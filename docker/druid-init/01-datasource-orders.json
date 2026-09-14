@@ -1,0 +1,33 @@
+{
+  "type": "index_parallel",
+  "spec": {
+    "ioConfig": {
+      "type": "index_parallel",
+      "inputSource": {
+        "type": "inline",
+        "data": "{\"ts\":\"2026-01-01T00:00:00Z\",\"order_id\":\"o-1\",\"country\":\"TR\",\"status\":\"1\",\"amount\":19.5,\"quantity\":2}\n{\"ts\":\"2026-01-01T01:00:00Z\",\"order_id\":\"o-2\",\"country\":\"DE\",\"status\":\"2\",\"amount\":4.25,\"quantity\":1}\n{\"ts\":\"2026-01-02T00:00:00Z\",\"order_id\":\"o-3\",\"country\":\"US\",\"status\":\"1\",\"amount\":120,\"quantity\":7}"
+      },
+      "inputFormat": { "type": "json" }
+    },
+    "dataSchema": {
+      "dataSource": "libredb_objects_orders",
+      "timestampSpec": { "column": "ts", "format": "iso" },
+      "dimensionsSpec": {
+        "dimensions": [
+          "order_id",
+          "country",
+          "status",
+          { "name": "quantity", "type": "long" }
+        ]
+      },
+      "metricsSpec": [{ "type": "doubleSum", "name": "amount", "fieldName": "amount" }],
+      "granularitySpec": {
+        "type": "uniform",
+        "segmentGranularity": "day",
+        "queryGranularity": "none",
+        "rollup": false
+      }
+    },
+    "tuningConfig": { "type": "index_parallel", "maxRowsPerSegment": 5000000 }
+  }
+}

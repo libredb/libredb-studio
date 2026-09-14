@@ -13,6 +13,7 @@ import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completi
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
+import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { useMonacoInstance } from "@/hooks/use-monaco-instance";
 import { logger } from "@/lib/logger";
@@ -140,9 +141,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
 
-    // Both themes are defined in `beforeMount`; this only picks which is applied.
+    // Both themes are defined in `beforeMount`, from `@/lib/editor/monaco-theme`; this only picks
+    // which is applied.
     // Monaco re-reads the `theme` prop on change, so the switch needs no remount.
-    const editorTheme = useEffectiveTheme() === "light" ? "db-light" : "db-dark";
+    const editorTheme = useEffectiveTheme() === "light" ? STUDIO_THEME_LIGHT : STUDIO_THEME_DARK;
 
     // Explain capability gate, shared by the toolbar button and the context-menu action.
     const canExplain = Boolean(onExplain) && Boolean(capabilities?.supportsExplain);
@@ -488,74 +490,18 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         };
       }
 
-      monacoInstance.editor.defineTheme("db-dark", {
-        base: "vs-dark",
-        inherit: true,
-        rules: [
-          { token: "keyword", foreground: "569cd6", fontStyle: "bold" },
-          { token: "function", foreground: "dcdcaa" },
-          { token: "string", foreground: "ce9178" },
-          { token: "number", foreground: "b5cea8" },
-          { token: "comment", foreground: "6a9955" },
-          { token: "operator", foreground: "d4d4d4" },
-          { token: "identifier", foreground: "9cdcfe" },
-        ],
-        colors: {
-          "editor.background": "#050505",
-          "editor.foreground": "#d4d4d4",
-          "editorCursor.foreground": "#569cd6",
-          "editor.lineHighlightBackground": "#111111",
-          "editorLineNumber.foreground": "#333333",
-          "editorLineNumber.activeForeground": "#666666",
-          "editor.selectionBackground": "#264f78",
-          "editor.inactiveSelectionBackground": "#3a3d41",
-          "editorIndentGuide.background": "#1a1a1a",
-          "editorIndentGuide.activeBackground": "#333333",
-        },
-      });
-
-      /*
-       * Monaco paints its own canvas and knows nothing about the CSS token layer,
-       * so the editor is the one surface that needs the palette written twice.
-       * Same syntax hues either side — they are chosen for contrast against the
-       * CODE, not against the chrome — with only the ground and the guides moved.
-       * `editor.background` mirrors `--studio-canvas` in both themes so the pane
-       * sits flush with the shell it lives in.
-       */
-      monacoInstance.editor.defineTheme("db-light", {
-        base: "vs",
-        inherit: true,
-        rules: [
-          { token: "keyword", foreground: "0000ff", fontStyle: "bold" },
-          { token: "function", foreground: "795e26" },
-          { token: "string", foreground: "a31515" },
-          { token: "number", foreground: "098658" },
-          { token: "comment", foreground: "008000" },
-          { token: "operator", foreground: "3f3f46" },
-          { token: "identifier", foreground: "001080" },
-        ],
-        colors: {
-          "editor.background": "#f4f4f5",
-          "editor.foreground": "#27272a",
-          "editorCursor.foreground": "#0000ff",
-          "editor.lineHighlightBackground": "#e4e4e7",
-          "editorLineNumber.foreground": "#a1a1aa",
-          "editorLineNumber.activeForeground": "#52525b",
-          "editor.selectionBackground": "#add6ff",
-          "editor.inactiveSelectionBackground": "#e5ebf1",
-          "editorIndentGuide.background": "#e4e4e7",
-          "editorIndentGuide.activeBackground": "#a1a1aa",
-        },
-      });
+      // Both themes come from one owner so this mount and the read-only source viewer
+      // paint identically (#789).
+      defineStudioThemes(monacoInstance);
     };
 
     // SQL completion provider
     useEffect(() => {
       if (monaco && language === "sql") {
-        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache);
+        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache, databaseType);
         return () => disposable.dispose();
       }
-    }, [monaco, language, schemaCompletionCache]);
+    }, [monaco, language, schemaCompletionCache, databaseType]);
 
     // MongoDB JSON completion provider
     useEffect(() => {

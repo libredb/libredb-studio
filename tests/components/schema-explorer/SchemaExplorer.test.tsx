@@ -15,7 +15,7 @@ mock.module("@/components/schema-explorer/TableItem", () => ({
     isExpanded,
     onToggle,
   }: {
-    table: { name: string };
+    table: { name: string; path: readonly string[] };
     isExpanded: boolean;
     onToggle: () => void;
   }) => {
@@ -23,7 +23,12 @@ mock.module("@/components/schema-explorer/TableItem", () => ({
     const React = require("react");
     return React.createElement(
       "div",
-      { "data-testid": `table-${table.name}`, "data-expanded": String(isExpanded), onClick: onToggle },
+      {
+        "data-testid": `table-${table.name}`,
+        "data-address": table.path.join("."),
+        "data-expanded": String(isExpanded),
+        onClick: onToggle,
+      },
       table.name,
     );
   },
@@ -38,6 +43,7 @@ import { SchemaExplorer } from "@/components/schema-explorer/SchemaExplorer";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ProviderLabels } from "@/lib/db/types";
 import { mockSchema, emptySchema } from "../../fixtures/schemas";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // =============================================================================
 // SchemaExplorer Tests
@@ -247,6 +253,34 @@ describe("SchemaExplorer", () => {
 
     await user.click(usersItem());
     expect(usersItem().getAttribute("data-expanded")).toBe("false");
+  });
+
+  test("expanding one of two objects that share a label leaves the other collapsed", async () => {
+    // The live SQL Server holds both. Keyed on the label, one click expanded both rows and
+    // the list itself carried one React key for two objects (#789, Task 36).
+    const user = userEvent.setup();
+    const namesakes: DetailedObject[] = [
+      { name: "customers", kind: "table", path: ["libredb_objects", "app", "customers"], columns: [], indexes: [] },
+      { name: "customers", kind: "table", path: ["shop", "dbo", "customers"], columns: [], indexes: [] },
+    ];
+    const props = createDefaultProps({ schema: namesakes });
+    // React's duplicate-key warning is the only place a list key is OBSERVABLE, and the key
+    // is exactly what this defect was: two objects, one label, one key. Without it the row
+    // identity assertions below pass while React is reconciling two rows as one.
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+    const { container } = render(<SchemaExplorer {...props} />);
+    console.error = originalError;
+    expect(errors.filter((message) => message.includes("same key"))).toEqual([]);
+    const rows = () => Array.from(container.querySelectorAll<HTMLElement>("[data-address]"));
+
+    expect(rows().map((row) => row.dataset.address)).toEqual(["libredb_objects.app.customers", "shop.dbo.customers"]);
+
+    await user.click(rows()[1]);
+    expect(rows().map((row) => row.dataset.expanded)).toEqual(["false", "true"]);
   });
 
   // ── Table count badge ─────────────────────────────────────────────────────

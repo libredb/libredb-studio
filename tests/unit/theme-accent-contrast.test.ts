@@ -467,6 +467,18 @@ const FADED_LIGHT_ONLY = [
 
 const FADED_BOTH = [
   "--studio-brand/20",
+  // #789's object tree and the sidebar's provider-pending state paint the same large
+  // panel spinner `SchemaExplorer` already painted at `text-brand/20`, one step less
+  // faded. Measured on the tokens as declared: 1.78:1 in light and 2.02:1 in dark, both
+  // worst on `--studio-brand-tint/25` over a studio ground. So it is BETTER than the
+  // `/20` directly above it (1.32:1 and 1.30:1) and worse than the `/50` directly below
+  // (2.09:1 and 2.41:1), and it fails in both palettes for the same reason they do: a
+  // faded token needs a per-mode alpha, which this file's docblock defers as its own
+  // design. It is admitted to the measured-failing set rather than fixed in the two
+  // components, because fixing it there would leave the identical `SchemaExplorer`
+  // spinner fainter than the two panels beside it while changing nothing about the
+  // class.
+  "--studio-brand/40",
   "--studio-brand/50",
   "--studio-brand/80",
   "--studio-danger/70",

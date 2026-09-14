@@ -892,13 +892,33 @@ describe("SchemaDiff", () => {
       expect(alertIcon).toBeTruthy();
     });
 
-    test("selecting a remote connection triggers API fetch", async () => {
+    test("selecting a remote connection reads the object inventory, kinds first", async () => {
+      // Two requests, not one (#789): `/api/db/provider-meta` decides which kinds a diff can
+      // compare, then the inventory is asked for those kinds with their columns. The route it
+      // replaces, `/api/db/schema-snapshot`, is deleted.
       const origFetch = globalThis.fetch;
-      const mockFetch = mock(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ schema: mockSchema }),
-        }),
+      const mockFetch = mock((url: string) =>
+        Promise.resolve(
+          url.includes("provider-meta")
+            ? {
+                ok: true,
+                json: () =>
+                  Promise.resolve({
+                    capabilities: {
+                      queryLanguage: "sql",
+                      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+                    },
+                  }),
+              }
+            : {
+                ok: true,
+                json: () =>
+                  Promise.resolve({
+                    objects: [{ name: "users", kind: "table", path: ["public", "users"] }],
+                    details: [{ path: ["public", "users"], columns: [], indexes: [], foreignKeys: [] }],
+                  }),
+              },
+        ),
       );
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 
@@ -911,14 +931,22 @@ describe("SchemaDiff", () => {
           fn!("conn:remote-1");
         });
 
-        expect(mockFetch).toHaveBeenCalledTimes(1);
-        const [url, options] = (mockFetch.mock.calls as unknown[][])[0] as [string, RequestInit];
-        expect(url).toBe("/api/db/schema-snapshot");
-        expect(JSON.parse(options.body as string).connection.id).toBe("remote-1");
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        const calls = mockFetch.mock.calls as unknown[][];
+        expect(calls[0][0]).toBe("/api/db/provider-meta");
+        const [url, options] = calls[1] as [string, RequestInit];
+        expect(url).toBe("/api/db/objects/inventory");
+        const body = JSON.parse(options.body as string);
+        expect(body.connection.id).toBe("remote-1");
+        expect(body.kinds).toEqual(["table"]);
+        expect(body.includeColumns).toBe(true);
 
         expect(mockSaveSchemaSnapshot).toHaveBeenCalledTimes(1);
         const saved = (mockSaveSchemaSnapshot.mock.calls as unknown[][])[0][0] as Record<string, unknown>;
         expect(saved.label).toBe("Live: Remote PG");
+        expect(saved.schema).toEqual([
+          { name: "users", kind: "table", path: ["public", "users"], columns: [], indexes: [], foreignKeys: [] },
+        ]);
       } finally {
         globalThis.fetch = origFetch;
       }
@@ -930,7 +958,22 @@ describe("SchemaDiff", () => {
       const fetchPromise = new Promise((resolve) => {
         resolveFetch = resolve;
       });
-      globalThis.fetch = mock(() => fetchPromise) as unknown as typeof fetch;
+      // The metadata read answers immediately; the inventory is the one held open, because it
+      // is the request the spinner is about.
+      globalThis.fetch = mock((url: string) =>
+        url.includes("provider-meta")
+          ? Promise.resolve({
+              ok: true,
+              json: () =>
+                Promise.resolve({
+                  capabilities: {
+                    queryLanguage: "sql",
+                    objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+                  },
+                }),
+            })
+          : fetchPromise,
+      ) as unknown as typeof fetch;
 
       try {
         const { queryByText } = renderDiff();
@@ -945,7 +988,7 @@ describe("SchemaDiff", () => {
 
         // Resolve the fetch
         await act(async () => {
-          resolveFetch({ ok: true, json: () => Promise.resolve({ schema: [] }) });
+          resolveFetch({ ok: true, json: () => Promise.resolve({ objects: [], details: [] }) });
         });
 
         expect(queryByText("Fetching...")).toBeNull();

@@ -5,9 +5,13 @@
 
 import {
   type DatabaseProvider,
+  type Container,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectDetailBatch,
   type DatabaseType,
   type DatabaseConnection,
-  type TableSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -159,7 +163,23 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   public abstract connect(): Promise<void>;
   public abstract disconnect(): Promise<void>;
   public abstract query(sql: string, params?: unknown[]): Promise<QueryResult>;
-  public abstract getSchema(): Promise<TableSchema[]>;
+
+  /*
+    The object surface (#789). Abstract here rather than defaulted, because there is no
+    honest default: what a container is, what kinds an engine has and how an object is
+    addressed are facts only the provider holds. They replaced `getSchema`,
+    `getSchemaList` and `getSchemaRelations`, which this class also declared abstract.
+  */
+  public abstract listContainers(parent?: readonly string[]): Promise<Container[]>;
+  public abstract countObjects(container: readonly string[]): Promise<Record<string, KindCount>>;
+  public abstract listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  public abstract describeObject(path: readonly string[], kind: string): Promise<ObjectDetail>;
+  public abstract describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+  ): Promise<ObjectDetailBatch>;
+
   public abstract getHealth(): Promise<HealthInfo>;
   public abstract runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
 
@@ -178,11 +198,6 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
 
   public isConnected(): boolean {
     return this.state.connected;
-  }
-
-  public async getTables(): Promise<string[]> {
-    const schema = await this.getSchema();
-    return schema.map((table) => table.name);
   }
 
   /**

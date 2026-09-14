@@ -1372,9 +1372,9 @@ describe("OperationsTab", () => {
 
   // ── A deep link from an Explorer row arrives selected (#459) ───────────────
 
-  test("deep-linked table name arrives filtered and selected", async () => {
+  test("a deep-linked address arrives filtered and selected", async () => {
     monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
-    setMockSearchParams(new URLSearchParams("table=orders"));
+    setMockSearchParams(new URLSearchParams("path=public&path=orders"));
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
       renderResult = render(<OperationsTab />);
@@ -1383,6 +1383,64 @@ describe("OperationsTab", () => {
 
     expect(queryByText("orders")).not.toBeNull();
     expect(queryByText("users")).toBeNull();
+    const selected = container.querySelectorAll('[data-selected="true"]');
+    expect(selected.length).toBe(1);
+    expect(selected[0]?.textContent).toContain("orders");
+  });
+
+  /**
+   * The collision the deep link used to be blind to (#789, Task 35).
+   *
+   * `?table=orders` named a LABEL, and two schemas holding an `orders` each got a marked
+   * row - or the wrong one did. The link now carries the whole address, so the container
+   * decides which row is the one the operator clicked.
+   */
+  test("marks the row in the container the link named, where two schemas share a label", async () => {
+    const collidingTables = [
+      { tableName: "orders", schemaName: "public", rowCount: 10, tableSize: "1 MB", totalSize: "1 MB", bloatRatio: 0 },
+      { tableName: "orders", schemaName: "archive", rowCount: 20, tableSize: "2 MB", totalSize: "2 MB", bloatRatio: 0 },
+    ];
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: collidingTables } };
+    setMockSearchParams(new URLSearchParams("path=archive&path=orders"));
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    // Both rows are listed - the filter is by label - and exactly ONE is marked.
+    const selected = container.querySelectorAll('[data-selected="true"]');
+    expect(selected.length).toBe(1);
+    // The row does not print its schema, so the row COUNT is what tells the two apart:
+    // 20 rows is the `archive` one, 10 is `public`.
+    expect(selected[0]?.textContent).toContain("20 rows");
+    expect(selected[0]?.textContent).not.toContain("10 rows");
+  });
+
+  test("a link naming a container this engine does not report marks nothing", async () => {
+    // The honest answer where the alternative is marking a row the operator did not ask
+    // for. The control is the test above: the same list with the container that does match.
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    setMockSearchParams(new URLSearchParams("path=warehouse&path=orders"));
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    expect(container.querySelectorAll('[data-selected="true"]').length).toBe(0);
+  });
+
+  test("a one-segment address marks by the object's own name, with no container to check", async () => {
+    // SQLite and the engines that declare no container levels: the address IS the label.
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    setMockSearchParams(new URLSearchParams("path=orders"));
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
     const selected = container.querySelectorAll('[data-selected="true"]');
     expect(selected.length).toBe(1);
     expect(selected[0]?.textContent).toContain("orders");
@@ -1718,7 +1776,7 @@ describe("OperationsTab", () => {
   test("names the deep-linked table the page has no row for", async () => {
     mockMetadata = perTableSpecs;
     monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
-    setMockSearchParams(new URLSearchParams("table=archived_events"));
+    setMockSearchParams(new URLSearchParams("path=public&path=archived_events"));
 
     const { getByTestId } = await render_();
 
@@ -1738,7 +1796,7 @@ describe("OperationsTab", () => {
     monitoringOverride = {
       data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },
     };
-    setMockSearchParams(new URLSearchParams("table=orders"));
+    setMockSearchParams(new URLSearchParams("path=public&path=orders"));
 
     const { getByTestId } = await render_();
 
@@ -1786,7 +1844,7 @@ describe("OperationsTab", () => {
     monitoringOverride = {
       data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },
     };
-    setMockSearchParams(new URLSearchParams("table=orders"));
+    setMockSearchParams(new URLSearchParams("path=public&path=orders"));
 
     const { queryByTestId } = await render_();
 
@@ -1797,7 +1855,7 @@ describe("OperationsTab", () => {
   test("says nothing once the operator's own filter is what empties the list", async () => {
     mockMetadata = perTableSpecs;
     monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
-    setMockSearchParams(new URLSearchParams("table=orders"));
+    setMockSearchParams(new URLSearchParams("path=public&path=orders"));
 
     const { queryByTestId, getByPlaceholderText } = await render_();
 

@@ -262,9 +262,6 @@ function unavailableSegmentCount(headers: Headers): number | null {
 // The result (spec section 2)
 // ============================================================================
 
-/** What a payload with no header row can honestly say about its columns. */
-const UNDESCRIBED = Object.freeze({ fieldNames: null, sqlTypes: null, nativeTypes: null });
-
 /**
  * The declared names, made unique.
  *

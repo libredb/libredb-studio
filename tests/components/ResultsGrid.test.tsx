@@ -85,6 +85,13 @@ mock.module("@/components/results-grid/StatsBar", () => ({
             `${(props.pendingChanges as unknown[]).length} changes`,
           )
         : null,
+      props.onToggleWrapText
+        ? React.createElement(
+            "button",
+            { "data-testid": "wrap-toggle", onClick: props.onToggleWrapText as () => void },
+            "WRAP",
+          )
+        : null,
       (props.activeFilterCount as number) > 0
         ? React.createElement(
             "button",
@@ -108,6 +115,7 @@ mock.module("@/components/results-grid/StatsBar", () => ({
 }));
 
 // ── Mock @tanstack/react-virtual ────────────────────────────────────────────
+const mockVirtualizerMeasure = mock(() => {});
 mock.module("@tanstack/react-virtual", () => ({
   useVirtualizer: (opts: { count: number }) => ({
     getVirtualItems: () =>
@@ -118,6 +126,8 @@ mock.module("@tanstack/react-virtual", () => ({
         key: i,
       })),
     getTotalSize: () => opts.count * 36,
+    measureElement: () => {},
+    measure: mockVirtualizerMeasure,
   }),
 }));
 
@@ -1061,11 +1071,13 @@ describe("ResultsGrid", () => {
   test("sorting reorders the rendered rows, not just the header indicator", () => {
     const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
 
-    // `:not([data-testid])` excludes the mocked ResultCard above, which also
-    // carries data-index; only the desktop table's rows come off the table
-    // instance, and they are the ones the row model orders.
+    // `:not([data-testid])` excludes the mocked ResultCard above and `:not(button)`
+    // the mobile table's rows, which both carry data-index too; only the desktop
+    // table's rows come off the table instance, and they are the ones the row model orders.
     const renderedRows = () =>
-      Array.from(container.querySelectorAll("[data-index]:not([data-testid])")).map((row) => row.textContent ?? "");
+      Array.from(container.querySelectorAll("[data-index]:not([data-testid]):not(button)")).map(
+        (row) => row.textContent ?? "",
+      );
 
     expect(renderedRows()).toHaveLength(3);
     expect(renderedRows()[0]).toContain("Alice");
@@ -1113,6 +1125,113 @@ describe("ResultsGrid", () => {
       for (const handle of handles) {
         expect(handle.getAttribute("aria-hidden")).toBe("true");
       }
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Text Wrapping Tests
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Text wrapping", () => {
+    // Walks from every element showing `text` up to its virtual row (desktop and
+    // mobile both render in the DOM), collecting what could hold the value to one line.
+    function lineConstraints(container: HTMLElement, text: string) {
+      const found = Array.from(container.querySelectorAll("span")).filter((el) => el.textContent === text);
+      expect(found.length).toBeGreaterThan(0);
+      return found.map((el) => {
+        const classes: string[] = [];
+        let node: HTMLElement | null = el;
+        while (node && !node.style.transform) {
+          classes.push(...Array.from(node.classList));
+          node = node.parentElement;
+        }
+        expect(node).not.toBeNull();
+        // measureElement files a row's height under this attribute; a row without it
+        // grows on screen while the rows below it stay where the old height put them.
+        expect(node!.dataset.index).toBeDefined();
+        return { classes, rowHeight: node!.style.height, mobile: node!.tagName === "BUTTON" };
+      });
+    }
+
+    function expectSingleLine(container: HTMLElement, text: string) {
+      for (const { classes, rowHeight, mobile } of lineConstraints(container, text)) {
+        expect(classes).toContain("whitespace-nowrap");
+        // The desktop grid's ellipsis is part of the unchanged behaviour; the mobile table never had one.
+        if (!mobile) expect(classes).toContain("truncate");
+        expect(rowHeight).toBe("36px");
+      }
+    }
+
+    function expectWrapped(container: HTMLElement, text: string) {
+      for (const { classes, rowHeight } of lineConstraints(container, text)) {
+        expect(classes).not.toContain("truncate");
+        expect(classes).not.toContain("whitespace-nowrap");
+        expect(classes).not.toContain("h-full");
+        expect(rowHeight).toBe("");
+      }
+    }
+
+    test("a plain cell wraps and its row sheds the fixed height, and turning it off restores both", () => {
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      expectSingleLine(container, "alice@example.com");
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectWrapped(container, "alice@example.com");
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectSingleLine(container, "alice@example.com");
+    });
+
+    test("every toggle drops the measured row heights, so turning wrap off shrinks rows back", () => {
+      // The virtualizer caches each measured row; without a reset, rows grown while
+      // wrapping keep that height after the toggle is off again.
+      const { getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      mockVirtualizerMeasure.mockClear();
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(2);
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(4);
+    });
+
+    test("an editable cell wraps too", () => {
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: mockResult,
+          editingEnabled: true,
+          onCellChange: mock(() => {}),
+          pendingChanges: [],
+        }),
+      );
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectWrapped(container, "alice@example.com");
+    });
+
+    test("masked and revealed cells wrap too", () => {
+      mockShouldMask.mockReturnValue(true);
+      mockCanReveal.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(
+        new Map([
+          ["email", { name: "email", maskType: "email" as const, columnPatterns: ["email"], enabled: true, id: "e1" }],
+        ]),
+      );
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: mockResult,
+          maskingEnabled: true,
+          maskingConfig: {
+            enabled: true,
+            patterns: [],
+            roleSettings: { admin: { canToggle: true, canReveal: true }, user: { canToggle: false, canReveal: false } },
+          },
+        }),
+      );
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectWrapped(container, "***");
+
+      fireEvent.click(container.querySelector('button[title="Reveal value (10s)"]')!);
+      expectWrapped(container, "alice@example.com");
     });
   });
 });

@@ -15,6 +15,8 @@ class StubDatabaseSync implements NodeDatabaseSyncLike {
   readonly path: string;
   readonly options: { readOnly?: boolean } | undefined;
   readonly calls: string[] = [];
+  /** node:sqlite's own transaction flag; the adapter republishes it as `inTransaction`. */
+  isTransaction = false;
 
   constructor(path: string, options?: { readOnly?: boolean }) {
     this.path = path;
@@ -120,6 +122,20 @@ describe("sqlite-driver", () => {
       new Driver("/tmp/editor.db", { create: true, readwrite: true });
 
       expect(StubDatabaseSync.lastInstance!.options).toEqual({ readOnly: false });
+    });
+
+    // node:sqlite spells it `isTransaction` and bun:sqlite spells it `inTransaction`,
+    // and the provider reads only the bun spelling. An adapter that forwarded nothing
+    // here would report every handle as clean, so a transaction a statement left open
+    // would never be found and would reach the next request (D71).
+    test("republishes node:sqlite's isTransaction under bun:sqlite's inTransaction", () => {
+      const Driver = createNodeSQLiteDriver(StubDatabaseSync);
+      const db = new Driver("/tmp/tx.db");
+      const stub = StubDatabaseSync.lastInstance!;
+
+      expect(db.inTransaction).toBe(false);
+      stub.isTransaction = true;
+      expect(db.inTransaction).toBe(true);
     });
   });
 

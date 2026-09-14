@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "The database editor that deploys next to your data, not onto your laptop.",
   "keywords": [
     "sql",
@@ -255,7 +255,7 @@
     "@testing-library/user-event": "^14.6.7",
     "@types/better-sqlite3": "^9.6.0",
     "@types/bun": "latest",
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.5.1",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
@@ -271,7 +271,7 @@
     "tailwindcss": "^4.3.3",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.69.0",
+    "typescript-eslint": "^8.70.0",
     "workflow": "4.8.1"
   }
 }

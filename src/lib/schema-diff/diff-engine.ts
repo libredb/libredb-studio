@@ -1,7 +1,8 @@
-import type { TableSchema, ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
+import type { ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
+import type { StoredObject } from "@/lib/db/detailed-object";
 import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff, ForeignKeyDiff } from "./types";
 
-function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): ColumnDiff[] {
+function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly ColumnSchema[]): ColumnDiff[] {
   const diffs: ColumnDiff[] = [];
   const sourceMap = new Map(sourceCols.map((c) => [c.name, c]));
   const targetMap = new Map(targetCols.map((c) => [c.name, c]));
@@ -76,7 +77,7 @@ function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): Co
   return diffs;
 }
 
-function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[]): IndexDiff[] {
+function diffIndexes(sourceIndexes: readonly IndexSchema[], targetIndexes: readonly IndexSchema[]): IndexDiff[] {
   const diffs: IndexDiff[] = [];
 
   // Build a stable map key from the column set. Copy before sorting so the
@@ -152,7 +153,10 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
   return diffs;
 }
 
-function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySchema[]): ForeignKeyDiff[] {
+function diffForeignKeys(
+  sourceFKs: readonly ForeignKeySchema[],
+  targetFKs: readonly ForeignKeySchema[],
+): ForeignKeyDiff[] {
   const diffs: ForeignKeyDiff[] = [];
 
   const makeKey = (fk: ForeignKeySchema) => `${fk.columnName}→${fk.referencedTable}.${fk.referencedColumn}`;
@@ -187,7 +191,27 @@ function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySch
   return diffs;
 }
 
-export function diffSchemas(source: TableSchema[], target: TableSchema[]): SchemaDiff {
+/**
+ * Two readings of a database, compared BY NAME (#789).
+ *
+ * The name is the key and not the path or the kind, and that is a compatibility decision with a
+ * measured reason rather than a shortcut. Both sides of this comparison may be a `SchemaSnapshot`
+ * out of the user's own storage, and a snapshot written before the object model carries no `kind`
+ * and no `path` at all. Keying on either would report every object in such a snapshot as REMOVED
+ * and every object in the current reading as ADDED, the first time somebody opened an old
+ * snapshot against a live database: a diff that invents every change there is. Nothing migrates
+ * those records, so `StoredObject` is the shape that enters here and NAME is the only field both
+ * populations are guaranteed to spell.
+ *
+ * What survives, and predates all of this: two entries colliding on one name leave `new Map()`
+ * holding the last of them.
+ *
+ * The cost, stated rather than left to be discovered: this cannot say that a table became a
+ * view. Both sides now CARRY the kind when both are current readings, so the comparison could be
+ * taught to notice it for a pair that has one; doing that while an old snapshot may be the other
+ * side means deciding what a kind-versus-no-kind pair means, which is Phase 2's to settle.
+ */
+export function diffSchemas(source: readonly StoredObject[], target: readonly StoredObject[]): SchemaDiff {
   const sourceMap = new Map(source.map((t) => [t.name, t]));
   const targetMap = new Map(target.map((t) => [t.name, t]));
 

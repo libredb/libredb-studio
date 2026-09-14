@@ -62,7 +62,7 @@ mock.module("@/components/schema-explorer/ColumnList", () => ({
 // ── Imports after mocks ─────────────────────────────────────────────────────
 
 import { TableItem } from "@/components/schema-explorer/TableItem";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // Capability fixtures are partial on purpose: TableItem reads three fields, and
@@ -132,8 +132,10 @@ const labelsFor = (partial: Partial<Labels>): Labels =>
 
 // ── Test data ───────────────────────────────────────────────────────────────
 
-const largeTable: TableSchema = {
+const largeTable: DetailedObject = {
   name: "users",
+  kind: "table",
+  path: ["users"],
   rowCount: 1500,
   indexes: [{ name: "idx_users_email", columns: ["email"], unique: true }],
   columns: [
@@ -142,8 +144,18 @@ const largeTable: TableSchema = {
   ],
 };
 
-const smallTable: TableSchema = {
+/**
+ * The same object OUTSIDE the session default container, which is the only fixture the two
+ * menu items below can be measured with: `name` is the label and `path` is the address
+ * (standing ruling 2), and at path `["users"]` the two are the same string, so an
+ * implementation still handing over the name would pass (#789).
+ */
+const qualifiedTable: DetailedObject = { ...largeTable, path: ["app", "users"] };
+
+const smallTable: DetailedObject = {
   name: "settings",
+  kind: "table",
+  path: ["settings"],
   rowCount: 42,
   indexes: [],
   columns: [
@@ -152,8 +164,10 @@ const smallTable: TableSchema = {
   ],
 };
 
-const noRowCountTable: TableSchema = {
+const noRowCountTable: DetailedObject = {
   name: "logs",
+  kind: "table",
+  path: ["logs"],
   indexes: [],
   columns: [{ name: "id", type: "SERIAL", nullable: false, isPrimary: true }],
 };
@@ -253,13 +267,13 @@ describe("TableItem", () => {
 
   // ── Dropdown action callbacks ─────────────────────────────────────────────
 
-  test('onTableClick fires with table name on "Select Top 50" click', () => {
-    const onTableClick = mock((name: string) => {
-      void name;
+  test('onTableClick fires with the object PATH on "Select Top 50" click', () => {
+    const onTableClick = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -269,16 +283,16 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Select Top 50"));
     expect(onTableClick).toHaveBeenCalledTimes(1);
-    expect(onTableClick.mock.calls[0][0]).toBe("users");
+    expect(onTableClick.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
-  test('onGenerateSelect fires with table name on "Generate Query" click', () => {
-    const onGenerateSelect = mock((name: string) => {
-      void name;
+  test('onGenerateSelect fires with the object PATH on "Generate Query" click', () => {
+    const onGenerateSelect = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -288,7 +302,7 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Generate Query"));
     expect(onGenerateSelect).toHaveBeenCalledTimes(1);
-    expect(onGenerateSelect.mock.calls[0][0]).toBe("users");
+    expect(onGenerateSelect.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
   test('copyToClipboard copies table name and shows toast on "Copy Name" click', async () => {
@@ -322,13 +336,13 @@ describe("TableItem", () => {
     expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
-  test('onProfileTable fires with table name on "Profile Table" click', () => {
-    const onProfileTable = mock((name: string) => {
-      void name;
+  test('onProfileTable fires with the table ADDRESS on "Profile Table" click', () => {
+    const onProfileTable = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -338,16 +352,16 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Profile Table"));
     expect(onProfileTable).toHaveBeenCalledTimes(1);
-    expect(onProfileTable.mock.calls[0][0]).toBe("users");
+    expect(onProfileTable.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
-  test('onGenerateCode fires with table name on "Generate Code" click', () => {
-    const onGenerateCode = mock((name: string) => {
-      void name;
+  test('onGenerateCode fires with the table ADDRESS on "Generate Code" click', () => {
+    const onGenerateCode = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -357,16 +371,16 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Generate Code"));
     expect(onGenerateCode).toHaveBeenCalledTimes(1);
-    expect(onGenerateCode.mock.calls[0][0]).toBe("users");
+    expect(onGenerateCode.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
-  test('onGenerateTestData fires with table name on "Generate Test Data" click', () => {
-    const onGenerateTestData = mock((name: string) => {
-      void name;
+  test('onGenerateTestData fires with the table ADDRESS on "Generate Test Data" click', () => {
+    const onGenerateTestData = mock((path: readonly string[]) => {
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
@@ -376,7 +390,7 @@ describe("TableItem", () => {
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Generate Test Data"));
     expect(onGenerateTestData).toHaveBeenCalledTimes(1);
-    expect(onGenerateTestData.mock.calls[0][0]).toBe("users");
+    expect(onGenerateTestData.mock.calls[0][0]).toEqual(["app", "users"]);
   });
 
   // ── Admin-only actions ────────────────────────────────────────────────────
@@ -399,14 +413,14 @@ describe("TableItem", () => {
     expect(dropdown.queryByText("Vacuum Table")).toBeNull();
   });
 
-  test('onOpenMaintenance fires with "tables" and table name on Analyze click', () => {
-    const onOpenMaintenance = mock((tab?: string, tbl?: string) => {
+  test('onOpenMaintenance fires with "tables" and the table ADDRESS on Analyze click', () => {
+    const onOpenMaintenance = mock((tab?: "global" | "tables" | "sessions", path?: readonly string[]) => {
       void tab;
-      void tbl;
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin
@@ -418,17 +432,17 @@ describe("TableItem", () => {
     fireEvent.click(dropdown.getByText("Analyze Table"));
     expect(onOpenMaintenance).toHaveBeenCalledTimes(1);
     expect(onOpenMaintenance.mock.calls[0][0]).toBe("tables");
-    expect(onOpenMaintenance.mock.calls[0][1]).toBe("users");
+    expect(onOpenMaintenance.mock.calls[0][1]).toEqual(["app", "users"]);
   });
 
   test("onOpenMaintenance fires on Vacuum click", () => {
-    const onOpenMaintenance = mock((tab?: string, tbl?: string) => {
+    const onOpenMaintenance = mock((tab?: "global" | "tables" | "sessions", path?: readonly string[]) => {
       void tab;
-      void tbl;
+      void path;
     });
     const { getByTestId } = render(
       <TableItem
-        table={largeTable}
+        table={qualifiedTable}
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin
@@ -440,7 +454,7 @@ describe("TableItem", () => {
     fireEvent.click(dropdown.getByText("Vacuum Table"));
     expect(onOpenMaintenance).toHaveBeenCalledTimes(1);
     expect(onOpenMaintenance.mock.calls[0][0]).toBe("tables");
-    expect(onOpenMaintenance.mock.calls[0][1]).toBe("users");
+    expect(onOpenMaintenance.mock.calls[0][1]).toEqual(["app", "users"]);
   });
 
   // ── Custom labels ─────────────────────────────────────────────────────────

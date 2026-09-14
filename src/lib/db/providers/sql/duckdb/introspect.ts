@@ -34,7 +34,6 @@ import type {
   IndexStats,
   SlowQueryStats,
   StorageStats,
-  TableSchema,
   TableStats,
 } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
@@ -129,24 +128,6 @@ interface TableRow {
   schema_name: string;
   table_name: string;
   estimated_size: unknown;
-}
-
-interface ColumnRow {
-  schema_name: string;
-  table_name: string;
-  column_name: string;
-  data_type: string;
-  is_nullable: boolean;
-  column_default: string | null;
-}
-
-interface ConstraintRow {
-  schema_name: string;
-  table_name: string;
-  constraint_type: string;
-  constraint_column_names: string[];
-  referenced_table: string | null;
-  referenced_column_names: string[];
 }
 
 interface IndexRow {
@@ -277,106 +258,6 @@ async function readRowCounts(
 // ============================================================================
 // Schema
 // ============================================================================
-
-/**
- * The full object tree: tables and views, with columns, primary keys, foreign keys and
- * indexes attached.
- *
- * Five catalog reads plus ONE counting statement, and no per-object sweep. The count is
- * `count(*)` and never `estimated_size`, which is an estimate a DELETE leaves wrong -
- * DuckDB answers `count(*)` out of row-group metadata, so a whole catalog is counted in
- * one statement in milliseconds (see `readRowCounts`).
- *
- * Views appear with their columns and no row count: `duckdb_views()` publishes no
- * cardinality and counting one would mean running it.
- */
-export async function readSchema(client: DuckDBClient): Promise<TableSchema[]> {
-  const [tables, views, columns, constraints, indexes] = await Promise.all([
-    client.run(TABLES_SQL),
-    client.run(VIEWS_SQL),
-    client.run(COLUMNS_SQL),
-    client.run(CONSTRAINTS_SQL),
-    client.run(INDEXES_SQL),
-  ]);
-
-  const rowCounts = await readRowCounts(client, tables.rows as unknown as TableRow[]);
-
-  const primaryKeys = new Map<string, Set<string>>();
-  const foreignKeys = new Map<string, TableSchema["foreignKeys"]>();
-  for (const row of constraints.rows as unknown as ConstraintRow[]) {
-    const id = tableKey(row.schema_name, row.table_name);
-    if (row.constraint_type === "PRIMARY KEY") {
-      primaryKeys.set(id, new Set(row.constraint_column_names));
-      continue;
-    }
-    // A composite foreign key is one constraint over several columns; the product's
-    // `ForeignKeySchema` is per column, so the pairs are zipped out.
-    const existing = foreignKeys.get(id) ?? [];
-    row.constraint_column_names.forEach((columnName, index) => {
-      existing.push({
-        columnName,
-        // Spelled exactly as the tree node it points at. DuckDB refuses a foreign key
-        // across schemas ("Binder Error: Creating foreign keys across different schemas
-        // or catalogs is not supported", measured), so the target lives in the
-        // constraint's own schema - and the bare name would link a non-default schema's
-        // foreign key to a same-named table in `main`.
-        referencedTable: row.referenced_table === null ? "" : displayName(row.schema_name, row.referenced_table),
-        referencedColumn: row.referenced_column_names[index] ?? "",
-      });
-    });
-    foreignKeys.set(id, existing);
-  }
-
-  const indexesByTable = new Map<string, TableSchema["indexes"]>();
-  for (const row of indexes.rows as unknown as IndexRow[]) {
-    const id = tableKey(row.schema_name, row.table_name);
-    const existing = indexesByTable.get(id) ?? [];
-    existing.push({ name: row.index_name, columns: row.index_columns ?? [], unique: row.is_unique });
-    indexesByTable.set(id, existing);
-  }
-
-  const columnsByTable = new Map<string, TableSchema["columns"]>();
-  for (const row of columns.rows as unknown as ColumnRow[]) {
-    const id = tableKey(row.schema_name, row.table_name);
-    const existing = columnsByTable.get(id) ?? [];
-    existing.push({
-      name: row.column_name,
-      type: row.data_type,
-      nullable: row.is_nullable,
-      isPrimary: primaryKeys.get(id)?.has(row.column_name) === true,
-      ...(row.column_default === null ? {} : { defaultValue: row.column_default }),
-    });
-    columnsByTable.set(id, existing);
-  }
-
-  const schemas: TableSchema[] = [];
-
-  for (const row of tables.rows as unknown as TableRow[]) {
-    const id = tableKey(row.schema_name, row.table_name);
-    const rowCount = rowCounts.get(id);
-    schemas.push({
-      name: displayName(row.schema_name, row.table_name),
-      // Absent rather than estimated: `TableSchema.rowCount` is optional, and a table
-      // this provider could not count publishes no count at all.
-      ...(rowCount === undefined ? {} : { rowCount }),
-      columns: columnsByTable.get(id) ?? [],
-      indexes: indexesByTable.get(id) ?? [],
-      foreignKeys: foreignKeys.get(id) ?? [],
-    });
-  }
-
-  for (const row of views.rows as unknown as { schema_name: string; view_name: string }[]) {
-    const id = tableKey(row.schema_name, row.view_name);
-    schemas.push({
-      name: displayName(row.schema_name, row.view_name),
-      columns: columnsByTable.get(id) ?? [],
-      indexes: [],
-      foreignKeys: [],
-    });
-  }
-
-  return schemas;
-}
 
 // ============================================================================
 // Sizes
@@ -587,7 +468,7 @@ export async function readTableStats(client: DuckDBClient): Promise<TableStats[]
   const stats: TableStats[] = [];
   for (const row of tables.rows as unknown as TableRow[]) {
     // `TableStats.rowCount` is required, so absence is not expressible here as it is on
-    // `TableSchema`. The counted figure is the answer; `estimated_size` is the fallback
+    // a row count. The counted figure is the answer; `estimated_size` is the fallback
     // only when the count could not be read at all, because of the two numbers
     // available it is the closer one - a 0 would draw an empty table over real rows.
     const rowCount = rowCounts.get(tableKey(row.schema_name, row.table_name)) ?? readCount(row.estimated_size) ?? 0;

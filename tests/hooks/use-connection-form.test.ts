@@ -1622,6 +1622,114 @@ describe("useConnectionForm", () => {
     expect(body.localDataCenter).toBeUndefined();
   });
 
+  // ── The no-scan escape hatch (#765) ────────────────────────────────────
+
+  test("the no-scan choice is saved, and omitted rather than written false", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+
+    expect(result.current.skipObjectScan).toBe(false);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    // Absent, not `false`: every other optional field on `DatabaseConnection` is written
+    // only when it says something, and a stored `false` would survive as noise on every
+    // connection ever saved.
+    expect(onConnect.mock.calls[0][0].skipObjectScan).toBeUndefined();
+
+    act(() => result.current.setSkipObjectScan(true));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[1][0].skipObjectScan).toBe(true);
+  });
+
+  test("editing a connection shows its saved no-scan choice", () => {
+    const conn: DatabaseConnection = {
+      id: "c1",
+      name: "Big owner",
+      type: "oracle",
+      host: "oracle.internal",
+      port: 1521,
+      database: "app",
+      skipObjectScan: true,
+      createdAt: new Date(),
+    };
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: conn }));
+
+    expect(result.current.skipObjectScan).toBe(true);
+  });
+
+  test("unticking the box clears the flag rather than preserving it", async () => {
+    // `FIELD_OWNERSHIP` calls this field `edited`, and this is what that buys: a
+    // `preserved` classification would leave the box unticked on screen while the saved
+    // connection went on skipping its scan.
+    const conn: DatabaseConnection = {
+      id: "c1",
+      name: "Big owner",
+      type: "oracle",
+      host: "oracle.internal",
+      port: 1521,
+      database: "app",
+      skipObjectScan: true,
+      createdAt: new Date(),
+    };
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: conn,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    act(() => result.current.setSkipObjectScan(false));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect.mock.calls[0][0].skipObjectScan).toBeUndefined();
+  });
+
+  test("editing a connection that does not skip its scan does not inherit the last one", () => {
+    // The edit block OVERWRITES, like the data centre above: a connection that reads its
+    // catalog must show an unticked box, or the previously edited connection's choice is
+    // saved onto it.
+    const skipping: DatabaseConnection = {
+      id: "c1",
+      name: "Big owner",
+      type: "oracle",
+      skipObjectScan: true,
+      createdAt: new Date(),
+    };
+    const scanning: DatabaseConnection = { id: "c2", name: "Small", type: "oracle", createdAt: new Date() };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: skipping },
+    });
+    expect(result.current.skipObjectScan).toBe(true);
+
+    rerender({ ...defaultProps, editConnection: scanning });
+    expect(result.current.skipObjectScan).toBe(false);
+  });
+
+  test("closing the modal clears the choice before the next new connection", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => result.current.setSkipObjectScan(true));
+    expect(result.current.skipObjectScan).toBe(true);
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.skipObjectScan).toBe(false);
+  });
+
   test("populates the Cassandra localDataCenter in edit mode", () => {
     const conn: DatabaseConnection = {
       id: "c1",

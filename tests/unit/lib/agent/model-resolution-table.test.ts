@@ -495,6 +495,70 @@ const RESOLVED: ResolvedRow[] = [
     refusalExamples: false,
     turnTimeoutMs: undefined,
   },
+  /*
+    The five this branch adds, and five vendors rather than one: Mistral's reasoning model, two
+    from Alibaba, OpenAI's first entry on this roster and Zhipu's first. Four of the five resolve
+    to the compiled defaults with `retryUnreadStop` stated; only `glm-4.7-flash` asks for more than
+    that, and each of its three settings answers a cell that could not close without it.
+  */
+  {
+    id: "magistral:24b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 2,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "qwq:32b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "qwen3-coder:30b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "gpt-oss:20b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
+    refusalExamples: false,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: undefined,
+    samplingOverrides: { "query-optimization": { temperature: 0.8, topP: 0.9 } },
+  },
+  {
+    id: "glm-4.7-flash:latest",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 2,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    retriesUnreadStop: true,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
 ];
 
 describe("every resolver's answer, pinned before the profiles moved", () => {
@@ -524,7 +588,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(30);
+    expect(Object.keys(modelProfiles())).toHaveLength(35);
   });
 });
 
@@ -594,6 +658,11 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen3:14b": "96e0d729224168eff3eddc16ed1bd588dd28cd133441c85790670ffd3e36dddd",
     "qwen3:4b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3:8b": "3dd169b2c0718d77a0db8732d575bb4c863d78ed8343020c103c0f38e9cf016b",
+    "magistral:24b": "b76df1e6d916d87e50b2b70169ca95c2774e037143b68251aeab6a3b94e62ded",
+    "qwq:32b": "3f85581b7a6ed2d052e4066258021a99e776a00c4eed98a95e4d1cbce948d8cf",
+    "qwen3-coder:30b": "bcf4ade23a0dab26370f0da178af8630025620510a4d239d237407f404bfe655",
+    "gpt-oss:20b": "289cbda6c810233c189f2cfb7984bc61a86b29009d4edf6c99eeb547194d3034",
+    "glm-4.7-flash:latest": "36f84723b7d527a9276900bb97c84653fbe5d1862ecc49efdbd5dd3d5f8b95bb",
   };
 
   test("every model's record survives the move, character for character", () => {

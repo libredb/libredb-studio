@@ -59,7 +59,7 @@ const NAMED_CITATIONS = [
   {
     doc: "docs/providers/sqlite.md",
     source: "src/lib/db/providers/sql/sqlite.ts",
-    methods: ["getCapabilities", "validate", "connect", "getDatabasePath", "query", "getSchema", "runMaintenance"],
+    methods: ["getCapabilities", "validate", "connect", "getDatabasePath", "query", "describeObject", "runMaintenance"],
   },
   {
     doc: "docs/providers/mssql.md",
@@ -74,7 +74,7 @@ const NAMED_CITATIONS = [
       "prepareQuery",
       "beginTransaction",
       "queryInTransaction",
-      "getSchema",
+      "describeObject",
       "runMaintenance",
       "getPoolStats",
     ],
@@ -96,7 +96,7 @@ const NAMED_CITATIONS = [
       "query",
       "cancelQuery",
       "beginTransaction",
-      "getSchema",
+      "describeObject",
       "runMaintenance",
       "getAllTablesForMaintenance",
     ],
@@ -114,7 +114,7 @@ const NAMED_CITATIONS = [
       "cancelQuery",
       "prepareQuery",
       "beginTransaction",
-      "getSchema",
+      "describeObject",
       "runMaintenance",
       "getPoolStats",
       "buildTLSAttributes",
@@ -132,7 +132,7 @@ const NAMED_CITATIONS = [
       "query",
       "parseQuery",
       "serializeDocument",
-      "getSchema",
+      "describeObject",
       "runMaintenance",
     ],
   },
@@ -147,8 +147,14 @@ const NAMED_CITATIONS = [
       "runCommand",
       "formatResult",
       "parseInfoResult",
-      "getSchema",
-      "getKeyPrefix",
+      "describeObject",
+      // The object surface (#789). Module-level helpers such as `keyGrouping` are cited in the
+      // doc too and cannot be listed here, because `declarationLine` matches class members
+      // only; `keyGrouping()` is pinned by its own test in the `redis provider doc` block.
+      "listContainers",
+      "countObjects",
+      "listObjects",
+      "describeObject",
       "calculateHitRatio",
       "getActiveSessions",
     ],
@@ -183,9 +189,9 @@ const NAMED_CITATIONS = [
       "disconnect",
       "query",
       "mapClickHouseError",
-      "getSchema",
-      "getSchemaList",
-      "getSchemaRelations",
+      "describeObject",
+      "listObjects",
+      "describeObjects",
       "getOverview",
       "getPerformanceMetrics",
       "getSlowQueries",
@@ -212,7 +218,7 @@ const NAMED_CITATIONS = [
       "disconnect",
       "query",
       "mapDruidError",
-      "getSchema",
+      "describeObject",
       "getOverview",
       "getPerformanceMetrics",
       "getSlowQueries",
@@ -241,9 +247,9 @@ const NAMED_CITATIONS = [
       "query",
       "mapCouchbaseError",
       "primaryIndexRemedy",
-      "getSchemaList",
-      "getSchemaRelations",
-      "getSchema",
+      "listObjects",
+      "describeObjects",
+      "describeObject",
       "getOverview",
       "getPerformanceMetrics",
       "getSlowQueries",
@@ -334,6 +340,21 @@ describe("redis provider doc", () => {
     expect(text).toContain("`getMonitoringData()` from\n[`base-provider.ts`](../../src/lib/db/base-provider.ts)");
     expect(text).not.toMatch(/base-provider\.ts:\d/);
     expect(declarationLine(read(BASE_PROVIDER), "getMonitoringData")).toBeGreaterThan(-1);
+  });
+
+  /**
+   * `keyGrouping()` is MODULE-LEVEL, so `NAMED_CITATIONS` cannot reach it: `declarationLine`
+   * matches `public`/`protected`/`private` members only, and the object surface (#789) renamed
+   * this helper out of the class precisely so the listing and `describeObject()` could share it. Three citations moved with the rename and nothing was measuring any of them, which is
+   * the same shape of stranding this whole file exists to stop. Pinned the way the measured
+   * aggregate helper below is pinned: the citation text, then the declaration it names.
+   */
+  test("names keyGrouping() where the listing and the detail read share it", () => {
+    expect(read("docs/providers/redis.md")).toContain(
+      "`keyGrouping()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))",
+    );
+    expect(read("src/lib/query-generators.ts")).toContain("`keyGrouping` grouping");
+    expect(read("src/lib/db/providers/keyvalue/redis.ts")).toMatch(/^function keyGrouping\(/m);
   });
 });
 

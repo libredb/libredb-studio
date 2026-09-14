@@ -545,6 +545,113 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(answer.answer.artifact.correlationId).toBe(artifact.correlationId);
     });
 
+    test("and the report's claims, which is the same encoding on the tool that ends the run", async () => {
+      /*
+        The same fault one tool over, and by a wide margin the more expensive of the two.
+
+        `readSerializedPresentation` was written for `present_answer` after `qwen3.8` serialized a
+        nested object three times and was refused three times. `compose_report` takes the identical
+        mistake and was never given the identical read — and it is the call that ENDS a run, so a
+        model that makes it here does not lose a presentation, it loses everything.
+
+        Measured on `llama3.1:8b`, the most-pulled tool-capable model on Ollama: five operate runs,
+        **seventy** declines, every one of them the same line —
+
+            the fields that did not match — claims: expected array, received string
+
+        — with the model re-sending the serialized array roughly fourteen times per run until the
+        turn limit ended it. The sentence is complete and correct by then; the model reads it and
+        cannot act on it, which is precisely the case the sibling read exists for.
+
+        Read ONCE and never recursively, at the call boundary rather than in the schema, and the
+        value still goes through the same strict schema afterwards — every constraint the sibling
+        states applies here unchanged, including why the placement matters to the contract the SDK
+        advertises.
+      */
+      const h = harness();
+
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      const events: AgentRunEvent[] = [
+        { kind: "tool-completed", atMs: 1, stepId: "step_1", artifact: outcome.artifact },
+      ];
+      const claims = [
+        {
+          claim: "orders has rows",
+          evidence: [{ source: "artifact", correlationId: outcome.artifact.correlationId }],
+        },
+      ];
+
+      const report = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events },
+        {
+          // The array serialized, which is what the model sends.
+          claims: JSON.stringify(claims),
+        },
+      );
+
+      expect(report.kind).toBe("composed");
+      if (report.kind !== "composed") return;
+      expect(report.claims).toHaveLength(1);
+      expect(report.claims[0]?.claim).toBe("orders has rows");
+    });
+
+    test("text that is not JSON at all is refused in words the model can act on", async () => {
+      /*
+        The half a lenient reader cannot fix, measured on the same model and captured off the wire.
+
+        `llama3.1:8b` sends its claims as a PYTHON repr — single quotes throughout:
+
+            "[{'claim': 'The employee table is incomplete.', 'evidence': [{'source': 'artifact', …}]}]"
+
+        The content is right: the claim is true, the source is right, the correlation id is one this
+        run produced. Only the quote character is wrong, and `JSON.parse` refuses it. Converting the
+        quotes here would be inventing an encoding rather than reading one the model chose, and it
+        breaks on the first apostrophe inside a sentence, so this layer does not try.
+
+        What it can do is stop saying something the model has no way to act on. `claims: expected
+        array, received string` is true and, to a model that believes it sent an array, says
+        nothing — measured across five assess runs, it re-sent the identical bytes THIRTY times.
+        The refusal now names the fault: the argument arrived as text, and what a JSON array
+        requires.
+      */
+      const h = harness();
+
+      const report = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [] },
+        {
+          claims: "[{'claim': 'orders has rows', 'evidence': []}]",
+        },
+      );
+
+      expect(report.kind).toBe("unavailable");
+      if (report.kind !== "unavailable") return;
+      expect(report.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(report.modelText).toContain("arrived as TEXT");
+      expect(report.modelText).toContain("double quotes");
+      // The model's own text is never quoted back at it; only the fault is named.
+      expect(report.modelText).not.toContain("orders has rows");
+    });
+
+    test("a serialized claims array of the wrong shape is still refused, so the schema is not relaxed", async () => {
+      const h = harness();
+
+      const report = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [] },
+        {
+          // Valid JSON, wrong shape: the read admits nothing the object form would not have been.
+          claims: JSON.stringify([{ text: "orders has rows" }]),
+        },
+      );
+
+      expect(report.kind).toBe("unavailable");
+      if (report.kind !== "unavailable") return;
+      expect(report.reasonCode).toBe("INVALID_TOOL_INPUT");
+    });
+
     test("still refuses a serialized presentation of the wrong shape: the schema is not relaxed", async () => {
       const h = analysis();
       const { artifact, events } = await readWithLedger(h.context);
@@ -592,6 +699,42 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       if (answer.kind !== "unavailable") return;
       expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
       expect(answer.modelText).toContain("presentation");
+    });
+
+    test("and a field sent under a near-miss name is named as the rename it is", async () => {
+      /*
+        One mistake reported as two, which is how a refusal becomes a puzzle.
+
+        A model that sends `artifact_id` where the schema says `artifact` is told two separate
+        and individually true things — `artifact: expected string, received nothing` and
+        `the arguments object: remove artifact_id` — and nothing in either sentence says they
+        are the same field. The value it sent was right; only the key was wrong. What it reads
+        is that something is missing AND something is surplus, so the obvious repair is to send
+        the surplus field again with more of it, which is the loop every other refusal in this
+        file was written to end.
+
+        Measured on llama3.1:8b, the most-pulled tool-capable model on Ollama: five analyze runs,
+        `present_answer` declined in every one, never once on the value. `artifact_id` is not an
+        exotic guess — it is what the field is called in most APIs that have one.
+
+        The rule the sentence is bounded by is untouched: both names are the model's KEYS and
+        the schema's, which are structural exactly as a path is, and the value never crosses.
+      */
+      const h = analysis();
+      const { artifact, events } = await readWithLedger(h.context);
+
+      const answer = presentAnswerTool(h.context, { runId: h.context.runId, events, autoExecute: false }, {
+        artifact_id: artifact.correlationId,
+        presentation: { kind: "table" },
+      } as never);
+
+      expect(answer.kind).toBe("unavailable");
+      if (answer.kind !== "unavailable") return;
+      expect(answer.modelText).toContain("rename artifact_id to artifact");
+      // And the two sentences the rename replaces are gone, because leaving them beside it
+      // restores the puzzle the rename exists to remove.
+      expect(answer.modelText).not.toContain("remove artifact_id");
+      expect(answer.modelText).not.toContain("artifact: expected string");
     });
 
     test("and names what ARRIVED, because a model told only what was expected sends it again", async () => {
@@ -3506,7 +3649,7 @@ describe("profileTableTool — the model names a table, the server decides the r
     connectionId: "conn-1",
     fingerprint: "ctx_1",
     capturedAtMs: 1,
-    tables: [
+    objects: [
       {
         name: "public.orders",
         columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
@@ -3517,6 +3660,35 @@ describe("profileTableTool — the model names a table, the server decides the r
   const events: readonly AgentRunEvent[] = [
     { kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 1, snapshot },
   ];
+
+  /**
+   * The same capture with the kinds a PostgreSQL inventory really carries (#789): a table,
+   * a view, and a function whose last path segment carries the overload form of ruling 2.
+   */
+  const kindedSnapshot = {
+    ...snapshot,
+    objects: [
+      { ...snapshot.objects[0], kind: "table" },
+      {
+        name: "public.order_summary",
+        kind: "view",
+        columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+        indexes: [],
+      },
+      { name: "public.order_total(integer)", kind: "function", label: "order_total", columns: [], indexes: [] },
+      { name: "public.orders_id_seq", kind: "sequence", columns: [], indexes: [] },
+    ],
+    kinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+    ],
+  };
+  const kindedRun = {
+    runId: "run-1",
+    events: [{ kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 4, snapshot: kindedSnapshot }],
+  } as Pick<AgentRunRecord, "runId" | "events">;
   const run = { runId: "run-1", events } as Pick<AgentRunRecord, "runId" | "events">;
 
   const plan = (h: Harness, input: unknown) => planTableProfile(h.context, run, input);
@@ -3569,6 +3741,48 @@ describe("profileTableTool — the model names a table, the server decides the r
     expect(outcome.modelText).toContain("orders");
   });
 
+  /*
+    The inventory stopped being a list of tables when the object surface landed (#789): a
+    PostgreSQL capture carries the schema's views, sequences and functions beside them.
+    A profile composes and RUNS `SELECT count(*) ...` against what it resolves, so what it
+    may resolve is the declared ROLE and nothing else. The refusal says which of the two
+    things happened, for the reason the qualifier refusal was split out: a model told "that
+    table is not in the inventory" about a name it can SEE in the inventory repeats the call
+    rather than changing it.
+  */
+  test("a FUNCTION the inventory lists is refused, and the refusal does not deny the object", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { schema: "public", table: "order_total(integer)" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("OBJECT_NOT_PROFILABLE");
+    expect(outcome.modelText).toContain("Function");
+  });
+
+  test("a SEQUENCE is refused by the same one line, because the gate is the role and not a list of kinds", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { table: "orders_id_seq" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("OBJECT_NOT_PROFILABLE");
+  });
+
+  test("a VIEW is planned, because its declared role is relation and it has rows to count", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { table: "order_summary" });
+
+    if (outcome.kind !== "planned") throw new Error("expected planned");
+    expect(outcome.plan.target.entry.name).toBe("public.order_summary");
+  });
+
+  test("the names a refusal offers back are only the ones it would accept", () => {
+    const outcome = planTableProfile(harness().context, kindedRun, { table: "secrets" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.modelText).toContain("public.orders");
+    // Offering a name this tool would then refuse is the two-dead-refusals sequence again.
+    expect(outcome.modelText).not.toContain("order_total");
+    expect(outcome.modelText).not.toContain("orders_id_seq");
+  });
+
   test("a qualifier the inventory has never heard of is refused by naming the entry that exists", () => {
     /*
       Read off the wire, from the run this refusal was costing.
@@ -3612,6 +3826,214 @@ describe("profileTableTool — the model names a table, the server decides the r
     expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
   });
 
+  /**
+   * The two-part address a 2/3-level engine's inventory does not spell (#789 fix round 2).
+   *
+   * On an engine whose container depth is 2 the inventory now carries the catalog as well,
+   * so an entry is `shop.sales.orders` while `sales.orders` is the form the engine's own
+   * documentation, and every statement the model has ever seen, writes. An exact-name match
+   * refused that outright, which is safe and still wrong: the model was shown a spelling and
+   * refused the only other one it could reasonably produce, with nothing in the refusal
+   * saying what to change.
+   *
+   * The resolution stays exactly as strict where strictness is what #345 bought: a named
+   * qualifier is still part of the answer, still never matched against a bare entry, and
+   * two objects that both answer one spelling are still refused rather than guessed between.
+   */
+  const twoLevelRun = {
+    runId: "run-1",
+    events: [
+      {
+        kind: "context-captured",
+        atMs: 1,
+        fingerprint: "ctx_1",
+        tableCount: 2,
+        snapshot: {
+          connectionId: "conn-1",
+          fingerprint: "ctx_1",
+          capturedAtMs: 1,
+          objects: [
+            {
+              name: "shop.sales.orders",
+              path: ["shop", "sales", "orders"],
+              kind: "table",
+              columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+              indexes: [],
+            },
+            {
+              name: "shop.dbo.customers",
+              path: ["shop", "dbo", "customers"],
+              kind: "table",
+              columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+              indexes: [],
+            },
+          ],
+          kinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+        },
+      },
+    ],
+  } as Pick<AgentRunRecord, "runId" | "events">;
+
+  test("a two-part address resolves against a catalog-qualified inventory", () => {
+    const outcome = planTableProfile(harness().context, twoLevelRun, { schema: "sales", table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.entry.name).toBe("shop.sales.orders");
+  });
+
+  test("the whole address resolves too, so the spelling the model was SHOWN still works", () => {
+    const outcome = planTableProfile(harness().context, twoLevelRun, { schema: "shop.sales", table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.entry.name).toBe("shop.sales.orders");
+  });
+
+  test("a qualifier that is not the object's own container is still refused", () => {
+    // #345, unchanged: `dbo.orders` is not this inventory's `sales.orders`, and profiling
+    // the one the caller did not name is worse than refusing.
+    const outcome = planTableProfile(harness().context, twoLevelRun, { schema: "dbo", table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
+  });
+
+  /*
+    An ambiguous spelling is its OWN answer, and it used to be answered as an absence.
+
+    `inventoriedTable` dropped the resolver's third outcome, so a spelling two inventoried
+    objects answer to came back as `TABLE_NOT_INVENTORIED` - "that table is not in the
+    schema inventory this run captured" - about a run that had just read both of them.
+    That is #414's defect in a new place: a run that read both objects tells the model it
+    read neither.
+
+    The fixture below carries eight other relations ahead of the two candidates on purpose.
+    The offer list attached to `TABLE_NOT_INVENTORIED` is the first six profilable names,
+    so with only two objects in the inventory it accidentally contained the candidates and
+    the answer looked adequate. With eight, the offer list holds none of them and what the
+    model is actually shown becomes visible: names it did not ask about, and no word about
+    the two it did.
+  */
+  const relation = (name: string, path: readonly string[]) => ({
+    name,
+    path,
+    kind: "table",
+    columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+    indexes: [],
+  });
+
+  const ambiguousRun = (objects: readonly unknown[], defaultContainer?: readonly string[]) =>
+    ({
+      runId: "run-1",
+      events: [
+        {
+          kind: "context-captured",
+          atMs: 1,
+          fingerprint: "ctx_1",
+          tableCount: objects.length,
+          snapshot: {
+            connectionId: "conn-1",
+            fingerprint: "ctx_1",
+            capturedAtMs: 1,
+            objects,
+            kinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+            ...(defaultContainer === undefined ? {} : { defaultContainer }),
+          },
+        },
+      ],
+    }) as Pick<AgentRunRecord, "runId" | "events">;
+
+  const CROWD = ["actor", "address", "category", "city", "country", "customer", "film", "inventory"].map((name) =>
+    relation(`public.${name}`, ["public", name]),
+  );
+
+  test("two containers answering one two-part spelling are refused rather than guessed between", () => {
+    const ambiguous = ambiguousRun([
+      ...CROWD,
+      relation("shop.sales.orders", ["shop", "sales", "orders"]),
+      relation("archive.sales.orders", ["archive", "sales", "orders"]),
+    ]);
+
+    const outcome = planTableProfile(harness().context, ambiguous, { schema: "sales", table: "orders" });
+
+    // The refusal is unchanged and the SENTENCE is the thing that moved: nothing about this
+    // spelling's qualifier is unknown and the table is not missing, there are simply two
+    // objects wearing the spelling, so the answer names them and lets the model pick the
+    // catalog it meant.
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_SPELLING_AMBIGUOUS");
+    expect(outcome.modelText).toContain("shop.sales.orders");
+    expect(outcome.modelText).toContain("archive.sales.orders");
+  });
+
+  test("and it is not told the table is missing, nor offered names it did not ask about", () => {
+    // What the model was actually shown, measured: the first six profilable names, NEITHER
+    // of which is a candidate, under a sentence saying the table is not in the inventory.
+    const ambiguous = ambiguousRun([
+      ...CROWD,
+      relation("shop.sales.orders", ["shop", "sales", "orders"]),
+      relation("archive.sales.orders", ["archive", "sales", "orders"]),
+    ]);
+
+    const outcome = planTableProfile(harness().context, ambiguous, { schema: "sales", table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.modelText).not.toContain("not in the schema inventory");
+    expect(outcome.modelText).not.toContain("public.actor");
+  });
+
+  /**
+   * The session default breaks the tie here too, because it breaks it EVERYWHERE ELSE
+   * (#789 bulk-read review, Important 3).
+   *
+   * `er-diagram.ts` passes the declaring object's container, `detailed-object.ts` passes
+   * the session default and the inventory join passes the same default. This was the one
+   * consumer of the address rule that passed nothing, so a run inventoried `app.orders` and
+   * `public.orders` with `public` as the session default, the object browser tagged the
+   * flat `orders` as `public.orders` and the tree resolved it, and `profile_table("orders")`
+   * in that same run was told the spelling was ambiguous. A table the run had inventoried
+   * and the browser could address could not be profiled.
+   *
+   * The run holds the fact and used to throw it away: the container walk reads it, the
+   * join uses it, and nothing carried it onto the snapshot a tool later reads.
+   */
+  test("the session default the capture read breaks a profile spelling's tie", () => {
+    const ambiguous = ambiguousRun(
+      [...CROWD, relation("app.orders", ["app", "orders"]), relation("public.orders", ["public", "orders"])],
+      ["public"],
+    );
+
+    const outcome = planTableProfile(harness().context, ambiguous, { table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.entry.name).toBe("public.orders");
+  });
+
+  // The refusal is not weakened where there is no default to break the tie with: a capture
+  // that read no session default still refuses rather than guessing.
+  test("without a session default the same two candidates are still refused", () => {
+    const ambiguous = ambiguousRun([
+      ...CROWD,
+      relation("app.orders", ["app", "orders"]),
+      relation("public.orders", ["public", "orders"]),
+    ]);
+
+    const outcome = planTableProfile(harness().context, ambiguous, { table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_SPELLING_AMBIGUOUS");
+    expect(outcome.modelText).toContain("app.orders");
+    expect(outcome.modelText).toContain("public.orders");
+  });
+
+  test("a spelling only ONE object answers is still profiled, so the ambiguity arm is not a net", () => {
+    const single = ambiguousRun([...CROWD, relation("shop.sales.orders", ["shop", "sales", "orders"])]);
+
+    const outcome = planTableProfile(harness().context, single, { schema: "sales", table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error(`expected a plan, got ${outcome.kind}`);
+    expect(outcome.plan.target.segments).toEqual(["shop", "sales", "orders"]);
+  });
+
   test("the composed statement targets what was RESOLVED, not what was asked for", () => {
     // An unqualified name resolving to a qualified entry composed `FROM "orders"`,
     // leaving search_path to decide which relation was read while the ledger said
@@ -3642,7 +4064,7 @@ describe("profileTableTool — the model names a table, the server decides the r
     // the run still counted as having profiled the table. Found by review on #345.
     const wide = {
       ...snapshot,
-      tables: [
+      objects: [
         {
           name: "public.wide",
           columns: Array.from({ length: 20 }, (_, index) => ({

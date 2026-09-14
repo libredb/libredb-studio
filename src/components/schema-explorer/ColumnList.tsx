@@ -1,10 +1,10 @@
 import React from "react";
-import { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import { Key, Hash } from "lucide-react";
 
 interface ColumnListProps {
-  columns: TableSchema["columns"];
-  indexes: TableSchema["indexes"];
+  columns: DetailedObject["columns"];
+  indexes: DetailedObject["indexes"];
 }
 
 // Static marker for non-primary columns, hoisted to module scope: the element

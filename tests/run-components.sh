@@ -29,8 +29,11 @@ FAIL=0
 # the third drift was caught (#331 T5): 26 was declared while 27 calls existed, so the
 # green summary line reported a group count no run had.
 # Drifted again before this line was touched: it read 30 while 32 `run_group` calls
-# existed, so every green run reported a group count no run had. 33 is the grep below.
-TOTAL_GROUPS=35
+# existed, so every green run reported a group count no run had. The comment then went
+# stale a fourth time by naming a DIGIT for the current value, which is the one thing
+# here that cannot stay true: the value is whatever that grep prints, never a number
+# written in prose.
+TOTAL_GROUPS=45
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -91,6 +94,35 @@ run_group "Group 0a: useStorageSync hook" \
 # Group 0b: Factory singleton (isolated — mocks provider modules which contaminates provider unit tests)
 run_group "Group 0b: Factory singleton" \
   tests/isolated/factory-singleton.test.ts
+
+# Group 0b2: The factory's cache, execution profiles and shutdown handlers (#789).
+# Isolated for the reason Group 0c's comment already named from the other side: this file
+# can only pass while it is the FIRST thing in its process to evaluate `@/lib/db/factory`.
+# It mocks six native driver packages and `@/lib/ssh/tunnel`, then imports the factory under
+# NODE_ENV=production to capture the SIGTERM and SIGINT handlers the module registers on load.
+# Both of those happen once per process, so any earlier evaluation of the factory by another
+# file leaves this one with an already-built module: no handler to capture, and unmocked
+# drivers behind `getOrCreateProvider`, whose cached entry then throws inside the
+# `clearProviderCache()` in `beforeEach` and fails every remaining test in the file.
+# Measured 2026-09-13: a three-line probe under `tests/unit/` whose only content is an import
+# of `@/lib/db/factory` takes this file from 99 pass 0 fail to 44 pass 56 fail, in either CLI
+# order, because bun does not run files in the order they are listed. A probe importing
+# `@/lib/ssh/tunnel` or `@/lib/db/compatibility` instead reproduces nothing.
+run_group "Group 0b2: Factory cache and execution profiles" \
+  tests/isolated/factory.test.ts
+
+# Group 0b3: The fleet census of object source declarations and the editor language guard (#789).
+# Both build all seventeen providers through the REAL `createDatabaseProvider`, which is the only
+# way to census what each provider declares rather than what somebody typed. Every file under
+# `tests/api/` mocks `@/lib/db` with a `createDatabaseProvider: mock()` that answers undefined,
+# and that mock reaches `@/lib/db/factory` through the index re-export, so both files read
+# `provider.getCapabilities` off undefined the moment they share a process with the api layer.
+# Measured 2026-09-13: census plus `tests/api/db-objects.test.ts` is 3 fail, the language guard
+# plus the same file is 1 fail, and each of them alone is 0 fail. There is nothing either file can
+# do about it: mocking the factory is what the api layer is for.
+run_group "Group 0b3: Object source declaration census" \
+  tests/isolated/object-source-declarations.test.ts \
+  tests/isolated/monaco-language-ids.test.ts
 
 # Group 0c: exports CJS shim (isolated — importing it pulls @/lib/db/factory into the
 # module cache, which breaks factory.test.ts's first-import signal-handler capture).
@@ -211,6 +243,11 @@ run_group "Group 9/12: StudioHeaders & TableItem" \
 run_group "Group 10/12: PoolTab" \
   tests/components/monitoring/PoolTab.test.tsx
 
+# Group 10b: PivotTable (isolated - mocks @/lib/export/download and dropdown-menu, which
+# the DatabaseDocs export tests in the smoke group need real)
+run_group "Group 10b: PivotTable" \
+  tests/components/PivotTable.test.tsx
+
 # Group 11: Smoke tests (isolated - mock globalThis.fetch + MonitoringEmbed)
 run_group "Group 11/12: Smoke tests" \
   tests/components/agent/AgentRail.test.tsx \
@@ -222,7 +259,6 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/VisualExplain.test.tsx \
   tests/components/DatabaseDocs.test.tsx \
   tests/components/SnapshotTimeline.test.tsx \
-  tests/components/PivotTable.test.tsx \
   tests/components/CodeGenerator.test.tsx \
   tests/components/TestDataGenerator.test.tsx \
   tests/components/CreateTableModal.test.tsx \
@@ -320,6 +356,37 @@ run_group "Group 19: ThemeProvider" \
 run_group "Group 20: WireCompatibilityHint" \
   tests/components/WireCompatibilityHint.test.tsx
 
+# Group 23: The object tree (#789). Its own group: it replaces globalThis.fetch for every test
+# and restores it afterwards, and a file that assigns the global at MODULE scope (the pattern
+# tests/components/monitoring/PoolTab.test.tsx uses) would be captured as this file's "real" fetch
+# when the two share a process. It mocks no module, so nothing else needs isolating from it.
+run_group "Group 23: Object tree" \
+  tests/components/object-tree.test.tsx
+
+# Group 24: First paint (#789, #765). Its own group for Group 23's reason, and separate from
+# it because it counts EVERY request by pathname: sharing a process with a file that answers
+# other routes from the same global would make "exactly two catalog reads" count somebody
+# else's reads. It renders the real tree against a fetch double rather than a mocked module.
+run_group "Group 24: Object tree first paint" \
+  tests/components/object-tree/first-paint.test.tsx
+
+# Group 25: The object tree's row menu (U22, #789). Its own group for Group 23's reason -
+# it replaces globalThis.fetch for every test and restores it afterwards - and separate from
+# 23 and 24 because it renders the REAL menu against the real tree: a file sharing its
+# process that replaced a menu primitive with mock.module would make every assertion in it a
+# statement about the stub.
+run_group "Group 25: Object tree row menu" \
+  tests/components/object-tree/row-menu.test.tsx
+
+# Group 26: the embedded workspace's object tree (#789, B76). Its own group for Group 23's
+# reason - it replaces globalThis.fetch to prove no route is asked - and separate from Group 17,
+# which mocks the sidebar and the workspace adapter hooks process-wide: this file exists to drive
+# the REAL adapter and the REAL sidebar from the published prop, which is exactly what those
+# mocks would replace. It mocks only the editor and the panel library, neither of which Group 17
+# asserts against.
+run_group "Group 26: Embedded workspace object tree" \
+  tests/components/studio/embedded-object-tree.test.tsx
+
 # Group 21: ui/scroll-area. Its own group for the same reason ui/resizable has one:
 # it is the only suite that renders the REAL @radix-ui/react-scroll-area, while
 # Sidebar and RowDetailSheet both mock that module process-wide - sharing a process
@@ -327,6 +394,34 @@ run_group "Group 20: WireCompatibilityHint" \
 # It also installs a global ResizeObserver, which Radix mounts on the viewport.
 run_group "Group 21: ui/scroll-area" \
   tests/components/ui/scroll-area.test.tsx
+
+# Group 27: The read-only object source viewer (#789). Its own group: it replaces
+# @monaco-editor/react with mock.module, which is process-wide, and Group 15 holds
+# QueryEditor.test.tsx, which installs a DIFFERENT double of that same module - sharing a
+# process would hand one of the two suites the other's editor. It also asserts against
+# globalThis.fetch for the default-reader case.
+run_group "Group 27: Object source viewer" \
+  tests/components/object-source/ObjectSourceView.test.tsx
+
+# Group 28: The standalone shell's Source tab (#789). Its own group, for three reasons that
+# each rule out sharing one: it replaces @monaco-editor/react with mock.module, which is
+# process-wide, and both Group 15 (QueryEditor.test.tsx) and Group 27 install a DIFFERENT
+# double of that same module; it mocks the same child families as Group 1 while deliberately
+# using the REAL use-tab-manager and the REAL StudioTabBar, which Group 1 replaces; and it
+# answers globalThis.fetch for the source route.
+run_group "Group 28: Studio source tab" \
+  tests/components/studio/source-tab.test.tsx
+
+# Group 29: The EMBEDDED shell's Source tab (#789). Its own group for Group 28's three reasons
+# and one more that is this file's alone. It installs a process-wide @monaco-editor/react double,
+# as Groups 15, 27 and 28 each install a different one; it mounts the REAL adapter, the REAL
+# sidebar, the REAL use-tab-manager and the REAL StudioTabBar, all of which Group 17 replaces
+# process-wide; and it replaces globalThis.fetch to prove NO route is asked, which is the whole
+# point on this shell, since the published package ships no API routes at all. It is separate
+# from Group 26, which is the same shell's tree, because this one also doubles the studio barrel
+# to capture the bottom panel's props.
+run_group "Group 29: Embedded workspace source tab" \
+  tests/components/studio/embedded-source.test.tsx
 
 # Summary
 echo ""

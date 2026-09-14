@@ -85,11 +85,11 @@ Score a candidate before writing code. Each criterion you fail becomes code you 
 |---|----------|----------------|
 | 1 | **Is HTTP a first-class interface?** Do the vendor's own tools use it, or is it a bolt-on? | A bolt-on API lags the real protocol and loses features |
 | 2 | **Is the query language SQL-shaped?** | `queryLanguage: "sql"` gives Monaco highlighting, the `sql` tab type and saved queries at no cost. The shared query limiter is separate — it comes from `SQLBaseProvider.prepareQuery()`, or you override `prepareQuery()` yourself; the base class default is a pass-through |
-| 3 | **Is there catalog introspection over the same surface?** | Otherwise `getSchema()` has nothing to read |
+| 3 | **Is there catalog introspection over the same surface?** | Otherwise the object surface has nothing to read |
 | 4 | **Is there monitoring data over the same surface?** | Decides how much of the monitoring panel is real rather than honestly empty |
 | 5 | **Is there an EXPLAIN?** | Decides `supportsExplain` and whether a strategy is needed |
 | 6 | **How complex is auth?** | Basic auth is three lines. SigV4, OAuth2 refresh or Kerberos is a library — and that is usually where the no-dependency promise ends |
-| 7 | **Does the data model flatten into `TableSchema`?** | The schema explorer renders a flat list, so a deeper hierarchy has to be flattened into the display name |
+| 7 | **Does the data model map onto containers, kinds and objects?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name |
 
 A good sanity check for criterion 1: **can a browser talk to it?** Couchbase's own Web Console and
 the Capella UI are browser applications, so every service had to be reachable over HTTP for the
@@ -218,13 +218,90 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
 
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
-`query`, `getSchema`, `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
+`query`, the five REQUIRED object methods (`listContainers`, `countObjects`, `listObjects`,
+`describeObject`, `describeObjects`), `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
 `getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
-`getStorageStats`). None can be omitted, but a method whose data your engine does not expose returns
+`getStorageStats`). None of those can be omitted, but a method whose data your engine does not expose returns
 a neutral value rather than throwing. Mind the return types: the list-valued ones
 (`getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`, `getStorageStats`) return
 `[]`, while `getOverview()` and `getPerformanceMetrics()` return DTOs and need a zeroed object.
 `libredb.ts` is the reference for doing this honestly.
+
+The sixth object method is the one exception to both halves of that sentence, and the next section
+is about it: it is declared optional on the interface, it IS omitted by a provider whose engine
+publishes no definition text, and a neutral value is the one thing it must never answer.
+
+### `readObjectSource`: the sixth object method (#789)
+
+This one is paired with a DECLARATION, which is what makes it different from the other five, and the
+pairing is enforced. A kind offers a Source tab only if its `ObjectKindSpec` sets `hasSource: true`,
+and a kind that sets it must also set `sourceLanguage`. Read the refusals off the declaration and
+never off the kind id.
+
+**It is OPTIONAL, and omitting it entirely is the right answer for an engine that publishes no
+definition text.** `readObjectSource?` is declared optional on `DatabaseProvider` in
+`src/lib/db/types.ts` for that reason: a provider with no source-bearing kind can never reach the
+method, so requiring it would put an unreachable throw in each. Two shipped providers are exactly
+that case and say so in their own docs, `druid` and `libredb`. If yours is a third, declare
+`hasSource` on no kind, write no method, and add your type-id to the committed ABSTAINER list in
+`tests/isolated/object-source-declarations.test.ts` beside those two. Do NOT write the method
+answering an empty document, an empty string or any other neutral value: the pairing fails by name
+on a method with no source-bearing kind, and an empty text is a RAISE everywhere in the table below.
+
+- **`hasSource: true`** on each kind whose definition text your engine really publishes. A kind
+  whose text the engine does not hold simply does not set it, and the row then offers no View
+  Source at all, which is the correct answer rather than a failure to read.
+- **`sourceLanguage`** is a Monaco language id, handed straight to the editor as the model's
+  language. Monaco does NOT raise on an id it never registered: it falls back to plain text, so a
+  wrong id ships a Source tab that is simply not highlighted and nothing goes red. `plsql`, `tsql`
+  and `cql` are not registered by the installed bundle, which is why Oracle, SQL Server and
+  Cassandra all declare `sql`.
+- **No fallback literal in the method.** A kind that declares `hasSource` and no `sourceLanguage`
+  RAISES a `QueryError` naming the kind, before any round trip. Every provider that reads source
+  does this, and the two that once wrote `?? "sql"` and `?? "lua"` were corrected: a literal there
+  hides a deleted declaration behind a tab that has quietly stopped highlighting.
+- **Check the path shape**, with the same function and the same sentence `describeObject` uses. The
+  HTTP route bounds an empty path, but the method is published through `@libredb/studio` and is
+  called by the embedded host seam and by the conformance helper, none of which sees the route.
+
+**A REFUSAL and an ABSENCE are different answers and must not arrive as one.** This is the rule the
+whole surface is built on:
+
+| The engine… | The answer | Why |
+|---|---|---|
+| declined the read, and said so | a PART carrying `unavailable`, holding the engine's own sentence **unprefixed** and with no `text` | the reader needs the server's words to act on. A part is never both `unavailable` and `text` |
+| holds no such object | RAISE a `QueryError` naming the object | a document invented for a dropped object is a claim the engine never made |
+| answered nothing, or an empty text | RAISE | an empty text puts an empty editor over a definition nobody read, which is the shape this contract exists to make unrepresentable |
+| never answered at all (a dropped socket, a timeout) | RAISE a `ConnectionError` | nobody answering is not the server answering "no", and a transport message rendered as this object's refusal is a symptom presented as a fact |
+
+Emptiness is sometimes absence itself: measured on Redis 8.10.0,
+`FUNCTION LIST LIBRARYNAME no_such_library WITHCODE` answers an empty array rather than an error, so
+whatever reads it has to treat emptiness as the absence and raise.
+
+**Every part carries `origin` and `form`, and both are facts about the TEXT rather than decoration:**
+
+- `origin` is `stored` when the bytes are the author's own, as the engine kept them, and
+  `regenerated` when the engine composed the statement from its catalog. Oracle's
+  `DBMS_METADATA.GET_DDL` is `regenerated`; SQLite's `sqlite_schema.sql` is `stored`. Say which in
+  the provider doc, with the measurement.
+- `form` is `complete` when the text runs as given, and `body` when it is the definition's body
+  without the `CREATE` statement around it. A caller that pastes a `body` into an editor and runs it
+  gets a syntax error, so the two must not be conflated.
+
+**The two isolated tests a new provider must satisfy**, neither of which any provider suite can
+stand in for, because both read the WHOLE fleet at once:
+
+- `tests/isolated/object-source-declarations.test.ts`, the census. THREE things move per new
+  type-id, and the third is the one a contributor misses: add one row to `SOURCE_DECLARATIONS`,
+  transcribed from what the engine publishes and not from your build; move the three committed
+  totals; and, if your engine declares no source-bearing kind, add the type-id to
+  `CENSUS_ABSTAINERS` as well. That list is asserted whole, so a new abstainer missing from it
+  fails the population assertion rather than the declaration one. The file also pins the PAIRING: a
+  type-id declares source-bearing kinds if and only if its built provider implements
+  `readObjectSource`, so a declaration with no method and a method with no declaration each fail by
+  name.
+- `tests/isolated/monaco-language-ids.test.ts`, where every declared `sourceLanguage` is checked
+  against the ids the INSTALLED editor bundle registers, extracted from the bundle rather than typed.
 
 **Override the metadata hooks** so the shared UI renders correctly:
 
@@ -244,7 +321,6 @@ for worked, code-verified examples see each provider's **Design decisions** sect
 | Method | What it does |
 |--------|-------------|
 | `isConnected()` | Returns `this.state.connected` |
-| `getTables()` | Calls `getSchema()` and extracts table names |
 | `getMonitoringData()` | Orchestrates `getOverview`, `getPerformanceMetrics`, etc. |
 | `validate()` | Checks that `config.type` and `config.id` exist |
 | `ensureConnected()` | Throws if not connected |
@@ -600,8 +676,8 @@ Every field and what it controls:
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
 | `supportsTransactions` | `boolean?` | Whether THIS PROVIDER implements the interactive transaction session `POST /api/db/transaction` drives (`beginTransaction`/`commitTransaction`/`rollbackTransaction` over one held connection). `false` withholds the editor toolbar's BEGIN/COMMIT/ROLLBACK trio **and** the SANDBOX toggle, which auto-rolls-back through the same route. It is about the provider's surface, not the engine: SQLite has `BEGIN` and still declares `false`. Optional for the published-interface reason above; the UI gates on `=== true`, so an absent flag and an unresolved metadata fetch both read as no transactions (#464) |
-| `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty `TableSchema.foreignKeys` means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
-| `tablesAreDerivedGroupings` | `boolean?` | Whether `getSchema()`'s rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
+| `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty foreign-key list means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
+| `tablesAreDerivedGroupings` | `boolean?` | Whether this provider's relation-shaped rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
 | `maintenanceOperations` | `MaintenanceType[]` | Which global cards and per-table buttons the admin Operations tab renders. `/api/db/maintenance` rejects anything not in this list, so a surface that ignored it could only offer a control answering HTTP 400. The schema explorer's row menu does **not** read it — its per-row maintenance items are gated on `isAdmin` and on `tablesAreDerivedGroupings`; see #496 for the mismatches that leaves |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |
@@ -869,7 +945,7 @@ range) is still checked on its numeral only, deliberately, so that no numeral go
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the
 connection-form test), so the compiler and those tests refuse to pass until each is updated:
-`tests/unit/db/factory.test.ts`, `tests/unit/lib/db-ui-config.test.ts`,
+`tests/isolated/factory.test.ts`, `tests/unit/lib/db-ui-config.test.ts`,
 `tests/unit/lib/db-icons.test.tsx`, `tests/unit/lib/connection-string-parser.test.ts`,
 `tests/unit/lib/query-generators.test.ts`, `tests/unit/seed/types.test.ts`,
 `tests/hooks/use-connection-form.test.ts`,
