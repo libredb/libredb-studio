@@ -144,6 +144,15 @@ export interface WorkspaceObjectReader {
    * `ObjectEditBuild` and not the route's own response type: a host holds no key to seal a plan
    * with, so there is no token on this path.
    *
+   * BIND THAT BY `planId` AND NOT BY OBJECT IDENTITY. The plan handed back to `apply` is the
+   * workspace's own snapshot of the plan the reader approved, taken while the build answer was
+   * measured, and not the object `build` returned: a property read twice can answer twice, so the
+   * only way the bytes drawn in the preview can BE the bytes an apply carries is to copy them
+   * once. A `WeakMap` keyed on the object a host returned will therefore not find this one, while
+   * every value the plan carries, `planId` first, arrives unchanged. `withinAnswerBound` in
+   * `src/workspace/hooks/use-connection-adapter.ts` records the two host answers that measured
+   * this into existence.
+   *
    * What the seam DOES check is shape: a plan that is not a plan, an outcome that is not an
    * outcome, a method that throws before returning, or a method that returns a non-thenable, is
    * turned into a FAILED apply by the adapter and by the pane's own narrowing rather than into a

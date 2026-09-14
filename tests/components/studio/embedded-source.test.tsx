@@ -13,11 +13,28 @@ setupFramerMotionMock();
  * would SEE is what is asserted. `setupMonacoMock` is not used here: it stubs the loader alone
  * and this file mounts the real `ObjectSourceView`, whose editor is the subject.
  */
+/**
+ * The pane's own `onChange`, captured from the double so a test can drive a KEYSTROKE.
+ *
+ * The round-1 double swallowed the change event, so nothing in this file could move the pane's
+ * buffer, and the one prop that only a moved buffer can defend, `dirty`, went undefended (fix
+ * round 1, finding 5). The real editor calls `props.onChange(nextText)`; the double forwards the
+ * textarea's own change to it, which is the same call. `ObjectSourceView.test.tsx` captures the
+ * callback the same way and for the same reason.
+ */
+const editorProbe: { change?: (value: string | undefined) => void } = {};
+
 mock.module("@monaco-editor/react", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
   return {
-    default: function MockEditor(props: { value?: string; language?: string; options?: Record<string, unknown> }) {
+    default: function MockEditor(props: {
+      value?: string;
+      language?: string;
+      options?: Record<string, unknown>;
+      onChange?: (value: string | undefined) => void;
+    }) {
+      editorProbe.change = props.onChange;
       return React.createElement("textarea", {
         "data-testid": "source-editor",
         "data-language": props.language,
@@ -1374,11 +1391,13 @@ describe("the embedded workspace applies an object edit through the host", () =>
    * THE BOUND, and this shell is the only place it can exist (#789 Phase 3).
    *
    * `src/lib/api/object-edit-wire.ts` bounds NO string in any of its four shape predicates, and it
-   * does not because its brief specified none. The standalone shell does not care: everything it
-   * renders came back from one of this application's own two routes, which bound what they answer.
-   * Here there is no route. The host's answer is a plain object an adopter constructed, and the
-   * dialog renders a refusal sentence, a refusal hint, a revision reason and each consequence's
-   * observed fact verbatim, with only the plan's executable text bounded by anything at all.
+   * does not because its brief specified none. Round 1 said here that the standalone shell does not
+   * care because its two routes bound what they answer. MEASURED and false, and the docblock in
+   * `use-connection-adapter.ts` now carries the grep: the two routes bound only what they RECEIVE,
+   * so the hazard is on both shells and only its author differs. This is the shell where a test can
+   * drive it, because here the answer is a plain object a test can construct. The dialog renders a
+   * refusal sentence, a refusal hint, a revision reason and each consequence's observed fact
+   * verbatim, with only the plan's executable text bounded by anything at all.
    *
    * Phase 2 measured the same hazard on the READ seam and closed it there: a part carrying a
    * five-million-character truncation reason passed `isSourceDocumentShape` and the whole of it
@@ -1395,8 +1414,8 @@ describe("the embedded workspace applies an object edit through the host", () =>
           plan: {
             ...PLAN,
             consequences: [
-              { loses: "comment", fact: { source: "pg_description", observed: HUGE } },
-              { loses: "grants", fact: { source: "pg_proc.proacl", observed: "one grant" } },
+              { loses: "destroys-comment", fact: { source: "pg_description", observed: HUGE } },
+              { loses: "destroys-index", fact: { source: "pg_index", observed: "one index" } },
             ],
           },
           preimage: { text: DEFINITION, language: "sql" },
@@ -1415,6 +1434,42 @@ describe("the embedded workspace applies an object edit through the host", () =>
     expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
     // The sentence is a claim about the apply, so it is asserted rather than trusted.
     expect(applied).toBe(0);
+  });
+
+  /**
+   * THE CONTROL for the test above, and without it that test certified the wrong thing (fix
+   * round 1, finding 4).
+   *
+   * The round-1 fixture spelled its two consequence classes `comment` and `grants`, and NEITHER is
+   * one of the eight names in `CONSEQUENCE_CLASSES`. MEASURED by the reviewer and reproduced here:
+   * the identical fixture with the five-million-character string cut to ten characters is refused
+   * with `data-refusal="unreadable"`, so the plan was malformed independently of its size and the
+   * test above certified "the bound runs before the shape check" rather than the cost the report
+   * states. This test is the population that makes the claim true: the SAME answer, well formed,
+   * with the same two classes and only the size changed, is ACCEPTED and drawn. The two tests
+   * differ in exactly one thing, which is the number of characters.
+   */
+  test("the same build answer with a short fact is ACCEPTED and drawn, which is the size claim's control", async () => {
+    await previewThrough({
+      build: async () =>
+        ({
+          built: true,
+          plan: {
+            ...PLAN,
+            consequences: [
+              { loses: "destroys-comment", fact: { source: "pg_description", observed: "0123456789" } },
+              { loses: "destroys-index", fact: { source: "pg_index", observed: "one index" } },
+            ],
+          },
+          preimage: { text: DEFINITION, language: "sql" },
+        }) as unknown as ObjectEditBuild,
+      apply: async () => APPLIED,
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-edit-refused")).toBeNull();
+    expect(screen.getAllByTestId("object-source-apply-consequence")).toHaveLength(2);
+    expect(document.body.textContent).toContain("0123456789");
   });
 
   test("a host APPLY answer larger than this shell can read never claims the change landed", async () => {
@@ -1505,5 +1560,153 @@ describe("the embedded workspace applies an object edit through the host", () =>
     );
     expect(screen.queryByTestId("source-editor")).toBeNull();
     // The `afterEach` asserts the whole of it: not one request left this shell.
+  });
+
+  /*
+   * THE THREE WAYS A HOST DEFEATS A BOUND THAT COUNTS WHAT IT WALKS (fix round 1, findings 1, 2
+   * and the third one this file found while repairing them).
+   *
+   * The round-1 walk counted DISTINCT objects: it carried one `seen` set across the whole answer,
+   * so every occurrence of an object after the first cost zero, while `ApplyPreviewDialog` draws
+   * `consequences.map` occurrence by occurrence. MEASURED by the reviewer inside this suite: six
+   * consequences that are ONE object with a one-million-character `observed` were ACCEPTED and all
+   * six were drawn, `PROBE consequence rows: 6 characters in the DOM: 6000456` against a bound of
+   * 4,400,000. The second defeat is an enumerable GETTER: the walk read the value once and the
+   * renderer read it again, so an answer measuring five characters drew two million of them, which
+   * also makes the bytes previewed differ from the bytes a host later applies. The third is a
+   * non-enumerable own property: `hasExactKeys` reads `Object.getOwnPropertyNames`, so a
+   * non-enumerable `observed` is judged and rendered while an `Object.entries` walk never sees it.
+   *
+   * All three are closed the same way, and the way is the point: the seam SNAPSHOTS the answer
+   * while it counts it, reading every property exactly once over the same key population the shape
+   * predicates read, and everything downstream renders the snapshot. So the measured characters
+   * are the drawn characters by construction, rather than by a claim about how many times a value
+   * is read.
+   */
+
+  test("a host answer that reuses ONE object pays for EVERY occurrence, because the dialog draws every one", async () => {
+    const shared = { loses: "destroys-comment", fact: { source: "pg_description", observed: "x".repeat(1_000_000) } };
+    let applied = 0;
+    await previewThrough({
+      build: async () =>
+        ({
+          built: true,
+          // Six references to ONE object: 6,000,000 characters on screen, over a 4,400,000 bound.
+          plan: { ...PLAN, consequences: [shared, shared, shared, shared, shared, shared] },
+          preimage: { text: DEFINITION, language: "sql" },
+        }) as unknown as ObjectEditBuild,
+      apply: async () => {
+        applied += 1;
+        return APPLIED;
+      },
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refused").getAttribute("data-refusal")).toBe("request");
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+    // The claim is about the DOM, so the DOM is what is asserted, not only the refusal.
+    expect(document.body.textContent?.length ?? 0).toBeLessThan(100_000);
+    expect(applied).toBe(0);
+  });
+
+  test("a host answer whose value CHANGES between reads is read ONCE, and the bytes drawn are the bytes measured", async () => {
+    let reads = 0;
+    const fact = {
+      source: "pg_description",
+      get observed(): string {
+        reads += 1;
+        return reads === 1 ? "small" : "y".repeat(2_000_000);
+      },
+    };
+
+    await previewThrough({
+      build: async () =>
+        ({
+          built: true,
+          plan: { ...PLAN, consequences: [{ loses: "destroys-comment", fact }] },
+          preimage: { text: DEFINITION, language: "sql" },
+        }) as unknown as ObjectEditBuild,
+      apply: async () => APPLIED,
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy());
+    // ONE read, by the seam, and the shape predicate and the renderer both read the snapshot.
+    expect(reads).toBe(1);
+    expect(document.body.textContent).toContain("small");
+    expect(document.body.textContent?.length ?? 0).toBeLessThan(100_000);
+  });
+
+  test("a host answer's NON-ENUMERABLE own property is measured, because the shape check reads it", async () => {
+    const fact: Record<string, unknown> = { source: "pg_description" };
+    // `hasExactKeys` reads `Object.getOwnPropertyNames`, so this property is judged, and
+    // `describeConsequence` renders it. An `Object.entries` walk never sees it at all.
+    Object.defineProperty(fact, "observed", { value: HUGE, enumerable: false });
+
+    await previewThrough({
+      build: async () =>
+        ({
+          built: true,
+          plan: { ...PLAN, consequences: [{ loses: "destroys-comment", fact }] },
+          preimage: { text: DEFINITION, language: "sql" },
+        }) as unknown as ObjectEditBuild,
+      apply: async () => APPLIED,
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refused").getAttribute("data-refusal")).toBe("request");
+    expect(document.body.textContent?.length ?? 0).toBeLessThan(100_000);
+  });
+
+  test("a host answer whose KEY is larger than this shell can read is refused too", async () => {
+    // A key is not rendered, but it is read, held and compared by everything downstream, and the
+    // budget is spent on it for the same reason the round-1 walk charged for it.
+    await previewThrough({
+      build: async () =>
+        ({
+          built: true,
+          plan: { ...PLAN, [HUGE]: true },
+          preimage: { text: DEFINITION, language: "sql" },
+        }) as unknown as ObjectEditBuild,
+      apply: async () => APPLIED,
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refused").getAttribute("data-refusal")).toBe("request");
+  });
+
+  test("a tab remounted inside an unsaved edit still clears its dirty mark when the buffer is reverted", async () => {
+    /*
+     * WHAT `dirty={sourceTab.dirty}` IS FOR, and until fix round 1 nothing in any suite drove it:
+     * deleting the prop left this file at 36 pass 0 fail (mutation h), which is the finding.
+     *
+     * `ObjectSourceView` seeds `dirtyRef` from this prop and writes the flag to the tab only when
+     * the boolean FLIPS. A tab switch unmounts the pane, so without the prop a pane remounted
+     * inside an unsaved edit starts at `false`, and reverting the buffer to the engine's own text
+     * then compares `false` against a `false` that was never true, no patch is written, and the
+     * strip keeps a dirty dot over a tab holding exactly what the database holds.
+     */
+    render(workspace({ reader: editingReader({ build: async () => BUILT, apply: async () => APPLIED }) }));
+    await openSourceTab();
+    await click("object-source-edit");
+
+    await act(async () => {
+      editorProbe.change?.("CREATE FUNCTION app.order_total(integer) RETURNS numeric AS $$ SELECT 99 $$;");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("tab-dirty-dot")).toBeTruthy());
+
+    // The tab switch is the remount: the pane is rendered only for the tab that is active.
+    await userEvent.click(screen.getByRole("tab", { name: /Query 1/ }));
+    expect(screen.queryByTestId("source-editor")).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: /Source: app.order_total/ }));
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    // The mark survives the remount, which is the state this test is about.
+    expect(screen.getByTestId("tab-dirty-dot")).toBeTruthy();
+
+    await act(async () => {
+      editorProbe.change?.(DEFINITION);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot")).toBeNull());
   });
 });
