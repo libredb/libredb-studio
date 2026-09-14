@@ -7,11 +7,14 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DatabaseDocs } from "@/components/DatabaseDocs";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
-const schema: TableSchema[] = [
+const schema: DetailedObject[] = [
   {
     name: "users",
+    kind: "table",
+    path: ["users"],
     rowCount: 100,
     indexes: [],
     columns: [
@@ -21,6 +24,8 @@ const schema: TableSchema[] = [
   },
   {
     name: "orders",
+    kind: "table",
+    path: ["orders"],
     rowCount: 500,
     indexes: [],
     columns: [
@@ -30,7 +35,7 @@ const schema: TableSchema[] = [
   },
 ];
 
-const emptySchema: TableSchema[] = [];
+const emptySchema: DetailedObject[] = [];
 
 function mockFetchStream(body: string, ok = true, errorBody?: { error: string }) {
   const encoder = new TextEncoder();
@@ -368,6 +373,59 @@ describe("DatabaseDocs", () => {
     document.createElement = origCreateElement;
   });
 
+  test("two objects sharing a label are two cards and two headings, each at its address", async () => {
+    // The live SQL Server holds both. Keyed and headed by the label, the list carried one
+    // React key for two objects and the exported document held two identical headings with
+    // nothing in it to say which was which (#789, Task 36).
+    const user = userEvent.setup();
+    const createObjectURLMock = mock(() => "blob:fake-url");
+    globalThis.URL.createObjectURL = createObjectURLMock as unknown as typeof URL.createObjectURL;
+    globalThis.URL.revokeObjectURL = mock(() => {});
+    const origCreateElement = document.createElement.bind(document);
+    document.createElement = mock((tag: string) => {
+      const el = origCreateElement(tag);
+      if (tag === "a") el.click = mock(() => {});
+      return el;
+    }) as unknown as typeof document.createElement;
+
+    const namesakes: DetailedObject[] = [
+      {
+        name: "customers",
+        kind: "table",
+        path: ["libredb_objects", "app", "customers"],
+        indexes: [],
+        columns: [{ name: "name", type: "VARCHAR", nullable: true, isPrimary: false }],
+      },
+      {
+        name: "customers",
+        kind: "table",
+        path: ["shop", "dbo", "customers"],
+        indexes: [],
+        columns: [{ name: "email", type: "VARCHAR", nullable: true, isPrimary: false }],
+      },
+    ];
+    // React's duplicate-key warning is the only place a list key is observable, and the key
+    // was the label the two objects share.
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+    const { queryByText } = render(<DatabaseDocs schema={namesakes} schemaContext="[]" databaseType="mssql" />);
+    console.error = originalError;
+    expect(errors.filter((message) => message.includes("same key"))).toEqual([]);
+
+    expect(queryByText("libredb_objects.app.customers")).not.toBeNull();
+    expect(queryByText("shop.dbo.customers")).not.toBeNull();
+
+    await user.click(queryByText("Export MD")!);
+    const exported = await ((createObjectURLMock.mock.calls as unknown[][])[0][0] as Blob).text();
+    expect(exported).toContain("### libredb_objects.app.customers");
+    expect(exported).toContain("### shop.dbo.customers");
+
+    document.createElement = origCreateElement;
+  });
+
   // -----------------------------------------------------------------------
   // Header buttons
   // -----------------------------------------------------------------------
@@ -376,5 +434,36 @@ describe("DatabaseDocs", () => {
     const { queryByText } = render(<DatabaseDocs schema={schema} schemaContext="[]" />);
     expect(queryByText("AI Describe")).not.toBeNull();
     expect(queryByText("Export MD")).not.toBeNull();
+  });
+});
+
+// =============================================================================
+// The object model: what this page documents at all (#789)
+// =============================================================================
+
+describe("DatabaseDocs object filtering", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    { name: "users", kind: "table", path: ["users"], columns: [], indexes: [], rowCount: 100 },
+    { name: "recalculate_totals", kind: "procedure", path: ["recalculate_totals"], columns: [], indexes: [] },
+  ];
+
+  test("a routine is neither counted nor documented", () => {
+    const { queryByText } = render(<DatabaseDocs schema={inventory} schemaContext="[]" capabilities={capabilities} />);
+    expect(queryByText("users")).not.toBeNull();
+    expect(queryByText("recalculate_totals")).toBeNull();
+    // The header count is the same derivation, so a routine cannot be counted as a table.
+    expect(queryByText("1 tables")).not.toBeNull();
   });
 });

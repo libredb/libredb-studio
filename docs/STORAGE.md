@@ -662,6 +662,15 @@ All application state is organized into **10 collections**, each stored as a JSO
 | `threshold_config` | `ThresholdConfig[]` | Monitoring alert thresholds | — |
 | `dismissed_seeds` | `string[]` | Seed IDs the user dismissed (deleted a `managed: false` seed copy) so it is not re-added | — |
 
+**A snapshot taken before the object model has no kind and no path.** `schema_snapshots` holds what
+the schema list held when the snapshot was taken, and a live reading now always carries an object's
+kind and its full address; a record written by an older version carries the name and the columns
+only. Those records are kept and stay comparable rather than being migrated or discarded, so the
+diff matches an old snapshot to a new reading BY NAME, and a diff against one cannot tell a view
+from a table or two same-named objects in different schemas apart. Take a fresh snapshot to get a
+baseline that carries both. Nothing is lost either way: a stored snapshot is the user's own data and
+this product does not rewrite it in place.
+
 ### 3.2 Server Database Schema
 
 Both SQLite and PostgreSQL use the same logical schema — a single table with collection-based JSON blobs:

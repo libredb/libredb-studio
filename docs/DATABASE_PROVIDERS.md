@@ -200,9 +200,13 @@ interface DatabaseProvider {
   // Query execution
   query(sql: string, params?: unknown[]): Promise<QueryResult>;
 
-  // Schema operations
-  getSchema(): Promise<TableSchema[]>;
-  getTables(): Promise<string[]>;
+  // The object surface: containers, counts, listings, and one object's or a whole
+  // folder's columns, indexes and foreign keys
+  listContainers(parent?: readonly string[]): Promise<Container[]>;
+  countObjects(container: readonly string[]): Promise<Record<string, KindCount>>;
+  listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  describeObject(path: readonly string[], kind: string): Promise<ObjectDetail>;
+  describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
 
   // Health & monitoring
   getHealth(): Promise<HealthInfo>;
@@ -267,7 +271,9 @@ const provider = await createDatabaseProvider(connection, {
 });
 
 await provider.connect();
-const schema = await provider.getSchema();
+const schemas = await provider.listContainers();
+const tables = await provider.listObjects(['public'], 'table');
+const { details } = await provider.describeObjects(['public'], 'table');
 await provider.disconnect();
 ```
 

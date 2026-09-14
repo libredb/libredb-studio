@@ -107,6 +107,9 @@ describe("the classification is exhaustive by construction", () => {
         "port",
         "queryTimeout",
         "seedId",
+        // Whether this browser reads the catalog when the connection opens (#765). A
+        // display preference: it grants nothing and unlocks nothing.
+        "skipObjectScan",
         "serviceName",
         "ssl",
         "sshTunnel",

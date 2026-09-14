@@ -14,11 +14,11 @@ import { Toaster } from "@/components/ui/sonner";
 
 const title = "LibreDB Studio | Universal Database Editor";
 const description =
-  "A self-hosted, web-based SQL IDE for PostgreSQL, MySQL, MongoDB and more, with AI-assisted queries, schema exploration, and support for SQL and NoSQL engines.";
+  "A self-hosted database management platform for SQL and NoSQL databases, with schema exploration, query tools, data import, and AI-assisted database development.";
 // Project previews use the public demo documented in README, including on private deployments.
-const siteUrl = "https://app.libredb.org";
+const siteUrl = "https://libredb.org";
 const previewImage = {
-  url: `${siteUrl}/screenshots/hero-editor.png`,
+  url: `https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/hero-editor.png`,
   alt: "LibreDB Studio SQL editor and query results",
 };
 

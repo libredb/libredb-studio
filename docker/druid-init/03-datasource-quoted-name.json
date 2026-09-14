@@ -1,0 +1,26 @@
+{
+  "type": "index_parallel",
+  "spec": {
+    "ioConfig": {
+      "type": "index_parallel",
+      "inputSource": {
+        "type": "inline",
+        "data": "{\"ts\":\"2026-01-01T00:00:00Z\",\"note\":\"a name holding an apostrophe\"}"
+      },
+      "inputFormat": { "type": "json" }
+    },
+    "dataSchema": {
+      "dataSource": "libredb_o'brien",
+      "timestampSpec": { "column": "ts", "format": "iso" },
+      "dimensionsSpec": { "dimensions": ["note"] },
+      "metricsSpec": [],
+      "granularitySpec": {
+        "type": "uniform",
+        "segmentGranularity": "day",
+        "queryGranularity": "none",
+        "rollup": false
+      }
+    },
+    "tuningConfig": { "type": "index_parallel", "maxRowsPerSegment": 5000000 }
+  }
+}

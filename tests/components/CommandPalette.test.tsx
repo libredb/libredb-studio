@@ -92,6 +92,8 @@ import {
   mockOracleConnection,
 } from "../fixtures/connections";
 import { mockSchema } from "../fixtures/schemas";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // =============================================================================
 // CommandPalette Tests
@@ -530,5 +532,50 @@ describe("CommandPalette", () => {
 
     // CommandEmpty renders "No results found." text
     expect(queryByText("No results found.")).not.toBeNull();
+  });
+});
+
+// =============================================================================
+// The object model: what this palette may offer at all (#789)
+// =============================================================================
+
+describe("CommandPalette object filtering", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Deliberately NOT tests/fixtures/schemas.ts: that fixture is shared and carries no
+  // kinds. The point here is an inventory holding one entry of each role.
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    { name: "orders", kind: "table", path: ["app", "orders"], columns: [], indexes: [] },
+    { name: "order_summary", kind: "view", path: ["app", "order_summary"], columns: [], indexes: [] },
+    { name: "order_total", kind: "function", path: ["app", "order_total(integer)"], columns: [], indexes: [] },
+  ];
+
+  test("a routine is not offered, because selecting an item RUNS a generated query", () => {
+    const props = createDefaultProps({ schema: inventory, capabilities });
+    const { queryByText } = render(<CommandPalette {...props} />);
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+
+    expect(queryByText("orders")).not.toBeNull();
+    expect(queryByText("order_summary")).not.toBeNull();
+    // The function has a name and columns and would have listed under the flat schema.
+    expect(queryByText("order_total")).toBeNull();
+  });
+
+  test("with no declaration yet, every entry is still offered", () => {
+    const props = createDefaultProps({ schema: inventory, capabilities: undefined });
+    const { queryByText } = render(<CommandPalette {...props} />);
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(queryByText("order_total")).not.toBeNull();
   });
 });

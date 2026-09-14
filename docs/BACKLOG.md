@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
+- [Drivers and connections](#drivers-and-connections) — D1–D69, U17 · 29
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X16, U2–U21 · 10
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B75 · 21
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B80 · 24
 
 ---
 
@@ -232,9 +232,9 @@ role, not inferred from the code.
 
 Measured 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` (issue #424, Phase 0).
 Databend replies `Prepare is not support in Databend` to mysql2's prepared protocol, and that one
-answer takes `getTables()`, `getSchema()`, `getActiveSessions()`, `getTableStats()`,
-`getIndexStats()` and `getStorageStats()` - the whole object browser and every statistics panel -
-while the editor keeps working.
+answer takes the object reads, `getActiveSessions()`, `getTableStats()`, `getIndexStats()` and
+`getStorageStats()` - the whole object browser and every statistics panel - while the editor keeps
+working.
 
 **The catalogs are there.** Asked with literal SQL on the same connection,
 `information_schema.tables` returns the true 3 and 2000 rows with `data_length` 124 and 49000, and
@@ -533,6 +533,398 @@ FIELD inside a successful response is a different question and needs its own mea
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
 
+### D52. A Couchbase node behind a port mapping is unreachable
+
+`http-transport.ts` resolves the query service from the cluster's own node map, which is right for a
+plain deployment and wrong behind a port mapping. A node advertises its INTERNAL ports there, so a
+container published on other host ports hands back an address only the container can reach, and the
+`DEFAULT_QUERY_PORT = 8093` fallback at `http-transport.ts:484` is unreachable for the same reason.
+The connection's own port is read for management (`:367`) and never for the query service.
+
+Measured on Couchbase CE 8.0.2 during the object-model epic's live acceptance: a node published on
+38091/38093 failed while the same node on 8091/8093 worked.
+
+Reproduced on a second port pair on 2026-09-13, against Couchbase Server 8.0.2 Community published on
+host ports 18091/18093 (#789). `connect()` succeeds over the management port, and the first
+query-service call fails with `Couchbase request failed: Unable to connect. Is the computer able to
+access the url?`, because the node map advertises 8093 and nothing listens there on the host.
+Publishing 8091/8093 makes the same provider work unchanged, which is the control.
+
+Couchbase's own answer to this is `alternateAddresses.external`, which the transport already prefers
+when the cluster publishes it (`:473-477`), so an operator-configured cluster is fine today. What is
+not handled is the ordinary developer case of a stock image published on other ports, where nothing
+configures the external address and the user has already told us the port.
+
+Not fixed inside #789 because it is a transport defect with no object-model component, and that PR
+is a major already carrying seventeen providers.
+
+**Done when:** a Couchbase connection reaches the query service on a node published behind a port
+mapping, with the precedence between the node map, the external addresses and the user's own port
+stated where a reader meets it.
+
+### D54. The data profiler can only profile columns on PostgreSQL-family engines
+
+`src/app/api/db/profile/route.ts:115-116` casts every column with `${safeCol}::text` to take
+its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
+SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
+"Could not profile this column" while the row count and the column list beside it are correct.
+The failure is per column and the panel still renders, which is why it reads as a data problem
+rather than a dialect one.
+
+Measured in a browser during #789's review, on SQL Server 2022 against `shop.dbo.customers`:
+three columns, three refusals, two rows counted correctly.
+
+Pre-existing and not caused by #789: `git show main:src/app/api/db/profile/route.ts` carries the
+identical two lines. It became visible because the object tree's row menu now offers Profile on
+every relation of every engine, where the flat explorer offered it on the tables it listed.
+
+Closing it is a per-dialect text cast measured on each engine rather than a one-line change:
+Oracle has `TO_CHAR`, SQL Server `CAST(x AS NVARCHAR(MAX))`, MySQL `CAST(x AS CHAR)`, ClickHouse
+`toString`, and `MIN`/`MAX` over a cast do not order the same way everywhere, so what the two
+numbers MEAN needs stating per engine rather than assuming a lexicographic answer is wanted.
+
+**Done when:** a column profiles on every engine whose provider offers the action, or the action
+is not offered where it cannot answer, with the engine's own sentence rather than a generic one.
+
+### D55. The admin Operations table list does not print a row's schema
+
+Two tables with the same label in different schemas render as identical rows, so an operator
+choosing between them has only the deep link's own marking to tell them apart. Found while moving
+the maintenance deep link onto the object path in #789, which now carries the full address; the
+list it lands on still shows a bare name.
+
+**Done when:** a row in that list is identifiable without relying on what marked it.
+
+### D56. A Druid lookup's JSON definition is unreachable from the one URL a connection carries
+
+Fifteen of the seventeen shipped type-ids read object source under #789, measured by the census in
+`tests/isolated/object-source-declarations.test.ts`; druid and libredb are the two that read none.
+Two of Druid's three kinds have nothing to read: a datasource and a system table were never written
+down as a statement, measured from the parser's own refusal, which enumerates every statement it
+expected and includes no form of `CREATE`. The third is different. A `lookup` IS authored, as a JSON
+spec, and `GET /druid/coordinator/v1/lookups/config/{tier}/{id}` answers that spec back. Nothing in
+this product can ask for it.
+
+What SQL answers instead is the lookup's key and value PAIRS (`SELECT * FROM lookup.<name>`, columns
+`k` and `v`, measured on Apache Druid 37.0.0). Those are its content. The spec's type (`map` versus
+`cachedNamespace`), its polling period and the namespace it extracts from appear nowhere in SQL, so
+rendering the pairs under a caption that says "definition" would show a user something that is not
+the definition.
+
+Three things make this a transport change rather than a source read:
+
+- `src/lib/db/providers/sql/druid/transport.ts` publishes exactly two members, `query(sql, opts)`
+  and `close()`. `query` takes a SQL string, so no member can address any other path on the cluster.
+- `tests/unit/db/druid/seam-guard.test.ts` parses every file in the provider directory and fails the
+  build when a bare `fetch` or an endpoint path appears outside `http-transport.ts`, so provider
+  logic cannot reach around the seam either.
+- A connection carries ONE host and ONE port. A Broker-only deployment serves the SQL endpoint and no
+  Coordinator API at all, and a Router serves it only when `druid.router.managementProxy.enabled` is
+  set, which `database-compose.yml` sets for this repository's own cluster and a production
+  deployment need not. So the read has to be able to come back empty-handed for a reason about the
+  DEPLOYMENT rather than about the object, which needs a refusal sentence this provider does not
+  have.
+
+Two further things anyone taking this on has to settle before writing code, both open:
+
+- The endpoint above is DOCUMENTED against the Druid 37.0.0 API reference and was NOT measured
+  against a cluster here, so measuring it is step one.
+- Which tier to ask for. The path takes a tier, `__default` being the usual one, and a Router-only
+  deployment gives no list of tiers to a caller who has not already reached the Coordinator. Whether
+  to enumerate tiers first, or to ask `__default` and refuse by name, is the design question.
+- Writing back is not symmetrical with reading. Posting a lookup spec requires its `version` field to
+  be BUMPED, so #778's edit half cannot round-trip a read spec unchanged, and the version handling is
+  part of the work rather than a detail after it.
+
+**Done when:** a Druid lookup shows its own JSON spec, or the object surface says in the engine's own
+terms why this deployment cannot reach it.
+
+### D57. MariaDB's `package` and `sequence` folders are never drawn in the standalone tree
+
+`POST /api/db/provider-meta` reads `getCapabilities()` off a provider it never connects
+(`src/app/api/db/provider-meta/route.ts:44`, #457), and `MySQLProvider.objectKinds` is the one
+declaration in the fleet resolved from the server's own `VERSION()` string, so an unconnected
+provider answers the MySQL six and the client's copy of the declaration never gains MariaDB's two.
+The tree draws its folders from that copy (`src/components/object-tree/flatten.ts`), so the two kinds
+have no folder and their source cannot be reached from the tree.
+
+Both kinds are fully implemented behind the API: a connected provider counts, lists, describes and,
+since #789, reads the source of both. Only the client's copy is stale.
+
+The smallest correct fix reads the connected provider out of the factory cache and re-reads
+`provider-meta` once the connection is warm, about ten lines. A `peekConnectedProvider(connectionId)`
+on `factory.ts` that returns the already-connected instance opens no socket and keeps
+`tests/unit/db-tunnel-discipline.test.ts` green, measured. The design question inside it is WHEN to
+re-read: an unconditional re-read costs a round trip on all seventeen engines and changes the
+capabilities object identity, invalidating every memo keyed on it.
+
+Two limits measured while writing this. It is NOT fleet-wide: `ProviderCapabilities` has exactly
+three connection-resolved values, `objectKinds`, `supportsExplain` and `explainFormat`, so a correct
+fix also changes when the EXPLAIN affordance is offered on PostgreSQL and the four MySQL-wire
+relatives, and that is a behaviour change rather than a repair. And the embedded half cannot be
+closed the same way, because a host declares its own capabilities to `StudioWorkspace`, so closing it
+there is a published-surface change.
+
+**Done when:** a MariaDB connection draws its Packages and Sequences folders in both shells, or the
+provider doc says which surface cannot have them and why.
+
+### D58. A ClickHouse function with a non-SQL origin has never been read live
+
+The source read's refusal arm for `ExecutableUserDefined` and `WasmUserDefined` is driven in the
+suite by a server answering an empty `create_query`, and killed by mutation, but no such function has
+ever existed on the fixture. Creating one needs a `*_function.xml` in the server configuration
+directory beside the script it runs, and `database-compose.yml` mounts neither directory.
+
+What is owed once the compose file is free to change: add a `*_function.xml` mount and a script
+directory to the clickhouse service, create one executable function in `docker/clickhouse-init/`, and
+read it back through the real provider to confirm the server answers an empty `create_query` and an
+`origin` of `ExecutableUserDefined`, which is what the refusal sentence claims.
+
+Cost if wrong: the sentence names an origin the server does not report that way, and a reader is told
+a body is an external program on a server that spells the absence differently. The Enum8 vocabulary
+is measured (`Enum8('System' = 0, 'SQLUserDefined' = 1, 'ExecutableUserDefined' = 2, 'WasmUserDefined'
+= 3)`), so only the empty-`create_query` half is unmeasured.
+
+**Done when:** one executable function exists in the fixture and its refusal is read back from a
+running server rather than from a double.
+
+### D59. A Trino materialized view has no fixture here, and the cheap route is measured shut
+
+`docker/trino-init/01-object-fixture.sql` seeds no materialized view, so the one object kind whose
+source read this repository cannot reproduce is `trino.materialized_view`. The read IS implemented
+and IS tested, against a payload captured from a live cluster, but the cluster that produced it is
+not one `database-compose.yml` can start.
+
+THE CHEAP ROUTE WAS PROBED AND REFUSED, and the measurement is the point of this entry, so the next
+attempt starts from a fact rather than from the same hope. Measured 2026-09-13 on trinodb/trino:476
+with an Iceberg JDBC catalog on PostgreSQL 18:
+
+- The JDBC catalog WORKS. `CREATE SCHEMA` answered `CREATE SCHEMA`, `CREATE TABLE
+  iceberg.warehouse.orders (id bigint, total double)` answered `CREATE TABLE`, and `INSERT INTO
+  iceberg.warehouse.orders VALUES (1, 10.0), (2, 20.0)` answered `INSERT: 2 rows`.
+- `CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals AS SELECT id, total FROM
+  iceberg.warehouse.orders` answered `createMaterializedView is not supported for Iceberg JDBC
+  catalogs`.
+- Two traps on the way: Trino 476 never creates the JDBC catalog's own `iceberg_tables`, so every
+  statement fails `Cannot check and eventually update SQL schema` until the two Iceberg V1 tables are
+  created by hand; and a `file://` warehouse needs `fs.hadoop.enabled=true`, where
+  `fs.native-local.enabled` plus `local.location` refuses to START the coordinator with `Invalid
+  configuration property local.location: file does not exist: file:/data/warehouse` for a directory
+  that exists and is writable inside the container.
+- The materialized view WAS then created on an `apache/hive:4.0.1` standalone metastore, which is
+  what produced the measured `Create Materialized View` reply column.
+
+So the remaining price is a metastore service and a warehouse volume in `database-compose.yml`, and
+the decision to pay it is a compose-file decision rather than an object-surface one.
+`docs/providers/trino.md` carries the full command set meanwhile.
+
+**Done when:** `database-compose.yml` starts a cluster on which the shipped fixture creates a
+materialized view, or the provider doc is accepted as the permanent home of those commands.
+
+### D60. `countObjects` reports a MongoDB transport failure as the engine's own refusal
+
+`src/lib/db/providers/document/mongodb.ts` `countObjects` catches every `listCollections` rejection
+and answers `{ unavailable: <the error message> }` for every declared kind.
+
+Measured against mongodb 7.6.0 and MongoDB 8.2.12: only a `MongoServerError` is the server's own
+error reply. A `MongoServerSelectionError` ("connect ECONNREFUSED ...") or a `MongoNotConnectedError`
+("Client must be connected before running operations") is a transport failure the server never
+answered, and the tree then badges a folder with a socket message as though MongoDB had refused the
+read.
+
+#789 fixed this for `readObjectSource` only (`isServerErrorReply` in the same file), because
+`KindCount`'s `unavailable` arm is a contract shared by the whole fleet and one provider moving alone
+would make the fleet inconsistent.
+
+The decision to take is whether `KindCount.unavailable` means "the engine refused" fleet-wide, in
+which case every provider's count catch needs the same discrimination and a transport failure should
+raise.
+
+**Done when:** a test per provider drives a transport-shaped rejection through `countObjects` and
+asserts it raises rather than badging, and the same for `listObjects`.
+
+### D61. Elasticsearch and OpenSearch object source re-serialises the cluster's JSON, so three values are re-spelled
+
+`readObjectSource` renders a pipeline's or a template's definition with `JSON.parse` followed by
+`JSON.stringify`, because the definition is a sub-document of the endpoint's answer and there is no
+extended-JSON writer for a REST payload.
+
+Measured on Elasticsearch 9.1.4 and OpenSearch 3.8.0 on 2026-09-13 against `probe_json_edges` in
+`docker/search-init/01-object-fixture.sh`: the cluster answers `9223372036854775807` and the pane
+shows `9223372036854776000`, `1.0E30` becomes `1e+30`, and a map keyed `zz, 10, 2, aa` is rendered
+`2, 10, zz, aa`.
+
+Nothing is dropped, so `form: "complete"` is true, and both provider docs record all three under
+"Object source (#789)". A faithful rendering would need the sub-document sliced out of the response
+TEXT rather than re-serialised, which is a small JSON scanner nobody owns today.
+
+It matters for #778 Phase 3: a definition holding a long past 2^53 must not be edited and PUT back
+from the pane.
+
+**Done when:** either the pane shows the cluster's own bytes, or the edit half is refused on a
+definition whose re-serialisation is not byte-identical to what was read.
+
+### D62. Two PostgreSQL source refusals are unverified on CockroachDB and Materialize
+
+`PostgresProvider.readObjectSource` reports exactly two SQLSTATEs as a refusal part, 42883 (`pg_get_*`
+absent) and 42703 (`pg_proc.prokind` absent), and both arms exist because this type id also serves
+CockroachDB and Materialize.
+
+The sentences in `tests/integration/db/postgres-provider.test.ts` are the SHAPE PostgreSQL 18.4
+answers for a missing function and a missing column, measured; neither fork was brought up. The
+provider carries no string of its own, so a wording difference cannot break it, and what is
+unverified is only the claim that those two SQLSTATEs are what a fork answers there.
+
+**Done when:** each fork is brought up, a view's and a routine's source is asked for through the
+shipped statements, and the SQLSTATE and the sentence are recorded in `docs/providers/postgres.md`.
+If either answers a third code, that arm is a code change and not a doc change.
+
+### D63. `postgres.ts`'s `describeObject` still binds `[path[0], path[1]]`
+
+Standing ruling 5g's second spelling, in `describeObject` in
+`src/lib/db/providers/sql/postgres.ts`. It is behaviour-identical at depth 1 and silently wrong at
+depth 2, and the source read does not use it. The object-model epic assigned it to a final sweep
+rather than to the task that found it, so it is recorded here rather than left in a work file.
+
+**Done when:** the name is `path[path.length - 1]` and the container is
+`path.slice(0, containerDepth(capabilities))`, plus the two-level `spyOn` test driven all the way to
+the binds, the way `readObjectSource` is already pinned.
+
+### D64. The PostgreSQL trigger LISTING join is unpinned, so the tree could list no trigger at all
+
+`LIST_TRIGGERS_SQL` in `src/lib/db/providers/sql/postgres.ts` joins
+`pg_catalog.pg_class c ON c.oid = t.tgrelid`, which is what makes a trigger's row name its base table.
+Mutating that one column to `tgconstrrelid` leaves the whole suite green.
+
+Measured 2026-09-13: with the mutation applied, `bun test tests/integration/db/postgres-provider.test.ts`
+is 205 pass 0 fail, identical to the unmutated control. `tgconstrrelid` is 0 for every ordinary
+trigger, so a real server would join nothing and the Triggers folder would list nothing, while the
+count beside it kept counting. Nothing in the tree would say so.
+
+The SOURCE statement added by #789 IS pinned as text at
+`tests/integration/db/postgres-provider.test.ts:4393`; this is the Phase 1 LISTING statement beside
+it, which is not.
+
+**Done when:** the listing statement is pinned as text the way the source statement is, and the
+mutation above fails by name.
+
+### D65. A provider suite whose double dispatches on the statement the test builds cannot see the statement change
+
+Five mutants of one class survived the PostgreSQL suite until its first fix round: three predicate
+deletions, one relkind swap and one pretty flag. All of them are edits to statement TEXT that leave
+the binds untouched, and all are invisible to a double that routes by the `pg_get_*` function name
+the test itself constructed.
+
+#789 closed this for the SOURCE statements: each provider task pinned its own source statement as
+text and reported its mutation numbers. The Phase 1 listing and counting statements across the fleet
+were not swept the same way, and D64 is the one instance that has been measured.
+
+**Done when:** every provider's listing and counting statements are pinned as text, one assertion per
+statement, with the mutation numbers recorded rather than a sample of them.
+
+### D66. The SQLite kind-vocabulary guard scrapes source text, so a kind can be declared and unmapped
+
+The guard in `tests/unit/lib/agent/context-snapshot.test.ts` scrapes `SQLITE_OBJECT_KINDS` with a
+`{ id: "..."` regex that only matches a SINGLE-LINE entry, so a kind written across two lines drops
+out of the population the guard compares.
+
+Measured 2026-09-13, both directions. Exploding an EXISTING entry past 120 columns is a LOUD red: two
+declared ids against the agent side's four, 1 fail, "Expected - 0 / Received + 2", with `table` and
+`trigger` unmatched. So that half is safe. But adding a FIFTH kind as a multi-line entry drops it from
+the guard's population AND it is absent from `COMPOSED_KIND_WORDS`, both sides shrink together, and
+the guard passes at 1 pass 0 fail, while the same kind written on one line fails.
+
+So the defect is a kind that is declared and unmapped, not a formatter. The provider keeps its entries
+on one line so they stay scrapable and says so in a comment.
+
+**Done when:** the guard reads the declaration through
+`createDatabaseProvider("sqlite").getCapabilities()` instead of scraping source text, and a
+multi-line entry for an unmapped kind fails it.
+
+### D67. `assertObjectPathShape` is written out eight times, and four more shapes twice or three times
+
+Measured in the tree on 2026-09-13: `assertObjectPathShape` is DEFINED, not imported, in eight
+provider files (`postgres.ts`, `mysql.ts`, `oracle.ts`, `sqlite.ts`, `libsql/objects.ts`,
+`clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb.ts`). It belongs beside
+`containerDepth` in `src/lib/db/object-kinds.ts`, which is where `comparePaths` already went: that
+one was written four times, was hoisted to `src/lib/db/object-path.ts`, and is now imported by every
+caller, so the pattern is settled and only this helper is left behind.
+
+Four more shapes are duplicated verbatim by the source reads:
+
+- `OBJECT_SOURCE_SQL` and `SOURCE_CATALOG_TYPES`, twice, in `sqlite.ts` and `libsql/objects.ts`.
+- `blankDefinitionShape` and `blankDefinitionReason`, three times, in those two plus
+  `duckdb/objects.ts`. The last two carry three sentences each, so there are copies of six sentences
+  that must not drift, and only the duckdb pair is exported.
+
+libSQL IS SQLite and the two source reads are the same statement against two transports, which is why
+that pair is worth taking first.
+
+None was hoisted when it was found because concurrent implementers held the checkout and a hoist
+collides with every one of them.
+
+**Done when:** one definition of each replaces the copies, with the sqlite and libsql source read
+sharing its statement.
+
+### D68. `bun run test` is red on a shared process, and only CI's per-file isolation hides it
+
+`bun run test` is the pre-commit command CLAUDE.md documents, and it runs
+`bun test tests/unit tests/api tests/integration` in ONE bun process. `mock.module()` is
+process-wide, so a mock one layer needs reaches every file in that process. CI runs
+`tests/run-core.sh` instead, one process per file, and is blind to the whole class by
+construction.
+
+Measured 2026-09-13, and the same numbers at `acf50738` and on the #789 branch, so it predates
+that epic: every file under `tests/api/` mocks `@/lib/auth` with stubbed `signJWT`, `verifyJWT`,
+`getSession`, `login` and `logout`, which is that layer's standard pattern. Run
+`tests/unit/lib/auth.test.ts`, `tests/unit/lib/auth-jwt-config.test.ts` and
+`tests/unit/seed/resolve-connection.test.ts` beside `tests/api/db-objects.test.ts` and the four
+files together are 31 fail; each of them alone is 0 fail.
+
+The cost is not a red gate, because no gate runs that shape. It is that a contributor following
+CLAUDE.md sees 31 failures on a clean checkout and cannot tell them from their own.
+
+#789 removed its own three instances by moving the files with the unshareable assumption into
+`tests/isolated/`, where `tests/run-components.sh` gives each a process and
+`tests/unit/component-runner-coverage.test.ts` makes an unregistered one a red test. The same
+remedy does not fit here: it is not three files but a whole layer's mocking pattern against three
+unit files that legitimately want the real module. `docs/TOOLCHAIN.md` carries the diagnosis.
+
+**Done when:** `bun run test` on a clean checkout is green, either because the auth mocking pattern
+stops reaching `tests/unit`, or because the documented command runs the same isolation CI does.
+
+### D69. Six type-ids still open `readObjectSource` with their own entry guard, and one of its sentences is less true
+
+`requireSourceKind` in `src/lib/db/object-kinds.ts` is the one entry guard for `readObjectSource`:
+it raises separately for a kind the engine never declared, for a declared kind that publishes no
+definition text, and for a source-bearing kind carrying no `sourceLanguage`. Measured on 2026-09-13,
+nine providers call it (sqlite, libsql, duckdb, clickhouse, cassandra, postgres, mssql, mysql,
+trino) and six type-ids do not: couchbase, mongodb, redis, elasticsearch and opensearch (one shared
+module) and oracle.
+
+All five of those modules COLLAPSE the first two facts into one throw. They test
+`spec?.hasSource !== true` and answer `<Engine> declares no readable source for the kind "X"`, so a
+kind the engine has never heard of and a declared kind with no definition text arrive as the same
+sentence. That sentence is not merely shorter, it is less true: it tells the caller the kind exists
+and has no source. Three of them (couchbase, mongodb, search) also spell the third arm differently,
+"declares source for the kind X and no sourceLanguage, so its text has no language to render in"
+rather than "declares readable source for the kind X and no sourceLanguage to render it with".
+
+A fourth spelling of the same refusal lives at the route layer: `src/lib/api/object-route.ts` raises
+`<type> declares no readable source for kind "X"` as an `ObjectRouteError` with a 400, before any
+provider is consulted. It guards a different fact and answers a different error type, so it is not
+simply a call site, but it is a fourth wording of one refusal.
+
+None of the six was converted when the guard was hoisted (#789), because converting them rewords
+between one and two throws each, five provider suites assert on the exact wording, and a reworded
+throw is a behaviour change that does not belong folded inside a refactor. The cost of leaving them
+is that the hoist's second-order gain, that a new provider cannot silently forget one of the three
+guards, holds for nine of seventeen type-ids only.
+
+**Done when:** the six call `requireSourceKind`, with the five provider suites' assertions moved onto
+the guard's three sentences in the same commit, and the route layer either reuses one of those
+sentences or its docblock says why a 400 raised before the provider is a different fact.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -576,8 +968,11 @@ goes away in a major, with this work.
 
 ## Studio UI and query execution
 
-`U2` came out of the #384 review. The `X` entries came out of the #422 export review — each was
-named, weighed and left out of that PR, so they are recorded rather than re-derived.
+`U2` came out of the #384 review. `X2` to `X13` came out of the #422 export review: each was
+named, weighed and left out of that PR, so they are recorded rather than re-derived. `X14` and `X15`
+came out of the #789 object-source design's own measurement passes: both are pre-existing, neither
+is in the seam that epic touches, and both were re-measured against the tree before being written
+here.
 
 ### X2. An export writes the page the grid holds, not the result the user asked for
 
@@ -650,6 +1045,134 @@ and calling that lossless would be a lie.
 **Done when:** a declared type the target cannot parse is either translated or refused with something a
 reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
 Cassandra.
+
+### X13. Profile is withheld from two engines by an engine-wide flag, and LibreDB has named objects behind it
+
+`row-actions.ts:146` gates Profile on `capabilities.tablesAreDerivedGroupings !== true`, which is a
+PROVIDER fact, while every other gate beside it is a per-kind declaration. The flag says "the rows
+this engine shows are prefix groupings this server derived from a bounded scan", and on Redis that
+is true of every row it has. On LibreDB it is true of one kind out of three: `keyspace` is derived,
+while `table` and `collection` are entries the persisted catalog NAMES, created by `table()` and
+`doc()` and addressed by the name their author chose (#789, Task 23). Those two are refused Profile
+purely because the gate never got a per-kind half.
+
+Nothing regresses today and that is measured, not assumed: `POST /api/db/profile` branches on
+`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is sent
+as a MongoDB aggregate pipeline and the grammar answers
+`Unknown command ... Supported: get, put, delete, prefix, range`. Profile cannot work on ANY kind
+here, so withholding it from all three is the honest menu rather than a cost. That is pinned by a
+test in `tests/integration/db/libredb-provider.test.ts`.
+
+The condition that makes it bite is a separate fact changing: the day the profile route grows an arm
+for this engine's grammar, two named-object kinds stay silently refused with no declaration
+recording why, and the reason will read as a Redis decision rather than a LibreDB one. The same
+would happen to any future engine that sets the flag while holding cataloged objects.
+
+**Done when:** the per-kind half exists - a kind-level declaration saying whether a kind's rows are
+derived groupings, read beside the engine-wide flag the way `kindAcceptsRowWrites` is read beside
+`supportsInlineRowEdit` - or the engine-wide gate is deliberately kept with that decision written at
+`libredb.ts`'s `tablesAreDerivedGroupings` site and in `docs/providers/libredb.md`. Either way
+LibreDB's `table` and `collection` stop being refused by a flag that was never about them.
+
+### X14. The workspace write that persists every tab has no quota guard
+
+`src/hooks/use-tab-manager.ts:213` writes the whole workspace with
+`storage.setItem(workspaceKey, JSON.stringify(serialized))` inside a 500 ms `setTimeout`, with no
+`try`/`catch` anywhere between the timer callback and the call. Every other localStorage writer in
+this application already has one: `src/lib/storage/local-storage.ts:64` and `:82` both wrap their
+`setItem`, log `Failed to write to localStorage` and answer `false`, so the guard is a pattern this
+writer skipped rather than a pattern nobody has.
+
+The quota it writes against is shared. `STORAGE_COLLECTIONS` (`src/lib/storage/types.ts:28-38`) is
+ten collections, connections and history and the audit log among them, and all of them plus this
+record live inside one origin quota of about 5 MiB. The record itself is unbounded from the shell's
+point of view because `PersistedTabState.query` copies each tab's editor text verbatim.
+
+The symptom is not a lost tab. A `QuotaExceededError` thrown inside a timer callback is not caught
+by React and not caught here, so it reaches the window's error handler, tab persistence stops for
+the WHOLE workspace, and nothing tells the user; the next tab change schedules the same timer and
+throws again. Found while designing #789 and not fixed there, because Phase 2 touches this record
+only to add one address-only field: a Source tab persists its `path` and `kind` and never one
+character of the definition it read, for exactly this reason, which narrows the exposure and closes
+nothing. The reasoning is in the `PersistedTabState` docblock at `use-tab-manager.ts:40-60`.
+
+**Done when:** the write is guarded the way `local-storage.ts` guards its own, and the failure is
+observable rather than swallowed - a user whose workspace has stopped persisting is told, since a
+silent `false` here means the tabs on screen are no longer the tabs that will come back.
+
+### X15. The studio tab bar is half the WAI-ARIA tabs pattern
+
+`StudioTabBar.tsx` has the tab half and none of the panel half. Measured 2026-09-13: `:98` is
+`role="tablist"` with `aria-label="Editor tabs"`, `:150-153` gives every tab `role="tab"`,
+`aria-selected` and a roving `tabIndex`, and `:72-79` implements Arrow, Home and End activation. No
+tab carries `aria-controls`, and no element in either shell carries `role="tabpanel"`: the region
+the tabs actually govern is the bare `<main className="flex-1 overflow-hidden relative">` at
+`src/components/Studio.tsx:777` and at `src/workspace/StudioWorkspace.tsx:494`.
+
+So a screen reader announces the tab and its selected state and can never say which region the tab
+governs, and there is no way to move from a tab to its content.
+
+The basis for the "nowhere in `src/`" form of this claim has moved and the entry says so rather than
+repeating it: `grep -rn 'tabpanel' src/` now returns exactly one hit,
+`src/components/object-source/ObjectSourceView.tsx:347`, which is the Source view's own part
+switcher added by #789. The pattern is bare on purpose: that role is written as an object property,
+`{ role: "tabpanel", ... }`, and never as a JSX attribute, so grepping the attribute form matches
+nothing, which would read as an absence that is not there. The switcher is the complete pattern,
+including the rule the studio bar will need: only the SELECTED tab may carry `aria-controls`,
+because only the active panel is in the tree and a reference to an absent element is an
+`aria-valid-attr-value` violation of its own.
+
+It is not a one-line fix, which is why it is here. The panel is ONE element shared by every tab, so
+its `id` has to key on `activeTabId`, and the same element is the mount point for the schema diagram
+overlay, which is not the tab's content at all. Both shells render the bar, so the fix lands twice
+and is verified twice.
+
+**Done when:** the editor region carries `role="tabpanel"`, an id derived from `activeTabId` and
+`aria-labelledby` naming the selected tab, the selected tab alone carries the matching
+`aria-controls`, and both shells are checked, since a UI change verified in one is not verified in
+the other.
+
+### X16. Opened at `127.0.0.1`, the dev server serves a page that never becomes interactive
+
+MEASURED on 2026-09-13 against Next.js 16.3.4 with Turbopack, in two independent browsers
+(Playwright's Chromium and Chrome over CDP), while doing the browser QA for #789.
+
+`bun dev` prints `http://localhost:<port>`. Open the SAME server at `http://127.0.0.1:<port>`
+instead and the page renders its server HTML and then does nothing at all: no button responds, the
+login form submits natively to `/login?` and clears itself, and `POST /api/auth/login` is never
+made. `Object.keys(document.querySelector('#email'))` carries no `__react*` key, so React never
+hydrated. The only console output is one repeated
+`WebSocket connection to 'ws://127.0.0.1:<port>/_next/hmr' failed: Error during WebSocket
+handshake: net::ERR_INVALID_HTTP_RESPONSE`.
+
+THE CAUSE IS THE DEV SERVER'S OWN ORIGIN CHECK ON THAT SOCKET, isolated with a control rather than
+inferred. The same upgrade request, differing only in one header, run from the shell:
+
+| Request to `/_next/hmr` | Answer |
+| --- | --- |
+| no `Origin` header | `HTTP/1.1 101 Switching Protocols` |
+| `Origin: http://localhost:<port>` | `HTTP/1.1 101 Switching Protocols` |
+| `Origin: http://127.0.0.1:<port>` | the connection is closed with no HTTP response at all |
+| `Origin: http://192.168.1.66:<port>` | the connection is closed with no HTTP response at all |
+
+That empty answer is what the browser reports as `ERR_INVALID_HTTP_RESPONSE`, and the dev client's
+bootstrap does not survive it. The chain closes both ways: served by the same process at the same
+moment, `http://localhost:<port>/login` hydrates and `http://127.0.0.1:<port>/login` does not.
+
+Next 16 has a configuration key for exactly this and this repository sets none:
+`grep -rn 'allowedDevOrigins' src/ next.config.ts` returns nothing. The production path is
+unaffected, measured: `bun run build` plus `bun run start` hydrates at `127.0.0.1` and every part of
+#789's browser pass ran there.
+
+It is filed rather than fixed because the value is a decision rather than a typo. The key names the
+origins a developer's browser may drive the dev server from, so widening it widens a control Next
+added deliberately, and `127.0.0.1` and a LAN address are not the same call. The cost of leaving it
+is a developer who types the loopback address, or opens the LAN URL `bun dev` also prints, meeting a
+dead page with one obscure console line.
+
+**Done when:** `bun dev` opened at `127.0.0.1` and at the LAN address the banner prints is
+interactive, either by configuring `allowedDevOrigins` or by not printing a URL that does not work,
+and a note in `docs/TOOLCHAIN.md` records which and why.
 
 ---
 
@@ -1802,3 +2325,60 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
+
+### B78. Generated Redis and LibreDB command text carries em dashes
+
+House style forbids em and en dashes in anything that lands in the repo or in front of a user.
+`src/lib/query-generators.ts` emits five of them into text a user reads in the editor, reproduced in
+the browser on a live Redis 8 during task 28b by pressing Generate Command on a key-prefix row:
+
+    # Redis commands for "bulk:*" — select a line and Run Selected.
+    # List keys under this prefix — ONE scan iteration, not the whole set.
+    # Create or update it — this overwrites an existing value
+
+plus `:229` for the hash variant and `:411` for the LibreDB header. Eleven more sit in that file's
+doc comments. Pre-existing rather than #789's, and named here because task 27 found it and it would
+otherwise disappear: it is not one edit but a small sweep, and
+`tests/unit/lib/query-generators.test.ts` pins the exact strings.
+
+**Done when:** no emitted line in that file carries an em or en dash, and its tests assert the new
+wording.
+
+### B80. The inventory's two bounds do not reach the container enumeration
+
+`POST /api/db/objects/inventory` bounds the listings it issues (`INVENTORY_PAIR_LIMIT`) and the
+objects it returns (`INVENTORY_LIMIT`), and its own docblock says so. Neither reaches the walk that
+produces the containers in the first place. `enumerateContainers`
+(`src/lib/db/container-walk.ts`) calls `listContainers()` once at the top level and then once per
+parent at every level below, with no cap: a two-level engine holding 5,000 catalogs issues 5,001
+round trips before the first pair exists, and only then meets a limit. The pair limit truncates the
+SCAN, never the walk.
+
+Not invented here, because `container-walk.ts` has a second reader: the agent's grounding inventory
+(`src/lib/agent/tools.ts`) performs the same walk from its run context. A cap belongs to both or to
+neither, and it needs the `truncated` shape the route already publishes, so it is one decision
+rather than a number chosen at one call site. The route's docblock states the gap where it bites.
+
+**Done when:** the walk reports a bound the same way a saturated scan does, both readers carry it,
+and a test drives an engine whose top level exceeds the cap.
+
+### B79. A connection switch reads the new connection with the old engine's container depth
+
+Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
+(DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
+path is [database] or [database, schema], received []". The tree then re-reads correctly and the
+final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
+switch.
+
+The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
+with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a
+child's effects run before its parent's - so the tree's reconciler fires once with the new connection
+and the previous engine's `capabilities`. `Sidebar`'s own comment reasons about metadata being
+ABSENT ("Nothing is drawn while the declaration is missing") and not about it being STALE.
+
+Pre-existing in shape and newly consequential: while the sidebar only listed tables, a stale
+capability object cost nothing, and now the request SHAPE is derived from it.
+
+**Done when:** no read is issued for a connection whose declaration has not arrived, proven by a test
+that switches between two engines of different depth and asserts what was posted.

@@ -6,10 +6,12 @@
  * test files. Every payload below was captured from a live Couchbase Server
  * 8.0.2 Community node, so the fake speaks exactly what the cluster speaks.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CouchbaseProvider } from "@/lib/db/providers/document/couchbase";
+import { COUCHBASE_CONTAINER_LEVELS, COUCHBASE_OBJECT_KINDS } from "@/lib/db/providers/document/couchbase/objects";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 
 // ============================================================================
 // Connection
@@ -294,6 +296,9 @@ describe("CouchbaseProvider metadata", () => {
       },
       supportsConnectionString: true,
       defaultPort: 8091,
+      // The object surface (#789); asserted field by field in the object-surface block.
+      containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     });
   });
@@ -634,54 +639,6 @@ describe("CouchbaseProvider error mapping", () => {
 // ============================================================================
 // Schema
 // ============================================================================
-
-describe("CouchbaseProvider schema", () => {
-  test("getSchemaList flattens scopes and infers columns", async () => {
-    const provider = await connectProvider();
-
-    const tables = await provider.getSchemaList();
-
-    expect(tables.map((table) => table.name)).toEqual(["airline", "inventory.hotel"]);
-    expect(tables[0].columns.map((column) => column.name)).toEqual(["__id", "city"]);
-    expect(tables[0].indexes).toEqual([]);
-  });
-
-  test("getSchemaRelations lists indexes and never invents foreign keys", async () => {
-    const provider = await connectProvider();
-
-    const relations = await provider.getSchemaRelations();
-
-    expect(relations.map((relation) => relation.name)).toEqual(["airline", "inventory.hotel"]);
-    expect(relations[0].indexes[0]).toEqual({ name: "#primary", columns: ["META().id"], unique: true });
-    expect(relations[0].foreignKeys).toEqual([]);
-  });
-
-  test("getSchema merges indexes into the inferred columns", async () => {
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["airline", "inventory.hotel"]);
-    expect(schema[1].indexes.map((index) => index.name)).toEqual(["idx_hotel_city"]);
-    expect(schema[1].columns.length).toBeGreaterThan(0);
-  });
-
-  test("getTables lists collections without paying for INFER", async () => {
-    const provider = await connectProvider();
-
-    const tables = await provider.getTables();
-
-    expect(tables).toEqual(["airline", "inventory.hotel"]);
-    expect(queryBodies.some((body) => String(body.statement).startsWith("INFER"))).toBe(false);
-  });
-
-  test("a denied catalog read surfaces as an AuthenticationError", async () => {
-    const provider = await connectProvider();
-    queryHandler = () => errorPayload(13014, "User does not have credentials to run queries");
-
-    await expect(provider.getSchemaRelations()).rejects.toBeInstanceOf(AuthenticationError);
-  });
-});
 
 // ============================================================================
 // Monitoring
@@ -1056,5 +1013,1045 @@ describe("CouchbaseProvider query preparation", () => {
 
     expect(prepared.query).toBe("DELETE FROM `travel`.`_default`.`airline`");
     expect(prepared.wasLimited).toBe(false);
+  });
+});
+
+// ============================================================================
+// Object surface (#789)
+//
+// The rows below are EXACTLY what a live Couchbase Server 8.0.2 Community node
+// running docker/couchbase-init/01-object-fixture.sh answers, re-aliased onto
+// the projections `objects.ts` asks for. Every count in this block is that
+// fixture's, so a claim here is re-measurable rather than invented.
+//
+// THE FAKE DISPATCHES ON STATEMENT CONTENT (standing ruling 5b), so a change to
+// a statement is invisible to a behavioural assertion unless the statement text
+// is itself asserted. The statement-text block below is what pins the parts a
+// behavioural assertion cannot see, and the report sizes the gap by naming the
+// mutations that survive without it.
+// ============================================================================
+
+const OBJECT_BUCKET_ROWS = [{ bucket_name: BUCKET }];
+
+// `_system` is already excluded by the statement's own predicate, so it is not
+// here; `_default` IS here, which is the whole reason system:all_scopes is read
+// instead of system:scopes.
+const OBJECT_SCOPE_ROWS = [{ scope_name: "_default" }, { scope_name: "inventory" }];
+
+const OBJECT_COLLECTION_ROWS = [
+  // The pre-scopes bucket-level row: no `bucket` and no `scope` field at all, and
+  // `name` is the BUCKET's name. It is `_default`.`_default`, not a collection
+  // called `travel`.
+  { object_name: BUCKET },
+  { bucket_id: BUCKET, scope_id: "_default", object_name: "bookings" },
+  // The SAME collection name in the other scope. A collection name is unique per scope,
+  // not per bucket, so a read that filtered a collection's indexes on the name alone would
+  // hand this one `inventory`.`airline`'s.
+  { bucket_id: BUCKET, scope_id: "_default", object_name: "airline" },
+  { bucket_id: BUCKET, scope_id: "inventory", object_name: "hotel" },
+  { bucket_id: BUCKET, scope_id: "inventory", object_name: "airline" },
+];
+
+const OBJECT_INDEX_ROWS = [
+  // The bucket-level primary index, same pre-scopes row shape as above. A PRIMARY index
+  // carries an EMPTY `index_key`: it keys the document key itself.
+  { collection_id: BUCKET, object_name: "#primary", index_key: [], is_primary: true },
+  // One index NAME on the two same-named collections of two scopes, over DIFFERENT keys,
+  // so a scope-blind filter reports the wrong keys and not merely the wrong count.
+  { bucket_id: BUCKET, scope_id: "_default", collection_id: "airline", object_name: "ix_name", index_key: ["`code`"] },
+  { bucket_id: BUCKET, scope_id: "inventory", collection_id: "hotel", object_name: "ix_name", index_key: ["`name`"] },
+  { bucket_id: BUCKET, scope_id: "inventory", collection_id: "airline", object_name: "ix_name", index_key: ["`name`"] },
+  {
+    bucket_id: BUCKET,
+    scope_id: "inventory",
+    collection_id: "airline",
+    object_name: "#primary",
+    index_key: [],
+    is_primary: true,
+  },
+];
+
+/**
+ * The `definition` sub-document of a `system:functions` row, captured verbatim from
+ * Couchbase Server 8.0.2 Community on 2026-09-13 (#789).
+ *
+ * `text` is the body AS AUTHORED and `expression` is the engine's normalisation of it: the
+ * fixture typed `price - (price * pct / 100)` and the cluster answered that string in
+ * `text` beside `(`price` - ((`price` * `pct`) / 100))` in `expression`. That difference is
+ * the measurement behind `origin: "stored"`, and it is in the double so a read switched to
+ * `expression` answers a DIFFERENT string rather than the same one.
+ */
+function inlineDefinition(text: string, expression: string, parameters: string[]): Record<string, unknown> {
+  return { "#language": "inline", expression, parameters, text };
+}
+
+const OBJECT_FUNCTION_ROWS = [
+  // GLOBAL: it belongs to the `default:` namespace, above every bucket, so it has
+  // no container in a bucket/scope tree and must never be listed.
+  {
+    identity: { name: "celsius", namespace: "default", type: "global" },
+    definition: inlineDefinition("(f - 32) / 1.8", "((`f` - 32) / 1.8)", ["f"]),
+  },
+  // Another bucket's scope function. The statement reads the whole namespace, so the
+  // bucket is matched in code and this row is what makes that check killable. Its body
+  // differs from every travel body, so a source read that lost the bucket comparison
+  // answers this string rather than merely the same one by luck.
+  {
+    identity: { bucket: "other", scope: "inventory", name: "discount", namespace: "default", type: "scope" },
+    definition: inlineDefinition("price * 0", "(`price` * 0)", ["price"]),
+  },
+  {
+    identity: { bucket: BUCKET, scope: "_default", name: "discount", namespace: "default", type: "scope" },
+    definition: inlineDefinition("x / 2", "(`x` / 2)", ["x"]),
+  },
+  {
+    identity: { bucket: BUCKET, scope: "inventory", name: "discount", namespace: "default", type: "scope" },
+    definition: inlineDefinition("price - (price * pct / 100)", "(`price` - ((`price` * `pct`) / 100))", [
+      "price",
+      "pct",
+    ]),
+  },
+];
+
+/**
+ * INFER answers, keyed by the exact keyspace the statement names (#789).
+ *
+ * The bulk column read issues one INFER per described collection, and a fake answering ONE
+ * canned flavour array whatever the statement said could not tell a read that attributes
+ * each answer to its own collection from one that hands every collection the first
+ * collection's fields. Only the keyspaces below differ from the default; everything else
+ * still gets `OBJECT_INFER_FLAVOURS`, so the tests written before this map are untouched.
+ */
+const OBJECT_INFER_BY_KEYSPACE: Record<string, unknown[]> = {
+  // `_default`.`airline`, the same collection NAME in the other scope, with fields of its
+  // own: a bulk read that sampled by name would give it `inventory`.`airline`'s.
+  // `~meta` rides along on every live INFER answer and is what `__id` is derived from, so
+  // it is here too: a double that dropped it would let a read that loses the document key
+  // pass.
+  "`travel`.`_default`.`airline`": [
+    {
+      "#docs": 1,
+      Flavor: "",
+      properties: { code: { type: "string", "%docs": 100 }, "~meta": { properties: { id: { type: "string" } } } },
+    },
+  ],
+  "`travel`.`_default`.`bookings`": [
+    {
+      "#docs": 1,
+      Flavor: "",
+      properties: { guest: { type: "string", "%docs": 100 }, "~meta": { properties: { id: { type: "string" } } } },
+    },
+  ],
+};
+
+const OBJECT_INFER_FLAVOURS = [
+  {
+    "#docs": 2,
+    Flavor: "",
+    properties: {
+      name: { type: "string", "%docs": 100 },
+      country: { type: "string", "%docs": 100 },
+      fleet: { type: "number", "%docs": 100 },
+      "~meta": { properties: { id: { type: "string" } } },
+    },
+  },
+];
+
+/** The object-surface reads, layered over the schema-explorer routing above. */
+function objectQueryPayload(statement: string): unknown {
+  if (statement.startsWith("INFER")) {
+    for (const [keyspace, flavours] of Object.entries(OBJECT_INFER_BY_KEYSPACE)) {
+      if (statement.includes(keyspace)) return queryPayload([flavours]);
+    }
+    return queryPayload([OBJECT_INFER_FLAVOURS]);
+  }
+  if (statement.includes("system:buckets")) return queryPayload(OBJECT_BUCKET_ROWS);
+  if (statement.includes("system:all_scopes")) return queryPayload(OBJECT_SCOPE_ROWS);
+  if (statement.includes("system:functions")) return queryPayload(OBJECT_FUNCTION_ROWS);
+  if (statement.includes("object_name")) {
+    return statement.includes("system:indexes")
+      ? queryPayload(OBJECT_INDEX_ROWS)
+      : queryPayload(OBJECT_COLLECTION_ROWS);
+  }
+  return defaultQueryPayload(statement);
+}
+
+describe("CouchbaseProvider object surface (#789)", () => {
+  let objectProvider: CouchbaseProvider;
+
+  beforeEach(async () => {
+    queryHandler = objectQueryPayload;
+    objectProvider = await connectProvider();
+  });
+
+  test("declares two container levels and three object kinds", () => {
+    const capabilities = objectProvider.getCapabilities();
+
+    expect(capabilities.containerLevels).toEqual([
+      { id: "catalog", label: "Bucket", labelPlural: "Buckets" },
+      { id: "schema", label: "Scope", labelPlural: "Scopes" },
+    ]);
+    expect(capabilities.objectKinds).toEqual([
+      {
+        id: "collection",
+        role: "relation",
+        label: "Collection",
+        labelPlural: "Collections",
+        acceptsRowWrites: true,
+      },
+      {
+        id: "function",
+        role: "routine",
+        label: "Function",
+        labelPlural: "Functions",
+        // The one kind here with a definition text (#789 Phase 2): `system:functions`
+        // carries a SQL++ function's body in `definition.text`.
+        hasSource: true,
+        sourceLanguage: "sql",
+      },
+      // `attachedTo` and not a bare container-level kind: measured on 8.0.2, one
+      // index NAME lives on two collections of one scope, so the collection segment
+      // is what makes the last segment unique within its parent.
+      { id: "index", role: "config", label: "Index", labelPlural: "Indexes", attachedTo: "collection" },
+    ]);
+  });
+
+  test("satisfies the shared object-surface contract", async () => {
+    const { assertObjectSurface } = await import("../../helpers/object-surface-conformance");
+
+    await assertObjectSurface(objectProvider, {
+      containers: [[BUCKET]],
+      kinds: { collection: 5, function: 2, index: 5 },
+      sampleObject: { path: [BUCKET, "inventory", "airline"], kind: "collection" },
+      // A function name that is not in `system:functions`. The read must RAISE naming it,
+      // never answer a document and never answer a refusal part: on this engine a missing
+      // row is absence, and it is also what a caller who may not see the function meets,
+      // because `system:functions` filters by permission rather than refusing.
+      absentSource: { path: [BUCKET, "inventory", "no_such_function"], kind: "function" },
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // listContainers
+  // --------------------------------------------------------------------------
+
+  test("lists buckets at level 0 and marks the connection's own", async () => {
+    expect(await objectProvider.listContainers()).toEqual([
+      { path: [BUCKET], name: BUCKET, level: 0, isSessionDefault: true },
+    ]);
+  });
+
+  test("lists a bucket's scopes and marks _default as the session's", async () => {
+    // Standing ruling 5a2: a two-level engine that marked `isSessionDefault` only on
+    // the bucket would leave first paint opening the bucket and stopping, having read
+    // no counts at all.
+    expect(await objectProvider.listContainers([BUCKET])).toEqual([
+      { path: [BUCKET, "_default"], name: "_default", level: 1, isSessionDefault: true },
+      { path: [BUCKET, "inventory"], name: "inventory", level: 1, isSessionDefault: false },
+    ]);
+  });
+
+  test("marks no scope of another bucket as the session default", async () => {
+    const containers = await objectProvider.listContainers(["other"]);
+    expect(containers.map((container) => container.isSessionDefault)).toEqual([false, false]);
+  });
+
+  test("answers nothing below the deepest declared level without a round trip", async () => {
+    queryBodies = [];
+    expect(await objectProvider.listContainers([BUCKET, "inventory"])).toEqual([]);
+    expect(queryBodies).toEqual([]);
+  });
+
+  // --------------------------------------------------------------------------
+  // countObjects and listObjects
+  // --------------------------------------------------------------------------
+
+  test("counts the whole bucket, including the pre-scopes bucket-level rows", async () => {
+    expect(await objectProvider.countObjects([BUCKET])).toEqual({
+      collection: { count: 5 },
+      function: { count: 2 },
+      index: { count: 5 },
+    });
+  });
+
+  test("counts one scope", async () => {
+    expect(await objectProvider.countObjects([BUCKET, "inventory"])).toEqual({
+      collection: { count: 2 },
+      function: { count: 1 },
+      index: { count: 3 },
+    });
+    expect(await objectProvider.countObjects([BUCKET, "_default"])).toEqual({
+      collection: { count: 3 },
+      function: { count: 1 },
+      index: { count: 2 },
+    });
+  });
+
+  test("places the bucket-level keyspace row in _default._default rather than in a collection named after the bucket", async () => {
+    const collections = await objectProvider.listObjects([BUCKET, "_default"], "collection");
+    expect(collections.map((object) => object.path)).toEqual([
+      [BUCKET, "_default", "_default"],
+      [BUCKET, "_default", "airline"],
+      [BUCKET, "_default", "bookings"],
+    ]);
+    // The DISPLAY name of the bucket-level row is `_default`, not `travel`.
+    expect(collections[0].name).toBe("_default");
+  });
+
+  test("addresses an index through its collection, so one name on two collections is two paths", async () => {
+    const indexes = await objectProvider.listObjects([BUCKET, "inventory"], "index");
+    expect(indexes.map((object) => object.path)).toEqual([
+      [BUCKET, "inventory", "airline", "#primary"],
+      [BUCKET, "inventory", "airline", "ix_name"],
+      [BUCKET, "inventory", "hotel", "ix_name"],
+    ]);
+  });
+
+  test("excludes a global function, which belongs to the namespace above every bucket", async () => {
+    const functions = await objectProvider.listObjects([BUCKET], "function");
+    expect(functions.map((object) => object.path)).toEqual([
+      [BUCKET, "_default", "discount"],
+      [BUCKET, "inventory", "discount"],
+    ]);
+    expect(functions.map((object) => object.name)).toEqual(["discount", "discount"]);
+  });
+
+  test("seeds every declared kind at zero so an empty scope keeps its folders", async () => {
+    queryHandler = (statement) =>
+      statement.includes("system:buckets") || statement.includes("system:all_scopes")
+        ? objectQueryPayload(statement)
+        : queryPayload([]);
+    expect(await objectProvider.countObjects([BUCKET])).toEqual({
+      collection: { count: 0 },
+      function: { count: 0 },
+      index: { count: 0 },
+    });
+  });
+
+  test("carries the cluster's own sentence for a refused catalog read rather than a zero nobody measured", async () => {
+    queryHandler = () => errorPayload(13014, "User does not have credentials to run queries");
+    const counts = await objectProvider.countObjects([BUCKET]);
+    expect(counts).toEqual({
+      collection: { unavailable: expect.stringContaining("credentials") },
+      function: { unavailable: expect.stringContaining("credentials") },
+      index: { unavailable: expect.stringContaining("credentials") },
+    });
+  });
+
+  test("never counts a kind the declaration does not carry", async () => {
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      objectKinds: [{ id: "function", role: "routine", label: "Function", labelPlural: "Functions" }],
+    });
+    expect(await objectProvider.countObjects([BUCKET])).toEqual({ function: { count: 2 } });
+  });
+
+  test("refuses a container path of the wrong shape rather than answering an empty bucket", async () => {
+    await expect(objectProvider.countObjects([])).rejects.toThrow(/container path is \[bucket\] or \[bucket, scope\]/);
+    await expect(objectProvider.countObjects([BUCKET, "inventory", "airline"])).rejects.toThrow(
+      /container path is \[bucket\] or \[bucket, scope\]/,
+    );
+  });
+
+  test("refuses a kind this engine does not declare", async () => {
+    await expect(objectProvider.listObjects([BUCKET], "view")).rejects.toThrow(/declares no object kind "view"/);
+    await expect(objectProvider.describeObject([BUCKET, "_default", "v"], "view")).rejects.toThrow(
+      /declares no object kind "view"/,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObject
+  // --------------------------------------------------------------------------
+
+  test("describes a collection with its inferred fields and its own indexes", async () => {
+    const detail = await objectProvider.describeObject([BUCKET, "inventory", "airline"], "collection");
+
+    expect(detail.path).toEqual([BUCKET, "inventory", "airline"]);
+    expect(detail.columns.map((column) => column.name)).toEqual(["__id", "country", "fleet", "name"]);
+    expect(detail.columns[0].isPrimary).toBe(true);
+    expect(detail.indexes).toEqual([
+      { name: "#primary", columns: ["META().id"], unique: true },
+      { name: "ix_name", columns: ["name"], unique: false },
+    ]);
+    // SQL++ has no referential constraint at all, which is the same measurement
+    // behind `declaresForeignKeys: false`.
+    expect(detail.foreignKeys).toEqual([]);
+  });
+
+  test("describes an empty collection as a collection with no columns rather than failing", async () => {
+    // INFER answers error 7014, "No documents found, unable to infer schema", on an
+    // empty collection. That is an ordinary state and the fixture leaves `hotel`
+    // empty so it stays measured.
+    queryHandler = (statement) =>
+      statement.startsWith("INFER")
+        ? errorPayload(7014, "No documents found, unable to infer schema")
+        : objectQueryPayload(statement);
+    const detail = await objectProvider.describeObject([BUCKET, "inventory", "hotel"], "collection");
+    expect(detail.columns).toEqual([]);
+    expect(detail.indexes).toEqual([{ name: "ix_name", columns: ["name"], unique: false }]);
+  });
+
+  test("keeps two same-named collections of two scopes apart when reading their indexes", async () => {
+    // `airline` exists in BOTH `_default` and `inventory`, each with its own `ix_name`
+    // over a different key. A filter on the collection name alone answers the same two
+    // indexes for both and would put `inventory`'s key on `_default`'s collection.
+    const inDefault = await objectProvider.describeObject([BUCKET, "_default", "airline"], "collection");
+    expect(inDefault.indexes).toEqual([{ name: "ix_name", columns: ["code"], unique: false }]);
+
+    const inInventory = await objectProvider.describeObject([BUCKET, "inventory", "airline"], "collection");
+    expect(inInventory.indexes).toEqual([
+      { name: "#primary", columns: ["META().id"], unique: true },
+      { name: "ix_name", columns: ["name"], unique: false },
+    ]);
+  });
+
+  test("describes a function and an index without claiming columns neither has", async () => {
+    const fn = await objectProvider.describeObject([BUCKET, "inventory", "discount"], "function");
+    expect(fn).toEqual({ path: [BUCKET, "inventory", "discount"], columns: [], indexes: [], foreignKeys: [] });
+
+    const index = await objectProvider.describeObject([BUCKET, "inventory", "airline", "ix_name"], "index");
+    expect(index).toEqual({
+      path: [BUCKET, "inventory", "airline", "ix_name"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+  });
+
+  test("refuses an object path of the wrong depth for its kind", async () => {
+    await expect(objectProvider.describeObject([BUCKET, "airline"], "collection")).rejects.toThrow(
+      /"collection" path is \[bucket, scope, name\]/,
+    );
+    // An index carries the collection it is attached to, so its path is one longer.
+    await expect(objectProvider.describeObject([BUCKET, "inventory", "ix_name"], "index")).rejects.toThrow(
+      /"index" path is \[bucket, scope, collection, name\]/,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObjects, the bulk column read (#789)
+  // --------------------------------------------------------------------------
+
+  /** Every statement the fake was sent since the last reset, in order. */
+  function statementsIssued(): string[] {
+    return queryBodies.map((body) => String(body.statement));
+  }
+
+  /** The keyspace each INFER named, in the order the statements were sent. */
+  function inferredKeyspaces(): string[] {
+    return statementsIssued()
+      .filter((statement) => statement.startsWith("INFER"))
+      .map((statement) => statement.replace(/^INFER /, "").replace(/ WITH .*$/, ""));
+  }
+
+  test("describes a whole folder with ONE index read and one INFER per described collection", async () => {
+    queryBodies = [];
+    const batch = await objectProvider.describeObjects!([BUCKET], "collection");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [BUCKET, "_default", "_default"],
+      [BUCKET, "_default", "airline"],
+      [BUCKET, "_default", "bookings"],
+      [BUCKET, "inventory", "airline"],
+      [BUCKET, "inventory", "hotel"],
+    ]);
+    expect(batch.truncated).toBeUndefined();
+
+    // ONE system:indexes read for the whole batch, where `describeObject` issues that same
+    // whole-bucket statement once per object: five objects cost two catalog statements
+    // here and ten there. The INFER count is irreducible - measured on 8.0.2, INFER takes
+    // exactly one keyspace - so it is asserted rather than hidden.
+    const catalog = statementsIssued().filter((statement) => !statement.startsWith("INFER"));
+    expect(catalog.filter((statement) => statement.includes("system:indexes"))).toHaveLength(1);
+    expect(catalog.filter((statement) => statement.includes("system:keyspaces"))).toHaveLength(1);
+    expect(inferredKeyspaces()).toEqual([
+      "`travel`.`_default`.`_default`",
+      "`travel`.`_default`.`airline`",
+      "`travel`.`_default`.`bookings`",
+      "`travel`.`inventory`.`airline`",
+      "`travel`.`inventory`.`hotel`",
+    ]);
+  });
+
+  test("gives each collection its OWN columns and its OWN indexes", async () => {
+    const batch = await objectProvider.describeObjects!([BUCKET], "collection");
+    const of = (scope: string, name: string) =>
+      batch.details.find((detail) => detail.path[1] === scope && detail.path[2] === name)!;
+
+    // `airline` exists in both scopes. Sampling or filtering by the collection NAME alone
+    // hands one of them the other's fields and the other's index keys.
+    expect(of("_default", "airline").columns.map((column) => column.name)).toEqual(["__id", "code"]);
+    expect(of("_default", "airline").indexes).toEqual([{ name: "ix_name", columns: ["code"], unique: false }]);
+    expect(of("inventory", "airline").columns.map((column) => column.name)).toEqual([
+      "__id",
+      "country",
+      "fleet",
+      "name",
+    ]);
+    expect(of("inventory", "airline").indexes).toEqual([
+      { name: "#primary", columns: ["META().id"], unique: true },
+      { name: "ix_name", columns: ["name"], unique: false },
+    ]);
+    expect(of("_default", "bookings").columns.map((column) => column.name)).toEqual(["__id", "guest"]);
+    // SQL++ has no referential constraint at all.
+    expect(batch.details.every((detail) => detail.foreignKeys.length === 0)).toBe(true);
+  });
+
+  test("the bulk read spells an object exactly as the single read does", async () => {
+    const listed = await objectProvider.listObjects([BUCKET], "collection");
+    const batch = await objectProvider.describeObjects!([BUCKET], "collection");
+
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    for (const detail of batch.details) {
+      expect(detail).toEqual(await objectProvider.describeObject(detail.path, "collection"));
+    }
+  });
+
+  test("an INFER the server refuses leaves that collection with no columns, not the batch in ruins", async () => {
+    // Error 7014, "No documents found, unable to infer schema", is what an EMPTY collection
+    // answers, and the fixture keeps `hotel` and `bookings` empty because it is an ordinary
+    // state. It is also why the columns are read one INFER at a time: measured on 8.0.2, a
+    // single statement unioning several INFERs fails ENTIRELY on the first empty keyspace,
+    // so one empty collection would cost the whole folder its columns.
+    queryHandler = (statement) =>
+      statement.startsWith("INFER `travel`.`inventory`.`hotel`")
+        ? errorPayload(7014, "No documents found, unable to infer schema")
+        : objectQueryPayload(statement);
+
+    const batch = await objectProvider.describeObjects!([BUCKET], "collection");
+    const hotel = batch.details.find((detail) => detail.path[2] === "hotel")!;
+    expect(hotel.columns).toEqual([]);
+    expect(hotel.indexes).toEqual([{ name: "ix_name", columns: ["name"], unique: false }]);
+    expect(batch.details).toHaveLength(5);
+  });
+
+  test("the caller's bound cuts the sorted objects and reaches the INFERs", async () => {
+    queryBodies = [];
+    const batch = await objectProvider.describeObjects!([BUCKET], "collection", 2);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [BUCKET, "_default", "_default"],
+      [BUCKET, "_default", "airline"],
+    ]);
+    expect(batch.truncated).toEqual({
+      limit: 2,
+      reason: "the bulk column read was bounded at 2 objects by its caller",
+    });
+    // The bound reaches the EXPENSIVE half: three of the five INFERs are never sent. A cut
+    // applied after the reads would answer the same two objects for the whole folder's cost.
+    expect(inferredKeyspaces()).toEqual(["`travel`.`_default`.`_default`", "`travel`.`_default`.`airline`"]);
+  });
+
+  test("a bound the folder fits inside reports nothing, on either side of the boundary", async () => {
+    expect((await objectProvider.describeObjects!([BUCKET], "collection", 5)).truncated).toBeUndefined();
+    expect((await objectProvider.describeObjects!([BUCKET], "collection", 6)).truncated).toBeUndefined();
+  });
+
+  test("a scope is a container of its own, and the batch holds only its collections", async () => {
+    const batch = await objectProvider.describeObjects!([BUCKET, "inventory"], "collection");
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      [BUCKET, "inventory", "airline"],
+      [BUCKET, "inventory", "hotel"],
+    ]);
+  });
+
+  test("a kind with no columns answers an empty batch with no round trip at all", async () => {
+    // A function's parameters and an index's keys are not columns, and `describeObject`
+    // answers three empty arrays for both. The batch says the same thing by holding
+    // nothing, and says it without asking the cluster anything.
+    for (const kind of ["function", "index"]) {
+      queryBodies = [];
+      expect(await objectProvider.describeObjects!([BUCKET], kind)).toEqual({ details: [] });
+      expect(queryBodies).toEqual([]);
+    }
+  });
+
+  test("an undeclared kind is refused by the DECLARATION, naming the engine and the kind", async () => {
+    await expect(objectProvider.describeObjects!([BUCKET], "view")).rejects.toThrow(
+      /Couchbase declares no object kind "view"/,
+    );
+  });
+
+  test("a container path of the wrong shape is refused before anything is read", async () => {
+    queryBodies = [];
+    await expect(objectProvider.describeObjects!([], "collection")).rejects.toThrow(
+      /container path is \[bucket\] or \[bucket, scope\], received \[\]/,
+    );
+    await expect(objectProvider.describeObjects!([BUCKET, "inventory", "airline"], "collection")).rejects.toThrow(
+      /container path is \[bucket\] or \[bucket, scope\]/,
+    );
+    expect(queryBodies).toEqual([]);
+  });
+
+  test("a limit that is not a positive whole number is refused, never clamped", async () => {
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      await expect(objectProvider.describeObjects!([BUCKET], "collection", limit)).rejects.toThrow(
+        /bulk column read limit must be a positive whole number/,
+      );
+    }
+    // Guard ORDER: the declaration first, then the container, then the limit. A `0` against
+    // an undeclared kind must report the KIND, and against a bad container the CONTAINER.
+    await expect(objectProvider.describeObjects!([BUCKET], "view", 0)).rejects.toThrow(/declares no object kind/);
+    await expect(objectProvider.describeObjects!([], "collection", 0)).rejects.toThrow(
+      /container path is \[bucket\] or \[bucket, scope\]/,
+    );
+  });
+
+  test("a refused catalog read raises rather than answering an empty folder", async () => {
+    queryHandler = (statement) =>
+      statement.includes("system:keyspaces")
+        ? errorPayload(13014, "User does not have credentials to run queries")
+        : objectQueryPayload(statement);
+    await expect(objectProvider.describeObjects!([BUCKET], "collection")).rejects.toThrow(/does not have credentials/);
+  });
+
+  /**
+   * Standing ruling 5g on the fifth method, driven to the BOUND VALUE rather than to a
+   * refusal: with the declaration reversed, a positional read binds the scope as the bucket.
+   */
+  test("the bulk read follows the DECLARED levels, not the container's positions", async () => {
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [
+        { id: "schema", label: "Scope", labelPlural: "Scopes" },
+        { id: "catalog", label: "Bucket", labelPlural: "Buckets" },
+      ],
+    });
+
+    queryBodies = [];
+    const batch = await objectProvider.describeObjects!(["inventory", BUCKET], "collection", 1);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["inventory", BUCKET, "airline"]]);
+    expect(bodyOf("system:keyspaces").args).toEqual([BUCKET]);
+    expect(bodyOf("system:indexes").args).toEqual([BUCKET]);
+    // The INFER statement is built bucket-first from the declared ids, not from the path.
+    expect(inferredKeyspaces()).toEqual(["`travel`.`inventory`.`airline`"]);
+  });
+
+  // --------------------------------------------------------------------------
+  // Standing ruling 5g: no position is read out of a path or a container
+  // --------------------------------------------------------------------------
+
+  test("reads every container segment by its DECLARED level, not by its position", async () => {
+    // Couchbase already declares two levels, so `container.length !== 1` and `path[1]`
+    // are wrong here rather than merely fragile. What a same-depth engine still cannot
+    // tell apart is a segment read by POSITION from one read by declared id, because
+    // both spellings agree while the declared order happens to be [catalog, schema].
+    // Reversing the declaration separates them, and the assertion is on the BOUND
+    // VALUE the cluster was sent rather than on a refusal.
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      containerLevels: [
+        { id: "schema", label: "Scope", labelPlural: "Scopes" },
+        { id: "catalog", label: "Bucket", labelPlural: "Buckets" },
+      ],
+    });
+
+    queryBodies = [];
+    const counts = await objectProvider.countObjects(["inventory", BUCKET]);
+    expect(counts).toEqual({ collection: { count: 2 }, function: { count: 1 }, index: { count: 3 } });
+    // THE BOUND VALUE. `container[0]` would have bound "inventory" as the bucket.
+    expect(bodyOf("system:keyspaces").args).toEqual([BUCKET]);
+    expect(bodyOf("system:indexes").args).toEqual([BUCKET]);
+
+    // And the object name is the LAST segment at whatever depth the declaration makes.
+    const listed = await objectProvider.listObjects(["inventory", BUCKET], "index");
+    expect(listed.map((object) => object.path)).toEqual([
+      ["inventory", BUCKET, "airline", "#primary"],
+      ["inventory", BUCKET, "airline", "ix_name"],
+      ["inventory", BUCKET, "hotel", "ix_name"],
+    ]);
+
+    queryBodies = [];
+    const detail = await objectProvider.describeObject(["inventory", BUCKET, "airline"], "collection");
+    expect(detail.path).toEqual(["inventory", BUCKET, "airline"]);
+    // The INFER statement names the keyspace bucket-first, from the declared ids and
+    // not from the path's order.
+    expect(String(bodyOf("INFER").statement)).toContain("INFER `travel`.`inventory`.`airline`");
+  });
+
+  test("reads a RELATION's own collection as the last segment, not as a fixed position", async () => {
+    // At three segments `path[2]` and `path[path.length - 1]` are the same read, and every
+    // relation this engine has sits at three. So the DECLARATION is varied instead: a
+    // `collection` kind carrying `attachedTo` is addressed at four segments, and the two
+    // spellings then name different things. The assertion is on the keyspace the INFER
+    // statement was BUILT with, not on a refusal.
+    const capabilities = objectProvider.getCapabilities();
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: [
+        {
+          id: "collection",
+          role: "relation",
+          label: "Collection",
+          labelPlural: "Collections",
+          attachedTo: "collection",
+        },
+      ],
+    });
+
+    queryBodies = [];
+    const detail = await objectProvider.describeObject([BUCKET, "inventory", "airline", "airline_v2"], "collection");
+    expect(detail.path).toEqual([BUCKET, "inventory", "airline", "airline_v2"]);
+    // `path[2]` would have sampled the BASE collection `airline` instead.
+    expect(String(bodyOf("INFER").statement)).toContain("INFER `travel`.`inventory`.`airline_v2`");
+  });
+
+  test("places a catalog row carrying a bucket but no scope in _default rather than dropping it", async () => {
+    // This row SHAPE was not observed on 8.0.2: every `system:keyspaces` row that carries
+    // a `bucket` carries a `scope` too, and a row with neither is the pre-scopes
+    // bucket-level row, which the branch above already owns. The rule is pinned anyway,
+    // because the alternative to placing such a row is dropping an object out of the count
+    // AND the listing at once, which is the absence standing ruling 5a exists for.
+    queryHandler = (statement) =>
+      statement.includes("object_name") && !statement.includes("system:indexes")
+        ? queryPayload([{ bucket_id: BUCKET, object_name: "orphan" }])
+        : objectQueryPayload(statement);
+    const listed = await objectProvider.listObjects([BUCKET], "collection");
+    expect(listed.map((object) => object.path)).toEqual([[BUCKET, "_default", "orphan"]]);
+  });
+
+  test("places an index row carrying a bucket but no keyspace in _default rather than dropping it", async () => {
+    // The SAME placement rule as the sibling above, on the other half of the row. An index
+    // row that carries a `bucket_id` but names no keyspace was not observed on 8.0.2
+    // either, and neither shape can be pinned by refuting it: the reason to place it is
+    // that the alternative is a row leaving the COUNT and the LISTING at once, which is
+    // standing ruling 5a's invisible absence. Dropping it would still satisfy ruling 5f,
+    // and that is exactly why 5f cannot be the test.
+    queryHandler = (statement) =>
+      statement.includes("object_name") && statement.includes("system:indexes")
+        ? queryPayload([{ bucket_id: BUCKET, scope_id: "inventory", object_name: "ix_orphan", index_key: [] }])
+        : objectQueryPayload(statement);
+    const listed = await objectProvider.listObjects([BUCKET], "index");
+    expect(listed.map((object) => object.path)).toEqual([[BUCKET, "inventory", "_default", "ix_orphan"]]);
+    expect((await objectProvider.countObjects([BUCKET])).index).toEqual({ count: 1 });
+  });
+
+  test("orders paths segment by segment, shorter first where one is a prefix of the other", async () => {
+    const { comparePaths } = await import("@/lib/db/object-path");
+
+    // The MIXED-DEPTH arm. Standing ruling 5f blesses a kind whose rows sit at two depths,
+    // and `JSON.stringify` orders those backwards: `,` (0x2C) is below `]` (0x5D), so a
+    // serialised deeper path sorts before its own prefix. No kind here mixes depth today,
+    // so the rule is pinned directly rather than through a listing that cannot show it.
+    expect(comparePaths([BUCKET, "inventory"], [BUCKET, "inventory", "airline"])).toBeLessThan(0);
+    expect(comparePaths([BUCKET, "inventory", "airline"], [BUCKET, "inventory"])).toBeGreaterThan(0);
+    expect(comparePaths([BUCKET, "inventory"], [BUCKET, "inventory"])).toBe(0);
+  });
+
+  test("classifies a function row by where it says it lives, never by identity.type", async () => {
+    const { resolveFunctionIdentity } = await import("@/lib/db/providers/document/couchbase/objects");
+
+    // A GLOBAL function: no bucket and no scope, so it has no container in a bucket/scope
+    // tree. Read structurally, so a future third `type` is placed rather than dropped.
+    expect(resolveFunctionIdentity({ identity: { name: "celsius", type: "global" } })).toBeUndefined();
+    // A scope function whose `type` is a spelling this provider has never seen is still
+    // placed, because the bucket and the scope are what say where it lives.
+    expect(
+      resolveFunctionIdentity({ identity: { bucket: "b", scope: "s", name: "f", type: "something-new" } }),
+    ).toEqual({ bucket: "b", scope: "s", name: "f" });
+    // A row carrying no identity at all addresses nothing.
+    expect(resolveFunctionIdentity({})).toBeUndefined();
+  });
+
+  test("refuses a declaration carrying no bucket level rather than binding undefined", async () => {
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      containerLevels: [{ id: "schema", label: "Scope", labelPlural: "Scopes" }],
+    });
+    await expect(objectProvider.countObjects(["inventory"])).rejects.toThrow(
+      /needs a "catalog" container level and a segment for it/,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // readObjectSource (#789 Phase 2)
+  // --------------------------------------------------------------------------
+
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const kinds = objectProvider.getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+    expect(declared).toEqual([["function", "sql"]]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab.
+    // `collection` is schemaless and there is nothing to read; `index` has no field in
+    // `system:indexes` carrying the CREATE INDEX text, so a tab there would show a
+    // statement this product invented rather than one the engine published.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["collection", "index"]);
+  });
+
+  /** The one statement the source read sends, pinned as text (#789 recipe rule 6). */
+  const FUNCTIONS_STATEMENT = "SELECT f.identity AS identity, f.definition AS definition FROM system:functions AS f";
+
+  test("reads the definition of a scope function and says what the text is", async () => {
+    const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+
+    expect(document.path).toEqual([BUCKET, "inventory", "discount"]);
+    expect(document.kind).toBe("function");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    // The WHOLE text and not a substring, and it is the body AS AUTHORED. Measured on
+    // 8.0.2, `definition.expression` for this function is
+    // "(`price` - ((`price` * `pct`) / 100))", so a read that took the engine's
+    // normalisation instead would answer a different string here.
+    expect(part.text).toBe("price - (price * pct / 100)");
+    expect(part.language).toBe("sql");
+    // A BODY, not a statement: the parameter list and the CREATE FUNCTION header are not
+    // in `definition.text`, and composing them into one would be a statement this product
+    // invented rather than one the engine published.
+    expect(part.form).toBe("partial");
+    // The author's own bytes, which is what the `text`/`expression` difference proves.
+    expect(part.origin).toBe("stored");
+    expect(part.truncated).toBeUndefined();
+  });
+
+  test("reads the OTHER scope's function of the same name, and the other bucket's is never it", async () => {
+    // Recipe rule 6: a whole-statement pin cannot see a wrong reply FIELD, and a wrong
+    // identity match answers a neighbouring row rather than a refusal. Three rows in the
+    // catalog are called `discount` and each carries a different body, so the text is what
+    // says which row was found.
+    const inDefault = await objectProvider.readObjectSource!([BUCKET, "_default", "discount"], "function");
+    const [defaultPart] = inDefault.parts;
+    if (isSourcePartUnavailable(defaultPart)) throw new Error("narrowing");
+    expect(defaultPart.text).toBe("x / 2");
+
+    const inOtherBucket = await objectProvider.readObjectSource!(["other", "inventory", "discount"], "function");
+    const [otherPart] = inOtherBucket.parts;
+    if (isSourcePartUnavailable(otherPart)) throw new Error("narrowing");
+    expect(otherPart.text).toBe("price * 0");
+  });
+
+  test("reads the definition on the catalog read the listing already makes, and asks for both fields", async () => {
+    // The fake routes on statement content, so this is the only assertion that can see the
+    // projection change. `f.definition` is what this task added: without it every row's
+    // `definition` reads as undefined, every read becomes a refusal, and a refusal passes
+    // the conformance walk and every count assertion alike.
+    queryBodies = [];
+    await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+    expect(statementsIssued()).toEqual([FUNCTIONS_STATEMENT]);
+    // No identifier reaches the statement: the identity is matched in code against the
+    // rows the listing itself produces, so there is no escaper here to get wrong.
+    expect(queryBodies[0].args).toBeUndefined();
+  });
+
+  test("carries a refusal, and no text beside it, for a row whose definition holds no body", async () => {
+    // The EXTERNAL JavaScript function case. Community Edition refuses to create one at
+    // all ("Functions of type javascript are only supported in Enterprise Edition",
+    // measured on 8.0.2), so this row shape is authored here rather than captured.
+    queryHandler = (statement) =>
+      statement.includes("system:functions")
+        ? queryPayload([
+            {
+              identity: { bucket: BUCKET, scope: "inventory", name: "discount", type: "scope" },
+              definition: { "#language": "javascript", library: "mylib", object: "add", parameters: ["a"] },
+            },
+          ])
+        : objectQueryPayload(statement);
+
+    const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function");
+    // The REFUSAL document's own identity, which nothing else in this repository asserts.
+    // `assertSourceDocument` compares path and kind, but it only walks documents built from
+    // the provider's own listing, and every couchbase listing row is readable, so no refusal
+    // document's identity is ever checked there. Composing the refusal path from the matched
+    // catalog row rather than from the request is the obvious refactor once `row` is in
+    // scope, and it would attribute the sentence to a different function: the viewer keys and
+    // captions the pane by `document.path`.
+    expect(document.path).toEqual([BUCKET, "inventory", "discount"]);
+    expect(document.kind).toBe("function");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toContain("evaluator endpoint");
+    expect(part.unavailable).toContain("discount");
+    // Recipe rule 8: a part carrying BOTH keys narrows to the refusal arm and satisfies the
+    // assertion above while carrying a real definition, so the absence of `text` is what
+    // has to be asserted.
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("refuses a row carrying no definition at all, and one whose text is blank", async () => {
+    for (const definition of [undefined, { "#language": "inline", text: "   " }, { "#language": "inline", text: 7 }]) {
+      queryHandler = (statement) =>
+        statement.includes("system:functions")
+          ? queryPayload([{ identity: { bucket: BUCKET, scope: "inventory", name: "discount" }, definition }])
+          : objectQueryPayload(statement);
+      const [part] = (await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function")).parts;
+      expect(isSourcePartUnavailable(part)).toBe(true);
+      expect(Object.hasOwn(part, "text")).toBe(false);
+    }
+  });
+
+  test("raises for a function the catalog does not hold, naming the object", async () => {
+    await expect(
+      objectProvider.readObjectSource!([BUCKET, "inventory", "no_such_function"], "function"),
+    ).rejects.toThrow(/no_such_function/);
+  });
+
+  test("raises for a GLOBAL function addressed through a bucket, which is not where it lives", async () => {
+    // `celsius` IS in the catalog the read walks, and it carries a readable body, so a
+    // match that ignored the bucket and the scope would answer it a document here.
+    await expect(objectProvider.readObjectSource!([BUCKET, "_default", "celsius"], "function")).rejects.toThrow(
+      /celsius/,
+    );
+  });
+
+  test("refuses a kind that declares no source, reading the DECLARATION and never the kind id", async () => {
+    for (const kind of ["collection", "index", "view"]) {
+      await expect(objectProvider.readObjectSource!([BUCKET, "inventory", "airline"], kind)).rejects.toThrow(
+        new RegExp(`declares no readable source for the kind "${kind}"`),
+      );
+    }
+  });
+
+  test("refuses a declaration that gained hasSource and no sourceLanguage rather than defaulting one", async () => {
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      objectKinds: [{ id: "function", role: "routine", label: "Function", labelPlural: "Functions", hasSource: true }],
+    });
+    await expect(objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function")).rejects.toThrow(
+      /no sourceLanguage/,
+    );
+  });
+
+  test("refuses a path of the wrong depth for the kind, in the same words describeObject uses", async () => {
+    await expect(objectProvider.readObjectSource!([BUCKET, "discount"], "function")).rejects.toThrow(
+      /"function" path is \[bucket, scope, name\]/,
+    );
+  });
+
+  test("bounds a definition at the caller's limit and says so in the engine-neutral sentence", async () => {
+    const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "discount"], "function", 5);
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text).toBe("price");
+    expect(part.truncated).toEqual({ limit: 5, reason: sourceBoundTruncationReason(5) });
+  });
+
+  test("derives the bucket and the scope from the DECLARATION, not from a position", async () => {
+    // Recipe rule 9. Couchbase's shipped declaration is ALREADY two-level, so a spyOn
+    // swapping in a two-level `containerLevels` matches the real one and would pass for an
+    // implementation hardcoding `bucket = path[0]` and `scope = path[1]`. The second
+    // declaration swaps the two levels over and the path is fed in the swapped order, so
+    // the SAME row must still be found and the same body returned.
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      containerLevels: [
+        { id: "schema", label: "Scope", labelPlural: "Scopes" },
+        { id: "catalog", label: "Bucket", labelPlural: "Buckets" },
+      ],
+    });
+    try {
+      const document = await objectProvider.readObjectSource!(["inventory", BUCKET, "discount"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.text).toBe("price - (price * pct / 100)");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("derives the function NAME from the last segment, not from a position", async () => {
+    // The name is `path[path.length - 1]` and never `path[2]`, and the two are
+    // behaviour-identical while a function sits at exactly three segments. So the
+    // DECLARATION is varied instead: a `function` kind handed an `attachedTo` is addressed
+    // at four segments, and `path[2]` then names the base object while the last segment
+    // names the function itself.
+    const spy = spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      objectKinds: [
+        {
+          id: "function",
+          role: "routine",
+          label: "Function",
+          labelPlural: "Functions",
+          hasSource: true,
+          sourceLanguage: "sql",
+          attachedTo: "collection",
+        },
+      ],
+    });
+    try {
+      const document = await objectProvider.readObjectSource!([BUCKET, "inventory", "airline", "discount"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.text).toBe("price - (price * pct / 100)");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // Statement text. The fake routes on statement content, so these are the only
+  // assertions that can see a change to the statements themselves.
+  // --------------------------------------------------------------------------
+
+  test("reads the catalogs the measurements name, and no others", async () => {
+    queryBodies = [];
+    await objectProvider.listContainers();
+    await objectProvider.listContainers([BUCKET]);
+    await objectProvider.countObjects([BUCKET]);
+    const statements = queryBodies.map((body) => String(body.statement));
+
+    // system:all_scopes and NOT system:scopes: measured on 8.0.2, system:scopes
+    // returns neither `_default` nor `_system` while COUNT(*) over it counts both,
+    // so reading it would lose the scope that holds most of the bucket's collections.
+    expect(statements.some((statement) => statement.includes("system:all_scopes"))).toBe(true);
+    expect(statements.some((statement) => /system:scopes\b/.test(statement))).toBe(false);
+    // `_system` is excluded by exact NAME. A user scope cannot start with `_`
+    // ("First character must not be _ or %", measured), so nothing a person creates
+    // can be hidden by it and `_default` is not swept up with it.
+    expect(statements.some((statement) => statement.includes('s.name != "_system"'))).toBe(true);
+
+    // system:keyspaces and system:indexes, NOT their `all_` variants: the `all_`
+    // forms carry the `_system` scope, the `#sequentialscan` pseudo-index and a
+    // DUPLICATE of the bucket-level row, which would give one collection two paths.
+    expect(statements.some((statement) => /FROM system:keyspaces\b/.test(statement))).toBe(true);
+    expect(statements.some((statement) => /system:all_keyspaces/.test(statement))).toBe(false);
+    expect(statements.some((statement) => /system:all_indexes/.test(statement))).toBe(false);
+
+    // No COUNT(*) anywhere in the object surface. Measured on 8.0.2: COUNT(*) over a
+    // `system:` keyspace can count rows the same catalog's projection does not return
+    // (system:scopes answers 4 and 2), so a count taken that way would badge a number
+    // the folder can never show. Every count here is the length of the rows the
+    // listing itself returns.
+    expect(statements.some((statement) => statement.includes("COUNT(*)"))).toBe(false);
+
+    // Both reserved words stay backtick-quoted: unquoted, the projection is error
+    // 3000 on 8.0.2.
+    expect(statements.some((statement) => statement.includes("`bucket`"))).toBe(true);
+
+    // THE PRE-SCOPES BUCKET-LEVEL BRANCH, in both object statements. `_default`.`_default`
+    // and any index on it appear as a row carrying no `bucket`/`bucket_id` at all, whose
+    // name is the BUCKET's, so dropping this branch hides every document written before
+    // scopes existed. The fake routes on statement content and cannot see the predicate
+    // change, so this is the only assertion that can.
+    expect(statements.some((statement) => statement.includes("k.`bucket` IS MISSING AND k.name = $1"))).toBe(true);
+    expect(statements.some((statement) => statement.includes("i.bucket_id IS MISSING AND i.keyspace_id = $1"))).toBe(
+      true,
+    );
+  });
+
+  test("binds the bucket rather than interpolating it into the statement", async () => {
+    queryBodies = [];
+    await objectProvider.countObjects(["other-bucket"]);
+    for (const body of queryBodies) {
+      const statement = String(body.statement);
+      if (statement.includes("system:functions")) continue;
+      expect(statement).not.toContain("other-bucket");
+      expect(body.args).toEqual(["other-bucket"]);
+    }
   });
 });

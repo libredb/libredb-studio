@@ -129,9 +129,8 @@ large schema (100+ tables/constraints/indexes) that explodes into minutes of pla
 
 If you edit these queries, keep `MATERIALIZED` or you reintroduce the timeout.
 
-**Fallback chain for engines that reject part of this query (#38680).** `getSchema()`,
-`getSchemaList()`, and `getSchemaRelations()` all route their query through
-`queryWithMaterializedFallback()` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)), which
+**Fallback chain for engines that reject part of this query (#38680).** The object surface's
+container and detail reads all route their query through `queryWithMaterializedFallback()` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)), which
 recovers real object-browser data on four independent gaps instead of failing outright:
 
 1. **The `MATERIALIZED` keyword itself.** Materialize and RisingWave reserve it for their own
@@ -197,7 +196,7 @@ those round trips are latency the object browser pays on every refresh.
 `tables_info` reads `pg_class.reltuples`, which is an **estimate**, and PostgreSQL 14+ writes
 **-1** there for a relation nothing has vacuumed or analysed yet. That is "I have not counted
 this", not "this has no rows". `estimatedRowCount()` maps it — and a NULL from a pg_class join
-that matched nothing — to `undefined`; `TableSchema.rowCount` is optional and both
+that matched nothing — to `undefined`; the row count is optional on an object and both
 [TableItem.tsx](../../src/components/schema-explorer/TableItem.tsx) and `DatabaseDocs.tsx`
 already gate on that, so no badge is drawn rather than a number nobody produced.
 
@@ -255,7 +254,7 @@ catalog would qualify, and without the `pg_` name Cloudberry's restriction would
 flattened into a settled fact the next time its wording contains "does not exist".
 Verified in the browser in both directions on live instances.
 
-### 3.1.1 The system-schema exclusion set
+### 3.1.3 The system-schema exclusion set
 
 `SYSTEM_SCHEMAS` ([postgres.ts](../../src/lib/db/providers/sql/postgres.ts)) is single-sourced and
 interpolated into every `NOT IN (...)` clause in the file, so a query added later cannot filter on a
@@ -281,9 +280,9 @@ directions because the two readers use different catalogs:
   engine. The index count still reads `pg_indexes`, which has no equivalent second reader.
 
 Every CTE in the schema queries carries the filter, not just some: `pk_info` and `fk_info` were
-missing it while `tables_info`, `columns_info` and `index_info` had it, which let
-`getSchemaRelations()` keep listing `_timescaledb_catalog` and `google_ml` relations through the FK
-side of its `FULL OUTER JOIN` after the browser had stopped showing them.
+missing it while `tables_info`, `columns_info` and `index_info` had it, which let the deleted
+relations read keep listing `_timescaledb_catalog` and `google_ml` relations through the FK side of
+its `FULL OUTER JOIN` after the browser had stopped showing them.
 
 Extension-created schemas are excluded by **ownership**, not by name. A hardcoded
 `google_ml` would have hidden a real schema from anyone who happened to name one that -
@@ -312,10 +311,358 @@ which its schema page does not list, and AlloyDB's `google_ml`, which Google's d
 traced through `pg_depend` to the `google_ml_integration` extension the Omni image enables by
 default.
 
+### 3.1.4 What the object surface declares, and which catalog answers for it
+
+[§3.1.1](#311-what-counts-as-a-table) is the flat model's answer to "what is a table", and it is a
+single yes/no over every relation the database holds.
+The object surface (#789) replaces it with seven named kinds, each declared in
+`getCapabilities().objectKinds` by the provider that has it, and each answered by the catalog that
+knows about it:
+
+| Kind | `role` | Catalog | Test |
+|---|---|---|---|
+| `table` | `relation` | `pg_class.relkind` in `'r'`, `'p'` | `acceptsRowWrites: true` |
+| `view` | `relation` | `pg_class.relkind = 'v'` | not a row-write target |
+| `materialized_view` | `relation` | `pg_class.relkind = 'm'` | not a row-write target |
+| `sequence` | `config` | `pg_class.relkind = 'S'` | |
+| `function` | `routine` | `pg_proc.prokind = 'f'` | |
+| `procedure` | `routine` | `pg_proc.prokind = 'p'` | |
+| `trigger` | `attached` | `pg_trigger` where `NOT tgisinternal` | `attachedTo: 'table'` |
+
+Five of the seven also declare `hasSource` and a `sourceLanguage`, which is what gives a row a Source tab; [§3.1.5](#315-object-source-789) says which, what each definition text IS, and why `table` and `sequence` declare nothing.
+
+`containerLevels` is one level, `schema`. A `catalog` level is not declared: a `pg` pool is opened
+against one database and nothing in the product can switch it on a live connection, so the level
+would draw a folder with exactly one child forever.
+
+**No `index` kind**, deliberately, and this is the line the fifteen other providers are read
+against. PostgreSQL's own catalog models an index as a property of the relation it is on:
+`pg_index` is keyed by `indrelid` and an index cannot exist apart from one. So it stays where it
+already is, in `describeObject()`'s output beside that object's columns, rather than becoming a
+container-level folder. An `index` kind belongs only where the engine's catalog names indexes as
+first-class objects at container level.
+
+**A view declares no `acceptsRowWrites`.** PostgreSQL does accept an `UPDATE` against a simple
+updatable view, and against any view carrying an `INSTEAD OF` trigger. The declaration is still
+absent, because it is per KIND and that fact is per OBJECT: claiming it would offer an import
+target that fails on most views in most schemas. `kindAcceptsRowWrites()`
+([object-kinds.ts](../../src/lib/db/object-kinds.ts)) reads an absent flag as false, so nothing has
+to be written for that to hold.
+
+**`prokind` costs the routine folders, never the container.** `pg_proc.prokind` arrived in
+PostgreSQL 11, and the wire-compatible forks do not all have it; a server without it answers
+`42703` for the routine arm of the counting statement. `countObjects()` re-runs the statement with
+that arm removed, so the relations and the triggers still carry their counts and only `function`
+and `procedure` carry `{ unavailable }` with the server's own sentence. Losing two folders to a
+missing column is the right cost; losing the whole schema to it is not. The retry is keyed on the
+column name as well as the code, because `42703` is "undefined column" generally and re-running
+without the routine arm repairs nothing when the missing column was in an arm that survives.
+
+**Three facts, not two.** `KindCount` is `{ count }` or `{ unavailable }`, and every declared kind
+is seeded at `{ count: 0 }` before the read. So a folder the engine has and this schema holds none
+of renders a zero badge; a folder whose read was refused renders the reason; and a kind this engine
+does not have at all is simply not in `objectKinds`, so no folder is drawn. The flat model
+collapsed all three into an empty array, which is the same failure
+[§3.1.2](#312-two-kinds-of-absence-and-why-neither-is-an-empty-array) records on the monitoring
+side. The `unavailable` sentence is the server's own, not passed through `mapDatabaseError()`:
+nothing here throws, and the mapper's prefix would put this product's words in front of the
+server's.
+
+**`describeObject()` reads columns from `pg_attribute`, not from `CTE_COLUMNS_INFO`.** This is the
+one place the object surface does not reuse the schema query's CTEs, and the reason is measured.
+`information_schema.columns` is defined over relkinds `'r'`, `'v'`, `'f'` and `'p'` only, so it has
+no row at all for a materialized view or a sequence. On the seeded `postgres:18` fixture it answered
+**0 columns** for `app.revenue_by_month` (relkind `'m'`) and **0** for `app.invoice_number_seq`
+(`'S'`), while `pg_attribute` answered 2 and 3. Reusing it would have shipped the browser's headline
+new folder, the materialized view #710 is about, with an empty column list. The primary key, foreign
+key and index CTEs *are* reused, so a fork that needs `withoutForeignKeyCatalog()` or
+`withoutJsonAggFunctions()` gets the same repair here that the container read gets.
+
+The type text matches on every column but one shape. `format_type(a.atttypid, NULL)` is passed NULL
+rather than `a.atttypmod` because that is what `information_schema.columns.data_type` says:
+`character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
+by column on `app.orders`, so `describeObject()` and `describeObjects()` name a column's type
+identically.
+
+One measurement is kept from the deleted flat reading, because it is why the type text is read this
+way. `app.products.tags` is `text[]`: `format_type` answers `text[]` and both object-model surfaces
+show that, while `information_schema.columns.data_type` answered the bare word `ARRAY` and put the
+element type in `information_schema.element_types`. The object model had the better half of that
+disagreement, and it is the only reading left.
+
+`OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
+[§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
+CTEs are read by several joins over every relation in the database, and materializing once is
+cheap. Here there is one target object, and the hint forbids the planner from pushing `$1`/`$2` into
+the CTEs, so it computes every constraint and every index in the database to answer for one name.
+Measured on the 10-table seed fixture with `EXPLAIN`: total plan cost **3416.66** with the hints
+against **122.99** without, and the gap grows with the database rather than with the object.
+
+**A size nobody could read is dropped, not zeroed.** `listObjects()` selects
+`pg_total_relation_size(c.oid)` without the `COALESCE(..., 0)` the schema query wraps the same call
+in, and does not go through `queryWithMaterializedFallback()`. CockroachDB and Materialize have no
+such builtin and both are reached under the `postgres` type id, so the listing retries with the
+size column REMOVED: the row then carries no `size_bytes` and `DatabaseObject.sizeBytes` is absent,
+which draws no badge. The shared `withoutTotalRelationSizeFn()` would have answered a literal `0`
+instead, and "0 bytes" is a claim about every relation on those servers that nobody measured, which
+is the distinction [§3.1.0](#310-a-row-count-nobody-counted) draws for row counts. Nothing else in
+the listing statement is repairable by that chain anyway: it has no `AS MATERIALIZED`, no
+`json_agg`, no `to_regclass` and no `pg_depend`. `listContainers()` does go through the chain,
+because `schemaExclusion()` carries the `pg_depend` ownership test and
+`withoutExtensionOwnershipTest()` drops only a filter.
+
+**`path` addresses, `name` labels, and the two are allowed to differ.** `DatabaseObject.path`'s
+last segment is the identifier that is unique WITHIN ITS PARENT, and two kinds here need more than a
+bare name for that:
+
+| Kind | Path | `name` |
+|---|---|---|
+| relation | `["app", "orders"]` | `orders` |
+| routine | `["app", "order_total(integer)"]` | `order_total` |
+| trigger | `["app", "orders", "orders_stamp_updated_at"]` | `orders_stamp_updated_at` |
+
+A routine's segment is the ARGUMENT TYPES and nothing else, because two overloads differ by types
+and never by parameter names: a name in the segment adds nothing to identity, and would change the
+identity when somebody renames a parameter. `pg_get_function_identity_arguments()` is the obvious
+candidate and is deliberately not used, measured on `postgres:18` for the reason above:
+
+| Routine | `pg_get_function_identity_arguments()` | What the path carries |
+|---|---|---|
+| `app.order_total` | `order_total(order_id integer)` | `order_total(integer)` |
+| `app.touch_order` | `touch_order(IN order_id integer)` | `touch_order(integer)` |
+| `app.stamp_updated_at` | `stamp_updated_at()` | `stamp_updated_at()` |
+
+The form used is `oid::regprocedure` minus the schema qualification, which is the point:
+`regprocedure` prepends the schema and the path already carries it, so using it directly would say
+`app` twice. Measured over all 3402 routines in `pg_catalog`, the two agree on 3315; the 87 that
+differ are every case where `regprocedure` double-quotes a RESERVED-WORD routine name
+(`"char"(integer)`, `"position"(text,text)`), and the argument list is identical in all 87. Quoting
+is a fact about SQL text and a path segment is data, so the bare `proname` is the right half of that
+disagreement. Uniqueness was checked rather than assumed: across every schema on that server, no two
+routines share a segment. The `COALESCE` in the expression is load-bearing, because
+`array_to_string` over an empty array answers NULL and a zero-argument routine would otherwise have
+no address at all.
+
+A trigger nests under its table because `attachedTo: 'table'` says it does, and because a trigger
+name is unique per table and not per schema: `[schema, trigger]` gives two triggers on two tables
+one address. The path builder reads this off the ROW - a `parent` column adds a segment, an
+`identity` column replaces the last one - so the three listings share one rule and no code branches
+on a kind id.
+
+**`describeObject()` takes the kind, and branches on it rather than on the name.** Only the kinds
+resolved in `pg_class` have columns, indexes or foreign keys, so a routine and a trigger answer three
+empty lists with no round trip. That was already the OUTPUT before the kind was passed, but by
+accident: the detail statement keys the last path segment against `pg_class.relname`, so
+`order_total(integer)` answered nothing only because no relation is called that, and a trigger named
+`orders` on table `customers` would have been handed `app.orders`'s 23 columns as its own. Path depth
+is derived from the declaration in the same way, two segments plus one where the kind declares
+`attachedTo`. That depth is `containerLevels.length + 1`, read off the declaration rather than
+written as a literal: `2` and `3` are right for a one-level engine and wrong for the five two-level
+ones in this epic, and the segment names in the refusal message come from the same array as the
+depth, so the message and the check cannot disagree.
+
+**Listing order is applied in TypeScript, not with an `ORDER BY`, and sorts by PATH.** Three
+different catalogs answer the three listings, so three `ORDER BY` clauses would be three chances to
+disagree; and a SQL sort runs under the database's own collation, which is `C` on the seeded fixture
+and `en_US.UTF-8` on plenty of real servers, so one schema would come back in two orders on two
+servers. Sorting by path rather than by name matters for the same reason the path exists: two
+overloads share a name, so a name sort leaves their order to whatever the catalog happened to
+answer, and sorting by address also groups one table's triggers together.
+
+**Verified against the seed.** `docker/postgres-init/02-sample-data.sql` creates one instance of
+every declared kind in schema `app`, and the provider was run against it end to end:
+
+```
+containers: [{"path":["app"],...},{"path":["public"],...}]
+counts(app): {"table":{"count":10},"view":{"count":4},"materialized_view":{"count":1},
+              "sequence":{"count":11},"function":{"count":2},"procedure":{"count":1},
+              "trigger":{"count":1}}
+function: 2 -> [[["app","order_total(order_id integer)"],"order_total"],
+               [["app","stamp_updated_at()"],"stamp_updated_at"]]
+trigger: 1 -> [[["app","orders","orders_stamp_updated_at"],"orders_stamp_updated_at"]]
+describe revenue_by_month: cols=2 idx=0 fk=0 first=month:timestamp with time zone
+```
+
+The four views are `customer_lifetime_value`, `daily_sales`, `order_summary` and
+`product_sales_summary`, which are the ones #710 reported the app never showed.
+
+**`describeObjects()` is the bulk column read, and it is `describeObject()` with the target chosen by
+RELKIND instead of by name (#789).** One statement answers every relation of one kind in one schema,
+with its columns, primary key, foreign keys and indexes. The lineage is `SCHEMA_FULL_SQL` ->
+`OBJECT_DETAIL_SQL` -> `bulkDetailSql()`, and it is a reshaping rather than a new statement on
+purpose: those bodies carry which catalog answers which fact and which schemas are excluded, all of
+it measured, and the shared PK, FK and index CTEs bring their fallback repairs with them.
+
+Why it exists at all: `src/lib/agent/tools.ts` read the agent's whole column, index and foreign-key
+grounding through the flat schema reading, and the four methods above cannot answer that. The inventory route
+tried, as one `describeObject` per object, and removed it as an N+1 of up to 5000 sequential round
+trips. Measured here on a 200-table schema: **33 ms for one `describeObjects()` against 4,135 ms for
+200 `describeObject()` calls**, both answering the same 600 columns, 200 indexes and 200 foreign keys.
+
+| Argument | Meaning |
+|----------|---------|
+| `container` | the schema, exactly as `listObjects` takes it |
+| `kind` | the declared kind; a kind with no relation behind it answers `{ details: [] }` with no round trip |
+| `limit` | optional; bounds ONE read, which nothing else in the object surface can do |
+
+Three properties it holds to:
+
+1. **One round trip per container and kind, never per object.** The arguments are a container and a
+   kind, the same pair `listObjects` takes, so a caller's fan-out is bounded by the container-and-kind
+   product it already bounds for listing rather than by a second, differently shaped budget. A list of
+   paths was the alternative and was rejected: it reaches a two-level engine as an IN list over
+   tuples, needs a second one for a kind with mixed path depth, and leaves a caller holding 5000 paths
+   to chunk them itself.
+2. **Keyed by `path`.** Every `ObjectDetail.path` is built by `objectPath()`, the same function
+   `listObjects` builds its paths with, because every caller joins the two answers on path. Never a
+   joined name: `"app.orders"` is what `query-generators.ts` used to split back on `.`.
+3. **It reports its own truncation.** `limit + 1` rows are asked for, so a saturated read is
+   distinguishable from an exact one without a second count; the extra row is dropped and
+   `truncated` carries the caller's own limit with the one sentence every provider reports a
+   caller's bound with, `callerBoundTruncationReason()` in `src/lib/db/object-kinds.ts`. An
+   unbounded call runs without a `LIMIT` clause and can never report truncation. The deleted flat
+   reading's `FILTER (WHERE c.ordinal_position <= 100)` column cap is deliberately NOT carried over,
+   because an unreported bound is the defect this field exists to prevent.
+
+**The `AS MATERIALIZED` hints are stripped here too, and the measurement is the other way round from
+the plan estimate.** `EXPLAIN (ANALYZE)` on `postgres:18` against the seeded `app` schema, ten
+tables: **6.5 ms** stripped against **20.2 ms** with the hints. The plan COST estimate disagrees,
+1301.35 stripped against 1287.54 with them, which is why the decision is recorded from ANALYZE. The
+gap grows with the schema rather than closing, because the hint forbids the planner from pushing
+`$1` into the shared CTEs and it then computes every constraint and index in the database: on a
+200-table schema, **29 ms against 730 ms**. Rebuild that schema with
+
+```sql
+CREATE SCHEMA bulkprobe;
+DO $$ BEGIN FOR i IN 1..200 LOOP EXECUTE format(
+  'CREATE TABLE bulkprobe.t%s (id serial primary key, a text, b int references bulkprobe.t%s(id))',
+  i, greatest(i-1,1)); END LOOP; END $$;
+```
+
+`ORDER BY c.relname` inside the target CTE is what makes a bounded read deterministic, and it is the
+one sort in this file that runs under the SERVER's collation. It decides WHICH objects a bound keeps
+and nothing else: the result is re-sorted by path in TypeScript, segment by segment, and a caller
+joins on path rather than on position.
+
+**Verified against the seed**, `docker/postgres-init/02-sample-data.sql`, on `postgres:18`:
+
+```
+describeObjects(app, table):             10 details, 1 round trip, truncated=undefined
+describeObjects(app, view):              4 details      materialized_view: 1     sequence: 11
+describeObjects(app, function|trigger):  0 details, 0 round trips
+describeObjects(app, table, limit 3):    3 details, truncated={"limit":3,
+                                         "reason":"the bulk column read was bounded at 3 objects by its caller"}
+describeObjects(app, table, limit 10):   10 details, truncated=undefined
+```
+
+Every detail path was found in that kind's own `listObjects()` answer, and every column list matched
+`describeObject()` for the same table column for column.
+
+### 3.1.5 Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers one object's definition text.
+Five of the seven declared kinds have one, and each declares `hasSource: true` with `sourceLanguage: "pgsql"`.
+
+| Kind | Statement | What the text is | `form` | `origin` |
+|---|---|---|---|---|
+| `view` | `pg_get_viewdef(c.oid, false)` over `pg_class` joined to `pg_namespace`, `relkind = 'v'` | the bare `SELECT`, with no `CREATE` around it | `partial` | `regenerated` |
+| `materialized_view` | the same statement with `relkind = 'm'` | the bare `SELECT` | `partial` | `regenerated` |
+| `function` | `pg_get_functiondef(p.oid)` over `pg_proc`, `prokind = 'f'` | a runnable `CREATE OR REPLACE FUNCTION` | `complete` | `regenerated` |
+| `procedure` | the same statement with `prokind = 'p'` | a runnable `CREATE OR REPLACE PROCEDURE` | `complete` | `regenerated` |
+| `trigger` | `pg_get_triggerdef(t.oid, false)` over `pg_trigger` joined to `pg_class` and `pg_namespace`, `NOT tgisinternal` | a runnable `CREATE TRIGGER` | `complete` | `regenerated` |
+
+**`table` and `sequence` declare nothing, and it is the first of the two absences: the engine publishes no such text at all.**
+There is no `pg_get_tabledef` and no `pg_get_sequencedef`, and `pg_catalog.pg_sequences` publishes a sequence's properties (`start_value`, `increment_by`, `cache_size`) rather than any statement.
+A kind an engine cannot answer for is absent from the declaration and is never declared and then refused, so those two rows offer no Source action at all.
+
+**`origin` is `regenerated` on all five, in PostgreSQL's own words.**
+The documentation calls this family's output "a decompiled reconstruction, not the original text of the command", so none of these five is the text anybody typed: a comment, the original whitespace and the original casing are all gone.
+`view` and `materialized_view` are additionally `partial` because `pg_get_viewdef` answers the `SELECT` and nothing else, which is what the reader is told rather than left to discover.
+
+**The pretty flag is `false` on every call.** PostgreSQL documents that "the default format is more likely to be interpreted the same way by future versions of PostgreSQL; so avoid using pretty-printed output for dump purposes", and this text may be submitted back.
+
+**PostgreSQL has NO privilege-driven refusal for object source. This is MEASURED and it is a CANNOT, not an omission.**
+On PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1), a role holding no `USAGE` on schema `app`, no `EXECUTE` and no `SELECT` read the COMPLETE text of `app.order_total(integer)`, `app.order_summary` and `orders_stamp_updated_at`, in the same session where `SELECT app.order_total(1)` was refused with `permission denied for schema app`.
+The `pg_get_*` family applies no privilege check at all.
+That role is `src_probe` in `docker/postgres-init/03-object-fixture.sql` and it is there so the measurement can be re-run rather than believed.
+
+**The consequence is an implementation rule, and it is the reason these statements pass an oid.**
+The two failures that DO exist are name RESOLUTION and ABSENCE.
+`pg_get_viewdef('app.order_summary'::regclass, false)` raises `ERROR: 42501: permission denied for schema app` for that same role, because the `regclass` and `regprocedure` casts resolve the NAME and name resolution needs `USAGE` on the schema.
+So a provider that casts manufactures a refusal the engine never made, on an object the tree has already listed.
+Every statement above joins `pg_namespace` on the schema NAME, which any caller may read, and hands the catalog's own `oid` to the function.
+
+**Absence RAISES; it is never a refusal part.**
+No row, a NULL definition and a whitespace-only definition are one fact here: the catalog holds no such object at that address.
+Measured: `pg_get_viewdef` answers NULL for an oid that is not a view.
+PostgreSQL utters no sentence for that, so a refusal part would carry OUR silence dressed as the server's answer, and an empty part would put an empty editor over a definition nobody read.
+The raise is a `QueryError` naming the object's own segment.
+
+**Two refusal arms exist for a wire-compatible FORK missing a catalog surface, and NEITHER FORK REACHES THEM.**
+This was measured on both forks on 2026-09-13 and the earlier wording here, "so both arms are reachable", was wrong. The arms fire on SQLSTATE `42883` (the function is absent) and `42703` (`pg_proc.prokind` is absent), which are the codes PostgreSQL 18.4 answers and the shapes the suite pins.
+
+| Fork | `pg_get_viewdef` | `pg_get_functiondef` | `pg_proc.prokind` | `pg_get_triggerdef` | What the provider does |
+|---|---|---|---|---|---|
+| CockroachDB v26.2.5 | works | works | present | works | reads the source. Neither refusal arm is needed |
+| Materialize v26.40.0 | works on a plain view, **NULL on a materialized view** | `XX000` | `XX000` | `XX000` | RAISES on all four, because `XX000` is neither of the two codes and a NULL definition is read as an absence |
+
+Re-run it, one container at a time, with the exact statements this file ships:
+
+```
+docker run -d --name <yours> -p <yours>:26257 cockroachdb/cockroach:v26.2.5 start-single-node --insecure --accept-sql-without-tls
+docker run -d --name <yours> -p <yours>:6875 materialize/materialized:v26.40.0
+psql "postgresql://root@127.0.0.1:<yours>/defaultdb?sslmode=disable"     # CockroachDB
+psql "postgresql://materialize@127.0.0.1:<yours>/materialize?sslmode=disable"   # Materialize
+```
+
+then `\set VERBOSITY verbose` and run each statement from `viewSourceSql()`, `SOURCE_ROUTINE_SQL` and `SOURCE_TRIGGER_SQL`.
+
+CockroachDB v26.2.5 answers every one of them, including `pg_get_functiondef` on a `CREATE FUNCTION` and `p.prokind = 'f'`, so nothing there is refused and nothing there is missing.
+
+Materialize v26.40.0 answers `XX000` for each absent surface, verbatim
+`function "pg_catalog.pg_get_functiondef" does not exist` and `column "p.prokind" does not exist`. `XX000` is `internal_error`, not `undefined_function` or `undefined_column`, so `isMissingCatalogSurface()` does not match and the read RAISES rather than answering a refusal part. The SQLSTATE is the server's and not the harness's: in the same session `SELECT 1/0` answers `22012` and `SELEC 1` answers `42601`, while an unknown table answers `XX000` too.
+
+A third Materialize fact, and it is the sharper one: `pg_get_viewdef` returns **NULL** for a `MATERIALIZED VIEW` (`relkind = 'm'`) while returning the definition for a plain view in the same schema. A NULL definition is read here as an absence, so a materialized view that exists is reported as an object the catalog does not hold.
+
+Widening the arms to `XX000` is NOT an obvious fix and is deliberately not done here: `XX000` is Materialize's generic internal error, so keying on it would turn a real internal failure into this object's refusal, which is the exact confusion the refusal-versus-absence rule exists to prevent. That is a code decision, recorded here rather than taken, and this section is the record: the measurement above is the whole of it, re-runnable with the commands beside it.
+Each is reported as the part's `unavailable`, the server's own sentence unprefixed and NOT passed through `mapDatabaseError()`, for the reason the count refusal gives one section up: the mapper's prefix would put this product's words in front of the server's.
+Measured, and it is why the plain spelling is load-bearing rather than cosmetic: `mapDatabaseError()` returns both sentences above unchanged, and rewrites a message containing "permission denied" into `Authentication failed: ...`.
+Everything else RAISES, including a transport failure, because nobody answering is not the server answering "no", and "Connection terminated unexpectedly" rendered as this object's own refusal is a symptom presented as a fact about the object.
+
+**No identifier escaper, and that is a property of the statements rather than a decision.**
+All five are fully parameterised: the schema, the object's own segment and, for a trigger, its table are binds, and `prokind` is a bind too.
+No caller-supplied name ever reaches statement text on this engine, which is the reason these are preferred over any `SHOW`-shaped alternative.
+
+**Verified end to end against the seeded `postgres:18`**, through the provider itself, connected as `src_probe`, which holds nothing:
+
+```
+view              app.order_summary                   1 part  partial   regenerated  pgsql  606 chars
+materialized_view app.revenue_by_month                1 part  partial   regenerated  pgsql  161 chars
+function          app.order_total(integer)            1 part  complete  regenerated  pgsql  228 chars
+procedure         app.touch_order(integer)            1 part  complete  regenerated  pgsql  185 chars
+trigger           app.orders.orders_stamp_updated_at  1 part  complete  regenerated  pgsql  119 chars
+limit 30 on the function:  30 chars, truncated={"limit":30,
+                           "reason":"the source read was bounded at 30 characters by its caller"}
+app.no_such_view (view):            raises  PostgreSQL holds no view called "no_such_view" in schema "app"
+app.invoice_number_seq (sequence):  raises  PostgreSQL publishes no definition text for the kind "sequence"
+```
+
+Every object `listObjects()` named under each of the five kinds was then read: 4/4 views, 1/1 materialized view, 2/2 functions, 1/1 procedure, 1/1 trigger, nine of nine, all readable text and no refusal.
+A role holding no privilege of any kind read all nine.
+
+**A routine is read by the identity its own listing wrote.**
+The last path segment of a routine is `proname` plus the argument TYPE list, and the source statement compares the SAME expression, `ROUTINE_IDENTITY_EXPR`, which the listing builds the segment with.
+One writer for both, because two copies are two chances for the read to answer "no such routine" for an object the tree had just listed.
+`pg_get_function_identity_arguments()` is not used, for the reason [§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it) gives: it renders parameter names.
+
+**`pgsql` is a real Monaco language id and is no compromise here.**
+It is among the ids the installed `monaco-editor` 0.56.0 registers, unlike `plsql` and `tsql`, which Oracle and SQL Server have to render under `sql`.
+A PL/pgSQL body inside a `$function$` dollar-quoted string is highlighted as PostgreSQL SQL rather than as a procedural language, which is the closest this bundle can come.
+
 ### 3.2 Schema SQL hoisted to module scope
 
-`SCHEMA_FULL_SQL`, `SCHEMA_LIST_SQL`, and `SCHEMA_RELATIONS_SQL` are module-level `const`s, not
-inline template literals inside the methods ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
+The object surface's statements are module-level `const`s, not inline template literals inside the
+methods ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
 This is a **coverage** workaround: `bun`'s coverage instruments the interior lines of a multi-line
 template literal *in a function body* as 0-hit in any test process that imports the file but does
 not exercise that method, and the merged lcov then reports those SQL lines as uncovered. Evaluated
@@ -323,19 +670,13 @@ once at module load, these consts are reported as covered everywhere. The CTE fr
 (`CTE_TABLES_INFO`, `CTE_COLUMNS_INFO`, …) are also single-sourced and composed into the three
 queries so the shared CTEs aren't duplicated (which would otherwise trip the duplication gate).
 
-### 3.3 Two-phase schema loading
+### 3.3 The two-phase schema load, and why it is gone
 
-The schema tree is loaded in two independent calls so a slow or failing relationship query never
-blocks the table list:
-
-- **`getSchemaList()`** — tables + columns + primary keys + row counts/sizes. Renders the tree
-  immediately. Excludes the expensive FK/index joins; returns `indexes: []`, `foreignKeys: []`.
-- **`getSchemaRelations()`** — foreign keys + indexes only, keyed by table display name, merged
-  into the tree asynchronously by the client.
-
-`getSchema()` remains available as the single-round-trip "everything" query (it replaced an old
-N+1 pattern of `1 + N*4` queries). The two-phase split is the path the UI actually uses (via
-`/api/db/schema/list` and `/api/db/schema/relations`).
+The schema tree used to be loaded in two independent calls, the deleted flat list read for tables, columns and
+primary keys and the deleted flat relations read for foreign keys and indexes, so a slow relationship query
+could not block the table list. Both are deleted with the flat reading (#789). The object browser
+reads counts before names and names before columns, so the cost the split was managing is now bounded
+by what the reader actually opened rather than by a second query.
 
 ### 3.4 Cross-schema display names & FK references
 
@@ -346,6 +687,30 @@ points across schemas renders correctly. The FK introspection CTE (`CTE_FK_INFO`
 **both** `constraint_name` and `constraint_schema` — joining on name alone
 mis-resolves same-named constraints in different schemas (this was a real bug; there is a
 regression test for it).
+
+### 3.4.1 The session default container, and why a bare name needs one
+
+`listContainers()` marks `isSessionDefault` from `current_schema()`, which standing ruling 5a2 of
+issue #789 requires of every provider with container levels and this one answered for none.
+
+It is the SERVER'S answer and not the literal `public` written down. Measured on a `postgres:18`
+seeded from `docker/postgres-init/`: a fresh connection reports `search_path` as `"$user", public`
+and `current_schema()` as `public`, and a connection that sets `search_path` moves it.
+
+Without the mark the object browser's flat join had no tie-breaker. §3.4 above drops the `public`
+qualifier and keeps every other one, so the deleted flat reading answered `app.orders` for one table
+and a bare `orders` for another; a bare name is a valid suffix of BOTH addresses, and with no container marked
+as the session's own the shared address rule refused it as ambiguous rather than reading it as the
+schema the connection is actually in. `docker/postgres-init/03-object-fixture.sql` creates
+`public.orders` beside the seeded `app.orders` so that case exists in the fixture rather than in a
+paragraph: it is the only shape that can tell an address that RESOLVES from a name that merely
+happens to be a suffix.
+
+One thing this pairing does NOT yet handle, and it is recorded here rather than fixed: the display
+rule strips `public` unconditionally while the tie-breaker follows `current_schema()`. A connection
+whose `search_path` puts another schema first therefore spells `public.orders` qualified while the
+join prefers that other schema, and a bare name would then be read in the wrong place. Nothing in
+the fixture reaches it, because the seeded connection's default IS `public`.
 
 ### 3.5 Resilient monitoring
 
@@ -684,21 +1049,28 @@ reconstructing. `columnTypes` is consumed by the results grid's column labels, b
 
 ## 6. Schema introspection
 
-Three queries, one set of shared `MATERIALIZED` CTEs:
-
-| Method | SQL const | Returns | Used by |
-|--------|-----------|---------|---------|
-| `getSchema()` | `SCHEMA_FULL_SQL` | tables + columns + PKs + FKs + indexes (one round-trip) | direct/full loads |
-| `getSchemaList()` | `SCHEMA_LIST_SQL` | tables + columns + PKs (fast, no FK/index) | `/api/db/schema/list` |
-| `getSchemaRelations()` | `SCHEMA_RELATIONS_SQL` | FKs + indexes keyed by table | `/api/db/schema/relations` |
+One surface, the object surface ([§3.1.1](#311-the-object-surface-789)): `listContainers()`,
+`countObjects()`, `listObjects()`, `describeObject()` and `describeObjects()`, over one set of shared
+`MATERIALIZED` CTEs.
 
 Common behaviour:
-- System schemas (`pg_catalog`, `information_schema`, `pg_toast`) are excluded; only `BASE TABLE`s.
-- Row counts come from `pg_class.reltuples` (planner estimate, fast) and are clamped to ≥ 0
-  (`reltuples` is `-1` on never-analyzed tables).
-- Column lists are capped at the first 100 columns (`ordinal_position <= 100`).
+- System schemas (`pg_catalog`, `information_schema`, `pg_toast`) are excluded, by ownership rather
+  than by name where an extension owns the schema.
+- Row counts come from `pg_class.reltuples` (planner estimate, fast); `-1` means never analysed and
+  is reported as no count rather than as zero.
+- Column lists are NOT capped, and a bulk read that a caller bounded says so in `truncated`.
 - Sizes use `pg_total_relation_size` formatted by `formatBytes()`.
 - Display names follow the public/qualified rule from [§3.4](#34-cross-schema-display-names--fk-references).
+
+Five more methods answer the container-aware object model (#789) and are documented in [§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it):
+
+| Method | SQL const | Returns |
+|--------|-----------|---------|
+| `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above, with the session's own marked from `current_schema()` |
+| `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
+| `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
+| `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
+| `describeObjects(container, kind, limit?)` | `BULK_DETAIL_SQL[kind]`, `BULK_DETAIL_SQL_BOUNDED[kind]` | the same four aggregates for EVERY object of that kind in that container, in one round trip, keyed by path, with `truncated` when the caller's `limit` bit |
 
 ---
 
@@ -789,6 +1161,23 @@ than inferred because the route's own gate is `isTransactionProvider(provider)`,
 check no client can read, so before #464 those controls rendered on every
 connection — including the ten providers that answer HTTP 400.
 
+### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
+
+The lifecycle above is not the only way a transaction starts here.
+A `BEGIN` sent through `query()` opens one on the pooled client that call borrowed, and `query()` releases that client back to the pool without ending it.
+The pool does not make that benign, it widens it: the client is one of up to ten, it is handed out again at random, and the provider itself is cached per `connection.id` for the whole process.
+
+Measured 2026-09-13 on PostgreSQL 17 through the product's own routes.
+`POST /api/db/multi-query` with `BEGIN; CREATE TABLE d71_pg(id int); SELECT * FROM no_such_table` stopped on the third statement and released the client in status `E`.
+Every later request that drew that client answered HTTP 500 "current transaction is aborted, commands ignored until end of transaction block": a different user on `POST /api/db/query`, twelve retries over 60 seconds, 40 seconds of idleness, and `POST /api/db/maintenance` eight minutes later.
+`pg_stat_activity` showed the backend as `idle in transaction (aborted)` throughout.
+
+`endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
+It reads the server's own answer rather than inferring one: `pg` records the ReadyForQuery status byte of every statement — `I` idle, `T` in a transaction, `E` in a failed one — and publishes it as `getTransactionStatus()` (pg 8.23).
+It targets the exact client the last `query()` ran on, kept in `lastQueryClient`, because a rollback issued through a fresh `pool.connect()` is not guaranteed to reach the same one and rolling back somebody else's transaction is worse than leaving this one open.
+The interactive session above is never touched: its client is checked out for the session's whole life, so `query()` never borrows it.
+`POST /api/db/multi-query` calls this in a `finally` and reports the outcome.
+
 ---
 
 ## 9. Maintenance
@@ -855,6 +1244,8 @@ Overrides the SQL base defaults:
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
+| `containerLevels` | one level, `schema`: the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
+| `objectKinds` | `table`, `view`, `materialized_view`, `sequence`, `function`, `procedure`, `trigger`. No `index` kind: `pg_index` is keyed by `indrelid`, so an index is a property of a relation and stays in `describeObject()` ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
 
@@ -1201,9 +1592,19 @@ bun run test:coverage                                      # CI coverage workflo
 The committed tests are mock-based by design. To smoke-test against a real server:
 
 ```bash
-docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:18
-# then point a connection at localhost:5432 (db=postgres, user=postgres) in the Studio UI
+docker compose -f database-compose.yml up -d postgres
+# then point a connection at localhost:5432 (db=libredb_dev, user=postgres, password=postgres)
 ```
+
+That service mounts `docker/postgres-init/`, which creates `libredb_dev`, the `app` schema and one
+instance of every object kind the provider declares, plus `public.orders`
+(`03-object-fixture.sql`), which exists to make one name live in two schemas
+([§3.4.1](#341-the-session-default-container-and-why-a-bare-name-needs-one))
+([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)). The init scripts
+run **only on a fresh data directory**, so a container that already exists has to be recreated
+before a change to them takes effect. Nothing in this repo recreates a container for you, and
+nothing should: a `libredb-postgres` already running on a machine may hold somebody's own
+databases.
 
 The E2E suite (`e2e/`) has been verified against PostgreSQL 18.x.
 
@@ -1224,15 +1625,16 @@ const provider = await createDatabaseProvider({
 
 await provider.connect();
 const res = await provider.query('SELECT id, email FROM users WHERE active = $1', [true]);
-const tree = await provider.getSchemaList();          // fast structural tree
-const rels = await provider.getSchemaRelations();      // FKs + indexes to merge in
+const schemas = await provider.listContainers();                        // the schemas
+const tables = await provider.listObjects(['app'], 'table');            // names only
+const { details } = await provider.describeObjects(['app'], 'table');   // columns, one round trip
 await provider.disconnect();
 ```
 
 ### 14.2 Over the API
 
 - `POST /api/db/query` — run SQL (see [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
-- `POST /api/db/schema/list` and `POST /api/db/schema/relations` — two-phase schema.
+- `POST /api/db/objects/inventory` — objects, and their columns with `includeColumns`.
 - `POST /api/db/transaction` — begin/commit/rollback/query-in-tx.
 - `POST /api/db/cancel` — cancel a running query by id.
 - `POST /api/db/maintenance` — vacuum/analyze/reindex/kill (admin only).
@@ -1249,6 +1651,9 @@ await provider.disconnect();
   active queries is available.
 - **WAL size and checkpoint times require elevated privileges** and are silently omitted otherwise.
 - **Column introspection is capped at 100 columns** per table.
+- **`describeObject()` reports nothing for a routine beyond its emptiness.** A routine's parameters
+  and return type are not columns and are not listed here; that is Phase 2's Source tab. The method
+  answers three empty lists for every kind that is not resolved in `pg_class`.
 - **`blocked` on active sessions is always `false`** — lock-wait detection (`pg_locks`) is not yet
   wired in.
 - **Cloud SSL auto-detect does not verify the server certificate.** When SSL is enabled by host

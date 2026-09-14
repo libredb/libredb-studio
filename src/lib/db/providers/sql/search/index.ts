@@ -84,13 +84,30 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+} from "@/lib/db/object-kinds";
+import { comparePaths } from "@/lib/db/object-path";
+import {
   type ActiveSessionDetails,
+  type ColumnSchema,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectDetailBatch,
+  type ObjectKindSpec,
+  type ObjectSourceDocument,
+  type ObjectSourcePart,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -100,17 +117,19 @@ import {
   type QueryResult,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { SearchHttpTransport } from "./http-transport";
-import { getSchema as readSchema, isSystemIndex } from "./introspect";
+import { isSystemIndex, toColumns } from "./introspect";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
+  type SearchErrorCategory,
   type SearchIndexInfo,
+  type SearchObjectDefinition,
+  type SearchObjectInfo,
   type SearchQueryResult,
   type SearchTransport,
   SearchTransportError,
@@ -285,8 +304,235 @@ const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
 });
 
 // ============================================================================
+// The object surface (#789)
+// ============================================================================
+
+/**
+ * The kind ids, as constants.
+ *
+ * `"index"` and `"alias"` are the two words this provider's seam guard also knows as
+ * wire vocabulary, and `tests/unit/db/search/seam-guard.test.ts` exempts a string
+ * literal only when it initialises a `SEARCH_KIND_*` constant - so these five lines
+ * are the ONLY place either word may be spelled outside `http-transport.ts`, and
+ * everything else refers to the constant. That is why they exist as constants at all.
+ */
+const SEARCH_KIND_INDEX = "index";
+const SEARCH_KIND_ALIAS = "alias";
+const SEARCH_KIND_PIPELINE = "pipeline";
+const SEARCH_KIND_TEMPLATE = "template";
+const SEARCH_KIND_STREAM = "stream";
+
+/**
+ * What a search cluster holds, measured on Elasticsearch 9.1.4 and OpenSearch 3.8.0
+ * on 2026-09-11 with `docker/search-init/01-object-fixture.sh` applied to both.
+ *
+ * ONE declaration for TWO type-ids, and that is a measured claim rather than a
+ * convenience: every endpoint below answered the same shape on both products, and the
+ * capability equality test in `tests/integration/db/opensearch-provider.test.ts`
+ * fails if the two ever diverge. The ONE difference the two showed is not in this
+ * declaration at all - it is that a stock Elasticsearch node ships 21 ingest
+ * pipelines and 61 index templates of its own while a stock OpenSearch node ships
+ * none, so the empty-pipeline case (HTTP 404, see the transport) is the first-run state
+ * on one product and takes a deletion to reach on the other.
+ *
+ * WHAT IS ABSENT, and why each absence is a fact rather than a gap:
+ *
+ * - NO view, function, procedure or trigger. Neither product's SQL surface has
+ *   CREATE VIEW, and OpenSearch's grammar contains no CREATE statement of any kind
+ *   (measured: `CREATE TABLE t (id BIGINT)` answers `SQLFeatureNotSupportedException`,
+ *   "Query must start with SELECT, DELETE, SHOW or DESCRIBE"). Elasticsearch 9.4 adds
+ *   an ES|QL views API as a TECHNICAL PREVIEW, and #789 Phase 2 ANSWERED that rather
+ *   than deferring it again: a preview surface gets no folder, so there is no kind and
+ *   nothing for the source read to read. It would also be a kind only ONE of the two
+ *   products this file serves could hold. Both provider docs carry the same answer.
+ * - NO stored script. Both products have them and NEITHER has a list-all API:
+ *   `GET /_scripts` is refused outright on both ("Invalid index name [_scripts]"),
+ *   only get-by-id exists. An object that cannot be enumerated cannot be a tree node,
+ *   which is the same call Redis's EVAL scripts got.
+ * - NO legacy index template. `_template` is a separate namespace whose names may
+ *   COLLIDE with the composable ones (measured on both), so one kind fed by both
+ *   endpoints would hold two different objects at one path.
+ * - NO secondary-index kind, in the relational sense. Every mapped field is inverted
+ *   -indexed as a property of being mapped, so there is nothing a user declared and
+ *   nothing to name. `index` here is the engine's own word for what a table is.
+ *
+ * WHY AN ALIAS AND A DATA STREAM ARE RELATIONS and not config objects: both answer
+ * rows through the SQL endpoint on both products (measured, `SELECT customer FROM
+ * probe_orders_alias` and `SELECT * FROM probe_stream`), which is exactly what
+ * `ObjectRole`'s "relation" means. Neither declares `acceptsRowWrites`: an alias may
+ * span several indices and has no single write target, and a data stream is
+ * append-only through its own API - and in any case no statement this provider can
+ * send writes anything at all.
+ */
+const SEARCH_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
+  {
+    id: SEARCH_KIND_INDEX,
+    role: "relation",
+    label: "Index",
+    // "Indices" is the plural both products use in their own APIs and docs, and it is
+    // the word `getLabels()` already puts everywhere else in the UI.
+    labelPlural: "Indices",
+    // The per-KIND half, and deliberately not conjoined with the engine-wide
+    // `supportsInlineRowEdit: false` this provider declares: that flag is about the
+    // results grid's `UPDATE ... SET`, which has no spelling in either grammar, while
+    // an import into an index is an ordinary bulk document write. See
+    // `kindAcceptsRowWrites()` in object-kinds.ts.
+    acceptsRowWrites: true,
+  },
+  { id: SEARCH_KIND_ALIAS, role: "relation", label: "Alias", labelPlural: "Aliases" },
+  { id: SEARCH_KIND_STREAM, role: "relation", label: "Data Stream", labelPlural: "Data Streams" },
+  {
+    id: SEARCH_KIND_PIPELINE,
+    role: "config",
+    label: "Ingest Pipeline",
+    labelPlural: "Ingest Pipelines",
+    // The two kinds that HAVE a definition anybody wrote (#789 Phase 2). A pipeline and
+    // a template are JSON documents a user PUT, and the same document is what the
+    // per-object endpoint answers, so there is a text to show and it is the text they
+    // would send back. `json` is a real Monaco language id, one of the four rich ones
+    // rather than one of the 89 basic ones.
+    hasSource: true,
+    sourceLanguage: "json",
+  },
+  {
+    id: SEARCH_KIND_TEMPLATE,
+    role: "config",
+    label: "Index Template",
+    labelPlural: "Index Templates",
+    hasSource: true,
+    sourceLanguage: "json",
+  },
+] as const);
+
+/**
+ * Which seam call answers a definition for which kind, and the THREE kinds that have no
+ * definition to answer (#789 Phase 2).
+ *
+ * Every absence here is a fact about the product, measured on Elasticsearch 9.1.4 and
+ * OpenSearch 3.8.0, and each is a DIFFERENT fact, which is why the three are written out
+ * rather than lumped together as "not supported":
+ *
+ * - `index`: `GET /<index>` answers settings the SERVER wrote (`index.uuid`,
+ *   `creation_date`, `version.created`, `provided_name`), so what a Source tab would
+ *   show is not a definition anybody could re-apply, and the round trip from that answer
+ *   back to a `PUT` that recreates the index could not be established.
+ * - `alias`: one alias over N indices has ONE DEFINITION PER INDEX and a different
+ *   create shape (`POST /_aliases` with an actions array), while the tree deliberately
+ *   deduplicates those N rows to one object. There is no single text belonging to the
+ *   row that exists.
+ * - `stream`: a data stream's definition IS the matching index template, which is a
+ *   DIFFERENT OBJECT in a DIFFERENT FOLDER of the same tree. Showing it here would
+ *   present another object's definition as this one's, which is exactly what the
+ *   per-object reads below refuse to do for a wildcard name.
+ *
+ * A table rather than a `switch`, for the same reason {@link SEARCH_OBJECT_READERS} is
+ * one: the only thing that differs per kind is the call. The DECLARATION decides whether
+ * a kind may be read at all and this table decides how, and `readObjectSource` throws by
+ * name when the two disagree rather than letting a declared kind fall through.
+ */
+const SEARCH_SOURCE_READERS: Readonly<
+  Record<
+    string,
+    (transport: SearchTransport, name: string, signal?: AbortSignal) => Promise<SearchObjectDefinition | null>
+  >
+> = Object.freeze({
+  [SEARCH_KIND_PIPELINE]: (transport, name, signal) => transport.pipelineSource(name, signal),
+  [SEARCH_KIND_TEMPLATE]: (transport, name, signal) => transport.templateSource(name, signal),
+});
+
+/** The part id and label of the one part either read answers with (#789). */
+const SEARCH_SOURCE_PART_ID = "definition";
+const SEARCH_SOURCE_PART_LABEL = "Definition";
+
+/** How many spaces the rendered JSON is indented by. */
+const SEARCH_SOURCE_INDENT = 2;
+
+/**
+ * Which seam call answers for which kind.
+ *
+ * A table rather than a `switch`, because the only thing that differs per kind IS the
+ * call: every kind is filtered, pathed and sorted by one function below. Adding a kind
+ * is a row here and a row in the declaration above, and the conformance helper fails
+ * the provider if the two disagree.
+ */
+const SEARCH_OBJECT_READERS: Readonly<
+  Record<string, (transport: SearchTransport, signal?: AbortSignal) => Promise<SearchObjectInfo[]>>
+> = Object.freeze({
+  [SEARCH_KIND_INDEX]: (transport, signal) => transport.indices(signal),
+  [SEARCH_KIND_ALIAS]: (transport, signal) => transport.aliases(signal),
+  [SEARCH_KIND_STREAM]: (transport, signal) => transport.dataStreams(signal),
+  [SEARCH_KIND_PIPELINE]: (transport, signal) => transport.pipelines(signal),
+  [SEARCH_KIND_TEMPLATE]: (transport, signal) => transport.templates(signal),
+});
+
+/**
+ * The kinds whose objects resolve to a MAPPING, and therefore have columns.
+ *
+ * An index, an alias and a data stream all answer `_mapping` - measured, an alias
+ * resolves to the index behind it and a data stream to its current backing index, and
+ * both come back keyed by the CONCRETE index name, which the transport already
+ * handles. A pipeline and a template are JSON documents with no field list at all, so
+ * their detail carries no columns, exactly as a routine, a trigger and a sequence do
+ * on the SQL engines.
+ */
+const SEARCH_MAPPED_KINDS: readonly string[] = Object.freeze([
+  SEARCH_KIND_INDEX,
+  SEARCH_KIND_ALIAS,
+  SEARCH_KIND_STREAM,
+]);
+
+// ============================================================================
 // Pure helpers
 // ============================================================================
+
+/**
+ * Whether a seam failure is the CLUSTER refusing, or nobody answering at all (#789).
+ *
+ * A source read has to tell those apart, because only the first is a refusal a Source
+ * pane may print as this object's own. A dropped socket, an expired client deadline and
+ * a cancellation are the SECOND: the cluster said nothing, so a document carrying
+ * "connect ECONNREFUSED" as the object's refusal would offer no raise, no retry and
+ * nothing to distinguish it from a real denial. MongoDB shipped exactly that defect in
+ * this phase and it was fixed rather than argued about.
+ *
+ * A `switch` with no `default` rather than a set, so a category added to the seam fails
+ * the typecheck here instead of quietly joining the raising half.
+ */
+function isClusterRefusal(category: SearchErrorCategory): boolean {
+  switch (category) {
+    // The cluster read the request and answered no: a denied endpoint (decided on the
+    // one status HTTP itself fixes), a fault it named, a body this client could not
+    // read. Each of these has a sentence worth putting in front of the user.
+    case "auth":
+    case "engine":
+    case "syntax":
+    case "unknown-object":
+    case "unsupported":
+      return true;
+    // Nobody answered, or this client stopped waiting. Neither is a statement about the
+    // object, so both raise.
+    case "unreachable":
+    case "timeout":
+    case "cancelled":
+      return false;
+  }
+}
+
+/**
+ * One object's `ObjectDetail`, shared by the single and the bulk read (#789).
+ *
+ * ONE function because every caller joins the two answers on path, and two copies would be
+ * two chances for a batch to describe an object differently from `describeObject` on the
+ * same name.
+ *
+ * `indexes` and `foreignKeys` are ALWAYS empty, and both are facts about the engine rather
+ * than unread fields: every mapped field is inverted-indexed as a property of being mapped,
+ * so there is no secondary-index object anybody named, and neither product has a foreign
+ * key constraint in its model - the same measurement behind `declaresForeignKeys: false`.
+ */
+function searchObjectDetail(path: readonly string[], columns: ColumnSchema[]): ObjectDetail {
+  return { path: [...path], columns, indexes: [], foreignKeys: [] };
+}
 
 /**
  * The neutral seam result as the grid's row contract.
@@ -484,6 +730,13 @@ abstract class SearchProvider extends SQLBaseProvider {
       // accepts the terminator and also accepts its absence, so omitting it on both
       // keeps this a fact about the family instead of a branch on `dialect`.
       statementTerminator: "none",
+      // ZERO container levels, and both products' own SQL surfaces say so: OpenSearch
+      // answers `TABLE_SCHEM` null and Elasticsearch reports only a `catalog` that is
+      // the cluster name and is not addressable in a statement (measured; see the file
+      // header, point 3). An index is not inside anything, so the tree opens straight
+      // onto the kind folders.
+      containerLevels: [],
+      objectKinds: SEARCH_OBJECT_KINDS,
       schemaRefreshPattern: SEARCH_SCHEMA_REFRESH_PATTERN,
     };
   }
@@ -500,7 +753,7 @@ abstract class SearchProvider extends SQLBaseProvider {
    * "Indices" rather than "Indexes" because that is the plural both products use in
    * their own APIs and documentation - and because "indexes" is the word this
    * product already uses for the secondary-index objects an index does NOT have
-   * (`TableSchema.indexes`, empty by construction here).
+   * (the index list is empty by construction here).
    *
    * The two maintenance actions are named even though `supportsMaintenance` is
    * false, because they are still RENDERED: the schema tree offers both entries to
@@ -772,19 +1025,459 @@ abstract class SearchProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
+  // ==========================================================================
+  // Object surface (#789)
+  // ==========================================================================
+
   /**
-   * Every index the credentials can see, with its mapped fields as columns.
+   * THE 5f SEAM, in one method: the ONLY place a REST listing becomes objects.
    *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. Both
-   * are optional and the client falls back to this method, and the split exists so a
-   * slow relationship read cannot block the table list - which this engine has
-   * neither half of: there are no secondary-index objects and no foreign keys, so a
-   * list would be byte-identical to this and a relations pass would re-read every
-   * mapping to answer two empty arrays per index.
+   * Standing ruling 5f says the listing must contain exactly what the count counted.
+   * On a SQL engine those two drift apart in a second WHERE clause; here there is no
+   * WHERE clause and no catalog query at all, so the seam moves to the place where a
+   * COUNT and a LISTING could stop being the same call - and on a REST surface that
+   * place is the HTTP request itself. `countObjects` is `readKind(...).length` per
+   * kind and `listObjects` is `readKind(...)` for one kind, so the two go through the
+   * same call, the same system filter, the same path construction and the same sort.
+   * Nothing is left for them to disagree in.
+   *
+   * The system filter is the part a fixture cannot certify on its own. A stock
+   * Elasticsearch node ships 21 ingest pipelines and 61 index templates of its own, so
+   * an unfiltered count reports a user's single pipeline as 22; the transport decides
+   * whose an object is, on the same signals it already decides an index by.
    */
-  public async getSchema(): Promise<TableSchema[]> {
+  private async readKind(container: readonly string[], kind: string, signal?: AbortSignal): Promise<DatabaseObject[]> {
+    // `Object.hasOwn` and never `kind in`, ruling 5g: a plain object literal carries
+    // `Object.prototype`, so a kind id spelled `toString` or `constructor` would
+    // resolve up the chain to a function this then calls with a transport. The
+    // callers check the DECLARATION; this checks the readers table, and the two
+    // disagreeing is a defect in this file rather than anything the engine said.
+    if (!Object.hasOwn(SEARCH_OBJECT_READERS, kind)) {
+      throw new Error(`${this.product.label} declares the object kind "${kind}" and has no reader for it`);
+    }
+
+    const read = SEARCH_OBJECT_READERS[kind];
+    const objects = await read(this.requireTransport(), signal);
+
+    return (
+      objects
+        .filter((object) => !object.isSystem)
+        // The one place a path is CONSTRUCTED rather than read, which is the single
+        // exception standing ruling 5g allows to the no-positional-index rule. The
+        // container is spread rather than assumed empty, so the construction stays
+        // correct under a declaration with levels in it.
+        .map((object) => ({ path: [...container, object.name], name: object.name, kind }))
+        .sort((left, right) => comparePaths(left.path, right.path))
+    );
+  }
+
+  /**
+   * The container path a caller handed in, checked against the DECLARATION.
+   *
+   * `containerDepth()` and never `containerLevels.length` at a call site, and never a
+   * hardcoded `0`: this engine declares zero levels today, and the check has to move
+   * with the declaration rather than with what this engine happens to be.
+   */
+  private requireContainer(container: readonly string[]): void {
+    const depth = containerDepth(this.getCapabilities());
+    if (container.length !== depth) {
+      throw new QueryError(
+        `A ${this.product.label} container path has ${depth} segment(s), received ${JSON.stringify(container)}`,
+        this.type,
+      );
+    }
+  }
+
+  /**
+   * The object path a caller handed in, checked against the DECLARATION.
+   *
+   * Derived and never written out: one segment per declared container level plus the
+   * object's own name. No kind here declares `attachedTo`, so there is one shape. Shared
+   * by `describeObject` and `readObjectSource` so the two cannot come to disagree about
+   * what a path of the wrong length is, and so the sentence a caller reads is written
+   * once.
+   */
+  private requireObjectPath(path: readonly string[], kind: string): void {
+    const depth = containerDepth(this.getCapabilities());
+    if (path.length !== depth + 1) {
+      throw new QueryError(
+        `A ${this.product.label} "${kind}" path has ${depth + 1} segment(s), received ${JSON.stringify(path)}`,
+        this.type,
+      );
+    }
+  }
+
+  /**
+   * There is no container level here, so there is nothing to list.
+   *
+   * An empty array and not a refusal: "this engine has no container above an object"
+   * is a true statement about a search cluster and not a caller mistake. Both
+   * products' own SQL surfaces say it - OpenSearch reports `TABLE_SCHEM` null and
+   * Elasticsearch reports a `catalog` that is the cluster name and is not addressable
+   * in a statement (measured) - so the tree opens straight onto the kind folders and
+   * first paint costs one `countObjects` and no container walk at all.
+   *
+   * `isSessionDefault` has nowhere to be marked for the same reason: standing ruling
+   * 5a2 requires it at every DECLARED level, and there are none.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    this.ensureConnected();
+    void parent;
+    return [];
+  }
+
+  /**
+   * How many objects of each declared kind the cluster holds.
+   *
+   * Every declared kind is seeded at `{ count: 0 }` from the DECLARATION before any
+   * read, so a kind whose listing comes back empty keeps its folder instead of
+   * disappearing, and a kind the readers table somehow did not answer for cannot
+   * vanish either.
+   *
+   * A refusal is PER KIND and not per cluster, which is the opposite of MongoDB's
+   * call and is measured rather than defensive: these are four separate endpoints, a
+   * security plugin grants privileges per endpoint, and one of them (the ingest
+   * pipeline listing) answers HTTP 404 for "there are none" on a stock OpenSearch
+   * node. So one kind's refusal carries the engine's own sentence on that kind's
+   * badge and leaves the other three alone. The reads are issued together because
+   * they are independent cluster-state GETs and a folder count that arrives four
+   * round trips late is a tree that opens slowly for no reason.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    this.requireContainer(container);
+    const signal = this.deadline();
+
+    const kinds = declaredKinds(this.getCapabilities());
+    const counts: Record<string, KindCount> = Object.fromEntries(kinds.map((kind) => [kind.id, { count: 0 }]));
+
+    await Promise.all(
+      kinds.map(async (kind) => {
+        try {
+          counts[kind.id] = { count: (await this.readKind(container, kind.id, signal)).length };
+        } catch (error) {
+          // Narrowed to the TRANSPORT's own error type. A badge presents its text as
+          // the engine's own sentence, so an internal defect - a TypeError, a broken
+          // invariant, a kind with no reader - must not be dressed up as one; it
+          // propagates and fails the read that is genuinely broken instead of
+          // rendering a JS message on a folder as though the cluster had said it.
+          if (!(error instanceof SearchTransportError)) throw error;
+          counts[kind.id] = { unavailable: this.mapSearchError(error).message };
+        }
+      }),
+    );
+    return counts;
+  }
+
+  /**
+   * The objects of one kind, names only.
+   *
+   * The DECLARATION answers "is this kind declared", not the readers table: deciding
+   * it from what the table happens to hold would let the two disagree and would report
+   * "declares no object kind" about a kind `SEARCH_OBJECT_KINDS` does declare.
+   *
+   * No `rowCount` and no `sizeBytes` on an index row, even though the index listing
+   * carries both. That is a deliberate bound and not an omission: the other four kinds
+   * have no such numbers at all, so filling them for one kind would make the folder's
+   * rows mean different things, and `describeObject` is where one object's detail is
+   * paid for.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    if (findKind(this.getCapabilities(), kind) === undefined) {
+      throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
+    }
+    this.requireContainer(container);
+
+    return this.guarded(() => this.readKind(container, kind, this.deadline()));
+  }
+
+  /**
+   * One object's fields.
+   *
+   * The KIND decides and nothing reads the name to work out what it is holding: the
+   * lookup requires the listing for THAT kind to contain the path, so asking for a
+   * pipeline by the name of an index is a miss rather than an index described as a
+   * pipeline. An alias and an index can never collide anyway - measured, the engine
+   * refuses an alias that takes an existing index's or data stream's name - but the
+   * lookup does not depend on that.
+   *
+   * `indexes` is ALWAYS empty and so is `foreignKeys`, and both are facts about the
+   * engine rather than unread fields: every mapped field is inverted-indexed as a
+   * property of being mapped, so there is no secondary-index object anybody named,
+   * and the engine has no foreign key constraint in its model at all - the same
+   * measurement behind `declaresForeignKeys: false`.
+   *
+   * A PIPELINE and a TEMPLATE carry no columns, which is the correct answer and not a
+   * gap: they are JSON documents with no field list, exactly as a routine, a trigger
+   * and a sequence have no columns on the SQL engines. Their definitions are a Phase 2
+   * Source tab.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
+    }
+
+    this.requireObjectPath(path, kind);
+    const depth = containerDepth(capabilities);
+
+    // Neither read is positional. The container is every segment the declaration
+    // assigns to a level, and the object's own name is the LAST segment.
+    const container = path.slice(0, depth);
+    const name = path[path.length - 1];
+
+    return await this.guarded(async () => {
+      const signal = this.deadline();
+      // Matched on the whole PATH and not on the name, so the container segments the
+      // declaration assigns are load-bearing rather than decorative: at any declared
+      // depth the object has to be the one this path addresses, and a container read
+      // off the wrong positions no longer finds it.
+      const found = (await this.readKind(container, kind, signal)).find(
+        (object) => comparePaths(object.path, path) === 0,
+      );
+      if (found === undefined) {
+        throw new QueryError(`No ${this.product.label} ${kind} named ${name}`, this.type);
+      }
+
+      const columns = SEARCH_MAPPED_KINDS.includes(kind)
+        ? toColumns(await this.requireTransport().mapping(name, signal))
+        : [];
+      return searchObjectDetail(path, columns);
+    });
+  }
+
+  /**
+   * Columns for EVERY object of one kind, and the one kind that can be read in one
+   * request (#789).
+   *
+   * WHICH CALL, and why it is not the same one for all three mapped kinds, measured on
+   * Elasticsearch 9.1.4 and OpenSearch 3.8.0:
+   *
+   * - An INDEX is concrete, so `_mapping` over a comma-joined list answers keyed by the
+   *   name that was asked for and ONE request serves the whole folder. That is the seam's
+   *   `mappings()`, and the request-line limit it splits on is the cluster's own.
+   * - An ALIAS and a DATA STREAM resolve to the index behind them and come back keyed by
+   *   THAT index. Measured: `GET /probe_orders_alias,alias_two/_mapping`, two aliases on
+   *   one index, answers a single `probe_orders` key, and the fixture's alias answers
+   *   under the same key as the index itself. There is nothing in that payload to
+   *   attribute a mapping back to the alias it was asked for, so those stay one request
+   *   per object, issued in parallel and cut by the caller's `limit` first.
+   *
+   * A PIPELINE and a TEMPLATE answer `{ details: [] }` with no round trip at all: they are
+   * JSON documents with no field list, which is the same fact `describeObject` states by
+   * answering three empty arrays.
+   */
+  private async describeMapped(
+    kind: string,
+    chosen: readonly DatabaseObject[],
+    signal?: AbortSignal,
+  ): Promise<ColumnSchema[][]> {
     const transport = this.requireTransport();
-    return this.guarded(() => readSchema(transport, {}, this.deadline()));
+    if (kind !== SEARCH_KIND_INDEX) {
+      return await Promise.all(chosen.map(async (object) => toColumns(await transport.mapping(object.name, signal))));
+    }
+
+    const names = chosen.map((object) => object.name);
+    const byIndex = await transport.mappings(names, signal);
+    return names.map((name) => {
+      const fields = byIndex.get(name);
+      // A concrete request answers for every name it was given - a CLOSED index included,
+      // measured - and refuses the whole request for one that does not exist. So a name
+      // missing from a present answer cannot come from the engine, and saying which index
+      // is the honest response: reporting it as a mapping-less index would spell it the
+      // same way as an index that really has no mapping, which is an ordinary state.
+      if (fields === undefined) {
+        throw new QueryError(`${this.product.label} answered no mapping for the index ${name}`, this.type);
+      }
+      return toColumns(fields);
+    });
+  }
+
+  /**
+   * Columns for every object of one kind, in as few requests as the engine allows (#789).
+   *
+   * The four guards, in the reference implementation's order: the DECLARATION first,
+   * because an undeclared kind is a fact about the engine while an empty answer is a claim
+   * about the data; then the container, through the same check `listObjects` uses; then the
+   * limit; then the kinds that have no columns at all.
+   *
+   * THE BOUND IS THE CALLER'S AND THERE IS NO `limit + 1`. That extra row exists to tell a
+   * saturated read from an exact one without a second count, and it is unnecessary here:
+   * every listing is one REST call answering the cluster's whole set, so the target set is
+   * COMPLETE before anything is cut and the comparison is exact. The cut is applied in code
+   * after the shared `comparePaths` sort, so a bounded read's membership is this provider's
+   * rather than the server's - no listing endpoint here takes an order or a limit.
+   *
+   * The chunking `mappings()` performs is NOT reported as truncation: it splits one read
+   * into several requests and drops nothing, so a `truncated` for it would claim objects
+   * were left out when none were.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    if (findKind(this.getCapabilities(), kind) === undefined) {
+      throw new QueryError(`${this.product.label} declares no object kind "${kind}"`, this.type);
+    }
+    this.requireContainer(container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      // Not clamped and not ignored: a 0 would answer nothing while reporting a truncation
+      // nobody asked for, and a fraction cannot cut a list. Both are caller mistakes.
+      throw new QueryError(
+        `A ${this.product.label} bulk column read limit must be a positive whole number, received ${limit}`,
+        this.type,
+      );
+    }
+    if (!SEARCH_MAPPED_KINDS.includes(kind)) return { details: [] };
+
+    return await this.guarded(async () => {
+      const signal = this.deadline();
+      const listed = await this.readKind(container, kind, signal);
+      const bounded = limit !== undefined && listed.length > limit;
+      const chosen = bounded ? listed.slice(0, limit) : listed;
+
+      const columns = await this.describeMapped(kind, chosen, signal);
+      const details = chosen.map((object, index) => searchObjectDetail(object.path, columns[index]));
+      // The bound reported here is the CALLER's and there is no other on this engine's
+      // batch. The chunking the transport does to stay inside the cluster's request-line
+      // limit is not one: it splits a read into several requests and drops nothing. The
+      // sentence itself is shared (#789), so one event reads one way on every engine.
+      return bounded ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+    });
+  }
+
+  /**
+   * One object's definition text (#789 Phase 2).
+   *
+   * TWO KINDS CAN ANSWER HERE AND THE DECLARATION SAYS WHICH: `pipeline` and `template`
+   * declare `hasSource`, and `index`, `alias` and `stream` declare nothing for three
+   * different measured reasons written out beside {@link SEARCH_SOURCE_READERS}. The
+   * refusal is read off the declaration and never off the kind id, so a kind this engine
+   * does not declare at all takes the same path.
+   *
+   * ONE REQUEST, AND IT NAMES THE OBJECT. There is no listing read first: the endpoint
+   * answers for a name directly, and reading the folder to prove the object exists would
+   * double every Source tab's cost to answer a question the endpoint answers itself. The
+   * kind decides which endpoint, so asking for a pipeline by the name of a template is
+   * an absence rather than a template rendered as a pipeline.
+   *
+   * ABSENCE RAISES AND ONLY A CLUSTER'S ANSWER IS A REFUSAL, and the two are told apart
+   * on the wire rather than by guessing. The seam answers null for "the cluster holds no
+   * such object", which covers both spellings the two endpoints use for it (measured
+   * 2026-09-13: `{}` from the pipeline endpoint and the full error envelope from the
+   * template endpoint), and this raises a `QueryError` naming the object. A cluster that
+   * ANSWERED and refused - a security plugin denying the endpoint, an engine fault, a
+   * body this client could not read - becomes a refusal part carrying the cluster's own
+   * sentence, unprefixed and unrewritten. ONE arm is the exception and both provider
+   * docs say so: a DENIAL carries the transport's own composed sentence
+   * ("Elasticsearch refused the credentials (HTTP 403)"), because security is disabled
+   * on both compose services and a bogus `Basic` header is ignored there, so no 401 or
+   * 403 body exists to carry through and the status is the only thing observed.
+   * A transport failure is neither: nobody answered at all, so it RAISES,
+   * because "connect ECONNREFUSED" printed in the Source pane as this object's own
+   * refusal has no raise, nothing to retry and nothing distinguishing it from a real
+   * denial. That distinction is {@link isClusterRefusal}.
+   *
+   * A REFUSAL IS PER ENDPOINT and not per cluster, which is the same measurement
+   * `countObjects` rests on: these are separate endpoints and a security plugin grants
+   * privileges per endpoint, so a pipeline read can be denied while a template read
+   * answers. Neither refusal can be produced on the compose services - security is
+   * disabled on both and a bogus `Basic` header is IGNORED (measured, HTTP 200 on both) -
+   * and both provider docs say CANNOT rather than reporting around it.
+   *
+   * AN EMPTY DEFINITION CANNOT ARRIVE, which is why design guarantee 2's empty-text
+   * refusal arm is absent here rather than forgotten. Measured on Elasticsearch 9.1.4
+   * and OpenSearch 3.8.0 on 2026-09-13: `PUT /_ingest/pipeline/<id>` with `{}` is HTTP
+   * 400 (`parse_exception`, "[processors] required property is missing") and
+   * `PUT /_index_template/<name>` with `{}` is HTTP 400 (`illegal_argument_exception`,
+   * "Required [index_patterns]"), so the smallest definition either endpoint will store
+   * is `{"processors":[]}` or `{"index_patterns":[...]}`. The rendered text is a JSON
+   * object with at least one member and can be neither empty nor whitespace-only.
+   *
+   * WHAT THE TEXT IS: `form: "complete"`, because the endpoint answers the whole
+   * definition rather than a summary of it, and `origin: "rendered"`, because this
+   * product prints it. The bytes the cluster sent are NOT what a reader sees, and both
+   * provider docs record the three measured differences a JSON re-serialisation makes
+   * (a long past 2^53 loses precision, integer-like keys are hoisted, an exponent is
+   * re-spelled). Nothing is dropped, which is what keeps `complete` true.
+   *
+   * The object name is `path[path.length - 1]` and the container is every segment the
+   * declaration assigns to a level, never `path[0]`: standing ruling 5g, pinned in both
+   * suites by a two-level declaration swapped in through `spyOn` and driven to the URL
+   * the transport builds.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const spec = findKind(this.getCapabilities(), kind);
+    if (spec?.hasSource !== true) {
+      throw new QueryError(`${this.product.label} declares no readable source for the kind "${kind}"`, this.type);
+    }
+    // The Monaco language is READ off the declaration and never defaulted. A `?? "json"`
+    // here is dead against the shipped declaration and silently wrong the moment it
+    // fires: a kind that gained `hasSource` without a language would be answered `json`
+    // for something that is not JSON, and the pane would pick a mode with nothing
+    // anywhere saying so.
+    const language = spec.sourceLanguage;
+    if (language === undefined) {
+      throw new QueryError(
+        `${this.product.label} declares source for the kind "${kind}" and no sourceLanguage, so its text has no ` +
+          "language to render in",
+        this.type,
+      );
+    }
+    if (!Object.hasOwn(SEARCH_SOURCE_READERS, kind)) {
+      throw new Error(`${this.product.label} declares source for the object kind "${kind}" and has no reader for it`);
+    }
+    this.requireObjectPath(path, kind);
+    const name = path[path.length - 1];
+
+    let definition: SearchObjectDefinition | null;
+    try {
+      definition = await SEARCH_SOURCE_READERS[kind](this.requireTransport(), name, this.deadline());
+    } catch (error) {
+      if (!(error instanceof SearchTransportError) || !isClusterRefusal(error.category)) {
+        throw this.mapSearchError(error);
+      }
+      // The cluster's own sentence, unprefixed, exactly as a folder badge carries it.
+      return this.sourceRefusal(path, kind, this.mapSearchError(error).message);
+    }
+    if (definition === null) {
+      throw new QueryError(`No ${this.product.label} ${kind} named ${name}`, this.type);
+    }
+
+    const bounded = applySourceBound(JSON.stringify(definition, null, SEARCH_SOURCE_INDENT), limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: SEARCH_SOURCE_PART_ID,
+          label: SEARCH_SOURCE_PART_LABEL,
+          text: bounded.text,
+          language,
+          // The endpoint answers the whole definition, so nothing of it is left out.
+          form: "complete",
+          // PRINTED BY THIS PRODUCT. The cluster answers a JSON document and this prints
+          // it; calling that `stored` would show a reader a rendering as an original.
+          origin: "rendered",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+        },
+      ],
+    };
+  }
+
+  /**
+   * One refusal document, built in ONE place (#789).
+   *
+   * The part is written as an object LITERAL carrying `unavailable` and nothing else,
+   * never spread from a branch that could also carry a `text`. A part holding both keys
+   * COMPILES, because TypeScript's excess-property check on a union admits any property
+   * declared on any member of it, and it narrows to the refusal arm while carrying a
+   * real definition - which would put a refusal sentence over text the cluster returned.
+   */
+  private sourceRefusal(path: readonly string[], kind: string, unavailable: string): ObjectSourceDocument {
+    const part: ObjectSourcePart = { id: SEARCH_SOURCE_PART_ID, label: SEARCH_SOURCE_PART_LABEL, unavailable };
+    return { path: [...path], kind, parts: [part] };
   }
 
   // ==========================================================================

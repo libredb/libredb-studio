@@ -73,12 +73,39 @@ import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/executi
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type {
+  Container,
+  DatabaseObject,
+  KindCount,
+  DatabaseProvider,
+  ObjectDetail,
+  ObjectKindSpec,
+  ProviderCapabilities,
+  ProviderLabels,
+} from "@/lib/db/types";
+import type { ContainerEnumeration } from "@/lib/db/container-walk";
+import { sessionDefaultContainer } from "@/lib/db/container-walk";
+import { containerDepth, declaredKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
+import { pathKey } from "@/lib/db/object-path";
+// The inventory route's bounds, and now nobody's second copy of them: one owner, so the
+// agent's grounding walk and `POST /api/db/objects/inventory` cannot come to disagree about
+// how much of a database an inventory is. They used to be declared again here, because
+// `object-route.ts` imports `next/server` at its top level and the agent tree must not
+// (#789). Both are stated again in `docs/AGENT.md`.
+import {
+  INVENTORY_LIMIT,
+  INVENTORY_PAIR_LIMIT,
+  INVENTORY_TRUNCATION_REASON,
+  PAIR_TRUNCATION_REASON,
+} from "@/lib/db/inventory-bounds";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
-import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
+import { resolveInventoryAddress } from "./inventory-address";
+import { addressableObjects } from "./inventory-objects";
+import type { AgentInventory, AgentInventoryObject } from "./types";
 import {
   type AgentCatalogKind,
   AgentComposedSqlError,
@@ -268,6 +295,30 @@ export type AgentToolUnavailableCode =
   | "TABLE_QUALIFIER_UNKNOWN"
   /** The named table is not in the inventory this run captured. */
   | "TABLE_NOT_INVENTORIED"
+  /**
+   * More than one inventoried object answers to the spelling, so there is nothing to profile
+   * YET and nothing missing either.
+   *
+   * Split from `TABLE_NOT_INVENTORIED` for the reason the other two were split from it, and
+   * this is the sharpest case of it: the run read BOTH objects and answered that it had read
+   * neither. Measured against an inventory of ten relations holding `public.orders` and
+   * `sales.orders`, a call naming `orders` was told the table was not in the inventory at
+   * all and then offered the first six profilable names, neither of which was a candidate.
+   * A model can repair an ambiguity by qualifying its spelling and can do nothing at all
+   * about an absence, so the candidates travel as the detail (#789).
+   */
+  | "TABLE_SPELLING_AMBIGUOUS"
+  /**
+   * The named object IS inventoried, and its declared kind is not one with rows to count.
+   *
+   * Split from `TABLE_NOT_INVENTORIED` for the reason `TABLE_QUALIFIER_UNKNOWN` was split
+   * from it: the inventory a run reads carries the schema's views, sequences and functions
+   * beside its tables (#789), and a model told "that table is not in the inventory" about a
+   * name it can SEE in the inventory has been told something it can check and disbelieve.
+   * Measured on the qualifier case, it then repeats the identical call rather than changing
+   * it. This one confirms the object and refuses the action.
+   */
+  | "OBJECT_NOT_PROFILABLE"
   /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
   | "CATALOG_MATCHED_NOTHING"
   /**
@@ -621,6 +672,74 @@ const presentAnswerSchema = z.strictObject({
  * (`part.invalid !== true`). `tests/isolated/agent-investigation.test.ts` drives the whole path
  * through the real SDK so that edit fails a test rather than a run.
  */
+/**
+ * A claims array a model sent as a STRING of JSON, read back once before validation.
+ *
+ * The same encoding `readSerializedPresentation` was written for, on the tool that ENDS a run.
+ * That one costs a presentation; this one costs everything the run did.
+ *
+ * Measured on `llama3.1:8b` — the most-pulled tool-capable model on Ollama — five operate runs
+ * produced SEVENTY `INVALID_TOOL_INPUT` declines and every one was the same line:
+ *
+ *     the fields that did not match — claims: expected array, received string
+ *
+ * The model serialized the array rather than nesting it, roughly fourteen times per run, until
+ * the turn limit ended the run. By then the sentence is complete — it names the field, the type
+ * expected and the type that arrived — and the model still cannot act on it. A message can only
+ * do so much; this is the other half, and the repository already decided that half is worth
+ * having when it wrote the sibling.
+ *
+ * Every bound the sibling states holds here unchanged and for the same reasons: read ONCE and
+ * never recursively, so this accepts a serialization the model chose rather than inventing a
+ * second encoding; at the CALL BOUNDARY rather than in the schema, so the contract the SDK
+ * advertises stays byte-identical; and the value still goes through the same strict schema, so a
+ * string holding the wrong shape is refused exactly as the object would have been. Nothing is
+ * admitted here that would not have been admitted written properly.
+ */
+/** Whether `claims` arrived as a string that is not JSON, which no read here can recover. */
+function claimsArrivedAsUnparseableText(input: unknown): boolean {
+  if (typeof input !== "object" || input === null) return false;
+  const { claims } = input as { claims?: unknown };
+  if (typeof claims !== "string") return false;
+  try {
+    JSON.parse(claims);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * What a run is told when its claims arrived as text that is not JSON.
+ *
+ * `readSerializedClaims` recovers the case a model serialized properly. This is the case it
+ * cannot: measured on `llama3.1:8b`, the claims arrive as a PYTHON repr — single quotes
+ * throughout — with the claim true, the source right and the correlation id one the run actually
+ * produced. Only the quote character is wrong. Converting it here would be inventing an encoding
+ * rather than reading one the model chose, and it breaks on the first apostrophe in a sentence.
+ *
+ * What was wrong was the sentence. `claims: expected array, received string` is true and, to a
+ * model that believes it sent an array, unusable — across five assess runs it re-sent the
+ * identical bytes THIRTY times. This names the fault and what a JSON array requires, and quotes
+ * nothing the model wrote: the rule the refusals here are bounded by is that a server sentence
+ * carries the path and the shape, never the value.
+ */
+const AGENT_CLAIMS_NOT_JSON =
+  "Your claims argument arrived as TEXT rather than as an array, and it is not JSON either. Send the array itself as the argument value — not a string containing it. If your tooling can only send a string, it must be JSON: double quotes around every key and every string value, never single quotes.";
+
+function readSerializedClaims(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const { claims } = input as { claims?: unknown };
+  if (typeof claims !== "string") return input;
+  try {
+    return { ...input, claims: JSON.parse(claims) };
+  } catch {
+    // Left as the string it was, for the sibling's reason: the schema refuses it, and reporting a
+    // parse failure here would replace the contract's own wording with this function's.
+    return input;
+  }
+}
+
 function readSerializedPresentation(input: unknown): unknown {
   if (typeof input !== "object" || input === null) return input;
   const { presentation } = input as { presentation?: unknown };
@@ -935,10 +1054,22 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   */
   TABLE_NOT_INVENTORIED:
     "That table is not in the schema inventory this run captured, so nothing was profiled. Profile one the inventory lists, spelled the way it spells it.",
+  // Names no tool, for the reason the two refusals around it name none: a held run has been
+  // narrowed out of `inspect_schema`, and this one does not need it anyway, since the objects
+  // are already inventoried. What it needs is the spellings, and they arrive as the `detail`
+  // because they are this inventory's own addresses and this sentence may not invent them.
+  TABLE_SPELLING_AMBIGUOUS:
+    "More than one object in this run's inventory is spelled that way, so nothing was profiled: this run cannot say which one you meant. Call profile_table again with one of the addresses below, spelled in full.",
   // Says what to change, which is the whole of it: the call this replaces was repeated
   // verbatim three times because the sentence it got named nothing that could be edited.
   // It also may not send the model to `inspect_schema` — a held run has been narrowed out
   // of holding it, and the fix does not need it, since the table is already inventoried.
+  // Confirms the object and refuses the profile, and names neither a tool nor a kind: the
+  // kind is the engine's own word and arrives as the refusal's `detail`, since a sentence
+  // that hardcoded "view or table" would be wrong on the engines whose relation kinds this
+  // repository has never heard of.
+  OBJECT_NOT_PROFILABLE:
+    "That name is in this run's inventory, and not as something with rows to count, so nothing was profiled. Profile one of the objects the inventory lists under a kind that holds rows.",
   TABLE_QUALIFIER_UNKNOWN:
     "The table is in this run's inventory, but not under the schema you named — this run's inventory has no such schema, so nothing was profiled. Call profile_table again with the same table and NO schema field at all: the inventory's own name for it is what this tool matches. The schema field takes a database schema name, never an artifact id or a snapshot fingerprint.",
   NO_COLUMNS_AT_OFFSET:
@@ -1288,7 +1419,7 @@ function exampleRecommendCall(events: readonly AgentRunEvent[]): string | undefi
  * this looks for a completed data read with a statement of the model's behind it, which is
  * exactly what the tool accepts, and offers nothing when there is none.
  */
-function presentableArtifact(events: readonly AgentRunEvent[]): string | undefined {
+export function presentableArtifact(events: readonly AgentRunEvent[]): string | undefined {
   const drafted = new Set(events.flatMap((event) => (event.kind === "statement-drafted" ? [event.stepId] : [])));
   let latest: string | undefined;
   for (const event of events) {
@@ -1624,7 +1755,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
   // PostgreSQL — while the error names it as the statement wrote it, usually bare. So the last
   // segment is compared as well, which is what makes the two spellings meet.
   const wanted = qualifier.toLowerCase();
-  const table = snapshot.tables.find((entry) => {
+  const table = snapshot.objects.find((entry) => {
     const name = entry.name.toLowerCase();
     return name === wanted || name.split(".").at(-1) === wanted;
   });
@@ -1638,7 +1769,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
     answer a model looking for a join key — `emp_no` exists, in dept_emp, employee, salary and
     title — and the whole inventory is already in hand.
   */
-  const elsewhere = snapshot.tables
+  const elsewhere = snapshot.objects
     .filter(
       (entry) => entry !== table && entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()),
     )
@@ -2053,12 +2184,74 @@ function arrivedAt(input: unknown, path: readonly PropertyKey[]): string {
  * long list read as prose is how a refusal becomes another wall.
  */
 function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): string {
-  const named = issues.slice(0, 3).map((issue) => {
-    const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
-    if (issue.code === "invalid_type")
-      return `${where}: expected ${issue.expected}, received ${arrivedAt(input, issue.path)}`;
-    if (issue.code === "unrecognized_keys") return `${where}: remove ${issue.keys.join(", ")}`;
-    /*
+  const renames = renamesAmong(issues, input);
+  const renamedTo = new Set(renames.values());
+  const named = [
+    ...[...renames].map(([from, to]) => `rename ${from} to ${to}`),
+    ...issues.flatMap((issue) => {
+      const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
+      // Both halves of a rename are dropped here rather than filtered out of `issues` above,
+      // because an `unrecognized_keys` issue can carry keys a rename did not claim and those
+      // still have to be named.
+      if (issue.code === "invalid_type" && issue.path.length === 1 && renamedTo.has(String(issue.path[0]))) return [];
+      if (issue.code === "unrecognized_keys") {
+        const surplus = issue.keys.filter((key) => !renames.has(key));
+        return surplus.length === 0 ? [] : [`${where}: remove ${surplus.join(", ")}`];
+      }
+      return [describeIssue(issue, where, input)];
+    }),
+  ].slice(0, 3);
+  return `the fields that did not match — ${named.join("; ")}`;
+}
+
+/**
+ * The pairs of issues that are one mistake wearing two names.
+ *
+ * A model that sends `artifact_id` where the schema says `artifact` is refused twice over:
+ * the field is missing AND a field is surplus. Both sentences are true, neither says they
+ * are the same field, and the value the model sent was never wrong — only the key was. What
+ * it reads is that something is absent and something is extra, and the repair that suggests
+ * itself is to send the extra field again with more of it. That is the loop every other
+ * refusal in this file exists to end, arriving by a route none of them cover.
+ *
+ * Measured on `llama3.1:8b`, the most-pulled tool-capable model on Ollama: five analyze runs,
+ * `present_answer` declined in every one, never once on the value it carried. `artifact_id`
+ * is not an exotic guess — it is what the field is called in most APIs that have one.
+ *
+ * A near miss and nothing looser: the two names have to be the same word once punctuation and
+ * case are set aside, one of them possibly carrying an affix the other does not. Anything
+ * broader would start pairing fields that are genuinely different, and a confident rename to
+ * the WRONG field is worse than the two sentences it replaced.
+ *
+ * The rule the message is bounded by is untouched. Both names are keys — the model's and the
+ * schema's — which are structural exactly as a path is, and the value never crosses over.
+ */
+function renamesAmong(issues: readonly z.core.$ZodIssue[], input: unknown): ReadonlyMap<string, string> {
+  const absent = issues.flatMap((issue) =>
+    issue.code === "invalid_type" && issue.path.length === 1 && arrivedAt(input, issue.path) === "nothing"
+      ? [String(issue.path[0])]
+      : [],
+  );
+  const surplus = issues.flatMap((issue) => (issue.code === "unrecognized_keys" ? issue.keys : []));
+  const bare = (name: string): string => name.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+  const pairs = new Map<string, string>();
+  for (const key of surplus) {
+    // First match wins and each side is claimed once, so two surplus keys cannot both rename
+    // onto one absent field and leave the model choosing between them.
+    const match = absent.find(
+      (name) =>
+        !new Set(pairs.values()).has(name) && (bare(key).includes(bare(name)) || bare(name).includes(bare(key))),
+    );
+    if (match !== undefined && !pairs.has(key)) pairs.set(key, match);
+  }
+  return pairs;
+}
+
+/** One issue in this layer's words; see `describeIssues`, which owns the rules. */
+function describeIssue(issue: z.core.$ZodIssue, where: string, input: unknown): string {
+  if (issue.code === "invalid_type")
+    return `${where}: expected ${issue.expected}, received ${arrivedAt(input, issue.path)}`;
+  /*
       A closed set is named, because "invalid value" was not something a model could act on.
 
       One evaluated model was refused `recommend_change` thirty-two times in one run on this
@@ -2071,8 +2264,8 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
       example does it, the citable-id list does it — and a closed set is its cheapest case:
       the permitted values are in the schema, already in hand at the point of refusal.
     */
-    if (issue.code === "invalid_value") return `${where}: expected one of ${issue.values.join(", ")}`;
-    /*
+  if (issue.code === "invalid_value") return `${where}: expected one of ${issue.values.join(", ")}`;
+  /*
       A DISCRIMINATED union lands here, and it is deliberately left alone.
 
       `claims.0.evidence.2.source: invalid union` looks like the same fault as the two cases above
@@ -2087,9 +2280,7 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
       the full sentence — is a reporting gap, not a blocked run, and pretending otherwise would
       have put dead code in front of a model that was never short of the answer.
     */
-    return `${where}: ${issue.code.replaceAll("_", " ")}`;
-  });
-  return `the fields that did not match — ${named.join("; ")}`;
+  return `${where}: ${issue.code.replaceAll("_", " ")}`;
 }
 
 /**
@@ -2143,7 +2334,7 @@ export async function readCatalogForGrounding(
 }
 
 /**
- * The provider schema read overran the time this call was granted.
+ * The provider object read overran the time this call was granted.
  *
  * A sentinel rather than a refusal code, for the same reason `AgentCuratedReadError`
  * is one: `executeAuditedOperation` owns the invoke callback's result type and there
@@ -2154,91 +2345,119 @@ export async function readCatalogForGrounding(
  */
 class AgentSchemaReadTimeout extends Error {
   constructor(readonly grantedMs: number) {
-    super(`the provider schema read did not answer within ${grantedMs}ms`);
+    super(`the provider object read did not answer within ${grantedMs}ms`);
     this.name = "AgentSchemaReadTimeout";
   }
 }
 
 /**
- * What the server's provider schema read produced. `tables` is the inventory itself.
+ * The inventory an object-surface read produced: what was listed, what the kinds MEAN,
+ * and whether it is all of it.
  *
- * No artifact reference travels with it, and that is not an oversight: the artifact is
- * still produced, still lands in the run's store and still reaches the audit stream, so
- * the call is as citable as any other. What the CALLER does with the reading is build a
- * snapshot from the structure, and it has no use for a handle to a projection of it.
+ * `kinds` carries more than the provider's `ObjectKindSpec` because two facts that decide
+ * whether the model is being told the truth are not on the spec: `sampledFrom`, which
+ * makes every count and listing of that kind a FLOOR, and `derivedGroupings`, which says
+ * the rows are groupings this server derived rather than objects anybody named.
  */
-export type AgentProviderSchemaRead =
-  | { readonly kind: "completed"; readonly tables: readonly TableSchema[] }
-  | { readonly kind: "timed-out"; readonly grantedMs: number }
-  | { readonly kind: "unavailable"; readonly modelText: string };
+export type AgentObjectInventoryRead =
+  | {
+      readonly kind: "completed";
+      readonly inventory: AgentInventory;
+      /**
+       * The container the session is in, where the walk could say (#789).
+       *
+       * Beside the inventory rather than on it, because it is a fact about the READ and
+       * not about what was read: it breaks a tie in `context-snapshot.ts`'s join and is
+       * not part of the snapshot the run reasons over or fingerprints.
+       */
+      readonly defaultContainer?: readonly string[];
+    }
+  /** This engine declares no object kinds, so there is nothing to tag and nothing was read. */
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "unavailable"; readonly modelText: string }
+  | { readonly kind: "timed-out"; readonly grantedMs: number };
 
 /**
- * The ENGINE'S OWN schema inspection, taken by the server while it grounds a run
- * (#414) — the same reading the sidebar performs when it lists your tables.
+ * The engine's own OBJECT inventory, taken by the server while it grounds a run (#789).
  *
- * The sibling of `readCatalogForGrounding`, for the engines that one cannot serve.
- * A catalog read is a statement the server composes per dialect, and it is composed
- * for two of the fourteen; everywhere else a run had no inventory at all and was told
- * so. This is the other reading the product already knows how to take, brought inside
- * the same pipeline rather than called beside it: `runAuditedAgentCall` applies the
- * mode check, the repair ledger, the deadline admission, the budget clamp, the
- * audited execution and the artifact exactly as it does for every statement, so there
- * is still no second, unaudited path to an engine — which is the objection
- * `context-snapshot.ts`'s own docblock opens with.
+ * The third grounding reading, beside the composed catalog and the provider schema
+ * inspection, and the one that answers a question neither of the other two can: WHAT KIND
+ * each entry is. A composed `information_schema.columns` read returns a view's columns
+ * beside a table's with nothing to tell them apart, and `getSchema()` answers one flat
+ * list on every engine, so a run was handed a view, a materialized view, a Redis key
+ * grouping and a Druid datasource under one word. #414 measured what a model does with
+ * that.
  *
- * **It acquires `AGENT_OPERATIONS_PROFILE`, and that is not interchangeable with the
- * read-only one.** `agent-read-only` sets `requiresReadOnlyStatements: true`, and
- * `factory.ts` refuses acquisition outright for a provider with no `queryReadOnly` —
- * which is every engine this function exists to reach. Acquired under that profile
- * this call would throw `PROFILE_UNSUPPORTED_BY_PROVIDER` before it ever reached a
- * provider, on all nine. The operations profile is the honest one here for the same
- * reason `runCuratedRead` takes it: no statement is sent that an engine has to plan,
- * so there is no statement for a read-only transaction to bound.
+ * TAKEN ON THE PROVIDER GROUNDING PATH ONLY, which is what makes the profile below the right
+ * one (#789 fix round 2). The walk reaches the four curated provider methods, and each sends
+ * its catalog statement through `provider.query`: nothing routes them through `queryReadOnly`,
+ * so no read-only transaction can contain them. That matches the path that grounds through
+ * the flat provider inspection this replaced took exactly - that whole grounding was a curated
+ * call under this same profile - and it does not match a dialect `CATALOG_PLANS` serves, where every
+ * statement of the run arrives inside `BEGIN READ ONLY` and this read would have been the one
+ * that left it.
  *
- * **It returns the `TableSchema[]` itself.** The artifact carries a model-facing
- * PROJECTION — one row per table: its name, how many columns, how many indexes — so
- * the call is citable and showable like any other reach, but the inventory does not
- * round-trip through it. The catalog path deliberately does the opposite, reading its
- * rows back out of the artifact store, and the difference is not inconsistency: there
- * the rows ARE the reading, so a released artifact must yield no snapshot rather than
- * a reconstruction from model-facing text. Here the provider handed back a structure,
- * there is no text to reconstruct from, and a round trip through the store would only
- * introduce a way to lose it.
+ * The dialects that do not take it are NOT the dialects without kinds (#789 fix round 3). A
+ * composed path composes the kind as well: its statement selects the engine's own word for the
+ * relation and `context-snapshot.ts` maps that onto the id the provider declares, so PostgreSQL
+ * and SQLite are kinded without a provider call and without leaving the envelope.
+ * `context-snapshot.ts` is where both halves of that are written, beside the two paths it
+ * chooses between.
+ *
+ * It costs ONE statement out of the run's budget, which is a charge for the READING rather
+ * than a measure of its traffic: inside that one statement the walk issues a
+ * `listContainers` per container level, a `countObjects` per container and a `listObjects`
+ * per container-and-kind pair, up to the pair bound below. It is charged and audited
+ * exactly like the other two, under the same `db.schema.read` descriptor: it is a schema read, an operator
+ * denying that descriptor means to deny this too, and a second canonical descriptor for
+ * the same fact would let the two be governed apart by accident. Its fingerprint source
+ * differs from the schema read's, so the repair ledger does not read the two as one
+ * attempt.
+ *
+ * IT READS COLUMNS TOO, and that is what makes it the WHOLE grounding on these engines rather
+ * than half of it. Columns used to come from a second, flat reading (`getSchema()`) joined onto
+ * this one by qualified NAME, which cost an object its columns whenever its name contained a dot
+ * and matched nothing at all on an engine whose flat name and object path disagree. The flat
+ * reading is gone, and `describeObjects` answers a whole container-and-kind folder in ONE round
+ * trip, so the columns arrive with the identity and are joined on the PATH, which both halves
+ * spell the same way because both came from the same call. The N+1 that got `includeColumns`
+ * removed from the inventory route was one `describeObject` PER OBJECT; this is one call per
+ * PAIR, bounded by the same pair limit the listing already obeys.
+ *
+ * `countObjects` is called per container before any listing, which is one extra provider
+ * call per container and pays for itself twice: a kind the engine answers `{ count: 0 }`
+ * for is not listed at all, and a kind whose count is SAMPLED is marked, which is the only
+ * way this read can know its own listing is a floor. `listObjects` reports no bound of its
+ * own, so without the count a Redis keyspace listing bounded by a 1,000-key `SCAN` would
+ * reach the model as the whole keyspace.
  */
-export async function readProviderSchemaForGrounding(context: AgentToolContext): Promise<AgentProviderSchemaRead> {
-  let tables: readonly TableSchema[] = [];
+export async function readObjectInventoryForGrounding(context: AgentToolContext): Promise<AgentObjectInventoryRead> {
+  const declared = declaredKinds(context.capabilities);
+  // Asked before anything is acquired, charged or audited: an engine that declares no
+  // kinds has nothing to answer, and spending a statement to be told so would charge
+  // every run on such an engine for a reading that cannot exist.
+  if (declared.length === 0) return { kind: "unsupported" };
 
+  let inventory: AgentInventory = { objects: [], kinds: [] };
+  let defaultContainer: readonly string[] | undefined;
   let outcome: AgentToolOutcome;
   try {
     outcome = await runAuditedAgentCall(context, {
       operationId: "db.schema.read",
-      // The connection IS the identity of this call: it takes no input, so two
-      // requests for it on one run are the same request and the repair ledger should
-      // say so rather than admitting the second as a fresh attempt.
-      fingerprintSource: `schema:${context.connection.id}`,
+      fingerprintSource: `objects:${context.connection.id}`,
       input: {},
-      label: "provider schema inventory",
+      label: "provider object inventory",
       grounding: true,
       invoke: async (_validatedInput, budget, phase) => {
-        // No "can this provider describe itself" check, deliberately: `getSchema()` is
-        // a REQUIRED member of `DatabaseProvider`, so every provider `acquireProvider`
-        // can return has one, and a guard for its absence would be a refusal code, a
-        // sentence and a headline for a state that cannot occur. What CAN happen is a
-        // `getSchema()` that rejects, and that is the case handled below.
         const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
         const startedAtMs = context.clock?.() ?? Date.now();
-        // Set immediately before the call leaves, for the same reason the statement
-        // path sets it: anything that threw while we were still connecting is not
-        // something the model could have written differently.
         phase.statementSent = true;
 
-        // HONEST LIMIT, stated because the alternative reading of this race is
-        // wrong: `getSchema()` takes no budget on any provider, so what this bounds
-        // is THE RUN and not the database. The driver call is not cancelled — it goes
-        // on reading until the engine or the driver ends it — and this run simply
-        // stops waiting for it. The clamp that reaches an engine on the statement
-        // path (PostgreSQL's `SET LOCAL statement_timeout`) has no counterpart here.
-        // Without the race there is no bound at all, which is the only worse answer.
+        // THE HONEST LIMIT, stated because the alternative reading of this race is wrong: no
+        // provider method here takes a budget, so what this bounds is THE RUN and not the
+        // database. The walk is not cancelled - it goes on reading until the engine or the
+        // driver ends it - and this run simply stops waiting for it. Without the race there is
+        // no bound at all, which is the only worse answer.
         let timer: ReturnType<typeof setTimeout> | undefined;
         const overran = new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
@@ -2247,26 +2466,25 @@ export async function readProviderSchemaForGrounding(context: AgentToolContext):
           );
         });
         try {
-          tables = await Promise.race([provider.getSchema(), overran]);
+          const walked = await Promise.race([walkObjectInventory(provider, context.capabilities, declared), overran]);
+          inventory = walked.inventory;
+          defaultContainer = walked.defaultContainer;
         } catch (error) {
           if (error instanceof AgentSchemaReadTimeout) throw error;
-          // Same wrap as the curated path, for the same measured reason: these
-          // provider methods do not map their driver's errors uniformly, so a raw
-          // `MongoServerError` can reach this seam and would otherwise propagate out
-          // of the tool layer and kill the run on the engines this exists to reach.
           throw asReadingFailure(error, context.connection.type);
         } finally {
           clearTimeout(timer);
         }
 
-        const rows = tables.map((table) => ({
-          table: table.name,
-          columns: table.columns.length,
-          indexes: table.indexes.length,
+        // The projection is one row per object naming its kind, so the artifact a claim
+        // cites shows the same kinds the prompt was given rather than a bare name list.
+        const rows = inventory.objects.map((object) => ({
+          object: object.name,
+          kind: object.kind ?? "",
         }));
         return {
           rows,
-          fields: ["table", "columns", "indexes"],
+          fields: ["object", "kind"],
           rowCount: rows.length,
           executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
         };
@@ -2278,7 +2496,160 @@ export async function readProviderSchemaForGrounding(context: AgentToolContext):
   }
 
   if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
-  return { kind: "completed", tables };
+  return defaultContainer === undefined
+    ? { kind: "completed", inventory }
+    : { kind: "completed", inventory, defaultContainer };
+}
+
+/**
+ * The walk itself: every container, every declared kind, under both bounds.
+ *
+ * Written as one flat pair loop for the reason the route states: two nested loops need a
+ * label to leave both, and a check in the outer one re-enters for every later container.
+ * The counts are taken first because they decide which pairs are worth listing at all.
+ *
+ * A kind whose COUNT was refused is still listed. A refusal to count is not a refusal to
+ * list, because on more than one engine the count is an aggregate over a catalog the listing
+ * does not need, and skipping it would drop objects the engine would have named, which is the
+ * absence this epic exists to prevent. A kind the engine counted as zero is skipped,
+ * because that IS the engine's answer and listing it would cost a round trip to be told
+ * the same thing.
+ */
+async function walkObjectInventory(
+  provider: DatabaseProvider,
+  capabilities: ProviderCapabilities,
+  declared: readonly ObjectKindSpec[],
+): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
+  const listObjects = provider.listObjects.bind(provider);
+  const describeObjects = provider.describeObjects.bind(provider);
+
+  const { containers, defaultContainer } = await enumerateGroundingContainers(provider, capabilities);
+  const sampledFrom = new Map<string, string>();
+  const objects: AgentInventoryObject[] = [];
+  let truncated: AgentInventory["truncated"];
+
+  let pairs = 0;
+  for (const container of containers) {
+    const counts = await countForGrounding(provider, container);
+    for (const spec of declared) {
+      const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
+      if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
+      if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+      if (pairs >= INVENTORY_PAIR_LIMIT) {
+        truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
+        break;
+      }
+      pairs += 1;
+      const listed: DatabaseObject[] = [];
+      for (const object of await listObjects(container, spec.id)) {
+        if (objects.length + listed.length >= INVENTORY_LIMIT) {
+          // Overwrites a pair-limit reason where both bit, the same way the route resolves
+          // it: the object limit is the one a reader can see reflected in what they hold.
+          truncated = { limit: INVENTORY_LIMIT, reason: INVENTORY_TRUNCATION_REASON };
+          break;
+        }
+        listed.push(object);
+      }
+
+      // One bulk read for the whole folder, bounded by what is left of the object budget, and
+      // only where the folder held something: describing a pair that named nothing would buy a
+      // round trip for an empty answer.
+      let details: readonly ObjectDetail[] = [];
+      if (listed.length > 0) {
+        const batch = await describeObjects(container, spec.id, listed.length);
+        details = batch.details;
+        // The provider's own bound in the provider's own words. Reported even when the listing
+        // fitted, because a complete list of objects whose columns were cut is still an
+        // incomplete reading, and a model told otherwise reads a missing column as an absent one.
+        if (batch.truncated !== undefined) truncated = batch.truncated;
+      }
+      const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
+      for (const object of listed) {
+        const detail = byPath.get(pathKey(object.path));
+        objects.push({
+          path: object.path,
+          name: object.name,
+          kind: object.kind,
+          // Empty rather than absent where the folder answered no detail for this object, which
+          // is a true reading on both of its arms: a kind that has no columns at all, and a
+          // bulk read the provider bounded before it reached this object. Neither may be shown
+          // to a model as a column list that was read and found empty, which is why `truncated`
+          // above travels with the inventory.
+          columns: detail?.columns ?? [],
+          indexes: detail?.indexes ?? [],
+          foreignKeys: detail?.foreignKeys ?? [],
+          // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
+          // fingerprint: a snapshot's identity is over the schema, so a row estimate on it
+          // would change identity every time somebody inserted a row, and a resumed run
+          // could no longer tell whether it was looking at the schema its earlier claims
+          // were made about. Each engine means something different by the number anyway.
+        });
+      }
+      if (truncated !== undefined) break;
+    }
+    if (truncated !== undefined) break;
+  }
+
+  const kinds = declared.map((spec) => ({
+    id: spec.id,
+    role: spec.role,
+    label: spec.label,
+    labelPlural: spec.labelPlural,
+    ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
+    // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
+    // which are the relation kinds: a Redis Function Library is a named object and a Redis
+    // key pattern is not, and both are declared by the one provider that sets the flag.
+    ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
+  }));
+
+  const inventory: AgentInventory = truncated === undefined ? { objects, kinds } : { objects, kinds, truncated };
+  return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
+}
+
+/**
+ * Every container the inventory covers, derived from the declared depth, and the SESSION
+ * DEFAULT among them.
+ *
+ * `containerDepth()` decides, never `containerLevels.length`, and a zero-level engine has
+ * exactly one container: the empty path, which is trivially the session's as well.
+ *
+ * The default is read off this walk and carried out of it because the join downstream ties
+ * without it (#789). A bare `orders` in the flat reading answers two databases on any
+ * MySQL server holding `app` beside `app_test`, and the object side of the join walks both
+ * while the flat side is a reading of ONE. `sessionDefaultContainer` is the shared rule for
+ * which container that is, taken at the DEEPEST level only under ruling 5a2, and this walk
+ * reads it rather than `enumerateContainers` for one reason: the depth here comes from the
+ * capabilities the RUN CONTEXT holds, not from `provider.getCapabilities()`.
+ */
+async function enumerateGroundingContainers(
+  provider: DatabaseProvider,
+  capabilities: ProviderCapabilities,
+): Promise<ContainerEnumeration> {
+  const depth = containerDepth(capabilities);
+  if (depth === 0) return { containers: [[]], defaultContainer: [] };
+  const listContainers = provider.listContainers.bind(provider);
+
+  let level = await listContainers();
+  for (let below = 1; below < depth; below += 1) {
+    const next: Container[] = [];
+    for (const parent of level) {
+      next.push(...(await listContainers(parent.path)));
+    }
+    level = next;
+  }
+
+  const containers = level.map((container) => container.path);
+  const defaultContainer = sessionDefaultContainer(level);
+  return defaultContainer === undefined ? { containers } : { containers, defaultContainer };
+}
+
+/** One container's counts, or none where the provider declares no counting. */
+async function countForGrounding(
+  provider: DatabaseProvider,
+  container: readonly string[],
+): Promise<Record<string, KindCount>> {
+  const countObjects = provider.countObjects?.bind(provider);
+  return countObjects === undefined ? {} : await countObjects(container);
 }
 
 /**
@@ -2905,40 +3276,106 @@ function describeFindings(findings: readonly AgentProfileFinding[]): string {
  * profiled. Found by review on #345; the profile now targets what it resolved.
  */
 interface ResolvedProfileTarget {
-  readonly entry: TableSchema;
+  readonly entry: AgentInventoryObject;
+  /**
+   * The resolved ADDRESS, which is what the statement is composed from.
+   *
+   * Segments rather than one string, because the composition quotes each of them: an
+   * address joined before it is quoted becomes an identifier no engine holds.
+   */
+  readonly segments: readonly string[];
+  /** The leading segments as one label, for the audit target and a report's citation. */
   readonly schema?: string;
   readonly table: string;
 }
 
-function inventoriedTable(
-  snapshot: AgentContextSnapshot,
+/**
+ * The table the run inventoried, found by the spelling the model gave.
+ *
+ * Resolved by `resolveInventoryAddress`, which is the same rule the ER diagram and the
+ * inventory join use, and the reason this stopped being an `=== name` test is measured: on
+ * an engine whose containers are two deep the inventory entry is `shop.sales.orders`, while
+ * `sales.orders` is the form that engine's own documentation writes and the only other one a
+ * model can reasonably produce. An exact comparison refused it - safely, and with nothing in
+ * the refusal saying what to change (#789 fix round 2).
+ *
+ * Everything #345 bought is unchanged, because the address rule already makes those refusals
+ * for its own reasons. A NAMED qualifier is still part of the answer and is still never
+ * matched against a bare entry: `sales.orders` is not a suffix of `["orders"]`, so SQLite's
+ * unqualified `orders` cannot be targeted as `other.orders`. And a spelling two entries
+ * answer to at the same length is still refused rather than guessed between, which is the
+ * case where a guess profiles the table the caller did not name.
+ */
+type ProfileTargetResolution =
+  | { readonly kind: "resolved"; readonly target: ResolvedProfileTarget }
+  | { readonly kind: "absent" }
+  | { readonly kind: "ambiguous"; readonly candidates: readonly AgentInventoryObject[] };
+
+/**
+ * The table the run inventoried, or WHICH of the two failures the spelling met.
+ *
+ * The third outcome used to be dropped here, and dropping it is what made a run that read
+ * two objects tell the model it had read neither: `resolveInventoryAddress` answers
+ * `ambiguous` with its candidates, `inventoriedTable` below folded that into `null`, and
+ * `null` was answered as `TABLE_NOT_INVENTORIED`. The two failures are different facts and
+ * only one of them is repairable by the model, so they travel separately from here (#789).
+ *
+ * `preferredContainer` is the session default the capture read, and it is passed for the
+ * reason every other consumer of the rule passes one: `er-diagram.ts` passes the declaring
+ * object's container, `detailed-object.ts` and the inventory join pass the session default,
+ * and this was the ONE that passed nothing. A run holding `app.orders` and `public.orders`
+ * with `public` as its default had the flat `orders` tagged `public.orders` by the object
+ * browser and answered `TABLE_AMBIGUOUS` here, in the same run, so a table the run had
+ * inventoried and the browser could address could not be profiled. It breaks a tie between
+ * equally ranked entries and never promotes a worse-ranked one, which is documented on the
+ * rule itself; where the capture read no default it is absent and the refusal stands.
+ */
+function resolveProfileTarget(
+  objects: readonly AgentInventoryObject[],
   schema: string | undefined,
   table: string,
+  preferredContainer: readonly string[] | undefined,
+): ProfileTargetResolution {
+  const resolution = resolveInventoryAddress(
+    objects,
+    schema === undefined ? table : `${schema}.${table}`,
+    preferredContainer,
+  );
+  if (resolution.kind === "absent") return { kind: "absent" };
+  if (resolution.kind === "ambiguous") return { kind: "ambiguous", candidates: resolution.candidates };
+  const entry = resolution.object;
+  // The entry's OWN address, never the spelling that reached it: an unqualified `orders`
+  // that resolved to `sales.orders` composed `FROM "orders"` and let the search path decide
+  // which relation was read while the ledger said `sales.orders`. Found by review on #345.
+  const segments = entry.path ?? entry.name.split(".");
+  const leading = segments.slice(0, -1);
+  return {
+    kind: "resolved",
+    target: {
+      entry,
+      segments,
+      ...(leading.length === 0 ? {} : { schema: leading.join(".") }),
+      table: segments[segments.length - 1],
+    },
+  };
+}
+
+/**
+ * The same resolution as a table or nothing, for the two probes that ask only WHETHER a
+ * spelling would resolve.
+ *
+ * Both of them are asking a yes-or-no question about a spelling the caller did not send, so
+ * a third outcome would have nothing to say: "would this have resolved without the
+ * qualifier?" is answered no by an ambiguity just as it is by an absence.
+ */
+function inventoriedTable(
+  objects: readonly AgentInventoryObject[],
+  schema: string | undefined,
+  table: string,
+  preferredContainer: readonly string[] | undefined,
 ): ResolvedProfileTarget | null {
-  if (schema !== undefined) {
-    // A schema was named, so it is part of the answer. Matching a BARE inventory
-    // entry here would accept `{schema: "other", table: "orders"}` against SQLite's
-    // unqualified `orders` and then target `other.orders` — a table the run never
-    // inventoried. Found by review on #345.
-    const entry = snapshot.tables.find((candidate) => candidate.name === `${schema}.${table}`);
-    return entry === undefined ? null : { entry, schema, table };
-  }
-
-  const bare = snapshot.tables.find((candidate) => candidate.name === table);
-  if (bare !== undefined) return { entry: bare, table };
-
-  // An unqualified name against a qualified inventory. PostgreSQL's capture names
-  // tables `schema.table` and SQLite's does not, so a model that has read either
-  // inventory may reasonably name a table without its schema. Resolved only when
-  // exactly ONE table ends that way: two schemas holding the same table name is
-  // precisely when a guess would profile the wrong one.
-  const suffix = `.${table}`;
-  const matches = snapshot.tables.filter((candidate) => candidate.name.endsWith(suffix));
-  const only = matches.length === 1 ? matches[0] : undefined;
-  if (only === undefined) return null;
-  // Derived by removing the suffix rather than by splitting on a dot: exact, and it
-  // cannot misread a name that carries one.
-  return { entry: only, schema: only.name.slice(0, only.name.length - suffix.length), table };
+  const resolution = resolveProfileTarget(objects, schema, table, preferredContainer);
+  return resolution.kind === "resolved" ? resolution.target : null;
 }
 
 /**
@@ -3002,7 +3439,26 @@ export function planTableProfile(
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
 
   const snapshot = capturedSnapshot(run.events);
-  const target = snapshot === null ? null : inventoriedTable(snapshot, parsed.value.schema, parsed.value.table);
+  // What a profile may target is the declared ROLE and nothing else (#789). The statement
+  // this composes is `SELECT count(*) ...` over the resolved name, and the inventory a run
+  // reads carries the schema's views, sequences and functions beside its tables, so
+  // resolving over all of them would compose a count over a sequence. `addressableObjects`
+  // also refuses a kind whose rows are groupings this server derived, which is the refusal
+  // the old flat row menu carried on `tablesAreDerivedGroupings`.
+  const profilable = snapshot === null ? [] : addressableObjects(snapshot);
+  const resolution: ProfileTargetResolution =
+    snapshot === null
+      ? { kind: "absent" }
+      : resolveProfileTarget(profilable, parsed.value.schema, parsed.value.table, snapshot.defaultContainer);
+  // Asked BEFORE the three questions below, because none of them is about this failure: the
+  // qualifier is not unknown, the object is not un-profilable and the table is not missing.
+  // The run read every candidate and cannot say which the caller meant, and the candidates
+  // are the only thing that repairs it, so they are what is said. They are this inventory's
+  // own addresses, so a model can copy one back verbatim.
+  if (resolution.kind === "ambiguous") {
+    return unavailable("TABLE_SPELLING_AMBIGUOUS", resolution.candidates.map((entry) => entry.name).join(", "));
+  }
+  const target = resolution.kind === "resolved" ? resolution.target : null;
   if (target === null) {
     /*
       Two different failures used to share one sentence, and the wire recording of a
@@ -3024,12 +3480,29 @@ export function planTableProfile(
       This only asks the second question once the first has failed — would this table have
       resolved unqualified? — and, when it would, says so and gives the name to use.
     */
-    const unqualified = snapshot !== null && inventoriedTable(snapshot, undefined, parsed.value.table) !== null;
+    const unqualified =
+      snapshot !== null &&
+      inventoriedTable(profilable, undefined, parsed.value.table, snapshot.defaultContainer) !== null;
     if (unqualified) return unavailable("TABLE_QUALIFIER_UNKNOWN");
+    // The third question, and it is asked over the WHOLE inventory: a name that resolves
+    // there and not among the profilable ones is an object this run has been shown and may
+    // not profile, which is a different thing to tell a model than "no such table". The
+    // engine's own word for the kind travels as the detail, because the kinds are the
+    // provider's and this sentence may not enumerate them.
+    const listed =
+      snapshot === null
+        ? null
+        : inventoriedTable(snapshot.objects, parsed.value.schema, parsed.value.table, snapshot.defaultContainer);
+    if (listed !== null) {
+      const kind = (snapshot?.kinds ?? []).find((declared) => declared.id === listed.entry.kind);
+      return unavailable("OBJECT_NOT_PROFILABLE", kind === undefined ? undefined : `it is listed under ${kind.label}`);
+    }
     // The first few names, not all of them: the inventory can hold hundreds, and a refusal
     // that turns into a catalog dump is a wall of its own. Enough to show the spelling
-    // convention this database uses, which is what a misspelling needs.
-    const offer = (snapshot?.tables ?? []).slice(0, 6).map((entry) => entry.name);
+    // convention this database uses, which is what a misspelling needs. Only names this
+    // tool would ACCEPT: offering one it would then refuse is the two-dead-refusals
+    // sequence the qualifier split was written to end.
+    const offer = profilable.slice(0, 6).map((entry) => entry.name);
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
 
@@ -3798,7 +4271,14 @@ export function composeReportTool(
     throw new Error("agent tool layer: the report's run record does not belong to this run");
   }
 
-  const parsed = parseToolInput(reportSchema, input);
+  /*
+    Named before the schema is asked, because the schema's own answer here is the one a model
+    cannot act on: it reports `claims: expected array, received string`, which a model that
+    serialized an array agrees with. Reached only where the read above could not recover the
+    value, so a properly serialized array never sees this.
+  */
+  if (claimsArrivedAsUnparseableText(input)) return unavailable("INVALID_TOOL_INPUT", AGENT_CLAIMS_NOT_JSON);
+  const parsed = parseToolInput(reportSchema, readSerializedClaims(input));
   if (!parsed.ok)
     return invalidEvidenceInput(
       parsed.problems,

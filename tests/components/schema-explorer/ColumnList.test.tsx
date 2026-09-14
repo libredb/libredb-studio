@@ -20,22 +20,22 @@ mock.module("framer-motion", () => ({
 // ── Imports after mocks ─────────────────────────────────────────────────────
 
 import { ColumnList } from "@/components/schema-explorer/ColumnList";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // ── Test data ───────────────────────────────────────────────────────────────
 
-const columnsWithPrimary: TableSchema["columns"] = [
+const columnsWithPrimary: DetailedObject["columns"] = [
   { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
   { name: "email", type: "VARCHAR(255)", nullable: true, isPrimary: false },
   { name: "created_at", type: "timestamp", nullable: false, isPrimary: false },
 ];
 
-const columnsNoPrimary: TableSchema["columns"] = [
+const columnsNoPrimary: DetailedObject["columns"] = [
   { name: "key", type: "TEXT", nullable: false, isPrimary: false },
   { name: "value", type: "JSONB", nullable: true, isPrimary: false },
 ];
 
-const indexesSample: TableSchema["indexes"] = [
+const indexesSample: DetailedObject["indexes"] = [
   { name: "idx_email", columns: ["email"], unique: true },
   { name: "idx_created", columns: ["created_at"], unique: false },
 ];
@@ -121,7 +121,7 @@ describe("ColumnList", () => {
   });
 
   test("handles columns with simple types (no parens)", () => {
-    const columns: TableSchema["columns"] = [{ name: "active", type: "boolean", nullable: false, isPrimary: false }];
+    const columns: DetailedObject["columns"] = [{ name: "active", type: "boolean", nullable: false, isPrimary: false }];
     const { queryByText } = render(<ColumnList columns={columns} indexes={[]} />);
     expect(queryByText("boolean")).not.toBeNull();
   });

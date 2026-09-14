@@ -5,6 +5,7 @@ export type {
   WorkspaceConnection,
   WorkspaceUser,
   WorkspaceQueryResult,
+  WorkspaceObjectReader,
   WorkspaceFeatures,
   SavedQueryInput,
 } from "../workspace/types";

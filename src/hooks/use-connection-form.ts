@@ -61,6 +61,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   instanceName: "edited",
   localDataCenter: "edited",
   authSource: "edited",
+  // The checkbox owns it, so unticking it has to CLEAR it. `preserved` would make the
+  // box unticked on screen while the saved connection still skipped its scan.
+  skipObjectScan: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -190,6 +193,14 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // MongoDB's auth database. In the open for the same reason as the field above: it is
   // what the ordinary deployment (users in `admin`) cannot connect without.
   const [authSource, setAuthSource] = useState("");
+  /**
+   * Read no catalog when this connection opens (#765).
+   *
+   * Engine-independent, unlike the four fields above: every engine has a catalog and any
+   * of them can hold an owner too big to scan on connect, so this is not gated on `type`
+   * and is not behind the Advanced accordion.
+   */
+  const [skipObjectScan, setSkipObjectScan] = useState(false);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(false);
@@ -248,6 +259,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten for the same reason: a connection that names no auth database must
       // show an empty field, not the last one edited.
       setAuthSource(editConnection.authSource || "");
+      // Overwritten, not set only when true: a connection that reads its catalog has to
+      // show an unticked box, or the previously edited connection's choice is saved onto
+      // it and the catalog silently stops being read.
+      setSkipObjectScan(editConnection.skipObjectScan === true);
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -317,6 +332,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // A leftover auth database sends the next connection's credentials to a
         // database that may not hold them, which reads as a wrong password.
         setAuthSource("");
+        // A leftover choice would open the next connection with no object list and no
+        // explanation, which reads as an engine that answered nothing.
+        setSkipObjectScan(false);
       }
     }
   }
@@ -400,6 +418,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(type === "mssql" && instanceName ? { instanceName } : {}),
       ...(type === "cassandra" && localDataCenter ? { localDataCenter } : {}),
       ...(type === "mongodb" && authSource ? { authSource } : {}),
+      // Written only when it says something, like every other optional field here: a
+      // stored `false` is noise on every connection ever saved.
+      ...(skipObjectScan ? { skipObjectScan } : {}),
     };
   }, [
     sslMode,
@@ -431,6 +452,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     instanceName,
     localDataCenter,
     authSource,
+    skipObjectScan,
   ]);
 
   /**
@@ -726,6 +748,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setLocalDataCenter,
     authSource,
     setAuthSource,
+    skipObjectScan,
+    setSkipObjectScan,
 
     // SSH Tunnel
     showSSH,

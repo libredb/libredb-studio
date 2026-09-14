@@ -30,8 +30,9 @@
  */
 
 import { quoteIdentifier } from "@/lib/sql/identifier";
-import type { ColumnSchema, DatabaseType, TableSchema } from "@/lib/types";
+import type { ColumnSchema, DatabaseType } from "@/lib/types";
 import { AgentComposedSqlError, MAX_CATALOG_SELECTOR_LENGTH } from "./composed-sql";
+import type { AgentInventoryObject } from "./types";
 
 /**
  * How deeply one profile reads. Each level is the one before it plus more, so a
@@ -213,11 +214,21 @@ function assertProfileTable(value: string): string {
   return trimmed;
 }
 
-/** The qualified target, quoted per dialect. Both engines here quote with `"`. */
-function quoteTarget(dialect: DatabaseType, schema: string | undefined, table: string): string {
-  const quotedTable = quoteIdentifier(assertProfileTable(table), dialect);
-  if (schema === undefined) return quotedTable;
-  return `${quoteIdentifier(assertProfileTable(schema), dialect)}.${quotedTable}`;
+/**
+ * The resolved address, one quoted identifier per SEGMENT. Both engines here quote with `"`.
+ *
+ * A schema and a table was enough while a resolution produced at most those two, and it is
+ * not any more: an address is as deep as the object read made it, and joining its leading
+ * segments into one string before quoting it composes `"shop.sales"."orders"` - a single
+ * identifier no engine holds, assembled from two that it does (#789). Quoting segment by
+ * segment is the only shape that cannot invent one. An empty address composes nothing: there
+ * is no name in it to profile.
+ */
+function quoteTarget(dialect: DatabaseType, segments: readonly string[]): string {
+  if (segments.length === 0) {
+    throw new AgentComposedSqlError("a profile needs one table name of a usable length", "INVALID_SELECTOR");
+  }
+  return segments.map((segment) => quoteIdentifier(assertProfileTable(segment), dialect)).join(".");
 }
 
 const isTextual = (column: ColumnSchema): boolean => TEXTUAL_TYPE.test(column.type);
@@ -253,7 +264,7 @@ const isComparable = (column: ColumnSchema): boolean => !INCOMPARABLE_TYPE.test(
  */
 export function composeTableProfile(
   dialect: DatabaseType,
-  selector: { readonly schema?: string; readonly table: string; readonly depth: AgentProfileDepth },
+  selector: { readonly segments: readonly string[]; readonly depth: AgentProfileDepth },
   columns: readonly ColumnSchema[],
 ): string {
   if (dialect !== "postgres" && dialect !== "sqlite") {
@@ -284,7 +295,7 @@ export function composeTableProfile(
     }
   });
 
-  return `SELECT ${parts.join(", ")} FROM ${quoteTarget(dialect, selector.schema, selector.table)}`;
+  return `SELECT ${parts.join(", ")} FROM ${quoteTarget(dialect, selector.segments)}`;
 }
 
 // ─── reading the result back ────────────────────────────────────────────────
@@ -448,7 +459,7 @@ function deriveFindings(
  * cannot be regrouped into the key they belong to, and a covering test over the
  * wrong grouping would be an answer about a key that does not exist.
  */
-export function findUnindexedForeignKeys(table: TableSchema): readonly AgentProfileFinding[] {
+export function findUnindexedForeignKeys(table: AgentInventoryObject): readonly AgentProfileFinding[] {
   const keys = table.foreignKeys ?? [];
   // More than one edge from a table is where a composite key becomes
   // indistinguishable from several single-column ones on PostgreSQL.

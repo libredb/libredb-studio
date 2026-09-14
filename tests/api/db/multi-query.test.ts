@@ -593,4 +593,92 @@ describe("POST /api/db/multi-query", () => {
     expect(res.status).toBe(408);
     expect(data.error).toContain("timed out");
   });
+  // ── An unfinished transaction never outlives the request (D71) ────────────
+  //
+  // Measured 2026-09-13 through the product's own routes. `BEGIN; CREATE TABLE
+  // ...; SELECT * FROM <missing>` breaks out of the loop on the third statement
+  // and the transaction the first one opened stays open on the provider handle,
+  // which `getOrCreateProvider` caches per `connection.id` for the whole process.
+  // On PostgreSQL 17 the next request — a DIFFERENT user, on POST /api/db/query —
+  // answered HTTP 500 "current transaction is aborted, commands ignored until end
+  // of transaction block", and so did POST /api/db/maintenance minutes later. On
+  // SQLite the loss is silent instead: the next user's INSERT answers 200 and reads
+  // its own row back while an independent reader sees nothing, and a later ROLLBACK
+  // destroys it with no error anywhere.
+
+  function providerEndingTransactions(outcome: "none" | "rolled-back") {
+    const endOpenQueryTransaction = mock(async () => outcome);
+    mockGetOrCreateProvider.mockImplementation(async () => ({ ...mockProvider, endOpenQueryTransaction }) as never);
+    return endOpenQueryTransaction;
+  }
+
+  test("ends a transaction the script left open and says so, when a statement failed", async () => {
+    const endOpenQueryTransaction = providerEndingTransactions("rolled-back");
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.includes("no_such_table")) throw new Error('relation "no_such_table" does not exist');
+      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+    });
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "BEGIN; CREATE TABLE t(id int); SELECT * FROM no_such_table" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ hasError: boolean; openTransaction?: string }>(res);
+
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect(data.hasError).toBe(true);
+    expect(data.openTransaction).toBe("rolled-back");
+  });
+
+  test("ends a transaction the script left open when every statement succeeded", async () => {
+    // The deliberate answer to the question the defect raised: a script may NOT
+    // leave a transaction open on a shared handle, error or no error. `BEGIN;
+    // INSERT;` with no COMMIT is rolled back and the author is told, rather than
+    // handed to whoever borrows the handle next.
+    const endOpenQueryTransaction = providerEndingTransactions("rolled-back");
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "BEGIN; INSERT INTO t VALUES (1)" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ hasError: boolean; openTransaction?: string }>(res);
+
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect(data.hasError).toBe(false);
+    expect(data.openTransaction).toBe("rolled-back");
+  });
+
+  test("says nothing when the script left no transaction open", async () => {
+    // Absent rather than "none": the client renders the notice from the field's
+    // presence alone, the same rule the two channels above follow.
+    const endOpenQueryTransaction = providerEndingTransactions("none");
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect("openTransaction" in data).toBe(false);
+  });
+
+  test("a provider that cannot end one is asked nothing and answers as before", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect("openTransaction" in data).toBe(false);
+  });
 });

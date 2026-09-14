@@ -49,12 +49,15 @@
  * categorisation lives on, and asserting it through a class that erases it would
  * have tested nothing.
  */
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sql/search";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
-import { ConnectionError, QueryError } from "@/lib/db/errors";
+import type { ProviderCapabilities } from "@/lib/db/types";
+import { ConnectionError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ============================================================================
 // Connection
@@ -255,8 +258,27 @@ const WRONG_ENDPOINT_BODY = JSON.stringify({
  * (455 documents), which the default listing does NOT report because it is hidden.
  * So the provider's inventory is the visible indices, and that is what the numbers
  * below are.
+ *
+ * The last row is the data stream's BACKING INDEX, and it is here because the whole
+ * argument for declaring `stream` as its own kind rests on it: a backing index is
+ * `.ds-`-prefixed, so the index listing's own dot rule already hides it, which is why
+ * a data stream is reachable through nothing in the tree without that kind AND why
+ * counting both kinds double-counts nothing. Without this row that premise is prose;
+ * with it, `index` is still 2 and `stream` is still 1.
  */
 const CAT_INDICES_BODY = JSON.stringify([
+  {
+    health: "yellow",
+    status: "open",
+    index: ".ds-probe_stream-000001",
+    uuid: "NzcJ_j43QlaXdvqSuGPRrA",
+    pri: "1",
+    rep: "1",
+    "docs.count": "1",
+    "docs.deleted": "0",
+    "store.size": "5211",
+    "pri.store.size": "5211",
+  },
   {
     health: "green",
     status: "open",
@@ -408,6 +430,182 @@ const STATS_BODY = JSON.stringify({
 });
 
 // ============================================================================
+// Object-surface payloads (#789), captured from OpenSearch 3.8.0 on 2026-09-11
+// ============================================================================
+
+/**
+ * `GET /_alias`, keyed by INDEX with an inner map of that index's aliases.
+ *
+ * A stock node's own indices are listed too, each with an EMPTY alias map, so the
+ * flattening has to tolerate an index that contributes nothing rather than assume
+ * every entry yields a name.
+ */
+const ALIAS_BODY = JSON.stringify({
+  "top_queries-2026.09.11-04089": { aliases: {} },
+  ".plugins-ml-config": { aliases: {} },
+  ".ds-probe_stream-000001": { aliases: {} },
+  probe_orders: { aliases: { probe_orders_alias: {} } },
+  ".opensearch-sap-log-types-config": { aliases: {} },
+});
+
+/**
+ * `GET /_ingest/pipeline` on a node that HAS a pipeline.
+ *
+ * The whole listing is the user's, because this product ships no built-in pipeline
+ * at all - which is what makes the empty case below a 404 rather than an empty set.
+ */
+const PIPELINES_BODY = JSON.stringify({
+  probe_pipeline: {
+    description: "libredb object-surface fixture (#789)",
+    processors: [{ set: { field: "seen", value: "yes" } }],
+  },
+  // The two objects the SOURCE read (#789) needs, both created by
+  // `docker/search-init/01-object-fixture.sh` on this product too. `probe pipe/slash`
+  // sorts FIRST (a space is below an underscore), so the first pipeline of the folder is
+  // the one whose name has to be percent-encoded to be readable at all.
+  "probe pipe/slash": {
+    description: "libredb source-read escaping fixture (#789)",
+    processors: [{ set: { field: "escaped", value: "yes" } }],
+  },
+  probe_json_edges: {
+    description: "libredb source-render fidelity fixture (#789)",
+    processors: [{ set: { field: "big", value: 1 } }],
+  },
+});
+
+// ----------------------------------------------------------------------------
+// The per-object source endpoints (#789 Phase 2), captured verbatim from
+// OpenSearch 3.8.0 on 2026-09-13 with the fixture applied.
+// ----------------------------------------------------------------------------
+
+/**
+ * `GET /_ingest/pipeline/probe_pipeline` - keyed by the id, exactly as upstream.
+ *
+ * The per-object endpoint answers the same wrapper the listing does, so the definition
+ * is the value under the id key and never the body: rendering the body would show a
+ * reader a map whose only key is the name of the object they already opened.
+ */
+const PIPELINE_SOURCE_BODY =
+  '{"probe_pipeline":{"description":"libredb object-surface fixture (#789)",' +
+  '"processors":[{"set":{"field":"seen","value":"yes"}}]}}';
+
+/** `GET /_ingest/pipeline/probe%20pipe%2Fslash` - the name that must be encoded. */
+const PIPELINE_SLASH_SOURCE_BODY =
+  '{"probe pipe/slash":{"description":"libredb source-read escaping fixture (#789)",' +
+  '"processors":[{"set":{"field":"escaped","value":"yes"}}]}}';
+
+/**
+ * `GET /_ingest/pipeline/probe_json_edges` - the renderer-fidelity object.
+ *
+ * The three values a JSON re-serialisation changes, and the fixture line that creates
+ * them is the same on both products with ONE difference recorded in the script: this
+ * product refuses `_meta` on an ingest pipeline outright ("doesn't support one or more
+ * provided configuration parameters [_meta]", HTTP 400), so the integer-like keys live
+ * inside a processor's value instead.
+ */
+const PIPELINE_JSON_EDGES_BODY =
+  '{"probe_json_edges":{"description":"libredb source-render fidelity fixture (#789)",' +
+  '"processors":[{"set":{"field":"big","value":9223372036854775807}},' +
+  '{"set":{"field":"sci","value":1.0E30}},' +
+  '{"set":{"field":"keys","value":{"zz":1,"10":"ten","2":"two","aa":2}}}]}}';
+
+/**
+ * `GET /_index_template/probe_template` - the LISTING shape for one object.
+ *
+ * Measured identical to upstream's answer for the same fixture line. The definition is
+ * the entry whose `name` matches, never entry zero: `GET /_index_template/probe*`
+ * answers two entries on this product too.
+ */
+const TEMPLATE_SOURCE_BODY =
+  '{"index_templates":[{"name":"probe_template","index_template":{"index_patterns":["probe-template-*"],' +
+  '"template":{"mappings":{"properties":{"id":{"type":"long"}}}},"composed_of":[]}}]}';
+
+/**
+ * `GET /_index_template/probe_stream_template`, and the ONE definition the two products
+ * do not agree on.
+ *
+ * The fixture writes `"data_stream": {}` and this product expands it to
+ * `timestamp_field` while Elasticsearch expands it to `hidden` and
+ * `allow_custom_routing` (both measured 2026-09-13). So the two suites' expected TEXTS
+ * for this object are deliberately different, and a shared expectation would have hidden
+ * whichever product it was not written from.
+ */
+const STREAM_TEMPLATE_SOURCE_BODY =
+  '{"index_templates":[{"name":"probe_stream_template","index_template":{"index_patterns":["probe_stream*"],' +
+  '"template":{"mappings":{"properties":{"@timestamp":{"type":"date"}}}},"composed_of":[],' +
+  '"data_stream":{"timestamp_field":{"name":"@timestamp"}}}}]}';
+
+/**
+ * `GET /_index_template/no_such_template` - HTTP 404 carrying the FULL error envelope.
+ *
+ * The measurement that refutes the design's row, and it is the CORE REST layer's
+ * envelope rather than the SQL plugin's Java class name: this endpoint is not the SQL
+ * plugin's. A 404 on a NAMED object is absence whatever the body carries, because the
+ * pipeline endpoint answers `{}` for the same event.
+ */
+const TEMPLATE_ABSENT_BODY =
+  '{"error":{"root_cause":[{"type":"resource_not_found_exception","reason":' +
+  '"index template matching [no_such_template] not found"}],"type":"resource_not_found_exception",' +
+  '"reason":"index template matching [no_such_template] not found"},"status":404}';
+
+/**
+ * `GET /_ingest/pipeline` on a node that has NONE - HTTP 404, body `{}`.
+ *
+ * THE measured difference between the two products this one implementation serves,
+ * and it is not a difference in the wire contract: both answer 404 for an empty set.
+ * It is a difference in what a stock cluster HOLDS. A stock Elasticsearch node ships
+ * 21 managed pipelines, so reaching this state there took `DELETE /_ingest/pipeline/*`
+ * and the built-ins returned about twenty seconds later (measured 2026-09-11); a stock
+ * OpenSearch node ships none, so this IS the ordinary first-run answer here. A transport that classified on
+ * the status would put "unavailable" on the Ingest Pipelines folder of every fresh
+ * OpenSearch cluster, when the truth is zero.
+ */
+const PIPELINES_ABSENT_BODY = "{}";
+
+/** `GET /_index_template`. This product ships none, so both entries are the fixture's. */
+const TEMPLATES_BODY = JSON.stringify({
+  index_templates: [
+    { name: "probe_template", index_template: { index_patterns: ["probe-template-*"], composed_of: [] } },
+    {
+      name: "probe_stream_template",
+      index_template: { index_patterns: ["probe_stream*"], data_stream: {}, composed_of: [] },
+    },
+  ],
+});
+
+/**
+ * `GET /_data_stream`.
+ *
+ * Measured shorter than Elasticsearch's: no `system`, no `hidden`, no `index_mode`,
+ * and the backing index name carries no date. `name` and the backing indices are the
+ * members both products share, and `name` is the only one the listing reads - through
+ * this product's OWN name key, which is why the constant exists rather than the
+ * template listing's being borrowed for both.
+ */
+const DATA_STREAMS_BODY = JSON.stringify({
+  data_streams: [
+    {
+      name: "probe_stream",
+      timestamp_field: { name: "@timestamp" },
+      indices: [{ index_name: ".ds-probe_stream-000001", index_uuid: "NzcJ_j43QlaXdvqSuGPRrA" }],
+      generation: 1,
+      status: "YELLOW",
+      template: "probe_stream_template",
+    },
+  ],
+});
+
+/** The mapping an alias and a data stream resolve to, keyed by the CONCRETE index. */
+const ALIAS_MAPPING_BODY = JSON.stringify({
+  probe_orders: { mappings: { properties: { customer: { type: "keyword" }, id: { type: "long" } } } },
+});
+const STREAM_MAPPING_BODY = JSON.stringify({
+  ".ds-probe_stream-000001": {
+    mappings: { _data_stream_timestamp: { enabled: true }, properties: { "@timestamp": { type: "date" } } },
+  },
+});
+
+// ============================================================================
 // Fake cluster
 // ============================================================================
 
@@ -445,6 +643,36 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   if (path === "/_cluster/stats") return ok(STATS_BODY);
   if (path === "/probe_orders/_mapping") return ok(ORDERS_MAPPING_BODY);
   if (path === "/probe_shapes/_mapping") return ok(SHAPES_MAPPING_BODY);
+  // The object-surface listings (#789), each one GET against a REST endpoint rather
+  // than the SQL surface: neither product's grammar can reach any of these objects.
+  if (path === "/_alias") return ok(ALIAS_BODY);
+  if (path === "/_ingest/pipeline") return ok(PIPELINES_BODY);
+  if (path === "/_index_template") return ok(TEMPLATES_BODY);
+  // The per-object source reads (#789 Phase 2). Each path is exact, percent-encoding
+  // included, so a name written into the URL unencoded reaches the unrouted-path throw
+  // below rather than being served the object it names.
+  if (path === "/_ingest/pipeline/probe_pipeline") return ok(PIPELINE_SOURCE_BODY);
+  if (path === "/_ingest/pipeline/probe%20pipe%2Fslash") return ok(PIPELINE_SLASH_SOURCE_BODY);
+  if (path === "/_ingest/pipeline/probe_json_edges") return ok(PIPELINE_JSON_EDGES_BODY);
+  if (path === "/_index_template/probe_template") return ok(TEMPLATE_SOURCE_BODY);
+  if (path === "/_index_template/probe_stream_template") return ok(STREAM_TEMPLATE_SOURCE_BODY);
+  if (path === "/_data_stream") return ok(DATA_STREAMS_BODY);
+  if (path === "/probe_orders_alias/_mapping") return ok(ALIAS_MAPPING_BODY);
+  if (path === "/probe_stream/_mapping") return ok(STREAM_MAPPING_BODY);
+  // The bulk column read (#789): ONE `_mapping` request naming the whole index folder,
+  // answered by COMPOSING the single-index bodies rather than by writing a third one, so
+  // the batch and the single read cannot be compared against two different servers.
+  if (path === "/probe_orders,probe_shapes/_mapping") {
+    return ok(JSON.stringify({ ...JSON.parse(ORDERS_MAPPING_BODY), ...JSON.parse(SHAPES_MAPPING_BODY) }));
+  }
+
+  // Every other NAMED object on the two source endpoints, answered the way the cluster
+  // answers it (#789): the pipeline endpoint spells absence as HTTP 404 with `{}` and the
+  // template endpoint spells the same event as HTTP 404 with the full error envelope.
+  // Both measured 2026-09-13, and the two spellings are why absence is decided on the
+  // status alone for a named object.
+  if (path.startsWith("/_ingest/pipeline/")) return { status: 404, body: "{}" };
+  if (path.startsWith("/_index_template/")) return { status: 404, body: TEMPLATE_ABSENT_BODY };
 
   // Every other index name: the core REST layer's snake_case 404.
   if (path.endsWith("/_mapping")) return { status: 404, body: MAPPING_NOT_FOUND_BODY };
@@ -917,78 +1145,6 @@ describe("OpenSearchProvider query", () => {
 // Schema
 // ============================================================================
 
-describe("OpenSearchProvider schema", () => {
-  test("hides both kinds of engine bookkeeping this product ships", async () => {
-    // Two of the four visible indices on this cluster are the engine's own, and
-    // only one of them is dot-prefixed: `top_queries-2026.08.18-74305` carries no
-    // dot at all and is recognisable by name SHAPE. A stock Elasticsearch node
-    // ships neither, so this is the case that makes the second rule necessary.
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_orders", "probe_shapes"]);
-  });
-
-  test("reports the string counts as numbers and the string bytes as a size", async () => {
-    const provider = await connectProvider();
-
-    const [orders] = await provider.getSchema();
-
-    // `"docs.count":"1"` and `"pri.store.size":"4807"` - quoted even under
-    // `bytes=b`, on both products.
-    expect(orders.rowCount).toBe(1);
-    expect(orders.size).toBe("4.69 KB");
-  });
-
-  test("omits containers as columns even though this product can project them, and omits multi-fields it cannot", async () => {
-    // Two portability decisions, pulling in OPPOSITE directions, and neither branches
-    // on the dialect - which is the point.
-    //
-    // Containers: `SELECT address, items FROM probe_shapes` is HTTP 200 here (the
-    // object comes back as a sub-document, the nested field as an array) and HTTP 400
-    // on Elasticsearch. So this product can do MORE, and the leaves are the columns on
-    // both anyway, because a starter query enumerating every declared column has to run
-    // on both.
-    //
-    // Multi-fields: this product can do LESS. `SELECT note.keyword` is
-    // `SemanticCheckException`, "can't resolve Symbol(namespace=FIELD_NAME,
-    // name=note.keyword) in type env", in every spelling, while Elasticsearch selects
-    // it fine - and dynamic mapping gives every text field such a child, so listing
-    // them would break the starter query on nearly every index here. Dropped on both,
-    // for the same reason the container's leaves are kept on both.
-    const provider = await connectProvider();
-
-    const shapes = (await provider.getSchema())[1];
-
-    expect(shapes.columns.map((column) => column.name)).toEqual(["address.city", "items.sku", "note"]);
-    // Every field is nullable and none is a key: a mapping cannot require a field,
-    // and nothing it declares is unique. `_id` is - measured, and this product's
-    // SQL even returns it while Elasticsearch's answers "Unknown column [_id]" -
-    // but it is metadata rather than a mapped field, so it is not a column here and
-    // no column claims to be a key.
-    expect(shapes.columns.every((column) => column.nullable && !column.isPrimary)).toBe(true);
-    expect(shapes.columns.map((column) => column.type)).toEqual(["keyword", "keyword", "text"]);
-  });
-
-  test("costs one index its columns when its mapping answers the snake_case 404", async () => {
-    // The listing is a snapshot, so an index deleted between the listing and its
-    // mapping read is a race on a live cluster rather than a fault - and the fault
-    // name that arrives is the CORE layer's snake_case one, which the SQL fault
-    // table alone would not have recognised. Recognising it is what keeps the whole
-    // sidebar from failing over one index.
-    replyFor = (path, body) =>
-      path === "/probe_shapes/_mapping" ? { status: 404, body: MAPPING_NOT_FOUND_BODY } : defaultReply(path, body);
-    const provider = await connectProvider();
-
-    const schema = await provider.getSchema();
-
-    expect(schema.map((table) => table.name)).toEqual(["probe_orders", "probe_shapes"]);
-    expect(schema[0].columns).toHaveLength(3);
-    expect(schema[1].columns).toEqual([]);
-  });
-});
-
 // ============================================================================
 // Monitoring
 // ============================================================================
@@ -1116,5 +1272,770 @@ describe("OpenSearchProvider monitoring", () => {
     // The ceiling keeps its 0: for `maxConnections` the type says 0 and absence are the
     // SAME fact, and the Connections card reads it as "no limit published".
     expect(overview.maxConnections).toBe(0);
+  });
+});
+
+// ============================================================================
+// The object surface (#789)
+// ============================================================================
+
+/**
+ * What the fixture holds on THIS product once the engine's own objects are removed.
+ *
+ * `index` is 2 of the four `_cat/indices` rows: `.plugins-ml-config` and
+ * `top_queries-2026.08.18-74305` are the node's own, and the second carries no dot at
+ * all, which is why the index listing's system rule is a name SHAPE and not just a
+ * prefix. Every other number equals the Elasticsearch fixture's, because
+ * `docker/search-init/01-object-fixture.sh` applies unchanged to both.
+ */
+const FIXTURE_OBJECT_COUNTS = { index: 2, alias: 1, pipeline: 3, template: 2, stream: 1 };
+
+describe("object surface", () => {
+  test("declares exactly what the other type-id declares", () => {
+    // The two declarations are already pinned as EQUAL above, capability by
+    // capability, so this test asserts the object model's own half rather than
+    // restating it: the kinds, their roles and the zero container depth, all of which
+    // are facts about a search cluster and not about either product.
+    const capabilities = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const kinds = capabilities.objectKinds ?? [];
+
+    expect(kinds.map((kind) => kind.id).sort()).toEqual(["alias", "index", "pipeline", "stream", "template"]);
+    expect(kinds.map((kind) => kind.role)).toEqual(["relation", "relation", "relation", "config", "config"]);
+    expect(capabilities.containerLevels).toEqual([]);
+
+    // OpenSearch's SQL grammar contains no CREATE statement of ANY kind - measured,
+    // `CREATE TABLE t (id BIGINT)` answers `SQLFeatureNotSupportedException`, "Query
+    // must start with SELECT, DELETE, SHOW or DESCRIBE" - so there is no view, no
+    // function, no procedure and no trigger to declare. A stored script exists but has
+    // no list-all API (`GET /_scripts` is refused outright on both products), and an
+    // object that cannot be enumerated cannot be a tree node.
+    for (const absent of ["view", "function", "procedure", "trigger", "script"]) {
+      expect(kinds.find((kind) => kind.id === absent)).toBeUndefined();
+    }
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    const provider = await connectProvider();
+
+    await assertObjectSurface(provider, {
+      // A zero-level engine lists NO containers, and the helper addresses every object
+      // at the root container. `[[]]` would assert that `listContainers()` answers one
+      // container whose path is empty, which is a different and untrue claim.
+      containers: [],
+      kinds: FIXTURE_OBJECT_COUNTS,
+      sampleObject: { path: ["probe_stream"], kind: "stream" },
+      // The absence raise, driven on the kind whose endpoint spells absence as an EMPTY
+      // body. The template endpoint spells the same event with a full error envelope,
+      // and both raises are asserted separately in the source block below.
+      absentSource: { path: ["no_such_pipeline"], kind: "pipeline" },
+    });
+  });
+
+  test("declares source on exactly the kinds that have a definition text", () => {
+    // ONE declaration constant serves both type-ids, so this expectation is deliberately
+    // written out here rather than compared against the other product's: a suite that
+    // drove only one of the two would certify the other by assumption, and the equality
+    // test above is what proves they are the same object.
+    const kinds = new OpenSearchProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+
+    expect(declared).toEqual([
+      ["pipeline", "json"],
+      ["template", "json"],
+    ]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab. The
+    // three absences are the same three, for the same reasons, and
+    // docs/providers/opensearch.md records each one.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["alias", "index", "stream"]);
+  });
+
+  // --------------------------------------------------------------------------
+  // describeObjects, the bulk column read (#789)
+  // --------------------------------------------------------------------------
+
+  test("reads the whole index folder's mappings in ONE request, and each alias in its own", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    const indices = await provider.describeObjects!([], "index");
+
+    expect(indices.details.map((detail) => detail.path)).toEqual([["probe_orders"], ["probe_shapes"]]);
+    expect(indices.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([
+      ["customer", "id", "total"],
+      ["address.city", "items.sku", "note"],
+    ]);
+    expect(sentPaths.filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_orders,probe_shapes/_mapping"]);
+
+    // An alias and a data stream resolve to the index behind them, so their mappings come
+    // back keyed by THAT index and a combined request cannot be attributed. Measured on
+    // 3.8.0, the same as on Elasticsearch, which is why one provider serves both.
+    sentPaths = [];
+    const aliases = await provider.describeObjects!([], "alias");
+    expect(aliases.details.map((detail) => detail.columns.map((column) => column.name))).toEqual([["customer", "id"]]);
+    expect(sentPaths.filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_orders_alias/_mapping"]);
+  });
+
+  test("the bulk read spells an object exactly as the single read does", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["index", "alias", "stream"]) {
+      const listed = await provider.listObjects([], kind);
+      const batch = await provider.describeObjects!([], kind);
+      expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+      for (const detail of batch.details) {
+        expect(detail).toEqual(await provider.describeObject(detail.path, kind));
+      }
+    }
+  });
+
+  test("the caller's bound cuts the sorted objects and reaches the mapping request", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    const batch = await provider.describeObjects!([], "index", 1);
+
+    expect(batch.details.map((detail) => detail.path)).toEqual([["probe_orders"]]);
+    expect(batch.truncated).toEqual({
+      limit: 1,
+      reason: "the bulk column read was bounded at 1 object by its caller",
+    });
+    // Singular, because a bound of one object is one object. The bound reaches the wire:
+    // `probe_shapes` is not in the URL.
+    expect(sentPaths.filter((path) => path.endsWith("/_mapping"))).toEqual(["/probe_orders/_mapping"]);
+    expect((await provider.describeObjects!([], "index", 2)).truncated).toBeUndefined();
+  });
+
+  test("a kind with no columns answers an empty batch with no round trip at all", async () => {
+    const provider = await connectProvider();
+
+    for (const kind of ["pipeline", "template"]) {
+      sentPaths = [];
+      expect(await provider.describeObjects!([], kind)).toEqual({ details: [] });
+      expect(sentPaths).toEqual([]);
+    }
+  });
+
+  test("the guards refuse in order: the declaration, the container, then the limit", async () => {
+    const provider = await connectProvider();
+
+    await expect(provider.describeObjects!([], "view", 0)).rejects.toThrow(/declares no object kind "view"/);
+    await expect(provider.describeObjects!(["nope"], "index", 0)).rejects.toThrow(/container path has 0 segment/);
+    await expect(provider.describeObjects!([], "index", 0)).rejects.toThrow(
+      /bulk column read limit must be a positive whole number/,
+    );
+  });
+
+  test("a backing index is hidden by the dot rule, so a data stream is counted once", async () => {
+    // The premise the `stream` kind rests on, asserted rather than argued on this
+    // product too: the listing carries `.ds-probe_stream-000001` and the index folder
+    // does not, so the stream's data is reachable through the `stream` kind and
+    // through nothing else, and the two kinds do not count the same bytes twice.
+    const provider = await connectProvider();
+
+    const indices = (await provider.listObjects([], "index")).map((object) => object.name);
+
+    expect(indices).toEqual(["probe_orders", "probe_shapes"]);
+    expect(indices.some((name) => name.startsWith(".ds-"))).toBe(false);
+    expect(await provider.countObjects([])).toMatchObject({ index: { count: 2 }, stream: { count: 1 } });
+  });
+
+  test("a 404 carrying this product's error envelope is a refusal, not an empty folder", async () => {
+    // The same rule from the other side, and the fork's envelope is its own: a Java
+    // class name where Elasticsearch spells a snake_case type. Measured on OpenSearch
+    // 3.8.0 2026-09-11, `GET /_data_stream/nope` answers HTTP 404 carrying the full
+    // envelope while the empty pipeline set answers HTTP 404 carrying `{}` - so the
+    // BODY is what separates a folder that holds nothing from one nobody may read.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", {
+      status: 404,
+      body: JSON.stringify({
+        error: {
+          type: "IndexNotFoundException",
+          reason: "Invalid SQL query",
+          details: "no such index [nope_pipeline_store]",
+        },
+        status: 404,
+      }),
+    });
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.pipeline).toEqual({ unavailable: "no such index [nope_pipeline_store]" });
+    expect(counts.pipeline).not.toEqual({ count: 0 });
+    // And the control is the test below: the same status with `{}` is still zero.
+    expect(counts.template).toEqual({ count: 2 });
+  });
+
+  test("a listing entry with no readable name is refused, never dropped", async () => {
+    // Ruling 5a's failure shape reached from the payload rather than from a CASE arm:
+    // a dropped entry leaves the count and the listing agreeing with each other
+    // (ruling 5f) and both short by exactly the objects nobody can see.
+    const provider = await connectProvider();
+    overridePath("/_data_stream", ok(JSON.stringify({ data_streams: [{ template: "probe_stream_template" }] })));
+
+    await expect(provider.listObjects([], "stream")).rejects.toThrow(
+      /OpenSearch answered a data stream listing the client could not read/,
+    );
+  });
+
+  test("an alias payload member that is not an object is refused, never skipped", async () => {
+    // This product's listing is the one that names the engine's own indices with an
+    // EMPTY alias map, so "an entry contributing nothing" and "an entry this cannot
+    // read" are genuinely different here, and only the second is a refusal.
+    const provider = await connectProvider();
+    overridePath("/_alias", ok(JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } } })));
+    expect((await provider.listObjects([], "alias")).map((object) => object.name)).toEqual(["probe_orders_alias"]);
+
+    overridePath("/_alias", ok(JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } }, bad: 7 })));
+    await expect(provider.listObjects([], "alias")).rejects.toThrow(/an alias listing/);
+  });
+
+  test("reads a 404 from the pipeline endpoint as an empty set, not a refusal", async () => {
+    // The one behaviour that differs between the two products in practice, and it is
+    // the stock state of THIS one: a node with no pipeline answers HTTP 404 with `{}`.
+    // Counting it as a refusal would put the engine's own sentence on the Ingest
+    // Pipelines folder of every fresh OpenSearch cluster.
+    const provider = await connectProvider();
+    overridePath("/_ingest/pipeline", { status: 404, body: PIPELINES_ABSENT_BODY });
+
+    const counts = await provider.countObjects([]);
+
+    expect(counts.pipeline).toEqual({ count: 0 });
+    expect(await provider.listObjects([], "pipeline")).toEqual([]);
+    // And the other folders are untouched: a 404 on one endpoint is one kind's answer
+    // and not a fact about the cluster.
+    expect(counts.template).toEqual({ count: 2 });
+  });
+});
+
+/**
+ * The source read on THIS product (#789 Phase 2).
+ *
+ * One implementation and one declaration constant serve both type-ids, so a mutation on
+ * one kind fails two rows at once. That is exactly why this block drives the reads
+ * itself instead of pointing at the other suite: a shared implementation certified from
+ * one product is a product certified by assumption, and every text below was captured
+ * from OpenSearch 3.8.0 on 2026-09-13 with the same fixture script applied.
+ */
+describe("OpenSearch object source", () => {
+  const SLASH_PIPELINE_TEXT = `{
+  "description": "libredb source-read escaping fixture (#789)",
+  "processors": [
+    {
+      "set": {
+        "field": "escaped",
+        "value": "yes"
+      }
+    }
+  ]
+}`;
+
+  const PIPELINE_TEXT = `{
+  "description": "libredb object-surface fixture (#789)",
+  "processors": [
+    {
+      "set": {
+        "field": "seen",
+        "value": "yes"
+      }
+    }
+  ]
+}`;
+
+  /** The data-stream template, whose `data_stream` member THIS product expands its own way. */
+  const STREAM_TEMPLATE_TEXT = `{
+  "index_patterns": [
+    "probe_stream*"
+  ],
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        }
+      }
+    }
+  },
+  "composed_of": [],
+  "data_stream": {
+    "timestamp_field": {
+      "name": "@timestamp"
+    }
+  }
+}`;
+
+  test("reads an ingest pipeline's definition and says what the text is", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    const document = await provider.readObjectSource!(["probe_pipeline"], "pipeline");
+
+    expect(document.path).toEqual(["probe_pipeline"]);
+    expect(document.kind).toBe("pipeline");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    expect(part.label).toBe("Definition");
+    expect(part.text).toBe(PIPELINE_TEXT);
+    expect(part.language).toBe("json");
+    expect(part.form).toBe("complete");
+    expect(part.origin).toBe("rendered");
+    expect(part.truncated).toBeUndefined();
+    expect(sentPaths).toEqual(["/_ingest/pipeline/probe_pipeline"]);
+  });
+
+  test("reads a text for every kind that DECLARES one, and the population is the declaration", async () => {
+    // Recipe rule 6 on the second type-id: the population comes from the declaration,
+    // never from a number typed here, because a kind that quietly became a refusal
+    // passes every count and every length assertion.
+    const provider = await connectProvider();
+    const expected: Record<string, string> = {
+      // The FIRST object of each folder, which is what the conformance walk reads too.
+      pipeline: SLASH_PIPELINE_TEXT,
+      template: STREAM_TEMPLATE_TEXT,
+    };
+
+    const declared = (provider.getCapabilities().objectKinds ?? []).filter((kind) => kind.hasSource === true);
+    expect(declared.map((kind) => kind.id).sort()).toEqual(Object.keys(expected).sort());
+
+    let read = 0;
+    for (const kind of declared) {
+      const [first] = await provider.listObjects([], kind.id);
+      const document = await provider.readObjectSource!(first.path, kind.id);
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) {
+        throw new Error(`the ${kind.id} read answered a refusal: ${part.unavailable}`);
+      }
+      expect(part.text).toBe(expected[kind.id]);
+      read += 1;
+    }
+    // A zero-iteration walk certifies nothing, so it is refused BY NAME.
+    if (read !== declared.length || read === 0) {
+      throw new Error(`the source walk read ${read} of ${declared.length} declared kinds`);
+    }
+  });
+
+  test("the data stream template's definition is NOT the other product's", async () => {
+    // The one definition the two products disagree about, from the SAME fixture line:
+    // `"data_stream": {}` comes back as `timestamp_field` here and as `hidden` plus
+    // `allow_custom_routing` upstream. A suite that shared its expected text with the
+    // other product's would have asserted whichever one it was written from.
+    const provider = await connectProvider();
+
+    const [part] = (await provider.readObjectSource!(["probe_stream_template"], "template")).parts;
+
+    if (isSourcePartUnavailable(part)) throw new Error("the template read answered a refusal");
+    expect(part.text).toBe(STREAM_TEMPLATE_TEXT);
+    expect(part.text).toContain('"timestamp_field"');
+    expect(part.text).not.toContain('"allow_custom_routing"');
+  });
+
+  test("renders the cluster's own JSON, and re-spells three things while doing it", async () => {
+    // Recipe rule 10, measured on this product too: there is no extended-JSON writer for
+    // a REST payload, so the renderer is `JSON.parse` plus `JSON.stringify` and what it
+    // costs is asserted rather than assumed. Nothing is DROPPED, which is the difference
+    // from the MongoDB regular expression that produced the rule.
+    const provider = await connectProvider();
+
+    const [part] = (await provider.readObjectSource!(["probe_json_edges"], "pipeline")).parts;
+
+    if (isSourcePartUnavailable(part)) throw new Error("the fidelity read answered a refusal");
+    expect(PIPELINE_JSON_EDGES_BODY).toContain("9223372036854775807");
+    expect(part.text).toContain("9223372036854776000");
+    expect(part.text).not.toContain("9223372036854775807");
+    expect(part.text).toContain("1e+30");
+    expect(part.text.indexOf('"2": "two"')).toBeLessThan(part.text.indexOf('"zz": 1'));
+    expect(part.form).toBe("complete");
+  });
+
+  test("percent-encodes the object's name, so a name holding a space and a slash is readable", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    const [part] = (await provider.readObjectSource!(["probe pipe/slash"], "pipeline")).parts;
+
+    if (isSourcePartUnavailable(part)) throw new Error("the escaped read answered a refusal");
+    expect(part.text).toBe(SLASH_PIPELINE_TEXT);
+    expect(sentPaths).toEqual(["/_ingest/pipeline/probe%20pipe%2Fslash"]);
+  });
+
+  test("never renders another object's definition as this one's", async () => {
+    // `encodeURIComponent` leaves the asterisk alone, and encoding it would not help:
+    // measured on this product too, `%2A` is decoded before the match and wildcards just
+    // the same. The exact-key match is the whole guard, so the fake answers a real
+    // wildcard result here.
+    const provider = await connectProvider();
+    replyFor = (path, body) =>
+      path === "/_ingest/pipeline/probe*" ? ok(PIPELINE_SOURCE_BODY) : defaultReply(path, body);
+
+    await expect(provider.readObjectSource!(["probe*"], "pipeline")).rejects.toThrow(
+      /No OpenSearch pipeline named probe\*/,
+    );
+
+    replyFor = (path, body) =>
+      path === "/_index_template/probe*" ? ok(TEMPLATE_SOURCE_BODY) : defaultReply(path, body);
+    await expect(provider.readObjectSource!(["probe*"], "template")).rejects.toThrow(
+      /No OpenSearch template named probe\*/,
+    );
+  });
+
+  test("an object the cluster does not hold RAISES, and the two endpoints spell absence differently", async () => {
+    // `GET /_ingest/pipeline/no_such` is HTTP 404 with `{}` and
+    // `GET /_index_template/no_such` is HTTP 404 with the FULL error envelope, on this
+    // product as on the other. Both are absence, and reading the second as a refusal
+    // would print "index template matching [x] not found" in the Source pane as the
+    // cluster refusing to show a definition for an object that is not there.
+    const provider = await connectProvider();
+
+    await expect(provider.readObjectSource!(["no_such_pipeline"], "pipeline")).rejects.toThrow(
+      /No OpenSearch pipeline named no_such_pipeline/,
+    );
+    await expect(provider.readObjectSource!(["no_such_template"], "template")).rejects.toThrow(
+      /No OpenSearch template named no_such_template/,
+    );
+  });
+
+  test("a refusal is per ENDPOINT: the pipeline read is denied while the template read answers", async () => {
+    // Not producible against the compose service: the security plugin is DISABLED there
+    // and a bogus Basic header is ignored (measured, HTTP 200), so this drives the shape
+    // the transport builds from the one status HTTP itself fixes.
+    // `docs/providers/opensearch.md` says CANNOT rather than reporting around it.
+    const provider = await connectProvider();
+    replyFor = (path, body) =>
+      path.startsWith("/_ingest/pipeline/") ? { status: 403, body: "" } : defaultReply(path, body);
+
+    const [part] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    if (!isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.unavailable).toBe("OpenSearch refused the credentials (HTTP 403)");
+    // A part carrying BOTH keys narrows to the refusal arm while holding a real
+    // definition, so the absence of a text is asserted rather than assumed.
+    expect(Object.hasOwn(part, "text")).toBe(false);
+
+    // The control, in the same test: the OTHER endpoint still answers a definition.
+    const [readable] = (await provider.readObjectSource!(["probe_template"], "template")).parts;
+    if (isSourcePartUnavailable(readable)) throw new Error("the template read was denied too");
+    expect(readable.text).toContain('"index_patterns"');
+  });
+
+  test("an engine fault the cluster ANSWERED is a refusal carrying its own sentence", async () => {
+    // The other half of the refusal set, and it is this product's own envelope: the core
+    // REST layer keeps upstream's snake_case fault names even though the SQL plugin
+    // answers Java class names, so the sentence carried here comes from the endpoint that
+    // replied and not from the product's SQL vocabulary.
+    const provider = await connectProvider();
+    replyFor = (path, body) =>
+      path.startsWith("/_index_template/")
+        ? {
+            status: 500,
+            body: JSON.stringify({
+              error: {
+                root_cause: [{ type: "illegal_state_exception", reason: "cluster state is not recovered yet" }],
+                type: "illegal_state_exception",
+                reason: "cluster state is not recovered yet",
+              },
+              status: 500,
+            }),
+          }
+        : defaultReply(path, body);
+
+    const [part] = (await provider.readObjectSource!(["probe_template"], "template")).parts;
+
+    if (!isSourcePartUnavailable(part)) throw new Error("an answered fault was not reported as a refusal");
+    expect(part.unavailable).toBe("cluster state is not recovered yet");
+    expect(Object.hasOwn(part, "text")).toBe(false);
+  });
+
+  test("a dropped socket RAISES rather than printing as the object's own refusal", async () => {
+    // The cluster answering "no" and nobody answering at all are different facts, and
+    // only the first belongs in the Source pane as this object's refusal.
+    const provider = await connectProvider();
+    globalThis.fetch = (() => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:9201");
+    }) as unknown as typeof fetch;
+
+    await expect(provider.readObjectSource!(["probe_pipeline"], "pipeline")).rejects.toBeInstanceOf(ConnectionError);
+  });
+
+  test("a kind that declares no source is refused by the DECLARATION, before any request", async () => {
+    const provider = await connectProvider();
+    sentPaths = [];
+
+    for (const kind of ["index", "alias", "stream", "view"]) {
+      await expect(provider.readObjectSource!(["probe_orders"], kind)).rejects.toThrow(
+        new RegExp(`OpenSearch declares no readable source for the kind "${kind}"`),
+      );
+    }
+    expect(sentPaths).toEqual([]);
+  });
+
+  test("the caller's bound cuts the text and marks it, and a text that fits is not marked", async () => {
+    const provider = await connectProvider();
+
+    const [part] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline", 20)).parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the bounded read answered a refusal");
+    expect(part.text).toBe(PIPELINE_TEXT.slice(0, 20));
+    expect(part.truncated).toEqual({
+      limit: 20,
+      reason: "the source read was bounded at 20 characters by its caller",
+    });
+
+    const [full] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline", PIPELINE_TEXT.length)).parts;
+    if (isSourcePartUnavailable(full)) throw new Error("the exact-bound read answered a refusal");
+    expect(full.text).toBe(PIPELINE_TEXT);
+    expect(full.truncated).toBeUndefined();
+  });
+
+  test("the source read takes the name from the END of the path, under a declaration with levels", async () => {
+    // Standing ruling 5g for `readObjectSource`, driven to a BOUND VALUE: the URL the
+    // transport builds. This engine declares ZERO container levels, which makes a
+    // hardcoded depth and a positional bind behaviour-identical on its own fixture, so
+    // the derivations are driven with a TWO-LEVEL declaration swapped in.
+    const provider = await connectProvider();
+    const real = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const levels: ProviderCapabilities["containerLevels"] = [
+      { id: "catalog", label: "Cluster", labelPlural: "Clusters" },
+      { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+    ];
+    spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerLevels: levels });
+    sentPaths = [];
+
+    await expect(provider.readObjectSource!(["probe_pipeline"], "pipeline")).rejects.toThrow(
+      /"pipeline" path has 3 segment\(s\)/,
+    );
+    expect(sentPaths).toEqual([]);
+
+    const document = await provider.readObjectSource!(["prod", "search", "probe_pipeline"], "pipeline");
+
+    expect(document.path).toEqual(["prod", "search", "probe_pipeline"]);
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the two-level read answered a refusal");
+    expect(part.text).toBe(PIPELINE_TEXT);
+    // The bound value: the cluster was asked for the object's OWN name and for nothing
+    // the container carries.
+    expect(sentPaths).toEqual(["/_ingest/pipeline/probe_pipeline"]);
+  });
+
+  /** A CORE REST failure envelope, the snake_case shape this endpoint answers. */
+  function restFault(type: string, reason: string): string {
+    return JSON.stringify({ error: { root_cause: [{ type, reason }], type, reason }, status: 400 });
+  }
+
+  /**
+   * `GET /_ingest/pipeline/probe_pipeline?nope=1`, HTTP 400, captured from OpenSearch
+   * 3.8.0 on 2026-09-13 (#789), byte-identical to the Elasticsearch answer.
+   *
+   * The only refusal either source endpoint could be MADE to produce on a node with the
+   * security plugin disabled, and the name is `illegal_argument_exception`, which
+   * classifies as `engine`.
+   */
+  const UNRECOGNIZED_PARAMETER = restFault(
+    "illegal_argument_exception",
+    "request [/_ingest/pipeline/probe_pipeline] contains unrecognized parameter: [nope]",
+  );
+
+  /**
+   * Run one call with the client's deadline already expired.
+   *
+   * This suite installs no abort recorder of its own, so the signal the provider arms is
+   * replaced here and the fake `fetch` is wrapped to reject with the signal's reason the
+   * way a real one does. Both are restored before the call returns, so nothing leaks into
+   * the next test.
+   */
+  async function underAbortedDeadline<T>(reason: unknown, call: () => Promise<T>): Promise<T> {
+    const realTimeout = AbortSignal.timeout;
+    const installed = globalThis.fetch;
+    AbortSignal.timeout = (() => {
+      const controller = new AbortController();
+      if (reason === undefined) controller.abort();
+      else controller.abort(reason);
+      return controller.signal;
+    }) as typeof AbortSignal.timeout;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      // A real fetch handed an already-aborted signal rejects with the signal's reason,
+      // and that value is exactly what the transport deliberately does not trust.
+      if (init?.signal?.aborted === true) throw init.signal.reason;
+      return installed(input, init);
+    }) as typeof fetch;
+    try {
+      return await call();
+    } finally {
+      AbortSignal.timeout = realTimeout;
+      globalThis.fetch = installed;
+    }
+  }
+
+  test("a pipeline body this client cannot read is a REFUSAL and never an absence", async () => {
+    // An unreadable body reported as absence would say "No OpenSearch pipeline named
+    // probe_pipeline" about a row the tree is currently showing: a claim about the
+    // cluster where the truth is a claim about this client, and the one a user cannot
+    // act on.
+    const provider = await connectProvider();
+
+    replyFor = (path, body) => (path === "/_ingest/pipeline/probe_pipeline" ? ok("[]") : defaultReply(path, body));
+    const [outer] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (!isSourcePartUnavailable(outer)) throw new Error("an unreadable wrapper was not refused");
+    expect(outer.unavailable).toBe("OpenSearch answered an ingest pipeline definition the client could not read");
+    expect(Object.hasOwn(outer, "text")).toBe(false);
+
+    replyFor = (path, body) =>
+      path === "/_ingest/pipeline/probe_pipeline" ? ok('{"probe_pipeline":7}') : defaultReply(path, body);
+    const [inner] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (!isSourcePartUnavailable(inner)) throw new Error("an unreadable definition was not refused");
+    expect(inner.unavailable).toBe("OpenSearch answered an ingest pipeline definition the client could not read");
+    expect(Object.hasOwn(inner, "text")).toBe(false);
+
+    // The control, so none of the above is a test of a broken fake.
+    replyFor = defaultReply;
+    const [readable] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+    if (isSourcePartUnavailable(readable)) throw new Error("the control read was refused");
+    expect(readable.text).toBe(PIPELINE_TEXT);
+  });
+
+  test("an index template entry this client cannot read is REFUSED rather than skipped", async () => {
+    // Skipping an unreadable entry walks off the end of the array and reports the object
+    // as absent, which is a different fact and the wrong one.
+    const provider = await connectProvider();
+    const unreadable: readonly (readonly [string, string])[] = [
+      ["the list is not an array", '{"index_templates":{}}'],
+      ["an entry is not an object", '{"index_templates":[7]}'],
+      ["an entry carries no name", '{"index_templates":[{"index_template":{"index_patterns":["x"]}}]}'],
+      [
+        "the named entry's definition is not an object",
+        '{"index_templates":[{"name":"probe_template","index_template":7}]}',
+      ],
+    ];
+
+    let refused = 0;
+    for (const [what, body] of unreadable) {
+      replyFor = (path, requested) =>
+        path === "/_index_template/probe_template" ? ok(body) : defaultReply(path, requested);
+      const [part] = (await provider.readObjectSource!(["probe_template"], "template")).parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${what}: the read answered a text`);
+      expect(part.unavailable).toBe("OpenSearch answered an index template definition the client could not read");
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      refused += 1;
+    }
+    if (refused !== unreadable.length || refused === 0) {
+      throw new Error(`${refused} of ${unreadable.length} unreadable bodies were refused`);
+    }
+  });
+
+  test("every category the cluster ANSWERED in is a refusal, and it carries the cluster's own sentence", async () => {
+    // Four of the five arms on the refusal side of `isClusterRefusal`, `auth` being the
+    // fifth and driven by the per-endpoint test above. A category moved to the raising
+    // half throws instead of answering a document, and the Source pane then shows the
+    // sentence the cluster wrote to nobody.
+    //
+    // Only the FIRST body is a capture and the rest are disclosed rather than presented
+    // as measurements: on OpenSearch 3.8.0 with the security plugin disabled, every fault
+    // either source GET produces is `illegal_argument_exception`, so the other three
+    // names cannot be provoked on these endpoints. They are pinned anyway, because the
+    // switch classifies the seam's CATEGORY and the seam is shared with the SQL surface,
+    // where all three names are measured (see the fault table above).
+    const provider = await connectProvider();
+    const answered: readonly (readonly [string, string, string])[] = [
+      [
+        "engine",
+        UNRECOGNIZED_PARAMETER,
+        "request [/_ingest/pipeline/probe_pipeline] contains unrecognized parameter: [nope]",
+      ],
+      [
+        "syntax",
+        restFault("EOFParserException", "Failed to parse query due to offending symbol"),
+        "Failed to parse query due to offending symbol",
+      ],
+      [
+        "unknown-object",
+        restFault("SemanticCheckException", "can't resolve Symbol(namespace=INDEX_NAME)"),
+        "can't resolve Symbol(namespace=INDEX_NAME)",
+      ],
+      ["unsupported", restFault("SQLFeatureNotSupportedException", "Unsupported operation"), "Unsupported operation"],
+    ];
+
+    let refused = 0;
+    for (const [category, body, sentence] of answered) {
+      replyFor = (path, requested) =>
+        path === "/_ingest/pipeline/probe_pipeline" ? { status: 400, body } : defaultReply(path, requested);
+      const [part] = (await provider.readObjectSource!(["probe_pipeline"], "pipeline")).parts;
+      if (!isSourcePartUnavailable(part)) throw new Error(`${category}: an answered fault was not a refusal`);
+      // Unprefixed and unrewritten, which the docblock promises for every arm but `auth`,
+      // where no body could be captured and the sentence is composed from the status.
+      expect(part.unavailable).toBe(sentence);
+      expect(Object.hasOwn(part, "text")).toBe(false);
+      refused += 1;
+    }
+    if (refused !== answered.length || refused === 0) {
+      throw new Error(`${refused} of ${answered.length} answered faults became refusals`);
+    }
+  });
+
+  test("an expired deadline and a cancellation RAISE, because nobody answered at all", async () => {
+    // The other two thirds of the docblock's sentence, and the same defect MongoDB
+    // shipped in this phase in the other direction. A deadline this client armed and a
+    // cancellation this client made say nothing about the object, so neither may be
+    // printed in the Source pane as the object's own refusal.
+    const provider = await connectProvider();
+
+    const timedOut = underAbortedDeadline(new DOMException("The operation timed out.", "TimeoutError"), () =>
+      provider.readObjectSource!(["probe_pipeline"], "pipeline"),
+    );
+    await expect(timedOut).rejects.toBeInstanceOf(TimeoutError);
+    await expect(timedOut).rejects.toThrow(/ran past its deadline/);
+
+    const cancelled = underAbortedDeadline(undefined, () => provider.readObjectSource!(["probe_pipeline"], "pipeline"));
+    await expect(cancelled).rejects.toBeInstanceOf(QueryCancelledError);
+    await expect(cancelled).rejects.toThrow(/was cancelled/);
+  });
+
+  test("a declaration this provider cannot honour is refused BY NAME, before any request", async () => {
+    // Both guards compare the DECLARATION against the reader table, and the shipped
+    // declaration agrees with it, so the disagreement is swapped in through
+    // `getCapabilities` the way ruling 5g swaps the container depth in. Without the
+    // first, a `?? "json"` default would render a text that is not JSON as JSON with
+    // nothing anywhere saying so; without the second, a declared kind with no reader
+    // would call `undefined`.
+    const provider = await connectProvider();
+    const real = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const kinds = real.objectKinds ?? [];
+    const spy = spyOn(provider, "getCapabilities");
+    sentPaths = [];
+
+    spy.mockReturnValue({
+      ...real,
+      objectKinds: kinds.map((kind) =>
+        kind.id === "pipeline" ? { ...kind, hasSource: true, sourceLanguage: undefined } : kind,
+      ),
+    });
+    await expect(provider.readObjectSource!(["probe_pipeline"], "pipeline")).rejects.toThrow(
+      /OpenSearch declares source for the kind "pipeline" and no sourceLanguage/,
+    );
+
+    spy.mockReturnValue({
+      ...real,
+      objectKinds: kinds.map((kind) =>
+        kind.id === "index" ? { ...kind, hasSource: true, sourceLanguage: "json" } : kind,
+      ),
+    });
+    await expect(provider.readObjectSource!(["probe_orders"], "index")).rejects.toThrow(
+      /OpenSearch declares source for the object kind "index" and has no reader for it/,
+    );
+
+    // Neither guard let a request out, which is the half that says they run before the
+    // read rather than after it.
+    expect(sentPaths).toEqual([]);
+    spy.mockRestore();
   });
 });

@@ -47,7 +47,8 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
-import type { TableSchema } from "@/lib/types";
+import { addressableObjects } from "./inventory-objects";
+import type { AgentInventory } from "./types";
 
 // ============================================================================
 // Reading the tables a statement names
@@ -354,7 +355,17 @@ const leafOf = (name: string): string => {
 };
 
 /**
- * The tables this statement names that the captured inventory does not hold.
+ * The tables this statement names that the captured inventory does not hold AS SOMETHING A
+ * STATEMENT CAN NAME.
+ *
+ * The second half of that sentence arrived with the object model (#789). The inventory a
+ * run reasons over is no longer a list of tables: a PostgreSQL capture carries the
+ * schema's views, sequences and functions beside them, each under the kind the engine
+ * declared, so the set a name is checked against is `addressableObjects` and not every
+ * entry. A bare `FROM film_summary` matching a FUNCTION called `film_summary` would tell
+ * the run the object it named exists - and PostgreSQL resolves no such relation, which is
+ * the #414 class stated in an affirmative. A function CALL never reaches here:
+ * `readStatementTables` drops a name followed by an open parenthesis in a table position.
  *
  * Matching is on the whole name OR on its last part, and the leniency is deliberate
  * and bounded: the engines qualify their inventories differently — PostgreSQL records
@@ -365,9 +376,10 @@ const leafOf = (name: string): string => {
  * accepted. That is the right trade for what this list is FOR — catching a table the
  * model invented, not adjudicating schema resolution, which only the engine can do.
  */
-function unknownTables(sql: string, inventory: readonly TableSchema[]): readonly string[] {
-  const whole = new Set(inventory.map((table) => table.name.toLowerCase()));
-  const leaves = new Set(inventory.map((table) => leafOf(table.name)));
+function unknownTables(sql: string, inventory: AgentInventory): readonly string[] {
+  const named = addressableObjects(inventory);
+  const whole = new Set(named.map((table) => table.name.toLowerCase()));
+  const leaves = new Set(named.map((table) => leafOf(table.name)));
   return readStatementTables(sql).filter((name) => !whole.has(name.toLowerCase()) && !leaves.has(leafOf(name)));
 }
 
@@ -393,7 +405,7 @@ function unknownTables(sql: string, inventory: readonly TableSchema[]): readonly
  */
 export function validatePlanStatement(
   sql: string,
-  inventory: readonly TableSchema[] | null,
+  inventory: AgentInventory | null,
   language: ProviderCapabilities["queryLanguage"],
 ): PlanStatementValidation {
   if (language !== "sql") {

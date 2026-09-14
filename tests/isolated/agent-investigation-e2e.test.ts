@@ -111,6 +111,7 @@ const PG_COLUMN_ROWS: Record<string, unknown>[] = [
   {
     table_schema: "public",
     table_name: "customers",
+    relkind: "r",
     columns: [
       { name: "id", type: "integer", nullable: "NO" },
       { name: "name", type: "text", nullable: "NO" },
@@ -119,11 +120,25 @@ const PG_COLUMN_ROWS: Record<string, unknown>[] = [
   {
     table_schema: "public",
     table_name: "orders",
+    relkind: "r",
     columns: [
       { name: "id", type: "integer", nullable: "NO" },
       { name: "customer_id", type: "integer", nullable: "NO" },
       { name: "status", type: "text", nullable: "NO" },
       { name: "total_cents", type: "integer", nullable: "NO" },
+    ],
+  },
+  // A VIEW, and the reason this fixture has one: `information_schema.columns` answers a
+  // view's columns beside a table's with nothing to tell them apart, so a run was handed
+  // one under the word table (#414). The `relkind` the composed statement joins from
+  // `pg_class` is what tells them apart, and this row is where that is end-to-end visible.
+  {
+    table_schema: "public",
+    table_name: "paid_orders",
+    relkind: "v",
+    columns: [
+      { name: "id", type: "integer", nullable: "NO" },
+      { name: "status", type: "text", nullable: "NO" },
     ],
   },
 ];
@@ -486,6 +501,14 @@ interface ArcExpectation {
   readonly catalogRowCount: number;
   /** The rows the engine returned, which the run's artifact store must hold verbatim. */
   readonly rows: readonly Record<string, unknown>[];
+  /**
+   * Every object the GROUNDING capture carried, with the kind it was identified as.
+   *
+   * The composed catalog path is the one both of these engines ground through, and this
+   * is what says the kind survived it (#789 fix round 3): the ids are the provider's own
+   * declaration, and a view is a view rather than an unnamed thing or a table.
+   */
+  readonly groundedAs: readonly (readonly [string, string | undefined])[];
 }
 
 /**
@@ -510,6 +533,24 @@ function expectTheWholeArc(arc: Arc, expected: ArcExpectation): void {
   // profile: the whole run's database access was under it.
   expect(arc.profiles.length).toBeGreaterThan(0);
   expect([...new Set(arc.profiles)]).toEqual(["agent-read-only"]);
+
+  // The grounding capture, and what it says each entry IS. Round 2 took the object read
+  // off this path to keep every statement inside the read-only envelope, and the kinds
+  // went with it: a PostgreSQL or SQLite run - the two engines agent mode executes on -
+  // reached the model with an inventory carrying none. They are composed on the catalog
+  // path now, so both assertions hold at once: the envelope test below is unchanged and
+  // still green, and the model is told what it is looking at.
+  const captured = arc.events.find((event) => event.kind === "context-captured");
+  const snapshot = captured !== undefined && "snapshot" in captured ? captured.snapshot : undefined;
+  expect(snapshot?.objects.map((object) => [object.name, object.kind])).toEqual(
+    expected.groundedAs.map((entry) => [...entry]),
+  );
+  // The kinds the inventory declares are exactly the ones its objects were identified as,
+  // which is what `addressableObjects` and the packed prompt both read.
+  expect(snapshot?.kinds?.map((kind) => kind.id)).toEqual(["table", "view"]);
+  // …and the word reached the MODEL, in the first request, which is the whole of why the
+  // kind is read at all.
+  expect(arc.transcripts[0]).toContain("(View)");
 
   // Beat 2 — the refusal is a DATABASE error carrying the engine's own words, not a
   // policy denial. The two are different variants on purpose (`tools.ts`), and a run
@@ -582,6 +623,9 @@ const SQLITE_DDL = [
     "status TEXT NOT NULL, " +
     "total_cents INTEGER NOT NULL)",
   "CREATE INDEX orders_status_idx ON orders (status)",
+  // The view is here for the same reason the PostgreSQL fixture has one: it is the
+  // object a kindless inventory hands over under the word table.
+  "CREATE VIEW paid_orders AS SELECT id, status FROM orders WHERE status = 'paid'",
   "INSERT INTO customers (id, name) VALUES (1, 'Ada'), (2, 'Grace')",
   "INSERT INTO orders (id, customer_id, status, total_cents) VALUES " +
     "(1, 1, 'paid', 1200), (2, 1, 'paid', 900), (3, 2, 'paid', 4500), (4, 2, 'pending', 700)",
@@ -659,6 +703,13 @@ describe("the whole investigation, against a real SQLite database file", () => {
       // One object row: `sqlite_master` holds one entry per table, narrowed to `orders`.
       catalogRowCount: 1,
       rows: SQLITE_STATUS_ROWS,
+      // Read out of a real `sqlite_master`: its own `type` column, mapped onto the ids
+      // `sqlite.ts` declares.
+      groundedAs: [
+        ["customers", "table"],
+        ["orders", "table"],
+        ["paid_orders", "view"],
+      ],
     });
   });
 
@@ -719,6 +770,11 @@ describe("the whole investigation, against the PostgreSQL suite's engine fixture
       // One row per TABLE: the selector narrowed to `orders`, so exactly one.
       catalogRowCount: 1,
       rows: PG_STATUS_ROWS,
+      groundedAs: [
+        ["public.customers", "table"],
+        ["public.orders", "table"],
+        ["public.paid_orders", "view"],
+      ],
     });
   });
 

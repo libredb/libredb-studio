@@ -40,7 +40,8 @@ import { useSearchParams } from "next/navigation";
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
-import { maintenanceControl, type ActiveSessionDetails, type MaintenanceType } from "@/lib/db/types";
+import { maintenanceControl, type ActiveSessionDetails, type MaintenanceType, type TableStats } from "@/lib/db/types";
+import { readObjectPathParam } from "@/lib/db/object-path";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 
 /**
@@ -66,14 +67,14 @@ const TABLE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; h
  *
  * The schema explorer's two maintenance items are DEEP LINKS, and for an admin they
  * land HERE - `openMaintenance` in src/components/Studio.tsx pushes
- * /admin/operations?table=... - not on the monitoring Tables panel. They are gated on
+ * /admin/operations?path=... - not on the monitoring Tables panel. They are gated on
  * what the OPERATION declares (`maintenanceControl(..., "perEntity")`), which is a
  * different question from whether this page has a ROW to hang the control on: the
  * controls render per row of `filteredTables` only, so every empty branch of the panel
  * below rendered nothing at all about the operation the operator arrived asking for
  * (U22).
  *
- * Unlike the monitoring panel, this page HAS the requested table's name - the `?table=`
+ * Unlike the monitoring panel, this page HAS the requested table's name - the `?path=`
  * search param that seeded the filter - so naming it is a measurement rather than an
  * invention. It is named only while the filter still holds that param: once the operator
  * types something else, that table is no longer why the list is empty.
@@ -118,10 +119,31 @@ export function OperationsTab() {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // The row an Explorer deep link named (`onOpenMaintenance("tables", name)` →
-  // /admin/operations?table=...). It seeds the filter and marks the row, so the
-  // named row is the one the operator lands on (#459).
-  const deepLinkedTable = useSearchParams().get("table");
+  /*
+    The object an Explorer deep link named (`onOpenMaintenance("tables", object.path)` →
+    /admin/operations?path=…&path=…). It seeds the filter and marks the row, so the named
+    row is the one the operator lands on (#459).
+
+    The link carries the ADDRESS, one parameter per segment, and it is read back with
+    `getAll` - the writer's inverse and nothing else, so no character inside a segment has to
+    be escaped by a rule the two could implement differently (#789, Task 35). It used to
+    carry `?table=<label>`, and a label is not unique: two containers holding one `customers`
+    marked both rows.
+
+    The list this page renders is per schema and per table, so the LAST segment is the row's
+    name and the one above it is the container the row declares as `schemaName` - the schema
+    on PostgreSQL, Oracle and SQL Server, the database on MySQL. A row is marked only when
+    both agree; an address whose container this engine spells differently marks nothing,
+    which is the honest answer where the alternative is marking a row the operator did not
+    ask for.
+  */
+  const deepLinkedPath = readObjectPathParam(useSearchParams());
+  const deepLinkedTable = deepLinkedPath === null ? null : (deepLinkedPath[deepLinkedPath.length - 1] ?? null);
+  const deepLinkedContainer = deepLinkedPath === null ? undefined : deepLinkedPath[deepLinkedPath.length - 2];
+  const isDeepLinkedRow = (table: TableStats): boolean =>
+    deepLinkedTable !== null &&
+    table.tableName === deepLinkedTable &&
+    (deepLinkedContainer === undefined || table.schemaName === deepLinkedContainer);
 
   // Offer only the maintenance the connected provider declares it can perform:
   // /api/db/maintenance rejects everything else with 400, so an ungated control can
@@ -516,9 +538,9 @@ export function OperationsTab() {
                   {filteredTables.map((table) => (
                     <div
                       key={`${table.schemaName}.${table.tableName}`}
-                      data-selected={table.tableName === deepLinkedTable ? "true" : undefined}
+                      data-selected={isDeepLinkedRow(table) ? "true" : undefined}
                       className={`group flex items-center justify-between px-4 py-2 hover:bg-fill transition-colors ${
-                        table.tableName === deepLinkedTable ? "bg-fill" : ""
+                        isDeepLinkedRow(table) ? "bg-fill" : ""
                       }`}
                     >
                       <div className="min-w-0">
