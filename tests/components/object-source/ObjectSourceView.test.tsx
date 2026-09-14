@@ -1338,6 +1338,8 @@ function EditHarness(props: {
   readonly onPatch?: (patch: ObjectSourcePatch) => void;
   readonly onApplied?: () => void;
   readonly seed?: ObjectSourcePatch;
+  /** The one label the shell derives rather than the pane, so a test may move it under a plan. */
+  readonly displayName?: string;
 }) {
   const [state, setState] = React.useState<ObjectSourcePatch>(props.seed ?? {});
   const record = props.onPatch;
@@ -1354,7 +1356,7 @@ function EditHarness(props: {
       path={[...EDIT_PATH]}
       kind="function"
       kindLabel="Function"
-      displayName="app.f(integer)"
+      displayName={props.displayName ?? "app.f(integer)"}
       document={state.document ?? props.document}
       activePartId={state.activePartId}
       editingPartId={state.editingPartId}
@@ -2691,6 +2693,15 @@ describe("ObjectSourceView across two Source tabs", () => {
   });
 
   test("a build that lands after the reader moved to another tab does not open over that tab", async () => {
+    /*
+     * DEFENCE IN DEPTH, and the population is named honestly rather than implied (#789, review
+     * fix round 1). Unlike the refusal test above, this one is NOT something a reader can drive
+     * today: while the build is in flight the modal is open, a mouse press on the strip hits the
+     * overlay and closes the dialog, focus is trapped, and the one document-level shortcut that
+     * moves the active tab unmounts this pane instead of re-addressing it (filed as D82). The
+     * rerender below moves the address at a moment no shipped shell moves it. It is kept because
+     * the binding it pins is one word of the rule every other piece of pane state carries.
+     */
     const { applier, build } = applierDouble();
     let land: (value: unknown) => void = () => {};
     build.mockImplementationOnce(
@@ -2750,5 +2761,44 @@ describe("ObjectSourceView across two Source tabs", () => {
 
     expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Definition");
     expect(screen.getByTestId("object-source-apply-dialog").textContent).not.toContain("Grants");
+  });
+
+  test("the dialog names the OBJECT its plan was built for, and a caller cannot rename it under the plan", async () => {
+    /*
+     * DEFENCE IN DEPTH, and said so rather than dressed as a live defect. Both shipped shells
+     * derive `displayName` from `sourceTab.path`, which is inside the address the dialog is bound
+     * to, so neither can move it under an open plan today. It is the ONE fact the dialog printed
+     * that came off the render instead of the sealed session, and it is the fact an embedded host
+     * supplies freely, so it is pinned by the same rule as the address, the part id and the part
+     * label: what the reader approves is what the plan was built for.
+     */
+    const { applier } = applierDouble();
+    function Renaming(): React.JSX.Element {
+      const [name, setName] = React.useState("app.f(integer)");
+      return (
+        <>
+          <button
+            type="button"
+            data-testid="rename-the-pane"
+            onClick={() => {
+              setName("app.other(integer)");
+            }}
+          >
+            rename
+          </button>
+          <EditHarness applier={applier} displayName={name} document={withPart(READABLE)} />
+        </>
+      );
+    }
+    render(<Renaming />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("rename-the-pane");
+
+    expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("app.f(integer)");
+    expect(screen.getByTestId("object-source-apply-dialog").textContent).not.toContain("app.other(integer)");
   });
 });

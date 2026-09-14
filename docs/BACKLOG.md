@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D81, U17 · 39
+- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 40
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 16
@@ -1198,6 +1198,39 @@ than folded in.
 
 **Done when:** the read raises the same sentence the build does when a kind declares an edit this file has
 no routine statement for, with its own test.
+
+### D82. A new-tab shortcut fires through the apply modal, unmounts the Source pane and loses the answer
+
+MEASURED 2026-09-14 in this repository's own component environment, with two probes rather than by
+reading, because the code comment at `src/components/Studio.tsx:255-268` says the opposite and this
+entry exists to correct it.
+
+That comment says "the strip cannot be moved while the dialog is open, because Radix's modal aria-hides
+it, and `setActiveTabId` has no caller outside the strip and the sidebar tree, both of which the modal
+covers". Both halves are wrong. Probe one rendered this repository's own `DialogContent` with a
+`document` keydown listener installed beside a `role="tablist"`: the strip stayed IN the tree
+(`document.body.contains(strip)` true, it is aria-hidden and covered, not removed) and a `keydown`
+dispatched from the focused control inside the dialog reached the document listener. That is exactly how
+`StudioTabBar` registers Ctrl/Cmd+Shift+T: on `document`, deliberately, "so it also works while Monaco
+owns focus" (#745). The handler calls `onAddTab`, `addTab` in `src/hooks/use-tab-manager.ts` ends with
+`setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover.
+
+The consequence is not a mis-addressed clear. `Studio.tsx` renders the Source pane only while the active
+tab is a Source tab, so the new Query tab UNMOUNTS `ObjectSourceView` and the dialog with it, mid apply.
+Probe two measured what that costs: with an apply in flight, unmounting the pane and then landing a
+`conflict` answer left `object-source-apply-conflict` null and the body text empty, no throw and no
+warning. The statement was already sent, and the reader is never told whether it was refused, conflicted
+or failed. A successful apply still reaches the toast through `onApplied`, so success is the one outcome
+that survives the unmount.
+
+Not fixable inside the pane, which is why it is filed rather than folded into #789 Phase 3's pane work:
+the fix belongs to the shell, either by refusing the shortcut while an object apply is in flight or by
+keeping the pane mounted for the tab that owns it. The pane's own state is already bound to its address
+(`boundTo`), so nothing there is drawn over the wrong object.
+
+**Done when:** an apply in flight cannot be unmounted by the new-tab shortcut, or its answer reaches the
+reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
+reachability paragraph in `Studio.tsx` is corrected in the same change.
 
 ## Value interpolation
 

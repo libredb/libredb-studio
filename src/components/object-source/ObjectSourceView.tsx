@@ -356,11 +356,21 @@ interface PreviewSession extends AddressBound {
    * already builds: a re-read lands with no cleanup and no drop, so the document can be replaced
    * while the dialog is open, and when the new parts do not carry the remembered id `activePart`
    * falls back to the FIRST part. MEASURED in a component test: the dialog then read
-   * "`app.f(integer)`, Grants" over a plan built for the definition. The object label is NOT
-   * pinned beside it, deliberately: the dialog only renders while `preview.address` matches the
-   * address on screen, and the object label is derived from the path, which is inside the address.
+   * "`app.f(integer)`, Grants" over a plan built for the definition.
    */
   readonly partLabel: string;
+  /**
+   * The OBJECT's label, pinned beside the part's, and the reason is a caller and not a re-read.
+   *
+   * Both shipped shells derive `displayName` from `sourceTab.path`, which is inside the address
+   * this session is bound to, so neither can move it under an open plan: this is DEFENCE IN DEPTH
+   * and not a live defect, said out loud rather than dressed as a measurement. It is pinned all
+   * the same because it is the one name over the plan that an embedded host supplies freely, and
+   * every other fact the dialog prints now comes off the sealed session. MEASURED before the pin,
+   * in the component test that pairs with this line: a render-time rename put
+   * "`app.other(integer)`, Definition" over a plan built for `app.f(integer)`.
+   */
+  readonly objectLabel: string;
 }
 
 /** A build that issued no plan. `refusal` is rendered as DATA, so a test asserts an id and not prose. */
@@ -837,12 +847,37 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   /**
    * The open edit THIS address holds, and never the one the pane left behind on another tab.
    *
-   * `boundTo` is the whole of it and its docblock carries the measurement. The part id is checked
-   * beside the address because one document can hold two parts and only one of them is on screen.
+   * `boundTo` is the whole of it and its docblock carries the measurement. The part id is NOT
+   * checked beside the address, and that is a removal rather than an omission (#789, review fix
+   * round 1). It read as a second guard and was a guard over a population this component cannot
+   * build: every reader of `sessionHere` is gated on `writable`, `writable` requires
+   * `props.editingPartId === partId`, `session.partId` is only ever the id `startEditing`
+   * reported through `onChange({ editingPartId: partId })`, and every patch that MOVES
+   * `activePartId` clears `editingPartId` in the same patch, above. MEASURED: mutating the
+   * conjunct away left this file's suite at 92 pass, 0 fail, so nothing certified it, and the
+   * docblock it carried named a two-part edit the shipped set cannot make, every editable part
+   * id in the fleet being "definition". The part a session belongs to is still pinned where it
+   * is load-bearing: on the PREVIEW session, which outlives a part move by design.
    */
-  const sessionHere = boundTo(address, session)?.partId === partId ? boundTo(address, session) : undefined;
+  const sessionHere = boundTo(address, session);
   const editorValue = writable && sessionHere !== undefined ? sessionHere.value : serverText;
-  /** The dialog and the refusal line, drawn only for the address they were raised on. */
+  /**
+   * The dialog and the refusal line, drawn only for the address they were raised on, and the two
+   * bindings do NOT rest on the same evidence (#789, review fix round 1).
+   *
+   * `refusalHere` closes a population a reader reaches with one click: a refusal leaves no modal
+   * up, so the tab strip is live, and the two-tab refusal test drives exactly what a person does.
+   *
+   * `previewHere` is DEFENCE IN DEPTH and is labelled as such rather than as a measured live
+   * defect. While `preview` is defined the modal is open, and no shipped shell re-addresses this
+   * pane through it: a mouse press on the strip hits the overlay, which closes the dialog and
+   * retires the generation; focus is trapped, so the keyboard cannot reach the strip; and the one
+   * document-level shortcut that does move the active tab, Ctrl/Cmd+Shift+T in `StudioTabBar`,
+   * UNMOUNTS this pane rather than re-addressing it, which is its own defect and is filed as D82
+   * rather than guarded here. Its test reaches the case by rerendering props at a moment no shell
+   * rerenders them. The binding is kept because it is one word of the same rule the other three
+   * states carry, and a state bound by construction cannot be the one somebody forgets.
+   */
   const previewHere = boundTo(address, preview);
   const refusalHere = boundTo(address, buildRefusal);
   /**
@@ -1197,7 +1232,14 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
      * the editor was handed `editorValue` and nothing has been typed since, so that IS the text.
      */
     const typed = bufferRef.current.owner === draftKey ? bufferRef.current.text : editorValue;
-    const shot = { address, userText: typed, modelPath: modelPathFor(address, partId), partId, partLabel };
+    const shot = {
+      address,
+      userText: typed,
+      modelPath: modelPathFor(address, partId),
+      partId,
+      partLabel,
+      objectLabel: props.displayName,
+    };
     const generation = buildGeneration.current + 1;
     buildGeneration.current = generation;
     setBuildRefusal(undefined);
@@ -1232,7 +1274,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         setBuildRefusal({ address, refusal: "request", sentence: sentenceOf(error) });
       },
     );
-  }, [address, connection, draftKey, editorValue, kind, onApply, partId, partLabel, path]);
+  }, [address, connection, draftKey, editorValue, kind, onApply, partId, partLabel, path, props.displayName]);
 
   const runApply = useCallback(
     (acknowledged: readonly ObjectEditConsequenceClass[]) => {
@@ -1565,7 +1607,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                   <ApplyPreviewDialog
                     open
                     state={previewHere.state}
-                    objectLabel={props.displayName}
+                    objectLabel={previewHere.objectLabel}
                     partLabel={previewHere.partLabel}
                     address={previewHere.address}
                     partId={previewHere.partId}
