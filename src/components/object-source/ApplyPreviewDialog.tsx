@@ -694,13 +694,18 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
  * the same attention as one that was refused; only the name was ever wrong.
  *
  * The `data-testid` still reads `object-source-apply-failure`, and that is a KNOWN STALE NAME
- * rather than an oversight. MEASURED by applying the rename to this file alone and running the
- * four suites that read the name: 24 tests fail, `ApplyPreviewDialog.test.tsx` 14 (it composes the
- * prefix, so every `-failure` and `-failure-code` call site there goes with it),
- * `ObjectSourceView.test.tsx` 6, `embedded-source.test.tsx` 3 and `source-tab.test.tsx` 1, plus one
- * Playwright assertion that reads the code child. The rename is a mechanical substitution of two
- * strings over six files, and five of them belong to other tasks, so it travels as one commit that
- * edits all six rather than as a change to this one.
+ * rather than an oversight. MEASURED by applying the rename to this file alone, leaving every
+ * other file untouched, and running the four suites that read the name: 26 tests fail,
+ * `ApplyPreviewDialog.test.tsx` 16 (it composes the prefix, so all 26 `-failure` and
+ * `-failure-code` call sites there go with it), `ObjectSourceView.test.tsx` 6,
+ * `embedded-source.test.tsx` 3 and `source-tab.test.tsx` 1, plus one Playwright assertion that
+ * reads the code child. The rename is a mechanical substitution of two strings over six files, and
+ * five of them belong to other tasks, so it travels as one commit that edits all six rather than
+ * as a change to this one.
+ *
+ * That count is a property of the TREE and not of the rename, so it has to be re-taken whenever
+ * the owning suite changes: the number above read 24 until this commit, because it was measured
+ * before the two tests that added the last two `-failure` call sites landed in the same commit.
  */
 function OutcomeRegion({
   plan,
