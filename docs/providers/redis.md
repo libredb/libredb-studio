@@ -1101,6 +1101,42 @@ that sentence.
 every numbered database and `SELECT` does not change what `FUNCTION LIST` answers, so nothing this
 apply does depends on a session another borrower of the connection can move. `plan.session` is `[]`.
 
+##### The measured acceptance run (#789)
+
+Driven through `POST /api/db/objects/source`, `POST /api/db/objects/edit-plan` and `POST /api/db/objects/edit-apply` against a running Studio, on a container created for the run.
+`INFO server` answered `redis_version:8.10.0`.
+The fixture was applied by hand, because this image has no init-script directory: `docker exec -i <container> redis-cli --no-raw < docker/redis-init/01-object-fixture.redis`, one connection for the whole file.
+`FUNCTION LIST` afterwards answered three libraries, `libredb_probe` registering `libredb_echo_key` and `libredb_ping`, `LIBREDB_PROBE` registering `LIBREDB_UPPER_PING`, and `libredb_bulk` registering `libredb_bulk_ping`.
+
+**THE COLLATERAL RUNS IN BOTH DIRECTIONS.**
+`libredb_probe` registers two functions, so a body registering only `libredb_echo_key` builds a plan carrying one consequence, `replaces-whole-container`, whose fact is `{ source: "FUNCTION LIST LIBRARYNAME libredb_probe", observed: "libredb_echo_key, libredb_ping" }`.
+Applying it answers `applied-with-collateral` whose `lost` entry names `libredb_ping` alone, which is the function that actually went, and `FUNCTION LIST` afterwards shows `libredb_probe` registering `libredb_echo_key` only.
+`LIBREDB_PROBE` registers one, so an edit that keeps that one builds `consequences: []` and the apply answers plain `applied`.
+The acknowledgement is enforced by the SERVER and not by the dialog: the identical collateral apply with an empty `acknowledged` answers HTTP 400, `this apply destroys something the plan warned about and the request did not acknowledge: replaces-whole-container`, and the library is untouched.
+
+**A FAILED APPLY LEAVES THE LIBRARY BYTE IDENTICAL.**
+This engine has no transaction, so the assertion is that `FUNCTION LIST WITHCODE` is byte identical across the apply and that the library-to-function map is unchanged.
+Five failures were driven against `libredb_probe` and all five left both readings identical.
+
+| What was sent | Where it was refused, and what it answered |
+| --- | --- |
+| A Lua compile error | the engine: `refused`, `definition`, `ERR Error compiling function: user_function:6: unexpected symbol near '='`, at line 6 of the reader's own text |
+| A body registering nothing | the engine: `refused`, `definition`, `ERR No functions registered` |
+| A shebang naming `LIBREDB_PROBE`, which EXISTS | the build: `built: false`, `identity`, before anything is sent |
+| No shebang at all | the build: `built: false`, `identity` |
+| A second writer replaced the library between the build and the apply | the apply's re-read: `conflict`, `object-changed`, carrying the server's CURRENT text |
+
+The third row is the one the shebang check exists for.
+`FUNCTION LOAD` takes no name argument, so the shebang IS the address: sending that body would have replaced `LIBREDB_PROBE` wholesale and left `libredb_probe` untouched, and the reader would have destroyed an object they were not looking at.
+
+**A TRUNCATED PART CANNOT BE EDITED, and this engine HAS the population.**
+`libredb_bulk` reads as `truncated: { limit: 1000000, ... }` with NO `edit` key and 1,000,000 characters of text, and an edit of it inside the route's bound is refused by the build with the `guard` class naming the server's own 1,000,243 characters.
+The CONTROL, `libredb_probe` at 252 characters, carries no `truncated`, carries `edit: { offered: true }`, and builds.
+
+**THE AUDIT.**
+One successful apply added exactly two `object_edit` events under one `correlationId`: an `action: "PLAN"` decision event and an `action: "replace-in-place-command"` outcome event, both `result: "success"`.
+A sentinel planted in the submitted Lua appears in neither event and nowhere in the process's stdout.
+
 #### Reads go to the CONTAINER's database, never the session's
 
 Every object read opens its own short-lived connection with `db` set, rather than issuing `SELECT` on

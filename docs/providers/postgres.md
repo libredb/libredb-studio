@@ -805,6 +805,66 @@ That is why the classifier answers `definition` with THE ENGINE'S OWN SENTENCE f
 **Reproducing all of it.**
 `docker/postgres-init/03-object-fixture.sql` creates the population every claim here needs: `app.over_limit_fn(integer)`, whose definition measured 1,215,122 characters and which the read bound refuses; `app.huge_fn(integer)`, its control at 945,116 characters, which builds; and the two grants that make the ownership refusal non-vacuous.
 
+#### 3.1.6.1 The measured acceptance run (#789)
+
+Everything in this subsection was driven through `POST /api/db/objects/source`, `POST /api/db/objects/edit-plan` and `POST /api/db/objects/edit-apply` against a running Studio, on a container created for the run from `docker/postgres-init/` through the mount.
+The server named itself `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit`.
+The fixture's own numbers on that server: `app.over_limit_fn(integer)` renders 1,215,122 characters, `app.huge_fn(integer)` renders 945,116, and every routine in `app` is owned by `postgres`, so the ownership refusal names `postgres`.
+
+**A FAILED APPLY LEAVES THE ROUTINE BYTE IDENTICAL, and `oid` and `xmin` say so.**
+Byte equality alone cannot tell a rollback from a write that happened to store the same bytes, so `oid`, `xmin` and `md5(pg_get_functiondef(oid))` were read out of band before and after each one.
+Five failures were driven against `app.order_total(integer)` and all five left `oid = 16763` and `xmin` unmoved.
+
+| What was sent | What the apply answered | The object afterwards |
+| --- | --- | --- |
+| A syntax error in the body | `refused`, `definition`, `syntax error at or near "SELEKT"`, `42601`, at line 6 column 3 of the reader's own text | unchanged |
+| `RETURNS integer` in place of `RETURNS numeric` | `refused`, `definition`, `cannot change return type of existing function`, `42P13`, with the engine's own hint | unchanged |
+| A relation that does not exist under the pinned path | `refused`, `definition`, `relation "no_such_table_t19" does not exist`, `42P01`, at line 6 column 55 | unchanged |
+| A second writer changed the routine between the build and the apply | `conflict`, `object-changed`, carrying the server's CURRENT text for the diff | left as the second writer wrote it, and the apply wrote nothing |
+| A changed argument list past a parameter `DEFAULT` holding a `)` | `applied-elsewhere` with `undone: true` | unchanged, and the second `pg_proc` row the CREATE had made was gone |
+
+The last row is the only case here where the engine ACCEPTED the statement.
+`CREATE OR REPLACE` created a second row, the post-condition saw that the addressed row's `xmin` had not moved, raised `LB003`, and the implicit transaction took the fork back inside the same round trip.
+That object is NOT in the committed fixture: the identity check cuts the rendered header at the first `)`, so only a parameter `DEFAULT` holding a `)` inside a string literal lets a changed argument list past it, and the fixture has no such object.
+It was created for the run as `CREATE FUNCTION app.t19_paren(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$` and the edit changed `b integer` to `b bigint`.
+
+**A TRUNCATED PART CANNOT BE EDITED, and the two bounds are two different refusals.**
+The read of `app.over_limit_fn(integer)` carries `truncated: { limit: 1000000, ... }` and carries NO `edit` key at all, and 1,000,000 characters of text.
+An edit that grows that text past the bound never reaches the provider: the route answers HTTP 413, `this edit is 1000012 characters and this route carries at most 1000000`.
+An edit that stays inside the route's bound reaches the build, which answers `built: false` with the `guard` class naming the server's own 1,215,122 characters.
+The CONTROL in the same run, `app.huge_fn(integer)`, carries no `truncated`, carries `edit: { offered: true }`, and builds a plan for both texts.
+
+**THE OWNERSHIP PRE-FLIGHT, PRODUCED BY THE ENGINE, in all three of the places it is read.**
+Driven on a second seed connection identical to the first except `user: src_probe`.
+
+- The read answers `edit: { offered: false, reason: "this connection's database account does not own \"app.order_total(integer)\", which is owned by \"postgres\", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE" }`, against `edit: { offered: true }` on the owning connection.
+- The Source pane renders that same sentence verbatim and unprefixed, under the `provider-refused` arm and not `not-offered`, and draws no Edit control. The owning connection draws the Edit control and no refusal.
+- The build answers HTTP 200 with `{ built: false, refusal: { refusal: "privilege", ... } }` carrying the same sentence, against `built: true` on the owning connection.
+
+No HTTP 401 and no `Authentication failed` appears anywhere in those transcripts, which is the shipped defect this pre-flight replaces.
+The sentence is LibreDB's and not the engine's, and that is the point of a pre-flight: nothing is sent, so `42501` is never produced.
+The engine's own `must be owner of function order_total` is not reachable through these routes at all, because the plan seal frames `connection.user` into the fingerprint: a plan built on the owning connection and applied on the `src_probe` connection is refused `this preview was built against a different connection` at HTTP 400, before any provider is called.
+
+**THE APPLY LEAVES THE SESSION UNCHANGED, on the same pooled backend.**
+`current_setting('search_path')` read through `POST /api/db/query` answered `"$user", public` on backend pid 957 before a successful apply and `"$user", public` on backend pid 957 after it, and `check_function_bodies` answered `on` both times.
+The transaction-local GUC the pre block writes reads back as the empty string on that same session and its captured value does not survive, so no later apply can read a stale row version.
+
+**THE ONE ROUND TRIP IS LOAD-BEARING, and both halves of that were measured by mutation.**
+The probe edits `app.order_total(integer)` to name `order_items` UNQUALIFIED, so the body resolves only under the pinned `search_path = "app", pg_catalog`.
+At the shipped code that apply answers `applied` and the object is rewritten.
+With the `SET LOCAL` sent as its OWN `client.query()` and the rest as a second one, the same apply answers `refused`, `definition`, `relation "order_items" does not exist`, `42P01`, the object is unchanged, and the server log carries `WARNING: SET LOCAL can only be used in transaction blocks`.
+Nothing in the product's own answer says the pin evaporated: the refusal reads as an ordinary bad edit, which is why splitting them is the failure mode that produces no error at all.
+With `SET LOCAL search_path` changed to a plain `SET search_path`, the apply succeeds and every subsequent read on the same connection id answers `app, pg_catalog` on the apply's own backend, so the next Studio user to borrow that pooled client inherits the pinned path.
+That is D73's leak, and it is why the pin is `SET LOCAL` and why it travels with the statement.
+
+**`check_function_bodies = off` IS A REACHABLE POPULATION and not a hypothetical.**
+Measured on the same server through `pg`: with the GUC at `off`, `CREATE OR REPLACE FUNCTION` over a body naming a table that does not exist answers `CREATE` and A BROKEN FUNCTION IS CREATED WITH SUCCESS REPORTED.
+`SET LOCAL check_function_bodies = on` in the apply's own round trip refuses the same body with `ERROR: relation "totally_absent_table" does not exist`, and the session is still `off` afterwards, so the pin is local and a previous borrower's plain `SET` survives it.
+
+**THE AUDIT, read out of the ring and off stdout.**
+One successful apply added exactly two `object_edit` events under one `correlationId`, the plan's own id: an `action: "PLAN"` decision event with `result: "success"`, and an `action: "guarded-atomic-batch"` outcome event with `result: "success"` and a duration.
+A sentinel planted in the submitted body appears in neither event, in no field, and nowhere in the process's stdout.
+
 ### 3.2 Schema SQL hoisted to module scope
 
 The object surface's statements are module-level `const`s, not inline template literals inside the

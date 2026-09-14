@@ -1356,6 +1356,39 @@ Regenerate the element list from the repository root with:
 node -e 'process.stdout.write(Array.from({length:77000},()=>".1").join(","))'
 ```
 
+#### The measured acceptance run (#789)
+
+Driven through `POST /api/db/objects/source`, `POST /api/db/objects/edit-plan` and `POST /api/db/objects/edit-apply` against a running Studio, on a coordinator created for the run with `docker/trino-init/` mounted at `/fixtures` and the fixture applied by the CLI in the same image.
+`select version()` answered `476`.
+`SHOW CREATE FUNCTION memory.app.over_limit_fn` measured 1,001,094 characters on that coordinator, which is the number the fixture claims.
+
+**A FAILED APPLY LEAVES THE OBJECT BYTE IDENTICAL.**
+Trino publishes no row identity a client can read, so the assertion is byte equality of `SHOW CREATE FUNCTION` for the addressed overload PLUS the whole `SHOW FUNCTIONS FROM memory.app` listing, both read out of band through the CLI.
+Four failures were driven against `memory.app.plus_one(bigint)`, which has a `double` overload beside it, and all four left both readings identical.
+
+| What was sent | What the apply answered |
+| --- | --- |
+| `RETURN (x + )` | `refused`, `definition`, `line 3:13: mismatched input ')'. Expecting: <expression>`, `SYNTAX_ERROR`, at line 3 column 13 of the reader's own text |
+| `RETURN (x + no_such_column_t19)` | `refused`, `definition`, `line 3:13: Column 'no_such_column_t19' cannot be resolved`, `COLUMN_NOT_FOUND` |
+| `RETURN ARRAY[x, x]` against `RETURNS bigint` | `refused`, `definition`, `line 3:8: Value of RETURN must evaluate to bigint (actual: array(bigint))`, `TYPE_MISMATCH` |
+| A second writer replaced the overload between the build and the apply | `conflict`, `object-changed`, carrying the coordinator's CURRENT text for the diff, and the apply wrote nothing |
+
+The plan's `session` is the empty array on this engine and its `revision` is `{ check: "compared", basis: "SHOW CREATE FUNCTION" }`, both of which the transcripts carry.
+
+**A TRUNCATED PART CANNOT BE EDITED, and this engine HAS the population.**
+The read of `memory.app.over_limit_fn(bigint)` carries `truncated: { limit: 1000000, ... }`, carries NO `edit` key, and 1,000,000 characters of text.
+An edit growing that text answers HTTP 413 at the route; an edit inside the route's bound reaches the build, which answers `built: false` with the `guard` class naming the coordinator's own 1,001,094 characters.
+The CONTROL, `memory.app.plus_one(bigint)` at 75 characters, carries no `truncated`, carries `edit: { offered: true }`, and builds.
+
+**THE SPLICE IS ANCHORED, and the fixture object that proves it was edited in this run.**
+`memory.app.mentions_create(bigint)` returns the literal `'CREATE TABLE'`.
+A successful apply of an edited body left that literal in the body untouched and the sent statement carried ` OR REPLACE` only after the first token, so a global replace of the word would have been visible here and was not.
+
+**THE AUDIT.**
+One successful apply added exactly two `object_edit` events under one `correlationId`: an `action: "PLAN"` decision event and an `action: "replace-in-place-statement"` outcome event, both `result: "success"`, the second carrying a duration.
+A sentinel planted in the submitted body appears in neither event and nowhere in the process's stdout.
+A refused apply produces the same two events with `result: "failure"` and `reason: "object_edit_refused"` on the second, which was seen in the same ring.
+
 ---
 
 ## 7. Monitoring & health
