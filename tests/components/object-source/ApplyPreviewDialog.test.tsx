@@ -1419,26 +1419,93 @@ describe("ApplyPreviewDialog", () => {
     consequences: [COLLATERAL],
     revision: { check: "compared", token: "md5:9f1", basis: "md5(prosrc)", scope: "server" },
   };
-  /** Every sentence on this screen that is about something still to come. */
+  /**
+   * The same three rows on a COMMAND-medium plan, which is the shape the collateral frame actually
+   * ships over and which the statement plan above cannot stand in for.
+   *
+   * `libraryCollateral` in `src/lib/db/providers/keyvalue/redis.ts` is the only day-one producer of
+   * `applied-with-collateral`, and every Redis plan carries `medium: "command"`, so the completed
+   * screen a reader meets first is this one. It draws one row no statement plan has,
+   * `This apply sends a command, not a statement.`, and it draws no identity line at all.
+   */
+  const LOADED_COMMAND: ObjectEditPlan = {
+    ...REDIS_PLAN,
+    consequences: [COLLATERAL],
+    revision: { check: "compared", token: "md5:9f1", basis: "md5(prosrc)", scope: "server" },
+  };
+  /** Every sentence the STATEMENT screen draws that is about something still to come. */
   const FUTURE = [
     "Nothing runs until you press Apply.",
     "Applying this replaces the whole container",
     "LibreDB runs this apply with search_path",
     "This apply re-reads the definition first",
+    "I understand what this will replace.",
     "Will be sent",
     "what will be sent",
   ];
+  /**
+   * The same read for the COMMAND screen, and a DIFFERENT set rather than the list above reused.
+   *
+   * MEASURED off `dialog.textContent` on a `preview` holding `LOADED_COMMAND`: the identity line is
+   * gated on `medium === "statement"` and the Redis plan pins no session setting, so two of the
+   * seven above are never on that screen and asserting them as a control would assert nothing.
+   */
+  const FUTURE_COMMAND = [
+    "Nothing runs until you press Apply.",
+    "Applying this replaces the whole container",
+    "This apply re-reads the definition first",
+    "I understand what this will replace.",
+    "Will be sent",
+  ];
+  /**
+   * Future tense as a SHAPE, over the whole screen, and not as a list somebody wrote down.
+   *
+   * A sentence list can only catch a row that was already inventoried. The row this pattern set
+   * exists for is `This apply sends a command, not a statement.`: it is in the PRESENT tense today,
+   * so no future-tense list contains it, and an edit turning it into `will send` would pass every
+   * list in this file while putting a prediction back onto a completed apply. These four patterns
+   * are matched over `dialog.textContent`, so a NEW future-tense row fails them whether or not
+   * anybody listed it. The controls beside each negative assert all four DO match on the matching
+   * preview, in both media, which is what keeps the negatives from certifying an empty screen.
+   */
+  const FUTURE_SHAPE = [/\bwill\b/i, /\bApplying this\b/, /\bNothing runs\b/, /\bre-reads\b/];
 
   test("THE CONTROL: every future-tense sentence this screen can draw IS on the preview", () => {
     // Without this the assertion below passes over a screen that simply never drew the rows.
     draw({ kind: "preview", plan: LOADED, preimage: PREIMAGE });
     for (const sentence of FUTURE) expect(text("-dialog")).toContain(sentence);
+    for (const shape of FUTURE_SHAPE) expect(text("-dialog")).toMatch(shape);
     expect(rows("-consequence")).toHaveLength(1);
   });
 
   test("a completed apply carries NO future-tense sentence anywhere on the screen", () => {
     draw({ ...COLLATERAL_OUTCOME, plan: LOADED } as ApplyPreviewState);
     for (const sentence of FUTURE) expect(text("-dialog")).not.toContain(sentence);
+    for (const shape of FUTURE_SHAPE) expect(text("-dialog")).not.toMatch(shape);
+  });
+
+  test("THE CONTROL: the COMMAND screen draws its own future-tense rows on the preview", () => {
+    draw({ kind: "preview", plan: LOADED_COMMAND, preimage: PREIMAGE });
+    for (const sentence of FUTURE_COMMAND) expect(text("-dialog")).toContain(sentence);
+    for (const shape of FUTURE_SHAPE) expect(text("-dialog")).toMatch(shape);
+    expect(rows("-consequence")).toHaveLength(1);
+    expect(query("-payload")).not.toBeNull();
+  });
+
+  test("a completed apply on the COMMAND medium is past tense too, down to the row only it draws", () => {
+    /*
+     * The gap the two reads above leave, and the medium that is the real day-one producer of this
+     * state: the whole-screen read was taken over a statement plan, so nothing ever read the block
+     * gated on `plan.unit.medium === "command"` on a state that carries an outcome. The payload
+     * assertion is the non-vacuity check: without it this test would pass over a screen that never
+     * drew the block at all, which is this epic's recurring shape.
+     */
+    draw({ ...COLLATERAL_OUTCOME, plan: LOADED_COMMAND } as ApplyPreviewState);
+    expect(query("-payload")).not.toBeNull();
+    expect(text("-dialog")).toContain("This apply sends a command, not a statement.");
+    for (const sentence of FUTURE_COMMAND) expect(text("-dialog")).not.toContain(sentence);
+    for (const shape of FUTURE_SHAPE) expect(text("-dialog")).not.toMatch(shape);
+    expect(rows("-consequence")).toHaveLength(0);
   });
 
   test("a consequence is a PREDICTION, so it comes off the screen once the apply has run", () => {
