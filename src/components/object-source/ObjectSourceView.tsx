@@ -259,16 +259,52 @@ interface EditSession {
   readonly partId: string;
   readonly value: string;
   readonly base: string;
+  /**
+   * Whether this session TOOK ON the stored draft, which is what decides who may destroy it.
+   *
+   * The bar offers `Edit` and the restore banner at the same time, so a reader can press Edit
+   * while an older unsaved edit is still on offer, and Edit seeds the buffer from the ENGINE's
+   * text. A `Discard changes` that dropped the stored draft regardless would then destroy an
+   * unsaved edit the reader never saw the contents of and never asked to lose. This pane drops a
+   * stored draft only when the session restored it or wrote it.
+   */
+  readonly restored: boolean;
 }
 
-/** What this browser holds for the open edit. `saved` is this pane's own last write, not a read. */
+/**
+ * What this browser holds for the open edit. `saved` is this pane's own last write, not a read.
+ *
+ * `key` is the DRAFT KEY this state is about, and the render reads it before drawing anything: a
+ * write scheduled on one part can land after the reader has moved to another, and a save line or
+ * a failure banner drawn over the new part would be a statement about a draft that is not this
+ * part's.
+ */
 interface DraftState {
+  readonly key: string;
   readonly saved: boolean;
   readonly unsaved?: DraftUnsavedReason;
 }
 
-const IDLE_DRAFT: DraftState = Object.freeze({ saved: false });
-const SAVED_DRAFT: DraftState = Object.freeze({ saved: true });
+const IDLE_DRAFT: DraftState = Object.freeze({ key: "", saved: false });
+
+/**
+ * A draft write waiting out its debounce, carrying EVERY value it will use (#789 Phase 3).
+ *
+ * The first spelling kept only the timer here and read `draftKey`, `serverText` and the session
+ * out of the render's closure when the timer fired. MEASURED: a part switch inside the 500 ms
+ * window then wrote part A's buffer under part B's key, because the flush the timer reached had
+ * been re-pointed at part B's closure, and part A's draft was never written at all. Nothing about
+ * a pending write is read off a later render now: it is decided when the write is SCHEDULED.
+ */
+interface PendingDraft {
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly key: string;
+  readonly text: string;
+  readonly serverText: string;
+  readonly base: ObjectEditRevision;
+  /** Whether the session that scheduled this write may DROP what the key already holds. */
+  readonly owned: boolean;
+}
 
 /**
  * The dialog's state PLUS the three facts the dialog does not carry and the apply needs.
@@ -697,6 +733,8 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
 
   const [session, setSession] = useState<EditSession | undefined>(undefined);
   const [draftState, setDraftState] = useState<DraftState>(IDLE_DRAFT);
+  /** The key a foreign tab took, so the restore banner stops offering what is no longer there. */
+  const [evictedKey, setEvictedKey] = useState<string | undefined>(undefined);
   const [preview, setPreview] = useState<PreviewSession | undefined>(undefined);
   const [buildRefusal, setBuildRefusal] = useState<BuildRefusal | undefined>(undefined);
 
@@ -715,8 +753,9 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   const dirtyRef = useRef<boolean>(props.dirty === true);
   /** The key this pane last WROTE a draft under, which is what makes an eviction detectable. */
   const savedKeyRef = useRef<string | undefined>(undefined);
-  const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flushRef = useRef<() => void>(() => undefined);
+  /** The key the restore banner is OFFERING, which can be taken from under it just as easily. */
+  const offeredKeyRef = useRef<string | undefined>(undefined);
+  const pendingRef = useRef<PendingDraft | null>(null);
   const mountedEditor = useRef<MountedEditor | null>(null);
   const markerRef = useRef(false);
 
@@ -745,8 +784,18 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    */
   const moved = writable && session !== undefined && session.partId === partId && session.base !== serverText;
 
-  const cancelDraft = useCallback(() => {
-    if (pendingRef.current !== null) clearTimeout(pendingRef.current);
+  /**
+   * Drop a pending write, and NEVER somebody else's: a key narrows it to the part named.
+   *
+   * Called with no key from the keystroke path, which is replacing its own window, and with one
+   * from the two ways of leaving edit mode, where a pending write for another part is a write
+   * that still has to happen.
+   */
+  const cancelDraft = useCallback((key?: string) => {
+    const pending = pendingRef.current;
+    if (pending === null) return;
+    if (key !== undefined && pending.key !== key) return;
+    clearTimeout(pending.timer);
     pendingRef.current = null;
   }, []);
 
@@ -761,28 +810,27 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * change it was a record of and offer to restore nothing on the next mount.
    */
   const flushDraft = useCallback(() => {
-    if (pendingRef.current === null) return;
-    clearTimeout(pendingRef.current);
+    const pending = pendingRef.current;
+    if (pending === null) return;
+    clearTimeout(pending.timer);
     pendingRef.current = null;
-    const text = bufferRef.current;
-    if (text === serverText) {
+    if (pending.text === pending.serverText) {
+      if (pending.owned) dropDraft(browserStorage(), pending.key);
       savedKeyRef.current = undefined;
-      dropDraft(browserStorage(), draftKey);
       setDraftState(IDLE_DRAFT);
       return;
     }
-    const write = writeDraft(browserStorage(), draftKey, {
-      text,
+    const write = writeDraft(browserStorage(), pending.key, {
+      text: pending.text,
       savedAt: Date.now(),
-      base: paneRevision(session?.base ?? serverText),
+      base: pending.base,
     });
-    savedKeyRef.current = write.ok ? draftKey : undefined;
-    setDraftState(write.ok ? SAVED_DRAFT : { saved: false, unsaved: write.reason });
-  }, [draftKey, serverText, session]);
-
-  useEffect(() => {
-    flushRef.current = flushDraft;
-  }, [flushDraft]);
+    savedKeyRef.current = write.ok ? pending.key : undefined;
+    if (write.ok) setEvictedKey(undefined);
+    setDraftState(
+      write.ok ? { key: pending.key, saved: true } : { key: pending.key, saved: false, unsaved: write.reason },
+    );
+  }, []);
 
   useEffect(
     () => () => {
@@ -792,9 +840,9 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
        * flushes a pending draft write, because a tab switch inside the 500 ms window is exactly
        * when a reader loses work and never learns they did.
        */
-      flushRef.current();
+      flushDraft();
     },
-    [],
+    [flushDraft],
   );
 
   /**
@@ -807,14 +855,23 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * inside the subsystem decision H2 created to avoid it.
    *
    * Registered unconditionally rather than while editing, because the restore banner reads the
-   * same store and a draft can be taken out from under it just as easily.
+   * same store and a draft can be taken out from under it just as easily. TWO keys are therefore
+   * watched and not one: the key this mount WROTE, and the key the restore banner is currently
+   * OFFERING, which was written in an earlier session. MEASURED on the first spelling, which
+   * watched only the first: with a draft written before this mount, the listener returned early,
+   * `object-source-draft-unsaved` never appeared, and the restore banner stayed on screen
+   * offering a draft that no longer existed. That is the docblock above naming a population its
+   * own code excluded.
    */
   useEffect(() => {
     const onForeignWrite = (event: StorageEvent) => {
-      if (event.key !== DRAFT_KEY || savedKeyRef.current === undefined) return;
-      if (readDraft(browserStorage(), savedKeyRef.current) !== undefined) return;
+      if (event.key !== DRAFT_KEY) return;
+      const watched = savedKeyRef.current ?? offeredKeyRef.current;
+      if (watched === undefined) return;
+      if (readDraft(browserStorage(), watched) !== undefined) return;
       savedKeyRef.current = undefined;
-      setDraftState({ saved: false, unsaved: "evicted" });
+      setEvictedKey(watched);
+      setDraftState({ key: watched, saved: false, unsaved: "evicted" });
     };
     window.addEventListener("storage", onForeignWrite);
     return () => {
@@ -899,34 +956,67 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       // The refusal was about the text that has just changed, so it is no longer about anything.
       clearMarker();
       noteDirty(text);
+      /*
+       * A pending write for ANOTHER part is flushed where it belongs rather than cancelled or
+       * re-keyed. The reader reached this part inside the other one's window, and their earlier
+       * keystrokes are an unsaved edit of the part they left.
+       */
+      if (pendingRef.current !== null && pendingRef.current.key !== draftKey) flushDraft();
       cancelDraft();
-      pendingRef.current = setTimeout(() => {
-        flushRef.current();
-      }, DRAFT_DEBOUNCE_MS);
+      pendingRef.current = {
+        key: draftKey,
+        text,
+        serverText,
+        base: paneRevision(session?.base ?? serverText),
+        owned: session?.restored === true || savedKeyRef.current === draftKey,
+        timer: setTimeout(() => {
+          flushDraft();
+        }, DRAFT_DEBOUNCE_MS),
+      };
     },
-    [cancelDraft, clearMarker, noteDirty],
+    [cancelDraft, clearMarker, draftKey, flushDraft, noteDirty, serverText, session],
   );
 
   /** Entering edit mode, from Edit with the engine's text and from Restore with the draft's. */
   const startEditing = useCallback(
-    (value: string) => {
+    (value: string, restored: boolean) => {
       bufferRef.current = value;
-      setSession({ partId, value, base: serverText });
+      setSession({ partId, value, base: serverText, restored });
       noteDirty(value);
       onChange({ editingPartId: partId });
     },
     [noteDirty, onChange, partId, serverText],
   );
 
-  /** Leaving it, from Discard and from a successful apply. The draft goes with the edit. */
-  const leaveEditMode = useCallback(() => {
-    cancelDraft();
-    dropDraft(browserStorage(), draftKey);
-    savedKeyRef.current = undefined;
-    setDraftState(IDLE_DRAFT);
-    dirtyRef.current = false;
-    onChange({ editingPartId: undefined, dirty: undefined });
-  }, [cancelDraft, draftKey, onChange]);
+  /**
+   * Leaving it, and WHICH draft key goes with the edit is an ARGUMENT and not the render's.
+   *
+   * The apply path is the reason. A re-read lands with no cleanup and no drop, deliberately, so
+   * the active part can move under an apply that is still in flight, and a key read off the
+   * render at that moment is the key of a part the reader never edited. The apply passes the key
+   * of the part its PLAN was built for, which is pinned on the preview session.
+   *
+   * `drop` is the ownership rule: `Discard changes` destroys the stored draft only when this
+   * session restored it or wrote it, and a successful apply always destroys it, because the
+   * engine now holds that text and an offer to restore it would be an offer to re-apply it.
+   */
+  const endEdit = useCallback(
+    (key: string, drop: boolean) => {
+      cancelDraft(key);
+      if (drop) {
+        dropDraft(browserStorage(), key);
+        savedKeyRef.current = undefined;
+      }
+      setDraftState(IDLE_DRAFT);
+      dirtyRef.current = false;
+      onChange({ editingPartId: undefined, dirty: undefined });
+    },
+    [cancelDraft, onChange],
+  );
+
+  const discardEdit = useCallback(() => {
+    endEdit(draftKey, session?.restored === true || savedKeyRef.current === draftKey);
+  }, [draftKey, endEdit, session]);
 
   /**
    * A stored draft for the part on screen, offered rather than restored.
@@ -936,9 +1026,30 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * one screen this phase asks a reader to trust.
    */
   const storedDraft = useMemo(
-    () => (writable || !canEdit || onApply === undefined ? undefined : readDraft(browserStorage(), draftKey)),
-    [canEdit, draftKey, onApply, writable],
+    () =>
+      writable || !canEdit || onApply === undefined || evictedKey === draftKey
+        ? undefined
+        : readDraft(browserStorage(), draftKey),
+    [canEdit, draftKey, evictedKey, onApply, writable],
   );
+
+  /*
+   * What the restore banner is offering, recorded for the storage listener above. A ref and not
+   * state: the listener needs the value at the moment an event arrives and nothing renders
+   * because of it.
+   */
+  useEffect(() => {
+    offeredKeyRef.current = storedDraft === undefined ? undefined : draftKey;
+  }, [draftKey, storedDraft]);
+  /**
+   * The draft state FOR THE PART ON SCREEN, and idle for anything else.
+   *
+   * A write scheduled on one part lands after the reader has moved to another, by design, and the
+   * save line or the failure banner it produces is a statement about that other part's draft. On
+   * this part it would be a statement about a draft this part does not have.
+   */
+  const shownDraft = draftState.key === draftKey ? draftState : IDLE_DRAFT;
+
   const driftSentence =
     storedDraft !== undefined && !draftIsCurrent(storedDraft.base, serverText)
       ? " The definition on the server has changed since then."
@@ -981,7 +1092,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       }
       if (APPLIED_OUTCOMES.has(answer.outcome)) {
         setPreview(undefined);
-        leaveEditMode();
+        endEdit(draftKeyFor(address, current.partId), true);
         onApplied?.();
         return;
       }
@@ -996,7 +1107,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       if (answer.outcome === "refused" && answer.refusal.at.within === "user")
         paintMarker(current.modelPath, answer.refusal.at, answer.refusal.sentence);
     },
-    [leaveEditMode, onApplied, paintMarker],
+    [address, endEdit, onApplied, paintMarker],
   );
 
   /**
@@ -1207,7 +1318,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                             size="sm"
                             className="h-6 px-2 text-xs"
                             data-testid="object-source-preview"
-                            disabled={draftState.unsaved === "too-long" || connection === null}
+                            disabled={shownDraft.unsaved === "too-long" || connection === null}
                             onClick={runBuild}
                           >
                             Preview changes
@@ -1218,12 +1329,12 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                             variant="ghost"
                             className="h-6 px-2 text-xs"
                             data-testid="object-source-discard"
-                            onClick={leaveEditMode}
+                            onClick={discardEdit}
                           >
                             Discard changes
                           </Button>
                           <span className="text-[11px] text-muted-foreground" data-testid="object-source-draft-state">
-                            {draftState.saved ? "Saved in this browser." : "Not saved in this browser yet."}
+                            {shownDraft.saved ? "Saved in this browser." : "Not saved in this browser yet."}
                           </span>
                         </>
                       ) : canEdit ? (
@@ -1234,7 +1345,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                           className="h-6 px-2 text-xs"
                           data-testid="object-source-edit"
                           onClick={() => {
-                            startEditing(serverText);
+                            startEditing(serverText, false);
                           }}
                         >
                           Edit
@@ -1280,7 +1391,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                           className="h-6 shrink-0 px-2 text-xs"
                           data-testid="object-source-draft-restore-accept"
                           onClick={() => {
-                            startEditing(storedDraft.text);
+                            startEditing(storedDraft.text, true);
                           }}
                         >
                           Restore it
@@ -1288,7 +1399,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                       </div>
                     )}
 
-                    {draftState.unsaved !== undefined && (
+                    {shownDraft.unsaved !== undefined && (
                       /*
                        * A BANNER AND NOT A TOAST, because it is a STATE that persists for as long
                        * as the reader keeps typing, and a toast that scrolled away three minutes
@@ -1306,7 +1417,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                       >
                         <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                         <span className="min-w-0 break-words">
-                          {`${UNSAVED_SENTENCE[draftState.unsaved]} ${UNSAVED_CONSEQUENCE}`}
+                          {`${UNSAVED_SENTENCE[shownDraft.unsaved]} ${UNSAVED_CONSEQUENCE}`}
                         </span>
                       </output>
                     )}

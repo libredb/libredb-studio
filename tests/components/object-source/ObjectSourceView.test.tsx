@@ -1403,11 +1403,10 @@ function draftKey(partId: string): string {
   return draftKeyFor(`${pgConnection.id}/${pathKey([...EDIT_PATH])}/function`, partId);
 }
 
-async function enterEditMode(applier?: ObjectSourceApplier): Promise<void> {
+async function enterEditMode(): Promise<void> {
   await waitFor(() => expect(screen.getByTestId("object-source-edit")).toBeTruthy());
   await click("object-source-edit");
   await waitFor(() => expect(editor().readOnly).toBe(false));
-  expect(applier).toBe(applier);
 }
 
 describe("ObjectSourceView edit mode", () => {
@@ -1524,6 +1523,37 @@ describe("ObjectSourceView edit mode", () => {
     await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
     await click("object-source-draft-restore-accept");
     await waitFor(() => expect(editor().value).toBe(`${READABLE.text} -- one`));
+  });
+
+  test("a part switch INSIDE the debounce window keeps the draft on the part it was typed on", async () => {
+    /*
+     * The population the test above does NOT build, and it is the common one in the product: it
+     * calls `settleDraft()` before the switch, so it only ever exercises the already-flushed case.
+     *
+     * MEASURED on the first spelling of this pane: the pending timer's callback read the CURRENT
+     * render's `draftKey` and `serverText`, and a part switch inside the 500 ms window therefore
+     * wrote the DEFINITION's buffer under the GRANTS key. The definition was left with no draft at
+     * all, and the grants part then offered to restore the definition's text as its own, with the
+     * drift sentence on it because the definition's base token does not match the grants text. A
+     * Restore-then-Preview from there would build a plan for `partId: "grants"` out of the
+     * definition's bytes. The pending write is now keyed on the part it was SCHEDULED for, so a
+     * switch inside the window costs nothing and misattributes nothing.
+     */
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE, SECOND_PART)} />);
+    await enterEditMode();
+    await type(`${READABLE.text} -- mine`);
+
+    // No `settleDraft()` here: the switch happens while the write is still pending.
+    await act(async () => {
+      (screen.getAllByRole("tab")[1] as HTMLElement).click();
+      await Promise.resolve();
+    });
+    await settleDraft();
+
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe(`${READABLE.text} -- mine`);
+    expect(readDraft(window.localStorage, draftKey("grants"))).toBeUndefined();
+    expect(screen.queryByTestId("object-source-draft-restore")).toBeNull();
   });
 
   test("`value` DOES NOT CHANGE while the reader is typing", async () => {
@@ -1705,6 +1735,55 @@ describe("ObjectSourceView edit mode", () => {
     expect(editor().value).toBe(READABLE.text);
   });
 
+  test("Edit pressed over a draft the reader never restored, then Discard, LEAVES that draft", async () => {
+    /*
+     * The bar offers Edit and the restore banner AT THE SAME TIME, so a reader can press Edit by
+     * mistake while an older unsaved edit is still on offer. Edit seeds the buffer from the
+     * engine's text and leaves the draft alone, and a Discard that dropped it regardless would
+     * destroy an unsaved edit the reader never saw the contents of and never asked to lose.
+     *
+     * The rule is OWNERSHIP: this pane drops a stored draft only when the session either restored
+     * it or wrote it, and here it did neither.
+     */
+    const { applier } = applierDouble();
+    const first = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- the older unsaved one");
+    await settleDraft();
+    first.unmount();
+
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+    await click("object-source-edit");
+    await waitFor(() => expect(editor().readOnly).toBe(false));
+
+    await click("object-source-discard");
+
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("-- the older unsaved one");
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+  });
+
+  test("Restore and then Discard DOES drop it, because that session took the draft on", async () => {
+    // The other half of the ownership rule, and the half a reader means by Discard: they read the
+    // restored text, decided against it, and the draft is what they discarded.
+    const { applier } = applierDouble();
+    const first = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- the older unsaved one");
+    await settleDraft();
+    first.unmount();
+
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+    await click("object-source-draft-restore-accept");
+    await waitFor(() => expect(editor().value).toBe("-- the older unsaved one"));
+
+    await click("object-source-discard");
+
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
+    expect(screen.queryByTestId("object-source-draft-restore")).toBeNull();
+  });
+
   test("a failed draft write is a PERSISTENT banner, with one sentence per reason, and editing is NOT blocked", async () => {
     // A banner and not a toast, because it is a STATE that persists for as long as the reader
     // keeps typing, and a toast that scrolled away three minutes ago is X14 with extra steps.
@@ -1794,6 +1873,38 @@ describe("ObjectSourceView edit mode", () => {
     expect(screen.getByTestId("object-source-draft-unsaved").textContent).toContain(
       "another LibreDB tab needed the space",
     );
+  });
+
+  test("a draft this mount only OFFERS, evicted by a foreign tab, is TOLD and stops being offered", async () => {
+    /*
+     * The half of the eviction listener its own docblock claimed and its code excluded. MEASURED
+     * on the first spelling: the listener returned early unless `savedKeyRef.current` was set, and
+     * that ref is written only by THIS mount's own draft write, so a draft written in an earlier
+     * session and offered by the restore banner was never watched. The banner kept offering a
+     * draft that was gone, `object-source-draft-unsaved` was absent, and pressing Restore would
+     * have seeded the buffer from... nothing, because `storedDraft` is memoised and none of its
+     * dependencies move when a foreign tab empties the store.
+     */
+    const { applier } = applierDouble();
+    const first = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- the unsaved one");
+    await settleDraft();
+    first.unmount();
+
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+
+    await act(async () => {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({}));
+      window.dispatchEvent(new window.StorageEvent("storage", { key: DRAFT_KEY, newValue: JSON.stringify({}) }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("object-source-draft-unsaved").textContent).toContain(
+      "another LibreDB tab needed the space",
+    );
+    expect(screen.queryByTestId("object-source-draft-restore")).toBeNull();
   });
 
   test("Preview changes opens the dialog, builds through the applier, and sends the REF's text", async () => {
@@ -2031,6 +2142,60 @@ describe("ObjectSourceView edit mode", () => {
     expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
     expect(patches).toContainEqual(expect.objectContaining({ editingPartId: undefined, dirty: undefined }));
     expect(applied).toHaveBeenCalledTimes(1);
+  });
+
+  test("a successful apply after a re-read MOVED the active part drops the draft of the part applied", async () => {
+    /*
+     * The same root cause as the part-switch draft above, on the apply path: leaving edit mode
+     * read the CURRENT render's `draftKey`. MEASURED on the first spelling: a re-read that landed
+     * while the apply was in flight moved `activePart` to `grants`, and the successful apply then
+     * dropped the GRANTS key, leaving the definition's now-applied draft in the store to be
+     * offered back as an unsaved edit of a definition the engine already holds. The apply path now
+     * drops the key of the part the PLAN was built for, which is pinned on the preview session.
+     */
+    const { applier, apply } = applierDouble();
+    let landTheApply: (value: unknown) => void = () => {};
+    apply.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          landTheApply = resolve;
+        }),
+    );
+    function Moving(): React.JSX.Element {
+      const [document, setDocument] = React.useState(withPart(READABLE, SECOND_PART));
+      return (
+        <>
+          <button
+            type="button"
+            data-testid="land-a-reread"
+            onClick={() => {
+              setDocument(withPart(SECOND_PART));
+            }}
+          >
+            re-read
+          </button>
+          <EditHarness applier={applier} document={document} />
+        </>
+      );
+    }
+    render(<Moving />);
+    await enterEditMode();
+    await type("edited");
+    await settleDraft();
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+
+    await click("land-a-reread");
+    expect(probe.path.endsWith("/grants")).toBe(true);
+    await act(async () => {
+      landTheApply({ outcome: "applied", revision: PLAN.revision, duration: 3 });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
   });
 
   test("a MARKER is placed only for a `within: user` coordinate, on the RIGHT model", async () => {
