@@ -3818,6 +3818,21 @@ describe("Trino object edit: the apply", () => {
     expect(outcome.refusal.at).toEqual({ within: "user", line: 3, column: 8 });
   });
 
+  test("a coordinate on the KEYWORD ITSELF stays in the reader's text at line 1 column 1", async () => {
+    // The arm that distinguishes an ANCHORED splice from one at offset zero, and nothing else
+    // does: every coordinate past the clause converts identically either way, because the same
+    // eleven characters sit in front of it. MEASURED on 476, an already-exists refusal points at
+    // `1:1`, so this is the live shape and not a constructed one.
+    const outcome = await applyWithTrinoError({
+      errorName: "ALREADY_EXISTS",
+      errorCode: 2,
+      message: "line 1:1: Function 'memory.app.plus_one' already exists",
+      errorLocation: { lineNumber: 1, columnNumber: 1 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "user", line: 1, column: 1 });
+  });
+
   test("a coordinate landing INSIDE the spliced clause is `outside` and never a clamped number", async () => {
     const outcome = await applyWithTrinoError({
       errorName: "SYNTAX_ERROR",
