@@ -447,21 +447,50 @@ export function StudioWorkspace({
   /**
    * What this shell does after an apply that CHANGED the addressed object (#789 Phase 3).
    *
-   * IT MOVES ITS OWN COUNTER AND CLEARS NOTHING, which is where it parts company with
-   * `src/components/Studio.tsx`, and the difference is a fact about this shell rather than a
-   * simplification. The standalone shell clears the tab in the same commit, so the tab that
-   * applied re-reads immediately and is never marked stale; here the RE-READ IS THE READER'S,
-   * through the stale banner's own control. The reason is the host: this shell's read goes out
-   * through `readObjectSource`, a host may withdraw that method between the apply and the read,
-   * and an automatic clear would then leave a tab with no document, no failure and no reader,
-   * which is the one state that would send the viewer's default reader at a route this package
-   * does not ship. `sourceFailure` above closes that door in the same render, and the banner
-   * makes the re-read a gesture a person takes with the pane's own text still on screen.
+   * IT MOVES ITS OWN COUNTER AND CLEARS THE TAB, in one handler, which is what
+   * `src/components/Studio.tsx` does for the same gesture. React commits both writes together, so
+   * the pane re-renders once with `refreshToken = n+1` AND `document === undefined`, its read
+   * effect issues a fresh read recording `tokenAtRead = n+1`, and the landed read writes
+   * `readAtToken = n+1`. The tab that applied is therefore NOT marked stale, while every other open
+   * Source tab is: the tab that applied knows what happened, the others know only that something
+   * did.
+   *
+   * THIS OVERTURNS THE FIRST ANSWER, WHICH CLEARED NOTHING, and the reason it gave is written out
+   * here because the reason is what was wrong rather than the taste. It said an automatic clear
+   * "would leave a tab with no document, no failure and no reader, which is the one state that
+   * would send the viewer's default reader at a route this package does not ship", and then said
+   * `sourceFailure` above closes that door in the same render. It does, and a reason discharged
+   * three lines below itself decides nothing. What the old behaviour actually produced is what
+   * decided it: the reader was left looking at the definition the object NO LONGER HOLDS, under an
+   * invitation to press "Read again", because a moved counter re-reads nothing on its own.
+   * `needsRead` in `ObjectSourceView` is `document === undefined && failure === undefined`, so the
+   * counter alone only makes `stale` true and draws the banner over stale bytes.
+   *
+   * THE WITHDRAWAL PATH IS DRIVEN AND NOT ARGUED. `tests/components/studio/embedded-source.test.tsx`
+   * applies successfully and has the host withdraw `readObjectSource` in the same act the answer
+   * lands: `sourceFailure` answers its sentence, `needsRead` is false, the pane refuses in the
+   * viewer's own grammar, and not one request leaves this shell. That is the hazard the old reason
+   * named, measured rather than reasoned about.
+   *
+   * NO TOAST, which is the one place the two shells still differ, and it is a measurement rather
+   * than an omission. `src/components/Studio.tsx` announces the re-read with
+   * `toast({ title: "Applied. Reading the definition again." })`, and `useToast` is a wrapper over
+   * `sonner`, whose toasts render only into a mounted `<Toaster />`. That component is mounted in
+   * `src/app/layout.tsx`, which belongs to the standalone application; `src/exports/` re-exports no
+   * Toaster and this shell mounts none, so the same call in this file is a line no adopter can see
+   * and no test can assert. MEASURED: added here, it killed zero tests in
+   * `tests/components/studio/embedded-source.test.tsx` while deleting the clear killed three and
+   * deleting the counter killed one. What announces the re-read here is the pane's own
+   * `object-source-loading` region, which is an `output` element carrying an implicit
+   * `role="status"`, so a screen reader is told the same thing by the surface that knows it.
    *
    * The DRAFT is not dropped here either. The pane drops it itself, keyed on the part its plan
    * was built for, which is a key this shell does not hold and must not guess.
    */
-  const handleApplied = useCallback(() => setObjectRefreshToken((previous) => previous + 1), []);
+  const handleApplied = useCallback(() => {
+    setObjectRefreshToken((previous) => previous + 1);
+    onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined });
+  }, [onSourceChange]);
 
   /**
    * The row menu's actions in THIS shell, which is four of the six (U22, #789).

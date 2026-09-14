@@ -1418,9 +1418,15 @@ describe("the embedded workspace applies an object edit through the host", () =>
     seen.push(refreshTokenPassedToTheViewer());
 
     expect(seen).toEqual([0, 1]);
-    // What the reader SEES for it, which is the consequence the number exists to produce: the
-    // definition on screen was read at token 0 and the session has moved past it.
-    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
+    /*
+     * What the reader SEES for it, and it is NOT the stale banner (X25, #789). The same handler
+     * clears the tab, so the pane re-reads at the token the apply moved to and `readAtToken`
+     * equals `refreshToken` again: the tab that applied knows exactly what happened and is not
+     * asked to press anything. The banner is what every OTHER open Source tab gets, and it is
+     * driven where it lives, in `tests/components/object-source/ObjectSourceView.test.tsx`.
+     */
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
 
   test("a FAILED apply does not move the counter", async () => {
@@ -1606,34 +1612,40 @@ describe("the embedded workspace applies an object edit through the host", () =>
      * `StudioWorkspace.tsx` is non-undefined in the SAME render, so `needsRead` is false and no
      * read is issued at all.
      *
-     * That conjunction was UNREACHABLE before this task and is reachable now: the only control that
-     * clears a document is the viewer's stale banner, the banner is drawn only when the counter has
-     * moved since the read, and until this task the counter was the constant zero. The apply below
-     * moves it, which is what puts the control on screen, which is what makes this a live
-     * population rather than a guard over an empty one.
+     * THE POPULATION MOVED AND THIS TEST MOVED WITH IT (X25, #789). It used to reach the clear
+     * through the stale banner's own control, because until X25 the apply cleared nothing and the
+     * banner was the only control that did. The apply clears now, so the clear and the withdrawal
+     * are driven together, in ONE act, which is both the tighter race and the exact hazard the
+     * old no-clear behaviour was defended with: apply, host withdraws `readObjectSource`, and the
+     * question is whether anything goes out. Nothing does.
      */
-    const view = render(workspace({ reader: editingReader({ build: async () => BUILT, apply: async () => APPLIED }) }));
+    const withReader = editingReader({ build: async () => BUILT, apply: async () => APPLIED });
+    const view = render(workspace({ reader: withReader }));
     await openSourceTab();
     await click("object-source-edit");
     await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
     await click("object-source-preview");
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
-    await click("object-source-apply-confirm");
-    // The tab that applied is stale rather than cleared: this shell knows a DDL ran.
-    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
 
-    // The host withdraws the read while the definition is still in hand, which leaves it on
-    // screen, and then the reader presses the banner's control, which clears it.
-    view.rerender(workspace({ reader: treeReader() }));
-    expect(screen.getByTestId("source-editor")).toBeTruthy();
-    await click("object-source-stale-reread");
+    const before = requested.length;
+    await act(async () => {
+      (screen.getByTestId("object-source-apply-confirm") as HTMLElement).click();
+      // The withdrawal, inside the same act as the answer landing: the host hands a reader object
+      // with no `readObjectSource` on it, which is `conn.sourceReader === undefined` here.
+      view.rerender(workspace({ reader: treeReader() }));
+      await Promise.resolve();
+    });
 
     await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
     expect(screen.getByTestId("object-source-failure-message").textContent).toContain(
       "no longer reads object definitions",
     );
     expect(screen.queryByTestId("source-editor")).toBeNull();
-    // The `afterEach` asserts the whole of it: not one request left this shell.
+    /*
+     * The door the old reason was written about, named here at the moment it matters rather than
+     * left to the `afterEach`, which would fail with no sentence saying why.
+     */
+    expect(requested.length).toBe(before);
   });
 
   /*
@@ -1782,5 +1794,53 @@ describe("the embedded workspace applies an object edit through the host", () =>
       await Promise.resolve();
     });
     await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot")).toBeNull());
+  });
+  /**
+   * WHAT THE READER IS LOOKING AT ONE RENDER AFTER A SUCCESSFUL APPLY (X25, #789).
+   *
+   * Filed as a residual with a reason, and the reason was checked by driving it rather than by
+   * re-reading it, which is what the two tests below are. This one is the REPRODUCTION: the host
+   * answers the OLD definition on the first read and the NEW one on every read after it, exactly
+   * as an engine does, so a pane that re-read shows `SELECT 2` and a pane that did not shows
+   * `SELECT 1`.
+   *
+   * It is an assertion about the BYTES ON SCREEN and not about the counter. The counter already has
+   * its own test above and a moved counter is not a re-read: `needsRead` in `ObjectSourceView` is
+   * `document === undefined && failure === undefined`, so a shell that moves the token and clears
+   * nothing issues no read at all and only draws the stale banner over text the object no longer
+   * holds.
+   */
+  test("a successful apply leaves the ENGINE'S OWN new text on screen, not the pre-apply text", async () => {
+    const versions = [DEFINITION, STEP_TEXT];
+    let read = 0;
+    const reader = {
+      ...treeReader(),
+      readObjectSource: async () => {
+        const text = versions[Math.min(read, versions.length - 1)] as string;
+        read += 1;
+        return { ...EDITABLE_DOCUMENT, parts: [{ ...EDITABLE_DOCUMENT.parts[0], text }] } as ObjectSourceDocument;
+      },
+      objectEditor: { build: async () => BUILT, apply: async () => APPLIED },
+    } as unknown as WorkspaceObjectReader;
+
+    render(workspace({ reader }));
+    await openSourceTab();
+    // The control for the two-version host: the FIRST read is the pre-apply definition, so a
+    // failure below is about the apply and not about a host that answered the new text all along.
+    expect(shownText()).toBe(DEFINITION);
+
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    // The pane asked the host again, which is the only way new text can reach the screen here.
+    await waitFor(() => expect(read).toBe(2));
+    await waitFor(() => expect(shownText()).toBe(STEP_TEXT));
+    // And the tab that applied is NOT marked stale: it re-read at the token its own apply moved to,
+    // which is what `src/components/Studio.tsx` already produces for the same gesture.
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
 });
