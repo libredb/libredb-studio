@@ -22,7 +22,7 @@ import {
 } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
-import { renderSegments } from "@/lib/db/object-edit";
+import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -4893,6 +4893,22 @@ test("the fixture's revision IS the md5 of the fixture's definition", () => {
 /** The reader's edit: one word of the body changed, and the identity untouched. */
 const EDITED = MEASURED_FUNCTION_DEFINITION.replace("coalesce(sum(", "COALESCE(sum(");
 
+/**
+ * The same edit, ending in a `--` line comment with NO trailing newline, which is how a person
+ * ends one (#789 Phase 3, task 22).
+ *
+ * MEASURED live through this provider against PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on
+ * 2026-09-14, before the repair: the build composed the terminator as the first character after
+ * the reader's last one, on the same line, so the comment swallowed it, the post-condition `DO`
+ * became part of the CREATE, and the apply answered
+ * `refused` with the refusal class `definition`, the sentence `syntax error at or near "DO"`, the
+ * code `42601`, and `at` reading `{"within":"outside"}`.
+ * `at.within` is `outside`, so the pane places NO marker and tells the reader the error is in text
+ * they cannot see. Every fixture in this phase built its edit the way a machine builds one, and
+ * that is why eleven waves of tests passed over it.
+ */
+const EDITED_TRAILING_COMMENT = `${EDITED.replace(/\n$/, "")} -- edited by task 22`;
+
 describe("PostgreSQL object edit (#789 Phase 3)", () => {
   function makeProvider() {
     return new PostgresProvider(makePgConfig());
@@ -5052,6 +5068,108 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
       );
       expect(step.language).toBe("pgsql");
+      await provider.disconnect();
+    });
+
+    test("a reader's edit ending in a `--` line comment still terminates the CREATE", async () => {
+      // THE DEFECT, MEASURED LIVE, and the reason no test in eleven waves saw it: every fixture in
+      // this phase composed its edit the way a machine does, and none of them ended in a line
+      // comment. PostgreSQL discards a `--` comment to the end of the LINE, so a terminator placed
+      // as the first character after the reader's last one is inside the comment when that comment
+      // is the last thing the reader wrote.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED_TRAILING_COMMENT,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+      // THE ENGINE'S OWN RULE, APPLIED TO THE EMITTED BYTES rather than asserted about them: strike
+      // out everything from the comment marker to the end of its line, which is exactly what the
+      // parser does with it, and what is left must STILL separate the CREATE from the
+      // post-condition `DO` with a semicolon. Before the repair this stripped view read
+      // `$function$ \nDO $lb...` with no terminator at all, which is the `syntax error at or near
+      // "DO"` the live run answered.
+      const commentStart = step.text.lastIndexOf("-- edited by task 22");
+      const lineEnd = step.text.indexOf("\n", commentStart);
+      expect(commentStart).toBeGreaterThan(-1);
+      expect(lineEnd).toBeGreaterThan(commentStart);
+      const asTheParserSeesIt = step.text.slice(0, commentStart) + step.text.slice(lineEnd);
+      expect(asTheParserSeesIt).toContain("$function$ \n;\nDO $lb");
+      await provider.disconnect();
+    });
+
+    test("the terminator ends the reader's LINE before it ends the statement, for four endings", async () => {
+      // The four endings the repair has to hold for, and each is an ordinary thing to type: a line
+      // comment, a text that already ends in a newline, a text ending in the body's `$$` delimiter,
+      // and a text carrying a terminator of the reader's own. The last one relies on a measurement
+      // recorded above this composition: `SELECT 1;;SELECT 2;` in one parameterless query is
+      // ACCEPTED on 18.4, so a doubled semicolon costs nothing and the terminator stays
+      // unconditional rather than becoming a decision about the reader's last character.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const withoutNewline = EDITED.replace(/\n$/, "");
+      const endings: readonly { readonly what: string; readonly text: string }[] = [
+        { what: "a line comment", text: EDITED_TRAILING_COMMENT },
+        { what: "a newline already", text: EDITED },
+        { what: "the body delimiter", text: withoutNewline },
+        { what: "a semicolon of the reader's own", text: `${withoutNewline};` },
+      ];
+      for (const ending of endings) {
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: ending.text,
+        });
+        if (!build.built) throw new Error(`${ending.what}: ${build.refusal.sentence}`);
+        if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+        const [step] = build.plan.unit.steps;
+        const [prefix, user, suffix] = step.segments;
+        if (prefix.from !== "provider" || user.from !== "user" || suffix.from !== "provider") {
+          throw new Error("narrowing");
+        }
+        // THE COORDINATES DO NOT MOVE. The suffix is the only thing the repair touches, and the
+        // marker arithmetic reads the user segment, so this is the assertion that says the repair
+        // cost the reader's line and column nothing.
+        expect(user.start).toBe(0);
+        expect(user.end).toBe(ending.text.length);
+        expect(step.text.slice(prefix.text.length, prefix.text.length + ending.text.length)).toBe(ending.text);
+        // The character that follows the reader's last one is a LINE BREAK, so no `--` comment of
+        // theirs can reach the terminator, whatever they ended with.
+        expect(step.text.slice(prefix.text.length + ending.text.length)).toStartWith("\n;\n");
+        expect(renderSegments(ending.text, step.segments)).toBe(step.text);
+      }
+      await provider.disconnect();
+    });
+
+    test("a known line and column in the reader's text survives the composition", async () => {
+      // The number this pins is the one the pane draws a marker at, and it is asserted as a
+      // LITERAL line and column rather than recomputed from the segments, because recomputing it
+      // from the same map the code uses would agree with any map. `COALESCE` is at offset 123 of
+      // the 228-character edit, which is line 6, column 10 of what the reader sees.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+      const [prefix] = step.segments;
+      if (prefix.from !== "provider") throw new Error("narrowing");
+      expect(EDITED.indexOf("COALESCE")).toBe(123);
+      expect(userPositionOf(step, prefix.text.length + 123)).toEqual({ within: "user", line: 6, column: 10 });
+      // The CONTROL, so the assertion above is not satisfied by a function that answers `user` for
+      // everything: the first character of the post-condition block is not in the reader's text.
+      expect(userPositionOf(step, prefix.text.length + EDITED.length + 3)).toEqual({ within: "outside" });
       await provider.disconnect();
     });
 

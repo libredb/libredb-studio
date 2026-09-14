@@ -3090,11 +3090,30 @@ export class PostgresProvider extends SQLBaseProvider {
       `  END IF;\n` +
       `END`;
     const prefix = `SET LOCAL search_path = ${pinnedSearchPath};\nDO ${this.dollarQuote(preBlock)};\n`;
-    // The doubled semicolon is not a risk this has to avoid: MEASURED on 18.4 through `pg`,
-    // `SELECT 1;;SELECT 2;` in one parameterless query is ACCEPTED and answers both rows, so the
-    // terminator is appended unconditionally rather than conditionally on the reader's last
-    // character.
-    const suffix = `;\nDO ${this.dollarQuote(postBlock)};`;
+    // THE TERMINATOR ENDS THE READER'S LINE BEFORE IT ENDS THE STATEMENT, and the leading newline
+    // is the whole repair (#789, task 22). It used to read `;\nDO ...`, so the semicolon that
+    // terminates the reader's CREATE was the first character after their last one, ON THE SAME
+    // LINE. PostgreSQL discards a `--` comment to the end of the line, so a reader whose edit ends
+    // in a line comment, which is how a person ends one, had that terminator swallowed and the
+    // post-condition `DO` became part of the CREATE.
+    //
+    // MEASURED live through this provider against PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on
+    // 2026-09-14, appending ` -- edited by task 22` to the definition of `app.order_total(integer)`:
+    // before the repair the apply answered `syntax error at or near "DO"`, SQLSTATE 42601, with the
+    // reported position inside the text this provider added, so `userPositionOf` answered `outside`
+    // and the pane placed no marker at all. After the repair the same edit answers
+    // `SET | DO | CREATE FUNCTION | DO` and the outcome is `applied`.
+    //
+    // The newline costs the reader's coordinates NOTHING: the prefix is untouched and the user
+    // segment still spans `[0, request.text.length)`, so the marker arithmetic reads the same line
+    // and column it did before.
+    //
+    // The doubled semicolon a reader who terminates their own text produces is not a risk this has
+    // to avoid: MEASURED on 18.4 through `pg`, `SELECT 1;;SELECT 2;` in one parameterless query is
+    // ACCEPTED and answers both rows, so the terminator is appended unconditionally rather than
+    // conditionally on the reader's last character. That is what keeps this one composition correct
+    // for a text ending in a line comment, in a newline, in `$$` and in a semicolon of their own.
+    const suffix = `\n;\nDO ${this.dollarQuote(postBlock)};`;
     const step: ObjectEditStep = {
       text: `${prefix}${request.text}${suffix}`,
       language: spec.sourceLanguage,

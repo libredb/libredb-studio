@@ -723,9 +723,16 @@ Four statements in one round trip:
 ```
 SET LOCAL search_path = "app", pg_catalog;
 DO $lb...$ <the pre-condition block> $lb...$;
-<the reader's text>;
+<the reader's text>
+;
 DO $lb...$ <the post-condition block> $lb...$;
 ```
+
+The terminator that ends the reader's text is on a LINE OF ITS OWN, and that is a repair rather than a style.
+Until this was fixed the terminator was the first character after the reader's last one, on the same line, and PostgreSQL discards a `--` comment to the end of the line: an edit ending in a line comment, which is how a person ends one, had its terminator swallowed, the post-condition `DO` became part of the CREATE, and the apply answered `syntax error at or near "DO"`, SQLSTATE `42601`, with the reported position inside the text LibreDB added, so the pane placed no marker and told the reader the error was in text they cannot see.
+Measured through this provider on 18.4 with ` -- edited by task 22` appended to `app.order_total(integer)`: `syntax error at or near "DO"` before, `applied` after, with the emitted bytes differing by exactly one newline.
+A trailing terminator of the reader's own is left alone rather than detected: a doubled semicolon is accepted, measured, `SELECT 1;;SELECT 2;` in one parameterless query answers both rows.
+A comment written after the body's closing `$function$` is not part of the definition, so the engine discards it and the next read of the Source tab does not show it.
 
 Every interpolated value is dollar-quoted with a randomly tagged delimiter, and there is NO literal escaping anywhere in the apply.
 That is deliberate: a dollar-quoted string ignores every escape, so the statement does not depend on `standard_conforming_strings`, another session GUC a previous borrower of the pooled connection can change and which single-quote doubling would depend on.
