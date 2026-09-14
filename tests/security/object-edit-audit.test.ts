@@ -62,11 +62,22 @@ describe("object edit apply: the audited write (control 3.6)", () => {
     // A plan the seal refuses is deliberately not in this population and is not a counter-example:
     // it emits ONE event and calls no provider, because no write happened. That arm is asserted in
     // `tests/api/db/objects/edit-apply.test.ts`.
+    //
+    // EVERY ITERATION DRIVES A DIFFERENT PLAN ID, and that is the half of this claim a reviewer
+    // MEASURED as vacuous in fix round 1: with every iteration minting the harness default
+    // `plan-task-11`, replacing `correlationId: plan.planId` in the route with the LITERAL
+    // `"plan-task-11"` left `bun test tests/security/object-edit-audit.test.ts
+    // tests/api/db/objects` at 35 pass / 0 fail. A route that stamped every apply in a deployment
+    // with one constant id passes an equality assertion against one constant, and it is precisely
+    // the failure that breaks an operator grouping a decision with its verdict. The ids are also
+    // collected and their distinctness asserted after the loop, so an id that tracks the ITERATION
+    // rather than the plan cannot pass either.
     expect(EVERY_OUTCOME.length).toBeGreaterThan(0);
-    for (const outcome of EVERY_OUTCOME) {
+    const correlationIds: string[] = [];
+    for (const [index, outcome] of EVERY_OUTCOME.entries()) {
       getServerAuditBuffer().clear();
       provider.applyObjectEdit.mockResolvedValueOnce(outcome);
-      const sealed = await mintValidPlan();
+      const sealed = await mintValidPlan({ planId: `plan-correlation-${index}` });
       await POST(request(sealed));
       const events = getServerAuditBuffer()
         .getAll()
@@ -74,12 +85,14 @@ describe("object edit apply: the audited write (control 3.6)", () => {
       expect(events).toHaveLength(2);
       expect(events[0].correlationId).toBe(sealed.plan.planId);
       expect(events[1].correlationId).toBe(sealed.plan.planId);
+      correlationIds.push(String(events[0].correlationId));
       // The two are a DECISION and an OUTCOME and not the same record twice: the decision is the
       // one emitted before the provider was called, and it is the one that survives when the
       // engine never answers.
       expect(events[0].action).toBe("PLAN");
       expect(events[1].action).toBe(sealed.plan.strategy);
     }
+    expect(new Set(correlationIds).size).toBe(EVERY_OUTCOME.length);
   });
 
   test("the outcome map is TOTAL over every arm, walked at runtime as well as typed", async () => {
@@ -106,7 +119,17 @@ describe("object edit apply: the audited write (control 3.6)", () => {
 
   test("NO event carries a character of the statement, the payload, the engine's words or either token", async () => {
     // The sentinel appears in the unit text, in the revision token and in the engine's message, so
-    // a leak through ANY of those is one assertion. It is deliberately NOT in the plan id:
+    // a leak through ANY of those is one assertion.
+    //
+    // THE PLAN TOKEN IS CHECKED AGAINST ITSELF AND NOT AGAINST THE SENTINEL, which is fix round 1
+    // finding 3: the token is an HMAC over the plan, so it CANNOT textually contain a planted
+    // string, and this test's title names it. A sentinel population is structurally incapable of
+    // seeing a plan-token leak, and MEASURED it did not: with the decision event carrying
+    // `connectionName: planToken.slice(0, 200)`, this suite answered 4 pass / 0 fail. The bearer
+    // proof that re-authorises the write is therefore asserted by value, below, against both the
+    // ring record and the stdout line.
+    //
+    // The sentinel is deliberately NOT in the plan id:
     // `plan.planId` IS the correlation id both events carry by design, and Task 11 MEASURED that a
     // sentinel planted there turns this assertion red against a route that leaks nothing.
     const SENTINEL = "libredb-audit-sentinel-9f3a2c";
@@ -135,6 +158,25 @@ describe("object edit apply: the audited write (control 3.6)", () => {
     expect(events).toHaveLength(2);
     for (const event of events) expect(JSON.stringify(event)).not.toContain(SENTINEL);
 
+    // THE PLAN TOKEN, BY VALUE, AND AS A PROBE RATHER THAN AS THE WHOLE STRING, and which of the
+    // two is asserted where is MEASURED and not chosen. `sanitizeAuditField` in `src/lib/audit.ts`
+    // bounds every free-text field at `MAX_AUDIT_FIELD_LENGTH`, 254, "before it can reach either
+    // destination", and this harness's token is 343 characters long (measured at this commit, 278
+    // of them the payload segment). So a leaked token NEVER appears verbatim in an AuditEvent
+    // field: `not.toContain(sealed.planToken)` over an event is a guard whose population cannot
+    // contain the case, which is this epic's signature defect, and it is deliberately not written
+    // here. MEASURED both ways in this task's fix round: with the decision event carrying
+    // `connectionName: planToken.slice(0, 200)` AND with it carrying the whole `planToken`, the
+    // failure landed on the PROBE assertion below, by line number, at 3 pass / 1 fail each time.
+    //
+    // The probe is forty characters taken from inside the JWS payload segment, past the header
+    // every token of this type shares, so it is unique to THIS token and survives truncation. Its
+    // own length is asserted first, because `not.toContain("")` is true of every string.
+    const tokenPayload = sealed.planToken.split(".")[1] ?? "";
+    const tokenProbe = tokenPayload.slice(0, 40);
+    expect(tokenProbe).toHaveLength(40);
+    for (const event of events) expect(JSON.stringify(event)).not.toContain(tokenProbe);
+
     // THE POPULATION IS PROVEN NON-EMPTY BEFORE IT IS WALKED.
     // `for (const line of lines) expect(line).not.toContain(...)` CERTIFIES NOTHING when `lines` is
     // `[]`, and `lines` is `[]` whenever the spy is installed after the emitter binds its writer or
@@ -146,8 +188,17 @@ describe("object edit apply: the audited write (control 3.6)", () => {
     expect(plan.unit.medium === "statement" ? plan.unit.steps[0].text : "").toContain(SENTINEL);
     expect(plan.revision.check === "unavailable" ? plan.revision.reason : plan.revision.token).toContain(SENTINEL);
     // And in no line the emitter wrote to stdout, which is the authoritative channel and the one a
-    // log pipeline consumes.
-    for (const line of lines) expect(line).not.toContain(SENTINEL);
+    // log pipeline consumes. The token is checked on this channel too: a leak that reaches stdout
+    // and not the ring, and the reverse, are two different defects.
+    // The WHOLE token is asserted on this channel and not on the ring, and the asymmetry has a
+    // reason: a line on stdout need not have come through `sanitizeAuditField` at all, and a stray
+    // `console.log` of the request body would carry all 343 characters untruncated. The probe
+    // covers the sanitized path on both channels.
+    for (const line of lines) {
+      expect(line).not.toContain(SENTINEL);
+      expect(line).not.toContain(sealed.planToken);
+      expect(line).not.toContain(tokenProbe);
+    }
   });
 
   test("the claim the log makes is the NARROW one, and the target names the address", async () => {

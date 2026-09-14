@@ -246,7 +246,9 @@ unable to count the statements in a routine body: a dollar-quoted body may conta
 semicolons, and no parser here can tell a statement separator from a character of the definition.
 So the event says an edit was applied at this address, with this strategy, and with this outcome.
 It does not say that one statement, and only one, reached the engine, and a reader of the log must
-not take it that way. The residual is tracked in [`docs/BACKLOG.md`](./BACKLOG.md).
+not take it that way. This note is the record of that residual: it is stated here, on the page the
+row lives on, and no backlog entry stands behind it. A reader looking for the limit finds it in this
+paragraph and nowhere else.
 
 ## Known limits
 
