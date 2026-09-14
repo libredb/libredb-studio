@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D78, U17 · 36
+- [Drivers and connections](#drivers-and-connections) — D1–D81, U17 · 39
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X18, U2–U21 · 11
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X22, U2–U21 · 15
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1052,10 +1052,29 @@ than a regression of anything measured above. The Trino half has a second source
 repository, which the Redis half does not: `docs/providers/trino.md`, section *A trailing semicolon is
 a syntax error*, records `SELECT 1;` answering `mismatched input ';'` as its own measurement.
 
+**The audit half of the same fact, and it is the half a log reader meets.** An `object_edit` event says
+an edit was applied at one address, with one strategy, and with one outcome. It does NOT say the round
+trip carried nothing else, and it cannot. `docs/SECURITY.md`'s note on control 3.6 states that limit
+where a reader of the control meets it; this entry is the work.
+
+Three things narrow the residual and none of them closes it. They are readings of the shipped code, not
+separate measurements. First, the bytes are in the SEALED plan and the preview drew them, so a rider is
+something the user was given the chance to read rather than something the server added. Second, the
+decision event is emitted before the provider is called and outside any try/catch, so an apply that
+cannot be audited does not run: what is narrow is the event's CLAIM and not its coverage. Third, the
+address in the event is the address the plan was built for, so a rider cannot make the event name the
+wrong object; it makes the event name too few.
+
+Closing the audit half needs a PostgreSQL statement counter. This repository does not have one and has
+measured itself unable to fake one: a dollar-quoted routine body may contain any number of semicolons,
+and no reader in `src/lib/sql/` can tell a statement separator from a character of a definition. Splitting
+the unit into one statement per round trip is not available either, because ruling 3a of #789 Phase 3
+measured that a `SET LOCAL` sent as its own round trip answers a WARNING and pins nothing.
+
 **Done when:** either the reader's text is refused when it carries more than one statement, or every
 statement it carries is named in the plan's consequences and in the audit target, so a success destroys
-nothing the plan did not show. The provider doc says the same thing where it bites, in
-`docs/providers/postgres.md`'s measured acceptance run.
+nothing the plan did not show and the log's claim is as wide as the round trip. The provider doc says the
+same thing where it bites, in `docs/providers/postgres.md`'s measured acceptance run.
 
 ### D77. The PostgreSQL object fixture builds no producer for the post-condition, so `applied-elsewhere` has only a test double
 
@@ -1106,6 +1125,71 @@ yet run.
 **Done when:** either D74 closes, which removes the producer, or the edit-apply route ends a transaction
 it did not open on the same terms `/api/db/multi-query` does, with the cross-user question that raises
 answered rather than assumed.
+
+### D79. The embedded shell learns about its own object apply and about no other DDL
+
+`StudioWorkspace` owns a catalog-change counter and moves it after an object apply the workspace itself
+issued (#789 Phase 3). It cannot see a DDL the HOST ran. Every statement in that shell leaves through
+`onQueryExecute`, and that callback answers a result set and never says what the statement changed, so a
+`CREATE OR REPLACE` a person runs in the query editor leaves every open Source tab showing the pre-apply
+text with no stale banner.
+
+MEASURED for the STANDALONE shell during the same phase, which is where the absence was found first: a
+new body applied to `p3probe.order_total` through `POST /api/db/query` while its Source tab was open left
+the tab unchanged and unmarked. The embedded shell inherits it, and this is a Phase 2 limitation rather
+than something the apply introduced: the counter was the constant `0` before, and saw nothing at all.
+
+The consequence is bounded where it bites, in the mount's own docblock: a stale banner in the embedded
+shell means "this workspace changed it", and the absence of one never means "nothing changed".
+
+**Done when:** a host can tell the workspace the catalog moved, either through a host-callable handle or
+through a field on the `onQueryExecute` answer. Both are NEW PUBLISHED SURFACES on `@libredb/studio`,
+which is why this is filed rather than folded into the apply.
+
+### D80. `object-edit-wire.ts` bounds no host-supplied string, so the standalone dialog is unbounded end to end
+
+The four shape predicates in `src/lib/api/object-edit-wire.ts` (`isObjectEditPlanShape`,
+`isObjectEditUnitShape`, `isObjectEditOutcomeShape`, `isObjectEditBuildResponseShape`) check shape and
+bound no string. So `refusal.sentence`, `refusal.hint`, `plan.revision.reason`,
+`preimage.truncated.reason` and each consequence's `fact.source` and `fact.observed` reach the DOM at
+whatever length their producer wrote them.
+
+MEASURED 2026-09-14: every bound the two edit routes enforce is on what they RECEIVE.
+`grep -rn ' > EDIT_' src/app/api/db/objects/` returns exactly 3 hits, `EDIT_CHARACTER_LIMIT` on the
+submitted text and `EDIT_PLAN_EXECUTABLE_LIMIT` on the plan's executable length at both routes, and the
+third inbound bound, `EDIT_BODY_BYTE_LIMIT`, is applied by `readBoundedJson` on the body. Nothing bounds
+what they ANSWER, and the answers are not this application's own prose:
+`libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds `observed` from `FUNCTION LIST`, and a
+refusal sentence is the engine's own message. `ApplyPreviewDialog` bounds exactly one string, the plan's
+executable text, which it refuses to draw a diff above.
+
+The EMBEDDED half is closed: `use-connection-adapter.ts` bounds the whole host answer and snapshots it as
+it counts, so the measured characters are the drawn characters. The standalone half is open, and so is
+the shape layer itself, which is where a reader looks for a bound and where a future third caller would
+inherit one.
+
+Phase 2's `isSourceDocumentShape` bounds all four of its host-supplied rendered strings with
+`SOURCE_CHARACTER_LIMIT` (`src/components/object-source/source-reader.ts`). That is the shape of the fix.
+
+**Done when:** every string those four predicates accept is bounded by an existing limit, with a test per
+predicate feeding it one character over the bound and a control exactly on it.
+
+### D81. A non-routine PostgreSQL kind declared editable would be refused in the words of an ownership problem
+
+`readObjectSource` in `src/lib/db/providers/sql/postgres.ts` calls `routineEditAffordance` whenever
+`kindAcceptsSourceEdits` is true, and that helper reads `may_replace` and `owner`, which only the ROUTINE
+statement selects. If a non-routine kind were ever declared editable, the pane would draw `offered: false`
+with the sentence "owned by another role", which is a misleading refusal rather than the declaration
+drift it actually is.
+
+Nothing can be applied in that state: the BUILD already refuses it by name
+(`declares an editable kind "view" but has no statement that reads it`, with a test). And no shipped
+declaration reaches it: only `function` and `procedure` declare `acceptsSourceEdits` and both are in
+`PROKIND_BY_KIND`. So this is a state nothing in this repository builds, which is why it is filed rather
+than folded in.
+
+**Done when:** the read raises the same sentence the build does when a kind declares an edit this file has
+no routine statement for, with its own test.
 
 ## Value interpolation
 
@@ -1412,6 +1496,89 @@ only the first leaves the next one to be found by hand.
 
 **Done when:** the button has an accessible name, and the lint rule that should have caught it either
 covers this shape or is recorded as not covering it.
+
+### X19. A body the framework truncated is reported as an empty body on five routes and as a parser error on a sixth
+
+Next 16.3.4 CLONES every request body for middleware, and this repository has middleware (`src/proxy.ts`),
+so `DEFAULT_BODY_CLONE_SIZE_LIMIT` in `node_modules/next/dist/server/body-streams.js` applies to every
+route. It TRUNCATES at exactly 10,485,760 bytes rather than refusing, and `next.config.ts` sets no
+`middlewareClientMaxBodySize`.
+
+MEASURED and bisected on 2026-09-14 against `POST /api/db/query`:
+
+```
+body 10485760 bytes -> HTTP 200, the statement ran
+body 10485761 bytes -> HTTP 500 {"error":"Expected ',' or '}' after property value in JSON at position 10485760 ...","code":"INTERNAL_ERROR"}
+body 10485900 bytes -> HTTP 500 {"error":"Unterminated string in JSON at position 10485760 ...","code":"INTERNAL_ERROR"}
+```
+
+The server log names it in Next's own words: `Request body exceeded 10MB for /api/db/query. Only the
+first 10MB will be available unless configured.`
+
+So one condition gets two wrong answers. The five existing object routes that go through
+`handleObjectRequest`'s body-parse arm answer HTTP 400 `{ "error": "Empty request body" }` for a body that
+was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
+Neither tells the caller their request was too large.
+
+The two routes added by #789 Phase 3 do NOT inherit this: `readBoundedJson` reads `content-length` and
+answers 413 above `EDIT_BODY_BYTE_LIMIT` (8,388,608), which sits below the framework's wall, so an
+oversized edit body meets a sentence that names the size. They do not fix it anywhere else, and that is
+stated in `readDefaultBody`'s own docblock.
+
+**Done when:** a body above the framework's clone limit gets one answer that names the size, on every
+route, rather than an empty-body claim on five and a parser error on one.
+
+### X20. The Source pane's `dirty` prop is undefended in `Studio.tsx`
+
+`Studio.tsx` passes `dirty={sourceTab.dirty}` to the Source pane and nothing measures it. MEASURED in
+#789 Phase 3, wave 9: deleting that prop left all 45 component groups green.
+
+The population it protects is a tab REMOUNTED inside an unsaved edit whose stored draft is gone: a
+restored tab carrying `dirty: true`. Without the prop, `dirtyRef = useRef(props.dirty === true)` seeds
+`false`, the pane computes `isDirty` `false`, the flip guard `if (isDirty === dirtyRef.current) return;`
+returns early, and the tab strip's dot never goes away for an edit that no longer exists. The behaviour
+shipped is CORRECT; what is missing is the regression test. An earlier note of this stated the failure in
+the opposite direction, which would send the next reader to build a population that cannot fail.
+
+The recipe exists for the embedded shell, which is closed:
+`tests/components/studio/embedded-source.test.tsx` edits, drives a keystroke, switches tab, switches back,
+asserts the dot survived the remount, then reverts the buffer to the engine's own text and asserts the dot
+goes. Deleting `dirty={sourceTab.dirty}` from `StudioWorkspace.tsx` takes that file from 42 pass 0 fail to
+41 pass 1 fail. A tab RESTORED from `localStorage` cannot be built in a component test, because
+`use-tab-manager.ts` computes `shouldPersistWorkspace` from `process.env.NODE_ENV !== "test"`; a tab
+SWITCH unmounts the pane the same way and is what the embedded test uses.
+
+**Done when:** the same test exists for the standalone shell and deleting the prop makes it fail.
+
+### X21. A malformed apply answer is reported to the reader in the words of a timeout
+
+The Source pane synthesises `{ outcome: "interrupted", committed: "unknown" }` for an apply answer that
+`isObjectEditOutcomeShape` refuses, because that is the closest arm the outcome type has and its
+`committed: "unknown"` half is exactly right. `FailureRegion` in
+`src/components/object-source/ApplyPreviewDialog.tsx` then prints "The engine stopped this statement
+before it finished." above our own sentence, and for this population that first clause is a claim nobody
+measured: the engine may have finished perfectly and the ANSWER is what could not be read.
+
+Our own sentence carries the truth ("The apply was sent and its answer could not be read ... Re-read this
+definition before trying again"), so the reader is not misled about what to do, only about why.
+
+**Done when:** the dialog has a seventh arm, or a per-outcome sentence override, so an unreadable answer
+is described as one.
+
+### X22. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
+
+MEASURED in Chromium on 2026-09-14, on every successful apply driven through the UI:
+`TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.
+
+`ApplyPreviewDialog` disposes the diff's original and modified models while the `DiffEditor` still holds
+them, so Monaco's own disposal path throws into the console. The disposal itself is deliberate and
+documented; the ORDER is what needs correcting.
+
+Nothing is visible to the reader and nothing is lost. It matters because it is noise on the exact channel
+#789 Phase 3's CSP assertion reads, and a page-error assertion added later would break on it.
+
+**Done when:** the widget releases the models before they are disposed, and the E2E spec can assert an
+empty console after an apply.
 
 ## Dependencies
 

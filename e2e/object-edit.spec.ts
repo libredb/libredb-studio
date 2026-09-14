@@ -66,13 +66,21 @@ const SEED_SQL = [
 /**
  * The text the reader types, and WHERE it is typed, which is a measurement rather than a taste.
  *
- * MEASURED on 2026-09-14 against this build: appending this comment at the END of the document
- * makes the apply fail with `syntax error at or near "DO"`, SQLSTATE 42601. The PostgreSQL strategy
- * sends its guard, the CREATE and its second guard as one semicolon-separated batch, so a trailing
- * LINE COMMENT with no newline after it swallows the separator and the following `DO` joins the
- * CREATE. Typed at the end of a line INSIDE the body it is ordinary plpgsql, and it is the only
- * place the round trip can be asserted from anyway: `pg_get_functiondef` rebuilds everything outside
- * the body from the catalog, so a comment written next to the signature is gone from the re-read.
+ * It goes INSIDE the body because the CATALOG says so, and not because of a syntax error.
+ * `pg_get_functiondef` rebuilds everything outside the body from the catalog, so a comment written
+ * next to the signature, or after the closing `$function$`, is discarded by the engine and the
+ * re-read assertion below would have nothing to find. MEASURED at this build against PostgreSQL
+ * 18.4 (Debian 18.4-1.pgdg13+1) through the shipped provider, in both placements: the re-read
+ * carried the body edit and never the comment. Typed at the end of a line inside the body it is
+ * ordinary plpgsql.
+ *
+ * An earlier version of this docblock explained the placement with a syntax error instead. That
+ * WAS true of the build it was written against: appending the comment at the END of the document
+ * made the apply fail `syntax error at or near "DO"`, SQLSTATE 42601, because the strategy's
+ * terminating semicolon sat on the reader's own last line and the comment swallowed it. `b3aa6822`
+ * repaired the composition by opening the suffix with a newline, and the same edit now answers
+ * `applied` with the comment on the `$function$` line and on a line of its own after it. The
+ * placement rule above survives that repair; the syntax error does not.
  */
 const EDIT_MARKER = " -- edited by the e2e";
 
