@@ -837,6 +837,12 @@ const SOURCE_PART_ID = "definition";
  * sealed a plan for it, and the apply then answered `applied-elsewhere` with `undone: true`,
  * because the post-condition found the addressed row unrewritten and rolled the unit back.
  *
+ * WHY BOTH QUOTE KINDS ARE TRACKED AND WHY EACH IGNORES THE OTHER, which is two guards and not
+ * one: PostgreSQL 18.4 renders `app.mix("a')b" integer, c integer)` and
+ * `app.mix2(a text DEFAULT '")'::text, b integer DEFAULT 1)` back exactly as written, so a `'`
+ * inside a quoted identifier and a `"` inside a string literal both reach this scan. Toggle
+ * either flag while the other is set and the scan leaves the quoted run at the wrong character.
+ *
  * WHAT THE PARAMETER TYPE MODIFIERS DO, which is the case a reader expects to be the dangerous one
  * and is not: `pg_get_functiondef` renders parameter types through `format_type(t, NULL)` and the
  * modifier is DROPPED. MEASURED on 18.4, a function declared
