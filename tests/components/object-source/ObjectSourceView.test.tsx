@@ -1556,6 +1556,45 @@ describe("ObjectSourceView edit mode", () => {
     expect(screen.queryByTestId("object-source-draft-restore")).toBeNull();
   });
 
+  test("a draft write that FAILS after a part switch says nothing about the part now on screen", async () => {
+    /*
+     * The other half of keying the pending write: a write scheduled on the definition lands after
+     * the reader has moved to the grants part, by design, and if it fails it is the DEFINITION's
+     * unsaved edit that is at risk. Drawn on the grants part, "It will be lost if you reload or
+     * close this tab." is a statement about a draft the grants part does not have, and it sits
+     * directly above a grants Edit button. The draft state carries the key it is about.
+     */
+    const { applier } = applierDouble();
+    const realStorage = window.localStorage;
+    const throwingStorage = {
+      length: 0,
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException("quota", "QuotaExceededError");
+      },
+      removeItem: () => undefined,
+      clear: () => undefined,
+      key: () => null,
+    } as unknown as Storage;
+    try {
+      render(<EditHarness applier={applier} document={withPart(READABLE, SECOND_PART)} />);
+      await enterEditMode();
+      Object.defineProperty(window, "localStorage", { value: throwingStorage, configurable: true });
+      await type(`${READABLE.text} -- mine`);
+
+      await act(async () => {
+        (screen.getAllByRole("tab")[1] as HTMLElement).click();
+        await Promise.resolve();
+      });
+      await settleDraft();
+
+      expect(screen.getByTestId("object-source-edit")).toBeTruthy();
+      expect(screen.queryByTestId("object-source-draft-unsaved")).toBeNull();
+    } finally {
+      Object.defineProperty(window, "localStorage", { value: realStorage, configurable: true });
+    }
+  });
+
   test("`value` DOES NOT CHANGE while the reader is typing", async () => {
     const { applier } = applierDouble();
     render(<EditHarness applier={applier} document={withPart(READABLE)} />);
