@@ -369,6 +369,26 @@ export interface SourceTabState {
   readonly activePartId?: string;
   /** The catalog-change counter's value when this document was read. */
   readonly readAtToken?: number;
+  /**
+   * WHICH part the reader is editing, and never a boolean (#789 Phase 3, discussion #778).
+   *
+   * Per part and not per tab, so two parts of one Oracle package can hold two independent drafts,
+   * the writable buffer can only ever be the part on screen, and a part switch is what leaves edit
+   * mode. A boolean would have to be read together with `activePartId` at every site, and the pair
+   * can disagree.
+   *
+   * NOT PERSISTED, like every other field here but the address. The unsaved text itself lives in
+   * its own bounded store keyed by address and part, so a restored tab re-reads and then offers
+   * the draft back rather than reopening in a writable state nothing has re-checked.
+   */
+  readonly editingPartId?: string;
+  /**
+   * Whether the buffer differs from the text the engine answered. Not persisted either.
+   *
+   * The tab bar is the reader of it, and the pane writes it ONLY when the boolean flips, so it
+   * costs one render per transition rather than one per keystroke.
+   */
+  readonly dirty?: boolean;
 }
 
 export interface QueryTab {

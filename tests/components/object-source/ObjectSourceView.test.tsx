@@ -22,6 +22,40 @@ import React from "react";
 
 let definedThemes: string[] = [];
 
+/**
+ * What the ONE mounted editor double recorded (#789 Phase 3).
+ *
+ * `values` is the `value` PROP's history and not the DOM's, and that distinction is the whole
+ * point of recording it. MEASURED by reading the installed wrapper, `@monaco-editor/react`
+ * 4.7.0: once the editor is not `readOnly`, its `value` effect runs on `[value]` and replaces
+ * the FULL MODEL RANGE with `executeEdits` plus an undo stop. So a `value` that followed the
+ * reader's buffer would clobber their text every time the debounced draft landed, and the
+ * assertion that catches that is "the prop was handed exactly one value", never a read of the
+ * textarea, which the double keeps in step with the prop by construction.
+ */
+interface EditorProbe {
+  values: string[];
+  options: Record<string, unknown>;
+  path: string;
+  change?: (value: string | undefined) => void;
+  markers: {
+    model: unknown;
+    owner: string;
+    markers: { startLineNumber?: number; startColumn?: number; severity?: number; message?: string }[];
+  }[];
+  revealed: { lineNumber: number; column: number }[];
+  mounted: boolean;
+}
+
+let probe: EditorProbe = { values: [], options: {}, path: "", markers: [], revealed: [], mounted: false };
+
+function resetProbe(): void {
+  probe = { values: [], options: {}, path: "", markers: [], revealed: [], mounted: false };
+}
+
+/** The marker severities Monaco publishes. `Error` is 8 and the pane reads it off the namespace. */
+const MARKER_SEVERITY = { Hint: 1, Info: 2, Warning: 4, Error: 8 };
+
 mock.module("@monaco-editor/react", () => ({
   default: function MockEditor(props: {
     value?: string;
@@ -30,8 +64,14 @@ mock.module("@monaco-editor/react", () => ({
     theme?: string;
     options?: Record<string, unknown>;
     beforeMount?: (monaco: unknown) => void;
+    onMount?: (editor: unknown, monaco: unknown) => void;
+    onChange?: (value: string | undefined) => void;
   }) {
     const ran = React.useRef(false);
+    probe.options = props.options ?? {};
+    probe.path = props.path ?? "";
+    probe.change = props.onChange;
+    if (probe.values[probe.values.length - 1] !== (props.value ?? "")) probe.values.push(props.value ?? "");
     React.useEffect(() => {
       if (ran.current) return;
       ran.current = true;
@@ -42,6 +82,29 @@ mock.module("@monaco-editor/react", () => ({
           },
         },
       });
+      probe.mounted = true;
+      props.onMount?.(
+        {
+          // The LIVE model and not the one this mount was created with: the wrapper keeps one
+          // editor and swaps models when `path` changes, so a handler that captured the model at
+          // mount would hold the previous part's after a switch.
+          getModel: () => ({ uri: { toString: () => `parsed:${probe.path}` } }),
+          setPosition: (position: { lineNumber: number; column: number }) => {
+            probe.revealed.push(position);
+          },
+          revealPositionInCenter: () => {},
+          focus: () => {},
+        },
+        {
+          editor: {
+            setModelMarkers: (model: unknown, owner: string, markers: EditorProbe["markers"][number]["markers"]) => {
+              probe.markers.push({ model, owner, markers });
+            },
+          },
+          Uri: { parse: (value: string) => ({ toString: () => `parsed:${value}` }) },
+          MarkerSeverity: MARKER_SEVERITY,
+        },
+      );
     });
     return (
       <textarea
@@ -49,11 +112,20 @@ mock.module("@monaco-editor/react", () => ({
         data-language={props.language}
         data-path={props.path}
         data-theme={props.theme}
+        data-dom-readonly={String(props.options?.domReadOnly === true)}
         readOnly={props.options?.readOnly === true}
         value={props.value ?? ""}
         onChange={() => {}}
       />
     );
+  },
+  /*
+   * `ApplyPreviewDialog` mounts a `DiffEditor` and this suite mounts that dialog, so the module
+   * double owes both exports. Without it the dialog throws on render and every apply test fails
+   * on a message about an undefined component rather than on what it asserts.
+   */
+  DiffEditor: function MockDiffEditor(props: { original?: string; modified?: string }) {
+    return <div data-testid="diff-editor" data-original={props.original ?? ""} data-modified={props.modified ?? ""} />;
   },
 }));
 
@@ -65,13 +137,23 @@ import userEvent from "@testing-library/user-event";
 // percent gate could not see them. A type-only import is erased and does not count (#789).
 import {
   isSourceDocumentShape,
+  ObjectEditRequestError,
   ObjectSourceView,
+  type ObjectSourceApplier,
   type ObjectSourcePatch,
   type ObjectSourceReader,
 } from "@/components/object-source";
+import { DRAFT_KEY, draftKeyFor, readDraft } from "@/components/object-source/source-drafts";
+import { NOT_OFFERED_SENTENCE } from "@/components/object-source/source-editable";
 import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
-import type { ObjectSourceDocument } from "@/lib/db/types";
+import type {
+  ObjectEditPlan,
+  ObjectEditPreimage,
+  ObjectEditStep,
+  ObjectSourceDocument,
+  ObjectSourcePart,
+} from "@/lib/db/types";
 import { STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -181,6 +263,8 @@ function readerFor(answer: unknown): ObjectSourceReader & { calls: number } {
 
 beforeEach(() => {
   definedThemes = [];
+  resetProbe();
+  window.localStorage.clear();
   document.documentElement.classList.remove("dark");
 });
 
@@ -1144,5 +1228,935 @@ describe("ObjectSourceView", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+/**
+ * EDIT MODE (#789 Phase 3, from discussion #778).
+ *
+ * Everything below is about the bar between the truncation banner and the editor, the buffer the
+ * reader types into, the draft that outlives a tab switch, and the modal that is the ONLY way
+ * from this pane to a database. Phase 2's pane is what this suite's first test pins: with no
+ * `onApply`, nothing here renders at all.
+ *
+ * WHAT A COMPONENT TEST CANNOT SEE, said once here rather than implied by silence: the editor is a
+ * `<textarea>`, so there is no model, no marker glyph and no diff. Every marker assertion below is
+ * an assertion about the CALL this pane makes into Monaco's own namespace, and the rendering half
+ * belongs to the end-to-end spec.
+ */
+const EDIT_PATH = ["app", "f(integer)"] as const;
+
+const pgConnection: DatabaseConnection = {
+  id: "pg-1",
+  name: "pg",
+  type: "postgres",
+  createdAt: new Date("2026-01-01"),
+};
+
+const READABLE = {
+  id: "definition",
+  label: "Definition",
+  text: "CREATE OR REPLACE FUNCTION app.f(integer) RETURNS integer\n  LANGUAGE sql\n  AS $$ SELECT 1 $$;",
+  language: "sql",
+  form: "complete",
+  origin: "regenerated",
+  edit: { offered: true },
+} as const;
+
+const SECOND_PART = {
+  id: "grants",
+  label: "Grants",
+  text: "GRANT EXECUTE ON FUNCTION app.f(integer) TO app_reader;",
+  language: "sql",
+  form: "complete",
+  origin: "regenerated",
+  edit: { offered: true },
+} as const;
+
+function withPart(...parts: readonly ObjectSourcePart[]): ObjectSourceDocument {
+  return {
+    path: [...EDIT_PATH],
+    kind: "function",
+    parts: parts as unknown as ObjectSourceDocument["parts"],
+  };
+}
+
+const STEP_TEXT = "CREATE OR REPLACE FUNCTION app.f(integer) RETURNS integer\n  LANGUAGE sql\n  AS $$ SELECT 2 $$;";
+
+/**
+ * A step whose MAP SPANS ITS OWN TEXT, which is what `isObjectEditPlanShape` requires and what a
+ * real provider produces.
+ *
+ * The first spelling of this fixture ended the single user segment at offset 10 over an
+ * 88-character text, and MEASURED against the shipped predicate that plan is REFUSED: ruling 1a's
+ * span check (`spansTheText` in `src/lib/api/object-edit-wire.ts`) answers false when the
+ * segments laid end to end do not reach `text.length`, so every test below that expects a preview
+ * would have been asserting the pane's UNREADABLE arm while reading as if it asserted the happy
+ * path. Corrected here rather than routed around, because the fixture was wrong and the
+ * assertions were right.
+ */
+const STEP: ObjectEditStep = {
+  text: STEP_TEXT,
+  language: "sql",
+  segments: [{ from: "user", start: 0, end: STEP_TEXT.length }],
+};
+
+const PLAN: ObjectEditPlan = {
+  planVersion: 1,
+  planId: "plan-1",
+  issuedAt: "2026-09-14T00:00:00.000Z",
+  connectionFingerprint: "fingerprint",
+  type: "postgres",
+  path: [...EDIT_PATH],
+  kind: "function",
+  partId: "definition",
+  strategy: "guarded-atomic-batch",
+  unit: { medium: "statement", steps: [STEP] },
+  session: [],
+  revision: { check: "compared", token: "t1", basis: "pg_proc.xmin", scope: "connection" },
+  consequences: [],
+};
+
+const PREIMAGE: ObjectEditPreimage = { text: READABLE.text, language: "sql" };
+
+const BUILT = { built: true, plan: PLAN, preimage: PREIMAGE, planToken: "token-1" };
+
+function applierDouble(): {
+  readonly applier: ObjectSourceApplier;
+  readonly build: ReturnType<typeof mock>;
+  readonly apply: ReturnType<typeof mock>;
+} {
+  const build = mock(async () => BUILT as unknown);
+  const apply = mock(async () => ({ outcome: "applied", revision: PLAN.revision, duration: 3 }) as unknown);
+  return { applier: { build, apply } as unknown as ObjectSourceApplier, build, apply };
+}
+
+/** The shell for the edit tests: it owns the tab state and merges every patch by SPREAD. */
+function EditHarness(props: {
+  readonly document: ObjectSourceDocument;
+  readonly applier?: ObjectSourceApplier;
+  readonly onPatch?: (patch: ObjectSourcePatch) => void;
+  readonly onApplied?: () => void;
+  readonly seed?: ObjectSourcePatch;
+}) {
+  const [state, setState] = React.useState<ObjectSourcePatch>(props.seed ?? {});
+  const record = props.onPatch;
+  const onChange = React.useCallback(
+    (patch: ObjectSourcePatch) => {
+      record?.(patch);
+      setState((previous) => ({ ...previous, ...patch }));
+    },
+    [record],
+  );
+  return (
+    <ObjectSourceView
+      connection={pgConnection}
+      path={[...EDIT_PATH]}
+      kind="function"
+      kindLabel="Function"
+      displayName="app.f(integer)"
+      document={state.document ?? props.document}
+      activePartId={state.activePartId}
+      editingPartId={state.editingPartId}
+      dirty={state.dirty}
+      refreshToken={0}
+      readAtToken={0}
+      reader={readerFor(props.document)}
+      onApply={props.applier}
+      onApplied={props.onApplied}
+      onChange={onChange}
+    />
+  );
+}
+
+function editor(): HTMLTextAreaElement {
+  return screen.getByTestId("source-editor") as HTMLTextAreaElement;
+}
+
+function domReadOnly(): boolean {
+  return editor().getAttribute("data-dom-readonly") === "true";
+}
+
+/** Typing the way Monaco reports it: the model changed and the `value` PROP did not move. */
+async function type(text: string): Promise<void> {
+  await act(async () => {
+    probe.change?.(text);
+    await Promise.resolve();
+  });
+}
+
+async function click(testId: string): Promise<void> {
+  await act(async () => {
+    (screen.getByTestId(testId) as HTMLElement).click();
+    await Promise.resolve();
+  });
+}
+
+/** The debounce is REAL: bun:test has no timer clock, so the draft window is waited out. */
+async function settleDraft(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 620));
+  });
+}
+
+function draftKey(partId: string): string {
+  return draftKeyFor(`${pgConnection.id}/${pathKey([...EDIT_PATH])}/function`, partId);
+}
+
+async function enterEditMode(applier?: ObjectSourceApplier): Promise<void> {
+  await waitFor(() => expect(screen.getByTestId("object-source-edit")).toBeTruthy());
+  await click("object-source-edit");
+  await waitFor(() => expect(editor().readOnly).toBe(false));
+  expect(applier).toBe(applier);
+}
+
+describe("ObjectSourceView edit mode", () => {
+  test("the bar is absent entirely when the shell cannot apply", async () => {
+    // `onApply === undefined` means the pane is exactly Phase 2: no bar, no sentence, nothing.
+    // That is the absent-handler rule `src/workspace/types.ts` already states for every optional
+    // host method, and it is what keeps an existing embedded adopter from changing at all.
+    render(<EditHarness document={withPart(READABLE)} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    expect(screen.queryByTestId("object-source-edit-bar")).toBeNull();
+    expect(screen.queryByTestId("object-source-edit")).toBeNull();
+    expect(editor().readOnly).toBe(true);
+    expect(domReadOnly()).toBe(true);
+  });
+
+  test("the bar draws the predicate's sentence with a stable data-refusal, and no Edit control", async () => {
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart({ ...READABLE, edit: undefined })} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-bar")).toBeTruthy());
+
+    expect(screen.getByTestId("object-source-edit-refusal").getAttribute("data-refusal")).toBe("not-offered");
+    expect(screen.getByTestId("object-source-edit-refusal").textContent).toBe(NOT_OFFERED_SENTENCE);
+    expect(screen.queryByTestId("object-source-edit")).toBeNull();
+    expect(editor().readOnly).toBe(true);
+  });
+
+  test("Edit makes the editor writable, and BOTH readOnly flags move together", async () => {
+    // `domReadOnly` also blocks IME composition and paste at the DOM level, and MEASURED on a live
+    // editor instance both are `true` in Phase 2, so driving only one leaves a writable pane
+    // behind a read-only flag.
+    const { applier } = applierDouble();
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("object-source-edit")).toBeTruthy());
+    await click("object-source-edit");
+
+    expect(patches).toContainEqual({ editingPartId: "definition" });
+    await waitFor(() => expect(editor().readOnly).toBe(false));
+    expect(domReadOnly()).toBe(false);
+  });
+
+  test("the editor is writable ONLY when the predicate, editingPartId and onApply ALL hold", async () => {
+    const { applier } = applierDouble();
+    const seed = { editingPartId: "definition" } as const;
+
+    // No applier, and the tab already says this part is being edited.
+    const withoutApplier = render(<EditHarness document={withPart(READABLE)} seed={seed} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(editor().readOnly).toBe(true);
+    withoutApplier.unmount();
+
+    // The predicate refuses this part, and the tab still says it is being edited.
+    const refused = render(
+      <EditHarness applier={applier} document={withPart({ ...READABLE, form: "partial" })} seed={seed} />,
+    );
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refusal").getAttribute("data-refusal")).toBe("body-only");
+    expect(editor().readOnly).toBe(true);
+    refused.unmount();
+
+    // Everything holds except that the OTHER part is the one being edited.
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE, SECOND_PART)}
+        seed={{ editingPartId: "grants", activePartId: "definition" }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(editor().readOnly).toBe(true);
+  });
+
+  test("switching to another part leaves edit mode, and switching back returns to the draft", async () => {
+    // PER PART and not per tab, which buys three behaviours with no second flag: two parts of one
+    // package can hold two independent drafts, the writable buffer can only ever be the part on
+    // screen, and a switch is what clears the flag.
+    const { applier } = applierDouble();
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE, SECOND_PART)}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await enterEditMode();
+    await type(`${READABLE.text} -- one`);
+    await settleDraft();
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe(`${READABLE.text} -- one`);
+
+    await act(async () => {
+      (screen.getAllByRole("tab")[1] as HTMLElement).click();
+      await Promise.resolve();
+    });
+    expect(patches).toContainEqual(expect.objectContaining({ activePartId: "grants", editingPartId: undefined }));
+    await waitFor(() => expect(editor().readOnly).toBe(true));
+    expect(editor().value).toBe(SECOND_PART.text);
+
+    await act(async () => {
+      (screen.getAllByRole("tab")[0] as HTMLElement).click();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+    await click("object-source-draft-restore-accept");
+    await waitFor(() => expect(editor().value).toBe(`${READABLE.text} -- one`));
+  });
+
+  test("`value` DOES NOT CHANGE while the reader is typing", async () => {
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    const before = probe.values.length;
+
+    await type("CREATE OR REPLACE FUNCTION app.order_total(order_id integer) RETURNS numeric ...");
+    await type("CREATE OR REPLACE FUNCTION app.order_total(order_id integer) RETURNS numeric AS ...");
+
+    expect(probe.values.length).toBe(before);
+    expect(editor().value).toBe(READABLE.text);
+  });
+
+  test("`dirty` is written to the tab only when the boolean FLIPS", async () => {
+    const { applier } = applierDouble();
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await enterEditMode();
+
+    await type(`${READABLE.text}a`);
+    await type(`${READABLE.text}ab`);
+    await type(`${READABLE.text}abc`);
+    expect(patches.filter((patch) => Object.hasOwn(patch, "dirty"))).toHaveLength(1);
+    expect(patches.filter((patch) => Object.hasOwn(patch, "dirty"))[0]?.dirty).toBe(true);
+
+    // Back to the original text flips it the other way, once.
+    await type(READABLE.text);
+    const flips = patches.filter((patch) => Object.hasOwn(patch, "dirty"));
+    expect(flips).toHaveLength(2);
+    expect(flips[1]?.dirty).toBeUndefined();
+  });
+
+  test("a landed read that changes the document does NOT swap the buffer under the typing", async () => {
+    // The read effect rewrites `document` with no drop, deliberately. The buffer does not follow
+    // `part.text` while editing, so the document may change beneath the reader and the text they
+    // are typing is untouched; the pane SAYS the underlying text moved rather than hiding it.
+    const { applier } = applierDouble();
+    function Moving(): React.JSX.Element {
+      const [document, setDocument] = React.useState(withPart(READABLE));
+      return (
+        <>
+          <button
+            type="button"
+            data-testid="move-the-document"
+            onClick={() => {
+              setDocument(withPart({ ...READABLE, text: `${READABLE.text} -- somebody else` }));
+            }}
+          >
+            move
+          </button>
+          <EditHarness applier={applier} document={document} />
+        </>
+      );
+    }
+    render(<Moving />);
+    await enterEditMode();
+    await type(`${READABLE.text} -- mine`);
+    const values = [...probe.values];
+
+    await click("move-the-document");
+
+    expect(probe.values).toEqual(values);
+    expect(editor().value).toBe(READABLE.text);
+    expect(screen.getByTestId("object-source-edit-moved").textContent).toContain("changed on the server");
+  });
+
+  test("a draft is written debounced, and the cleanup FLUSHES the pending write", async () => {
+    // The same 500 ms the workspace save effect uses at `use-tab-manager.ts:214`, so the two
+    // writers have one rhythm. The READ effect keeps its documented no-cleanup, no-drop shape:
+    // this is a SECOND effect and it does not touch that one.
+    const { applier } = applierDouble();
+    const view = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+
+    await type("abc");
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
+    await settleDraft();
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("abc");
+
+    await type("abcd");
+    view.unmount();
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("abcd");
+  });
+
+  test("a draft identical to the server's text is never written, so `dirty` cannot outlive its change", async () => {
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+
+    await type("abc");
+    await type(READABLE.text);
+    await settleDraft();
+
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
+  });
+
+  test("a stored draft shows the ENGINE's text read-only under a restore banner", async () => {
+    // The pane NEVER shows draft text in a read-only editor, because a read-only editor reads as
+    // "this is what the engine holds" and a silent restore would make that false.
+    //
+    // The draft is written BY THE PANE and never by a hand-built record, which is what makes the
+    // `base` this banner compares against the value the real writer stores rather than a value
+    // this file invented to match.
+    const { applier } = applierDouble();
+    const first = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- the unsaved one");
+    await settleDraft();
+    first.unmount();
+
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+
+    expect(editor().value).toBe(READABLE.text);
+    expect(editor().readOnly).toBe(true);
+    expect(screen.getByTestId("object-source-draft-restore").textContent).toContain("unsaved edit of this part");
+    expect(screen.getByTestId("object-source-draft-restore").textContent).not.toContain(
+      "The definition on the server has changed since then.",
+    );
+
+    await click("object-source-draft-restore-accept");
+    await waitFor(() => expect(editor().value).toBe("-- the unsaved one"));
+    expect(editor().readOnly).toBe(false);
+  });
+
+  test("the restore banner says so when the definition MOVED under the draft", async () => {
+    const { applier } = applierDouble();
+    const first = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- the unsaved one");
+    await settleDraft();
+    first.unmount();
+
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart({ ...READABLE, text: `${READABLE.text}\n-- and somebody else edited it` })}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+
+    expect(screen.getByTestId("object-source-draft-restore").textContent).toContain(
+      "The definition on the server has changed since then.",
+    );
+  });
+
+  test("Discard drops the draft, leaves edit mode and puts the engine's text back", async () => {
+    const { applier } = applierDouble();
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await enterEditMode();
+    await type("-- mine");
+    await settleDraft();
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("-- mine");
+
+    await click("object-source-discard");
+
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
+    expect(patches).toContainEqual(expect.objectContaining({ editingPartId: undefined, dirty: undefined }));
+    await waitFor(() => expect(editor().readOnly).toBe(true));
+    expect(editor().value).toBe(READABLE.text);
+  });
+
+  test("a failed draft write is a PERSISTENT banner, with one sentence per reason, and editing is NOT blocked", async () => {
+    // A banner and not a toast, because it is a STATE that persists for as long as the reader
+    // keeps typing, and a toast that scrolled away three minutes ago is X14 with extra steps.
+    // MEASURED: X14 was reproduced through the product's own New tab button, an uncaught
+    // QuotaExceededError, zero toasts, zero alerts, and no occurrence of the word "quota"
+    // anywhere in the document.
+    const { applier } = applierDouble();
+    /*
+     * THE WHOLE `localStorage` IS REPLACED, and the two spellings that do not work are recorded
+     * here because both of them LOOK like they do.
+     *
+     * A bare `Storage.prototype.setItem` raises `ReferenceError: Storage is not defined`:
+     * MEASURED on happy-dom 20, the constructor is a property of the window and is NOT installed
+     * on `globalThis`. Reaching it as `window.Storage.prototype.setItem` gets past that and still
+     * does nothing, and this is the one worth writing down: MEASURED in the same run,
+     * `Object.getPrototypeOf(window.localStorage) === window.Storage.prototype` is TRUE while
+     * `window.localStorage.setItem === window.Storage.prototype.setItem` is FALSE, because
+     * happy-dom's storage is a Proxy that answers `setItem` from its own target. So the patched
+     * prototype method is never called, the draft is written successfully, and the test asserts
+     * the failure banner over a store that did not fail.
+     *
+     * A property on the window is what the pane actually reads: `browserStorage()` asks for
+     * `window.localStorage` at the moment of use for exactly this reason.
+     */
+    const realStorage = window.localStorage;
+    const throwingStorage = {
+      length: 0,
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException("quota", "QuotaExceededError");
+      },
+      removeItem: () => undefined,
+      clear: () => undefined,
+      key: () => null,
+    } as unknown as Storage;
+    Object.defineProperty(window, "localStorage", { value: throwingStorage, configurable: true });
+    try {
+      render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+      await enterEditMode();
+      await type("-- mine");
+      await settleDraft();
+
+      const banner = screen.getByTestId("object-source-draft-unsaved");
+      expect(banner.getAttribute("role") ?? banner.tagName.toLowerCase()).toBe("output");
+      expect(banner.textContent).toContain("It will be lost if you reload or close this tab.");
+      expect(banner.textContent).toContain("storage");
+      expect(editor().readOnly).toBe(false);
+      expect((screen.getByTestId("object-source-preview") as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      Object.defineProperty(window, "localStorage", { value: realStorage, configurable: true });
+    }
+  });
+
+  test("the over-limit reason is the ONE that disables Preview, because the route would refuse it anyway", async () => {
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+
+    await type("x".repeat(SOURCE_CHARACTER_LIMIT + 1));
+    await settleDraft();
+
+    expect(screen.getByTestId("object-source-draft-unsaved").textContent).toContain("1,000,000");
+    expect((screen.getByTestId("object-source-preview") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a foreign tab that evicted this draft is TOLD, through a storage event", async () => {
+    // MEASURED by grep: there is no `addEventListener("storage", ...)` and no `BroadcastChannel`
+    // anywhere in `src/`. With one key and oldest-first eviction, two Studio browser tabs silently
+    // destroy each other's drafts: tab B evicts tab A's, tab B shows its own failure, and tab A
+    // keeps saying "Saved in this browser" over a draft that is gone. That is X14's shape inside
+    // the subsystem decision H2 created to avoid it.
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- mine");
+    await settleDraft();
+    expect(screen.getByTestId("object-source-draft-state").textContent).toContain("Saved in this browser");
+
+    await act(async () => {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({}));
+      // `window.StorageEvent` for the same measured reason as `window.Storage` above: happy-dom 20
+      // installs neither constructor on `globalThis`.
+      window.dispatchEvent(new window.StorageEvent("storage", { key: DRAFT_KEY, newValue: JSON.stringify({}) }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("object-source-draft-unsaved").textContent).toContain(
+      "another LibreDB tab needed the space",
+    );
+  });
+
+  test("Preview changes opens the dialog, builds through the applier, and sends the REF's text", async () => {
+    const { applier, build } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+
+    await click("object-source-preview");
+
+    expect(build).toHaveBeenCalledWith(pgConnection, {
+      path: [...EDIT_PATH],
+      kind: "function",
+      partId: "definition",
+      text: "edited",
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy());
+  });
+
+  test("a build that REFUSES never opens a preview, and says why in the bar", async () => {
+    const { applier, build } = applierDouble();
+    build.mockResolvedValueOnce({
+      built: false,
+      refusal: {
+        refusal: "privilege",
+        sentence: "must be owner of function order_total",
+        code: "42501",
+        at: { within: "none" },
+      },
+    } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+
+    await click("object-source-preview");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refused").getAttribute("data-refusal")).toBe("privilege");
+    expect(screen.getByTestId("object-source-edit-refused").textContent).toContain(
+      "must be owner of function order_total",
+    );
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+  });
+
+  test("a build answer that is not a build response at all is refused in OUR own sentence", async () => {
+    const { applier, build } = applierDouble();
+    build.mockResolvedValueOnce({ built: true, plan: PLAN } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+
+    await click("object-source-preview");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refused").textContent).toContain("could not be read");
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+  });
+
+  test("an EDIT_PLAN_INVALID answer puts the dialog in `expired`, which is the only control that rebuilds", async () => {
+    const { applier, apply } = applierDouble();
+    apply.mockRejectedValueOnce(new ObjectEditRequestError("this preview has expired", "EDIT_PLAN_INVALID"));
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-expired")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-rebuild")).toBeTruthy();
+  });
+
+  test("a malformed answer from the applier is a FAILED apply carrying our own sentence", async () => {
+    // A read that lies shows the wrong text; an apply that lies tells a reader their change landed
+    // when it did not. This is the only thing standing on the embedded seam.
+    const { applier, apply } = applierDouble();
+    apply.mockResolvedValueOnce({ outcome: "applied", conflict: "object-changed" } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain("could not be read");
+  });
+
+  test("a build the ROUTE refused carries the route's own sentence into the bar", async () => {
+    // The build seam throws rather than answering on every non-2xx: `httpSourceApplier` mints an
+    // `ObjectEditRequestError` from the body's `error`, and an embedded host's `build` may throw
+    // anything at all. Either way nothing was previewed and nothing was sent, so the answer is the
+    // same refusal line the bar uses for a build that answered `built: false`.
+    const { applier, build } = applierDouble();
+    build.mockRejectedValueOnce(new ObjectEditRequestError("The apply preview could not be built: HTTP 503."));
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+
+    await click("object-source-preview");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+    expect(screen.getByTestId("object-source-edit-refused").getAttribute("data-refusal")).toBe("request");
+    expect(screen.getByTestId("object-source-edit-refused").textContent).toContain("HTTP 503");
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+  });
+
+  test("an apply that THROWS anything other than an expired plan is a failed apply, not an expired one", async () => {
+    // The arm the `EDIT_PLAN_INVALID` test above is the exception to, and it is a different
+    // outcome for the reader: the plan is still valid, so the control is Close and not Rebuild.
+    // `interrupted` with `committed: "unknown"` is the honest disposition, because the statement
+    // was SENT and no answer this pane can read came back.
+    const { applier, apply } = applierDouble();
+    apply.mockRejectedValueOnce(new ObjectEditRequestError("The apply failed: HTTP 502.", "DATABASE_ERROR"));
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain("HTTP 502");
+    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain(
+      "Whether it was applied is unknown",
+    );
+    expect(screen.queryByTestId("object-source-apply-expired")).toBeNull();
+  });
+
+  test("an apply that answers `object-changed` puts the SERVER's text on the left of a conflict diff", async () => {
+    // Decision H3's user-facing half: the lost update is not reported as a failure, it is shown.
+    // The reader's own edit is the right side and it is taken from the shot the BUILD was made
+    // from, so the two sides of the diff are the two texts that actually disagree.
+    const { applier, apply } = applierDouble();
+    apply.mockResolvedValueOnce({
+      outcome: "conflict",
+      conflict: "object-changed",
+      current: { text: `${READABLE.text}\n-- somebody else got there first`, language: "sql" },
+      duration: 5,
+    } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    expect(screen.getByTestId("diff-editor").getAttribute("data-original")).toContain("somebody else got there first");
+    expect(screen.getByTestId("diff-editor").getAttribute("data-modified")).toBe("edited");
+    expect(screen.getByTestId("object-source-apply-rebuild")).toBeTruthy();
+  });
+
+  test("Cancel closes the dialog and leaves the edit exactly where it was", async () => {
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-cancel")).toBeTruthy());
+
+    await click("object-source-apply-cancel");
+
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    expect(editor().readOnly).toBe(false);
+    expect((screen.getByTestId("object-source-preview") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test("a successful apply closes the dialog, drops the draft, clears edit mode and calls onApplied", async () => {
+    const { applier } = applierDouble();
+    const patches: ObjectSourcePatch[] = [];
+    const applied = mock(() => {});
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onApplied={applied}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await enterEditMode();
+    await type("edited");
+    await settleDraft();
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
+    expect(patches).toContainEqual(expect.objectContaining({ editingPartId: undefined, dirty: undefined }));
+    expect(applied).toHaveBeenCalledTimes(1);
+  });
+
+  test("a MARKER is placed only for a `within: user` coordinate, on the RIGHT model", async () => {
+    // Owner is one constant, `libredb-object-apply`. The MODEL is already per part, so two parts
+    // cannot overwrite each other's markers, and the guard compares the live model's uri against
+    // the path this pane expects, because a reader who switches parts while an apply is in flight
+    // must not get the other part's error painted on this one.
+    const { applier, apply } = applierDouble();
+    apply.mockResolvedValueOnce({
+      outcome: "refused",
+      refusal: {
+        refusal: "definition",
+        sentence: "syntax error at end of input",
+        code: "42601",
+        at: { within: "user", line: 7, column: 3 },
+      },
+      duration: 4,
+    } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-goto-error")).toBeTruthy());
+
+    await click("object-source-apply-goto-error");
+
+    expect(probe.markers.length).toBeGreaterThan(0);
+    const placed = probe.markers[probe.markers.length - 1];
+    expect(placed.owner).toBe("libredb-object-apply");
+    expect(placed.markers[0]).toMatchObject({
+      startLineNumber: 7,
+      startColumn: 3,
+      severity: MARKER_SEVERITY.Error,
+      message: "syntax error at end of input",
+    });
+    expect(probe.revealed).toContainEqual({ lineNumber: 7, column: 3 });
+  });
+
+  test("an `outside` coordinate places NO marker at all", async () => {
+    // MEASURED in a real browser: an uncorrected coordinate did not throw, did not warn and did
+    // not look wrong, because Monaco silently CLAMPED it to the end of the model.
+    const { applier, apply } = applierDouble();
+    apply.mockResolvedValueOnce({
+      outcome: "refused",
+      refusal: {
+        refusal: "definition",
+        sentence: "syntax error at or near the placeholder",
+        at: { within: "outside" },
+      },
+      duration: 4,
+    } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    expect(probe.markers.filter((call) => call.markers.length > 0)).toHaveLength(0);
+    expect(screen.queryByTestId("object-source-apply-goto-error")).toBeNull();
+  });
+
+  test("a model that MOVED while the apply is in flight is not painted with the other part's error", async () => {
+    /*
+     * The population the model-uri guard exists for, BUILT rather than asserted, and it is not
+     * the population this test was first written over.
+     *
+     * The first spelling clicked the part switcher while the dialog was open, and MEASURED, that
+     * click is not reachable: the preview is a Radix modal, `DialogContent` takes the rest of the
+     * document out of the accessible tree, and `getAllByRole("tab")` therefore answers
+     * "Unable to find an accessible element with the role tab" with the dialog as the only role
+     * in the document. A reader cannot switch parts through the switcher while an apply is in
+     * flight, so THAT population is empty and a guard tested over it would certify nothing.
+     *
+     * The population that IS real needs no user action at all, which is why the guard stays. The
+     * read effect above has no cleanup and no drop, deliberately, so a re-read issued before the
+     * apply can land at any moment and REPLACE the document. When the parts it answers with do
+     * not carry the remembered id, `activePart` falls back to the first part, the model path
+     * changes under the open dialog, and the refusal that arrives a moment later carries a
+     * coordinate in a text that is no longer on screen. That is what is driven here, the same way
+     * the landed-read test above drives it: by moving the document prop.
+     */
+    const { applier, apply } = applierDouble();
+    let landTheFailure: (value: unknown) => void = () => {};
+    apply.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          landTheFailure = resolve;
+        }),
+    );
+    function Moving(): React.JSX.Element {
+      const [document, setDocument] = React.useState(withPart(READABLE, SECOND_PART));
+      return (
+        <>
+          <button
+            type="button"
+            data-testid="land-a-reread"
+            onClick={() => {
+              setDocument(withPart(SECOND_PART));
+            }}
+          >
+            re-read
+          </button>
+          <EditHarness applier={applier} document={document} />
+        </>
+      );
+    }
+    render(<Moving />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+
+    await click("land-a-reread");
+    expect(probe.path.endsWith("/grants")).toBe(true);
+    await act(async () => {
+      landTheFailure({
+        outcome: "refused",
+        refusal: {
+          refusal: "definition",
+          sentence: "syntax error at end of input",
+          at: { within: "user", line: 7, column: 3 },
+        },
+        duration: 4,
+      });
+      await Promise.resolve();
+    });
+
+    expect(probe.markers.filter((call) => call.markers.length > 0)).toHaveLength(0);
+  });
+
+  test("the marker is cleared on the first content change after it was placed", async () => {
+    const { applier, apply } = applierDouble();
+    apply.mockResolvedValueOnce({
+      outcome: "refused",
+      refusal: {
+        refusal: "definition",
+        sentence: "syntax error at end of input",
+        at: { within: "user", line: 2, column: 1 },
+      },
+      duration: 4,
+    } as unknown as never);
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() => expect(probe.markers.filter((call) => call.markers.length > 0).length).toBe(1));
+
+    await type("edited again");
+
+    const last = probe.markers[probe.markers.length - 1];
+    expect(last.owner).toBe("libredb-object-apply");
+    expect(last.markers).toEqual([]);
+    // And a SECOND change does not clear a second time: the flag is what stops a `setModelMarkers`
+    // on every keystroke of the rest of the session.
+    const after = probe.markers.length;
+    await type("edited again and again");
+    expect(probe.markers.length).toBe(after);
   });
 });
