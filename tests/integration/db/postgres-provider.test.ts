@@ -10,6 +10,8 @@ import {
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -5568,9 +5570,10 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
      * g interval hour to second(2), h bit(4))` was rendered
      * `app.tm(a numeric, b character varying, c character, d time without time zone,
      * e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
-     * What DOES carry a parenthesis before the parameter list closes, all SEVEN measured on 18.4 by
-     * creating the object and reading `pg_get_functiondef` back, in the order the array below
-     * holds them:
+     * What DOES carry a parenthesis before the parameter list closes, every one of them measured on
+     * 18.4 by creating the object and reading `pg_get_functiondef` back, in the order the array
+     * below holds them, and the array below is the population, so its length is the count and the
+     * only place in this repository that states one is the guard's `expect(...length).toBe(7)`:
      *
      *     CREATE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 2) ...
      *     CREATE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1) ...
@@ -5583,15 +5586,15 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
      * A DEFAULT holding a call, a DEFAULT holding either parenthesis inside a string literal, a
      * quoted function NAME holding one, a quoted PARAMETER name holding one, and the two
      * MIXED-QUOTE shapes that are why the scan tracks both quote kinds and has each ignore the
-     * other: a `'` inside a quoted identifier, and a `"` inside a string literal. All seven are
+     * other: a `'` inside a quoted identifier, and a `"` inside a string literal. All of them are
      * ordinary PostgreSQL and none of them is hypothetical: the renderings below are the bytes the
      * server answered, and each `revision` is the `md5(pg_get_functiondef(oid))` it answered for
      * exactly those bytes, asserted rather than described by the first test under this block.
      *
      * RE-MEASURED on 2026-09-15 by #789 task 34, on its own `postgres:18` container answering
-     * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`: all seven `CREATE FUNCTION` statements above plus
+     * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`: every `CREATE FUNCTION` statement above plus
      * `app.np()` were applied to a fresh database and `md5(pg_get_functiondef(oid))` answered the
-     * eight constants below, every one of them byte for byte, so the population is re-runnable and
+     * the `revision` constants below, every one of them byte for byte, so the population is re-runnable and
      * not a transcription. The typmod rendering above was re-measured in the same session and
      * answered the same eight-parameter line, with every parenthesis gone.
      *
@@ -5700,7 +5703,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         return build;
       }
 
-      test("every fixture's revision IS the md5 of its definition, and the population is the measured seven", () => {
+      test("every fixture's revision IS the md5 of its definition, and the population is the one this file measured", () => {
         // The population is asserted BEFORE it is looped over, because a loop over an empty or a
         // shortened list certifies nothing and this epic has shipped that defect six times.
         expect(PAREN_HEADER_FIXTURES.length).toBe(7);
@@ -5712,13 +5715,41 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         );
       });
 
+      /**
+       * THE DOC LEG OF THE COUNT, which until this test nothing in this repository bound (#789
+       * Phase 3, fix round 1 of task 34).
+       *
+       * `docs/providers/postgres.md` states the size of this population in prose, and the review
+       * of the first commit found that the count had been stated in six prose places in this file
+       * and three in that one while exactly ONE place asserted it. Prose numerals that no check
+       * reads are how this section drifted in the first place: an eighth shape makes
+       * `expect(PAREN_HEADER_FIXTURES.length).toBe(7)` red, the implementer corrects the array and
+       * the guard, and the doc's numeral silently becomes the wrong record again.
+       *
+       * So the doc now states the count exactly once, in the word this test reads back, and every
+       * other sentence there says "every one of those" or "all of them". If the sentence itself is
+       * reworded the regex finds nothing and this test fails loudly rather than passing vacuously,
+       * which is the point: a guard whose population can go empty certifies nothing.
+       */
+      test("the provider doc's numeral for this population is the array's length", () => {
+        const doc = readFileSync(path.join(import.meta.dir, "../../..", "docs/providers/postgres.md"), "utf8");
+        const words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
+        const matches = [...doc.matchAll(/^([A-Z]+) such shapes were measured on 18\.4\b/gm)];
+        // The sentence must exist and must be the only one of its shape, or the assertion below
+        // would be reading a numeral that is not the one the doc's reader sees.
+        expect(matches.length).toBe(1);
+        const stated = words.indexOf(matches[0][1]);
+        expect(stated).toBeGreaterThanOrEqual(0);
+        expect(stated).toBe(PAREN_HEADER_FIXTURES.length);
+      });
+
       for (const fixture of PAREN_HEADER_FIXTURES) {
         test(`a LATER argument type change is refused when the header carries ${fixture.carries}`, async () => {
           const [from, to] = fixture.forked;
           const forked = fixture.definition.replace(from, to);
           expect(forked).not.toBe(fixture.definition);
           // WHICH of these the first-`)` reading actually false-accepted, asserted per fixture
-          // rather than assumed for all seven: the change is hidden from it only when it falls
+          // rather than assumed for the population as a whole: the change is hidden from it only when it falls
           // after the first `)`, and `app.dp` carries an OPENING parenthesis in its literal, so
           // its first `)` is still the header's own and the old reading refused it correctly.
           // That fixture is here for the depth counter instead: count the `(` inside the literal
@@ -5753,10 +5784,18 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
        * parser for the header. The refusal's own sentence names the way out, the SQL editor.
        *
        * MEASURED on 2026-09-15 by #789 task 34 against its own `postgres:18` container answering
-       * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`, on the `app.dc` this block's first fixture is:
+       * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`, on `app.dc`, the fixture this test selects by
+       * `object` below and not by array position:
        * `CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 3)` over
-       * the `DEFAULT 2` form left ONE `pg_proc` row with `oid = 16385` unmoved and `xmin` moving
-       * 754 to 762, and `pg_get_functiondef` then rendered `b integer DEFAULT 3`. So the engine
+       * the `DEFAULT 2` form left ONE `pg_proc` row with its `oid` unmoved at 16392 and `xmin`
+       * moving 763 to 771, and `pg_get_functiondef` then rendered `b integer DEFAULT 3`. The
+       * numerals come from ONE database on ONE container in which the seven fixtures above were
+       * created in this array's order, then `app.np()`, then this edit; an `oid` counter is global
+       * to the cluster and an `xmin` to the database, so neither reproduces on a differently
+       * populated cluster and neither is the claim. The claim is one row, the `oid` unmoved and
+       * the `xmin` moved, and the earlier revision of this docblock quoted 16385 and 754 for this
+       * edit AND for a typmod edit in a different database, which is two rows claiming one oid in
+       * one cluster and cannot happen. So the engine
        * performs this edit in place, and the apply's post-condition would have seen the addressed
        * row rewritten and answered `applied`. The cost of the fix is therefore a REFUSAL on a
        * population the product used to serve, and it is written down here rather than discovered.
@@ -5772,7 +5811,11 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
           const close = text.indexOf(")");
           return close < 0 ? text : text.slice(0, close + 1);
         };
-        const fixture = PAREN_HEADER_FIXTURES[0];
+        // Selected by IDENTITY and not by index: `app.dc` is the fixture whose later parameter
+        // carries the literal `b integer DEFAULT 2` this test replaces, and a reorder of the array
+        // must not silently re-point the test at a different object.
+        const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dc(integer,integer)");
+        if (!fixture) throw new Error("app.dc(integer,integer) is not in PAREN_HEADER_FIXTURES");
         const submitted = fixture.definition.replace("b integer DEFAULT 2", "b integer DEFAULT 3");
         expect(submitted).not.toBe(fixture.definition);
         expect(firstParenthesisHeader(submitted)).toBe(firstParenthesisHeader(fixture.definition));
