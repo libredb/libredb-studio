@@ -174,6 +174,16 @@ describe("the populations the eviction policy is actually for", () => {
     expect(writeDraft(storage, "new", draft(text, 2))).toEqual({ ok: true, evicted: ["old"] });
   });
 
+  test("a store that is an array is replaced rather than spread into the record it is not", () => {
+    // The brief's readDraft case asks an ARRAY store for key "a", which answers undefined with or
+    // without the array guard, because an array has no "a" index. The guard's live consequence is
+    // on the WRITE: without it the array's elements survive as numbered keys of the record.
+    const storage = fakeStorage();
+    storage.setItem(DRAFT_KEY, JSON.stringify([1, 2]));
+    expect(writeDraft(storage, "a", draft("one", 1))).toEqual({ ok: true, evicted: [] });
+    expect(JSON.parse(storage.getItem(DRAFT_KEY) ?? "null")).toEqual({ a: draft("one", 1) });
+  });
+
   test("dropDraft swallows a storage failure rather than breaking a successful apply", () => {
     // The live caller is the successful-apply handler and the explicit Discard. A throw out of
     // this call would turn a write that DID reach the engine into a broken success handler.
