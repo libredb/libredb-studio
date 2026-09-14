@@ -1289,15 +1289,35 @@ export class TrinoProvider extends SQLBaseProvider {
    * addresses: the statement that read it, the bare name, the signature the row was FOUND by,
    * and that row's own text.
    *
-   * ONE WRITER FOR TWO READERS, the build and the apply, so the statement the build read and
-   * the statement the apply re-reads can never drift apart: the provider suite asserts they
-   * are the same bytes on the two-level declaration AND on a swapped one.
+   * ONE WRITER FOR TWO READERS, AND THE TWO READERS ARE BOTH INSIDE THE APPLY: the re-read that
+   * `compared` is compared against, and the post-apply verification. THE BUILD IS NOT ONE OF
+   * THEM and this docblock said it was until the external review of PR #831 asked (#789, item
+   * 6). {@link buildObjectEdit} resolves the overload through {@link resolveOverload} instead,
+   * deliberately, and the comment at that call says why: the build resolves the overload the way
+   * the pane's own read does, so the object a plan is addressed to is the object the reader was
+   * shown.
+   *
+   * SO THE TWO ROUTES HAVE TO AGREE, and what makes them agree is that
+   * {@link trinoFunctionSegmentParts} is the exact inverse of the {@link functionSegment} this
+   * provider minted: `resolveOverload` answers the split a live `SHOW FUNCTIONS` row MINTED, and
+   * this one answers the split the scan recovers, so they are the same split for any name and
+   * any parenthesis-balanced and quote-balanced type list. THAT IS AN ARGUMENT AND NOT A
+   * MEASUREMENT, so the suite measures it three ways: the inverse round trip over every function
+   * in the fixture, the same round trip over nine shapes the fixture does not hold, and a
+   * comparison of the `SHOW CREATE FUNCTION` statement the BUILD sends against the one the APPLY
+   * sends, over the whole fixture.
+   *
+   * WHAT A DRIFT WOULD ACTUALLY COST, measured rather than assumed, because the review called it
+   * a silently wrong overload comparison: with the scan mutated to run left to right, a build
+   * and an apply that were both correct before answer `conflict` with an EMPTY current text and
+   * send NO write at all, against a control on the same drive that answers `applied`. A drift
+   * cannot reach a wrong object, because the object it would reach cannot hash to the token the
+   * plan carries. It is a false conflict and never a false apply.
    *
    * The overload is addressed from the PATH SEGMENT rather than from a `SHOW FUNCTIONS` round
    * trip, and that is what lets an apply make its re-read its FIRST round trip, which is what
-   * `compared` means. {@link trinoFunctionSegmentParts} is the exact inverse of the
-   * {@link functionSegment} this provider minted, and the fixture's `we(ird`, `rowparen` and
-   * `hard` are what make it non-vacuous.
+   * `compared` means. The fixture's `we(ird`, `rowparen` and `hard` are what make the round trip
+   * non-vacuous.
    *
    * `signature` IS RETURNED RATHER THAN RECOMPUTED BY THE CALLER, because the apply's post-apply
    * verification compares the parameter list the SENT statement declares against the one the

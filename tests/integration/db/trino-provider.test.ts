@@ -4175,6 +4175,84 @@ describe("Trino object edit: the derivations, driven to their BOUND values", () 
     });
   }
 
+  /**
+   * A plan addressed at one path and nothing else, built by hand so the apply's FIRST round trip
+   * can be observed for a function the build's own checks would never issue a plan for.
+   *
+   * The revision token is deliberately not any definition's digest, so the apply answers
+   * `conflict` after its re-read and sends nothing. The statement that re-read sent is the whole
+   * subject of the test below.
+   */
+  function addressedPlan(path: readonly string[]): ObjectEditPlan {
+    const text = "CREATE OR REPLACE FUNCTION memory.app.unused() RETURNS bigint RETURN 1";
+    return {
+      planVersion: 1,
+      planId: "the-cross-resolver-probe",
+      issuedAt: "2026-09-14T00:00:00.000Z",
+      connectionFingerprint: "not-checked-by-the-provider",
+      type: "trino",
+      path: [...path],
+      kind: EDIT_KIND,
+      partId: TRINO_SOURCE_PART_ID,
+      strategy: "replace-in-place-statement",
+      unit: {
+        medium: "statement",
+        steps: [{ text, language: "sql", segments: [{ from: "user", start: 0, end: text.length }] }],
+      },
+      session: [],
+      revision: {
+        check: "compared",
+        token: "no-definition-hashes-to-this",
+        basis: "SHOW CREATE FUNCTION",
+        scope: "server",
+      },
+      consequences: [],
+    };
+  }
+
+  test("the BUILD's resolver and the APPLY's address the same statement, over every function in the fixture", async () => {
+    /*
+     * THE TWO RESOLVERS, DRIVEN AGAINST EACH OTHER RATHER THAN READ (#789, external review of PR
+     * #831, item 6). This provider resolves an overload TWICE by two different routes, and until
+     * this test nothing compared them: `buildObjectEdit` calls `resolveOverload`, which matches
+     * `functionSegment(name, argumentTypes)` against the live `SHOW FUNCTIONS` reply, and
+     * `applyObjectEdit` calls `readOverload`, which PARSES the path segment with
+     * `trinoFunctionSegmentParts` so its re-read can be its first round trip. If those two ever
+     * name different functions, the plan is built against one object and the apply re-reads
+     * another, which is ruling 1a failing on its own terms.
+     *
+     * MEASURED, and it is the reason this is a statement comparison rather than a round trip of
+     * the helper: with the parse mutated to a LEFT-TO-RIGHT scan, the pre-existing round-trip
+     * test below is the ONLY test in this file that turns red, 187 pass 1 fail, so nothing
+     * measured what the drift does to the APPLY. Under the same mutation this test fails on
+     * `we(ird`, where the build sends `SHOW CREATE FUNCTION "memory"."app"."we(ird"` and the
+     * apply sends `..."we"`.
+     *
+     * Both calls are expected to end badly and that is deliberate: the build finds no row whose
+     * parameter list matches and raises, and the apply's re-read answers a conflict. Neither
+     * outcome is the subject. The STATEMENT each sent is.
+     */
+    const statement = trinoSourceStatementFor(EDIT_KIND);
+    for (const row of MEMORY_APP_FUNCTION_ROWS) {
+      const [name, , argumentTypes] = row as [string, string, string];
+      const path = ["memory", "app", functionSegment(name, argumentTypes)];
+      const provider = await editProvider();
+
+      const beforeBuild = sentSql.length;
+      await buildOn(provider, "CREATE FUNCTION not_the_definition()", path).catch(() => undefined);
+      const built = sentSql.slice(beforeBuild).filter((sql) => sql.startsWith("SHOW CREATE FUNCTION"));
+
+      const beforeApply = sentSql.length;
+      await provider.applyObjectEdit!(addressedPlan(path)).catch(() => undefined);
+      const applied = sentSql.slice(beforeApply).filter((sql) => sql.startsWith("SHOW CREATE FUNCTION"));
+
+      // The BOUND value on both sides, so a test that stopped sending anything cannot pass by
+      // comparing two empty lists.
+      expect(built).toEqual([trinoObjectSourceSql(statement, "memory", "app", name)]);
+      expect(applied).toEqual(built);
+    }
+  });
+
   test("the path segment inverse round-trips every function the fixture holds", async () => {
     // `trinoFunctionSegmentParts` is what lets the apply address the object from the plan alone,
     // and the fixture is what makes it non-vacuous: `we(ird` puts a parenthesis inside the NAME,
@@ -4184,6 +4262,52 @@ describe("Trino object edit: the derivations, driven to their BOUND values", () 
       const [name, , argumentTypes] = row as [string, string, string];
       const segment = functionSegment(name, argumentTypes);
       expect(trinoFunctionSegmentParts(segment)).toEqual({ name, argumentTypes });
+    }
+  });
+
+  test("the path segment inverse round-trips shapes BEYOND the fixture, name and type list alike", () => {
+    /*
+     * THE FIXTURE IS NINE ROWS AND THE PROPERTY IS UNIVERSAL, so the population is widened here
+     * rather than left at whatever `docker/trino-init/01-object-fixture.sql` happens to create
+     * (#789, external review of PR #831, item 6). Everything below is a shape a quoted Trino
+     * identifier can hold: `CREATE FUNCTION memory.app."we(ird"(x bigint)` is in the fixture and
+     * is the measured proof that a delimited name reaches `SHOW FUNCTIONS` with its punctuation
+     * intact, and the same delimiter admits `)`, `"` and a trailing `(`.
+     *
+     * WHAT THE PROPERTY IS, stated so a later reader can see why the list is a list and not a
+     * proof: for any `name` and any `argumentTypes` whose parentheses and quotes BALANCE, the
+     * close parenthesis `functionSegment` appends is matched by the open parenthesis
+     * `functionSegment` appends, so a right-to-left depth scan can only stop there. A name's own
+     * punctuation is never reached, because the scan returns before entering it. That is an
+     * argument and not a measurement, which is exactly why the cases below are RUN.
+     *
+     * A LEFT-TO-RIGHT SCAN IS THE DRIFT THIS GUARDS, and it is measured: mutated that way, the
+     * fixture round trip above fails on `we(ird` and this one fails on the first row.
+     */
+    const beyond: readonly (readonly [string, string])[] = [
+      // A close parenthesis in the NAME, which the fixture has no example of.
+      ["we)ird", "bigint"],
+      // Both, and balanced, so a scan that counted the name's parentheses would come out even
+      // and still be wrong.
+      ["a(b)c", "bigint"],
+      // A name that ENDS with the character the scan is looking for.
+      ["trail(", "bigint"],
+      // A name that BEGINS with the character that raises the depth.
+      [")lead", "bigint"],
+      // A bare double quote in the name, which flips the scan's quote state if it is reached.
+      ['q"uote', "bigint"],
+      // An empty argument list behind a name holding a parenthesis: the segment then ends
+      // `((` `)` with nothing between, which is the shortest ambiguous-looking shape there is.
+      ["we(ird", ""],
+      // Three levels of nesting inside the type list, with a quoted `)` at the deepest one.
+      ["nested", 'array(row("a)b" bigint,"c" array(varchar)))'],
+      // The fixture's hardest name and its hardest type list at once, which it never combines.
+      ["we(ird", 'decimal(10,2), array(varchar), row("a)b" bigint,"c" varchar)'],
+      // Trino's doubled-quote escape inside a row field name, which toggles twice either way.
+      ["doubled", 'row("a""b" bigint)'],
+    ];
+    for (const [name, argumentTypes] of beyond) {
+      expect(trinoFunctionSegmentParts(functionSegment(name, argumentTypes))).toEqual({ name, argumentTypes });
     }
   });
 
