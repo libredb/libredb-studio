@@ -38,7 +38,10 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  * which no harness in this repository builds.
  *
  * THE TWO CORE FACTS ARE INDEPENDENT AND ARE NOT CONJOINED. MEASURED on PostgreSQL 18.4:
- * `form` stays `complete` on a TRUNCATED part, which is shipped defect X17. Nothing here
+ * `form` stays `complete` on a TRUNCATED part. That was backlog entry X17 while the CAPTION still
+ * read `form` alone and told a reader the text was whole above a banner saying it was cut; the
+ * caption reads both fields now and X17 is closed, so the sentence is left here as the ENGINE FACT
+ * it always was rather than as a defect id that no longer resolves. Nothing here
  * consults `form` to decide whether the text is WHOLE, and nothing consults `truncated` to
  * decide whether it is a STATEMENT. A part that is both truncated AND `partial` answers
  * `bounded`, which is the arm its reader can act on.

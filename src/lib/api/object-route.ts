@@ -630,8 +630,10 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * 2. THE PART IS TRUNCATED, whether the PROVIDER marked it or `boundText` just did. A truncated
  *    part is a PREFIX, and submitting a prefix back replaces the object with the part of itself
  *    the reader was shown, which is ruling 1b's second clause: a SUCCESS destroying something the
- *    user was not shown. It is the server-side half of X17: the caption tells a human, and this
- *    tells the machine. It WITHDRAWS THE OFFER; it does not make the submission impossible, and
+ *    user was not shown. It is the server-side half of the pair that closed backlog entry X17: the
+ *    CAPTION tells a human that a bounded text is not whole, and THIS tells the machine not to
+ *    offer an edit over it. X17 is closed, so the id no longer resolves and the pairing is named
+ *    here instead. It WITHDRAWS THE OFFER; it does not make the submission impossible, and
  *    the write-path paragraph below says whose job that is.
  * 3. THE KIND IS NOT EDITABLE ON THE CONNECTED PROVIDER, by `kindAcceptsSourceEdits`. This is D57,
  *    the defect where a client's declaration can be a different server's, closed on the read path:
