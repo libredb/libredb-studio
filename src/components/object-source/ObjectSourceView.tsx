@@ -386,15 +386,22 @@ interface MountedEditor {
 }
 
 /**
- * The two outcomes that mean THE ADDRESSED OBJECT NOW HOLDS THE READER'S TEXT.
+ * The ONE outcome that both means THE ADDRESSED OBJECT NOW HOLDS THE READER'S TEXT and leaves
+ * nothing for the reader to be told, so the dialog closes on it.
  *
- * `applied-elsewhere` is deliberately NOT one of them: the engine accepted the text and wrote a
- * DIFFERENT object, so the reader's edit did not land where they were looking and closing the
- * dialog on it would report a success for a change that is not there. `applied-with-collateral`
- * IS one: the addressed object was replaced, the plan named what else would be lost, and the
- * reader acknowledged it before the apply ran.
+ * `applied-elsewhere` is deliberately not here: the engine accepted the text and wrote a DIFFERENT
+ * object, so the reader's edit did not land where they were looking and closing the dialog on it
+ * would report a success for a change that is not there.
+ *
+ * `applied-with-collateral` was here until X24, the last open item of the external review of PR
+ * #831, and taking it out is what makes the dialog's collateral region reachable at all. That
+ * region is drawn from the `failed` state, this pane is the ONLY mount of the dialog in `src`, and
+ * with the outcome in this set the pane answered it with `setPreview(undefined)`, so no screen in
+ * the shipped product ever named what the apply destroyed. The apply still SUCCEEDED, so the arm
+ * below does everything this set's arm does and only holds the session open; see it for why the
+ * population grew rather than shrank.
  */
-const APPLIED_OUTCOMES: ReadonlySet<string> = new Set(["applied", "applied-with-collateral"]);
+const APPLIED_OUTCOMES: ReadonlySet<string> = new Set(["applied"]);
 
 /** OURS. The outcome this pane synthesises for an answer it could not narrow. */
 const UNREADABLE_APPLY = Object.freeze({
@@ -1198,6 +1205,33 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       }
       if (APPLIED_OUTCOMES.has(answer.outcome)) {
         setPreview(undefined);
+        endEdit(draftKeyFor(current.address, current.partId), true);
+        onApplied?.();
+        return;
+      }
+      if (answer.outcome === "applied-with-collateral") {
+        /*
+         * A SUCCESS THAT STILL OWES THE READER A SENTENCE (#789 Phase 3, X24).
+         *
+         * The addressed object holds the reader's text and something else is gone with it, read
+         * back from the catalog AFTER the apply. The plan's warning said what WOULD go and the
+         * reader ticked it, which is what satisfies ruling 1b amended; `answer.lost` is the only
+         * thing that says what DID. Closing the dialog here threw that tuple away and the loss
+         * survived only in the audit ring, which no reader of this pane can see.
+         *
+         * So the apply half is identical to the plain arm above, draft dropped, edit mode ended,
+         * host told to re-read, and the preview session alone stays open, in the `failed` state
+         * the dialog already renders the collateral region from. It is not a failure and the
+         * region does not read as one: it says the change was applied and then names each fact.
+         * The ordering matters, session first: `onApplied` drives a re-read in both shipped
+         * shells, and a re-read landing before the session is set would render one frame with no
+         * dialog and then bring it back.
+         *
+         * The population is bigger than it looks. Redis is the one shipped engine that produces
+         * this outcome, and its collateral floor is now zero registered functions rather than
+         * two, so an ordinary edit of a one-function library reaches it.
+         */
+        setPreview({ ...current, state: { kind: "failed", plan, preimage, outcome: answer } });
         endEdit(draftKeyFor(current.address, current.partId), true);
         onApplied?.();
         return;

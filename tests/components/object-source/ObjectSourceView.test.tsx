@@ -2212,6 +2212,91 @@ describe("ObjectSourceView edit mode", () => {
     expect(applied).toHaveBeenCalledTimes(1);
   });
 
+  test("an apply that DESTROYED something else keeps the dialog open and names what went", async () => {
+    /*
+     * X24, the last open item of the external review of PR #831, and it is a REACHABILITY defect
+     * rather than a rendering one.
+     *
+     * `ApplyPreviewDialog`'s `applied-with-collateral` arm was written in Task 14 and covered by
+     * `tests/components/object-source/ApplyPreviewDialog.test.tsx`, which drives it by handing
+     * `draw()` a `{ kind: "failed", outcome: applied-with-collateral }` state DIRECTLY. That state
+     * was one the only mount of that dialog in `src/` could not produce: this pane held
+     * `applied-with-collateral` in `APPLIED_OUTCOMES`, so it landed the outcome with
+     * `setPreview(undefined)` and the dialog unmounted on a plain success. A green test over a
+     * region no screen could ever show, which is this phase's signature defect one more time.
+     *
+     * The population is not theoretical and it got LARGER, not smaller, in the commit before this
+     * one: `3a4511a5` lowered Redis's collateral floor to zero registered functions after a LIVE
+     * measurement on Redis 8.10.0 showed a one-function library losing that function on an apply
+     * that reported success, so a plain everyday edit of a Redis library now reaches this outcome.
+     * The reader ticked a SUPERSET beforehand, which is what keeps ruling 1b amended satisfied.
+     * What was missing is the report of what ACTUALLY went, and only the catalog read AFTER the
+     * apply knows that: the plan's warning says what WOULD be lost.
+     *
+     * This test drives it at the PANE and not at the dialog, so it fails if the mount cannot
+     * produce the state, which is exactly what the dialog's own test cannot see.
+     */
+    const build = mock(async () => COLLATERAL_BUILT as unknown);
+    const apply = mock(
+      async () =>
+        ({
+          outcome: "applied-with-collateral",
+          lost: [
+            {
+              loses: "replaces-whole-container",
+              fact: {
+                source: "FUNCTION LIST LIBRARYNAME libredb_probe",
+                observed: "libredb_ping is no longer registered",
+              },
+            },
+          ],
+          revision: PLAN.revision,
+          duration: 4,
+        }) as unknown,
+    );
+    const applier = { build, apply } as unknown as ObjectSourceApplier;
+    const patches: ObjectSourcePatch[] = [];
+    const applied = mock(() => {});
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        onApplied={applied}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await enterEditMode();
+    await type("edited");
+    await settleDraft();
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-ack")).toBeTruthy());
+    await click("object-source-apply-ack");
+
+    await click("object-source-apply-confirm");
+
+    // THE REPORT IS ON SCREEN, and it names the catalog fact read after the apply. Asserted on the
+    // rendered text rather than on a testid alone, because a region that renders with the tuple
+    // dropped would satisfy a testid and tell the reader nothing.
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    const report = screen.getByTestId("object-source-apply-failure").textContent ?? "";
+    expect(report).toContain("destroyed something else");
+    expect(report).toContain("FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_ping is no longer registered.");
+
+    // AND IT DID NOT READ AS A FAILURE. The apply SUCCEEDED, so everything the plain `applied` arm
+    // does still happens: the draft goes, edit mode ends and the host re-reads. A screen that kept
+    // the reader in edit mode over text the engine already holds would be the worse defect.
+    expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
+    expect(patches).toContainEqual(expect.objectContaining({ editingPartId: undefined, dirty: undefined }));
+    expect(applied).toHaveBeenCalledTimes(1);
+    // There is nothing to retry and nothing to rebuild: the only control is the way out.
+    expect(screen.queryByTestId("object-source-apply-confirm")).toBeNull();
+    expect(screen.queryByTestId("object-source-apply-rebuild")).toBeNull();
+    expect(screen.getByTestId("object-source-apply-cancel").textContent).toBe("Close");
+  });
+
   test("the apply is called with the connection, the SEALED plan, its token and the classes the reader ticked", async () => {
     /*
      * THE APPLY CONTRACT, ASSERTED BY VALUE (#789, external review of PR #831, item 5).
