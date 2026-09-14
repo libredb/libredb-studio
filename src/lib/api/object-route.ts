@@ -638,14 +638,29 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *    the affordance travels with the document from the server that answered it.
  *
  * WHICH OF THE THREE RULES HAS A LIVE PRODUCER TODAY, measured by grep at this commit rather than
- * implied by the fact that all three are tested. The fleet's ONLY producer of `edit` is
- * `src/lib/db/providers/sql/postgres.ts:2734`, and it spreads the affordance only on the readable
- * routine arm and only when `kindAcceptsSourceEdits(capabilities, kind)` is already true. So rules 1
- * and 3 have NO live producer: the only thing that can build their population is a DEFECTIVE or a
- * future provider, and the unit tests construct it deliberately, which is this module's own
- * ENFORCE-rather-than-trust precedent and not an oversight. Rule 2 DOES have one, because that same
- * site spreads `truncated` and `edit` from a single read, so a PostgreSQL routine whose definition is
- * over `SOURCE_CHARACTER_LIMIT` reaches it today.
+ * implied by the fact that all three are tested. This paragraph counted ONE producer when PostgreSQL
+ * was the only engine that had landed; the day-one set is now three and the count was re-measured
+ * rather than the digit bumped, because what it counts is what the paragraph is for.
+ *
+ * There are THREE producers of `edit`: `providers/sql/postgres.ts:2799`, gated on
+ * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1249` and
+ * `providers/keyvalue/redis.ts:1657`, both gated on `spec.acceptsSourceEdits === true`, which is the
+ * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
+ * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
+ *
+ * So rules 1 and 3 still have NO live producer, and for the same reason as before: the only thing
+ * that can build their population is a DEFECTIVE or a future provider, and the unit tests construct
+ * it deliberately, which is this module's own ENFORCE-rather-than-trust precedent and not an
+ * oversight.
+ *
+ * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
+ * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
+ * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
+ * stated at `redis.ts:1649-1656`: the affordance is offered on a truncated part deliberately, because
+ * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
+ * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
+ * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
+ * re-read are what make it safe on the other two.
  *
  * THE WRITE PATH IS NOT COVERED HERE AT ALL, and it is the larger gap. Deleting a field from a READ
  * response cannot bind a caller: a client that never calls `/api/db/objects/source`, or that simply
