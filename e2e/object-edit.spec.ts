@@ -500,7 +500,7 @@ test.describe("Functional smoke: object edit end to end", () => {
     await expect(page.getByTestId("object-source-apply-diff")).toBeVisible({ timeout: 20_000 });
     await page.getByTestId("object-source-apply-confirm").click();
 
-    await expect(page.getByTestId("object-source-apply-failure-code")).toHaveText("42601", { timeout: 30_000 });
+    await expect(page.getByTestId("object-source-apply-outcome-code")).toHaveText("42601", { timeout: 30_000 });
     await expect.poll(async () => (await markersOnTheSourceEditor(page)).length, { timeout: 20_000 }).toBe(1);
     const [marker] = await markersOnTheSourceEditor(page);
     expect(marker).toEqual({

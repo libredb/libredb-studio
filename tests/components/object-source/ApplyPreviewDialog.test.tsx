@@ -783,10 +783,10 @@ describe("ApplyPreviewDialog", () => {
       }),
     );
     expect(query("-dialog")).not.toBeNull();
-    expect(text("-failure")).toContain("cannot change return type of existing function");
-    expect(text("-failure-code")).toBe("42P13");
+    expect(text("-outcome")).toContain("cannot change return type of existing function");
+    expect(text("-outcome-code")).toBe("42P13");
     // The engine's own hint, kept because the shipped mapper destroys it.
-    expect(text("-failure")).toContain("Use DROP FUNCTION app.f_demo(integer) first.");
+    expect(text("-outcome")).toContain("Use DROP FUNCTION app.f_demo(integer) first.");
     // The diff is still under the failure, unchanged.
     expect(diffProps?.original).toBe(PREIMAGE.text);
     click("-goto-error");
@@ -808,8 +808,8 @@ describe("ApplyPreviewDialog", () => {
         },
       }),
     );
-    expect(text("-failure")).toContain("must be owner of function order_total");
-    expect(text("-failure")).toContain(
+    expect(text("-outcome")).toContain("must be owner of function order_total");
+    expect(text("-outcome")).toContain(
       "This apply runs as the database credential on this connection and not as your LibreDB login, so re-entering your password will not change this.",
     );
     expect(query("-goto-error")).toBeNull();
@@ -830,7 +830,7 @@ describe("ApplyPreviewDialog", () => {
         },
       }),
     );
-    expect(text("-failure")).toContain(
+    expect(text("-outcome")).toContain(
       "The engine reported a position inside the part LibreDB added, so no marker was placed.",
     );
     expect(query("-goto-error")).toBeNull();
@@ -849,8 +849,8 @@ describe("ApplyPreviewDialog", () => {
         },
       }),
     );
-    expect(text("-failure")).toContain('search_path set to "app", pg_catalog');
-    expect(text("-failure")).toContain("Qualify the name");
+    expect(text("-outcome")).toContain('search_path set to "app", pg_catalog');
+    expect(text("-outcome")).toContain("Qualify the name");
   });
 
   test("a refusal on a plan that pinned no path adds no such sentence", () => {
@@ -871,7 +871,7 @@ describe("ApplyPreviewDialog", () => {
         TRINO_PLAN,
       ),
     );
-    expect(text("-failure")).not.toContain("search_path set to");
+    expect(text("-outcome")).not.toContain("search_path set to");
   });
 
   test("`applied-elsewhere` says the addressed object was NOT changed, and names what was written", () => {
@@ -881,13 +881,13 @@ describe("ApplyPreviewDialog", () => {
       preimage: PREIMAGE,
       outcome: { outcome: "applied-elsewhere", undone: false, wrote: "libredb_probe_v2", duration: 30 },
     });
-    expect(text("-failure")).toContain(
+    expect(text("-outcome")).toContain(
       "This text does not name `app.order_total(integer)`, so that object was not changed.",
     );
-    expect(text("-failure")).toContain(
+    expect(text("-outcome")).toContain(
       "A different object was created and LibreDB did not remove it: `libredb_probe_v2`.",
     );
-    expect(query("-failure-code")).toBeNull();
+    expect(query("-outcome-code")).toBeNull();
   });
 
   test("`applied-elsewhere` that was undone says the fork was taken back", () => {
@@ -897,7 +897,7 @@ describe("ApplyPreviewDialog", () => {
       preimage: PREIMAGE,
       outcome: { outcome: "applied-elsewhere", undone: true, duration: 30 },
     });
-    expect(text("-failure")).toContain("LibreDB took that back, so nothing was left behind");
+    expect(text("-outcome")).toContain("LibreDB took that back, so nothing was left behind");
   });
 
   test("`applied-elsewhere` with no name still says the object is there", () => {
@@ -907,7 +907,7 @@ describe("ApplyPreviewDialog", () => {
       preimage: PREIMAGE,
       outcome: { outcome: "applied-elsewhere", undone: false, duration: 30 },
     });
-    expect(text("-failure")).toContain("A different object was created and LibreDB did not remove it.");
+    expect(text("-outcome")).toContain("A different object was created and LibreDB did not remove it.");
   });
 
   test("`interrupted` never offers a retry, at any status", () => {
@@ -922,7 +922,7 @@ describe("ApplyPreviewDialog", () => {
         duration: 30_000,
       },
     });
-    expect(text("-failure")).toContain(
+    expect(text("-outcome")).toContain(
       "The engine stopped this statement before it finished. Whether it was applied is unknown.",
     );
     expect(query("-confirm")).toBeNull();
@@ -939,7 +939,7 @@ describe("ApplyPreviewDialog", () => {
         duration: 30_000,
       },
     });
-    expect(text("-failure")).toContain("rolled it back, so nothing was applied");
+    expect(text("-outcome")).toContain("rolled it back, so nothing was applied");
     expect(query("-confirm")).toBeNull();
   });
 
@@ -959,8 +959,8 @@ describe("ApplyPreviewDialog", () => {
         duration: 2_800,
       },
     });
-    expect(text("-failure")).toContain("Another session was changing this object at the same moment");
-    expect(text("-failure-code")).toBe("XX000");
+    expect(text("-outcome")).toContain("Another session was changing this object at the same moment");
+    expect(text("-outcome-code")).toBe("XX000");
     click("-confirm");
     expect(handlers.onRebuild).toHaveBeenCalled();
   });
@@ -978,7 +978,7 @@ describe("ApplyPreviewDialog", () => {
         duration: 22,
       },
     });
-    expect(text("-failure")).toContain("The engine reported this apply as done.");
+    expect(text("-outcome")).toContain("The engine reported this apply as done.");
   });
 
   test("`applied-with-collateral` READS the lost facts instead of saying nothing needs fixing", () => {
@@ -1001,11 +1001,11 @@ describe("ApplyPreviewDialog", () => {
         duration: 18,
       },
     });
-    expect(text("-failure")).toContain(
+    expect(text("-outcome")).toContain(
       "The engine applied this change and it destroyed something else, read back from the catalog after the apply.",
     );
-    expect(text("-failure")).toContain("FUNCTION LIST LIBRARYNAME orders answers: order_count is gone.");
-    expect(text("-failure")).not.toContain("Nothing here needs fixing.");
+    expect(text("-outcome")).toContain("FUNCTION LIST LIBRARYNAME orders answers: order_count is gone.");
+    expect(text("-outcome")).not.toContain("Nothing here needs fixing.");
   });
 
   test("the `failed` state's TYPE excludes `object-changed`, which is the conflict SCREEN", () => {
@@ -1127,7 +1127,7 @@ describe("ApplyPreviewDialog", () => {
         refusal: { refusal: "definition", sentence: "no", at: { within: "none" } },
       }),
     );
-    expect(role("-failure")).toBe("alert");
+    expect(role("-outcome")).toBe("alert");
     cleanup();
     draw({ kind: "applying", plan: PLAN, preimage: PREIMAGE });
     expect(role("-applying")).toBe("status");
@@ -1269,7 +1269,7 @@ describe("ApplyPreviewDialog", () => {
     // The attention level is unchanged and that is deliberate: a destroyed object deserves the
     // alert an engine refusal gets. The existing alert test drives a REFUSAL, which is a population
     // that does not contain this case, so the SUCCESS arm is asserted here.
-    expect(role("-failure")).toBe("alert");
+    expect(role("-outcome")).toBe("alert");
     // And the frame is not the only thing on screen that changes: the left column is the one text
     // the server no longer holds.
     expect(headers()).toEqual(["On the server before this apply", "What was sent"]);
@@ -1516,7 +1516,7 @@ describe("ApplyPreviewDialog", () => {
     // prediction in the future tense, is the one contradiction this dialog must not print.
     draw({ ...COLLATERAL_OUTCOME, plan: LOADED } as ApplyPreviewState);
     expect(rows("-consequence")).toHaveLength(0);
-    expect(text("-failure")).toContain("FUNCTION LIST LIBRARYNAME orders answers: order_count is gone.");
+    expect(text("-outcome")).toContain("FUNCTION LIST LIBRARYNAME orders answers: order_count is gone.");
     cleanup();
     // Every other outcome the `failed` state can carry, including the two where nothing was
     // applied: the dialog offers no Apply on any of them, so there is no apply left for a
@@ -1565,7 +1565,7 @@ describe("ApplyPreviewDialog", () => {
       description: `${LABEL}${UNCHANGED}`,
     });
     // The region under it still carries the refusing sentence, which is the provider's own here.
-    expect(text("-failure")).toContain("pooled session is inside a transaction");
+    expect(text("-outcome")).toContain("pooled session is inside a transaction");
     cleanup();
     // THE CONTROL, and the population this title is true over: every other refusal class at apply
     // time is a verdict an engine reached. `unsupported` stays with the engine deliberately: its

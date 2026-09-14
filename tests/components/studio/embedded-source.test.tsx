@@ -1321,8 +1321,8 @@ describe("the embedded workspace applies an object edit through the host", () =>
     await click("object-source-apply-confirm");
     // An outcome with no duration is not an outcome. The reader is told the answer could not be
     // read rather than that the change landed.
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
-    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-outcome").textContent).toContain(
       "The apply was sent and its answer could not be read",
     );
     expect(refreshTokenPassedToTheViewer()).toBe(0);
@@ -1451,7 +1451,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
     });
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
     await click("object-source-apply-confirm");
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
 
     /*
      * WHICH failure, and it is asserted because the first draft of this test did not: a refusal
@@ -1460,7 +1460,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
      * BEFORE the line the counter mutation moves. The test passed and the mutation killed nothing.
      * Pinning the engine's own sentence is what puts the refused arm in the population.
      */
-    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain(
+    expect(screen.getByTestId("object-source-apply-outcome").textContent).toContain(
       "must be owner of function order_total",
     );
     expect(refreshTokenPassedToTheViewer()).toBe(0);
@@ -1571,8 +1571,8 @@ describe("the embedded workspace applies an object edit through the host", () =>
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
     await click("object-source-apply-confirm");
 
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
-    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-outcome").textContent).toContain(
       "The apply was sent and the host answered with more text than LibreDB can read, so LibreDB cannot say whether this change landed.",
     );
     expect(refreshTokenPassedToTheViewer()).toBe(0);

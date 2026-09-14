@@ -1218,7 +1218,7 @@ describe("a successful apply in the standalone shell", () => {
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
     await click("object-source-apply-confirm");
 
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
     expect(sourceReads).toHaveLength(1);
     expect(mockToast).not.toHaveBeenCalled();
     expect(statesFor(SOURCE_TAB_ID).at(-1)?.document).toBeDefined();

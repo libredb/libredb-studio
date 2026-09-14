@@ -693,28 +693,21 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
  * `role="alert"` stays on all of them, because an apply that destroyed a sibling function deserves
  * the same attention as one that was refused; only the name was ever wrong.
  *
- * The `data-testid` still reads `object-source-apply-failure`, and that is a KNOWN STALE NAME
- * rather than an oversight. MEASURED by applying the rename to this file alone, leaving every
- * other file untouched, and running the four suites that read the name: 26 tests fail,
- * `ApplyPreviewDialog.test.tsx` 16 (it composes the prefix, so all 26 `-failure` and
- * `-failure-code` call sites there go with it), `ObjectSourceView.test.tsx` 6,
- * `embedded-source.test.tsx` 3 and `source-tab.test.tsx` 1, plus one Playwright assertion that
- * reads the code child. The rename is a mechanical substitution of two strings over six files, and
- * five of them belong to other tasks, so it travels as one commit that edits all six rather than
- * as a change to this one.
+ * The `data-testid` reads `object-source-apply-outcome`, renamed from `-failure` once the region
+ * started reporting successes. The paragraph that used to stand here said the old name was a KNOWN
+ * STALE NAME and listed what a rename would cost; it is kept below as the record of how the rename
+ * was done, because both of the traps it named were then walked into in order.
  *
- * That count is a property of the TREE and not of the rename, so it has to be re-taken whenever
- * the owning suite changes: the number above read 24 until it was corrected, because it was
- * measured before the two tests that added the last two `-failure` call sites landed in the same
- * commit. Re-measured unchanged at 26 after the command-medium tests landed.
+ * TRAP ONE, and it is the one a careful reader also misses: a whole-tree grep for the literal string
+ * finds FIVE files and 21 occurrences and MISSES THIS REGION'S OWN SUITE ENTIRELY, because that
+ * suite composes the prefix (`const testId = (suffix: string) => ...`, then `testId("-failure")`).
+ * Measured when the literal-only substitution ran: `ApplyPreviewDialog.test.tsx` went to 16 fail,
+ * and the composed forms numbered 23 `"-failure"` plus 3 `"-failure-code"`, which is the 26 the old
+ * paragraph had counted. So the rename is FOUR literals over SIX files, not two over five.
  *
- * Two things a mechanical `sed` over the tree gets WRONG, both MEASURED in that same window:
- * a whole-tree grep for the literal string finds FIVE files and 21 occurrences and misses this
- * region's own suite entirely, because that suite composes the prefix
- * (`const testId = (suffix: string) => ...` and `testId("-failure")`), so the rename has to run
- * over the `-failure` suffix form as well; and the substitution rewrites THIS paragraph into a
- * false one, `still reads object-source-apply-outcome ... KNOWN STALE NAME`, so the paragraph
- * comes out with the rename rather than going through it.
+ * TRAP TWO: the substitution rewrites the paragraph describing it into a false one, because that
+ * paragraph quotes the old name. It has to be rewritten in the same commit rather than carried
+ * through the sed.
  */
 function OutcomeRegion({
   plan,
@@ -795,7 +788,7 @@ function OutcomeRegion({
   return (
     <div
       className="flex flex-col gap-1 rounded-md border border-border bg-warning/10 px-3 py-2 text-xs text-warning"
-      data-testid="object-source-apply-failure"
+      data-testid="object-source-apply-outcome"
       role="alert"
     >
       {lines.map((line, index) => (
@@ -804,7 +797,7 @@ function OutcomeRegion({
         </span>
       ))}
       {code !== undefined && (
-        <span className="font-mono text-fg-muted" data-testid="object-source-apply-failure-code">
+        <span className="font-mono text-fg-muted" data-testid="object-source-apply-outcome-code">
           {code}
         </span>
       )}

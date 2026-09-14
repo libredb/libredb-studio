@@ -2142,8 +2142,8 @@ describe("ObjectSourceView edit mode", () => {
 
     await click("object-source-apply-confirm");
 
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
-    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain("could not be read");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-outcome").textContent).toContain("could not be read");
   });
 
   test("a foreign tab that wrote the key WITHOUT taking this draft is not reported as an eviction", async () => {
@@ -2218,9 +2218,9 @@ describe("ObjectSourceView edit mode", () => {
 
     await click("object-source-apply-confirm");
 
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
-    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain("HTTP 502");
-    expect(screen.getByTestId("object-source-apply-failure").textContent).toContain(
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
+    expect(screen.getByTestId("object-source-apply-outcome").textContent).toContain("HTTP 502");
+    expect(screen.getByTestId("object-source-apply-outcome").textContent).toContain(
       "Whether it was applied is unknown",
     );
     expect(screen.queryByTestId("object-source-apply-expired")).toBeNull();
@@ -2340,9 +2340,9 @@ describe("ObjectSourceView edit mode", () => {
     // THE REPORT IS ON SCREEN, and it names the catalog fact read after the apply. Asserted on the
     // rendered text rather than on a testid alone, because a region that renders with the tuple
     // dropped would satisfy a testid and tell the reader nothing.
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
     expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
-    const report = screen.getByTestId("object-source-apply-failure").textContent ?? "";
+    const report = screen.getByTestId("object-source-apply-outcome").textContent ?? "";
     expect(report).toContain("destroyed something else");
     expect(report).toContain("FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_ping is no longer registered.");
 
@@ -2398,7 +2398,7 @@ describe("ObjectSourceView edit mode", () => {
     // REPLACE the dialog. Both are on screen at once, and that is the fix.
     await waitFor(() => expect(screen.getByTestId("object-source-loading")).toBeTruthy());
     expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
-    expect(screen.getByTestId("object-source-apply-failure").textContent ?? "").toContain(
+    expect(screen.getByTestId("object-source-apply-outcome").textContent ?? "").toContain(
       "FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_ping is no longer registered.",
     );
     expect(applied).toHaveBeenCalledTimes(1);
@@ -2432,7 +2432,7 @@ describe("ObjectSourceView edit mode", () => {
 
     await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
     expect(screen.getByTestId("object-source-failure-message").textContent).toBe("HTTP 500 from the source route");
-    expect(screen.getByTestId("object-source-apply-failure").textContent ?? "").toContain(
+    expect(screen.getByTestId("object-source-apply-outcome").textContent ?? "").toContain(
       "FUNCTION LIST LIBRARYNAME libredb_probe answers: libredb_ping is no longer registered.",
     );
   });
@@ -2612,7 +2612,7 @@ describe("ObjectSourceView edit mode", () => {
 
     await click("object-source-apply-confirm");
 
-    await waitFor(() => expect(screen.getByTestId("object-source-apply-failure")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
     expect(probe.markers.filter((call) => call.markers.length > 0)).toHaveLength(0);
     expect(screen.queryByTestId("object-source-apply-goto-error")).toBeNull();
   });
