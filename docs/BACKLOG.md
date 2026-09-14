@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 40
+- [Drivers and connections](#drivers-and-connections) — D1–D83, U17 · 41
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 16
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X25, U2–U21 · 18
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3, DOC4 · 2
+- [Documentation](#documentation) — DOC3–DOC5 · 3
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
@@ -1232,6 +1232,31 @@ keeping the pane mounted for the tab that owns it. The pane's own state is alrea
 reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
 reachability paragraph in `Studio.tsx` is corrected in the same change.
 
+### D83. PostgreSQL is the only day-one apply that does not re-resolve the editable kind
+
+`applyObjectEdit` calls `requireEditableKind` on Trino (`src/lib/db/providers/sql/trino/index.ts:1562`)
+and on Redis (`src/lib/db/providers/keyvalue/redis.ts:1869`) and NOT on PostgreSQL
+(`src/lib/db/providers/sql/postgres.ts:3266`, which consults `plan.kind` nowhere at all). Trino needs the
+returned spec for its re-read; Redis DISCARDS the return value, so on that provider the call is a guard
+and nothing else, which is what makes PostgreSQL's absence an inconsistency rather than a shape
+difference.
+
+NOT A LIVE DEFECT THROUGH ANY SHIPPED PATH, said in that voice rather than left implied.
+`src/app/api/db/objects/edit-apply/route.ts:141` re-resolves editability on the CONNECTED provider for
+every apply, which is D57 closed on the write path, and the plan's statement was minted by a
+`buildObjectEdit` that called `requireEditableKind` itself (`postgres.ts:2968`). The population that
+reaches the provider without either check is a `@libredb/studio` library consumer calling
+`provider.applyObjectEdit` directly, and PostgreSQL's apply sends `plan.unit.steps[0].text` verbatim, so
+what it would execute is a statement its own build already minted.
+
+Found by the external review of PR #831 (#789, discussion #778) and verified by grep rather than
+adopted from the review.
+
+**Done when:** the three day-one applies agree, with a test that drives an apply plan carrying a kind the
+provider does not declare editable and asserts the refusal, or with a docblock on `postgres.ts` saying by
+name why the check is not there and what carries it instead.
+
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -1660,6 +1685,58 @@ entirely, so a caller could re-point an approved plan through a bastion they own
 **Done when:** a connection with an enabled SSH tunnel can build and apply an object edit plan, with a
 test that drives the two sides through the factory rather than asserting the digest alone.
 
+### X24. The apply dialog's collateral arm cannot be reached from its only mount
+
+`ApplyPreviewDialog.tsx:582` renders a dedicated region for the `applied-with-collateral` outcome, with
+the sentence "The engine applied this change and it destroyed something else, read back from the catalog
+after the apply" and one line per entry of the outcome's `lost` tuple. Nothing in the product can draw
+it. `ObjectSourceView.tsx:397` puts `applied-with-collateral` in `APPLIED_OUTCOMES`, deliberately and
+correctly, so `landOutcome` CLOSES the dialog on it; and `grep -rn '<ApplyPreviewDialog' src/` returns
+exactly one hit, the mount at `ObjectSourceView.tsx:1607`, with no export of the component from
+`src/exports/`. So the arm is live only in
+`tests/components/object-source/ApplyPreviewDialog.test.tsx:968`.
+
+The outcome itself is real and reached: `src/lib/db/providers/keyvalue/redis.ts:1925` answers it whenever
+the functions a library registered BEFORE the apply are not all registered after, which is the everyday
+result of editing a library of two or more functions.
+
+NOTHING IS DESTROYED UNSHOWN, so ruling 1b's second axis holds: the plan's `consequences` name the
+library's whole registered set before the apply, the reader ticks the acknowledgement, and the outcome's
+`lost` is a strict SUBSET of what they were shown. What is lost is precision. The reader is told what
+MIGHT go and is never told what DID, and the audit ring records `object_edit_collateral_loss` where the
+reader's screen records a plain success.
+
+Found by the external review of PR #831 (#789, discussion #778).
+
+**Done when:** either the outcome's `lost` facts reach the reader after a successful apply, or the arm is
+deleted and the dialog's outcome type stops admitting a state its only mount cannot produce. Deciding
+between those two is the work; both leave the file honest and today's file is not.
+
+### X25. The embedded shell leaves the pre-apply definition on screen, for a reason that refutes itself
+
+`StudioWorkspace.tsx`'s `handleApplied` moves `objectRefreshToken` and clears nothing, where
+`Studio.tsx`'s clears the tab's document so the pane re-reads at once. In `ObjectSourceView.tsx` a read is
+issued only when `needsRead` holds (`document === undefined && failure === undefined`), so a moved counter
+re-reads nothing: it makes `stale` true and draws the banner. After a successful apply in the embedded
+shell the reader is therefore looking at the text the object no longer holds, with an invitation to press
+"Read again". `tests/components/studio/embedded-source.test.tsx:1405` pins that behaviour.
+
+THE REASON WRITTEN FOR IT CONTRADICTS ITSELF IN ITS OWN PARAGRAPH. It says an automatic clear "would then
+leave a tab with no document, no failure and no reader, which is the one state that would send the
+viewer's default reader at a route this package does not ship", and then says "`sourceFailure` above
+closes that door in the same render". It does: `sourceFailure` answers a sentence exactly when
+`conn.sourceReader === undefined && sourceTab?.document === undefined`, which makes `needsRead` false, and
+the suite already drives clear-then-withdraw and asserts no request leaves the shell. So the hazard the
+paragraph gives as the reason for not clearing is the hazard the file already closes.
+
+Found by the external review of PR #831 (#789, discussion #778) and verified by reading the three files
+and running the pane's read effect against them, not by adopting the review.
+
+**Done when:** the two shells agree on what a successful apply leaves on screen, or the embedded shell's
+docblock gives a reason that is not already discharged three lines below it. The behaviour may still be
+the right one for a host-served read; what cannot stand is the argument currently written for it.
+
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -1838,6 +1915,29 @@ guard, which is what makes the change stick - the guard bans the FORM, so a corr
 too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
 of those two were rewritten in round 17 and are the natural first pair; the round left them out because
 they were another lane's live files at the time, not because they are correct.
+
+### DOC5. `stripEdit`'s docblock still calls the write-path obligation undischarged, and it is discharged
+
+`src/lib/api/object-route.ts:667-674` says "MEASURED by grep at this commit, nothing on the write path
+enforces either fact", names an obligation on the edit-plan route to "REFUSE a plan whose part is
+truncated, and REFUSE a kind that fails `kindAcceptsSourceEdits` on the CONNECTED provider", and closes
+"Until it does, this function decides what the UI is OFFERED and never what the server ACCEPTS".
+
+Both halves have since landed, in this same phase. The kind:
+`src/app/api/db/objects/edit-plan/route.ts:89` calls `requireEditableKind` on the connected provider and
+its own comment cites this very docblock as the reason. The bound: that route refuses a submitted text
+over `EDIT_CHARACTER_LIMIT` at line 74, and all three day-one providers refuse a READ definition over the
+same constant inside `buildObjectEdit` (`postgres.ts:3012`, `redis.ts:1747`,
+`trino/index.ts` refusal 1), so a truncated prefix cannot become a plan.
+
+Not a live bug. It is a sentence that tells a reader a guard is missing when the guard is two files away,
+which is the failure mode this repository files its stale citations for.
+
+Found by the external review of PR #831 (#789, discussion #778).
+
+**Done when:** the paragraph says what enforces each half and where, and the "until it does" sentence is
+gone.
+
 
 ---
 
