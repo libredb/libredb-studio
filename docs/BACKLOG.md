@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D81, U17 · 39
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X22, U2–U21 · 15
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X21, U2–U21 · 14
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1528,29 +1528,7 @@ stated in `readDefaultBody`'s own docblock.
 **Done when:** a body above the framework's clone limit gets one answer that names the size, on every
 route, rather than an empty-body claim on five and a parser error on one.
 
-### X20. The Source pane's `dirty` prop is undefended in `Studio.tsx`
-
-`Studio.tsx` passes `dirty={sourceTab.dirty}` to the Source pane and nothing measures it. MEASURED in
-#789 Phase 3, wave 9: deleting that prop left all 45 component groups green.
-
-The population it protects is a tab REMOUNTED inside an unsaved edit whose stored draft is gone: a
-restored tab carrying `dirty: true`. Without the prop, `dirtyRef = useRef(props.dirty === true)` seeds
-`false`, the pane computes `isDirty` `false`, the flip guard `if (isDirty === dirtyRef.current) return;`
-returns early, and the tab strip's dot never goes away for an edit that no longer exists. The behaviour
-shipped is CORRECT; what is missing is the regression test. An earlier note of this stated the failure in
-the opposite direction, which would send the next reader to build a population that cannot fail.
-
-The recipe exists for the embedded shell, which is closed:
-`tests/components/studio/embedded-source.test.tsx` edits, drives a keystroke, switches tab, switches back,
-asserts the dot survived the remount, then reverts the buffer to the engine's own text and asserts the dot
-goes. Deleting `dirty={sourceTab.dirty}` from `StudioWorkspace.tsx` takes that file from 42 pass 0 fail to
-41 pass 1 fail. A tab RESTORED from `localStorage` cannot be built in a component test, because
-`use-tab-manager.ts` computes `shouldPersistWorkspace` from `process.env.NODE_ENV !== "test"`; a tab
-SWITCH unmounts the pane the same way and is what the embedded test uses.
-
-**Done when:** the same test exists for the standalone shell and deleting the prop makes it fail.
-
-### X21. A malformed apply answer is reported to the reader in the words of a timeout
+### X20. A malformed apply answer is reported to the reader in the words of a timeout
 
 The Source pane synthesises `{ outcome: "interrupted", committed: "unknown" }` for an apply answer that
 `isObjectEditOutcomeShape` refuses, because that is the closest arm the outcome type has and its
@@ -1565,7 +1543,7 @@ definition before trying again"), so the reader is not misled about what to do, 
 **Done when:** the dialog has a seventh arm, or a per-outcome sentence override, so an unreadable answer
 is described as one.
 
-### X22. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
+### X21. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
 
 MEASURED in Chromium on 2026-09-14, on every successful apply driven through the UI:
 `TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.

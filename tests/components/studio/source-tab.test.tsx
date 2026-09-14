@@ -36,8 +36,26 @@ let sourceStates: Array<{ id: string; source: SourceTabState }> = [];
 
 const DEFINITION = "CREATE OR REPLACE FUNCTION app.order_total(integer)\n  RETURNS numeric AS $$ SELECT 1 $$;";
 
+/**
+ * The editor's own `onChange`, captured so a test can move the buffer.
+ *
+ * The textarea below is `readOnly` whenever the pane is, and jsdom's own change on a controlled
+ * textarea does not reach a handler this double installs, so a test that wants to type calls
+ * `editorProbe.change` instead. That is the same call Monaco makes. `ObjectSourceView.test.tsx`
+ * and `tests/components/studio/embedded-source.test.tsx` capture it the same way and for the same
+ * reason: without it nothing in this file could move the buffer, which is how `dirty` went
+ * undefended here (#789 Phase 3).
+ */
+const editorProbe: { change?: (value: string | undefined) => void } = {};
+
 mock.module("@monaco-editor/react", () => ({
-  default: function MockEditor(props: { value?: string; language?: string; options?: Record<string, unknown> }) {
+  default: function MockEditor(props: {
+    value?: string;
+    language?: string;
+    options?: Record<string, unknown>;
+    onChange?: (value: string | undefined) => void;
+  }) {
+    editorProbe.change = props.onChange;
     return (
       <textarea
         data-testid="source-editor"
@@ -1248,5 +1266,60 @@ describe("the kind lookup does NOT grow a writable arm, and the edit gate reads 
     expect(screen.queryByTestId("object-source-edit")).toBeNull();
     // And the pane says WHY, in the words the predicate owns, rather than drawing nothing.
     expect(screen.getByTestId("object-source-edit-refusal").getAttribute("data-refusal")).toBe("not-offered");
+  });
+});
+
+describe("the tab strip's dirty mark survives a remount and still clears", () => {
+  test("a tab remounted inside an unsaved edit still clears its dirty mark when the buffer is reverted", async () => {
+    /*
+     * WHAT `dirty={sourceTab.dirty}` IN `Studio.tsx` IS FOR (#789 Phase 3, discussion #778).
+     *
+     * `ObjectSourceView` seeds `dirtyRef` from that prop and writes the flag onto the tab only
+     * when the boolean FLIPS. A tab switch unmounts the pane, because the pane is rendered for
+     * the active tab alone. So without the prop a pane remounted inside an unsaved edit starts
+     * from `false`, reverting the buffer to the engine's own text compares `false` against a
+     * `false` that was never true, the flip guard returns early, no patch is written, and the
+     * strip keeps a dirty dot over a tab holding exactly what the database holds.
+     *
+     * MEASURED: this file is 32 pass 0 fail without this test and 33 pass 0 fail with it, and
+     * deleting the prop from `Studio.tsx` takes it to 32 pass 1 fail, the one failure being this
+     * test. Before this test existed the same deletion left all 46 component groups green.
+     *
+     * `tests/components/studio/embedded-source.test.tsx` carries the same test for the embedded
+     * shell. A tab RESTORED from `localStorage`, which is the production population, cannot be
+     * built in a component test at all: `use-tab-manager.ts` computes `shouldPersistWorkspace`
+     * from `process.env.NODE_ENV !== "test"`. A tab SWITCH unmounts the pane the same way, and
+     * that is the population this drives.
+     */
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    render(<Studio />);
+    await openFunctionTab();
+    await click("object-source-edit");
+
+    await act(async () => {
+      editorProbe.change?.(
+        "CREATE OR REPLACE FUNCTION app.order_total(integer)\n  RETURNS numeric AS $$ SELECT 99 $$;",
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("tab-dirty-dot")).toBeTruthy());
+
+    // The tab switch is the remount: the pane is mounted for the active tab only.
+    act(() => {
+      screen.getAllByRole("tab")[0].click();
+    });
+    await waitFor(() => expect(screen.queryByTestId("source-editor")).toBeNull());
+    act(() => {
+      screen.getAllByRole("tab")[1].click();
+    });
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    // The mark survived the remount, which is the state this test is about.
+    expect(screen.getByTestId("tab-dirty-dot")).toBeTruthy();
+
+    await act(async () => {
+      editorProbe.change?.(DEFINITION);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot")).toBeNull());
   });
 });
