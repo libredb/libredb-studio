@@ -185,8 +185,10 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * grep: `node_modules/next/dist/server/body-streams.js` declares
  * `DEFAULT_BODY_CLONE_SIZE_LIMIT = 10 * 1024 * 1024`, and over it `cloneBodyStream` sets
  * `limitExceeded`, pushes `null` into both streams and logs a `console.warn`, which ENDS the body
- * early rather than failing the request. `next-server.js` installs that clone on every
- * non-upgrade request, with `experimental.proxyClientMaxBodySize` as the only override. The two
+ * early rather than failing the request. `next-server.js:1289` installs that clone on every
+ * non-upgrade request, with `experimental.proxyClientMaxBodySize` as the only override, so the
+ * clone is not conditional on a middleware file being present in this repository even though
+ * middleware is what the clone is for. The two
  * HTTP SENTENCES are a live measurement made earlier in this phase against a running server, not
  * something this file re-ran, and they are recorded here because they are the reason the function
  * exists.
