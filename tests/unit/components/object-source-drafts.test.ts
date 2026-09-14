@@ -203,12 +203,14 @@ describe("the populations the eviction policy is actually for", () => {
     expect(writeDraft(storage, "new", draft(text, 2))).toEqual({ ok: true, evicted: ["old"] });
   });
 
-  test("a store that is an array is replaced rather than spread into the record it is not", () => {
-    // The brief's readDraft case asks an ARRAY store for key "a", which answers undefined with or
-    // without the array guard, because an array has no "a" index. The guard's live consequence is
-    // on the WRITE: without it the array's elements survive as numbered keys of the record.
+  test("a store that is an array of WELL FORMED drafts is still replaced, not indexed", () => {
+    // Three populations deep, and only the third can see the guard. The brief's readDraft case
+    // asks an array store for key "a", which answers undefined either way. An array of junk is
+    // now dropped entry by entry by the shape walk, so it cannot see it either. Only an array
+    // whose ELEMENTS are drafts can: without the guard those survive as the numbered keys "0"
+    // and "1" of a record, each one an undeletable draft nothing can ever address.
     const storage = fakeStorage();
-    storage.setItem(DRAFT_KEY, JSON.stringify([1, 2]));
+    storage.setItem(DRAFT_KEY, JSON.stringify([draft("zero", 1), draft("one", 2)]));
     expect(writeDraft(storage, "a", draft("one", 1))).toEqual({ ok: true, evicted: [] });
     expect(JSON.parse(storage.getItem(DRAFT_KEY) ?? "null")).toEqual({ a: draft("one", 1) });
   });
@@ -218,6 +220,32 @@ describe("the populations the eviction policy is actually for", () => {
     // this call would turn a write that DID reach the engine into a broken success handler.
     const storage = fakeStorage({ throwOnSet: true });
     expect(() => dropDraft(storage, "a")).not.toThrow();
+  });
+
+  test("a drop the browser refused leaves the draft READABLE, which is the caller's only signal", () => {
+    // `dropDraft` is void by contract, so no caller can tell "dropped" from "refused" by its
+    // answer. The state is still observable, and this pins the one surface that makes it so: a
+    // re-read. Without it the consequence after a SUCCESSFUL apply is a restore banner on the next
+    // mount offering the pre-apply text with no reason attached, which is X14's shape at reduced
+    // scale. Task 15 either re-reads here or the banner has nothing to say.
+    const seeded = fakeStorage();
+    seeded.setItem(DRAFT_KEY, JSON.stringify({ a: draft("one", 1) }));
+    const refusing = {
+      get length() {
+        return seeded.length;
+      },
+      clear: () => seeded.clear(),
+      key: (index: number) => seeded.key(index),
+      getItem: (key: string) => seeded.getItem(key),
+      removeItem: (key: string) => seeded.removeItem(key),
+      setItem: () => {
+        const error = new Error("The quota has been exceeded.");
+        error.name = "QuotaExceededError";
+        throw error;
+      },
+    } as Storage;
+    dropDraft(refusing, "a");
+    expect(readDraft(refusing, "a")).toEqual(draft("one", 1));
   });
 
   test("a store cost of exactly the budget is within it, and evicts nothing", () => {

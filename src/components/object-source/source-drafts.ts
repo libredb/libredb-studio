@@ -96,6 +96,16 @@ export function draftKeyFor(address: string, partId: string): string {
  * Every arm here has its own population in the test file, because an arm whose false branch is
  * never taken is 100 percent line-covered and certifies nothing.
  *
+ * NO `Array.isArray` ARM, and its absence is measured rather than assumed. This predicate only
+ * ever sees the output of `JSON.parse`, and a JSON array carries no named member, so `text` on
+ * one is `undefined` and the `text` arm has already refused it: the array arm could never be the
+ * decider. MEASURED: with the arm present, deleting it left the suite at 20 pass 0 fail, which is
+ * a guard over an empty population rather than a pass, and a probe comparing the two predicates
+ * over six parsed bodies and every member of each found 0 disagreements. The array case that IS
+ * real is the STORE itself being an array, which `readStore` refuses, and the only population
+ * that can see THAT guard is an array whose elements are well-formed drafts, which the test file
+ * builds.
+ *
  * `base` is checked for being an OBJECT and no further. It is carried opaquely, and the module
  * that acts on it is the restore banner, which compares it rather than destructuring it, so a
  * walk of `ObjectEditRevision`'s arms would be this module asserting a contract it does not own
@@ -104,7 +114,7 @@ export function draftKeyFor(address: string, partId: string): string {
  * revision.
  */
 function isDraftShape(value: unknown): value is SourceDraft {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.text !== "string") return false;
   if (typeof candidate.savedAt !== "number") return false;
@@ -213,6 +223,13 @@ export function writeDraft(storage: Storage | null, key: string, draft: SourceDr
  * `setItem` is guarded for the same reason `writeDraft`'s is, one step further: a throw out of
  * this call would break a successful apply's own handler, which is a worse outcome than a draft
  * that outlives the text it was an edit of.
+ *
+ * VOID MEANS THE CALLER CANNOT TELL "dropped" FROM "the browser refused", and the consequence of
+ * a refusal after a SUCCESSFUL apply is a restore banner on the next mount offering the pre-apply
+ * text with no reason attached. The signal exists but it is not this answer: it is a RE-READ.
+ * `readDraft` on the same key still answers the draft after a refused drop, asserted in the test
+ * file, so the pane that calls this can distinguish the two states and give the banner its
+ * "another tab" grammar. Nothing in this module builds that banner (#789).
  */
 export function dropDraft(storage: Storage | null, key: string): void {
   if (storage === null) return;
