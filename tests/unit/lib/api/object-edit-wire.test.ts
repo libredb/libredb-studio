@@ -324,6 +324,20 @@ describe("the arms the brief's block does not reach", () => {
     expect(isObjectEditPlanShape(null)).toBe(false);
   });
 
+  test("refuses an unknown conflict discriminant that carries a well formed `current`", () => {
+    // Found by mutation (c): with the second discriminant's VALUE check removed but its key still
+    // required, every other case in this file still passed. This is the case that pins the value,
+    // and nothing else in the file builds the population it lives in.
+    expect(
+      isObjectEditOutcomeShape({
+        outcome: "conflict",
+        conflict: "somebody-else",
+        current: { text: "x", language: "pgsql" },
+        duration: 1,
+      }),
+    ).toBe(false);
+  });
+
   test("refuses the optional fields when they are present and empty", () => {
     expect(isObjectEditOutcomeShape({ outcome: "applied-elsewhere", undone: false, wrote: "", duration: 1 })).toBe(
       false,
