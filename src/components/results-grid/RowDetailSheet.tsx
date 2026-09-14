@@ -104,7 +104,11 @@ export function RowDetailSheet({
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent side="bottom" className="h-[85vh] bg-surface border-t border-hairline-strong rounded-t-3xl">
+      {/*
+        Capped rather than fixed: a six field row took 85% of the screen to show six
+        lines, and a 200 field row still needs every pixel of the cap (#800).
+      */}
+      <SheetContent side="bottom" className="max-h-[85vh] bg-surface border-t border-hairline-strong rounded-t-3xl">
         <SheetHeader className="pb-4 border-b border-hairline">
           <div className="flex items-center justify-between">
             <SheetTitle className="text-fg flex items-center gap-2">
@@ -138,58 +142,78 @@ export function RowDetailSheet({
           </div>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(85vh-100px)] mt-4">
-          <div className="space-y-1 pr-4">
+        <ScrollArea className="max-h-[calc(85vh-100px)] mt-4">
+          {/*
+            One field per line is the readable shape on a phone and a waste of a desktop
+            window: a 40 column row left most of a 1440px screen empty and scrolled for
+            no reason (#800). The list flows into as many columns as the window fits,
+            asked for by column WIDTH rather than by a breakpoint, so there is no width
+            at which a field is dropped or a column count is wrong for the window - one
+            column on a phone, three on a 1440px screen, and every step between.
+
+            Column flow rather than a grid: a grid row is as tall as its tallest cell, so
+            one long value left the two fields beside it sitting over a screenful of
+            empty space.
+          */}
+          <div className="columns-sm gap-x-6 px-4 pb-4">
             {fields.map((field) => {
               const { text, className, preserveWhitespace, isMasked } = getDisplayValue(field, row[field]);
               const isLongValue = text.length > 50;
 
               return (
-                <div key={field} className="group p-3 rounded-lg hover:bg-fill transition-colors">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-fg-muted mb-1 font-mono flex items-center gap-1">
-                        {field}
-                        {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple" />}
-                      </p>
-                      <p
-                        className={cn(
-                          "font-mono text-xs break-all",
-                          className,
-                          preserveWhitespace && "whitespace-pre-wrap",
-                          isLongValue && "text-xs",
-                        )}
-                      >
-                        {text}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {isMasked && allowReveal && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => revealField(field)}
-                          title="Reveal value (10s)"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-hue-purple" />
-                        </Button>
-                      )}
+                <div
+                  key={field}
+                  className="group flex items-start gap-3 break-inside-avoid px-2 py-1.5 rounded-lg border-b border-hairline hover:bg-fill transition-colors"
+                >
+                  {/*
+                    Name beside the value rather than above it. Stacked, one field cost two
+                    lines and the window's whole width for a value a few characters long, so
+                    a wide row scrolled far past what it needed. The name column is fixed so
+                    the names line up and the eye can run down them (#800).
+                  */}
+                  <p
+                    className="w-32 shrink-0 text-xs text-fg-muted font-mono flex items-center gap-1 leading-5"
+                    title={field}
+                  >
+                    <span className="truncate">{field}</span>
+                    {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple shrink-0" />}
+                  </p>
+                  <p
+                    className={cn(
+                      "flex-1 min-w-0 font-mono text-xs break-all leading-5",
+                      className,
+                      preserveWhitespace && "whitespace-pre-wrap",
+                      isLongValue && "text-xs",
+                    )}
+                  >
+                    {text}
+                  </p>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {isMasked && allowReveal && (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => copyValue(field, row[field])}
+                        onClick={() => revealField(field)}
+                        title="Reveal value (10s)"
                       >
-                        {copyOutcome?.key === field && copyOutcome.copied && (
-                          <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-success" />
-                        )}
-                        {copyOutcome?.key === field && !copyOutcome.copied && (
-                          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-warning" />
-                        )}
-                        {copyOutcome?.key !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />}
+                        <Eye className="w-3.5 h-3.5 text-hue-purple" />
                       </Button>
-                    </div>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => copyValue(field, row[field])}
+                    >
+                      {copyOutcome?.key === field && copyOutcome.copied && (
+                        <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-success" />
+                      )}
+                      {copyOutcome?.key === field && !copyOutcome.copied && (
+                        <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-warning" />
+                      )}
+                      {copyOutcome?.key !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />}
+                    </Button>
                   </div>
                 </div>
               );

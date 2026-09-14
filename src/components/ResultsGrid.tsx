@@ -16,7 +16,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock, Rows3 } from "lucide-react";
 import {
   type MaskingConfig,
   detectSensitiveColumnsFromConfig,
@@ -41,6 +41,21 @@ export interface CellChange {
 const CLEAR_FILTER_LABEL = "Clear filter";
 const EMPTY_RESULT_HINT = "The operation was successful, but the result set is currently empty.";
 const ENGINE_WARNINGS_LABEL = "The engine reported:";
+const ROW_DETAIL_COLUMN_ID = "__libredb_row_detail__";
+const ROW_DETAIL_HEADER_TITLE = "Show a row field by field";
+
+/**
+ * A column id for the row detail control that no field of this result already carries.
+ *
+ * A column name is arbitrary SQL output and `SELECT 1 AS "__libredb_row_detail__"` is a
+ * legal statement, so a fixed id would collide with it and the table would hold two
+ * columns under one id - TanStack keys rows and cells by it.
+ */
+function rowDetailColumnId(fields: string[]): string {
+  let id = ROW_DETAIL_COLUMN_ID;
+  while (fields.includes(id)) id = `_${id}`;
+  return id;
+}
 
 /**
  * TanStack Table 9 does not ship every feature to every table: each one is
@@ -184,6 +199,8 @@ export function ResultsGrid({
 
   const idColumn = useMemo(() => detectIdColumn(result.fields), [result.fields]);
 
+  const detailColumnId = useMemo(() => rowDetailColumnId(result.fields), [result.fields]);
+
   // Filter rows based on column filters
   const filteredRows = useMemo(() => {
     if (columnFilters.size === 0) return result.rows;
@@ -222,7 +239,42 @@ export function ResultsGrid({
     // `truncate` carries its own `white-space: nowrap`, so wrapping has to replace it here,
     // on the element holding the value, not only on the cell around it.
     const valueFlow = wrapText ? "whitespace-pre-wrap break-words" : "truncate h-full";
-    return result.fields.map((field) => ({
+
+    /**
+     * The field-by-field view of one row, reachable from the desktop grid (#800).
+     *
+     * It ships as a column rather than as an overlay on the row so it scrolls, sizes
+     * and aligns with the header the way every other cell does, and so no breakpoint
+     * decides whether it is there: the vertical view already existed and was reachable
+     * only below `md`, which is the whole of the reported defect. Wide results are
+     * exactly where it is wanted, so it is sticky at the left edge and stays reachable
+     * after the grid has been scrolled across 200 columns.
+     */
+    const detailColumn: ColumnDef<typeof tableFeatureSet, Record<string, unknown>> = {
+      id: detailColumnId,
+      header: () => <Rows3 strokeWidth={1.5} aria-hidden="true" className="w-3.5 h-3.5" />,
+      cell: ({ row }) => (
+        <button
+          type="button"
+          data-row-detail=""
+          // Named after the row, so a screen reader hears which row it opens rather
+          // than one of N identically named buttons.
+          aria-label={`Show row ${row.index + 1} field by field`}
+          title={ROW_DETAIL_HEADER_TITLE}
+          className="p-1 rounded text-fg-muted hover:text-brand hover:bg-brand-tint/10 transition-colors"
+          onClick={() => setSelectedRow({ row: row.original, index: row.index })}
+        >
+          <Rows3 strokeWidth={1.5} className="w-3.5 h-3.5" />
+        </button>
+      ),
+      size: 36,
+      minSize: 36,
+      maxSize: 36,
+      enableResizing: false,
+      enableSorting: false,
+    };
+
+    const fieldColumns = result.fields.map<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>>((field) => ({
       // `id` + `accessorFn`, never `accessorKey`: TanStack reads a DOT in an
       // accessorKey as a path into the row, so `shipping.city` was fetched as
       // `row.shipping.city` while the row carries the flat key `"shipping.city"` -
@@ -436,7 +488,10 @@ export function ResultsGrid({
       minSize: 80,
       maxSize: 500,
     }));
+
+    return [detailColumn, ...fieldColumns];
   }, [
+    detailColumnId,
     wrapText,
     result.fields,
     result.columnTypes,
@@ -671,29 +726,44 @@ export function ResultsGrid({
         </div>
       </div>
 
-      <div ref={tableContainerRef} className="hidden md:block flex-1 overflow-auto editor-scrollbar">
+      <div
+        ref={tableContainerRef}
+        data-desktop-grid=""
+        className="hidden md:block flex-1 overflow-auto editor-scrollbar"
+      >
         <div className="min-w-max">
           <div className="sticky top-0 z-20 bg-raised flex">
             {table.getHeaderGroups().map((headerGroup) =>
-              headerGroup.headers.map((header) => (
-                <div
-                  key={header.id}
-                  style={{ width: header.getSize(), minWidth: header.getSize() }}
-                  className="h-10 px-4 flex items-center border-r border-b border-hairline text-xs uppercase font-mono text-fg-muted bg-raised relative group shrink-0"
-                >
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-
+              headerGroup.headers.map((header) => {
+                const isRowDetail = header.column.id === detailColumnId;
+                return (
                   <div
-                    aria-hidden="true"
-                    onMouseDown={header.getResizeHandler()}
-                    onTouchStart={header.getResizeHandler()}
+                    key={header.id}
+                    {...(isRowDetail ? { "data-row-detail-header": "" } : {})}
+                    style={{ width: header.getSize(), minWidth: header.getSize() }}
                     className={cn(
-                      "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-brand-tint/50 transition-colors",
-                      header.column.getIsResizing() ? "bg-brand-tint w-1" : "bg-transparent",
+                      "h-10 flex items-center border-r border-b border-hairline text-xs uppercase font-mono text-fg-muted bg-raised relative group shrink-0",
+                      isRowDetail ? "px-2 justify-center sticky left-0 z-10" : "px-4",
                     )}
-                  />
-                </div>
-              )),
+                  >
+                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+
+                    {/* A column pinned to one width has no handle to drag: rendering one
+                        would offer a drag that `enableResizing: false` then refuses. */}
+                    {header.column.getCanResize() && (
+                      <div
+                        aria-hidden="true"
+                        onMouseDown={header.getResizeHandler()}
+                        onTouchStart={header.getResizeHandler()}
+                        className={cn(
+                          "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-brand-tint/50 transition-colors",
+                          header.column.getIsResizing() ? "bg-brand-tint w-1" : "bg-transparent",
+                        )}
+                      />
+                    )}
+                  </div>
+                );
+              }),
             )}
           </div>
 
@@ -716,20 +786,26 @@ export function ResultsGrid({
                   }}
                   className="flex group hover:bg-brand-tint/[0.03] transition-colors border-b border-hairline"
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <div
-                      key={cell.id}
-                      style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
-                      className={cn(
-                        "px-4 py-2 border-r border-hairline text-xs font-mono overflow-hidden group-hover:border-hairline-strong flex shrink-0",
-                        wrapText
-                          ? "whitespace-pre-wrap break-words items-start"
-                          : "h-full whitespace-nowrap items-center",
-                      )}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </div>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const isRowDetail = cell.column.id === detailColumnId;
+                    return (
+                      <div
+                        key={cell.id}
+                        style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                        className={cn(
+                          "py-2 border-r border-hairline text-xs font-mono overflow-hidden group-hover:border-hairline-strong flex shrink-0",
+                          wrapText
+                            ? "whitespace-pre-wrap break-words items-start"
+                            : "h-full whitespace-nowrap items-center",
+                          // Sticky with the header above it, so the control is still
+                          // there once a wide result has been scrolled sideways.
+                          isRowDetail ? "px-1 justify-center sticky left-0 z-10 bg-sunken" : "px-4",
+                        )}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

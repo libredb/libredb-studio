@@ -52,7 +52,13 @@ mock.module("@/components/results-grid/ResultCard", () => ({
 
 mock.module("@/components/results-grid/RowDetailSheet", () => ({
   RowDetailSheet: (props: Record<string, unknown>) =>
-    props.isOpen ? React.createElement("div", { "data-testid": "row-detail-sheet" }, "Row Detail") : null,
+    props.isOpen
+      ? React.createElement(
+          "div",
+          { "data-testid": "row-detail-sheet", "data-row-index": String(props.rowIndex) },
+          "Row Detail",
+        )
+      : null,
 }));
 
 mock.module("@/components/results-grid/StatsBar", () => ({
@@ -1020,8 +1026,9 @@ describe("ResultsGrid", () => {
       const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
 
       expect(getAllByRole("button", { name: "name" })[0].textContent).toBe("name");
-      // No header gains a tooltip it did not have before ("Filter column" is pre-existing).
-      expect(container.querySelectorAll('[title]:not([title="Filter column"])').length).toBe(0);
+      // No header gains a tooltip it did not have before ("Filter column" is pre-existing,
+      // and the row detail control is a row control rather than a header).
+      expect(container.querySelectorAll('[title]:not([title="Filter column"]):not([data-row-detail])').length).toBe(0);
     });
   });
 
@@ -1232,6 +1239,100 @@ describe("ResultsGrid", () => {
 
       fireEvent.click(container.querySelector('button[title="Reveal value (10s)"]')!);
       expectWrapped(container, "alice@example.com");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Row detail on the desktop grid (#800)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Row detail on the desktop grid", () => {
+    // The desktop table is the only place that renders through TanStack columns, so a
+    // control that came from the column list is on the desktop row and nowhere else.
+    function detailControls(container: HTMLElement): HTMLButtonElement[] {
+      return Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-row-detail]"));
+    }
+
+    test("every desktop row carries a control that opens the row detail sheet", () => {
+      const { container, queryByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const controls = detailControls(container);
+      expect(controls.length).toBe(mockResult.rows.length);
+
+      expect(queryByTestId("row-detail-sheet")).toBeNull();
+      fireEvent.click(controls[1]);
+      expect(queryByTestId("row-detail-sheet")).not.toBeNull();
+      expect(queryByTestId("row-detail-sheet")!.getAttribute("data-row-index")).toBe("1");
+    });
+
+    test("the control names the row it opens, so its accessible name is not bare", () => {
+      const { getByRole } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      expect(getByRole("button", { name: "Show row 3 field by field" })).not.toBeNull();
+    });
+
+    test("the control opens the row the reader sees after sorting, not the unsorted one", () => {
+      const { container, getAllByRole, queryByTestId } = render(
+        React.createElement(ResultsGrid, { result: mockResult }),
+      );
+      // Descending on `name` puts Charlie first, so the first control must open row 2.
+      fireEvent.click(getAllByRole("button", { name: "name" })[0]);
+      fireEvent.click(getAllByRole("button", { name: "name, sorted ascending" })[0]);
+      fireEvent.click(detailControls(container)[0]);
+      expect(queryByTestId("row-detail-sheet")!.getAttribute("data-row-index")).toBe("2");
+    });
+
+    /**
+     * The reason this issue existed at all: the vertical view shipped behind `md:hidden`,
+     * so it was absent on exactly the screens that meet a wide table (#800). A breakpoint
+     * class on the control or on the cell holding it would put it back there, and a
+     * narrowed desktop window or a tablet would lose it in silence.
+     */
+    test("no breakpoint hides the control or the cell holding it", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      // Without this the loop below asserts nothing when no control was rendered at all.
+      expect(detailControls(container).length).toBeGreaterThan(0);
+      for (const control of detailControls(container)) {
+        for (let el: HTMLElement | null = control; el !== null; el = el.parentElement) {
+          // The desktop grid's own `hidden md:block` is the boundary, not a finding: below
+          // that width the card and mobile table render, and both already open the sheet.
+          if (el.hasAttribute("data-desktop-grid")) break;
+          const classes = (el.getAttribute("class") ?? "").split(/\s+/);
+          expect(classes.filter((c) => /^(sm|md|lg|xl|2xl):/.test(c) || c === "hidden")).toEqual([]);
+        }
+      }
+    });
+
+    test("the control column cannot be resized, so it keeps its width", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const headers = Array.from(container.querySelectorAll("[data-row-detail-header]"));
+      expect(headers.length).toBe(1);
+      expect(headers[0].querySelector(".cursor-col-resize")).toBeNull();
+      // The field columns keep theirs: the guard is per column, not a removal.
+      expect(container.querySelectorAll(".cursor-col-resize").length).toBe(mockResult.fields.length);
+    });
+
+    /**
+     * `SELECT 1 AS "__libredb_row_detail__"` is legal, and a result set carrying that
+     * column name must still render both it and the control, not one column swallowing
+     * the other.
+     */
+    test("a field named like the control column still gets its own column", () => {
+      const collidingResult: QueryResult = {
+        rows: [{ __libredb_row_detail__: "value", id: 1 }],
+        fields: ["__libredb_row_detail__", "id"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container, getAllByRole } = render(React.createElement(ResultsGrid, { result: collidingResult }));
+      expect(detailControls(container).length).toBe(1);
+      expect(getAllByRole("button", { name: "__libredb_row_detail__" }).length).toBeGreaterThan(0);
+
+      // Two columns under one id is what breaks: the grid keys header and body cells by
+      // the column id, and every cell answering to it is then styled as the control -
+      // the field's own value would be pinned to the left edge in the control's place.
+      const desktop = container.querySelector("[data-desktop-grid]")!;
+      const valueCell = Array.from(desktop.querySelectorAll("span")).find((el) => el.textContent === "value");
+      expect(valueCell).toBeDefined();
+      expect(valueCell!.closest("[style*='width']")!.getAttribute("class")).not.toContain("sticky");
     });
   });
 });
