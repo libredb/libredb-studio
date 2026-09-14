@@ -180,6 +180,17 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * two wrong sentences, and NEITHER IS TRUE: the body was neither malformed by its sender nor
  * absent. A caller reading either one has no way to learn that the fix is to send less.
  *
+ * TWO EVIDENCE CLASSES IN THAT PARAGRAPH, said apart so a later reader does not have to guess.
+ * The CONSTANT and the TRUNCATION are read from the installed dependency and re-checkable with a
+ * grep: `node_modules/next/dist/server/body-streams.js` declares
+ * `DEFAULT_BODY_CLONE_SIZE_LIMIT = 10 * 1024 * 1024`, and over it `cloneBodyStream` sets
+ * `limitExceeded`, pushes `null` into both streams and logs a `console.warn`, which ENDS the body
+ * early rather than failing the request. `next-server.js` installs that clone on every
+ * non-upgrade request, with `experimental.proxyClientMaxBodySize` as the only override. The two
+ * HTTP SENTENCES are a live measurement made earlier in this phase against a running server, not
+ * something this file re-ran, and they are recorded here because they are the reason the function
+ * exists.
+ *
  * THE ARITHMETIC, done here rather than asserted, because the three numbers only make sense
  * together. One part is bounded at `SOURCE_CHARACTER_LIMIT`, 1,000,000 UTF-16 code units. That is
  * up to 4 MB encoded as UTF-8, because one code unit encodes to at most three UTF-8 bytes and a
