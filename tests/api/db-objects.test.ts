@@ -117,10 +117,22 @@ const describeRoute = await import("@/app/api/db/objects/describe/route");
 const searchRoute = await import("@/app/api/db/objects/search/route");
 const inventoryRoute = await import("@/app/api/db/objects/inventory/route");
 const sourceRoute = await import("@/app/api/db/objects/source/route");
+const editPlanRoute = await import("@/app/api/db/objects/edit-plan/route");
+const editApplyRoute = await import("@/app/api/db/objects/edit-apply/route");
 
 /**
- * The seven handlers KEYED BY THE DIRECTORY each one lives in, so the census can be checked
+ * The NINE handlers KEYED BY THE DIRECTORY each one lives in, so the census can be checked
  * against `src/app/api/db/objects/` rather than against itself.
+ *
+ * SEVEN became NINE with #789 Phase 3's two edit routes, and the numeral moved WITH ITS BASIS
+ * rather than as a bare digit: the basis is the route directories under
+ * `src/app/api/db/objects/`, which is what the test below reads from disk, and
+ * `src/lib/api/rate-limit.ts` and `src/lib/api/object-route.ts` carry the same census and moved
+ * with it. A numeral left behind by its basis is this epic's stale-numeral defect.
+ *
+ * The two are FLAT SIBLINGS and never `objects/edit/plan`. A nested pair would leave `edit/` with
+ * no `route.ts`, the enumeration below would filter it out, and two new provider-reaching routes
+ * would be uncensused and unasserted for the 401 path while this census kept passing.
  */
 const objectRoutes: Record<string, { POST: (req: never) => Promise<Response> }> = {
   containers: containersRoute,
@@ -130,6 +142,8 @@ const objectRoutes: Record<string, { POST: (req: never) => Promise<Response> }> 
   search: searchRoute,
   inventory: inventoryRoute,
   source: sourceRoute,
+  "edit-plan": editPlanRoute,
+  "edit-apply": editApplyRoute,
 };
 
 const OBJECT_ROUTE_DIR = path.resolve(import.meta.dir, "../..", "src/app/api/db/objects");
