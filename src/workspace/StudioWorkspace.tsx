@@ -235,6 +235,17 @@ export function StudioWorkspace({
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   // ADDRESSES, not labels, for the reason `src/components/Studio.tsx` gives at the same
   // three lines: a label is not unique within a connection (#789, Task 35).
+  /**
+   * How many catalog-changing statements THIS SHELL has run (#789 Phase 3, discussion #778).
+   *
+   * A counter this shell owns, and it counts exactly one thing: an object apply that this
+   * workspace issued and that came back applied. It is deliberately NOT moved by anything the
+   * host ran through `onQueryExecute`, because nothing reports back what those statements
+   * changed, which is the same absence `refreshToken={0}` used to state by being a constant.
+   *
+   * See the mount below for what a reader is told as a result, and what they are not.
+   */
+  const [objectRefreshToken, setObjectRefreshToken] = useState(0);
   const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
   const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
   const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
@@ -366,12 +377,17 @@ export function StudioWorkspace({
    * a host handing a new reader object on a render is not a reason to throw a real definition
    * away; what it must not become is an editor with a Run button, and it does not.
    *
-   * THE ONE PATH THIS DOES NOT COVER, named here because a later change would open it: a tab
-   * holding a document whose state is CLEARED while the host declares no reader would issue the
-   * read. The only control that clears one is the viewer's stale banner, and this shell passes a
-   * hardcoded `refreshToken={0}` below, so nothing here is ever marked stale and the banner is
-   * never drawn. A shell that starts counting DDL has to hand this conjunction a reader that
-   * refuses, or the read goes to a route this package does not ship.
+   * THE PATH THIS COVERS THAT NOTHING USED TO REACH, and it is now the second load-bearing
+   * reason for the conjunction rather than a note about a later change: a tab holding a document
+   * whose state is CLEARED while the host declares no reader would send the viewer's default
+   * `httpSourceReader` at `/api/db/objects/source`, which this package does not ship. The only
+   * control that clears one is the viewer's stale banner, and until this phase this shell passed
+   * a hardcoded `refreshToken={0}`, so nothing was ever marked stale and the banner was never
+   * drawn. It counts its OWN applies now, so the banner is reachable and so is its control. What
+   * makes the clear safe is that this failure is non-undefined in the SAME render: `needsRead` in
+   * `ObjectSourceView` is `document === undefined && failure === undefined`, so no read is issued
+   * at all and the pane refuses instead. `tests/components/studio/embedded-source.test.tsx`
+   * drives clear-then-withdraw and asserts that not one request left this shell.
    */
   const sourceFailure =
     sourceTab?.failure ??
@@ -427,6 +443,25 @@ export function StudioWorkspace({
     },
     [setTabs, activeTabId],
   );
+
+  /**
+   * What this shell does after an apply that CHANGED the addressed object (#789 Phase 3).
+   *
+   * IT MOVES ITS OWN COUNTER AND CLEARS NOTHING, which is where it parts company with
+   * `src/components/Studio.tsx`, and the difference is a fact about this shell rather than a
+   * simplification. The standalone shell clears the tab in the same commit, so the tab that
+   * applied re-reads immediately and is never marked stale; here the RE-READ IS THE READER'S,
+   * through the stale banner's own control. The reason is the host: this shell's read goes out
+   * through `readObjectSource`, a host may withdraw that method between the apply and the read,
+   * and an automatic clear would then leave a tab with no document, no failure and no reader,
+   * which is the one state that would send the viewer's default reader at a route this package
+   * does not ship. `sourceFailure` above closes that door in the same render, and the banner
+   * makes the re-read a gesture a person takes with the pane's own text still on screen.
+   *
+   * The DRAFT is not dropped here either. The pane drops it itself, keyed on the part its plan
+   * was built for, which is a key this shell does not hold and must not guess.
+   */
+  const handleApplied = useCallback(() => setObjectRefreshToken((previous) => previous + 1), []);
 
   /**
    * The row menu's actions in THIS shell, which is four of the six (U22, #789).
@@ -644,18 +679,44 @@ export function StudioWorkspace({
                               failure={sourceFailure}
                               activePartId={sourceTab.activePartId}
                               /*
-                                A DECISION and not a stub. The standalone shell passes a
-                                catalog-change counter it increments whenever something it ran
-                                changed the catalog; this shell counts no DDL, because every
-                                statement goes out through the host's `onQueryExecute` and nothing
-                                reports back what it changed. Zero is a real token rather than a
-                                missing one: the viewer marks a tab stale when the token has MOVED
-                                since the read, so a constant says "this shell has no such fact"
-                                and a Source tab here is never marked stale.
+                                A COUNTER THIS SHELL OWNS, and it counts exactly one thing: an
+                                object apply this workspace issued that came back applied (#789
+                                Phase 3). It was the constant zero until this phase, and that was
+                                a DECISION and not a stub: the standalone shell increments a
+                                catalog-change counter for everything it runs, and this shell runs
+                                nothing, because every statement goes out through the host's
+                                `onQueryExecute` and nothing reports back what it changed.
+
+                                An apply breaks that premise and only that premise, because an
+                                apply THIS shell issues IS a DDL this shell knows about. So the
+                                original sentence still holds for everything else and is kept
+                                rather than replaced: this counter STILL cannot see a DDL the host
+                                ran through `onQueryExecute`. A stale banner here therefore means
+                                "this workspace changed something" and its absence NEVER means
+                                "nothing changed".
                               */
-                              refreshToken={0}
+                              refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}
                               reader={conn.sourceReader}
+                              editingPartId={sourceTab.editingPartId}
+                              dirty={sourceTab.dirty}
+                              /*
+                                WHO performs the apply, and `undefined` for a host that declared
+                                no `objectEditor` (#789 Phase 3, discussion #778). Withholding it
+                                is what keeps an existing adopter unchanged: with no `onApply` the
+                                pane is exactly Phase 2, no bar and no sentence.
+
+                                NOTHING HERE CONSULTS `conn.metadata.capabilities` for the edit
+                                gate, and on this shell that matters more than on the standalone
+                                one: this shell's declaration is the HOST's own, per connection,
+                                and nothing type-checks a host. MEASURED with a stub host during
+                                this phase's browser probe: the host declared `package`, the shell
+                                drew a `Packages 1` folder for it, and the connected MariaDB had
+                                no such thing. The affordance travels with the READ instead, on
+                                the part, from whoever answered it.
+                              */
+                              onApply={conn.sourceApplier}
+                              onApplied={handleApplied}
                               onChange={onSourceChange}
                             />
                           </div>

@@ -5,9 +5,102 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ObjectSource } from "@/components/object-tree";
-import type { ObjectSourceReader } from "@/components/object-source";
+import type { ObjectSourceApplier, ObjectSourceReader } from "@/components/object-source";
+import { EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
+import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import { useReadGeneration } from "@/hooks/use-read-generation";
 import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
+
+/**
+ * The largest host answer this shell will read, in UTF-16 code units, and the arithmetic behind
+ * every term of it (#789 Phase 3, from discussion #778).
+ *
+ * WHY THIS EXISTS HERE AND NOWHERE ELSE. `src/lib/api/object-edit-wire.ts` bounds no string in any
+ * of its four shape predicates, and it does not because its brief specified none. On the
+ * STANDALONE shell that is covered: every value the pane renders came back from one of this
+ * application's own two routes, which bound what they answer. On THIS shell there is no route at
+ * all. A host's build answer is a plain JavaScript object an adopter constructed, it reaches
+ * `ApplyPreviewDialog`, and the dialog bounds exactly one of the strings in it, the plan's
+ * executable text, which it refuses to draw a diff above. Every other host-supplied string in a
+ * plan or an outcome, `refusal.sentence`, `refusal.hint`, `revision.reason` and each consequence's
+ * `fact.observed`, is rendered verbatim into an element with nothing in front of it. Phase 2's
+ * `isSourceDocumentShape` bounds its three host-supplied strings with `SOURCE_CHARACTER_LIMIT` for
+ * this reason, MEASURED: a part carrying a five-million-character truncation reason passed that
+ * predicate before the bound was added, and the whole of it reached a `div`.
+ *
+ * THE NUMBER, derived from two constants this repository already publishes rather than picked:
+ * - `EDIT_PLAN_EXECUTABLE_LIMIT` (1,200,000) is the whole executable text of a plan.
+ * - A plan carries that text a second time at most: a step's `provider` segments hold their own
+ *   framing text, while its `user` segments are offsets and hold none, so the segments cannot
+ *   exceed the step text they describe. Hence the factor of two.
+ * - `SOURCE_CHARACTER_LIMIT` (1,000,000) is one part's text as a READ may answer it, which bounds
+ *   the build's `preimage.text` and a conflict outcome's `current.text`. Neither answer carries
+ *   both, and the sum takes both anyway.
+ * So the largest LEGITIMATE answer either method can produce is about 3,400,000 characters and
+ * this bound is 4,400,000, which leaves a million characters for identifiers, sentences and keys.
+ *
+ * What it costs, stated as a cost: a host that answers a well-formed plan above this size has its
+ * apply refused, with a sentence, on a shell where nothing else would have stopped it.
+ */
+const EMBEDDED_ANSWER_CHARACTER_LIMIT = EDIT_PLAN_EXECUTABLE_LIMIT * 2 + SOURCE_CHARACTER_LIMIT * 2;
+
+/** OURS, and it says nothing was sent, because a build refusal happens before any apply. */
+const UNREADABLE_BUILD_ANSWER =
+  "The host answered the apply preview with more text than LibreDB can read, so nothing was previewed and nothing was sent.";
+
+/**
+ * OURS, and it deliberately does NOT say the apply failed. The apply was sent, the host answered,
+ * and the answer could not be read, so the only honest sentence is that we cannot say. The pane
+ * renders a rejection from `apply` as `interrupted` with `committed: "unknown"`, which is the
+ * same fact in the outcome vocabulary.
+ */
+const UNREADABLE_APPLY_ANSWER =
+  "The apply was sent and the host answered with more text than LibreDB can read, so LibreDB cannot say whether this change landed. Re-read this definition before trying again.";
+
+/**
+ * How many characters of the budget are LEFT after walking `value`, stopping as soon as it is gone.
+ *
+ * A walk rather than `JSON.stringify(value).length`, for three measured reasons and not for speed
+ * alone. `JSON.stringify` allocates a second copy of the very object whose size is in question,
+ * which is the hazard rather than the measurement of it; it answers `undefined` rather than a
+ * string for an undefined input, so the length read would throw; and it honours a `toJSON` method,
+ * so a host object could answer a short string for itself and pass a bound its real strings do
+ * not. This counts what a renderer would meet: every string, and every key that leads to one.
+ *
+ * `seen` makes a cycle terminate rather than counting for ever. A cycle is not refused: it is
+ * counted once and walked no further, because a plan carrying the same consequence object twice is
+ * a host quirk and not an attack, and the shape predicates downstream refuse anything malformed.
+ *
+ * A pathologically DEEP host answer overflows the stack here rather than being counted. That is a
+ * RangeError inside the `async` wrapper above, so it becomes a rejected promise and a visible
+ * failed build or failed apply, which is the same outcome as an overrun and never a page-level
+ * throw.
+ */
+function charactersLeft(value: unknown, budget: number, seen: Set<object>): number {
+  if (typeof value === "string") return budget - value.length;
+  if (typeof value !== "object" || value === null) return budget;
+  if (seen.has(value)) return budget;
+  seen.add(value);
+  let left = budget;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (left < 0) return left;
+      left = charactersLeft(item, left, seen);
+    }
+    return left;
+  }
+  for (const [key, held] of Object.entries(value as Record<string, unknown>)) {
+    if (left < 0) return left;
+    left = charactersLeft(held, left - key.length, seen);
+  }
+  return left;
+}
+
+/** The host's answer, or a THROW carrying `sentence`, which both seams turn into a visible failure. */
+function withinAnswerBound(answer: unknown, sentence: string): unknown {
+  if (charactersLeft(answer, EMBEDDED_ANSWER_CHARACTER_LIMIT, new Set()) < 0) throw new Error(sentence);
+  return answer;
+}
 
 interface UseConnectionAdapterParams {
   connections: WorkspaceConnection[];
@@ -206,6 +299,48 @@ export function useConnectionAdapter({
     return async (conn, path, kind) => read(conn.id, path, kind);
   }, [onObjectsFetch]);
 
+  /**
+   * The APPLY seam, built beside `sourceReader` and for all of its reasons (#789 Phase 3).
+   *
+   * `undefined` when the host declared no `objectEditor`, which is what withholds `onApply` from
+   * the pane, which is what leaves an existing adopter's Source tab exactly as Phase 2 shipped it:
+   * no bar, no sentence, no draft. The absent-affordance rule the read seam states, applied to a
+   * seam that WRITES, where it matters more.
+   *
+   * BOUND, on both methods, and that is not a style choice. `const { build } = host.objectEditor`
+   * followed by `build(...)` calls with no receiver, so an adopter whose `build` reaches
+   * `this.clients[id]` gets a TypeError instead of a plan. The read seam's docblock above records
+   * the same fault for a provider, and this is the same fault on the other direction of travel.
+   *
+   * `async` IS LOAD-BEARING, exactly as it is on `sourceReader`, and the measurement behind it is
+   * the read seam's: a host that threw before returning gave an uncaught `Error` and a host that
+   * returned `undefined` gave `TypeError: undefined is not an object (evaluating '...then')`.
+   * `ObjectSourceView` calls both of these methods with `.then(onValue, onError)` and no `try`, so
+   * without the wrapper the first is a throw inside a click handler and the second is a TypeError
+   * at the same place. With it, the first is a rejection the pane reports as a failed build or a
+   * failed apply, and the second is a resolved non-answer the pane's own shape narrowing refuses.
+   *
+   * WHAT THIS SEAM DOES NOT DO is narrow the host's answer to `ObjectEditBuild` or
+   * `ObjectEditOutcome`. `ObjectSourceApplier` returns `unknown` on both methods and
+   * `ObjectSourceView` narrows with `isObjectEditBuildResponseShape` and
+   * `isObjectEditOutcomeShape` before it draws anything, so a second copy of those predicates here
+   * would be a second implementation of one boundary, on one of the two shells. The size bound
+   * above is here rather than there because it is the EMBEDDED path's own hazard: on the
+   * standalone path the two routes bound what they answer, and on this one there is no route.
+   */
+  const sourceApplier = useMemo<ObjectSourceApplier | undefined>(() => {
+    const editor = onObjectsFetch.objectEditor;
+    if (editor === undefined) return undefined;
+    return {
+      async build(connection, request) {
+        return withinAnswerBound(await editor.build(connection.id, request), UNREADABLE_BUILD_ANSWER);
+      },
+      async apply(connection, plan, _planToken, acknowledged) {
+        return withinAnswerBound(await editor.apply(connection.id, plan, acknowledged), UNREADABLE_APPLY_ANSWER);
+      },
+    };
+  }, [onObjectsFetch]);
+
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
   // The embedded shell's stand-in for `useProviderMetadata`: it has no
@@ -241,6 +376,8 @@ export function useConnectionAdapter({
     objectSource,
     /** The host's own source read, or `undefined` where it declared none. */
     sourceReader,
+    /** The host's own object editor, or `undefined` where it declared none. */
+    sourceApplier,
     schemaContext,
   };
 }

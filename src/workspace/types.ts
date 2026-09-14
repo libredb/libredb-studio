@@ -5,6 +5,11 @@ import type {
   Container,
   DatabaseObject,
   KindCount,
+  ObjectEditBuild,
+  ObjectEditConsequenceClass,
+  ObjectEditOutcome,
+  ObjectEditPlan,
+  ObjectEditRequest,
   ObjectSourceDocument,
   ProviderCapabilities,
   ProviderLabels,
@@ -121,6 +126,39 @@ export interface WorkspaceObjectReader {
    * tab. See `sourceReader` in `src/workspace/hooks/use-connection-adapter.ts`.
    */
   readObjectSource?(connectionId: string, path: readonly string[], kind: string): Promise<ObjectSourceDocument>;
+  /**
+   * The host's own editor, if it has one (#789 Phase 3, from discussion #778).
+   *
+   * ONE optional property holding TWO REQUIRED methods, and not two optional methods, because
+   * nothing type-checks a host: two optionals admit a host that previews and cannot apply, which
+   * is a mandatory preview with no apply behind it. An absent editor is an absent affordance and
+   * never an error, exactly as `readObjectSource`'s absence is, so an existing adopter who does
+   * nothing sees the workspace exactly as it is today.
+   *
+   * The adapter calls both methods BOUND to the `objectEditor` object, for the reason
+   * `readObjectSource`'s docblock already records for a provider: a method read off an object as
+   * a value and called with no receiver loses whatever it reaches through `this`.
+   *
+   * The binding between the host's preview and the host's apply is the HOST's own; this server's
+   * plan token does not exist here and is not asked for. That is also why `build` answers
+   * `ObjectEditBuild` and not the route's own response type: a host holds no key to seal a plan
+   * with, so there is no token on this path.
+   *
+   * What the seam DOES check is shape: a plan that is not a plan, an outcome that is not an
+   * outcome, a method that throws before returning, or a method that returns a non-thenable, is
+   * turned into a FAILED apply by the adapter and by the pane's own narrowing rather than into a
+   * render-phase throw that takes the adopter's whole page down. See `sourceApplier` in
+   * `src/workspace/hooks/use-connection-adapter.ts` for the wrapper and the bound call, and
+   * `tests/components/studio/embedded-source.test.tsx` for the shapes that are driven.
+   */
+  readonly objectEditor?: {
+    build(connectionId: string, request: ObjectEditRequest): Promise<ObjectEditBuild>;
+    apply(
+      connectionId: string,
+      plan: ObjectEditPlan,
+      acknowledged: readonly ObjectEditConsequenceClass[],
+    ): Promise<ObjectEditOutcome>;
+  };
 }
 
 // === User (platform → studio) ===
