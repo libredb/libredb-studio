@@ -814,22 +814,47 @@ const SOURCE_PART_ID = "definition";
  * The engine's own rendering of the routine's HEADER, which is what identity is compared on
  * (#789 Phase 3).
  *
- * Everything up to and including the FIRST `)` and no parser, and that is exact rather than
- * approximate for one reason: both sides of the comparison are `pg_get_functiondef` output,
- * because the reader started from it and the build re-read it. So the question is never "does
- * this parse to the same signature", it is "are these the same bytes the engine wrote", and a
- * byte comparison answers it.
+ * Everything up to and including the parenthesis that CLOSES THE PARAMETER LIST, found by a scan
+ * that counts nesting and skips both kinds of quoted text, and no parser beyond that. The
+ * comparison itself stays a byte comparison and that is exact rather than approximate for one
+ * reason: both sides are `pg_get_functiondef` output, because the reader started from it and the
+ * build re-read it. So the question is never "does this parse to the same signature", it is "are
+ * these the same bytes the engine wrote".
  *
  * MEASURED on PostgreSQL 18.4 why the identity has to be refused at all: a `CREATE OR REPLACE
  * FUNCTION` with a changed argument type is a SILENT SUCCESS that creates a SECOND `pg_proc` row
  * and leaves the original untouched, after which every call site fails `42725 is not unique`.
  *
- * THE LIMIT IN THE FALSE-ACCEPT DIRECTION: a parameter DEFAULT holding a `)` inside a string
- * literal cuts the header early, identically on both sides, so a change AFTER that `)` passes this
- * check. That case is caught one layer down and deliberately: the emitted unit's post-condition
- * raises `LB003` when the addressed ROW was not rewritten, inside the same implicit transaction,
- * so a fork is detected AND rolled back. This function is the first line and the post-condition is
- * the control on it.
+ * WHY IT IS NOT `indexOf(")")`, which is what it was until the second external review of PR #831
+ * found it. The first `)` is not the header's own whenever anything before the parameter list
+ * closes carries one, and MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) four ordinary
+ * shapes do: a parameter DEFAULT holding a call, rendered `DEFAULT abs('-1'::integer)`; a DEFAULT
+ * holding a `)` inside a string literal, rendered `DEFAULT ')'::text`; a quoted function NAME, as
+ * in `app."we)ird"(a integer, b integer)`; and a quoted PARAMETER name, as in
+ * `app.pn("a)b" integer, c integer)`. Everything after that early cut was uncompared, so a change
+ * to a LATER parameter passed the check that exists to stop it. MEASURED through this provider on
+ * 2026-09-14: the build ACCEPTED `b integer DEFAULT 2` -> `b bigint DEFAULT 2` on `app.dc` and
+ * sealed a plan for it, and the apply then answered `applied-elsewhere` with `undone: true`,
+ * because the post-condition found the addressed row unrewritten and rolled the unit back.
+ *
+ * WHAT THE PARAMETER TYPE MODIFIERS DO, which is the case a reader expects to be the dangerous one
+ * and is not: `pg_get_functiondef` renders parameter types through `format_type(t, NULL)` and the
+ * modifier is DROPPED. MEASURED on 18.4, a function declared
+ * `(a numeric(10,2), b varchar(9), c char(5), d time(3), e timestamp(3), f decimal(8,4),
+ * g interval hour to second(2), h bit(4))` renders as
+ * `(a numeric, b character varying, c character, d time without time zone,
+ * e timestamp without time zone, f numeric, g interval, h bit)`, with no parenthesis left in it.
+ * So a typmod can only ever reach this comparison from the text the READER submitted.
+ *
+ * WHY THE SCAN CANNOT FALSE-ACCEPT even where it parses the submitted text wrongly, which it will
+ * for a shape `pg_get_functiondef` never renders, a dollar-quoted DEFAULT being the one to expect:
+ * the CURRENT text is always the engine's own rendering and is cut at the right place, so an
+ * accept requires the submitted cut to produce those exact bytes, and any mis-cut of the submitted
+ * text produces different ones and refuses. The error is one-directional by construction.
+ *
+ * WHEN THE SCAN FINDS NO CLOSING PARENTHESIS AT ALL it answers the whole text, which is the
+ * behaviour the `indexOf` reading had for the same case. A submitted text with no closed parameter
+ * list is SQL no engine will take, and it is refused here rather than sent.
  *
  * THE LIMIT IN THE FALSE-REFUSE DIRECTION, which the wave 5 review MEASURED and which this
  * function cannot close: `pg_get_functiondef` renders parameter DEFAULTS inside this header, and a
@@ -839,13 +864,39 @@ const SOURCE_PART_ID = "definition";
  * `DEFAULT 2`. So this refusal REFUSES an edit PostgreSQL would have performed. It stays refused
  * rather than parsed apart, because telling a changed DEFAULT from a changed argument list inside
  * the rendered header needs a parser for the header and this design has none: to a byte comparison
- * they are the same bytes. What the refusal must NOT do is state a fork it cannot know, which is
- * what its sentence did until this measurement, and `docs/providers/postgres.md` carries both
- * directions of the limit.
+ * they are the same bytes. A parameter RENAME and a parameter typmod the reader adds are in that
+ * same class, both MEASURED on 18.4 as in-place replaces: adding `numeric(10,2)` to a parameter
+ * already rendered `numeric` left `oid = 16385` with `xmin` moving 754 -> 779. What the refusal
+ * must NOT do is state a fork it cannot know, which is what its sentence did until the wave 5
+ * measurement, and `docs/providers/postgres.md` carries both directions of the limit.
+ *
+ * WHY THIS IS A SECOND SCANNER AND NOT A SHARED ONE with `trinoFunctionSegmentParts`, which counts
+ * nesting and quotes for the same reason: the two scans differ in every dimension that would have
+ * to agree. That one runs RIGHT TO LEFT over a bounded path segment that is known to end in `)`
+ * and splits it into a name and an argument list; this one runs LEFT TO RIGHT over an unbounded
+ * document to find where a prefix ends. That one toggles on `"` only, because a Trino type list
+ * has no other quote; this one has to toggle on `'` as well, because PostgreSQL renders parameter
+ * DEFAULTS as string literals inside the text it scans. A shared helper would take a direction, an
+ * alphabet and a return shape as parameters and would be longer than both of its callers.
  */
 function routineIdentityHeader(text: string): string {
-  const close = text.indexOf(")");
-  return close < 0 ? text : text.slice(0, close + 1);
+  let depth = 0;
+  let single = false;
+  let double = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    // A doubled quote is PostgreSQL's escape for both kinds and it needs no arm of its own: it
+    // toggles the flag twice, which leaves it where it started.
+    if (character === "'" && !double) single = !single;
+    else if (character === '"' && !single) double = !double;
+    else if (single || double) continue;
+    else if (character === "(") depth += 1;
+    else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return text.slice(0, index + 1);
+    }
+  }
+  return text;
 }
 
 /**

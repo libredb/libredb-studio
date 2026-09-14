@@ -5540,6 +5540,202 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         await provider.disconnect();
       });
     });
+
+    /**
+     * THE HEADER'S REAL CLOSING PARENTHESIS, and the population that has one anywhere but at the
+     * first `)` (#789 Phase 3, task 31, the second external review of PR #831).
+     *
+     * The identity check compares the rendered HEADER of the submitted text against the rendered
+     * header of the server's current definition, and it took the FIRST `)` as the end of that
+     * header. Everything after that `)` was then not compared at all, so a change to a LATER
+     * parameter passed the check that exists to stop exactly that change.
+     *
+     * WHY IT MATTERS, MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through this provider
+     * on 2026-09-14 against `app.dc` below: the build ACCEPTED
+     * `b integer DEFAULT 2` -> `b bigint DEFAULT 2` and sealed a plan for it, and the apply then
+     * answered `{"outcome":"applied-elsewhere","undone":true}` because the post-condition found
+     * the addressed row unrewritten and rolled the whole unit back. So the second line held and
+     * nothing was lost, and what the reader got instead of the actionable identity sentence was a
+     * write round trip and a sentence about an object changing elsewhere, which is not what
+     * happened. The same edit outside the guarded unit is the measured silent fork: run bare
+     * against 18.4 it left TWO `pg_proc` rows, oid 16385 `amount numeric, factor integer` and oid
+     * 16386 `amount numeric, factor bigint`.
+     *
+     * THE POPULATION IS MEASURED AND NOT ASSUMED, and the brief's headline case is NOT in it.
+     * A parameter TYPE MODIFIER never reaches this header: `pg_get_functiondef` renders parameter
+     * types through `format_type(t, NULL)`, so
+     * `app.tm(a numeric(10,2), b varchar(9), c char(5), d time(3), e timestamp(3), f decimal(8,4),
+     * g interval hour to second(2), h bit(4))` was rendered
+     * `app.tm(a numeric, b character varying, c character, d time without time zone,
+     * e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
+     * What DOES carry a parenthesis before the parameter list closes, all five measured on 18.4 by
+     * creating the object and reading `pg_get_functiondef` back:
+     *
+     *     CREATE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 2) ...
+     *     CREATE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1) ...
+     *     CREATE FUNCTION app.dp(a text DEFAULT '(', b integer DEFAULT 1) ...
+     *     CREATE FUNCTION app."we)ird"(a integer, b integer) ...
+     *     CREATE FUNCTION app.pn("a)b" integer, c integer) ...
+     *
+     * A DEFAULT holding a call, a DEFAULT holding either parenthesis inside a string literal, a
+     * quoted function NAME holding one and a quoted PARAMETER name holding one. All five are
+     * ordinary PostgreSQL and none of them is hypothetical: the renderings below are the bytes the
+     * server answered, and each `revision` is the `md5(pg_get_functiondef(oid))` it answered for
+     * exactly those bytes, asserted rather than described by the first test under this block.
+     *
+     * `app.np()`, a function with no parameters at all, is the case where the first `)` IS the
+     * right one, and it is here so that the fix is measured to leave it alone.
+     */
+    const PAREN_HEADER_FIXTURES = [
+      {
+        object: "app.dc(integer,integer)",
+        path: ["app", "dc(integer,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs('-1'::integer), b integer DEFAULT 2)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "550d4047cff301bdfc3d052679226420",
+        forked: ["b integer DEFAULT 2", "b bigint DEFAULT 2"],
+        hidesTheChange: true,
+        carries: "a DEFAULT holding a function call",
+      },
+      {
+        object: "app.dl(text,integer)",
+        path: ["app", "dl(text,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')'::text, b integer DEFAULT 1)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "0c7937f7060d7bc0c2a583af49227203",
+        forked: ["b integer DEFAULT 1", "b bigint DEFAULT 1"],
+        hidesTheChange: true,
+        carries: "a closing parenthesis inside a DEFAULT string literal",
+      },
+      {
+        object: "app.dp(text,integer)",
+        path: ["app", "dp(text,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.dp(a text DEFAULT '('::text, b integer DEFAULT 1)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "78a2abb082795267b2cff7738d6cbd6c",
+        forked: ["b integer DEFAULT 1", "b bigint DEFAULT 1"],
+        hidesTheChange: false,
+        carries: "an OPENING parenthesis inside a DEFAULT string literal",
+      },
+      {
+        object: 'app."we)ird"(integer,integer)',
+        path: ["app", "we)ird(integer,integer)"],
+        definition:
+          'CREATE OR REPLACE FUNCTION app."we)ird"(a integer, b integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n',
+        revision: "ca7bc8f5489f6819f4e9b3c656b3e5d8",
+        forked: ["b integer", "b bigint"],
+        hidesTheChange: true,
+        carries: "a closing parenthesis inside the QUOTED FUNCTION NAME",
+      },
+      {
+        object: "app.pn(integer,integer)",
+        path: ["app", "pn(integer,integer)"],
+        definition:
+          'CREATE OR REPLACE FUNCTION app.pn("a)b" integer, c integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n',
+        revision: "30876101726d9d0bd1bbbf8cf8b04fba",
+        forked: ["c integer", "c bigint"],
+        hidesTheChange: true,
+        carries: "a closing parenthesis inside a QUOTED PARAMETER NAME",
+      },
+    ] as const;
+
+    /** `app.np()`, the control: the first `)` is the header's own, and nothing may change for it. */
+    const NO_PARAMETER_FIXTURE = {
+      path: ["app", "np()"],
+      definition:
+        "CREATE OR REPLACE FUNCTION app.np()\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+      revision: "a5526222ec78b46798cc940a1176ecc5",
+    } as const;
+
+    describe("the identity header's real closing parenthesis", () => {
+      function rowFor(definition: string, revision: string) {
+        return { ...ROUTINE_ROW, definition, revision };
+      }
+
+      async function buildAgainst(
+        fixture: { path: readonly string[]; definition: string; revision: string },
+        text: string,
+      ) {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [rowFor(fixture.definition, fixture.revision)] });
+        const build = await provider.buildObjectEdit({
+          path: [...fixture.path],
+          kind: "function",
+          partId: "definition",
+          text,
+        });
+        await provider.disconnect();
+        return build;
+      }
+
+      test("every fixture's revision IS the md5 of its definition, and the population is the measured five", () => {
+        // The population is asserted BEFORE it is looped over, because a loop over an empty or a
+        // shortened list certifies nothing and this epic has shipped that defect six times.
+        expect(PAREN_HEADER_FIXTURES.length).toBe(5);
+        for (const fixture of PAREN_HEADER_FIXTURES) {
+          expect(createHash("md5").update(fixture.definition).digest("hex")).toBe(fixture.revision);
+        }
+        expect(createHash("md5").update(NO_PARAMETER_FIXTURE.definition).digest("hex")).toBe(
+          NO_PARAMETER_FIXTURE.revision,
+        );
+      });
+
+      for (const fixture of PAREN_HEADER_FIXTURES) {
+        test(`a LATER argument type change is refused when the header carries ${fixture.carries}`, async () => {
+          const [from, to] = fixture.forked;
+          const forked = fixture.definition.replace(from, to);
+          expect(forked).not.toBe(fixture.definition);
+          // WHICH of these the first-`)` reading actually false-accepted, asserted per fixture
+          // rather than assumed for all five: the change is hidden from it only when it falls
+          // after the first `)`, and `app.dp` carries an OPENING parenthesis in its literal, so
+          // its first `)` is still the header's own and the old reading refused it correctly.
+          // That fixture is here for the depth counter instead: count the `(` inside the literal
+          // and the scan runs past the header's own `)`, which its body-edit test below catches.
+          expect(forked.indexOf(to) > fixture.definition.indexOf(")")).toBe(fixture.hidesTheChange);
+          const build = await buildAgainst(fixture, forked);
+          if (build.built) throw new Error(`expected a refusal for ${fixture.object}`);
+          expect(build.refusal.refusal).toBe("identity");
+          // BOTH headers are in the sentence, and both are the WHOLE header rather than a prefix
+          // of it, so the reader can see which argument list is which.
+          expect(build.refusal.sentence).toContain(forked.split("\n")[0]);
+          expect(build.refusal.sentence).toContain(fixture.definition.split("\n")[0]);
+        });
+
+        test(`an ordinary BODY edit is still built when the header carries ${fixture.carries}`, async () => {
+          // The other half of the defect: a fix that refused a header it could not parse would
+          // refuse every reader whose function has a DEFAULT, which is ordinary SQL.
+          const build = await buildAgainst(fixture, fixture.definition.replace("SELECT 1", "SELECT 2"));
+          if (!build.built) throw new Error(`expected a plan for ${fixture.object}: ${build.refusal.sentence}`);
+          expect(build.plan.path).toEqual([...fixture.path]);
+        });
+      }
+
+      test("a function with NO parameters compares its whole header, and its body edit still builds", async () => {
+        const built = await buildAgainst(
+          NO_PARAMETER_FIXTURE,
+          NO_PARAMETER_FIXTURE.definition.replace("SELECT 1", "SELECT 2"),
+        );
+        if (!built.built) throw new Error(`expected a plan: ${built.refusal.sentence}`);
+        const renamed = await buildAgainst(
+          NO_PARAMETER_FIXTURE,
+          NO_PARAMETER_FIXTURE.definition.replace("app.np()", "app.np_v2()"),
+        );
+        if (renamed.built) throw new Error("expected a refusal");
+        expect(renamed.refusal.refusal).toBe("identity");
+        expect(renamed.refusal.sentence).toContain("app.np_v2()");
+      });
+
+      test("a submitted text whose parameter list never closes is refused, not compared as a prefix", async () => {
+        // The scan's no-answer arm. A reader who deletes the closing parenthesis has written SQL
+        // no engine will take, and the whole text is then the header: it differs from the server's
+        // header, so it is refused here rather than sent.
+        const fixture = PAREN_HEADER_FIXTURES[0];
+        const truncated = fixture.definition.replaceAll(")", "");
+        const build = await buildAgainst(fixture, truncated);
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+      });
+    });
   });
 
   describe("applyObjectEdit", () => {
