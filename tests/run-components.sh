@@ -33,7 +33,7 @@ FAIL=0
 # stale a fourth time by naming a DIGIT for the current value, which is the one thing
 # here that cannot stay true: the value is whatever that grep prints, never a number
 # written in prose.
-TOTAL_GROUPS=44
+TOTAL_GROUPS=45
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -418,6 +418,13 @@ run_group "Group 28: Studio source tab" \
 # to capture the bottom panel's props.
 run_group "Group 29: Embedded workspace source tab" \
   tests/components/studio/embedded-source.test.tsx
+
+# Group 30: The apply preview dialog (#789 Phase 3). Its own group for Group 27's reason: it
+# installs a process-wide @monaco-editor/react double, and Groups 15, 27, 28 and 29 each install a
+# different one. It doubles `DiffEditor` rather than `Editor`, which is a different export of the
+# same module, so sharing a process with any of them would hand one suite the other's editor.
+run_group "Group 30: Apply preview dialog" \
+  tests/components/object-source/ApplyPreviewDialog.test.tsx
 
 # Summary
 echo ""
