@@ -1219,8 +1219,10 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         </div>
       ) : part === undefined ? (
         <div
+          aria-live="polite"
           className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground"
           data-testid="object-source-loading"
+          role="status"
         >
           <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
           Reading the definition...

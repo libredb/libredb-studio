@@ -243,9 +243,25 @@ export default function Studio() {
    * tab whose reader is certain about what changed.
    *
    * The CLEAR is `onSourceChange`'s explicit-undefined form, which is a clear and not a no-op,
-   * and it addresses the ACTIVE tab. That is correct and not an approximation: the pane that
-   * performed the apply is mounted in the active tab, because it is the only Source pane this
-   * shell renders.
+   * and it addresses the ACTIVE tab. It reaches the right tab, and the reason written here first
+   * was NOT the reason, which is worth the space because the wrong reason survives a refactor the
+   * right one would not.
+   *
+   * The wrong reason: "the pane that performed the apply is mounted in the active tab, because it
+   * is the only Source pane this shell renders". MEASURED FALSE at the moment that matters. With
+   * the apply in flight and a direct DOM click moving the strip to another tab, the apply landed,
+   * the toast fired, and the tab that was active THEN was not cleared.
+   *
+   * The real reason is a STALE CLOSURE, and it is load-bearing rather than incidental:
+   * `onSourceChange` here is bound to the `activeTabId` of the render at CONFIRM time, and the
+   * pane captures it through `onApplied`, so the clear addresses the tab that was active when the
+   * reader pressed Confirm. That is the tab that applied, which is what this is for.
+   *
+   * Reachability of the disagreement, also measured: the strip cannot be moved while the dialog is
+   * open, because Radix's modal aria-hides it, and `setActiveTabId` has no caller outside the strip
+   * and the sidebar tree, both of which the modal covers. So the two readings agree on every path
+   * that exists today, and this comment is here so that a change which decouples them is read as
+   * the change it is.
    *
    * The DRAFT is not dropped here. The pane drops it itself, keyed on the part its PLAN was built
    * for, which is a key this shell does not hold and must not guess.
