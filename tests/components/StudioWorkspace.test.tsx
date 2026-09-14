@@ -720,6 +720,76 @@ describe("StudioWorkspace", () => {
     expect(text).toContain('"deleted" TEXT');
   });
 
+  /**
+   * Copying the result instead of saving it (#701).
+   *
+   * The embedded shell masks nothing, so what is copied is what the host handed over,
+   * exactly as its file export already writes it.
+   */
+  describe("copyResults", () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+    const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+    function setClipboard(clipboard: { writeText: (text: string) => Promise<void> } | undefined): void {
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+    }
+
+    afterEach(() => {
+      if (originalClipboard === undefined) setClipboard(undefined);
+      else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+      if (originalExecCommand === undefined) {
+        Object.defineProperty(globalThis.document, "execCommand", { value: undefined, configurable: true });
+      } else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
+    });
+
+    test("copyResults writes the serialized rows to the clipboard and says so", async () => {
+      withExportResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      renderWorkspace();
+
+      await act(async () => (capturedBottomPanelProps.onCopyResults as (f: string) => void)("json"));
+
+      expect(writeText.mock.calls[0][0]).toContain('"name": "Alice"');
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("Copied") }));
+    });
+
+    // The byte-order mark belongs to the file, not to the text.
+    test("a copied CSV starts at the header row", async () => {
+      withExportResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      renderWorkspace();
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (f: string, h: null, d: string) => void;
+      await act(async () => copyFn("csv", null, ";"));
+
+      expect(writeText.mock.calls[0][0].split("\n")[0]).toBe("id;name;ratio;active;created;deleted");
+    });
+
+    test("a refused copy is reported rather than announced as a success", async () => {
+      withExportResult();
+      setClipboard(undefined);
+      Object.defineProperty(globalThis.document, "execCommand", { value: () => false, configurable: true });
+      renderWorkspace();
+
+      await act(async () => (capturedBottomPanelProps.onCopyResults as (f: string) => void)("json"));
+
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: "destructive" }));
+    });
+
+    test("copyResults does nothing without a result", async () => {
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      renderWorkspace();
+
+      await act(async () => (capturedBottomPanelProps.onCopyResults as (f: string) => void)("csv"));
+
+      expect(writeText).not.toHaveBeenCalled();
+      expect(mockToast).not.toHaveBeenCalled();
+    });
+  });
+
   test("exportResults does nothing without a result", () => {
     renderWorkspace();
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("csv"));

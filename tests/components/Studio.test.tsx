@@ -70,7 +70,11 @@ const mockHandleCellChange = mock(() => {});
 const mockHandleApplyChanges = mock(() => {});
 const mockHandleDiscardChanges = mock(() => {});
 // Toast
-const mockToast = mock(() => {});
+const mockToast = mock((_params?: unknown) => {});
+// Named rather than inline in the module mock below, because one test turns masking ON
+// for the length of that test: an inline `mock(() => false)` has no handle to do it.
+const mockShouldMask = mock(() => false);
+const mockApplyMaskingToRows = mock((rows: unknown) => rows);
 // Storage
 const mockStorageSaveConnection = mock(() => {});
 const mockStorageGetConnections = mock(() => [] as unknown[]);
@@ -248,10 +252,10 @@ mock.module("@/lib/data-masking", () => ({
     },
   })),
   saveMaskingConfig: mockSaveMaskingConfig,
-  shouldMask: mock(() => false),
+  shouldMask: mockShouldMask,
   canToggleMasking: mock(() => true),
   detectSensitiveColumnsFromConfig: mock(() => new Set()),
-  applyMaskingToRows: mock((rows: unknown) => rows),
+  applyMaskingToRows: mockApplyMaskingToRows,
 }));
 
 // ---- Mock child components ----
@@ -573,6 +577,10 @@ describe("Studio", () => {
     mockStorageDeleteConnection.mockClear();
     mockStorageSaveQuery.mockClear();
     mockSaveMaskingConfig.mockClear();
+    // Set rather than restored: one test turns masking on, and `mockRestore` in bun
+    // drops the implementation entirely instead of returning it to this default.
+    mockShouldMask.mockImplementation(() => false);
+    mockApplyMaskingToRows.mockImplementation((rows: unknown) => rows);
     mockCreateObjectURL.mockClear();
     mockRevokeObjectURL.mockClear();
     mockRouterPush.mockClear();
@@ -1318,6 +1326,183 @@ describe("Studio", () => {
     const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
     act(() => exportFn("csv"));
     expect(mockCreateObjectURL).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Copying the result instead of saving it (#701).
+   *
+   * The same writers and the same rows; only the destination differs. What differs
+   * with it is the ending: a clipboard write can be refused — no secure context, no
+   * permission, an unfocused document — so nothing here announces a copy it has not
+   * been told happened.
+   */
+  describe("copyResults", () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+    const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+    function setClipboard(clipboard: { writeText: (text: string) => Promise<void> } | undefined): void {
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+    }
+
+    afterEach(() => {
+      if (originalClipboard === undefined) setClipboard(undefined);
+      else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+      if (originalExecCommand === undefined) {
+        Object.defineProperty(globalThis.document, "execCommand", { value: undefined, configurable: true });
+      } else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
+    });
+
+    function withResult() {
+      tabMgrOverride = {
+        currentTab: {
+          id: "tab-1",
+          name: "Users",
+          query: "SELECT 1",
+          result: testResult,
+          isExecuting: false,
+          type: "sql" as const,
+        },
+      };
+    }
+
+    test("copyResults writes the serialized rows to the clipboard", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(writeText.mock.calls[0][0]).toContain('"name": "Alice"');
+    });
+
+    // The byte-order mark belongs to the FILE, not to the text: `downloadText` adds it
+    // for a spreadsheet reading bytes off disk, and a paste that carried it would
+    // start with an invisible character in whatever the user pasted into.
+    test("a copied CSV starts at the header row, with no byte-order mark", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("csv"));
+
+      expect(writeText.mock.calls[0][0].startsWith("id,name,salary,active")).toBe(true);
+    });
+
+    test("copyResults forwards the chosen CSV delimiter", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (
+        format: string,
+        artifact: null,
+        delimiter: string,
+      ) => void;
+      await act(async () => copyFn("csv", null, ";"));
+
+      expect(writeText.mock.calls[0][0].split("\n")[0]).toBe("id;name;salary;active");
+    });
+
+    test("a successful copy is announced once the write has reported one", async () => {
+      withResult();
+      setClipboard({ writeText: mock((_text: string) => Promise.resolve()) });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      expect(mockToast).toHaveBeenCalledTimes(1);
+      const params = mockToast.mock.calls[0][0] as { title: string; variant?: string };
+      expect(params.variant).toBeUndefined();
+      expect(params.title).toContain("Copied");
+    });
+
+    // Both routes gone: no async clipboard, and no editing command either. There is
+    // nothing left for the product to do but say so, because the alternative is the
+    // user discovering an empty clipboard at the far end of a paste.
+    test("a refused copy is reported rather than announced as a success", async () => {
+      withResult();
+      setClipboard(undefined);
+      Object.defineProperty(globalThis.document, "execCommand", { value: () => false, configurable: true });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      const params = mockToast.mock.calls[0][0] as { title: string; variant?: string };
+      expect(params.variant).toBe("destructive");
+    });
+
+    test("copyResults with no result copies nothing and says nothing", async () => {
+      tabMgrOverride = {
+        currentTab: {
+          id: "tab-1",
+          name: "Users",
+          query: "SELECT 1",
+          result: null,
+          isExecuting: false,
+          type: "sql" as const,
+        },
+      };
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      expect(writeText).not.toHaveBeenCalled();
+      expect(mockToast).not.toHaveBeenCalled();
+    });
+
+    // B34: a run's rows are not the tab's rows, and the clipboard has no file name to
+    // carry the difference — so the one thing that must hold is that the rows copied
+    // are the ones on screen.
+    test("copyResults writes the run's rows, not the tab's, when it is given the artifact", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string, artifact: unknown) => void;
+      await act(async () =>
+        copyFn("json", {
+          runId: "arun_1",
+          correlationId: "corr_9",
+          operationId: "sql.query.read",
+          surface: "results",
+          result: { rows: [{ id: 7 }], fields: ["id"], rowCount: 1, executionTime: 1 },
+          explainPlan: null,
+        }),
+      );
+
+      const text = writeText.mock.calls[0][0];
+      expect(text).toContain('"id": 7');
+      expect(text).not.toContain("Alice");
+    });
+
+    // The file export masks; the clipboard is not a way around that.
+    test("a copy of a masked result carries the masked values", async () => {
+      withResult();
+      mockShouldMask.mockImplementation(() => true);
+      mockApplyMaskingToRows.mockImplementation(() => [{ id: 1, name: "***", salary: "***", active: null }]);
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      const text = writeText.mock.calls[0][0];
+      expect(text).toContain('"name": "***"');
+      expect(text).not.toContain("Alice");
+    });
   });
 
   // --- exportResults over an agent run's rows (B34) ---

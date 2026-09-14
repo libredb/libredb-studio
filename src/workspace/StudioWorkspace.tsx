@@ -31,6 +31,7 @@ import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
+import { writeToClipboard } from "@/components/copy-button";
 import { downloadText } from "@/lib/export/download";
 
 // The ERD is the largest thing this shell can mount (`@xyflow/react` + the elk layout
@@ -265,10 +266,10 @@ export function StudioWorkspace({
   );
 
   // === Export results (shared writers; this shell applies no masking) ===
-  const exportResults = useCallback(
-    (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
-      if (!tabMgr.currentTab.result) return;
-      const file = buildResultExport(format, {
+  const buildResultFile = useCallback(
+    (format: ResultExportFormat, csvDelimiter?: CsvDelimiter) => {
+      if (!tabMgr.currentTab.result) return null;
+      return buildResultExport(format, {
         rows: tabMgr.currentTab.result.rows,
         fields: tabMgr.currentTab.result.fields,
         tabName: tabMgr.currentTab.name,
@@ -281,9 +282,46 @@ export function StudioWorkspace({
         columnTypes: tabMgr.currentTab.result.columnTypes,
         csvDelimiter,
       });
-      downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
     },
     [tabMgr.currentTab, conn.activeConnection?.type],
+  );
+
+  const exportResults = useCallback(
+    (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
+      const file = buildResultFile(format, csvDelimiter);
+      if (file === null) return;
+      downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
+    },
+    [buildResultFile],
+  );
+
+  /**
+   * The same rows, in the same format, onto the clipboard (#701).
+   *
+   * Built from the same function as the file above, so the two cannot come to disagree
+   * about what a format means. The byte-order mark is the one thing they do not share:
+   * `downloadText` adds it for a spreadsheet reading bytes off disk, and a paste
+   * carrying it would open with an invisible character wherever it landed.
+   *
+   * The outcome is reported only once the write has one (B43). `writeToClipboard` falls
+   * back to the editing command where there is no secure context, and when both routes
+   * are gone the user is told rather than left to find an empty clipboard mid-paste.
+   */
+  const copyResults = useCallback(
+    (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
+      const file = buildResultFile(format, csvDelimiter);
+      if (file === null) return;
+      void writeToClipboard(file.content).then((copied) => {
+        if (copied) toast({ title: `Copied ${file.extension.toUpperCase()} to clipboard` });
+        else
+          toast({
+            title: "Could not copy to clipboard",
+            description: "Select the text and copy it yourself, or export the result as a file.",
+            variant: "destructive",
+          });
+      });
+    },
+    [buildResultFile, toast],
   );
 
   // === Table click handler ===
@@ -693,6 +731,7 @@ export function StudioWorkspace({
                         }
                         isLoadingMore={tabMgr.currentTab.isLoadingMore}
                         onExportResults={exportResults}
+                        onCopyResults={copyResults}
                       />
                     </ResizablePanel>
                   </ResizablePanelGroup>

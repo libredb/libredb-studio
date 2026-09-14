@@ -42,6 +42,7 @@ import {
   type ResultExportFormat,
 } from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
+import { writeToClipboard } from "@/components/copy-button";
 import { newLocalId } from "@/lib/ids";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
@@ -500,13 +501,13 @@ export default function Studio() {
    * `currentTab.result` wrote rows nobody was looking at. That is why the menu used to
    * be hidden over a hydrated view instead of retargeted.
    */
-  const exportResults = (
+  const buildResultFile = (
     format: ResultExportFormat,
-    hydrated: AgentArtifactHydration | null = null,
+    hydrated: AgentArtifactHydration | null,
     csvDelimiter?: CsvDelimiter,
   ) => {
     const source = hydrated?.result ?? tabMgr.currentTab.result;
-    if (!source) return;
+    if (!source) return null;
     // The columns the engine declared for THIS result. The writers read every row by
     // these names rather than by whatever keys row 0 happens to carry, so a row with
     // a different key order — or a document store's row missing a field entirely —
@@ -515,7 +516,7 @@ export default function Studio() {
     const sensitiveColumns = detectSensitiveColumnsFromConfig(fields, maskingConfig);
     const rows = effectiveMasking ? applyMaskingToRows(source.rows, fields, sensitiveColumns) : source.rows;
 
-    const file = buildResultExport(format, {
+    return buildResultExport(format, {
       rows,
       fields,
       // A run's rows did not come from this tab, so the SQL forms take the neutral
@@ -528,7 +529,51 @@ export default function Studio() {
       columnTypes: source.columnTypes,
       csvDelimiter,
     });
+  };
+
+  const exportResults = (
+    format: ResultExportFormat,
+    hydrated: AgentArtifactHydration | null = null,
+    csvDelimiter?: CsvDelimiter,
+  ) => {
+    const file = buildResultFile(format, hydrated, csvDelimiter);
+    if (file === null) return;
     downloadText(file.content, file.mimeType, resultExportFileName(file.extension, hydrated?.runId));
+  };
+
+  /**
+   * The same rows, in the same format, onto the clipboard (#701).
+   *
+   * Two things this shares with the export above, and both are the reason it is built
+   * from the same function rather than beside it: the masking, so the clipboard is not
+   * a way around a masked column, and the rows, so a hydrated run's result is copied
+   * as what is on screen rather than as the tab's own.
+   *
+   * What it does NOT share is the byte-order mark. That is added by `downloadText` for
+   * a spreadsheet reading bytes off disk; a paste carrying it would open with an
+   * invisible character wherever it landed.
+   *
+   * The outcome is reported only once the write has one (B43). `writeToClipboard`
+   * falls back to the editing command where there is no secure context — several
+   * distribution channels serve plain HTTP — and when both routes are gone the user is
+   * told, because the alternative is discovering an empty clipboard mid-paste.
+   */
+  const copyResults = (
+    format: ResultExportFormat,
+    hydrated: AgentArtifactHydration | null = null,
+    csvDelimiter?: CsvDelimiter,
+  ) => {
+    const file = buildResultFile(format, hydrated, csvDelimiter);
+    if (file === null) return;
+    void writeToClipboard(file.content).then((copied) => {
+      if (copied) toast({ title: `Copied ${file.extension.toUpperCase()} to clipboard` });
+      else
+        toast({
+          title: "Could not copy to clipboard",
+          description: "Select the text and copy it yourself, or export the result as a file.",
+          variant: "destructive",
+        });
+    });
   };
 
   /** Open and run the statement for one object, addressed by its PATH (#789). */
@@ -996,6 +1041,7 @@ export default function Studio() {
                         }
                         isLoadingMore={tabMgr.currentTab.isLoadingMore}
                         onExportResults={exportResults}
+                        onCopyResults={copyResults}
                         agentArtifact={agentArtifact.artifact}
                         onDismissAgentArtifact={agentArtifact.dismiss}
                       />
