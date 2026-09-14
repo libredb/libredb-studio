@@ -1090,8 +1090,16 @@ MEASURED live on PostgreSQL 18.4 through `POST /api/db/objects/edit-plan` and
 shown them, but the plan's consequence model says nothing was lost, no acknowledgement is asked for, and
 both `object_edit` audit events name only
 `target: "function:app/order_total(integer):definition"` with the dropped routine's name nowhere in
-either. The same shape is refused by Trino at the coordinator (`mismatched input ';'`, `SYNTAX_ERROR`)
-and by Redis at load time, so this is measured on PostgreSQL alone.
+either.
+
+This run measured PostgreSQL alone. THE OTHER TWO ENGINES ARE SOMEBODY ELSE'S MEASUREMENT: the review
+of #789 Phase 3 task 19 fix round 1, on 2026-09-14, reports the same shape refused by Trino at the
+coordinator (`mismatched input ';'`, `SYNTAX_ERROR`) and by Redis at load time. Neither was re-driven
+here, so a later reader who re-drives the rider on Trino or Redis is re-running that review's
+measurement and not this entry's, and a result that disagrees is a finding against the review rather
+than a regression of anything measured above. The Trino half has a second source inside this
+repository, which the Redis half does not: `docs/providers/trino.md`, section *A trailing semicolon is
+a syntax error*, records `SELECT 1;` answering `mismatched input ';'` as its own measurement.
 
 **Done when:** either the reader's text is refused when it carries more than one statement, or every
 statement it carries is named in the plan's consequences and in the audit target, so a success destroys
