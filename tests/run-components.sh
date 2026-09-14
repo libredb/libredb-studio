@@ -33,7 +33,7 @@ FAIL=0
 # stale a fourth time by naming a DIGIT for the current value, which is the one thing
 # here that cannot stay true: the value is whatever that grep prints, never a number
 # written in prose.
-TOTAL_GROUPS=44
+TOTAL_GROUPS=45
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -243,6 +243,11 @@ run_group "Group 9/12: StudioHeaders & TableItem" \
 run_group "Group 10/12: PoolTab" \
   tests/components/monitoring/PoolTab.test.tsx
 
+# Group 10b: PivotTable (isolated - mocks @/lib/export/download and dropdown-menu, which
+# the DatabaseDocs export tests in the smoke group need real)
+run_group "Group 10b: PivotTable" \
+  tests/components/PivotTable.test.tsx
+
 # Group 11: Smoke tests (isolated - mock globalThis.fetch + MonitoringEmbed)
 run_group "Group 11/12: Smoke tests" \
   tests/components/agent/AgentRail.test.tsx \
@@ -254,7 +259,6 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/VisualExplain.test.tsx \
   tests/components/DatabaseDocs.test.tsx \
   tests/components/SnapshotTimeline.test.tsx \
-  tests/components/PivotTable.test.tsx \
   tests/components/CodeGenerator.test.tsx \
   tests/components/TestDataGenerator.test.tsx \
   tests/components/CreateTableModal.test.tsx \
