@@ -119,7 +119,7 @@ function previewedStep(plan: ObjectEditPlan): ObjectEditStep {
  * as a description of what is on screen. No day-one strategy sends more than one step, and this is
  * the arm that stops a silent half-preview when one does.
  */
-function identitySentence(plan: ObjectEditPlan): string {
+function identitySentence(plan: ObjectEditPlan, sent: boolean): string {
   const opening =
     "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you ";
   const total = counted(planExecutableLength(plan.unit));
@@ -128,9 +128,91 @@ function identitySentence(plan: ObjectEditPlan): string {
     // right side is one statement of several, so "the whole of the right side is what will be
     // sent" would be false for exactly the case this arm exists for, while the count beside it
     // would be counting bytes that are not on the screen.
-    return `${opening}typed. The diff shows statement 1 of ${counted(plan.unit.steps.length)}, and ${total} characters will be sent in total.`;
+    const tense = sent ? "were sent" : "will be sent";
+    return `${opening}typed. The diff shows statement 1 of ${counted(plan.unit.steps.length)}, and ${total} characters ${tense} in total.`;
   }
-  return `${opening}typed, and the whole of the right side is what will be sent, ${total} characters.`;
+  return `${opening}typed, and the whole of the right side is what ${sent ? "was" : "will be"} sent, ${total} characters.`;
+}
+
+/**
+ * What the reader is told HAPPENED, which is the title, the disposition sentence and whether the
+ * left column may still claim the server (#789 Phase 3, discussion #778).
+ *
+ * One function rather than three conditionals at three render sites, because the three answers are
+ * one fact and they went wrong together. Before this existed every state opened with
+ * `Apply this definition` and `Nothing runs until you press Apply.`, MEASURED by reading
+ * `dialog.textContent` in each of the twelve states this component can reach, and eleven of the
+ * twelve also labelled the pre-image column `On the server now`. On the state X24 made reachable,
+ * an apply that SUCCEEDED and destroyed a sibling function, all three of those are false at once
+ * and the region under them is the honest part of the screen.
+ *
+ * `preimageIsCurrent` is a claim about the SERVER and not about this dialog's history, so it stays
+ * true wherever the addressed object was left alone: a refusal, a rolled-back interruption and
+ * both `applied-elsewhere` arms all leave the pre-image as the current definition. It goes false
+ * on the two arms that replaced it and on `interrupted: "unknown"`, where nobody knows, and a
+ * header claiming the server there would be a guess printed as a fact.
+ */
+function applyFrame(state: ApplyPreviewState): {
+  readonly title: string;
+  readonly disposition: string;
+  readonly preimageIsCurrent: boolean;
+} {
+  const unchanged = "Nothing was applied and the definition on the server is unchanged.";
+  if (state.kind === "building" || state.kind === "preview") {
+    return {
+      title: "Apply this definition",
+      disposition: "Nothing runs until you press Apply.",
+      preimageIsCurrent: true,
+    };
+  }
+  if (state.kind === "applying") {
+    return { title: "Applying this definition", disposition: "This apply is running now.", preimageIsCurrent: true };
+  }
+  if (state.kind === "expired") {
+    return { title: "This preview expired", disposition: unchanged, preimageIsCurrent: true };
+  }
+  if (state.kind === "conflict") {
+    return {
+      title: "This definition changed while you had it open",
+      disposition: "Nothing was applied. The left side below is what the server holds now.",
+      preimageIsCurrent: true,
+    };
+  }
+  const outcome = state.outcome;
+  if (outcome.outcome === "refused" || outcome.outcome === "conflict") {
+    return { title: "The engine refused this change", disposition: unchanged, preimageIsCurrent: true };
+  }
+  if (outcome.outcome === "interrupted") {
+    return {
+      title: "This apply was stopped before it finished",
+      disposition:
+        outcome.committed === "rolled-back"
+          ? unchanged
+          : "Whether it reached the server is unknown. Read the definition again before you edit it.",
+      preimageIsCurrent: outcome.committed === "rolled-back",
+    };
+  }
+  if (outcome.outcome === "applied-with-collateral") {
+    return {
+      title: "Applied, and it destroyed something else",
+      disposition: "The new definition is on the server. What else went is named below.",
+      preimageIsCurrent: false,
+    };
+  }
+  if (outcome.outcome === "applied-elsewhere") {
+    return outcome.undone
+      ? { title: "This apply changed nothing", disposition: unchanged, preimageIsCurrent: true }
+      : {
+          title: "This apply wrote a different object",
+          disposition: "This object is unchanged, and what the engine did write is named below.",
+          preimageIsCurrent: true,
+        };
+  }
+  // `applied`, and only `applied`. Unreachable through the mount, which closes this dialog on a
+  // clean success, and framed anyway for the same reason the region renders it: the prop type
+  // cannot exclude it, and a success wearing "Nothing runs until you press Apply." is the exact
+  // defect this function exists to remove.
+  return { title: "This apply is done", disposition: "The new definition is on the server.", preimageIsCurrent: false };
 }
 
 /** The warning grammar the pane already uses for a truncated part (`ObjectSourceView.tsx:491-497`). */
@@ -186,6 +268,15 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
   });
 
   const applying = state.kind === "applying";
+  /**
+   * The apply has RUN, which is what puts every sentence on this screen into the past tense.
+   *
+   * `failed` is the only state that can carry an outcome, so it is the only state where anything
+   * was sent at all. `applying` is deliberately NOT here: the bytes are in flight and the reader is
+   * being told what is happening, not what happened.
+   */
+  const sent = state.kind === "failed";
+  const frame = applyFrame(state);
   const plan = state.kind === "building" || state.kind === "expired" ? undefined : state.plan;
   const preimage =
     state.kind === "preview" || state.kind === "applying" || state.kind === "failed" ? state.preimage : undefined;
@@ -324,8 +415,8 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
         className="flex max-h-[85vh] w-full flex-col gap-4 sm:max-w-3xl"
       >
         <DialogHeader>
-          <DialogTitle>Apply this definition</DialogTitle>
-          <DialogDescription>{`\`${objectLabel}\`, ${partLabel}. Nothing runs until you press Apply.`}</DialogDescription>
+          <DialogTitle>{frame.title}</DialogTitle>
+          <DialogDescription>{`\`${objectLabel}\`, ${partLabel}. ${frame.disposition}`}</DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
@@ -426,10 +517,10 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
             <div className="flex min-h-0 flex-col" data-testid="object-source-apply-diff">
               <div className="grid grid-cols-2 border-b border-border text-[11px] text-fg-muted">
                 <span className="px-2 py-1" data-testid="object-source-apply-diff-header">
-                  On the server now
+                  {frame.preimageIsCurrent ? "On the server now" : "On the server before this apply"}
                 </span>
                 <span className="px-2 py-1" data-testid="object-source-apply-diff-header">
-                  {state.kind === "conflict" ? "Your edit" : "Will be sent"}
+                  {state.kind === "conflict" ? "Your edit" : sent ? "What was sent" : "Will be sent"}
                 </span>
               </div>
               <div className="h-72">
@@ -463,7 +554,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
 
           {!oversize && plan !== undefined && step !== undefined && plan.unit.medium === "statement" && (
             <p className="text-[11px] text-fg-muted" data-testid="object-source-apply-identity">
-              {identitySentence(plan)}
+              {identitySentence(plan, sent)}
             </p>
           )}
 

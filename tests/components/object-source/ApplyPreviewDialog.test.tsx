@@ -343,6 +343,22 @@ function refusal(outcome: ApplyPreviewFailure, plan: ObjectEditPlan = PLAN): App
   return { kind: "failed", plan, preimage: PREIMAGE, outcome };
 }
 
+/**
+ * The state X24 made reachable, and the one the frame was most wrong about: an apply that
+ * SUCCEEDED, destroyed a sibling function, and holds the dialog open to say so.
+ */
+const COLLATERAL_OUTCOME: ApplyPreviewState = refusal({
+  outcome: "applied-with-collateral",
+  lost: [
+    {
+      loses: "replaces-whole-container",
+      fact: { source: "FUNCTION LIST LIBRARYNAME orders", observed: "order_count is gone" },
+    },
+  ],
+  revision: { check: "guarded", token: "md5:9f3", basis: "md5(prosrc)", scope: "server" },
+  duration: 18,
+});
+
 describe("ApplyPreviewDialog", () => {
   beforeEach(() => {
     diffProps = undefined;
@@ -1137,5 +1153,193 @@ describe("ApplyPreviewDialog", () => {
       />,
     );
     expect(query("-dialog")).toBeNull();
+  });
+
+  /**
+   * The FRAME, which is the title, the description and the two diff column headers (#789 Phase 3).
+   *
+   * X24 made the collateral report reachable, and the moment a reader could reach it the frame
+   * around it started lying: a dialog reporting an apply that SUCCEEDED and destroyed a sibling
+   * function still said `Apply this definition` and `Nothing runs until you press Apply.` and
+   * still labelled the pre-image column `On the server now`, which on that path is the one text
+   * the server no longer holds. INVENTORY, taken from `dialog.textContent` in every state this
+   * component can reach before any of this changed: all twelve opened with the same
+   * `Apply this definitionapp.order_total(integer), Definition. Nothing runs until you press
+   * Apply.`, and all eleven that draw a diff carried `On the server nowWill be sent`.
+   *
+   * Asserted BY VALUE and per state, because the defect was never a missing element: every one of
+   * these strings rendered, and every one of them was wrong about what had happened.
+   */
+  const frame = () => ({
+    title: document.querySelector("[data-slot='dialog-title']")?.textContent,
+    description: document.querySelector("[data-slot='dialog-description']")?.textContent,
+  });
+  const LABEL = "`app.order_total(integer)`, Definition. ";
+  const UNCHANGED = "Nothing was applied and the definition on the server is unchanged.";
+
+  test("the frame before anything runs says exactly that, in all three pre-apply states", () => {
+    draw({ kind: "building" });
+    expect(frame()).toEqual({
+      title: "Apply this definition",
+      description: `${LABEL}Nothing runs until you press Apply.`,
+    });
+    cleanup();
+    draw(PREVIEW);
+    expect(frame()).toEqual({
+      title: "Apply this definition",
+      description: `${LABEL}Nothing runs until you press Apply.`,
+    });
+    cleanup();
+    draw({ kind: "applying", plan: PLAN, preimage: PREIMAGE });
+    expect(frame()).toEqual({
+      title: "Applying this definition",
+      description: `${LABEL}This apply is running now.`,
+    });
+  });
+
+  test("a preview that never ran says the object is untouched, in the frame and not only in the body", () => {
+    draw({ kind: "expired" });
+    expect(frame()).toEqual({ title: "This preview expired", description: `${LABEL}${UNCHANGED}` });
+    cleanup();
+    draw({ kind: "conflict", plan: PLAN, current: CURRENT, userText: USER_TEXT });
+    expect(frame()).toEqual({
+      title: "This definition changed while you had it open",
+      description: `${LABEL}Nothing was applied. The left side below is what the server holds now.`,
+    });
+  });
+
+  test("a REFUSED apply is framed as a refusal, and it says the object is unchanged", () => {
+    draw(
+      refusal({
+        outcome: "refused",
+        duration: 4,
+        refusal: { refusal: "definition", sentence: "syntax error", at: { within: "none" } },
+      }),
+    );
+    expect(frame()).toEqual({ title: "The engine refused this change", description: `${LABEL}${UNCHANGED}` });
+    cleanup();
+    draw(
+      refusal({
+        outcome: "conflict",
+        conflict: "engine-refused-concurrent",
+        sentence: "tuple concurrently updated",
+        duration: 2_800,
+      }),
+    );
+    expect(frame()).toEqual({ title: "The engine refused this change", description: `${LABEL}${UNCHANGED}` });
+  });
+
+  test("an INTERRUPTED apply is framed by its disposition, which is the one thing the two arms differ on", () => {
+    // The whole point of the arm: `rolled-back` is a reader who may edit again, `unknown` is a
+    // reader who must go and look. A frame that read the same for both would erase the difference
+    // the outcome type was split to carry.
+    draw(
+      refusal({ outcome: "interrupted", committed: "rolled-back", sentence: "statement timeout", duration: 30_000 }),
+    );
+    expect(frame()).toEqual({
+      title: "This apply was stopped before it finished",
+      description: `${LABEL}${UNCHANGED}`,
+    });
+    cleanup();
+    draw(
+      refusal({ outcome: "interrupted", committed: "unknown", sentence: "connection terminated", duration: 30_000 }),
+    );
+    expect(frame()).toEqual({
+      title: "This apply was stopped before it finished",
+      description: `${LABEL}Whether it reached the server is unknown. Read the definition again before you edit it.`,
+    });
+  });
+
+  test("the COLLATERAL frame says the apply succeeded and that something else went with it", () => {
+    // This is the state X24 made reachable and the reason this whole item exists.
+    draw(COLLATERAL_OUTCOME);
+    expect(frame()).toEqual({
+      title: "Applied, and it destroyed something else",
+      description: `${LABEL}The new definition is on the server. What else went is named below.`,
+    });
+    // And the frame is not the only thing on screen that changes: the left column is the one text
+    // the server no longer holds.
+    expect(headers()).toEqual(["On the server before this apply", "What was sent"]);
+    expect(text("-identity")).toBe(
+      "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you " +
+        "typed, and the whole of the right side is what was sent, 1,234 characters.",
+    );
+  });
+
+  test("a plain SUCCESS in this dialog is framed as done, not as a thing about to happen", () => {
+    draw(
+      refusal({
+        outcome: "applied",
+        revision: { check: "guarded", token: "md5:9f2", basis: "md5(prosrc)", scope: "server" },
+        duration: 22,
+      }),
+    );
+    expect(frame()).toEqual({
+      title: "This apply is done",
+      description: `${LABEL}The new definition is on the server.`,
+    });
+    expect(headers()).toEqual(["On the server before this apply", "What was sent"]);
+  });
+
+  test("`applied-elsewhere` frames the two dispositions apart, because one leaves an object behind", () => {
+    draw(refusal({ outcome: "applied-elsewhere", undone: true, duration: 9 }));
+    expect(frame()).toEqual({ title: "This apply changed nothing", description: `${LABEL}${UNCHANGED}` });
+    // The addressed object is untouched on both arms, so the LEFT column is still current here.
+    expect(headers()).toEqual(["On the server now", "What was sent"]);
+    cleanup();
+    draw(refusal({ outcome: "applied-elsewhere", undone: false, wrote: "app.other(integer)", duration: 9 }));
+    expect(frame()).toEqual({
+      title: "This apply wrote a different object",
+      description: `${LABEL}This object is unchanged, and what the engine did write is named below.`,
+    });
+  });
+
+  test("the LEFT column claims the server only where the server still holds that text", () => {
+    // Three states, one rule. `refused` left the object alone, so `On the server now` is true;
+    // `applied-with-collateral` replaced it, so it is false; `interrupted: unknown` cannot say, and
+    // a header that claims the server there would be a guess printed as a fact.
+    draw(
+      refusal({
+        outcome: "refused",
+        duration: 4,
+        refusal: { refusal: "definition", sentence: "syntax error", at: { within: "none" } },
+      }),
+    );
+    expect(headers()).toEqual(["On the server now", "What was sent"]);
+    cleanup();
+    draw(
+      refusal({ outcome: "interrupted", committed: "unknown", sentence: "connection terminated", duration: 30_000 }),
+    );
+    expect(headers()).toEqual(["On the server before this apply", "What was sent"]);
+    cleanup();
+    draw(
+      refusal({ outcome: "interrupted", committed: "rolled-back", sentence: "statement timeout", duration: 30_000 }),
+    );
+    expect(headers()).toEqual(["On the server now", "What was sent"]);
+  });
+
+  test("the multi-step identity line moves to the past tense on a completed apply too", () => {
+    // The arm that drops the byte-identity clause has its own sentence, so it has its own tense and
+    // a fix that only touched the single-step arm would leave this one saying `will be sent`.
+    const second: ObjectEditStep = {
+      text: "SELECT 1;",
+      language: "sql",
+      segments: [{ from: "provider", text: "SELECT 1;" }],
+    };
+    const twoSteps: ObjectEditPlan = { ...PLAN, unit: { medium: "statement", steps: [PG_STEP, second] } };
+    draw({
+      kind: "failed",
+      plan: twoSteps,
+      preimage: PREIMAGE,
+      outcome: {
+        outcome: "applied",
+        revision: { check: "guarded", token: "md5:9f2", basis: "md5(prosrc)", scope: "server" },
+        duration: 22,
+      },
+    });
+    expect(text("-identity")).toBe(
+      "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you " +
+        "typed. The diff shows statement 1 of 2, and 1,243 characters were sent in total.",
+    );
   });
 });
