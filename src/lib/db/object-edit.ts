@@ -292,10 +292,19 @@ export type ObjectEditAuditKey =
   | Exclude<ObjectEditOutcome, { outcome: "conflict" }>["outcome"]
   | `conflict:${Extract<ObjectEditOutcome, { outcome: "conflict" }>["conflict"]}`;
 
+/**
+ * What one outcome event records, NAMED rather than written inline at each of its two uses.
+ *
+ * The name is not style. `auditReadingFor` below declared this shape inline as its return type, and
+ * a multi-line inline return annotation is instrumented as executable: bun emitted `DA:` records for
+ * the two member lines with a hit count of 0, which took the merged lcov to 56,313 of 56,315 lines
+ * and the required 100 percent coverage gate to red over two lines no test can execute. MEASURED
+ * 2026-09-14 (#789 Phase 3). One line of signature has no member lines to instrument.
+ */
+type ObjectEditAuditReading = { readonly result: "success" | "failure"; readonly reason?: AuditReason };
+
 /** A TOTAL map, so a new outcome with no audit reading fails to COMPILE, on the `DENY_REASONS` precedent. */
-export const OBJECT_EDIT_AUDIT: Readonly<
-  Record<ObjectEditAuditKey, { readonly result: "success" | "failure"; readonly reason?: AuditReason }>
-> = Object.freeze({
+export const OBJECT_EDIT_AUDIT: Readonly<Record<ObjectEditAuditKey, ObjectEditAuditReading>> = Object.freeze({
   applied: { result: "success" },
   "applied-with-collateral": { result: "success", reason: "object_edit_collateral_loss" },
   "applied-elsewhere": { result: "failure", reason: "object_edit_applied_elsewhere" },
@@ -317,10 +326,7 @@ export function auditKeyFor(outcome: ObjectEditOutcome): ObjectEditAuditKey {
  * engine refusing the reader's text. An operator reading the log has to be able to tell those
  * apart, which is the same separation `agent_operation` was added to preserve.
  */
-export function auditReadingFor(outcome: ObjectEditOutcome): {
-  readonly result: "success" | "failure";
-  readonly reason?: AuditReason;
-} {
+export function auditReadingFor(outcome: ObjectEditOutcome): ObjectEditAuditReading {
   if (outcome.outcome === "refused" && outcome.refusal.refusal === "guard") {
     return { result: "failure", reason: "object_edit_guard_refused" };
   }

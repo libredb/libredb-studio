@@ -891,8 +891,16 @@ that epic: every file under `tests/api/` mocks `@/lib/auth` with stubbed `signJW
 `tests/unit/seed/resolve-connection.test.ts` beside `tests/api/db-objects.test.ts` and the four
 files together are 31 fail; each of them alone is 0 fail.
 
+**It is not one module.** RE-MEASURED 2026-09-14 (#789 Phase 3): `tests/api/admin/audit.test.ts`
+mocks `@/lib/audit` the same way, and `tests/api/db/objects/edit-apply.test.ts` reads the audit ring
+to assert what an apply logs. Run those two files together and it is 20 pass 11 fail; each alone is
+0 fail, and `bun run test:ci` runs all 424 core files and exits 0. So the pattern is a LAYER mocking
+a module a sibling in the same layer legitimately needs, and `@/lib/auth` against three unit files is
+one instance of it rather than the whole of it. The full `bun run test` at that commit is 42 fail,
+all of them in these two groups.
+
 The cost is not a red gate, because no gate runs that shape. It is that a contributor following
-CLAUDE.md sees 31 failures on a clean checkout and cannot tell them from their own.
+CLAUDE.md sees dozens of failures on a clean checkout and cannot tell them from their own.
 
 #789 removed its own three instances by moving the files with the unshareable assumption into
 `tests/isolated/`, where `tests/run-components.sh` gives each a process and
