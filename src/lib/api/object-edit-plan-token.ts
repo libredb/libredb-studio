@@ -91,6 +91,19 @@ export function planDigestLeaves(plan: ObjectEditPlan): readonly { readonly path
       return;
     }
     if (value !== null && typeof value === "object") {
+      // Default (code-point) sort, NOT localeCompare: these are an object's own KEYS being
+      // ordered to build the digest this plan is SEALED with, so mint and verify must agree byte
+      // for byte on every host. localeCompare would tie the ordering to the host locale and ICU
+      // version, and a plan minted on one host could then fail to verify on another. S2871 is
+      // suppressed for this file in sonar-project.properties for exactly this reason.
+      // THE BARE `.sort()` IS DELIBERATE AND A COMPARATOR WOULD BE A DEFECT. `Object.keys`
+      // answers `string[]`, so the default sort orders by UTF-16 code units, which is total,
+      // deterministic and the same on every machine. SonarCloud's S2871 asks for
+      // `String.localeCompare` here (reported CRITICAL on PR #831, 2026-09-14, and NOT actioned):
+      // that would make this digest depend on the runtime's collation, so a server and a client
+      // under different locales could order the same keys differently and the seal would answer
+      // "forged" for a correct plan. A canonical digest needs a locale-INDEPENDENT order, which is
+      // exactly what the default is.
       const keys = Object.keys(value as Record<string, unknown>).sort();
       leaves.push({ path: `${path}.keys`, value: keys.join(",") });
       for (const key of keys) walk(`${path}.${key}`, (value as Record<string, unknown>)[key]);
