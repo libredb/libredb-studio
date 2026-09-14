@@ -813,7 +813,13 @@ The fixture's own numbers on that server: `app.over_limit_fn(integer)` renders 1
 
 **A FAILED APPLY LEAVES THE ROUTINE BYTE IDENTICAL, and `oid` and `xmin` say so.**
 Byte equality alone cannot tell a rollback from a write that happened to store the same bytes, so `oid`, `xmin` and `md5(pg_get_functiondef(oid))` were read out of band before and after each one.
-Five failures were driven against `app.order_total(integer)` and all five left `oid = 16763` and `xmin` unmoved.
+FOUR of the five failures below were driven against `app.order_total(integer)`, whose row is `oid = 16763` on a container built from this fixture, and none of the four moved that `oid` or that `xmin` across the apply.
+Read each row for what it actually compares, because two of the five are not "unmoved since the case began":
+
+- In the second-writer case the `xmin` DID move, and a second writer is what moved it: `16763|888` before the case and `16763|889` after the second writer's own `CREATE OR REPLACE`, with the md5 moving with it. What is unmoved there is the state ACROSS THE APPLY, so the comparison is against the row the second writer left and never against the pre-case row. The apply wrote nothing, which is the claim.
+- The last case was driven against a DIFFERENT object at a different row, `app.r19f1_paren(text,integer)`, because the fixture holds nothing that can reach the post-condition. It read `16793|879` before the apply and `16793|879` after it. That `oid` is not stable: the object is created by the probe rather than by the fixture, and two re-runs on the same image read `16789` and then `16793`.
+
+`oid = 16763` for `app.order_total(integer)` is what a container built from this fixture assigns, and it held across every run. The `xmin` counters are not: they advance with every write the container has seen, so read the pairs above as before-and-after of one run rather than as constants.
 
 | What was sent | What the apply answered | The object afterwards |
 | --- | --- | --- |
@@ -826,7 +832,19 @@ Five failures were driven against `app.order_total(integer)` and all five left `
 The last row is the only case here where the engine ACCEPTED the statement.
 `CREATE OR REPLACE` created a second row, the post-condition saw that the addressed row's `xmin` had not moved, raised `LB003`, and the implicit transaction took the fork back inside the same round trip.
 That object is NOT in the committed fixture: the identity check cuts the rendered header at the first `)`, so only a parameter `DEFAULT` holding a `)` inside a string literal lets a changed argument list past it, and the fixture has no such object.
-It was created for the run as `CREATE FUNCTION app.t19_paren(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$` and the edit changed `b integer` to `b bigint`.
+It was created for the run as `CREATE FUNCTION app.<name>(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$` and the edit changed `b integer` to `b bigint`.
+Re-measured under the name `app.r19f1_paren` on the same 18.4 image: `edit-plan` built, `edit-apply` answered `applied-elsewhere` with `undone: true`, and `oid|xmin|argument types` read `16793|879|text,integer` both before and after with one row left, so the fork was made and taken back inside the round trip.
+
+**A SUCCESSFUL APPLY CAN DESTROY AN OBJECT THE PLAN NEVER NAMED, and that is open (`docs/BACKLOG.md` D76).**
+The reader's text is spliced into the emitted unit as a whole segment of one parameterless simple query, and PostgreSQL runs every statement in such a query, so a text that carries a second statement after its terminator runs that statement too.
+Nothing above the wire is a single-statement check: the build's identity comparison reads the rendered HEADER, and the post-condition asks whether the addressed row was rewritten, which a `CREATE OR REPLACE` followed by a rider answers yes to.
+MEASURED end to end through the two routes on the same 18.4 image: `app.order_total(integer)`'s own definition followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with `consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and `count(*)` for `app.r19f1_victim` went 1 to 0.
+The bytes ARE in the sealed preview, so the seal holds and the user was shown them: in the shipped re-run the step measured 2,473 characters, the reader's own 268-character segment ran from 1,506 to 1,774, and the rider sat at offset 1,741, between a 1,506-character provider prefix and a 699-character provider suffix.
+Those three offsets move with the reader's own text and the prefix's random dollar-quote tags; the prefix and suffix lengths are what the reader has to scroll past either way.
+What is missing is everything above the bytes.
+The plan's consequence model reported nothing lost, no acknowledgement was asked for, and the two `object_edit` audit events name `target: "function:app/order_total(integer):definition"` and carry the string `r19f1_victim` nowhere at all.
+So a definition pasted out of a migration script that carries a trailing statement is applied, reported `applied`, and the routine it dropped is named in no answer, no consequence and no audit row.
+This is ruling 1b clause (ii), a SUCCESS destroying something the user was not SHOWN in any surface that speaks about consequences, and it is unfixed here: this subsection is a measurement of the shipped code, and the repair belongs in the emitted unit above it.
 
 **A TRUNCATED PART CANNOT BE EDITED, and the two bounds are two different refusals.**
 The read of `app.over_limit_fn(integer)` carries `truncated: { limit: 1000000, ... }` and carries NO `edit` key at all, and 1,000,000 characters of text.

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D75, U17 · 35
+- [Drivers and connections](#drivers-and-connections) — D1–D77, U17 · 37
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X18, U2–U21 · 12
@@ -1073,6 +1073,46 @@ It is recorded because a boundary nobody wrote down becomes a fallback the next 
 **Done when:** each remaining type-id either implements the surface, or its provider doc says which
 absence it is: the engine has no transaction to leave open, the driver cannot be asked, or nobody has
 measured it yet.
+
+### D76. A PostgreSQL object edit runs every statement the reader's text carries, and only the first one is accounted for
+
+`readObjectSource`'s edit path on `postgres` splices the reader's text between a provider prefix and a
+provider suffix and sends the whole thing as one parameterless simple query, and PostgreSQL runs every
+statement in such a query. Nothing above the wire is a single-statement check: the build compares the
+rendered HEADER for identity, and the post-condition only asks whether the addressed row was rewritten,
+which a `CREATE OR REPLACE` followed by a rider answers yes to.
+
+MEASURED live on PostgreSQL 18.4 through `POST /api/db/objects/edit-plan` and
+`POST /api/db/objects/edit-apply` (#789 Phase 3, task 19 fix round 1): the definition of
+`app.order_total(integer)` followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with
+`consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and the victim routine's
+`count(*)` went 1 to 0. The bytes are in the sealed preview, so the seal is intact and the user was
+shown them, but the plan's consequence model says nothing was lost, no acknowledgement is asked for, and
+both `object_edit` audit events name only
+`target: "function:app/order_total(integer):definition"` with the dropped routine's name nowhere in
+either. The same shape is refused by Trino at the coordinator (`mismatched input ';'`, `SYNTAX_ERROR`)
+and by Redis at load time, so this is measured on PostgreSQL alone.
+
+**Done when:** either the reader's text is refused when it carries more than one statement, or every
+statement it carries is named in the plan's consequences and in the audit target, so a success destroys
+nothing the plan did not show. The provider doc says the same thing where it bites, in
+`docs/providers/postgres.md`'s measured acceptance run.
+
+### D77. The PostgreSQL object fixture builds no producer for the post-condition, so `applied-elsewhere` has only a test double
+
+`docker/postgres-init/03-object-fixture.sql` builds the truncation population and the ownership
+population, and it builds nothing that can reach the emitted unit's post-condition on this engine. The
+build's identity check compares the rendered header up to the FIRST `)`, so a changed argument list only
+gets past it when a parameter `DEFAULT` holds a `)` inside a string literal, and no fixture routine has
+one. The #789 Phase 3 acceptance run had to create the object itself,
+`CREATE FUNCTION app.<name>(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$`,
+edited to `b bigint`, which answered `applied-elsewhere` with `undone: true` and left one row.
+
+Without it in the fixture, the only producer of `applied-elsewhere` on this engine that this repository
+builds is a driver mock, and the guard reads as one over a population nothing here creates.
+
+**Done when:** the fixture carries a routine with a parameter `DEFAULT` holding a `)` in a string
+literal, and the integration suite's `applied-elsewhere` case is driven against it.
 
 ## Value interpolation
 
