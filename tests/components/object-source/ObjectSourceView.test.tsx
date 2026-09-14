@@ -1884,6 +1884,44 @@ describe("ObjectSourceView edit mode", () => {
     expect(screen.getByTestId("object-source-apply-failure").textContent).toContain("could not be read");
   });
 
+  test("a foreign tab that wrote the key WITHOUT taking this draft is not reported as an eviction", async () => {
+    /*
+     * The control for the eviction test above, and it exists because the guard it controls
+     * SURVIVED its mutation: deleting the `readDraft(...) !== undefined` line left the suite at 75
+     * pass 0 fail, so the eviction detector was a guard over a population nothing built.
+     *
+     * The population is ordinary and is the common case rather than the rare one: one key holds
+     * every draft, so ANOTHER Studio tab saving ITS OWN draft writes this key and fires this event
+     * without touching ours. Reported as an eviction, that is a banner telling a reader their
+     * unsaved work is gone while it is sitting in the store, which is the false half of exactly
+     * the silence the eviction banner was added to break.
+     */
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("-- mine");
+    await settleDraft();
+    const held = window.localStorage.getItem(DRAFT_KEY) ?? "{}";
+    const withAForeignDraft = JSON.stringify({
+      ...(JSON.parse(held) as Record<string, unknown>),
+      "another-connection/other/function/definition": {
+        text: "-- theirs",
+        savedAt: 1,
+        base: { check: "unavailable", reason: "none" },
+      },
+    });
+
+    await act(async () => {
+      window.localStorage.setItem(DRAFT_KEY, withAForeignDraft);
+      window.dispatchEvent(new window.StorageEvent("storage", { key: DRAFT_KEY, newValue: withAForeignDraft }));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("object-source-draft-unsaved")).toBeNull();
+    expect(screen.getByTestId("object-source-draft-state").textContent).toContain("Saved in this browser");
+    expect(readDraft(window.localStorage, draftKey("definition"))?.text).toBe("-- mine");
+  });
+
   test("a build the ROUTE refused carries the route's own sentence into the bar", async () => {
     // The build seam throws rather than answering on every non-2xx: `httpSourceApplier` mints an
     // `ObjectEditRequestError` from the body's `error`, and an embedded host's `build` may throw
