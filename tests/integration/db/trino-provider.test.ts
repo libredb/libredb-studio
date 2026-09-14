@@ -3426,6 +3426,53 @@ const SHOW_PLUS_ONE = trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "
 const OVER_LIMIT_HEAD = "CREATE FUNCTION memory.app.plus_one(x bigint)\nRETURNS varchar\nRETURN '";
 const OVER_LIMIT_TEXT = `${OVER_LIMIT_HEAD}${"x".repeat(1_000_001 - OVER_LIMIT_HEAD.length - 1)}'`;
 
+/**
+ * A definition whose PARAMETER LIST the server's own formatter splits across two lines.
+ *
+ * MEASURED on trinodb/trino:476 in container `trino-t32` on host port 18532 on 2026-09-15, and
+ * every byte below is verbatim from `SHOW CREATE FUNCTION memory.app.nlrow`. It is created by
+ *
+ *   CREATE OR REPLACE FUNCTION memory.app.nlrow(r row("a<newline>b" bigint), y bigint)
+ *     RETURNS bigint
+ *     RETURN y;
+ *
+ * with a real newline inside the quoted ROW field name, and the coordinator accepts it.
+ *
+ * WHY THIS SHAPE AND NOT A LONG PARAMETER LIST. The brief for this repair expected the formatter
+ * to WRAP a long list, and it does not: a function with 200 parameters and deliberately long
+ * names answered 11,845 characters on ONE line on the same container. What splits a header is an
+ * IDENTIFIER holding a newline, which the formatter renders verbatim between its quotes. So the
+ * population exists, it is produced by the SERVER rather than by the reader, and the mechanism is
+ * not the one that was expected.
+ *
+ * The object is NOT in `docker/trino-init/01-object-fixture.sql`: this task owns the provider and
+ * this suite and not that file, and the statement above is recorded in its report so the fixture
+ * can gain it in one pass with the count assertion beside it.
+ */
+const CREATE_NLROW = 'CREATE FUNCTION memory.app.nlrow(r ROW("a\nb" bigint), y bigint)\nRETURNS bigint\nRETURN y';
+/** Its `SHOW FUNCTIONS` row, verbatim from the same container, and its path segment. */
+const NLROW_FUNCTION_ROW: unknown[] = ["nlrow", "bigint", 'row("a\nb" bigint), bigint', "scalar", true, ""];
+const NLROW_PATH: readonly string[] = ["memory", "app", 'nlrow(row("a\nb" bigint), bigint)'];
+
+/**
+ * Build against the split-header object, with the listing carrying it beside the fixture's own.
+ *
+ * The listing is EXTENDED rather than replaced, because the build resolves the overload the way
+ * the pane's read does and a one-row listing would not be a reply this coordinator sends.
+ */
+async function buildAgainstNlrow(readText: string, submitted: string): Promise<ObjectEditBuild> {
+  const provider = await editProvider();
+  serveInstead(
+    trinoFunctionListSql("memory", "app"),
+    rows(FUNCTION_COLUMNS, [...MEMORY_APP_FUNCTION_ROWS, NLROW_FUNCTION_ROW]),
+  );
+  serveInstead(
+    trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", "nlrow"),
+    sourceRows("Create Function", [readText]),
+  );
+  return await buildOn(provider, submitted, NLROW_PATH);
+}
+
 /** The `SHOW CREATE FUNCTION` reply, one queued answer per call, the last one repeating. */
 function sourceQueue(replies: readonly (readonly string[])[]): (id: string) => Reply {
   let call = 0;
@@ -3677,18 +3724,133 @@ describe("Trino object edit: the build", () => {
     expect(build.refusal.sentence).toContain("ALTER");
   });
 
-  test("the identity check is FIRST-LINE equality against the FORMATTER's own output", async () => {
-    // MEASURED on 476: the read text is the formatter's output, comments are dropped, expressions
-    // are parenthesised, `U&'\0041'` becomes `'A'` and blocks are re-indented, so its first line is
-    // canonical. The fixture's own shapes put the whole parameter list on that line, including
-    // `decimal(10, 2)`, `array(varchar)`, a ROW with a quoted `"a)b"` field and a `we(ird`
-    // identifier.
+  test("the identity survives a header the SERVER ITSELF split across lines, which a first-line check does not", async () => {
+    // THE POPULATION, and it is server-produced rather than reader-supplied. MEASURED on
+    // trinodb/trino:476 in container `trino-t32` on host port 18532 on 2026-09-15: the formatter
+    // does NOT wrap on width, a 200-parameter function answering 11,845 characters on ONE line,
+    // but it renders an identifier VERBATIM, so a ROW field name holding a newline puts the rest
+    // of the parameter list on line two of the engine's own text.
+    const submitted = CREATE_NLROW.replace("), y bigint)", "), y varchar)").replace("RETURN y", "RETURN 1");
+    // The CONTROL that makes this test about the parameter list and not about the first line: the
+    // two first lines are byte-identical, so a first-line check certifies nothing here.
+    expect(submitted.split("\n")[0]).toBe(CREATE_NLROW.split("\n")[0]);
+    const build = await buildAgainstNlrow(CREATE_NLROW, submitted);
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    // MEASURED end to end through this provider against that container: the first-line check
+    // ACCEPTED this text, the apply SUCCEEDED, and `SHOW FUNCTIONS FROM memory.app` answered TWO
+    // `nlrow` rows where it had answered one, with the outcome `applied-elsewhere` and
+    // `undone: false`, so nothing in this product removes the second one.
+    expect(build.refusal.sentence).toContain('nlrow(ROW("a\nb" bigint), varchar)');
+    expect(build.refusal.sentence).toContain('memory.app.nlrow(row("a\nb" bigint), bigint)');
+  });
+
+  test("the same split header BUILDS when only the body below it moved", async () => {
+    // The other half of the population, and without it the test above is a guard that refuses
+    // everything. A body edit on the very same object, with the identity untouched, is applied.
+    const submitted = CREATE_NLROW.replace("RETURN y", "RETURN y + 1");
+    const build = await buildAgainstNlrow(CREATE_NLROW, submitted);
+    if (build.built !== true) throw new Error(build.refusal.sentence);
+    if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+    expect(build.plan.unit.steps[0]?.text).toBe(`CREATE OR REPLACE${submitted.slice(6)}`);
+  });
+
+  test("a RENAMED parameter builds, because on 476 a rename is replaced in place", async () => {
+    // The widening this repair carries, and it is measured rather than argued. On the same
+    // container: `CREATE OR REPLACE FUNCTION memory.app.rename_probe(  renamed   bigint  )` over
+    // `rename_probe(x bigint)` answered CREATE FUNCTION and `SHOW FUNCTIONS` held ONE row before
+    // and ONE after, rendered back as `rename_probe(renamed bigint)`. A parameter name is not part
+    // of the identity on this engine, `SHOW FUNCTIONS` publishes none, and the path segment this
+    // provider mints carries none, so refusing a rename was a false refusal.
+    const submitted = READ_TEXT.replace("(x bigint)", "(  renamed   bigint  )").replace(
+      "RETURN (x + 1)",
+      "RETURN (renamed + 1)",
+    );
+    const build = await buildAgainst(READ_TEXT, submitted);
+    if (!build.built) throw new Error(build.refusal.sentence);
+    if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+    expect(build.plan.unit.steps[0]?.text).toContain(
+      "CREATE OR REPLACE FUNCTION memory.app.plus_one(  renamed   bigint  )",
+    );
+  });
+
+  test("a changed argument TYPE is refused even when nothing else in the header moves", async () => {
+    // The edit that FORKS, measured on 476, in its plainest form: same name, one type. The
+    // first-line check caught this one too, and the signature check has to keep catching it, so
+    // this is the regression that stops the repair from widening past what it meant to.
+    const build = await buildAgainst(READ_TEXT, FORKING_TEXT);
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain("memory.app.plus_one(varchar)");
+  });
+
+  test("a changed qualified NAME is refused although the argument types are unchanged", async () => {
+    // MEASURED on 476: `CREATE OR REPLACE FUNCTION memory.app.rename_probe2(renamed bigint)` over
+    // `rename_probe(renamed bigint)` left TWO functions, so a name change forks exactly as an
+    // argument-type change does, and the identity is the NAME and the types together.
     const renamed = READ_TEXT.replace("plus_one", "plus_two");
     const build = await buildAgainst(READ_TEXT, renamed);
     if (build.built) throw new Error("expected a refusal");
     expect(build.refusal.refusal).toBe("identity");
-    expect(build.refusal.sentence).toContain(READ_TEXT.split("\n")[0]);
-    expect(build.refusal.sentence).toContain(renamed.split("\n")[0]);
+    expect(build.refusal.sentence).toContain("memory.app.plus_two(bigint)");
+    expect(build.refusal.sentence).toContain("memory.app.plus_one(bigint)");
+  });
+
+  test("a text LibreDB cannot read a CREATE FUNCTION header out of is refused by that fact", async () => {
+    // `CREATE OR REPLACE FUNCTION ...` is the population, and it is a real paste: the first token
+    // IS CREATE, so check 3 passes it, and the apply would then splice a SECOND ` OR REPLACE` into
+    // it and send a statement no engine parses. The old first-line comparison refused it as a
+    // changed header, which was the right answer for the wrong reason.
+    const build = await buildAgainst(
+      READ_TEXT,
+      "CREATE OR REPLACE FUNCTION memory.app.plus_one(x bigint)\nRETURNS bigint\nRETURN (x + 2)",
+    );
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain("could not read a CREATE FUNCTION header");
+    expect(build.refusal.sentence).toContain("memory.app.plus_one(bigint)");
+  });
+
+  test("the three shapes a CREATE FUNCTION header cannot be read out of all answer the SAME fact", async () => {
+    // Enumerated from the reader itself rather than sampled, because each one is a different line
+    // of it and this suite is the only thing that can tell them apart from the outside. All three
+    // are texts a reader can type into the pane, and all three open with CREATE, so check 3 passes
+    // them on.
+    const shapes = [
+      // No parenthesis pair ANYWHERE, which is the arm that would throw on `span.open`. The
+      // parentheses have to be gone from the BODY too, and that is a fact about the scan worth
+      // stating: it takes the first TOP-LEVEL pair in the whole statement, which for every text
+      // this engine prints is the parameter list, and for a text with no parameter list is
+      // whatever the body brackets. The refusal is the same either way, by a different line.
+      "CREATE FUNCTION memory.app.plus_one RETURNS bigint RETURN x + 2",
+      // Keywords and then nothing: the parenthesis is there and the name is not.
+      "CREATE FUNCTION(x bigint)\nRETURNS bigint\nRETURN (x + 2)",
+      // A second keyword that is not the object's, which is what `CREATE OR REPLACE` is.
+      "CREATE TABLE memory.app.plus_one(x bigint)\nRETURNS bigint\nRETURN (x + 2)",
+    ];
+    for (const shape of shapes) {
+      const build = await buildAgainst(READ_TEXT, shape);
+      if (build.built) throw new Error(`expected a refusal for ${shape}`);
+      expect(build.refusal.refusal).toBe("identity");
+      expect(build.refusal.sentence).toContain("could not read a CREATE FUNCTION header");
+    }
+    // The loop asserts nothing if it runs zero times, so the population is pinned by count.
+    expect(shapes).toHaveLength(3);
+  });
+
+  test("a SERVER definition whose header cannot be read refuses rather than builds", async () => {
+    // The fail-safe direction of the same reading, driven from the other side. Unmeasured on 476
+    // and named as such: every `SHOW CREATE FUNCTION` reply this phase captured opens with
+    // `CREATE FUNCTION`. It is asserted because the alternative to refusing is applying against a
+    // definition this provider could not identify.
+    //
+    // The first token still has to be CREATE, or check 3 answers first: this is a reply that opens
+    // with CREATE and then says something this provider cannot parse a name and a list out of.
+    const served = READ_TEXT.replace("CREATE FUNCTION", "CREATE ROUTINE");
+    const build = await buildAgainst(served, READ_TEXT);
+    if (build.built) throw new Error("expected a refusal");
+    expect(build.refusal.refusal).toBe("identity");
+    expect(build.refusal.sentence).toContain("memory.app.plus_one(bigint)");
   });
 
   test("the revision is a COMPARISON, because Trino publishes no readable token anywhere", async () => {

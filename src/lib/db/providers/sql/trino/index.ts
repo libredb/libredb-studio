@@ -126,6 +126,7 @@ import {
   trinoObjectTargetSql,
   containerRead,
   functionSegment,
+  trinoCreateIdentity,
   listedObject,
   objectRead,
   readIdentifier as readObjectIdentifier,
@@ -1464,29 +1465,56 @@ export class TrinoProvider extends SQLBaseProvider {
       );
     }
 
-    // 4. The identity, which here is FIRST-LINE equality against the FORMATTER's own output.
-    //    MEASURED on 476: the read text is the formatter's, comments are dropped, expressions are
-    //    parenthesised, `U&'\0041'` becomes `'A'` and blocks are re-indented, so the first line is
-    //    canonical and the fixture's own shapes put the whole parameter list on it, including
-    //    `decimal(10, 2)`, `array(varchar)`, a ROW with a quoted `"a)b"` field and a `we(ird`
-    //    identifier. UNMEASURED and named rather than reported around: whether the formatter ever
-    //    WRAPS a very long parameter list onto a second line. The check fails SAFE either way,
-    //    because a wrapped header the reader did not touch is byte-identical to itself, so the
-    //    failure mode is a false refusal and never a false apply.
+    // 4. The identity, which is the QUALIFIED NAME and the ARGUMENT TYPE LIST, read wherever in
+    //    the text they are. It compared the FIRST LINE of each side until this was measured, and
+    //    a first line is not the identity: MEASURED on trinodb/trino:476 in container
+    //    `trino-t32` on host port 18532 on 2026-09-15, the formatter renders an identifier
+    //    verbatim, so `CREATE FUNCTION memory.app.nlrow(r ROW("a<newline>b" bigint), y bigint)` is
+    //    the server's own text for an object whose parameter list it split across two lines.
+    //    Driven end to end through this provider against that container, the first-line check
+    //    ACCEPTED `y bigint` edited to `y varchar` below line one, the apply SUCCEEDED, the
+    //    outcome was `applied-elsewhere` with `undone: false`, and the schema was left holding a
+    //    SECOND `nlrow` that nothing in this product removes.
     //
-    //    Both headers are shown, because the reader's next action is to put the original identity
+    //    THE WRAP THE OLD COMMENT NAMED AS UNMEASURED IS NOW MEASURED AND IT DOES NOT HAPPEN: a
+    //    function with 200 parameters and deliberately long names answers 11,845 characters on
+    //    ONE line on the same container. The formatter has no width. It was the identifier and
+    //    not the width that split the header, so the old comment's "fails safe either way" was
+    //    true of the population it imagined and false of the one that exists.
+    //
+    //    {@link trinoCreateIdentity} is the reader, and it is the same parameter-list scan the
+    //    overload resolution and the post-apply verification use, so a build and an apply cannot
+    //    disagree about which object a text names.
+    //
+    //    Both identities are shown, because the reader's next action is to put the original one
     //    back or to create the new function deliberately, and neither is possible from a sentence
-    //    that only says no.
-    const submittedHeader = request.text.split("\n")[0];
-    const currentHeader = definition.split("\n")[0];
-    if (submittedHeader !== currentHeader) {
+    //    that only says no. The submitted side is rendered from the reader's OWN bytes and the
+    //    current side is the path segment the plan is addressed to, which is the engine's own
+    //    rendering: the two spell a type list the way each source spelled it, and the comparison
+    //    that produced this refusal is the case-folded, whitespace-free and quote-free form both
+    //    of them reduce to.
+    const address = `${read.catalog}.${read.schema}.${read.name}`;
+    const submitted = trinoCreateIdentity(request.text, statement.object);
+    if (submitted === null) {
       return refuse(
         "identity",
-        `this text declares "${submittedHeader}" and the object being edited is "${currentHeader}", and ` +
-          "LibreDB refuses an edited header rather than sending it. MEASURED on Trino 476, a changed " +
-          "ARGUMENT TYPE LIST creates a SECOND function and leaves this one untouched, while a changed " +
-          "return type and a renamed parameter are replaced in place: make the change you want with a " +
-          "CREATE OR REPLACE FUNCTION of your own in the SQL editor",
+        `LibreDB could not read a CREATE ${statement.object} header out of this text, so it cannot tell ` +
+          `whether the text still names ${address}. A definition this product applies opens with ` +
+          `CREATE ${statement.object}, the qualified name and the parameter list in parentheses, exactly ` +
+          "as the server printed it, and LibreDB adds the OR REPLACE itself. Run the statement you want " +
+          "in the SQL editor instead",
+      );
+    }
+    const current = trinoCreateIdentity(definition, statement.object);
+    if (submitted.key !== current?.key) {
+      return refuse(
+        "identity",
+        `this text names "${functionSegment(submitted.name, submitted.argumentTypes.join(", "))}" and the ` +
+          `object being edited is "${address}", and LibreDB refuses an edited identity rather than sending ` +
+          "it. MEASURED on Trino 476, a changed ARGUMENT TYPE LIST or a changed NAME creates a SECOND " +
+          "function and leaves this one untouched, while a changed return type and a renamed parameter " +
+          "are replaced in place: make the change you want with a CREATE OR REPLACE FUNCTION of your own " +
+          "in the SQL editor",
       );
     }
 

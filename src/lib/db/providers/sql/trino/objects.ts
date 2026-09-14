@@ -819,7 +819,8 @@ export function trinoUnreadableSourceReason(statement: TrinoSourceStatement, nam
 // ----------------------------------------------------------------------------
 
 /**
- * The text inside the first TOP-LEVEL parentheses, or `null` when the text has none.
+ * The first TOP-LEVEL parenthesis pair, as the offsets of its own two characters, or `null`
+ * when the text holds none.
  *
  * QUOTE AWARE, and that is not defensive. Measured on 476: a function whose name holds an
  * open parenthesis renders its definition as
@@ -831,10 +832,10 @@ export function trinoUnreadableSourceReason(statement: TrinoSourceStatement, nam
  * A `"` toggles the quoted state, which handles Trino's doubled-quote escape without a case
  * of its own: `""` toggles twice and lands back where it started.
  */
-function trinoParenthesisedList(text: string): string | null {
+function trinoParenthesisedSpan(text: string): { readonly open: number; readonly close: number } | null {
   let quoted = false;
   let depth = 0;
-  let start = -1;
+  let open = -1;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
     if (character === '"') {
@@ -843,16 +844,28 @@ function trinoParenthesisedList(text: string): string | null {
     }
     if (quoted) continue;
     if (character === "(") {
-      if (depth === 0) start = index + 1;
+      if (depth === 0) open = index;
       depth += 1;
       continue;
     }
     if (character === ")") {
       depth -= 1;
-      if (depth === 0) return text.slice(start, index);
+      if (depth === 0) return { open, close: index };
     }
   }
   return null;
+}
+
+/**
+ * The text inside the first TOP-LEVEL parentheses, or `null` when the text has none.
+ *
+ * The OFFSETS are the primitive and this is the slice, because {@link trinoCreateIdentity} needs
+ * what comes BEFORE the list as well and two scanners for one parenthesis pair would be two
+ * readings that could disagree about which pair it is.
+ */
+function trinoParenthesisedList(text: string): string | null {
+  const span = trinoParenthesisedSpan(text);
+  return span === null ? null : text.slice(span.open + 1, span.close);
 }
 
 /**
@@ -1026,6 +1039,98 @@ export function trinoSpliceAt(text: string): number | null {
   if (start === -1) return null;
   const end = text.slice(start).search(/\s|$/) + start;
   return text.slice(start, end).toUpperCase() === "CREATE" ? end : null;
+}
+
+/**
+ * The IDENTITY a `CREATE` statement declares: the qualified name it writes and the argument
+ * types it declares, or `null` when neither can be read out of it (#789 Phase 3).
+ *
+ * THIS REPLACES A FIRST-LINE COMPARISON, AND THE POPULATION THAT KILLED THAT COMPARISON IS
+ * MEASURED. The build compared `text.split("\n")[0]` on both sides, which certifies the identity
+ * only while the WHOLE parameter list sits on line one. MEASURED on trinodb/trino:476 in
+ * container `trino-t32` on host port 18532 on 2026-09-15:
+ *
+ * - the formatter does NOT wrap on width: a function with 200 parameters and deliberately long
+ *   names answers 11,845 characters on one line, so the wrap the repair was briefed to expect is
+ *   not a thing this formatter does;
+ * - it DOES render an identifier verbatim, so a ROW field name holding a newline splits the
+ *   header. `CREATE FUNCTION memory.app.nlrow(r ROW("a<newline>b" bigint), y bigint)` is the
+ *   server's OWN text for such an object, its line one ends inside the ROW, and everything after
+ *   it was unchecked.
+ *
+ * Driven end to end through this provider against that container: with `y bigint` edited to
+ * `y varchar` below line one the build ACCEPTED the text, the apply SUCCEEDED, the outcome was
+ * `applied-elsewhere` with `undone: false`, and `SHOW FUNCTIONS FROM memory.app` answered two
+ * `nlrow` rows where it had answered one. Trino has no transaction to take that back and this
+ * design will not issue a DROP, so the second function stays.
+ *
+ * WHAT THE IDENTITY IS ON THIS ENGINE, and all three halves were measured on the same container:
+ * a changed ARGUMENT TYPE forks, a changed qualified NAME forks
+ * (`rename_probe` and `rename_probe2` left two rows), and a changed RETURN TYPE and a RENAMED
+ * parameter are replaced IN PLACE, one row before and one after. So the identity is the name and
+ * the argument TYPES and nothing else, which is also exactly what {@link functionSegment} mints a
+ * path segment from.
+ *
+ * THE WIDENING THAT FOLLOWS IS DELIBERATE. A parameter rename and any whitespace the reader adds
+ * inside the header now BUILD, where the first-line comparison refused them. They were false
+ * refusals: `SHOW FUNCTIONS` publishes no parameter name, the path segment carries none, and the
+ * measured apply above replaced the function in place and rendered the new name back.
+ *
+ * `key` is the comparison value and it is LENGTH FRAMED, because a name may hold any character
+ * this engine will quote, including a newline and a comma: concatenating the name and the
+ * signature with a plain separator lets one slide across the boundary into the other.
+ *
+ * The keyword walk is over `CREATE` plus the object's own words, taken from
+ * {@link TRINO_SOURCE_STATEMENTS}, so nothing here branches on a kind or on a type id. It is a
+ * token walk rather than a regular expression because the NAME may hold whitespace between its
+ * quotes and a `\s+`-separated pattern would have to stop guessing where the name begins.
+ *
+ * THERE IS NO "THE HEAD RAN OUT OF TOKENS" ARM, and its absence is measured rather than an
+ * oversight. `if (offset === -1) return null` was written here for a head like `CREATE   (`, and
+ * mutating it away left the whole suite at 197 pass 0 fail. It cannot change an answer: with
+ * `offset` at -1 the scan compares `head.slice(cursor - 1, cursor)`, which is the LAST CHARACTER
+ * of the keyword it just matched, and no word in {@link TRINO_SOURCE_STATEMENTS} is one character
+ * long, so the comparison below fails and the walk answers `null` by that line instead. Enumerated
+ * rather than argued: nine head shapes across all three keyword sets, `""`, `"   "`, `"CREATE"`,
+ * `"CREATE   "`, `"CREATE FUNCTION"`, `"CREATE FUNCTION   "`, `"  CREATE  "`,
+ * `"CREATE MATERIALIZED"` and `"CREATE MATERIALIZED   "`, 27 pairs, ZERO differing. A guard for a
+ * state that changes no answer is a covered line nothing executes (standing ruling 5b, #789).
+ *
+ * THE LENGTH FRAMING ON `key` SURVIVED ITS OWN MUTATION and is kept anyway, which is a judgement
+ * and not a measurement, so it is written as one. Dropping it to `${name}:${signature}` left the
+ * suite at 197 pass 0 fail, and no population in this product distinguishes the two: a collision
+ * needs either a rendered TYPE holding a colon or an UNQUOTED colon inside a name, and the
+ * coordinator can print neither, while a quoted name always carries its quotes and a normalised
+ * signature never holds a quote at all. It stays because this key is an identity comparison ahead
+ * of a write and the framing costs one call.
+ */
+export interface TrinoCreateIdentity {
+  /** The qualified name exactly as the statement writes it, `memory.app.plus_one`. */
+  readonly name: string;
+  /** One element per parameter, the TYPE as written, the parameter name dropped. */
+  readonly argumentTypes: readonly string[];
+  /** The comparison value: the length-framed name, then the two-rendering-proof signature. */
+  readonly key: string;
+}
+
+export function trinoCreateIdentity(createStatement: string, object: string): TrinoCreateIdentity | null {
+  const span = trinoParenthesisedSpan(createStatement);
+  if (span === null) return null;
+  const head = createStatement.slice(0, span.open);
+  let cursor = 0;
+  for (const keyword of ["CREATE", ...object.split(" ")]) {
+    const from = cursor + head.slice(cursor).search(/\S/);
+    // `\s|$` and never `\s` alone: the last keyword may run to the end of the head, and a -1 arm
+    // for that would be a second way to say the same thing.
+    const to = from + head.slice(from).search(/\s|$/);
+    if (head.slice(from, to).toUpperCase() !== keyword) return null;
+    cursor = to;
+  }
+  const name = head.slice(cursor).trim();
+  // `CREATE FUNCTION(x bigint)` names nothing, and neither does a head that is only keywords.
+  if (name === "") return null;
+  const argumentTypes = trinoSplitTopLevel(createStatement.slice(span.open + 1, span.close)).map(trinoParameterType);
+  return { name, argumentTypes, key: `${String(name.length)}:${name}:${trinoNormalisedSignature(argumentTypes)}` };
 }
 
 /**
