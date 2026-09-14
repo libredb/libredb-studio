@@ -1223,9 +1223,11 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
          * host told to re-read, and the preview session alone stays open, in the `failed` state
          * the dialog already renders the collateral region from. It is not a failure and the
          * region does not read as one: it says the change was applied and then names each fact.
-         * The ordering matters, session first: `onApplied` drives a re-read in both shipped
-         * shells, and a re-read landing before the session is set would render one frame with no
-         * dialog and then bring it back.
+         * The order of the three is NOT load-bearing, said plainly because the first draft of this
+         * comment claimed it was: MEASURED as a mutation window, moving `setPreview` after
+         * `onApplied` leaves this pane's suite at 95 pass 0 fail and the embedded shell's
+         * `source-tab` suite at 33 pass 0 fail. React batches all three inside one promise
+         * continuation, so the re-read `onApplied` drives cannot paint a frame between them.
          *
          * The population is bigger than it looks. Redis is the one shipped engine that produces
          * this outcome, and its collateral floor is now zero registered functions rather than
