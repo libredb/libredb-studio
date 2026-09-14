@@ -5316,7 +5316,12 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
           // A `refused` row whose case carries no class means a code this table expected to answer
           // some other arm came back as a refusal, which is the mapping changing under the test.
           if (refusalClass === undefined) throw new Error(`${code} answered refused with no expected class`);
-          expect(answer.refusal.refusal).toBe(refusalClass);
+          // The CODE is paired into both assertions, and that is the difference between a failure a
+          // reader can act on and one they cannot: the loop stops at the first bad case, and a bare
+          // `toBe("definition")` receiving `"privilege"` does not say WHICH of the nine codes moved.
+          // Measured: mutating the `42P13` arm to `privilege` produced exactly that message before
+          // this pairing, so the test went red without naming the arm it was red about.
+          expect([code, answer.refusal.refusal]).toEqual([code, refusalClass]);
         }
       }
     });
