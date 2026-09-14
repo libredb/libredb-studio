@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig } from "@/lib/types";
 
 /**
  * The base connection every case below varies by exactly one field.
@@ -21,6 +21,20 @@ const BASE: DatabaseConnection = {
   createdAt: new Date("2026-09-13T00:00:00.000Z"),
 };
 
+/**
+ * The bastion every tunnel case below varies by exactly one field. Its secrets are populated, so a
+ * frame that hashed the whole `sshTunnel` object rather than its four route fields would fail the
+ * rotation assertions rather than pass them by absence.
+ */
+const BASTION: SSHTunnelConfig = {
+  enabled: true,
+  host: "bastion.internal",
+  port: 22,
+  username: "libredb",
+  authMethod: "password",
+  password: "secret",
+};
+
 function vary(overrides: Partial<DatabaseConnection>): DatabaseConnection {
   return { ...BASE, ...overrides };
 }
@@ -32,8 +46,8 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({}))).toBe(digest);
   });
 
-  test("each of the nine server fields MOVES it, one field at a time", async () => {
-    // One case per field rather than one case for all nine, because a walk that dropped a single
+  test("each of the ten server fields MOVES it, one field at a time", async () => {
+    // One case per field rather than one case for all ten, because a walk that dropped a single
     // field would still answer differently for a connection that varied two.
     const base = await connectionFingerprint(BASE);
     expect(await connectionFingerprint(vary({ type: "mysql" }))).not.toBe(base);
@@ -51,6 +65,60 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ schema: "other" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
+    // The tenth, which the four above were audited without and which a review of THAT audit found
+    // one field away: the bastion is the ROUTE, and `factory.ts:485-492` rewrites `host` and `port`
+    // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
+    // record decides which machine the sealed statement reaches.
+    expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
+  });
+
+  test("two connections differing ONLY in their BASTION are two different servers", async () => {
+    // THE REGRESSION FOR THE SECOND HOLE, the one the first fix left open. REPRODUCED against the
+    // real module before the fix: `{ postgres, db.internal, 5432, app, libredb }` with no tunnel and
+    // the same record carrying `sshTunnel: { enabled, attacker.example, mallory }` BOTH answered
+    // `2dedca1a0ad45abdfb01427f0e1df3130e59617c5658058cbcf4852297f888c7`.
+    //
+    // Reachable with no forgery at all: preview an edit normally, then POST the SAME nine fields
+    // with a fresh `connection.id`, which is out of the frame on purpose and also misses the
+    // provider cache, plus a bastion the caller owns. The seal verified and the approved DDL and
+    // the database credentials travelled through the caller's SSH server.
+    //
+    // This repository already hashes the tunnel into its OTHER connection identity,
+    // `connectionIdentity` in `src/lib/agent/context-snapshot.ts`, whose docblock states the rule
+    // this seal needed: the same `db:5432` reached through two different bastions is two different
+    // databases. The field set below is that twin's, deliberately, so the two cannot drift.
+    const ours = await connectionFingerprint(vary({ sshTunnel: BASTION }));
+    expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, host: "attacker.example" } })));
+    expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
+    expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
+    // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
+    // `factory.ts:485` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
+    // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
+    // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
+    // out for the twin's reason, it records what this connection TRUSTS rather than where it goes.
+    expect(ours).toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, password: "rotated" } })));
+    expect(ours).toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, privateKey: "-----BEGIN-----" } })));
+    expect(ours).toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, passphrase: "p" } })));
+    expect(ours).toBe(
+      await connectionFingerprint(vary({ sshTunnel: { ...BASTION, hostKeyFingerprint: "SHA256:aa" } })),
+    );
+  });
+
+  test("the tunnel-REWRITTEN twin of a connection is a different digest, which is a KNOWN GAP", async () => {
+    // Not a guard, a PIN on the arithmetic behind backlog X23, so the entry is re-derivable without
+    // an SSH server. `getOrCreateProvider` (`src/lib/db/factory.ts:485-492`) hands the provider a
+    // connection whose `host` and `port` are the tunnel's LOCAL endpoint, and `base-provider.ts:149`
+    // stores that object as `this.config`, which is what every provider fingerprints its plan with.
+    // The routes fingerprint the UNREWRITTEN record. So these two digests are the two sides of the
+    // comparison at `edit-plan/route.ts:155`, and they differ, which means an HONEST tunnelled
+    // connection can never build an object edit plan at all.
+    //
+    // CODE READING and not a live drive: no bastion was stood up. What is RUN here is the digest
+    // arithmetic; the wiring above is read from the three files named.
+    const record = vary({ sshTunnel: BASTION });
+    const asTheProviderSeesIt = { ...record, host: "127.0.0.1", port: 54_321 };
+    expect(await connectionFingerprint(record)).not.toBe(await connectionFingerprint(asTheProviderSeesIt));
   });
 
   test("two connections differing ONLY in their URI are two different servers", async () => {
@@ -91,6 +159,18 @@ describe("connectionFingerprint", () => {
     const left = await connectionFingerprint(vary({ database: "d", user: "b1u" }));
     const right = await connectionFingerprint(vary({ database: "db1", user: "u" }));
     expect(left).not.toBe(right);
+    // And it holds INSIDE the tunnel's own field, which is a second frame and needed its own
+    // colliding pair. MEASURED: dropping the inner `.map` from `tunnelRoute` was the ONE mutation
+    // of five that every other assertion in this file survived, so this pair is the whole guard.
+    // Unframed, both of these concatenate to `truebastion.internal22libredb`, one digest for a
+    // bastion on port 22 and a DIFFERENT bastion, `bastion.internal2`, on port 2.
+    const throughOne = await connectionFingerprint(
+      vary({ sshTunnel: { ...BASTION, host: "bastion.internal", port: 22 } }),
+    );
+    const throughTwo = await connectionFingerprint(
+      vary({ sshTunnel: { ...BASTION, host: "bastion.internal2", port: 2 } }),
+    );
+    expect(throughOne).not.toBe(throughTwo);
   });
 
   test("an absent field is not a throw, over BOTH populations that carry absences", async () => {
@@ -126,5 +206,11 @@ describe("connectionFingerprint", () => {
     // string and an absent field are both the empty frame, which is stated here as the measured
     // limit rather than left for a later reader to discover.
     expect(await connectionFingerprint({ ...bare, host: "" })).toBe(await connectionFingerprint(bare));
+    // The third absence, added with the tunnel field: NO tunnel is not the same route as a tunnel
+    // that happens to be switched off. An implementation that folded both to the empty frame would
+    // pass every other line here, because nothing else in this file compares those two records.
+    expect(await connectionFingerprint(bare)).not.toBe(
+      await connectionFingerprint({ ...bare, sshTunnel: { ...BASTION, enabled: false } }),
+    );
   });
 });

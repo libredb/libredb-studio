@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D81, U17 · 39
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X22, U2–U21 · 15
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 16
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1596,6 +1596,36 @@ a slow runner.
 **Done when:** the failure is reproduced with the reason named, and the first attempt passes, so
 Playwright's retry is no longer what makes the job green. If the cause is the refused read, closing
 this also means deciding whether the source pane should offer the recovery the tree already does.
+
+### X23. An SSH-tunnelled connection can never build an object edit plan
+
+`getOrCreateProvider` (`src/lib/db/factory.ts:485-492`) rewrites `host` and `port` to the tunnel's
+LOCAL endpoint before the provider is constructed, and `src/lib/db/base-provider.ts:149` stores that
+rewritten object as `this.config`. Every provider seals the plan it issues with
+`connectionFingerprint(this.config)`, so the plan carries the digest of `127.0.0.1:<ephemeral>`. The
+routes fingerprint the record the request RESOLVED, which still carries the far-end address, so
+`src/app/api/db/objects/edit-plan/route.ts:155` compares two digests that cannot be equal and answers
+400 `EDIT_PLAN_INVALID`. The reader sees an object they can read and cannot edit, with no sentence
+saying why.
+
+EVIDENCE CLASS. The digest arithmetic is MEASURED and is pinned by the test "the tunnel-REWRITTEN
+twin of a connection is a different digest" in `tests/unit/lib/db/connection-fingerprint.test.ts`, so
+this entry is re-derivable without an SSH server. The wiring above is CODE READING of the three files
+named: no bastion was stood up and no tunnelled edit was driven end to end.
+
+It is filed rather than fixed because the fix belongs in the factory and not in the seal. The
+fingerprint cannot recover the far-end address from the rewritten record, and folding `host` and
+`port` out of the frame whenever a tunnel is enabled would make two different databases behind the
+same bastion collide, which is the failure the fingerprint exists to prevent. The shape that works is
+for `getOrCreateProvider` to carry the pre-rewrite endpoint on the effective connection so both sides
+fingerprint the same address.
+
+Found while closing the OTHER half of the same asymmetry: `sshTunnel` was absent from the frame
+entirely, so a caller could re-point an approved plan through a bastion they own. That half is fixed
+(#789, discussion #778); this half is the same blind spot seen from the honest side.
+
+**Done when:** a connection with an enabled SSH tunnel can build and apply an object edit plan, with a
+test that drives the two sides through the factory rather than asserting the digest alone.
 
 ## Dependencies
 
