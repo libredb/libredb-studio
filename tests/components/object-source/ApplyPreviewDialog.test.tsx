@@ -116,8 +116,12 @@ mock.module("@monaco-editor/react", () => ({
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { ApplyPreviewDialog, type ApplyPreviewState } from "@/components/object-source/ApplyPreviewDialog";
-import { providerRanges } from "@/lib/db/object-edit";
+import {
+  ApplyPreviewDialog,
+  type ApplyPreviewFailure,
+  type ApplyPreviewState,
+} from "@/components/object-source/ApplyPreviewDialog";
+import { EDIT_PLAN_EXECUTABLE_LIMIT, providerRanges } from "@/lib/db/object-edit";
 import type {
   ObjectEditConsequence,
   ObjectEditCurrentText,
@@ -308,12 +312,34 @@ const click = (suffix: string) => {
   fireEvent.click(screen.getByTestId(testId(suffix)));
 };
 const headers = () => screen.queryAllByTestId(testId("-diff-header")).map((node) => node.textContent);
+/**
+ * A pointer press on the Radix overlay, the way a reader dismisses a modal by clicking the backdrop.
+ *
+ * MEASURED in this environment, and it is why this is three events behind one timer flush rather
+ * than one `fireEvent.pointerDown`: Radix registers its document `pointerdown` listener inside a
+ * `setTimeout(0)`, so a press fired before that timer reaches nothing at all, and a bare
+ * `pointerdown` with no `mousedown`/`click` behind it is swallowed by the layer's own
+ * outside-interaction interception. With the flush and the full sequence the press closes the
+ * dialog in `preview`, which is the control that makes the `applying` block non-vacuous.
+ */
+async function pressOverlay(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+  const overlay = document.querySelector("[data-slot='dialog-overlay']");
+  if (overlay === null) throw new Error("no overlay to press");
+  await act(async () => {
+    fireEvent.pointerDown(overlay, { button: 0 });
+    fireEvent.mouseDown(overlay, { button: 0 });
+    fireEvent.click(overlay, { button: 0 });
+  });
+}
 /** Offsets, decoded from the fake model's line-1 mapping, which is what `providerRanges` speaks. */
 const decorations = () => painted.map((one) => ({ start: one.range.startColumn - 1, end: one.range.endColumn - 1 }));
 
 const PREVIEW: ApplyPreviewState = { kind: "preview", plan: PLAN, preimage: PREIMAGE };
 
-function refusal(outcome: ObjectEditOutcome, plan: ObjectEditPlan = PLAN): ApplyPreviewState {
+function refusal(outcome: ApplyPreviewFailure, plan: ObjectEditPlan = PLAN): ApplyPreviewState {
   return { kind: "failed", plan, preimage: PREIMAGE, outcome };
 }
 
@@ -423,8 +449,15 @@ describe("ApplyPreviewDialog", () => {
       unit: { medium: "statement", steps: [PG_STEP, { ...PG_STEP, text: "SELECT 1;" }] },
     };
     draw({ kind: "preview", plan: twoStep, preimage: PREIMAGE });
-    expect(text("-identity")).toContain("1,243 characters.");
-    expect(text("-identity")).toContain("This plan sends 2 statements and the diff shows the first of them.");
+    // The byte-identity clause is NOT claimed here, and that is the repair: with two steps the
+    // right side is one of them, so "the whole of the right side is what will be sent" would be
+    // false for exactly the case the second sentence was added for. The count belongs to the plan
+    // and the diff names which statement it is showing.
+    expect(text("-identity")).toBe(
+      "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you " +
+        "typed. The diff shows statement 1 of 2, and 1,243 characters will be sent in total.",
+    );
+    expect(text("-identity")).not.toContain("the whole of the right side");
     expect(diffProps?.modified).toBe(PG_STEP.text);
   });
 
@@ -437,6 +470,28 @@ describe("ApplyPreviewDialog", () => {
     // READS `check_function_bodies`, so a line claiming a pin for it would be worse than no line.
     expect(text("-session-pin")).not.toContain("check_function_bodies");
     expect(rows("-session-pin")).toHaveLength(1);
+  });
+
+  test("two PINNED entries for one setting draw ONE line, not two", () => {
+    // The population the dedupe in the pin loop is for, built rather than assumed. Nothing this
+    // repository ships emits it, and nothing refuses it either: `isObjectEditPlanShape` checks
+    // every entry's shape and asserts NO uniqueness over `setting`, so an embedded host's
+    // `objectEditor.build` can answer exactly this. Two lines for one setting would read as two
+    // pins, and the second value is not even the one `pinnedSessionValue` resolves.
+    draw({
+      kind: "preview",
+      plan: {
+        ...PLAN,
+        session: [
+          { mode: "pinned", setting: "search_path", value: '"app", pg_catalog' },
+          { mode: "pinned", setting: "search_path", value: '"other"' },
+        ],
+      },
+      preimage: PREIMAGE,
+    });
+    expect(rows("-session-pin")).toHaveLength(1);
+    expect(text("-session-pin")).toContain('search_path set to "app", pg_catalog');
+    expect(text("-session-pin")).not.toContain("other");
   });
 
   test("a plan that pins nothing draws no session line", () => {
@@ -458,6 +513,35 @@ describe("ApplyPreviewDialog", () => {
     // The acknowledgement is sent as the list of CLASSES and the ROUTE enforces it, because a
     // client-only confirmation satisfies nothing a server can assert.
     expect(handlers.onApply).toHaveBeenCalledWith(["replaces-whole-container"]);
+  });
+
+  test("the acknowledgement stays on screen WHILE applying, checked and frozen", () => {
+    // The population for the `|| applying` arm of the checkbox's visibility, which nothing else in
+    // this suite builds: a reader who acknowledged a consequence and is now watching the apply run.
+    // Dropping the row at that moment would take the sentence they agreed to off the screen for
+    // exactly the seconds the destruction is happening, and leave the dialog claiming nothing was
+    // acknowledged.
+    const planned: ObjectEditPlan = { ...PLAN, consequences: [COLLATERAL] };
+    const view = draw({ kind: "preview", plan: planned, preimage: PREIMAGE });
+    click("-ack");
+    view.rerender(
+      <ApplyPreviewDialog
+        open
+        state={{ kind: "applying", plan: planned, preimage: PREIMAGE }}
+        objectLabel="app.order_total(integer)"
+        partLabel="Definition"
+        address="conn/app.f(integer)/function"
+        partId="definition"
+        onApply={handlers.onApply}
+        onRebuild={handlers.onRebuild}
+        onGoToError={handlers.onGoToError}
+        onClose={handlers.onClose}
+      />,
+    );
+    expect(query("-ack")).not.toBeNull();
+    expect(screen.getByTestId(testId("-ack")).getAttribute("data-state")).toBe("checked");
+    expect(button("-ack").disabled).toBe(true);
+    expect(rows("-consequence")).toHaveLength(1);
   });
 
   test("a TRUNCATED pre-image says so in the header and DISABLES Apply", () => {
@@ -485,6 +569,72 @@ describe("ApplyPreviewDialog", () => {
     draw(PREVIEW);
     expect(query("-preimage-truncated")).toBeNull();
     expect(button("-confirm").disabled).toBe(false);
+  });
+
+  test("a plan ABOVE the apply route's own bound never reaches a Monaco model", () => {
+    // The trust boundary this dialog sits on, and the bound is the EXISTING one rather than a
+    // third number invented here: `EDIT_PLAN_EXECUTABLE_LIMIT` is what both apply routes enforce.
+    // The population: the STANDALONE path is bounded at both routes, and the EMBEDDED path passes
+    // through no route at all. `isObjectEditPlanShape` bounds NO string (grep `length` in
+    // `src/lib/api/object-edit-wire.ts`: four shape predicates, no bound), so an embedded host's
+    // `objectEditor.build` can answer a well-formed plan whose step text is 50 MB, and the tab
+    // hangs building a diff model for bytes no apply could ever send.
+    const huge = "-".repeat(EDIT_PLAN_EXECUTABLE_LIMIT + 1);
+    draw({
+      kind: "preview",
+      plan: {
+        ...PLAN,
+        unit: {
+          medium: "statement",
+          steps: [{ text: huge, language: "sql", segments: [{ from: "user", start: 0, end: huge.length }] }],
+        },
+      },
+      preimage: PREIMAGE,
+    });
+    expect(text("-oversize")).toBe(
+      "One side of this diff is 1,200,001 characters, above the 1,200,000 an apply can send, so LibreDB is " +
+        "not drawing it. Rebuild the preview, or shorten the definition.",
+    );
+    expect(query("-diff")).toBeNull();
+    expect(diffProps).toBeUndefined();
+    expect(query("-identity")).toBeNull();
+    expect(button("-confirm").disabled).toBe(true);
+  });
+
+  test("THE CONTROL: a plan AT the bound still draws its diff and leaves Apply enabled", () => {
+    // Without this the assertion above passes against a dialog that refuses every plan.
+    const atLimit = "-".repeat(EDIT_PLAN_EXECUTABLE_LIMIT);
+    draw({
+      kind: "preview",
+      plan: {
+        ...PLAN,
+        unit: {
+          medium: "statement",
+          steps: [{ text: atLimit, language: "sql", segments: [{ from: "user", start: 0, end: atLimit.length }] }],
+        },
+      },
+      preimage: PREIMAGE,
+    });
+    expect(query("-oversize")).toBeNull();
+    expect(diffProps?.modified).toBe(atLimit);
+    expect(button("-confirm").disabled).toBe(false);
+  });
+
+  test("an oversized CONFLICT text is refused the same way, and it is not the plan that is big", () => {
+    // The conflict screen's left side is `outcome.current.text`, which arrives over the same wire
+    // and through the same unbounded predicate as the plan.
+    draw({
+      kind: "conflict",
+      plan: PLAN,
+      current: { text: "-".repeat(EDIT_PLAN_EXECUTABLE_LIMIT + 1), language: "sql" },
+      userText: USER_TEXT,
+    });
+    expect(query("-oversize")).not.toBeNull();
+    expect(query("-diff")).toBeNull();
+    // The conflict header still says what happened, and the rebuild is still the way out.
+    expect(text("-conflict")).toContain("This definition changed after you opened it.");
+    click("-rebuild");
+    expect(handlers.onRebuild).toHaveBeenCalled();
   });
 
   test("with NO consequences there is no checkbox, so the common case is two clicks", () => {
@@ -581,6 +731,24 @@ describe("ApplyPreviewDialog", () => {
     draw(PREVIEW);
     expect(document.querySelector("[data-slot='dialog-close']")).not.toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
+    expect(handlers.onClose).toHaveBeenCalled();
+  });
+
+  test("applying BLOCKS the overlay as well: a press on the backdrop does not close it", async () => {
+    // The other half of "no other way out", and it was the half resting on a comment: Escape had a
+    // test, the overlay had none, and deleting `onPointerDownOutside` and `onInteractOutside` left
+    // the suite green. MEASURED here rather than deferred to a browser, with the control below.
+    draw({ kind: "applying", plan: PLAN, preimage: PREIMAGE });
+    await pressOverlay();
+    expect(handlers.onClose).not.toHaveBeenCalled();
+  });
+
+  test("THE CONTROL: a press on the backdrop DOES close the dialog in preview", async () => {
+    // Without this the block above would pass in an environment where the press never reaches the
+    // layer at all, which is exactly how this suite's first overlay probe read: a bare
+    // `fireEvent.pointerDown` with no timer flush closes nothing in EITHER state.
+    draw(PREVIEW);
+    await pressOverlay();
     expect(handlers.onClose).toHaveBeenCalled();
   });
 
@@ -797,13 +965,67 @@ describe("ApplyPreviewDialog", () => {
     expect(text("-failure")).toContain("The engine reported this apply as done.");
   });
 
+  test("`applied-with-collateral` READS the lost facts instead of saying nothing needs fixing", () => {
+    // The one arm whose outcome type carries a non-empty `lost` tuple precisely so the destruction
+    // can be NAMED. Folding it into the plain `applied` sentence printed "Nothing here needs
+    // fixing." over a function that had just been deleted.
+    draw({
+      kind: "failed",
+      plan: PLAN,
+      preimage: PREIMAGE,
+      outcome: {
+        outcome: "applied-with-collateral",
+        lost: [
+          {
+            loses: "replaces-whole-container",
+            fact: { source: "FUNCTION LIST LIBRARYNAME orders", observed: "order_count is gone" },
+          },
+        ],
+        revision: { check: "guarded", token: "md5:9f3", basis: "md5(prosrc)", scope: "server" },
+        duration: 18,
+      },
+    });
+    expect(text("-failure")).toContain(
+      "The engine applied this change and it destroyed something else, read back from the catalog after the apply.",
+    );
+    expect(text("-failure")).toContain("FUNCTION LIST LIBRARYNAME orders answers: order_count is gone.");
+    expect(text("-failure")).not.toContain("Nothing here needs fixing.");
+  });
+
+  test("the `failed` state's TYPE excludes `object-changed`, which is the conflict SCREEN", () => {
+    // A code comment saying "`object-changed` never reaches here" is not a guard. MEASURED before
+    // this exclusion existed: a `failed` state carrying that outcome rendered "Another session was
+    // changing this object at the same moment", threw `outcome.current` away and offered Close as
+    // the only control, which is decision H3's whole reason for existing presented as a timing
+    // collision. The mount that maps outcomes to states is Task 14's, so the refusal has to be one
+    // the COMPILER makes: this directive is the test, and it fails typecheck (TS2578, unused
+    // '@ts-expect-error') the moment the state type admits the arm again.
+    const asFailed = (outcome: ObjectEditOutcome): ApplyPreviewState => ({
+      kind: "failed",
+      plan: PLAN,
+      preimage: PREIMAGE,
+      // @ts-expect-error `object-changed` belongs to the `conflict` state, which has the text to diff.
+      outcome,
+    });
+    const changed: ObjectEditOutcome = {
+      outcome: "conflict",
+      conflict: "object-changed",
+      current: CURRENT,
+      duration: 12,
+    };
+    expect(asFailed(changed).kind).toBe("failed");
+  });
+
   test("conflict replaces the LEFT side with the server's text NOW and renames the right header", () => {
     draw({ kind: "conflict", plan: PLAN, current: CURRENT, userText: USER_TEXT });
     expect(text("-conflict")).toContain("This definition changed after you opened it. Nothing was applied.");
     expect(diffProps?.original).toBe(CURRENT.text);
     expect(diffProps?.modified).toBe(USER_TEXT);
     expect(headers()).toEqual(["On the server now", "Your edit"]);
-    // Nothing on the right side was written by this product here, so nothing is shaded.
+    // Nothing on the right side was written by this product here, so nothing is shaded. The paint
+    // count is what separates "painted an empty set" from "never painted at all": `painted` starts
+    // as `[]` in `beforeEach`, so the assertion below passes either way on its own.
+    expect(paintCalls).toBeGreaterThan(0);
     expect(decorations()).toEqual([]);
     expect(query("-identity")).toBeNull();
     expect(query("-session-pin")).toBeNull();

@@ -18,6 +18,7 @@ import {
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import {
   describeConsequence,
+  EDIT_PLAN_EXECUTABLE_LIMIT,
   describePinnedPathRefusal,
   pinnedSessionValue,
   planExecutableLength,
@@ -47,6 +48,24 @@ import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib
  * side taken from the tab hides a change somebody else made while the tab sat open, which is the
  * whole shape of the failure this phase exists to prevent.
  */
+/**
+ * The outcomes the `failed` state may carry, and the one it may NOT (#789 Phase 3, decision H3).
+ *
+ * `conflict: "object-changed"` is the CONFLICT SCREEN and it is excluded here by the compiler
+ * rather than by a comment. The two conflict arms read the same on their first discriminant and
+ * differ entirely in what the reader is owed: `object-changed` carries `current`, the server's
+ * text at refusal time, and H3 asks for that text as a DIFF with a rebuild; `engine-refused-
+ * concurrent` carries a sentence and nothing to diff, because the apply was up to date and a
+ * "this changed" screen would show two identical texts.
+ *
+ * MEASURED, before this exclusion existed: a `failed` state carrying `object-changed` rendered
+ * "Another session was changing this object at the same moment ...", threw `outcome.current` away
+ * and left `Close` as the only control in the footer. The mount that maps an outcome to a state is
+ * Task 14's, so this is refused where a mount cannot get it wrong: a mount that branches on
+ * `outcome.outcome === "conflict"` alone no longer compiles.
+ */
+export type ApplyPreviewFailure = Exclude<ObjectEditOutcome, { readonly conflict: "object-changed" }>;
+
 export type ApplyPreviewState =
   | { readonly kind: "building" }
   | { readonly kind: "preview"; readonly plan: ObjectEditPlan; readonly preimage: ObjectEditPreimage }
@@ -55,7 +74,7 @@ export type ApplyPreviewState =
       readonly kind: "failed";
       readonly plan: ObjectEditPlan;
       readonly preimage: ObjectEditPreimage;
-      readonly outcome: ObjectEditOutcome;
+      readonly outcome: ApplyPreviewFailure;
     }
   | {
       readonly kind: "conflict";
@@ -101,13 +120,17 @@ function previewedStep(plan: ObjectEditPlan): ObjectEditStep {
  * the arm that stops a silent half-preview when one does.
  */
 function identitySentence(plan: ObjectEditPlan): string {
-  const base =
-    "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you " +
-    `typed, and the whole of the right side is what will be sent, ${counted(planExecutableLength(plan.unit))} characters.`;
+  const opening =
+    "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you ";
+  const total = counted(planExecutableLength(plan.unit));
   if (plan.unit.medium === "statement" && plan.unit.steps.length > 1) {
-    return `${base} This plan sends ${counted(plan.unit.steps.length)} statements and the diff shows the first of them.`;
+    // The byte-identity clause is DROPPED here rather than qualified: with more than one step the
+    // right side is one statement of several, so "the whole of the right side is what will be
+    // sent" would be false for exactly the case this arm exists for, while the count beside it
+    // would be counting bytes that are not on the screen.
+    return `${opening}typed. The diff shows statement 1 of ${counted(plan.unit.steps.length)}, and ${total} characters will be sent in total.`;
   }
-  return base;
+  return `${opening}typed, and the whole of the right side is what will be sent, ${total} characters.`;
 }
 
 /** The warning grammar the pane already uses for a truncated part (`ObjectSourceView.tsx:491-497`). */
@@ -243,7 +266,29 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
   const diffModified = state.kind === "conflict" ? state.userText : (step?.text ?? "");
   const diffLanguage = state.kind === "conflict" ? state.current.language : (step?.language ?? "sql");
 
-  const applyDisabled = truncated !== undefined || (needsAcknowledgement && !checked);
+  /**
+   * The one bound this dialog owes on the text it is handed, and it is the EXISTING number.
+   *
+   * `EDIT_PLAN_EXECUTABLE_LIMIT` is what both apply routes enforce, so nothing above it can ever
+   * be sent and a diff of it would be a preview of an impossible apply. The population is the
+   * EMBEDDED seam and not the standalone one: the standalone path is bounded at the build route
+   * and again at the apply route, while an embedded host's `objectEditor.build` passes through no
+   * route at all, and `isObjectEditPlanShape` bounds NO string. A 50 MB `unit.steps[0].text` is a
+   * well-formed plan by that predicate, and handing it to a Monaco model hangs the host's tab
+   * before the reader ever sees a preview. The measured cost of getting this wrong is the tab, so
+   * the answer is a sentence rather than a model.
+   *
+   * `planExecutableLength` is in the maximum as well as the two diff sides, because the command
+   * arm's verb and arguments are also host-supplied and are also rendered.
+   */
+  const previewLength = Math.max(
+    diffOriginal.length,
+    diffModified.length,
+    plan === undefined ? 0 : planExecutableLength(plan.unit),
+  );
+  const oversize = previewLength > EDIT_PLAN_EXECUTABLE_LIMIT;
+
+  const applyDisabled = truncated !== undefined || oversize || (needsAcknowledgement && !checked);
   const errorPosition =
     state.kind === "failed" && state.outcome.outcome === "refused" && state.outcome.refusal.at.within === "user"
       ? state.outcome.refusal.at
@@ -359,7 +404,13 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
             </p>
           ))}
 
-          {plan !== undefined && step !== undefined && plan.unit.medium === "command" && (
+          {oversize && (
+            <WarningRow testId="object-source-apply-oversize">
+              {`One side of this diff is ${counted(previewLength)} characters, above the ${counted(EDIT_PLAN_EXECUTABLE_LIMIT)} an apply can send, so LibreDB is not drawing it. Rebuild the preview, or shorten the definition.`}
+            </WarningRow>
+          )}
+
+          {!oversize && plan !== undefined && step !== undefined && plan.unit.medium === "command" && (
             <div className="dark rounded-lg border border-hairline bg-black p-3 font-mono">
               <p className="mb-2 text-[0.625rem] text-fg-faint">This apply sends a command, not a statement.</p>
               <pre
@@ -371,7 +422,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
             </div>
           )}
 
-          {plan !== undefined && (
+          {!oversize && plan !== undefined && (
             <div className="flex min-h-0 flex-col" data-testid="object-source-apply-diff">
               <div className="grid grid-cols-2 border-b border-border text-[11px] text-fg-muted">
                 <span className="px-2 py-1" data-testid="object-source-apply-diff-header">
@@ -410,7 +461,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
             </div>
           )}
 
-          {plan !== undefined && step !== undefined && plan.unit.medium === "statement" && (
+          {!oversize && plan !== undefined && step !== undefined && plan.unit.medium === "statement" && (
             <p className="text-[11px] text-fg-muted" data-testid="object-source-apply-identity">
               {identitySentence(plan)}
             </p>
@@ -493,7 +544,7 @@ function FailureRegion({
   label,
 }: {
   readonly plan: ObjectEditPlan;
-  readonly outcome: ObjectEditOutcome;
+  readonly outcome: ApplyPreviewFailure;
   readonly label: string;
 }): React.JSX.Element {
   const lines: string[] = [];
@@ -518,16 +569,25 @@ function FailureRegion({
       lines.push("The engine reported a position inside the part LibreDB added, so no marker was placed.");
     }
   } else if (outcome.outcome === "conflict") {
-    // `object-changed` is the conflict SCREEN and never reaches here. This is the other arm,
-    // MEASURED on PostgreSQL 18.4: a well-formed, UP-TO-DATE apply refused purely on timing after
-    // blocking for 2.8 seconds, so a "this changed" screen would show two identical texts.
+    // The ONLY conflict this state can carry: `ApplyPreviewFailure` excludes `object-changed`, so
+    // this arm is narrowed to `engine-refused-concurrent` by the type and not by a check whose
+    // other branch nothing builds. MEASURED on PostgreSQL 18.4: a well-formed, UP-TO-DATE apply
+    // refused purely on timing after blocking for 2.8 seconds, so a "this changed" screen would
+    // show two identical texts.
     lines.push(
       "Another session was changing this object at the same moment, so the engine refused this change. Nothing was applied.",
     );
-    if (outcome.conflict === "engine-refused-concurrent") {
-      lines.push(outcome.sentence);
-      code = outcome.code;
-    }
+    lines.push(outcome.sentence);
+    code = outcome.code;
+  } else if (outcome.outcome === "applied-with-collateral") {
+    // The arm whose outcome carries a NON-EMPTY `lost` tuple, which is a catalog fact read AFTER
+    // the apply and never a restatement of the plan's warning. Folding it into the plain `applied`
+    // sentence printed "Nothing here needs fixing." over a function the apply had just deleted,
+    // which is the exact opposite of what the tuple was added to make sayable.
+    lines.push(
+      "The engine applied this change and it destroyed something else, read back from the catalog after the apply.",
+    );
+    for (const lost of outcome.lost) lines.push(`${lost.fact.source} answers: ${lost.fact.observed}.`);
   } else if (outcome.outcome === "applied-elsewhere") {
     lines.push(`This text does not name \`${label}\`, so that object was not changed.`);
     lines.push(
@@ -548,7 +608,7 @@ function FailureRegion({
     );
     lines.push(outcome.sentence);
   } else {
-    // `applied` and `applied-with-collateral`. The mount closes this dialog on success, so nothing
+    // `applied`, and only `applied`. The mount closes this dialog on success, so nothing
     // in this product puts a success into the `failed` state. It is renderable rather than a throw
     // because the prop type cannot exclude it and a blank region would be the worse answer.
     lines.push("The engine reported this apply as done. Nothing here needs fixing.");
