@@ -1165,7 +1165,9 @@ describe("ApplyPreviewDialog", () => {
    * the server no longer holds. INVENTORY, taken from `dialog.textContent` in every state this
    * component can reach before any of this changed: all twelve opened with the same
    * `Apply this definitionapp.order_total(integer), Definition. Nothing runs until you press
-   * Apply.`, and all eleven that draw a diff carried `On the server nowWill be sent`.
+   * Apply.`, and all eleven that draw a diff carried `On the server nowWill be sent`. That
+   * inventory was taken over a plan whose `consequences` was `[]`, so it could not see the row
+   * that survived it, and the tests further down drive a plan that carries one.
    *
    * Asserted BY VALUE and per state, because the defect was never a missing element: every one of
    * these strings rendered, and every one of them was wrong about what had happened.
@@ -1199,7 +1201,14 @@ describe("ApplyPreviewDialog", () => {
 
   test("a preview that never ran says the object is untouched, in the frame and not only in the body", () => {
     draw({ kind: "expired" });
-    expect(frame()).toEqual({ title: "This preview expired", description: `${LABEL}${UNCHANGED}` });
+    // NOT `UNCHANGED`. The seal ran out after up to fifteen minutes and this client has asked the
+    // server nothing since, so "the definition on the server is unchanged" is a claim about a
+    // server this dialog has not spoken to: the `conflict` state exists precisely because another
+    // session can replace the definition inside that window.
+    expect(frame()).toEqual({
+      title: "This preview expired",
+      description: `${LABEL}Nothing was applied by this attempt.`,
+    });
     cleanup();
     draw({ kind: "conflict", plan: PLAN, current: CURRENT, userText: USER_TEXT });
     expect(frame()).toEqual({
@@ -1389,6 +1398,146 @@ describe("ApplyPreviewDialog", () => {
     expect(text("-identity")).toBe(
       "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you " +
         "typed. The diff shows statement 1 of 2, and 1,243 characters were sent in total.",
+    );
+  });
+  /**
+   * The whole screen on a completed apply, and the population that was missing from the inventory.
+   *
+   * The first inventory read `dialog.textContent` in twelve states over a plan whose
+   * `consequences` was `[]`, so no state in it ever drew a consequence row, and the row is not a
+   * corner case: `libraryCollateral` in `src/lib/db/providers/keyvalue/redis.ts` attaches
+   * `replaces-whole-container` to every Redis function plan whose library registers at least one
+   * function, and that same provider is the only day-one producer of `applied-with-collateral`.
+   * So every screen the collateral frame exists for carries a consequence row, and each of the
+   * eight sentences `describeConsequence` composes opens with `Applying this ...`.
+   *
+   * The plan below is LOADED on purpose: a consequence, a pinned setting and a `compared`
+   * revision, so every optional row in the body renders and the read below covers them all.
+   */
+  const LOADED: ObjectEditPlan = {
+    ...PLAN,
+    consequences: [COLLATERAL],
+    revision: { check: "compared", token: "md5:9f1", basis: "md5(prosrc)", scope: "server" },
+  };
+  /** Every sentence on this screen that is about something still to come. */
+  const FUTURE = [
+    "Nothing runs until you press Apply.",
+    "Applying this replaces the whole container",
+    "LibreDB runs this apply with search_path",
+    "This apply re-reads the definition first",
+    "Will be sent",
+    "what will be sent",
+  ];
+
+  test("THE CONTROL: every future-tense sentence this screen can draw IS on the preview", () => {
+    // Without this the assertion below passes over a screen that simply never drew the rows.
+    draw({ kind: "preview", plan: LOADED, preimage: PREIMAGE });
+    for (const sentence of FUTURE) expect(text("-dialog")).toContain(sentence);
+    expect(rows("-consequence")).toHaveLength(1);
+  });
+
+  test("a completed apply carries NO future-tense sentence anywhere on the screen", () => {
+    draw({ ...COLLATERAL_OUTCOME, plan: LOADED } as ApplyPreviewState);
+    for (const sentence of FUTURE) expect(text("-dialog")).not.toContain(sentence);
+  });
+
+  test("a consequence is a PREDICTION, so it comes off the screen once the apply has run", () => {
+    // It is not suppressed because it stopped mattering: it is suppressed because the sentence is
+    // written in the future tense by `describeConsequence`, which this file does not own, and on
+    // the collateral screen the outcome region above it already names what the catalog says went,
+    // read back AFTER the apply. A prediction and a measurement of the same destruction, with the
+    // prediction in the future tense, is the one contradiction this dialog must not print.
+    draw({ ...COLLATERAL_OUTCOME, plan: LOADED } as ApplyPreviewState);
+    expect(rows("-consequence")).toHaveLength(0);
+    expect(text("-failure")).toContain("FUNCTION LIST LIBRARYNAME orders answers: order_count is gone.");
+    cleanup();
+    // Every other outcome the `failed` state can carry, including the two where nothing was
+    // applied: the dialog offers no Apply on any of them, so there is no apply left for a
+    // prediction to be about.
+    for (const outcome of [
+      { outcome: "refused", duration: 4, refusal: { refusal: "definition", sentence: "x", at: { within: "none" } } },
+      { outcome: "interrupted", committed: "unknown", sentence: "gone", duration: 30_000 },
+      { outcome: "applied-elsewhere", undone: true, duration: 9 },
+    ] as const) {
+      draw(refusal(outcome as ApplyPreviewFailure, LOADED));
+      expect(rows("-consequence")).toHaveLength(0);
+      cleanup();
+    }
+  });
+
+  test("the acknowledgement's rows are still drawn while the bytes are IN FLIGHT", () => {
+    // The population that keeps the suppression above from becoming "hide it once Apply is
+    // pressed": `applying` has sent nothing the reader can be told about in the past tense, and
+    // the checkbox beside these rows stays on screen through it.
+    draw({ kind: "applying", plan: LOADED, preimage: PREIMAGE });
+    expect(rows("-consequence")).toHaveLength(1);
+  });
+
+  test("a refusal LibreDB made ITSELF does not tell the reader an engine spoke", () => {
+    /*
+     * MEASURED, `src/lib/db/providers/sql/postgres.ts`: a pooled client somebody else left inside a
+     * transaction is refused with `refusal: "guard"` and the comment "No engine spoke, so there is
+     * no SQLSTATE to carry". That is a day-one PostgreSQL path, filed as D78, and a title reading
+     * "The engine refused this change" over it sends the reader to the database to look for an
+     * error that is not there. `auditReadingFor` already separates a `guard` refusal from an
+     * engine's for exactly this reason.
+     */
+    draw(
+      refusal({
+        outcome: "refused",
+        duration: 4,
+        refusal: {
+          refusal: "guard",
+          sentence: "this connection's pooled session is inside a transaction somebody else opened",
+          at: { within: "none" },
+        },
+      }),
+    );
+    expect(frame()).toEqual({
+      title: "LibreDB refused this change",
+      description: `${LABEL}${UNCHANGED}`,
+    });
+    // The region under it still carries the refusing sentence, which is the provider's own here.
+    expect(text("-failure")).toContain("pooled session is inside a transaction");
+    cleanup();
+    // THE CONTROL, and the population this title is true over: every other refusal class at apply
+    // time is a verdict an engine reached. `unsupported` stays with the engine deliberately: its
+    // only day-one producer is Trino's coordinator answering NOT_SUPPORTED, errorCode 13.
+    for (const klass of ["definition", "privilege", "identity", "unsupported"] as const) {
+      draw(
+        refusal({
+          outcome: "refused",
+          duration: 4,
+          refusal: { refusal: klass, sentence: "the engine's own sentence", at: { within: "none" } },
+        }),
+      );
+      expect(frame().title).toBe("The engine refused this change");
+      cleanup();
+    }
+  });
+
+  test("the state whose bytes are IN FLIGHT is in the present tense, top to bottom", () => {
+    /*
+     * The two mutations that SURVIVED the first round both lived here: `applying` is the one state
+     * whose body nothing asserted, so `preimageIsCurrent` could be flipped false and `sent` could
+     * be made true on it with every test green. The report's decision that `applying` is not in the
+     * past tense was defended in prose and by nothing executable.
+     */
+    draw({ kind: "applying", plan: LOADED, preimage: PREIMAGE });
+    expect(frame()).toEqual({
+      title: "Applying this definition",
+      description: `${LABEL}This apply is running now.`,
+    });
+    expect(headers()).toEqual(["On the server now", "Will be sent"]);
+    expect(text("-session-pin")).toBe(
+      'LibreDB runs this apply with search_path set to "app", pg_catalog, for that one round trip only.',
+    );
+    expect(text("-revision-note")).toBe(
+      "This apply re-reads the definition first and refuses if it differs from the left side.",
+    );
+    expect(text("-identity")).toBe(
+      "The shaded regions are added by LibreDB to make this apply safe. Everything else is exactly what you " +
+        "typed, and the whole of the right side is what will be sent, 1,234 characters.",
     );
   });
 });

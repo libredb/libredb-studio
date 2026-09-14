@@ -141,8 +141,10 @@ function identitySentence(plan: ObjectEditPlan, sent: boolean): string {
  * One function rather than three conditionals at three render sites, because the three answers are
  * one fact and they went wrong together. Before this existed every state opened with
  * `Apply this definition` and `Nothing runs until you press Apply.`, MEASURED by reading
- * `dialog.textContent` in each of the twelve states this component can reach, and eleven of the
- * twelve also labelled the pre-image column `On the server now`. On the state X24 made reachable,
+ * `dialog.textContent` in each state this component can reach, and all but one of the states that
+ * draw a diff also labelled the pre-image column `On the server now`. That first inventory was
+ * taken over a plan carrying NO consequences and it therefore missed the row that survived it: see
+ * the consequence list in the body below, which is drawn only while the apply has not run. On the state X24 made reachable,
  * an apply that SUCCEEDED and destroyed a sibling function, all three of those are false at once
  * and the region under them is the honest part of the screen.
  *
@@ -150,7 +152,9 @@ function identitySentence(plan: ObjectEditPlan, sent: boolean): string {
  * true wherever the addressed object was left alone: a refusal, a rolled-back interruption and
  * both `applied-elsewhere` arms all leave the pre-image as the current definition. It goes false
  * on the two arms that replaced it and on `interrupted: "unknown"`, where nobody knows, and a
- * header claiming the server there would be a guess printed as a fact.
+ * header claiming the server there would be a guess printed as a fact. On `building` and `expired`
+ * the value is unobservable, because neither state draws a diff to put a header on; it is `true`
+ * there because nothing was sent, and no test can see it.
  */
 function applyFrame(state: ApplyPreviewState): {
   readonly title: string;
@@ -169,7 +173,16 @@ function applyFrame(state: ApplyPreviewState): {
     return { title: "Applying this definition", disposition: "This apply is running now.", preimageIsCurrent: true };
   }
   if (state.kind === "expired") {
-    return { title: "This preview expired", disposition: unchanged, preimageIsCurrent: true };
+    // NOT `unchanged`, and the difference is a claim this client cannot make. The seal ran out
+    // after up to fifteen minutes and nothing has asked the server anything since, so "the
+    // definition on the server is unchanged" would be a guess about a window the `conflict` state
+    // exists because another session can write inside. This attempt applied nothing, which is the
+    // whole of what is known here.
+    return {
+      title: "This preview expired",
+      disposition: "Nothing was applied by this attempt.",
+      preimageIsCurrent: true,
+    };
   }
   if (state.kind === "conflict") {
     return {
@@ -179,7 +192,27 @@ function applyFrame(state: ApplyPreviewState): {
     };
   }
   const outcome = state.outcome;
-  if (outcome.outcome === "refused" || outcome.outcome === "conflict") {
+  if (outcome.outcome === "refused") {
+    /*
+     * WHO refused, which the title may not get wrong. A `guard` refusal is THIS DESIGN'S
+     * precondition failing and no engine spoke: MEASURED in `postgres.ts`, an apply on a pooled
+     * client somebody else left inside a transaction is refused before any bytes leave, carrying
+     * no SQLSTATE because there was nothing to carry one, and it is a day-one PostgreSQL path
+     * (D78). "The engine refused this change" over it sends the reader to the database to look for
+     * an error that is not there. `auditReadingFor` makes the same separation for the same reason.
+     *
+     * Every other class at apply time is a verdict an engine reached, `unsupported` included: its
+     * only day-one producer is Trino's coordinator answering NOT_SUPPORTED, errorCode 13, through
+     * `TRINO_APPLY_VERDICT`, so the connector half of that class's documented sentence has no
+     * producer that would make this title false.
+     */
+    return {
+      title: outcome.refusal.refusal === "guard" ? "LibreDB refused this change" : "The engine refused this change",
+      disposition: unchanged,
+      preimageIsCurrent: true,
+    };
+  }
+  if (outcome.outcome === "conflict") {
     return { title: "The engine refused this change", disposition: unchanged, preimageIsCurrent: true };
   }
   if (outcome.outcome === "interrupted") {
@@ -452,16 +485,36 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
             </WarningRow>
           )}
 
-          {consequences.map((consequence, index) => (
-            <WarningRow
-              // A plan may legitimately carry two consequences of one class over two different
-              // catalog facts, so the class is not a key and the index is what the list has.
-              key={`${consequence.loses}-${String(index)}`}
-              testId="object-source-apply-consequence"
-            >
-              {describeConsequence(consequence)}
-            </WarningRow>
-          ))}
+          {/*
+           * The plan's consequences are a PREDICTION, so they are drawn only while there is still
+           * an apply for them to predict: `preview` and `applying`, never a state that carries an
+           * outcome. Every sentence `describeConsequence` composes opens with `Applying this ...`,
+           * all eight of them, and CORE owns that prose: a second renderer writing its own past
+           * tense here would be the second owner of one sentence, which is the thing that function
+           * was centralised to prevent.
+           *
+           * MEASURED on the screen this whole item exists for: the collateral state drew
+           * "The engine applied this change and it destroyed something else" and
+           * "... order_count is gone." and then, in the same warning styling one row below,
+           * "Applying this replaces the whole container, so anything in it that your text does not
+           * re-create is deleted." A prediction in the future tense under a measurement of the same
+           * destruction, contradicting the three lines above it. The outcome region says what the
+           * catalog answered AFTER the apply, which is the stronger statement of the two.
+           *
+           * A tense-aware `describeConsequence` would let a completed apply keep the prediction as
+           * well, and that lives in `src/lib/db/object-edit.ts`, which this task does not own.
+           */}
+          {!sent &&
+            consequences.map((consequence, index) => (
+              <WarningRow
+                // A plan may legitimately carry two consequences of one class over two different
+                // catalog facts, so the class is not a key and the index is what the list has.
+                key={`${consequence.loses}-${String(index)}`}
+                testId="object-source-apply-consequence"
+              >
+                {describeConsequence(consequence)}
+              </WarningRow>
+            ))}
 
           {needsAcknowledgement && (state.kind === "preview" || applying) && (
             <label className="flex items-center gap-2 text-xs text-fg-secondary" htmlFor="object-source-apply-ack">
@@ -641,11 +694,13 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
  * the same attention as one that was refused; only the name was ever wrong.
  *
  * The `data-testid` still reads `object-source-apply-failure`, and that is a KNOWN STALE NAME
- * rather than an oversight. MEASURED: renaming it to `object-source-apply-outcome` fails 10 tests
- * across three suites that read it (`ObjectSourceView.test.tsx` 6, `embedded-source.test.tsx` 3,
- * `source-tab.test.tsx` 1) and one Playwright assertion that reads the code child, and none of
- * those four files belongs to the change that renamed this one. The rename is a mechanical
- * substitution of two strings and it travels with an edit to those four files, in one commit.
+ * rather than an oversight. MEASURED by applying the rename to this file alone and running the
+ * four suites that read the name: 24 tests fail, `ApplyPreviewDialog.test.tsx` 14 (it composes the
+ * prefix, so every `-failure` and `-failure-code` call site there goes with it),
+ * `ObjectSourceView.test.tsx` 6, `embedded-source.test.tsx` 3 and `source-tab.test.tsx` 1, plus one
+ * Playwright assertion that reads the code child. The rename is a mechanical substitution of two
+ * strings over six files, and five of them belong to other tasks, so it travels as one commit that
+ * edits all six rather than as a change to this one.
  */
 function OutcomeRegion({
   plan,
