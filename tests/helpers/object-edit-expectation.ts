@@ -51,5 +51,12 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
  */
 export const EDIT_CENSUS_TYPES: readonly DatabaseType[] = Object.freeze([
   ...EXTERNAL_DATABASE_TYPES,
-  "libredb" as DatabaseType,
+  // NO `as DatabaseType` here. `libredb` is already a member of the union, so the assertion bought
+  // nothing and would have SUPPRESSED the compile error if the id were ever renamed or dropped,
+  // leaving the census counting seventeen against a sixteen-id fleet. MEASURED by renaming the id
+  // to `libredbX` in both places: bare, `bun run typecheck` reports
+  // `tests/helpers/object-edit-expectation.ts(52,14): error TS2322: Type
+  // 'readonly (DatabaseType | "libredbX")[]' is not assignable to type 'readonly DatabaseType[]'`;
+  // with `as DatabaseType` in front of it, the same rename compiles CLEAN (#789 Phase 3).
+  "libredb",
 ]);

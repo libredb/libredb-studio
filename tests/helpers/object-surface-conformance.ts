@@ -77,6 +77,7 @@ import {
   findKind,
   isCountUnavailable,
   isSourcePartUnavailable,
+  kindAcceptsSourceEdits,
   relationKindIds,
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
@@ -596,7 +597,12 @@ async function assertSourceSurface(
   // seventeen providers INCLUDING the fourteen that declare no editable kind, which is the
   // population a loop over editable kinds cannot reach. A build with no apply is a mandatory
   // preview with nothing behind it; an apply with no build is ruling 1a violated (#789 Phase 3).
-  const editableKinds = declaredKinds(capabilities).filter((kind) => kind.acceptsSourceEdits === true);
+  // THROUGH `kindAcceptsSourceEdits()` and never `kind.acceptsSourceEdits === true` inline: that
+  // function is the single reader of the field, its own docblock says so, and a later phase that
+  // changes the derivation (the way `kindAcceptsRowWrites` sits next to `supportsInlineRowEdit`)
+  // would otherwise move every provider and every route while this helper kept the old semantics
+  // for all seventeen suites (#789 Phase 3).
+  const editableKinds = declaredKinds(capabilities).filter((kind) => kindAcceptsSourceEdits(capabilities, kind.id));
   // `typeof` and never `"buildObjectEdit" in provider`: the property is optional on the
   // interface, so an `in` test walks the prototype chain and would answer true for anything the
   // base class ever grows under that name.
@@ -632,6 +638,22 @@ async function assertSourceSurface(
   const reasons = expected.emptyKinds ?? {};
   if (read === undefined) {
     assertNoStaleReason(reasons, []);
+    // THE HALF DECLARATION, and it is refused HERE for the same reason the pairing above sits
+    // before this return: everything below it is skipped, so the `undriven` refusal at the end of
+    // the walk, which exists for exactly this sentence, never executes for a provider that reads
+    // no source at all. MEASURED against the first commit of this task: a double declaring
+    // `acceptsSourceEdits` on `function`, no `hasSource`, no `readObjectSource` and BOTH edit
+    // methods RESOLVED, 1 pass 0 fail, because the pairing saw one editable kind against two
+    // implemented methods and agreed. The live population is a provider that keeps
+    // `acceptsSourceEdits` while a refactor drops `hasSource` and `readObjectSource` from the same
+    // declaration: the edit is then declared with nothing readable behind it, and every other
+    // refuser in this file is upstream of a walk that no longer runs (#789 Phase 3).
+    if (editableKinds.length > 0) {
+      throw new Error(
+        `${provider.type} declares the editable kind(s) ${editableKinds.map((kind) => kind.id).join(", ")} and ` +
+          "implements no readObjectSource, so the edit is declared over a definition nothing can read",
+      );
+    }
     return;
   }
 
@@ -730,7 +752,7 @@ async function assertSourceSurface(
     const document = await read.call(provider, object.path, kindId);
     entered.add(kindId);
     assertSourceDocument(document, object, kindId, findKind(capabilities, kindId)?.sourceLanguage);
-    const editableHere = findKind(capabilities, kindId)?.acceptsSourceEdits === true;
+    const editableHere = kindAcceptsSourceEdits(capabilities, kindId);
     let firstReadable: Extract<ObjectSourcePart, { readonly text: string }> | undefined;
     for (const part of document.parts) {
       if (isSourcePartUnavailable(part)) continue;
@@ -768,7 +790,11 @@ async function assertSourceSurface(
         partId: firstReadable.id,
         text: firstReadable.text,
       });
-      if (built === null || typeof (built as { built?: unknown } | undefined)?.built !== "boolean") {
+      // NO `built === null ||` in front of this: optional chaining short-circuits on null as well
+      // as undefined, so `typeof (null)?.built !== "boolean"` is already true and the disjunct
+      // decided nothing. MEASURED with node: `const b = null; typeof (b)?.built !== "boolean"`
+      // prints true, and deleting the disjunct killed no test (#789 Phase 3).
+      if (typeof (built as { built?: unknown } | null | undefined)?.built !== "boolean") {
         throw new Error(`buildObjectEdit("${kindId}") answered no ObjectEditBuild: ${JSON.stringify(built)}`);
       }
       editsDriven.add(kindId);

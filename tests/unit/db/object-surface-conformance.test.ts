@@ -1075,6 +1075,101 @@ describe("assertObjectSurface and the object source read", () => {
     );
   });
 
+  // THE HALF DECLARATION, found by review of the first commit and RED before the repair that
+  // followed it. The edit pairing above passes this double (one editable kind, both methods), the
+  // zero-count refusal passes it (the fixture holds two functions), and the `read === undefined`
+  // early return then leaves the whole walk, and with it the `undriven` refusal at the end of the
+  // helper, unexecuted. MEASURED against the first commit: this exact double RESOLVED, 1 pass 0
+  // fail. The live population is a provider that keeps `acceptsSourceEdits` on a kind while a
+  // refactor drops `hasSource` and `readObjectSource` from the same declaration, which leaves the
+  // edit declared with nothing readable behind it (#789 Phase 3).
+  test("refuses a provider that declares an editable kind and reads no source at all", async () => {
+    const provider = sourceProvider({
+      getCapabilities: () =>
+        capabilities({ acceptsSourceEdits: true, hasSource: undefined, sourceLanguage: undefined }),
+      readObjectSource: undefined,
+      buildObjectEdit: async () => ({
+        built: false,
+        refusal: { refusal: "unsupported", sentence: "no", at: { within: "none" } },
+      }),
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /declares the editable kind\(s\) function and implements no readObjectSource/,
+    );
+  });
+
+  // The OTHER population the `undriven` refusal exists for, and the one that keeps it killable: an
+  // editable kind that is not itself source-bearing WHILE another kind is. The early return above
+  // is not taken here, so the walk runs, reads `view`, and never reaches `function`. MEASURED
+  // against the first commit: deleting the `undriven` block killed no test at all, because no
+  // committed double ever reached the walk with an editable kind in it.
+  test("refuses an editable kind the walk never reads while another kind is read", async () => {
+    const mixed = {
+      queryLanguage: "sql",
+      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        {
+          id: "view",
+          role: "relation",
+          label: "View",
+          labelPlural: "Views",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions", acceptsSourceEdits: true },
+      ],
+    };
+    const provider = sourceProvider({
+      getCapabilities: () => mixed,
+      buildObjectEdit: async () => ({
+        built: false,
+        refusal: { refusal: "unsupported", sentence: "no", at: { within: "none" } },
+      }),
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(
+      assertObjectSurface(provider as never, {
+        ...expectation,
+        absentSource: { path: ["app", absentName], kind: "view" },
+      }),
+    ).rejects.toThrow(/declares the editable kind\(s\) function and the walk drove buildObjectEdit for none of them/);
+  });
+
+  // THE GREEN PATH OF THE EDIT WALK, which nothing committed reached: every editable double above
+  // throws before `editsDriven.add()` ever runs, so the `undriven` refusal was certified by no
+  // passing test and the build call itself was never made against a conforming provider. This is
+  // the positive control for all of them, and it also pins WHAT the helper submits: the first
+  // readable part's OWN id and text, unchanged, for the first object of the editable kind.
+  //
+  // `buildObjectEdit` is a `function` and not an arrow SO THAT `this` is observable. The helper
+  // calls it as `provider.buildObjectEdit!.call(provider, ...)`; a detached
+  // `const build = provider.buildObjectEdit!; await build(...)` binds `this` to undefined under
+  // ESM strict mode and this double throws, which is the mutation that makes the receiver a fact
+  // rather than a style (#789 Phase 3).
+  test("passes a provider whose editable kind is read, and DRIVES its buildObjectEdit", async () => {
+    const requests: unknown[] = [];
+    const provider = sourceProvider({
+      getCapabilities: () => capabilities({ acceptsSourceEdits: true }),
+      buildObjectEdit: async function (this: { type?: string } | undefined, request: unknown) {
+        if (this?.type !== "postgres") {
+          throw new Error("buildObjectEdit was called without its provider as `this`");
+        }
+        requests.push(request);
+        return {
+          built: false,
+          refusal: { refusal: "unsupported", sentence: "this double builds nothing", at: { within: "none" } },
+        };
+      },
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).resolves.toBeUndefined();
+    expect(requests).toEqual([
+      { path: ["app", "order_total(integer)"], kind: "function", partId: "definition", text: readable },
+    ]);
+  });
+
   test("a provider that declares nothing and implements nothing passes, which is fourteen of seventeen", async () => {
     // The zero-iteration case, asserted rather than assumed: this is the state of most of the
     // fleet, so if it threw, every abstaining provider's suite would be red. The positive test at
