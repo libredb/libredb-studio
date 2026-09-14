@@ -1058,13 +1058,24 @@ offers this design nothing to take it back with and it will not issue a `FUNCTIO
 It is a CONTROL rather than the primary guard: the build's shebang check already refused that text, so
 what this catches is a shebang-extraction bug in the provider. Round trip 3 is skipped on that arm,
 because the addressed library was not written.
+The comparison is BYTE-EQUAL and case-sensitive, for the same reason the library selection is: a reply
+differing from the addressed name only in case names a DIFFERENT library on this engine, and measured
+on 8.10.0 a load addressed at `libredb_probe` whose shebang said `name=LIBREDB_PROBE` replaced
+`LIBREDB_PROBE` wholesale and left `libredb_probe` untouched. A case-folding comparison would report
+that write as `applied` against an object the reader was never shown.
+
+**A plan whose revision is not `compared` RAISES**, and it does so before the first round trip. This
+provider issues `compared` on every plan it builds, so any other revision arrived from somewhere else,
+and reporting "no revision was available" as `conflict` / `object-changed` would assert that the object
+moved when nothing observed it moving. A statement unit and an undeclared kind raise for the same
+reason and in the same place.
 
 **Refusal classes, from the server's own first word, which on Redis is the error code:**
 
 | Reply | Class | `at` |
 |---|---|---|
 | `READONLY You can't write against a read only replica.` | `privilege` | `none` |
-| `NOPERM User libredb_nofunction has no permissions to run the 'function|load' command` | `privilege` | `none` |
+| `NOPERM User libredb_nofunction has no permissions to run the 'function\|load' command` | `privilege` | `none` |
 | `ERR Error compiling function: user_function:4: ...` | `definition` | `user`, line 4, column 1 |
 | every other `ERR` | `definition` | `none` |
 

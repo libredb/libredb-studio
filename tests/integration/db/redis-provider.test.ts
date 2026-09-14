@@ -2183,6 +2183,35 @@ describe("RedisProvider", () => {
         expect(part.edit).toEqual({ offered: true });
       });
 
+      /**
+       * The affordance is read off the DECLARATION, and the FALSE arm is given a population.
+       *
+       * Nothing in the shipped declaration reaches it: `keyspace`, the one kind that does not
+       * accept edits, is refused earlier by the `hasSource` guard, so the conditional's false
+       * arm has no live producer and a mutation making the field unconditional survived the
+       * suite at 179 pass 0 fail. The population is built the way the two standing-ruling-5g
+       * tests build theirs, by spying a declaration in: a kind that HAS source and does NOT
+       * accept edits, which is a shape a later phase can declare for real.
+       *
+       * The absent field and an `offered: false` are different facts and the pane's predicate
+       * reads the difference, so this asserts absence with `toBeUndefined` and not falsiness.
+       */
+      test("a kind that declares source and NOT edits is read with no edit affordance at all", async () => {
+        const base = provider.getCapabilities();
+        spyOn(provider, "getCapabilities").mockReturnValue({
+          ...base,
+          objectKinds: (base.objectKinds ?? []).map((kind) =>
+            kind.id === "function" ? { ...kind, acceptsSourceEdits: false } : kind,
+          ),
+        });
+
+        const document = await provider.readObjectSource!(["0", LOWER_NAME], "function");
+        const [part] = document.parts;
+        if (isSourcePartUnavailable(part)) throw new Error("the fixture library is readable");
+
+        expect(part.edit).toBeUndefined();
+      });
+
       test("the build reads WITHCODE and selects the library BYTE FOR BYTE", async () => {
         // MEASURED: `LIBRARYNAME` is a CASE-INSENSITIVE glob over a CASE-SENSITIVE dictionary, so the
         // reply can hold more than one library and the selection is a byte comparison of
@@ -2578,6 +2607,30 @@ describe("RedisProvider", () => {
         expect(outcome.wrote).toBe("libredb_probe_v2");
       });
 
+      /**
+       * The SAME control, over the population the fixture's library pair exists to build: a reply
+       * differing from the addressed name ONLY IN CASE.
+       *
+       * MEASURED on 8.10.0, `libredb_probe` and `LIBREDB_PROBE` coexist as two distinct
+       * libraries, and a body whose shebang said `name=LIBREDB_PROBE` loaded while addressed at
+       * `libredb_probe` REPLACED `LIBREDB_PROBE` wholesale and left `libredb_probe` untouched.
+       * So a case-insensitive comparison here would report `applied` for a write that landed on a
+       * THIRD object the reader was never shown, file a fresh revision token for it, and leave
+       * the pane re-reading the addressed library unchanged with the reader's edit nowhere.
+       * The `_v2` case above differs by more than case and cannot see that mutation: a
+       * case-insensitive compare survived the suite at 179 pass 0 fail without this test.
+       */
+      test("a reply differing from the addressed name ONLY IN CASE is `applied-elsewhere` too", async () => {
+        const outcome = await applyAgainst({
+          before: ["libredb_ping"],
+          after: ["libredb_ping"],
+          reply: UPPER_NAME,
+        });
+        if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+        expect(outcome.undone).toBe(false);
+        expect(outcome.wrote).toBe(UPPER_NAME);
+      });
+
       test("a read-only replica maps to PRIVILEGE, because the reader's action is the same", async () => {
         // `READONLY You can't write against a read only replica.` The reader's next action is to use a
         // different connection, which is exactly what a privilege refusal tells them.
@@ -2758,6 +2811,33 @@ describe("RedisProvider", () => {
         const outcome = await provider.applyObjectEdit!(build.plan);
         if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
         expect(outcome.current.text).toBe("");
+      });
+
+      /**
+       * H3 keeps its three states apart, and an `unavailable` revision is not one of them.
+       *
+       * A plan whose revision says "this provider could not produce a token" says nothing at all
+       * about whether the object moved, so answering `conflict` / `object-changed` for it asserts
+       * a fact this method's read did not observe, which is exactly the collapse H3 forbids. This
+       * provider issues `compared` on every plan it builds and the route seals plans, so the only
+       * way to hold such a plan is to have built it somewhere else: it raises, for the same
+       * reason and in the same shape as the statement-unit arm below.
+       */
+      test("a plan carrying an UNAVAILABLE revision is not one this provider issued, and it raises", async () => {
+        mockCall = async () => [LIBRARY_LOWER];
+        const build = await provider.buildObjectEdit!(request(EDITED));
+        if (!build.built) throw new Error(build.refusal.sentence);
+
+        capturedCalls.length = 0;
+        await expect(
+          provider.applyObjectEdit!({
+            ...build.plan,
+            revision: { check: "unavailable", reason: "this provider publishes no revision" },
+          }),
+        ).rejects.toThrow(/carries a compared revision, received "unavailable"/);
+        // It raises BEFORE the write and before the re-read, so a foreign plan costs no round
+        // trip and cannot half-apply.
+        expect(commandsSent()).toEqual([]);
       });
 
       test("a plan carrying a STATEMENT unit is not one this provider issued, and it raises", async () => {

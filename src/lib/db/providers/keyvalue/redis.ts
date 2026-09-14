@@ -1868,13 +1868,25 @@ export class RedisProvider extends BaseDatabaseProvider {
     const capabilities = this.getCapabilities();
     requireEditableKind(capabilities, plan.kind, REDIS_ENGINE);
     assertObjectPathShape(capabilities, plan.kind, plan.path);
+    if (plan.revision.check === "unavailable") {
+      // H3's three states stay three. A revision that says "this provider could not produce a
+      // token" says NOTHING about whether the object moved, so answering `conflict` /
+      // `object-changed` for it would assert a fact no read of this method observed, which is the
+      // collapse H3 forbids. This provider issues `compared` on every plan it builds and the
+      // route seals plans, so a plan arriving here with any other revision was built somewhere
+      // else: it raises, exactly as the statement-unit arm above does, and it raises BEFORE the
+      // first round trip, so a foreign plan costs nothing and cannot half-apply.
+      throw new QueryError(
+        `A Redis object edit plan carries a compared revision, received "${plan.revision.check}"`,
+        "redis",
+      );
+    }
     const name = plan.path[plan.path.length - 1];
     const started = Date.now();
 
     const before = parseFunctionLibrary(await this.callFunctionList(name), name);
     const current = before?.code ?? "";
-    const token = plan.revision.check === "unavailable" ? undefined : plan.revision.token;
-    if (token === undefined || libraryDigest(current) !== token) {
+    if (libraryDigest(current) !== plan.revision.token) {
       // H3's diff: the server's own text as this comparison read it, so the reader is shown what
       // is there rather than asked to trust a detector. A library that was DELETED answers the
       // empty string, which is what is there.
