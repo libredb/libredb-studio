@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { ObjectRouteError, boundSourceDocument, objectRouteErrorBody, readBoundedJson } from "@/lib/api/object-route";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -115,7 +117,8 @@ describe("readBoundedJson", () => {
     // has three conditions and "no named fields" is not one of them: `{}` parsed, and it is a JSON
     // object, so it is answered and `resolveConnection` is what refuses it. `readDefaultBody` refuses
     // `{}` itself with `Empty request body`. The handler-level half of this pair, both answers
-    // measured end to end, is `tests/api/object-route-handler.test.ts`.
+    // measured end to end through `handleObjectRequest`, is `tests/api/db-objects.test.ts`, under
+    // `describe("the body read the handler actually performs")`.
     expect(await readBoundedJson(request("{}"), 1024)).toEqual({});
   });
 
@@ -232,5 +235,35 @@ describe("the wire body one refusal renders as", () => {
       );
       expect((raised as ObjectRouteError).status).toBe(400);
     }
+  });
+});
+
+/**
+ * The docblocks in `src/lib/api/object-route.ts` cite test files BY PATH as the evidence for the
+ * claims they make, and a citation that points at nothing is worse than no citation: a reader who
+ * cannot find the file concludes the claim was never measured, and a reader who does not look
+ * concludes it was. This round found exactly that, twice: the fix round before it drove the two
+ * body reads end to end from a file called `tests/api/object-route-handler.test.ts`, measured that
+ * a second `mock.module("@/lib/db", ...)` in one process breaks `tests/api/db/profile.test.ts`,
+ * DELETED that file and appended the tests to `tests/api/db-objects.test.ts`, and left both
+ * docblock pointers aimed at the deleted path.
+ *
+ * THE POPULATION THIS RUNS OVER IS REAL AND IT IS NOT EMPTY: measured at this commit, the regex
+ * below matches two citations in that one source file. If it ever matches zero the count assertion
+ * fails, because a guard that certifies nothing when its population empties is the defect class
+ * this phase keeps finding rather than a guard.
+ *
+ * Scope is ONE file on purpose. Forty-eight distinct `tests/...test.ts` paths are cited across
+ * `src/` at this commit, and a repo-wide version of this check belongs to whoever owns the repo's
+ * lint surface, not to this task.
+ */
+describe("the test files object-route.ts cites in its docblocks", () => {
+  test("every cited path exists on disk", () => {
+    const source = readFileSync(join(import.meta.dir, "../../../../src/lib/api/object-route.ts"), "utf8");
+    const cited = [...new Set(source.match(/tests\/[A-Za-z0-9_./-]*\.test\.ts/g) ?? [])];
+
+    expect(cited.length).toBeGreaterThan(0);
+    const missing = cited.filter((relative) => !existsSync(join(import.meta.dir, "../../../..", relative)));
+    expect(missing).toEqual([]);
   });
 });

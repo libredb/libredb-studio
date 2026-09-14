@@ -249,8 +249,13 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * The caller's outcome is a 400 either way, because `resolveConnection({})` raises
  * `Either connection or connectionId is required` at 400, so this is a difference in SENTENCE and
  * not a hole. Both halves are pinned: the empty object is returned in
- * `tests/unit/lib/api/object-route-edit.test.ts` and both end-to-end answers are measured in
- * `tests/api/object-route-handler.test.ts`.
+ * `tests/unit/lib/api/object-route-edit.test.ts` and both end-to-end answers are measured through
+ * this handler in `tests/api/db-objects.test.ts`, under
+ * `describe("the body read the handler actually performs")`. They live in that file rather than in
+ * one of their own because a SECOND `mock.module("@/lib/db", ...)` in one bun process breaks the
+ * real module graph for the files that mock `@/lib/db/factory` later: measured, a separate file
+ * carrying the same mocks took `bun test tests/api` from 558 pass / 0 fail to 510 pass / 5 fail
+ * with 5 `SyntaxError: Export named 'getOrCreateProvider' not found` errors.
  */
 export async function readBoundedJson(req: NextRequest, byteLimit: number): Promise<Record<string, unknown>> {
   // `req.body` is null for a request that carried no body at all, which is what a GET or a bodiless
