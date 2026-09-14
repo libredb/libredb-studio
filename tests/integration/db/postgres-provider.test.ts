@@ -5572,8 +5572,14 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
      * e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
      * What DOES carry a parenthesis before the parameter list closes, every one of them measured on
      * 18.4 by creating the object and reading `pg_get_functiondef` back, in the order the array
-     * below holds them, and the array below is the population, so its length is the count and the
-     * only place in this repository that states one is the guard's `expect(...length).toBe(7)`:
+     * below holds them, and the array below is the population, so its length is the count. That
+     * count is a literal in exactly two places in these two files, and each of them is bound to
+     * this array: the population guard under this block, whose literal an added fixture turns red,
+     * and one sentence in `docs/providers/postgres.md` that a test under this block reads out of
+     * that file and asserts against this array's length. An earlier revision of this line claimed
+     * the guard was the only place in the REPOSITORY that stated a count, which that doc sentence
+     * already falsified. No PROSE sentence in either file states the count, here or there, and a
+     * second test under this block is what keeps that true:
      *
      *     CREATE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 2) ...
      *     CREATE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1) ...
@@ -5594,9 +5600,9 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
      * RE-MEASURED on 2026-09-15 by #789 task 34, on its own `postgres:18` container answering
      * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`: every `CREATE FUNCTION` statement above plus
      * `app.np()` were applied to a fresh database and `md5(pg_get_functiondef(oid))` answered the
-     * the `revision` constants below, every one of them byte for byte, so the population is re-runnable and
-     * not a transcription. The typmod rendering above was re-measured in the same session and
-     * answered the same eight-parameter line, with every parenthesis gone.
+     * `revision` constants below, every one of them byte for byte, so the population is
+     * re-runnable and not a transcription. The typmod rendering above was re-measured in the same
+     * session and answered the same eight-parameter line, with every parenthesis gone.
      *
      * `app.np()`, a function with no parameters at all, is the case where the first `)` IS the
      * right one, and it is here so that the fix is measured to leave it alone.
@@ -5722,9 +5728,9 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
        * `docs/providers/postgres.md` states the size of this population in prose, and the review
        * of the first commit found that the count had been stated in six prose places in this file
        * and three in that one while exactly ONE place asserted it. Prose numerals that no check
-       * reads are how this section drifted in the first place: an eighth shape makes
-       * `expect(PAREN_HEADER_FIXTURES.length).toBe(7)` red, the implementer corrects the array and
-       * the guard, and the doc's numeral silently becomes the wrong record again.
+       * reads are how this section drifted in the first place: an eighth shape makes the
+       * population guard above red, the implementer corrects the array and that guard, and the
+       * doc's numeral silently becomes the wrong record again.
        *
        * So the doc now states the count exactly once, in the word this test reads back, and every
        * other sentence there says "every one of those" or "all of them". If the sentence itself is
@@ -5741,6 +5747,43 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         const stated = words.indexOf(matches[0][1]);
         expect(stated).toBeGreaterThanOrEqual(0);
         expect(stated).toBe(PAREN_HEADER_FIXTURES.length);
+      });
+
+      /**
+       * THE OTHER HALF OF THAT BINDING, and a defect this task's own fix round 1 introduced.
+       *
+       * The test above binds ONE sentence in the provider doc to this array's length. The commit
+       * that wrote it also wrote two OTHER sentences that state the count in prose, one in the
+       * doc's paragraph on the in-place replace of `app.dc` and one in the docblock of the
+       * DEFAULT-change test below, and nothing bound either of them. An eighth fixture would then
+       * have been caught once, at the bound sentence, and left the two prose counts wrong with the
+       * suite green: the drift the test above exists to remove, over a population that excluded
+       * two live cases. Found by this task's round 2 reviewer.
+       *
+       * The repair is that no prose sentence states the count at all: the array is the count, and
+       * a sentence that needs to point at the population writes `the shapes above`. This guard
+       * keeps it that way. MEASURED by running it on 2026-09-15 before the prose was corrected:
+       * exactly those two sentences matched, one per file, the doc leg and this file's leg each
+       * measured on its own, and `grep -nEi` over the two files found the same two and nothing
+       * else.
+       *
+       * WHAT IT DOES NOT SEE, said here rather than left to be found: it sees a spelled numeral or
+       * a digit written DIRECTLY in front of `shapes` or `fixtures`, which is the shape both
+       * drifted sentences had and the shape the next one is likeliest to have. A count written any
+       * other way passes it, and no cheap check over English prose does better. The doc's own
+       * `such shapes` sentence is not matched, because `such` sits between its numeral and the
+       * noun, and it does not need to be: the test above is what binds that one.
+       */
+      test("no prose sentence in either file states this population's count", () => {
+        // Built so the pattern cannot match its own source: in the alternation each word is
+        // followed by `|`, never by the whitespace the pattern requires.
+        const counted = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)[ \t]+(?:shapes|fixtures)\b/gi;
+        for (const file of ["docs/providers/postgres.md", "tests/integration/db/postgres-provider.test.ts"]) {
+          const text = readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
+          const stated = [...text.matchAll(counted)].map((match) => match[0]);
+          // Paired with the file name so a failure names WHICH file and the exact words to remove.
+          expect([file, stated]).toEqual([file, []]);
+        }
       });
 
       for (const fixture of PAREN_HEADER_FIXTURES) {
@@ -5789,7 +5832,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
        * `CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 3)` over
        * the `DEFAULT 2` form left ONE `pg_proc` row with its `oid` unmoved at 16392 and `xmin`
        * moving 763 to 771, and `pg_get_functiondef` then rendered `b integer DEFAULT 3`. The
-       * numerals come from ONE database on ONE container in which the seven fixtures above were
+       * numerals come from ONE database on ONE container in which the fixtures above were
        * created in this array's order, then `app.np()`, then this edit; an `oid` counter is global
        * to the cluster and an `xmin` to the database, so neither reproduces on a differently
        * populated cluster and neither is the claim. The claim is one row, the `oid` unmoved and
