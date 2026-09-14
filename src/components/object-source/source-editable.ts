@@ -19,12 +19,15 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  * Both of the core facts travel ON THE DOCUMENT, so both arms are reachable on BOTH shells: the
  * standalone app, which reads through `/api/db/objects/source`, and the embedded library
  * surface, where a HOST supplies the document and no route of ours runs at all. That second
- * half is the one the server-side stripping cannot cover. The route is SPECIFIED to delete
- * `edit` from any part whose kind the CONNECTED provider does not declare editable, and at the
- * time this file is written that stripping IS NOT WRITTEN YET: measured at this commit,
- * `boundSourceDocument` carries `edit` through untouched and `acceptsSourceEdits` has no reader
- * outside `kindAcceptsSourceEdits`. Either way a host never reaches `boundSourceDocument`, so on
- * the embedded shell `edit` arrives exactly as the host wrote it.
+ * half is the one the server-side stripping cannot cover. The route deletes `edit` from any part
+ * whose kind the CONNECTED provider does not declare editable: `boundSourceDocument` reads
+ * `kindAcceptsSourceEdits(capabilities, document.kind)` and passes the answer to `stripEdit`
+ * (`src/lib/api/object-route.ts:549` and `:588`). This paragraph said that stripping was NOT
+ * WRITTEN YET, which was true when this file landed and stopped being true in the same phase;
+ * corrected here rather than left, because a stale claim about a guard reads as a statement that
+ * the guard is absent. What did NOT change is the half that matters to this file: a host never
+ * reaches `boundSourceDocument`, so on the embedded shell `edit` arrives exactly as the host
+ * wrote it, and the route's stripping covers the standalone path only.
  * Ordering the core facts first is what lets the embedded shell inherit the truncation and form
  * refusals with no route in the path, and it is what gives three of the four false arms a
  * producer on both shells rather than on one.
