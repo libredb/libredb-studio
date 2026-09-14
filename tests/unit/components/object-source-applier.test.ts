@@ -4,6 +4,11 @@ import {
   ObjectEditRequestError,
   type ObjectSourceApplier,
 } from "@/components/object-source/source-applier";
+import {
+  httpSourceApplier as barrelApplier,
+  ObjectEditRequestError as BarrelRequestError,
+  type ObjectSourceApplier as BarrelApplier,
+} from "@/components/object-source";
 import type { ObjectEditPlan, ObjectEditRequest, ObjectEditStep } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -219,5 +224,24 @@ describe("the seam's own type", () => {
     const applier: ObjectSourceApplier = httpSourceApplier;
     expect(typeof applier.build).toBe("function");
     expect(typeof applier.apply).toBe("function");
+  });
+
+  test("all three names reach a consumer OUTSIDE this folder through the barrel", () => {
+    /*
+     * The barrel is the shells' import surface and both of them name these three: the standalone
+     * shell builds its `onApply` from `httpSourceApplier`, the embedded adapter declares its
+     * host-built applier as an `ObjectSourceApplier`, and both read `ObjectEditRequestError`'s
+     * `code` to tell an expired plan apart from a failure.
+     *
+     * Asserted here rather than left to those shells, because they land in later waves of this
+     * phase and until they do NOTHING outside this folder imports the three names: `knip` names an
+     * unreferenced re-export by line, measured on this exact commit, and the file's own docblock
+     * says a re-export earns its place only by having a consumer outside the directory. This test
+     * is that consumer, and it is the only thing standing between a dropped barrel line and two
+     * shells that stop compiling in a wave nobody is looking at this file.
+     */
+    const applier: BarrelApplier = barrelApplier;
+    expect(applier).toBe(httpSourceApplier);
+    expect(BarrelRequestError).toBe(ObjectEditRequestError);
   });
 });
