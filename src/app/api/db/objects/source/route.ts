@@ -43,6 +43,10 @@ export async function POST(req: NextRequest) {
     const path = requireObjectPath(body);
     const kind = requireString(body, "kind");
     const read = requireSourceReader(provider, kind);
-    return boundSourceDocument(await read(path, kind, SOURCE_CHARACTER_LIMIT), SOURCE_CHARACTER_LIMIT);
+    return boundSourceDocument(
+      await read(path, kind, SOURCE_CHARACTER_LIMIT),
+      SOURCE_CHARACTER_LIMIT,
+      provider.getCapabilities(),
+    );
   });
 }
