@@ -1321,6 +1321,33 @@ const PREIMAGE: ObjectEditPreimage = { text: READABLE.text, language: "sql" };
 
 const BUILT = { built: true, plan: PLAN, preimage: PREIMAGE, planToken: "token-1" };
 
+/**
+ * A plan that carries a CONSEQUENCE, which is the everyday Redis shape and not a corner (#789).
+ *
+ * `libraryCollateral` in `src/lib/db/providers/keyvalue/redis.ts` fills `consequences` for every
+ * function library registering two or more functions, so a plan with a consequence is what the
+ * one shipped collateral engine builds for an ordinary library. The pane's suite held no such
+ * plan at all before the external review of PR #831 asked for the apply contract, which is why
+ * the acknowledgement argument was reaching `apply` unmeasured.
+ */
+const COLLATERAL_PLAN: ObjectEditPlan = {
+  ...PLAN,
+  planId: "plan-with-a-consequence",
+  consequences: [
+    {
+      loses: "replaces-whole-container",
+      fact: { source: "FUNCTION LIST", observed: "libredb_probe registers libredb_ping and libredb_echo_key" },
+    },
+  ],
+};
+
+const COLLATERAL_BUILT = {
+  built: true,
+  plan: COLLATERAL_PLAN,
+  preimage: PREIMAGE,
+  planToken: "token-for-the-collateral-plan",
+};
+
 function applierDouble(): {
   readonly applier: ObjectSourceApplier;
   readonly build: ReturnType<typeof mock>;
@@ -2183,6 +2210,54 @@ describe("ObjectSourceView edit mode", () => {
     expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
     expect(patches).toContainEqual(expect.objectContaining({ editingPartId: undefined, dirty: undefined }));
     expect(applied).toHaveBeenCalledTimes(1);
+  });
+
+  test("the apply is called with the connection, the SEALED plan, its token and the classes the reader ticked", async () => {
+    /*
+     * THE APPLY CONTRACT, ASSERTED BY VALUE (#789, external review of PR #831, item 5).
+     *
+     * The suite around this one drove the apply a dozen times and never once said WHAT was sent.
+     * MEASURED, as three mutation windows over `runApply` in `ObjectSourceView.tsx`, each run
+     * against this file and against `tests/components/studio/source-tab.test.tsx`:
+     *
+     *   * `apply(connection, plan, undefined, [])`, dropping the token AND the acknowledgement:
+     *     this file 92 pass 0 fail, so it certified nothing. `source-tab.test.tsx` DID catch it,
+     *     1 fail, because it asserts the request BODY the standalone shell's applier sends. So
+     *     the reviewer's mechanism is right and its claim that only an E2E covers this is not.
+     *   * `apply(connection, plan, current.planToken, [])`, dropping the acknowledgement ALONE:
+     *     this file 92 pass 0 fail AND `source-tab.test.tsx` 33 pass 0 fail. NOTHING in this
+     *     repository killed it, because every other plan in both suites carries no consequence
+     *     and `acknowledged: []` is then the correct value. That is what this test is for.
+     *   * `current = preview` instead of `previewHere`, unbinding the apply from the address:
+     *     1 fail here already, so that binding is guarded and is not re-asserted below.
+     *
+     * WHAT THE UNKILLED MUTATION COSTS A READER, and it is a live population rather than a
+     * theoretical one: `src/app/api/db/objects/edit-apply/route.ts:128` refuses a plan whose
+     * consequence classes are not all in `acknowledged`, so a pane that dropped the tick would
+     * make every Redis library of two or more functions permanently unappliable, with the reader
+     * looking at a ticked box and a refusal that says they did not tick it.
+     */
+    const build = mock(async () => COLLATERAL_BUILT as unknown);
+    const apply = mock(async () => ({ outcome: "applied", revision: PLAN.revision, duration: 3 }) as unknown);
+    const applier = { build, apply } as unknown as ObjectSourceApplier;
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-ack")).toBeTruthy());
+
+    // The population the fourth argument comes from: Apply is DISABLED until the box is ticked,
+    // so a test that pressed Apply without ticking would be asserting over an unreachable press.
+    expect((screen.getByTestId("object-source-apply-confirm") as HTMLButtonElement).disabled).toBe(true);
+    await click("object-source-apply-ack");
+    await click("object-source-apply-confirm");
+
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(1));
+    // All four by VALUE. The plan is the one the BUILD issued and not a rebuild of it, which is
+    // ruling 1a's own claim: the bytes the reader approved are the bytes the engine receives.
+    expect(apply).toHaveBeenCalledWith(pgConnection, COLLATERAL_PLAN, "token-for-the-collateral-plan", [
+      "replaces-whole-container",
+    ]);
   });
 
   test("a successful apply after a re-read MOVED the active part drops the draft of the part applied", async () => {
