@@ -1322,6 +1322,51 @@ describe("ApplyPreviewDialog", () => {
     expect(headers()).toEqual(["On the server now", "What was sent"]);
   });
 
+  test("the three lines BELOW the outcome move to the past tense too, or they re-frame the screen", () => {
+    /*
+     * The trap this item exists for, one level down: a conditional title over a body that still
+     * reads as a plan. Read top to bottom on a completed apply, the pin line and the revision note
+     * sit between the outcome and the diff, and in the future tense they tell a reader who has just
+     * been told their function is gone that LibreDB "runs" this apply and "re-reads the definition
+     * first". Both describe what already happened by the time this screen exists.
+     */
+    const compared: ObjectEditPlan = {
+      ...PLAN,
+      revision: { check: "compared", token: "md5:9f1", basis: "md5(prosrc)", scope: "server" },
+    };
+    draw({ kind: "preview", plan: compared, preimage: PREIMAGE });
+    expect(text("-session-pin")).toBe(
+      'LibreDB runs this apply with search_path set to "app", pg_catalog, for that one round trip only.',
+    );
+    expect(text("-revision-note")).toBe(
+      "This apply re-reads the definition first and refuses if it differs from the left side.",
+    );
+    cleanup();
+    draw({ ...COLLATERAL_OUTCOME, plan: compared } as ApplyPreviewState);
+    expect(text("-session-pin")).toBe(
+      'LibreDB ran this apply with search_path set to "app", pg_catalog, for that one round trip only.',
+    );
+    expect(text("-revision-note")).toBe(
+      "This apply re-read the definition first, and it would have refused if it differed from the left side.",
+    );
+  });
+
+  test("the UNAVAILABLE revision note carries the same tense, on the arm that admits it knew nothing", () => {
+    const unavailable: ObjectEditPlan = {
+      ...PLAN,
+      revision: { check: "unavailable", reason: "This engine exposes no revision token" },
+    };
+    draw({ kind: "preview", plan: unavailable, preimage: PREIMAGE });
+    expect(text("-revision-note")).toBe(
+      "This engine exposes no revision token. This apply cannot tell whether somebody else changed this definition first.",
+    );
+    cleanup();
+    draw({ ...COLLATERAL_OUTCOME, plan: unavailable } as ApplyPreviewState);
+    expect(text("-revision-note")).toBe(
+      "This engine exposes no revision token. This apply could not tell whether somebody else had changed this definition first.",
+    );
+  });
+
   test("the multi-step identity line moves to the past tense on a completed apply too", () => {
     // The arm that drops the byte-identity clause has its own sentence, so it has its own tense and
     // a fix that only touched the single-step arm would leave this one saying `will be sent`.

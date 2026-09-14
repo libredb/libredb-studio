@@ -480,18 +480,24 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
 
           {plan !== undefined && state.kind !== "conflict" && plan.revision.check === "compared" && (
             <p className="text-xs text-fg-muted" data-testid="object-source-apply-revision-note">
-              This apply re-reads the definition first and refuses if it differs from the left side.
+              {sent
+                ? "This apply re-read the definition first, and it would have refused if it differed from the left side."
+                : "This apply re-reads the definition first and refuses if it differs from the left side."}
             </p>
           )}
           {plan !== undefined && state.kind !== "conflict" && plan.revision.check === "unavailable" && (
             <WarningRow testId="object-source-apply-revision-note">
-              {`${plan.revision.reason}. This apply cannot tell whether somebody else changed this definition first.`}
+              {`${plan.revision.reason}. ${
+                sent
+                  ? "This apply could not tell whether somebody else had changed this definition first."
+                  : "This apply cannot tell whether somebody else changed this definition first."
+              }`}
             </WarningRow>
           )}
 
           {pins.map((pin) => (
             <p key={pin.setting} className="text-xs text-fg-muted" data-testid="object-source-apply-session-pin">
-              {`LibreDB runs this apply with ${pin.setting} set to ${pin.value}, for that one round trip only.`}
+              {`LibreDB ${sent ? "ran" : "runs"} this apply with ${pin.setting} set to ${pin.value}, for that one round trip only.`}
             </p>
           ))}
 
