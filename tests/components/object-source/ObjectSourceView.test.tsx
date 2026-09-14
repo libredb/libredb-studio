@@ -2402,3 +2402,353 @@ describe("ObjectSourceView edit mode", () => {
     expect(probe.markers.length).toBe(after);
   });
 });
+
+/**
+ * TWO SOURCE TABS THROUGH ONE PANE, and an in-flight build that outlives the press (#789 Phase 3).
+ *
+ * Both shells mount this component with NO `key`: `Studio.tsx` and `StudioWorkspace.tsx` each render
+ * exactly one `<ObjectSourceView>` and swap its props when the reader moves between two Source tabs,
+ * which is the shape the read effect's `asked` SET was built for. Everything React holds in this
+ * component therefore survives that move: `useState` and `useRef` alike. The read path was bound to
+ * the address for that reason; the edit path added in this phase was not, and these tests are the
+ * populations that difference produces.
+ *
+ * Written for the external review of PR #831, items C1 and C2, and kept as the regression.
+ */
+const A_PATH = ["app", "fa(integer)"] as const;
+const B_PATH = ["app", "fb(integer)"] as const;
+
+const A_TEXT = "CREATE OR REPLACE FUNCTION app.fa(integer) RETURNS integer\n  LANGUAGE sql\n  AS $$ SELECT 1 $$;";
+const B_TEXT = "CREATE OR REPLACE FUNCTION app.fb(integer) RETURNS integer\n  LANGUAGE sql\n  AS $$ SELECT 2 $$;";
+
+function functionDocument(path: readonly string[], text: string): ObjectSourceDocument {
+  return {
+    path: [...path],
+    kind: "function",
+    parts: [{ ...READABLE, text } as unknown as ObjectSourcePart],
+  };
+}
+
+/** A second plan whose step SPANS its own text, which `isObjectEditPlanShape` requires. */
+const SECOND_STEP_TEXT =
+  "CREATE OR REPLACE FUNCTION app.f(integer) RETURNS integer\n  LANGUAGE sql\n  AS $$ SELECT 22 $$;";
+
+const A_DOCUMENT = functionDocument(A_PATH, A_TEXT);
+const B_DOCUMENT = functionDocument(B_PATH, B_TEXT);
+const A_READER = readerFor(A_DOCUMENT);
+const B_READER = readerFor(B_DOCUMENT);
+
+/**
+ * TWO tab states and ONE pane, which is exactly what the shells do.
+ *
+ * `onChange` closes over the ACTIVE tab, the way both shells' writers do, so a patch lands on the
+ * tab that produced it. The document is served from the tab's own state so that a re-read that
+ * lands for one tab cannot be read by the other.
+ */
+function TwoSourceTabs(props: {
+  readonly active: "a" | "b";
+  readonly applier: ObjectSourceApplier;
+  readonly onApplied?: () => void;
+  readonly onPatch?: (tab: "a" | "b", patch: ObjectSourcePatch) => void;
+}) {
+  const [tabs, setTabs] = React.useState<Record<"a" | "b", ObjectSourcePatch>>({ a: {}, b: {} });
+  const active = props.active;
+  const record = props.onPatch;
+  // `active` is the whole point of this callback's identity: it names the tab that asked.
+  const onChange = React.useCallback(
+    (patch: ObjectSourcePatch) => {
+      record?.(active, patch);
+      setTabs((previous) => ({ ...previous, [active]: { ...previous[active], ...patch } }));
+    },
+    [active, record],
+  );
+  const state = tabs[active];
+  const onA = active === "a";
+  return (
+    <ObjectSourceView
+      connection={pgConnection}
+      path={onA ? [...A_PATH] : [...B_PATH]}
+      kind="function"
+      kindLabel="Function"
+      displayName={onA ? "app.fa(integer)" : "app.fb(integer)"}
+      document={state.document ?? (onA ? A_DOCUMENT : B_DOCUMENT)}
+      activePartId={state.activePartId}
+      editingPartId={state.editingPartId}
+      dirty={state.dirty}
+      refreshToken={0}
+      readAtToken={0}
+      reader={onA ? A_READER : B_READER}
+      onApply={props.applier}
+      onApplied={props.onApplied}
+      onChange={onChange}
+    />
+  );
+}
+
+describe("ObjectSourceView across two Source tabs", () => {
+  test("an edit open in a SECOND tab does not become the first tab's buffer, or the text it previews", async () => {
+    /*
+     * ITEM C1, reproduced. Edit tab A, edit tab B, come back to A. A's tab still carries
+     * `editingPartId: "definition"`, so the pane is writable; `partId` is `"definition"` for both,
+     * because it is `"definition"` for every kind in the day-one editable set; and the session and
+     * the buffer are the ones tab B left behind. Before the fix, `editorValue` matched on the part
+     * id alone, so tab A drew tab B's text, and `Preview changes` sent tab B's text to tab A's
+     * address, which is the one thing ruling 1a exists to make impossible.
+     */
+    const { applier, build } = applierDouble();
+    const { rerender } = render(<TwoSourceTabs active="a" applier={applier} />);
+    await enterEditMode();
+    await type(`${A_TEXT} -- edited on A`);
+
+    rerender(<TwoSourceTabs active="b" applier={applier} />);
+    await enterEditMode();
+    await type(`${B_TEXT} -- edited on B`);
+
+    rerender(<TwoSourceTabs active="a" applier={applier} />);
+    await waitFor(() => expect(editor().readOnly).toBe(false));
+
+    expect(editor().value).toBe(A_TEXT);
+    await click("object-source-preview");
+    const call = build.mock.calls[0] as unknown[];
+    expect((call[1] as { path: string[]; text: string }).path).toEqual([...A_PATH]);
+    expect((call[1] as { path: string[]; text: string }).text).toBe(A_TEXT);
+  });
+
+  test("the unsaved mark for a second tab is announced, and is not swallowed by the first tab's flag", async () => {
+    /*
+     * THE SAME CLAIM ASKED OF THE FLIP DETECTOR, AND IT DID NOT REPRODUCE. Recorded as a control
+     * rather than dropped, because the reasoning that says it should have is sound and the reason
+     * it does not is worth pinning.
+     *
+     * `dirtyRef` really is one boolean for the whole pane and really does outlive a tab switch, so
+     * arriving on tab B with tab A's `true` in it should swallow B's first flip. It does not,
+     * because entering edit mode CALLS the detector: `startEditing` seeds the buffer from the
+     * engine's text and `noteDirty` therefore flips the ref back to false before the reader types.
+     * The detector is against the text in hand rather than against remembered state, so it is
+     * self-correcting on every path that reaches it. This test goes red if that stops being true.
+     */
+    const { applier } = applierDouble();
+    const marks: { readonly tab: string; readonly dirty: boolean | undefined }[] = [];
+    const onPatch = (tab: "a" | "b", patch: ObjectSourcePatch) => {
+      if (Object.hasOwn(patch, "dirty")) marks.push({ tab, dirty: patch.dirty });
+    };
+    const { rerender } = render(<TwoSourceTabs active="a" applier={applier} onPatch={onPatch} />);
+    await enterEditMode();
+    await type(`${A_TEXT} -- edited on A`);
+
+    rerender(<TwoSourceTabs active="b" applier={applier} onPatch={onPatch} />);
+    await enterEditMode();
+    await type(`${B_TEXT} -- edited on B`);
+
+    expect(marks).toContainEqual({ tab: "a", dirty: true });
+    expect(marks).toContainEqual({ tab: "b", dirty: true });
+  });
+
+  test("coming back to the first tab OFFERS the edit it left behind, rather than hiding it", async () => {
+    /*
+     * The other half of binding the session to the address, and the reason the fix is not just a
+     * refusal. Once tab A's session no longer counts as A's open edit, A draws the engine's own
+     * text in a writable editor, and the reader's work is in the draft store where the debounce
+     * put it. If the restore banner stayed suppressed by `writable` alone, that work would be on
+     * screen nowhere: not in the editor, not on the bar, and reachable only by leaving edit mode.
+     * So the suppression asks whether there is an open edit FOR THIS ADDRESS, not whether the tab
+     * says the reader is editing.
+     */
+    const { applier } = applierDouble();
+    const { rerender } = render(<TwoSourceTabs active="a" applier={applier} />);
+    await enterEditMode();
+    await type(`${A_TEXT} -- edited on A`);
+
+    rerender(<TwoSourceTabs active="b" applier={applier} />);
+    await enterEditMode();
+    // Typing on B flushes A's pending write, which is the debounce rule this pane already states.
+    await type(`${B_TEXT} -- edited on B`);
+
+    rerender(<TwoSourceTabs active="a" applier={applier} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-draft-restore")).toBeTruthy());
+    await click("object-source-draft-restore-accept");
+
+    await waitFor(() => expect(editor().value).toBe(`${A_TEXT} -- edited on A`));
+  });
+
+  test("a build refusal raised on one tab is not drawn over the other", async () => {
+    const { applier, build } = applierDouble();
+    build.mockResolvedValueOnce({ built: false, refusal: { refusal: "unsupported", sentence: "No." } } as never);
+    const { rerender } = render(<TwoSourceTabs active="a" applier={applier} />);
+    await enterEditMode();
+    await type(`${A_TEXT} -- edited on A`);
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-refused")).toBeTruthy());
+
+    rerender(<TwoSourceTabs active="b" applier={applier} />);
+
+    expect(screen.queryByTestId("object-source-edit-refused")).toBeNull();
+  });
+
+  test("a build that lands after Cancel does not open the dialog again", async () => {
+    /*
+     * ITEM C2, reproduced. `ApplyPreviewDialog` blocks dismissal while APPLYING and not while
+     * BUILDING, so Cancel is a live control for the whole of the build round trip, and
+     * `closePreview` was `setPreview(undefined)` and nothing else. The build's `.then` then set the
+     * preview a second time, from a press the reader had already withdrawn.
+     */
+    const { applier, build } = applierDouble();
+    let land: (value: unknown) => void = () => {};
+    build.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          land = resolve;
+        }),
+    );
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-building")).toBeTruthy());
+
+    await click("object-source-apply-cancel");
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await act(async () => {
+      land(BUILT);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+  });
+
+  test("a build that FAILS after Cancel draws no refusal, because the press was withdrawn", async () => {
+    // The rejection arm of the same withdrawal. Before the generation counter the request error
+    // landed as a warning line on the bar, about a press the reader had already taken back.
+    const { applier, build } = applierDouble();
+    let fail: (error: unknown) => void = () => {};
+    build.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-building")).toBeTruthy());
+
+    await click("object-source-apply-cancel");
+    await act(async () => {
+      fail(new Error("the network went away"));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("object-source-edit-refused")).toBeNull();
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+  });
+
+  test("a build cancelled and re-pressed shows the SECOND plan, whichever answer lands last", async () => {
+    const { applier, build } = applierDouble();
+    let landFirst: (value: unknown) => void = () => {};
+    build
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            landFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(async () => ({
+        ...BUILT,
+        plan: {
+          ...PLAN,
+          planId: "plan-2",
+          unit: {
+            medium: "statement",
+            steps: [
+              {
+                text: SECOND_STEP_TEXT,
+                language: "sql",
+                segments: [{ from: "user", start: 0, end: SECOND_STEP_TEXT.length }],
+              },
+            ],
+          },
+        },
+      }));
+    render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited once");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-building")).toBeTruthy());
+    await click("object-source-apply-cancel");
+    await type("edited twice");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("diff-editor")).toBeTruthy());
+    expect(screen.getByTestId("diff-editor").getAttribute("data-modified")).toContain(SECOND_STEP_TEXT);
+
+    await act(async () => {
+      landFirst(BUILT);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("diff-editor").getAttribute("data-modified")).toContain(SECOND_STEP_TEXT);
+    expect(screen.getByTestId("diff-editor").getAttribute("data-modified")).not.toContain(STEP_TEXT);
+  });
+
+  test("a build that lands after the reader moved to another tab does not open over that tab", async () => {
+    const { applier, build } = applierDouble();
+    let land: (value: unknown) => void = () => {};
+    build.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          land = resolve;
+        }),
+    );
+    const { rerender } = render(<TwoSourceTabs active="a" applier={applier} />);
+    await enterEditMode();
+    await type(`${A_TEXT} -- edited on A`);
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-building")).toBeTruthy());
+
+    rerender(<TwoSourceTabs active="b" applier={applier} />);
+    await act(async () => {
+      land(BUILT);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull();
+  });
+
+  test("the dialog names the part its PLAN was built for, after a re-read moved the active part", async () => {
+    /*
+     * The population the marker guard was already built for, asked of the dialog's own words. The
+     * read effect lands with no cleanup and no drop, deliberately, so a re-read can replace the
+     * document while the dialog is open; when the new parts do not carry the remembered id,
+     * `activePart` falls back to the first part and `part.label` becomes the other part's label.
+     * The dialog then said `Grants` over a plan built for `Definition`.
+     */
+    const { applier } = applierDouble();
+    function Moving(): React.JSX.Element {
+      const [document, setDocument] = React.useState(withPart(READABLE, SECOND_PART));
+      return (
+        <>
+          <button
+            type="button"
+            data-testid="land-a-reread"
+            onClick={() => {
+              setDocument(withPart(SECOND_PART));
+            }}
+          >
+            re-read
+          </button>
+          <EditHarness applier={applier} document={document} />
+        </>
+      );
+    }
+    render(<Moving />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    await click("land-a-reread");
+
+    expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Definition");
+    expect(screen.getByTestId("object-source-apply-dialog").textContent).not.toContain("Grants");
+  });
+});

@@ -188,6 +188,36 @@ function modelPathFor(address: string, partId: string): string {
 }
 
 /**
+ * EVERY piece of edit state this pane holds carries the address it belongs to (#789 Phase 3).
+ *
+ * Both shells mount ONE `ObjectSourceView` with NO `key` and swap its props when the reader moves
+ * between two Source tabs: `Studio.tsx` and `StudioWorkspace.tsx` each render exactly one, which is
+ * the shape the read effect's `asked` SET was built for and which its docblock states. So every
+ * `useState` and every `useRef` in this component OUTLIVES a tab switch, and the read path was
+ * bound to the address for exactly that reason.
+ *
+ * The edit path added in this phase was not, and MEASURED in a component test driving two tabs
+ * through one pane: with an edit open on tab A and another on tab B, returning to A drew B's buffer
+ * in A's editor and `Preview changes` sent B's text to A's address, because `editorValue` matched
+ * on `partId` alone and `partId` is `"definition"` for every kind in the day-one editable set. A
+ * build refusal raised on A stayed on screen over B for the same reason.
+ *
+ * A `key` on the pane in each shell would fix all of it in one line and is NOT what this does: it
+ * would tear down and rebuild the Monaco instance on every Source tab switch, and it would move the
+ * fix into two files this component cannot see. Instead the state carries its address and
+ * `boundTo` is the one place that reads it, so a new field is bound by construction rather than by
+ * a reviewer noticing.
+ */
+interface AddressBound {
+  readonly address: string;
+}
+
+/** The value when it belongs to the address on screen, and `undefined` when it belongs elsewhere. */
+function boundTo<T extends AddressBound>(address: string, value: T | undefined): T | undefined {
+  return value !== undefined && value.address === address ? value : undefined;
+}
+
+/**
  * A token for the text a draft was started from, so the restore banner can say whether the
  * definition MOVED under the draft (#789 Phase 3).
  *
@@ -255,7 +285,7 @@ function browserStorage(): Storage | null {
  * `part.text` said at the moment edit mode was entered, which is the only thing that can answer
  * "has the definition moved under this edit" without asking the engine a second time.
  */
-interface EditSession {
+interface EditSession extends AddressBound {
   readonly partId: string;
   readonly value: string;
   readonly base: string;
@@ -313,16 +343,28 @@ interface PendingDraft {
  * makes the marker guard meaningful: a reader who switches parts while an apply is in flight has
  * moved the live model, and the coordinate in the answer belongs to the part they left.
  */
-interface PreviewSession {
+interface PreviewSession extends AddressBound {
   readonly state: ApplyPreviewState;
   readonly planToken?: string;
   readonly userText: string;
   readonly modelPath: string;
   readonly partId: string;
+  /**
+   * The part's own label, PINNED at build time and never read off the render.
+   *
+   * Same population as `modelPath` above, and it is the population the marker guard's own test
+   * already builds: a re-read lands with no cleanup and no drop, so the document can be replaced
+   * while the dialog is open, and when the new parts do not carry the remembered id `activePart`
+   * falls back to the FIRST part. MEASURED in a component test: the dialog then read
+   * "`app.f(integer)`, Grants" over a plan built for the definition. The object label is NOT
+   * pinned beside it, deliberately: the dialog only renders while `preview.address` matches the
+   * address on screen, and the object label is derived from the path, which is inside the address.
+   */
+  readonly partLabel: string;
 }
 
 /** A build that issued no plan. `refusal` is rendered as DATA, so a test asserts an id and not prose. */
-interface BuildRefusal {
+interface BuildRefusal extends AddressBound {
   readonly refusal: string;
   readonly sentence: string;
 }
@@ -716,6 +758,8 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   const canEdit = editability?.editable === true;
   const refusalShown = editability === undefined || editability.editable ? undefined : editability;
   const partId = part?.id ?? "";
+  /** The part's own word, pinned onto a preview so the dialog cannot be renamed under an open plan. */
+  const partLabel = part?.label ?? "";
   const serverText = editablePart?.text ?? "";
   const draftKey = draftKeyFor(address, partId);
 
@@ -748,7 +792,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * So `editorValue` moves at FIVE moments and at no other: entering edit mode, Restore, Discard,
    * a successful apply and leaving edit mode. Typing writes this ref, and nothing else.
    */
-  const bufferRef = useRef<string>("");
+  const bufferRef = useRef<{ readonly owner: string; readonly text: string }>({ owner: "", text: "" });
   /** Seeded from the tab, so a remount inside an unsaved edit does not re-announce the flip. */
   const dirtyRef = useRef<boolean>(props.dirty === true);
   /** The key this pane last WROTE a draft under, which is what makes an eviction detectable. */
@@ -758,6 +802,19 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   const pendingRef = useRef<PendingDraft | null>(null);
   const mountedEditor = useRef<MountedEditor | null>(null);
   const markerRef = useRef(false);
+  /**
+   * WHICH build press this pane is still waiting for, and it is a counter and not a boolean.
+   *
+   * `ApplyPreviewDialog` blocks dismissal while APPLYING and not while BUILDING, deliberately: a
+   * build executes nothing, so withdrawing it costs nothing and a reader must not be held in a
+   * modal for the length of a round trip. That makes Cancel a live control for the whole of the
+   * build, and MEASURED in a component test before this counter existed: cancelling a build and
+   * letting it land afterwards opened the dialog a SECOND time, from a press the reader had
+   * already withdrawn, and the same answer landing after a re-press showed the FIRST plan under
+   * the second press. Every entry to `runBuild` and every close takes the next number, and an
+   * answer whose number is no longer current is dropped without touching a single state.
+   */
+  const buildGeneration = useRef(0);
 
   /**
    * THE BUFFER ON SCREEN, and the five moments are the only things that move it.
@@ -773,7 +830,17 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * repository's lint gate, and it is right, because an effect that cleared the session would
    * paint one render of the stale buffer before it ran.
    */
-  const editorValue = writable && session !== undefined && session.partId === partId ? session.value : serverText;
+  /**
+   * The open edit THIS address holds, and never the one the pane left behind on another tab.
+   *
+   * `boundTo` is the whole of it and its docblock carries the measurement. The part id is checked
+   * beside the address because one document can hold two parts and only one of them is on screen.
+   */
+  const sessionHere = boundTo(address, session)?.partId === partId ? boundTo(address, session) : undefined;
+  const editorValue = writable && sessionHere !== undefined ? sessionHere.value : serverText;
+  /** The dialog and the refusal line, drawn only for the address they were raised on. */
+  const previewHere = boundTo(address, preview);
+  const refusalHere = boundTo(address, buildRefusal);
   /**
    * The definition MOVED under an open edit, said out loud rather than resolved silently.
    *
@@ -782,7 +849,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * only safe answer: swapping the buffer would destroy their work. Saying nothing would be the
    * other failure, because their next Preview would then diff against a text they never saw.
    */
-  const moved = writable && session !== undefined && session.partId === partId && session.base !== serverText;
+  const moved = writable && sessionHere !== undefined && sessionHere.base !== serverText;
 
   /**
    * Drop a pending write, and NEVER somebody else's: a key narrows it to the part named.
@@ -952,7 +1019,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   const onEditorChange = useCallback(
     (value: string | undefined) => {
       const text = value ?? "";
-      bufferRef.current = text;
+      bufferRef.current = { owner: draftKey, text };
       // The refusal was about the text that has just changed, so it is no longer about anything.
       clearMarker();
       noteDirty(text);
@@ -967,25 +1034,25 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         key: draftKey,
         text,
         serverText,
-        base: paneRevision(session?.base ?? serverText),
-        owned: session?.restored === true || savedKeyRef.current === draftKey,
+        base: paneRevision(sessionHere?.base ?? serverText),
+        owned: sessionHere?.restored === true || savedKeyRef.current === draftKey,
         timer: setTimeout(() => {
           flushDraft();
         }, DRAFT_DEBOUNCE_MS),
       };
     },
-    [cancelDraft, clearMarker, draftKey, flushDraft, noteDirty, serverText, session],
+    [cancelDraft, clearMarker, draftKey, flushDraft, noteDirty, serverText, sessionHere],
   );
 
   /** Entering edit mode, from Edit with the engine's text and from Restore with the draft's. */
   const startEditing = useCallback(
     (value: string, restored: boolean) => {
-      bufferRef.current = value;
-      setSession({ partId, value, base: serverText, restored });
+      bufferRef.current = { owner: draftKey, text: value };
+      setSession({ address, partId, value, base: serverText, restored });
       noteDirty(value);
       onChange({ editingPartId: partId });
     },
-    [noteDirty, onChange, partId, serverText],
+    [address, draftKey, noteDirty, onChange, partId, serverText],
   );
 
   /**
@@ -1015,8 +1082,8 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   );
 
   const discardEdit = useCallback(() => {
-    endEdit(draftKey, session?.restored === true || savedKeyRef.current === draftKey);
-  }, [draftKey, endEdit, session]);
+    endEdit(draftKey, sessionHere?.restored === true || savedKeyRef.current === draftKey);
+  }, [draftKey, endEdit, sessionHere]);
 
   /**
    * A stored draft for the part on screen, offered rather than restored.
@@ -1027,10 +1094,10 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    */
   const storedDraft = useMemo(
     () =>
-      writable || !canEdit || onApply === undefined || evictedKey === draftKey
+      (writable && sessionHere !== undefined) || !canEdit || onApply === undefined || evictedKey === draftKey
         ? undefined
         : readDraft(browserStorage(), draftKey),
-    [canEdit, draftKey, evictedKey, onApply, writable],
+    [canEdit, draftKey, evictedKey, onApply, sessionHere, writable],
   );
 
   /*
@@ -1092,7 +1159,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       }
       if (APPLIED_OUTCOMES.has(answer.outcome)) {
         setPreview(undefined);
-        endEdit(draftKeyFor(address, current.partId), true);
+        endEdit(draftKeyFor(current.address, current.partId), true);
         onApplied?.();
         return;
       }
@@ -1107,7 +1174,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
       if (answer.outcome === "refused" && answer.refusal.at.within === "user")
         paintMarker(current.modelPath, answer.refusal.at, answer.refusal.sentence);
     },
-    [address, endEdit, onApplied, paintMarker],
+    [endEdit, onApplied, paintMarker],
   );
 
   /**
@@ -1120,19 +1187,28 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   const runBuild = useCallback(() => {
     const applier = onApply;
     if (applier === undefined || connection === null) return;
-    const shot = { userText: bufferRef.current, modelPath: modelPathFor(address, partId), partId };
+    /*
+     * THE TEXT ON SCREEN, and never a buffer this pane typed into another object. The ref outlives
+     * a tab switch, so it is read only when it names this address and this part; where it does not,
+     * the editor was handed `editorValue` and nothing has been typed since, so that IS the text.
+     */
+    const typed = bufferRef.current.owner === draftKey ? bufferRef.current.text : editorValue;
+    const shot = { address, userText: typed, modelPath: modelPathFor(address, partId), partId, partLabel };
+    const generation = buildGeneration.current + 1;
+    buildGeneration.current = generation;
     setBuildRefusal(undefined);
     setPreview({ ...shot, state: { kind: "building" } });
     void applier.build(connection, { path: [...path], kind, partId, text: shot.userText }).then(
       (answer) => {
+        if (buildGeneration.current !== generation) return;
         if (!isObjectEditBuildResponseShape(answer)) {
           setPreview(undefined);
-          setBuildRefusal({ refusal: "unreadable", sentence: UNREADABLE_BUILD });
+          setBuildRefusal({ address, refusal: "unreadable", sentence: UNREADABLE_BUILD });
           return;
         }
         if (!answer.built) {
           setPreview(undefined);
-          setBuildRefusal({ refusal: answer.refusal.refusal, sentence: answer.refusal.sentence });
+          setBuildRefusal({ address, refusal: answer.refusal.refusal, sentence: answer.refusal.sentence });
           return;
         }
         setPreview({
@@ -1142,16 +1218,17 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         });
       },
       (error: unknown) => {
+        if (buildGeneration.current !== generation) return;
         setPreview(undefined);
-        setBuildRefusal({ refusal: "request", sentence: sentenceOf(error) });
+        setBuildRefusal({ address, refusal: "request", sentence: sentenceOf(error) });
       },
     );
-  }, [address, connection, kind, onApply, partId, path]);
+  }, [address, connection, draftKey, editorValue, kind, onApply, partId, partLabel, path]);
 
   const runApply = useCallback(
     (acknowledged: readonly ObjectEditConsequenceClass[]) => {
       const applier = onApply;
-      const current = preview;
+      const current = previewHere;
       if (applier === undefined || connection === null || current === undefined || current.state.kind !== "preview")
         return;
       const { plan, preimage } = current.state;
@@ -1165,10 +1242,13 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         },
       );
     },
-    [connection, landApplyError, landOutcome, onApply, preview],
+    [connection, landApplyError, landOutcome, onApply, previewHere],
   );
 
   const closePreview = useCallback(() => {
+    // The press is WITHDRAWN and not merely hidden: the number moves, so a build still in flight
+    // for it lands on nothing. Without this the dialog reopened by itself a round trip later.
+    buildGeneration.current += 1;
     setPreview(undefined);
   }, []);
 
@@ -1425,14 +1505,14 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                       </output>
                     )}
 
-                    {buildRefusal !== undefined && (
+                    {refusalHere !== undefined && (
                       <div
                         className="flex items-start gap-2 text-xs text-warning"
                         data-testid="object-source-edit-refused"
-                        data-refusal={buildRefusal.refusal}
+                        data-refusal={refusalHere.refusal}
                       >
                         <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span className="min-w-0 break-words">{buildRefusal.sentence}</span>
+                        <span className="min-w-0 break-words">{refusalHere.sentence}</span>
                       </div>
                     )}
                   </div>
@@ -1472,14 +1552,14 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                     }}
                   />
                 </div>
-                {preview !== undefined && (
+                {previewHere !== undefined && (
                   <ApplyPreviewDialog
                     open
-                    state={preview.state}
+                    state={previewHere.state}
                     objectLabel={props.displayName}
-                    partLabel={part.label}
-                    address={address}
-                    partId={preview.partId}
+                    partLabel={previewHere.partLabel}
+                    address={previewHere.address}
+                    partId={previewHere.partId}
                     onApply={runApply}
                     onRebuild={runBuild}
                     onGoToError={revealPosition}
