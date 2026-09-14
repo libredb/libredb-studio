@@ -1,9 +1,5 @@
-import { SignJWT, jwtVerify } from "jose";
-import { getJwtSecret } from "@/lib/config/auth-env";
-import type { ObjectEditPlan } from "@/lib/db/types";
-
 /**
- * The seal that makes a plan UNFORGEABLE while leaving it READABLE (#789 Phase 3, ruling 1a as
+ * @file The seal that makes a plan UNFORGEABLE while leaving it READABLE (#789 Phase 3, ruling 1a as
  * adjudicated: "opaque" means sealed, not unreadable).
  *
  * What forging buys, stated honestly, because the next reader will otherwise reduce this to
@@ -17,12 +13,13 @@ import type { ObjectEditPlan } from "@/lib/db/types";
  * does not hold at all: that measurement covers SQL engines, so for the one non-SQL engine in the
  * day-one set this may be a genuinely new capability and the token is a real boundary.
  */
-
-/** Fifteen minutes, carried as the JWS `exp` so `jose` owns the clock. */
-export const PLAN_TOKEN_TTL_SECONDS = 900;
+import { SignJWT, jwtVerify } from "jose";
+import { getJwtSecret } from "@/lib/config/auth-env";
+import type { ObjectEditPlan } from "@/lib/db/types";
 
 /**
- * Fifteen minutes has one measured basis and one honest limit.
+ * Fifteen minutes, carried as the JWS `exp` so `jose` owns the clock, with one measured basis and
+ * one honest limit.
  *
  * The basis: the provider cache evicts on 30 idle minutes (`src/lib/db/factory.ts:361`), so a plan
  * cannot ordinarily outlive its issuing provider by much. The limit: a reconnect can replace the
@@ -31,6 +28,14 @@ export const PLAN_TOKEN_TTL_SECONDS = 900;
  * definition rendering 13,009 lines, and a reader who spends six minutes on that diff and then
  * presses Apply must not meet a dead end. The TTL bounds REPLAY and is not the lost-update
  * protection, which is the revision.
+ */
+export const PLAN_TOKEN_TTL_SECONDS = 900;
+
+/**
+ * The label the signing key is derived under, and the whole of what makes a session cookie not a
+ * plan token: the key is HMAC(JWT_SECRET, this label), so neither credential verifies as the other.
+ * Changing this string invalidates every plan token in flight, which is the intended cost of a `v2`
+ * if the claim set ever changes shape.
  */
 const PLAN_KEY_LABEL = "libredb.object-edit.plan.v1";
 
@@ -91,7 +96,14 @@ export function planDigestLeaves(plan: ObjectEditPlan): readonly { readonly path
       for (const key of keys) walk(`${path}.${key}`, (value as Record<string, unknown>)[key]);
       return;
     }
-    leaves.push({ path, value: String(value) });
+    // `${typeof value}:` and not `String(value)` alone. ROUND 1 REVIEW MEASURED the bare form
+    // against the shipped module: the number 0 and the string "0" are one leaf, so a client could
+    // retype `segments[].start` inside an approved digest and the seal would not move. The plan
+    // arrives as JSON, where a type is something the client chose, so the tag is what makes the
+    // leaf injective over the values a client can send. `null` is `object:null` and the string
+    // "null" is `string:null`, and a string that spells another tag, "number:0", becomes
+    // `string:number:0`, so the tag is recoverable from the encoding rather than merely prepended.
+    leaves.push({ path, value: `${typeof value}:${String(value)}` });
   };
   for (const field of PLAN_FIELDS) walk(field, (plan as unknown as Record<string, unknown>)[field]);
   return leaves;
@@ -167,22 +179,46 @@ export async function verifyPlanToken(
  * their boundary, so that one leaf's tail plus the next leaf's head can never spell the same
  * concatenation as some other pair of values.
  *
- * MEASURED in node against the walk as written: no pair of `ObjectEditPlan` values collides under
- * the UNFRAMED concatenation, because every leaf carries a structural path literal and this plan
- * type has no data-derived path segment a value could absorb. The framing stays anyway, because it
- * makes the property hold by CONSTRUCTION rather than by that argument, and because a later walk
- * that dropped the path would silently lose it. The framing's live discriminating population is
- * the connection fingerprint's walk, which carries no paths at all and where
- * `{ database: "d", user: "b1u" }` against `{ database: "db1", user: "u" }` is a real collision.
- * That pair is asserted there and is not re-asserted here.
+ * THE ORIGINAL FORM OF THIS BLOCK CLAIMED, in a measurement's voice, that no pair of
+ * `ObjectEditPlan` values collides unframed because every leaf carries a structural path literal
+ * and the type has no data-derived path segment. That claim is REFUTED BY RUNNING, node against
+ * this walk, and the refuting pair is in the seal's test: `kind` and `partId` are both plain
+ * `string` on `ObjectEditPlan` and both are engine-derived, so a value CAN absorb the next leaf's
+ * path literal. `kind: "XpartIdstring:Y", partId: "P"` and `kind: "X", partId: "YpartIdstring:P"`
+ * concatenate to the same unframed bytes and are told apart framed. The framing is therefore load
+ * bearing over a live population of this very plan type, and not a principle kept for later.
+ *
+ * The pair carries the value tag `string:` inside it because `planDigestLeaves` emits
+ * `${typeof value}:${String(value)}`; the earlier, untagged spelling of the same pair is
+ * `kind: "XpartIdY", partId: "P"` against `kind: "X", partId: "YpartIdP"`.
  */
 function frame(value: string): string {
   return `${value.length}:${value}`;
 }
 
-/** SHA-256 over UTF-8 bytes, lowercase hex, through Web Crypto so this works in every runtime this tree targets. */
+/**
+ * SHA-256 over the input's UTF-16 CODE UNITS, lowercase hex, through Web Crypto so this works in
+ * every runtime this tree targets.
+ *
+ * NOT `new TextEncoder().encode(input)`, and the reason is ruling 1a in the letter. MEASURED by
+ * round 1 review against the shipped module: `TextEncoder` maps every UNPAIRED surrogate to
+ * U+FFFD, while `JSON.stringify`/`JSON.parse` on the wire preserves the code unit, so a token
+ * minted for a statement text `"A\uD800B"` answered `{ valid: true }` for a plan carrying
+ * `"A\uDC00B"`. The bytes the user approved would not have been the bytes the engine received.
+ * Two bytes per code unit is injective over every JavaScript string, lone surrogates included.
+ *
+ * MEASURED cost, bun 1.4.2 on this machine, over an input the size of the largest definition the
+ * browser probe opened (975,134 characters): one whole `digestPlan` over that plan, loop included,
+ * is 3.60 ms, mean of five runs after a warm-up, which is well inside one apply's budget.
+ */
 async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  const units = new Uint8Array(input.length * 2);
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    units[index * 2] = code >>> 8;
+    units[index * 2 + 1] = code & 0xff;
+  }
+  const digest = await crypto.subtle.digest("SHA-256", units);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
