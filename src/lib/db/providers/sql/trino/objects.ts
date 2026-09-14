@@ -951,14 +951,35 @@ export function trinoArgumentSignature(argumentTypes: string): string {
 }
 
 /**
+ * One `Create Function` statement's parameter list AS IT IS WRITTEN, one element per parameter
+ * with the parameter NAME dropped, or `null` when no parameter list can be found at all.
+ *
+ * SEPARATE FROM THE SIGNATURE BELOW BECAUSE THE TWO ARE READ BY DIFFERENT AUDIENCES, and the
+ * signature is the wrong thing to show one of them. `trinoNormalisedSignature` lower-cases the
+ * text and strips its whitespace and its quotes, which is exactly what lets the engine's two
+ * renderings of one signature be compared and is exactly what makes the result unreadable: it
+ * removes the boundary between a ROW field's NAME and its TYPE, so the fixture's `hard` shape
+ * reduces to `decimal(10,2),array(varchar),row(abigint,bvarchar)`, in which `abigint` names no
+ * type Trino will parse. A human who is being told WHICH object was written needs the rendering,
+ * and the comparison needs the signature, so this returns the first and
+ * {@link trinoCreateSignature} derives the second from it. ONE WRITER for the parameter-list
+ * scan, so the string a reader is shown and the string the provider compares can never come from
+ * two different readings of one statement.
+ */
+export function trinoCreateArgumentTypes(createStatement: unknown): readonly string[] | null {
+  if (typeof createStatement !== "string") return null;
+  const list = trinoParenthesisedList(createStatement);
+  if (list === null) return null;
+  return trinoSplitTopLevel(list).map(trinoParameterType);
+}
+
+/**
  * One `Create Function` statement as the comparable signature above, or `null` when its
  * parameter list cannot be found at all.
  */
 export function trinoCreateSignature(createStatement: unknown): string | null {
-  if (typeof createStatement !== "string") return null;
-  const list = trinoParenthesisedList(createStatement);
-  if (list === null) return null;
-  return trinoNormalisedSignature(trinoSplitTopLevel(list).map(trinoParameterType));
+  const types = trinoCreateArgumentTypes(createStatement);
+  return types === null ? null : trinoNormalisedSignature(types);
 }
 
 // ============================================================================

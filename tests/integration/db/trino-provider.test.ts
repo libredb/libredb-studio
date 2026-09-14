@@ -3396,6 +3396,16 @@ const CANONICALIZED = READ_TEXT.replace(
 const FORKING_TEXT = READ_TEXT.replace("(x bigint)", "(x varchar)").replace("RETURN (x + 1)", "RETURN (length(x) + 1)");
 const CREATE_PLUS_ONE_VARCHAR =
   "CREATE FUNCTION memory.app.plus_one(x varchar)\nRETURNS bigint\nRETURN (length(x) + 1)";
+
+/**
+ * A fork whose parameter list is the fixture's own `hard` shape, verbatim from 476's formatter.
+ *
+ * The three places the two renderings of one signature DISAGREE are all in it: a space inside
+ * `decimal(10, 2)`, `ROW` in upper case, and row-field names unquoted. That is what makes it the
+ * one shape that can tell the comparison form apart from the rendering the statement declares,
+ * which two `varchar`s cannot.
+ */
+const FORKING_HARD_TEXT = CREATE_HARD.replace("memory.app.hard(", "memory.app.plus_one(");
 const SHOW_PLUS_ONE = trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", "plus_one");
 
 /**
@@ -3844,6 +3854,30 @@ describe("Trino object edit: the apply", () => {
     // The engine's own name for what it wrote, in the shape a path segment addresses it with, so
     // the dialog can say WHICH object is now there instead of only that one is.
     expect(outcome.wrote).toBe("plus_one(varchar)");
+  });
+
+  test("`wrote` carries the parameter list the SENT statement declares, not the comparison form", async () => {
+    // THE READER IS SENT LOOKING FOR AN OBJECT, so this string has to be one they can look up.
+    // The comparison form is lower-cased and has its whitespace and its quotes stripped, which is
+    // the only form the engine's two renderings of one signature agree on and is therefore the
+    // right thing to COMPARE with, and it destroys the boundary between a ROW field's NAME and its
+    // TYPE. Measured with the shipped helper on this same text, `trinoCreateSignature` answers
+    // `decimal(10,2),array(varchar),row(abigint,bvarchar)`, so a `wrote` built from it prints
+    // `row(abigint,bvarchar)` at the reader, which names no type Trino will parse.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: FORKING_HARD_TEXT, forced: true });
+    if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+    expect(outcome.wrote).toBe("plus_one(decimal(10, 2), array(varchar), ROW(a bigint, b varchar))");
+    // AND IT IS AN ADDRESS RATHER THAN A LABEL, which is what the claim beside it says it is: the
+    // segment reader takes it apart and the signature it yields is the one the written row would
+    // be FOUND by, so the reader can put it in an object path and reach what was written.
+    const parts = trinoFunctionSegmentParts(outcome.wrote ?? "");
+    if (parts === null) throw new Error("narrowing");
+    expect(parts.name).toBe("plus_one");
+    const COMPARISON_FORM = "decimal(10,2),array(varchar),row(abigint,bvarchar)";
+    expect(trinoArgumentSignature(parts.argumentTypes)).toBe(COMPARISON_FORM);
+    // And the form the comment above names, pinned by value rather than left as prose: this is
+    // what the reader WOULD have been shown, and it is what the check itself runs on.
+    expect(trinoCreateSignature(FORKING_HARD_TEXT)).toBe(COMPARISON_FORM);
   });
 
   test("a fork onto an overload that ALREADY EXISTS adds no row and is still `applied-elsewhere`", async () => {

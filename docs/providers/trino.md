@@ -1256,6 +1256,16 @@ If it is a different one, the outcome is `applied-elsewhere` with `undone: false
 the overload that was written, because Trino has no transaction to take it back and this design will
 not issue a `DROP` to clean up.
 
+`wrote` is the parameter list the SENT statement declares, with the parameter names dropped, minted
+in the same `name(argumentTypes)` shape a function path segment uses, so it is an address and not a
+label: paste it into an object path and it resolves to the overload that was written.
+It is deliberately NOT the comparison form the check itself runs on. That form is lower-cased and has
+its whitespace and its quotes stripped, which is what makes the engine's two renderings of one
+signature comparable at all, and it removes the boundary between a ROW field's name and its type: the
+fixture's `hard` shape reduces to `decimal(10,2),array(varchar),row(abigint,bvarchar)`, in which
+`abigint` names no type Trino will parse, so `wrote` carries
+`plus_one(decimal(10, 2), array(varchar), ROW(a bigint, b varchar))` instead.
+
 Why that arm is reachable at all: a fork needs an argument-type edit, which the first-line check above
 already refuses, so this is the CONTROL that catches a first-line rule this design got wrong rather
 than a path anybody expects to take.

@@ -138,6 +138,7 @@ import {
   TRINO_SOURCE_PART_ID,
   sha256Hex,
   trinoArgumentSignature,
+  trinoCreateArgumentTypes,
   trinoCreateSignature,
   trinoFunctionSegmentParts,
   trinoObjectSourceSql,
@@ -1284,8 +1285,9 @@ export class TrinoProvider extends SQLBaseProvider {
   // ==========================================================================
 
   /**
-   * The `SHOW CREATE FUNCTION` reply for ONE NAME: the addressed overload's row, and the
-   * SIGNATURE OF EVERY ROW the reply carried.
+   * The `SHOW CREATE FUNCTION` reply for ONE NAME, reduced to the ONE overload the path segment
+   * addresses: the statement that read it, the bare name, the signature the row was FOUND by,
+   * and that row's own text.
    *
    * ONE WRITER FOR TWO READERS, the build and the apply, so the statement the build read and
    * the statement the apply re-reads can never drift apart: the provider suite asserts they
@@ -1639,16 +1641,35 @@ export class TrinoProvider extends SQLBaseProvider {
     // the build's first-line check already refuses an edited header, so the suite reaches it
     // with a plan built by hand, which is the only way to reach a control on a rule.
     const after = await this.readOverload(plan.path, plan.kind, spec);
-    const wrote = trinoCreateSignature(step.text);
-    if (wrote !== before.signature) {
+    const wroteSignature = trinoCreateSignature(step.text);
+    if (wroteSignature !== before.signature) {
+      const declared = trinoCreateArgumentTypes(step.text);
       return {
         outcome: "applied-elsewhere",
         undone: false,
-        // The engine's own name for what it wrote, in the shape this provider addresses an
-        // overload with, so the reader can go and look at it. Omitted rather than guessed for a
-        // statement whose parameter list could not be read at all, which is the other way this
-        // arm is reached.
-        ...(wrote === null ? {} : { wrote: `${after.name}(${wrote})` }),
+        // WHAT THE SENT STATEMENT DECLARED, minted in the same shape as the path segment that
+        // addresses an overload, so the reader can go to the object that is now there instead of
+        // being told only that one is.
+        //
+        // IT IS THE RENDERING AND NOT THE COMPARISON SIGNATURE, and that distinction is the whole
+        // reason {@link trinoCreateArgumentTypes} exists. The signature is lower-cased and has
+        // its whitespace and its quotes removed, which is what makes the engine's two renderings
+        // of one list comparable and what makes it unreadable: measured with the shipped helper
+        // on the fixture's own `hard` shape, a `wrote` built from the signature prints
+        // `plus_one(decimal(10,2),array(varchar),row(abigint,bvarchar))`, in which `abigint`
+        // names no type Trino will parse, and this prints
+        // `plus_one(decimal(10, 2), array(varchar), ROW(a bigint, b varchar))`. The suite pins
+        // both halves of that, and pins that the result is an ADDRESS rather than a label:
+        // {@link trinoFunctionSegmentParts} takes it apart and the signature it yields is the one
+        // the written row would be FOUND by.
+        //
+        // It is the SENT statement's own rendering, so on the population this arm exists for it
+        // is the reader's own bytes rather than the coordinator's. That is the honest thing to
+        // show, because those bytes are what created the object being named.
+        //
+        // Omitted rather than guessed for a statement whose parameter list could not be read at
+        // all, which is the other way this arm is reached.
+        ...(declared === null ? {} : { wrote: functionSegment(after.name, declared.join(", ")) }),
         duration: Date.now() - started,
       };
     }
