@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { parseResponseJSON } from "../../../helpers/mock-next";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { mintPlanToken } from "@/lib/api/object-edit-plan-token";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
 import type { ObjectEditOutcome } from "@/lib/db/types";
 import {
@@ -78,6 +80,36 @@ describe("POST /api/db/objects/edit-apply", () => {
     const { plan, planToken } = await mintValidPlan({ database: "db1" });
     mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, database: "db2" });
     expect((await POST(request({ plan, planToken }))).status).toBe(400);
+  });
+
+  test("a plan for a connection that differs ONLY in its URI is refused, with its control", async () => {
+    // THE HOLE AN EXTERNAL REVIEW OF PR #831 FOUND, driven end to end at the route rather than only
+    // at the digest. REPRODUCED against the five-field frame: both connections below answered
+    // `1c7e7b2e9f9ee023a97ad141dd3d3c92923bb03472f6b0ff0c726968c3fe28a5`, this request answered 200
+    // and `provider.applyObjectEdit` was called once, which is the apply landing on another server.
+    //
+    // Why the URI and not the five fields: `src/lib/db/providers/sql/postgres.ts:2095-2099` returns
+    // `{ ...baseConfig, connectionString }` and NEVER reaches the host/port/user/database branch
+    // below it, so these two records are byte-identical in every field the old frame hashed, `id`
+    // included, and reach two different servers.
+    const ours = { ...CONNECTION, connectionString: "postgres://libredb@127.0.0.1:5432/appdb" };
+    const theirs = { ...CONNECTION, connectionString: "postgres://libredb@evil.example:5432/appdb" };
+    const { plan } = await mintValidPlan();
+    const sealed = { ...plan, connectionFingerprint: await connectionFingerprint(ours) };
+    const planToken = await mintPlanToken(sealed);
+
+    mockResolveConnection.mockResolvedValueOnce(theirs);
+    const response = await POST(request({ plan: sealed, planToken }));
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ code: string }>(response)).code).toBe("EDIT_PLAN_INVALID");
+    expect(provider.applyObjectEdit).toHaveBeenCalledTimes(0);
+
+    // THE CONTROL, and it is not optional: a frame that refused every URI-bearing connection, or a
+    // route that answered 400 for an unrelated reason, would pass every line above. Same plan, same
+    // token, and the connection this request resolves is the one it was sealed against.
+    mockResolveConnection.mockResolvedValueOnce(ours);
+    expect((await POST(request({ plan: sealed, planToken }))).status).toBe(200);
+    expect(provider.applyObjectEdit).toHaveBeenCalledTimes(1);
   });
 
   test("an expired token is refused with its own sentence", async () => {
