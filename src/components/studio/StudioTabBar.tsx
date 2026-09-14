@@ -33,6 +33,34 @@ function tabIcon(tab: QueryTab): React.JSX.Element {
   return <FileBraces strokeWidth={1.5} className="w-3 h-3" />;
 }
 
+/**
+ * Whether this tab holds source text the reader has changed and not applied (#789 Phase 3).
+ *
+ * READ THROUGH `tab.source`, so an ordinary query tab has no field that could carry it and the
+ * strip cannot mark one by accident. The pane writes `dirty` onto `SourceTabState` only when the
+ * buffer's dirtiness FLIPS, so this costs one render per transition rather than one per keystroke.
+ */
+function hasUnsavedEdit(tab: QueryTab): boolean {
+  return tab.source?.dirty === true;
+}
+
+/**
+ * The tab's ACCESSIBLE NAME, which is its visible label plus the mark when there is one.
+ *
+ * WCAG 2.5.3, Label in Name: the accessible name has to CONTAIN the visible label. The dot beside
+ * the icon is the only visible statement that a tab the reader is not looking at holds an unsaved
+ * edit, and a dot is not text, so the same fact is put in the name. Replacing the name with
+ * "unsaved edit" would satisfy nothing: a speech-input user could no longer say the tab's own name
+ * to reach it, and a screen-reader user would not be told WHICH object the mark is about.
+ *
+ * `undefined` and not the bare name for a tab with no mark, so the accessible name keeps coming
+ * from the visible text in the ordinary case. An `aria-label` that duplicates the visible label is
+ * a second copy of the same string that can drift from it under a rename.
+ */
+function tabAccessibleName(tab: QueryTab): string | undefined {
+  return hasUnsavedEdit(tab) ? `${tab.name} (unsaved edit)` : undefined;
+}
+
 interface StudioTabBarProps {
   tabs: QueryTab[];
   activeTabId: string;
@@ -150,6 +178,7 @@ export function StudioTabBar({
               role="tab"
               data-tab-id={tab.id}
               aria-selected={activeTabId === tab.id}
+              aria-label={tabAccessibleName(tab)}
               tabIndex={activeTabId === tab.id ? 0 : -1}
               onClick={() => onSetActiveTabId(tab.id)}
               onKeyDown={(e) => handleTabKeyDown(e, index)}
@@ -160,6 +189,18 @@ export function StudioTabBar({
               className="flex items-center gap-2 flex-1 min-w-0 h-full text-left cursor-pointer"
             >
               {tabIcon(tab)}
+              {hasUnsavedEdit(tab) && (
+                /*
+                 * ARIA-HIDDEN, because the same fact is already in the tab's accessible name
+                 * above. Left in the tree it would be announced as a second, wordless node
+                 * inside the tab, and a decorative shape has nothing to say twice.
+                 */
+                <span
+                  aria-hidden="true"
+                  data-testid="tab-dirty-dot"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-tint"
+                />
+              )}
               <span className="text-xs truncate font-medium">{tab.name}</span>
             </button>
           )}

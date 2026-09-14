@@ -481,4 +481,64 @@ describe("StudioTabBar", () => {
       expect(document.activeElement?.getAttribute("data-tab-id")).toBe("tab-1");
     });
   });
+
+  // ── The unsaved-edit mark (#789 Phase 3) ────────────────────────────────
+
+  /**
+   * The tab strip is the ONLY place a reader learns that a Source tab they are not looking at
+   * holds an unsaved edit (#789 Phase 3, discussion #778).
+   *
+   * The draft lives in `SourceTabState.dirty`, which the pane writes when the buffer's
+   * dirtiness FLIPS, and nothing else in the shell draws it: the pane itself is one tab, and a
+   * reader who switched away has no other surface saying their text is still there.
+   *
+   * WCAG 2.5.3, Label in Name: the visible label is the tab's name, so the accessible name has
+   * to CONTAIN it rather than replace it. An `aria-label` of "unsaved edit" alone would leave a
+   * speech-input user unable to say the tab's name to reach it, and would leave a screen-reader
+   * user with no idea which object the mark is about.
+   */
+  describe("a Source tab with an unsaved edit", () => {
+    const sourceTab = (dirty: boolean | undefined): QueryTab =>
+      createTab({
+        id: "source:function:app%1Forder_total",
+        name: "Source: app.order_total",
+        source: { path: ["app", "order_total"], kind: "function", dirty },
+      });
+
+    test("the tab bar marks an unsaved edit, and the accessible name CONTAINS the visible label", () => {
+      const props = createDefaultProps({ tabs: [sourceTab(true)], activeTabId: "source:function:app%1Forder_total" });
+      const { container } = render(<StudioTabBar {...props} />);
+
+      const tab = container.querySelector('[role="tab"]');
+      expect(tab?.getAttribute("aria-label")).toBe("Source: app.order_total (unsaved edit)");
+      // The visible label is still there and still the tab's own name, so the accessible name
+      // contains it rather than standing in for it.
+      expect(tab?.textContent).toBe("Source: app.order_total");
+      expect(container.querySelector('[data-testid="tab-dirty-dot"]')?.getAttribute("aria-hidden")).toBe("true");
+    });
+
+    test("a tab with no unsaved edit carries neither", () => {
+      // The control. `dirty` is optional and absent on every tab this repository has ever
+      // persisted, so an implementation that always drew the dot would pass the test above and
+      // mark every tab in the strip.
+      const props = createDefaultProps({
+        tabs: [sourceTab(undefined)],
+        activeTabId: "source:function:app%1Forder_total",
+      });
+      const { container } = render(<StudioTabBar {...props} />);
+
+      const tab = container.querySelector('[role="tab"]');
+      expect(tab?.getAttribute("aria-label")).toBeNull();
+      expect(container.querySelector('[data-testid="tab-dirty-dot"]')).toBeNull();
+    });
+
+    test("an ordinary query tab can never carry the mark, because it holds no source state", () => {
+      // The second control, over the OTHER population: `dirty` is read through `tab.source`, so
+      // a query tab has no field to carry it and the strip cannot mark one by accident.
+      const props = createDefaultProps();
+      const { container } = render(<StudioTabBar {...props} />);
+      expect(container.querySelector('[data-testid="tab-dirty-dot"]')).toBeNull();
+      expect(container.querySelectorAll('[role="tab"][aria-label]')).toHaveLength(0);
+    });
+  });
 });
