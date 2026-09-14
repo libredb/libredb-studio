@@ -32,6 +32,8 @@
  * `measuredServerVersion` field that `connect()` writes.
  */
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
@@ -91,6 +93,17 @@ async function mariadbKinds(): Promise<readonly ObjectKindSpec[]> {
  */
 const implementsBothEditMethods = (provider: DatabaseProvider): boolean =>
   typeof provider.buildObjectEdit === "function" && typeof provider.applyObjectEdit === "function";
+
+/** The repository root, from this file's own location, so the doc read below is cwd-independent. */
+const ROOT = path.resolve(import.meta.dir, "../..");
+
+/**
+ * A markdown HEADING line whose text ends in `Object edit (#789)`, at any level and with any
+ * trailing clause after it, which two of the fourteen carry (`druid.md` and `libredb.md` both
+ * continue the heading with "nothing to write"). Anchored to `^#` so a mention of the phrase in a
+ * paragraph, or in a link, cannot satisfy the guard.
+ */
+const EDIT_SECTION_HEADING = /^#{1,6} .*Object edit \(#789\)/m;
 
 describe("the fleet census of object edit declarations", () => {
   test("exactly four (type-id, kind) pairs declare acceptsSourceEdits", async () => {
@@ -193,6 +206,37 @@ describe("the fleet census of object edit declarations", () => {
       .filter((row) => row.kind.acceptsSourceEdits === true && row.kind.hasSource !== true)
       .map((row) => pair(row.type, row.kind));
     expect(halfDeclarations).toEqual([]);
+  });
+
+  test("every abstainer's provider doc carries the Object edit (#789) section naming its absence", () => {
+    // WHY THIS IS A TEST AND NOT PROSE. Each of the fourteen abstainer sections ends by saying
+    // that THIS FILE is what holds that absence and that section together. Without this guard
+    // that sentence was false in one direction: the census pinned the DECLARATION half only, so a
+    // seventeenth external engine landing as an abstainer would grow
+    // `EXPECTED_EDIT_ABSTAINERS`, pass the census with its new id, and ship with no section
+    // written anywhere, and nothing in this repository would go red. The population this iterates
+    // is the committed abstainer list, which is the same list the census above compares the
+    // measured abstainers against, so the two halves cannot drift apart.
+    //
+    // It asserts the SECTION EXISTS at that id's own doc, not what it says: prose content has no
+    // truth value a test can read. What it does buy is that a new absence cannot be shipped
+    // silent.
+    if (EXPECTED_EDIT_ABSTAINERS.length === 0) {
+      throw new Error("the doc-section guard read 0 abstainers, so it certifies nothing about the fourteen sections");
+    }
+    const missing: string[] = [];
+    for (const type of EXPECTED_EDIT_ABSTAINERS) {
+      const relative = `docs/providers/${type}.md`;
+      const absolute = path.join(ROOT, relative);
+      if (!existsSync(absolute)) {
+        missing.push(`${relative} does not exist`);
+        continue;
+      }
+      if (!EDIT_SECTION_HEADING.test(readFileSync(absolute, "utf8"))) {
+        missing.push(`${relative} carries no "Object edit (#789)" heading`);
+      }
+    }
+    expect(missing).toEqual([]);
   });
 
   test("the MariaDB branch is censused separately, because an unconnected mysql provider answers the MySQL six", async () => {

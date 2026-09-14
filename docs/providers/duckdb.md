@@ -897,7 +897,7 @@ segment carries an argument type list.
 
 ### Object edit (#789)
 
-This engine is a REFUSAL on every kind it declares, and the kinds refuse for three different reasons.
+No kind here is editable on day one, and the four kinds get there two ways: `view` is DEFERRED, and the other three are REFUSED for two different reasons.
 `view` is the one DEFERRED case and is the cheapest second producer for the collateral machinery: a single `CREATE OR REPLACE` is atomic on failure, and the price is that a byte-identical replace DISCARDS the view's COMMENT.
 `macro` is refused while a Phase 2 defect stands: `CREATE OR REPLACE MACRO` replaces the NAME and deletes every other overload, and the macro read in [`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts) takes `rows[0]`, so the pane shows one overload and calls it the definition.
 `table` and `sequence` are refused because a SUCCESS would destroy what the user was never shown: `CREATE OR REPLACE TABLE` with the table's own published DDL deletes every row, and a sequence's published `START` is the reached value plus one, so the pane shows a clause the author never typed and which moves on every use.

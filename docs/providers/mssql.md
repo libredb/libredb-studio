@@ -881,7 +881,7 @@ Both arms are driven in the suite instead, and both are mutation-tested.
 
 #### Object edit (#789)
 
-Four kinds here are DEFERRED rather than refused, and one shape of a fifth is a refusal outright.
+Four kinds here are DEFERRED rather than refused, and one shape of one of those four is a refusal outright.
 `CREATE OR ALTER` works on `procedure`, `function`, `trigger` and a plain `view`, and a transaction really does revert it, so the failure arm is safe; the price is three unbuilt pieces, no bound parameter on either send path (`Msg 111`), never sending `USE` because it persists on the pooled connection, and reading `uses_quoted_identifier` and `uses_ansi_nulls` beside the definition.
 A view CARRYING AN INDEX is a REFUSAL: `CREATE OR ALTER VIEW` drops its clustered index on a byte-identical body and reports success, which is a destroyed object the user was never shown.
 Shipping the deferred four would make this provider the first producer of the `transactional-replace` strategy and of the `interrupted.committed: "rolled-back"` outcome.
