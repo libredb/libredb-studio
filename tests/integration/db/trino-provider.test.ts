@@ -70,6 +70,7 @@ import {
   sha256Hex,
   trinoFunctionSegmentParts,
   trinoObjectSourceSql,
+  trinoSentOffsetOf,
   trinoSpliceAt,
   trinoRelationListSql,
   trinoSchemaListSql,
@@ -3377,6 +3378,24 @@ const READ_TEXT = CREATE_PLUS_ONE_BIGINT;
 const EDITED = READ_TEXT.replace("RETURN (x + 1)", "RETURN (x + 2)");
 /** What the apply sends: eleven characters spliced in after the first token and nothing else. */
 const PLAN_TEXT = `${EDITED.slice(0, 6)} OR REPLACE${EDITED.slice(6)}`;
+/**
+ * A LEGITIMATE edit the formatter canonicalizes straight back to the pre-image.
+ *
+ * MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port 18509:
+ * with `plus_one(x bigint)` in place, applying this text SUCCEEDED and `SHOW CREATE FUNCTION`
+ * came back byte-identical to the pre-image, two rows before and two after. The comment is
+ * dropped and the doubled parentheses and spaces are re-rendered, which is the same
+ * canonicalization this file's identity docblock records. It is the population that made a
+ * post-apply comparison of the two RENDERINGS report a successful in-place apply as a fork.
+ */
+const CANONICALIZED = READ_TEXT.replace(
+  "RETURN (x + 1)",
+  "RETURN ((x  +  1)) -- I reformatted this and added a comment",
+);
+/** The one edit that FORKS on 476, and the row the coordinator then answers for it, verbatim. */
+const FORKING_TEXT = READ_TEXT.replace("(x bigint)", "(x varchar)").replace("RETURN (x + 1)", "RETURN (length(x) + 1)");
+const CREATE_PLUS_ONE_VARCHAR =
+  "CREATE FUNCTION memory.app.plus_one(x varchar)\nRETURNS bigint\nRETURN (length(x) + 1)";
 const SHOW_PLUS_ONE = trinoObjectSourceSql(trinoSourceStatementFor(EDIT_KIND), "memory", "app", "plus_one");
 
 /**
@@ -3498,6 +3517,28 @@ async function applyAgainst(options: {
   before: string;
   after: string;
   then?: string;
+  /**
+   * The OTHER overloads of the same name, in BOTH replies.
+   *
+   * `SHOW CREATE FUNCTION memory.app.plus_one` answers ONE ROW PER OVERLOAD and the fixture has
+   * two, so a one-row reply is not a shape this coordinator produces: measured on 476 the reply
+   * carries the `double` row beside the `bigint` one. It defaults to that pair rather than to a
+   * single row so every apply test below drives the multi-row reply the post-apply verification
+   * has to read.
+   */
+  siblings?: readonly string[];
+  /**
+   * Rows only the POST-APPLY reply carries, which is what a FORK leaves behind.
+   *
+   * MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port
+   * 18509: `memory.app.plus_one` answered two rows, `CREATE OR REPLACE FUNCTION
+   * memory.app.plus_one(x varchar)` succeeded, and the reply then carried three with the
+   * addressed `(x bigint)` row byte-identical. They are served FIRST because that is where the
+   * coordinator put the new row in that measurement. A gained row is ALSO what an unrelated
+   * session creating another overload of the same name leaves, which is why the provider does
+   * not read one as a fork.
+   */
+  gained?: readonly string[];
   capture?: string[];
   forced?: boolean;
 }): Promise<ObjectEditOutcome> {
@@ -3505,7 +3546,14 @@ async function applyAgainst(options: {
   serveInstead(SHOW_PLUS_ONE, sourceRows("Create Function", [READ_TEXT]));
   const plan = options.forced ? await forcedPlan(options.after) : await planOn(provider, options.after);
   const then = options.then ?? (options.forced ? options.before : options.after);
-  serveInstead(SHOW_PLUS_ONE, sourceQueue([[options.before], [then]]));
+  const siblings = options.siblings ?? [CREATE_PLUS_ONE_DOUBLE];
+  serveInstead(
+    SHOW_PLUS_ONE,
+    sourceQueue([
+      [options.before, ...siblings],
+      [...(options.gained ?? []), then, ...siblings],
+    ]),
+  );
   const mark = sentSql.length;
   const outcome = await provider.applyObjectEdit!(plan);
   options.capture?.push(...sentSql.slice(mark));
@@ -3771,15 +3819,78 @@ describe("Trino object edit: the apply", () => {
     expect(sent).toEqual([SHOW_PLUS_ONE]);
   });
 
-  test("the addressed row is verified AFTER the apply, and a fork is `applied-elsewhere` UNDONE: false", async () => {
+  test("the addressed ROW is verified AFTER the apply: a fork ADDS an overload row", async () => {
     // MEASURED why this arm is reachable: only the ARGUMENT TYPE LIST forks on 476, a changed
     // return type and a renamed parameter are replaced in place, so a fork needs an argument-type
     // edit, which the build's first-line check already refuses. This post-apply check is the
     // CONTROL that catches a first-line rule this design got wrong.
-    const outcome = await applyAgainst({ before: READ_TEXT, after: READ_TEXT, forced: true });
+    //
+    // MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port
+    // 18509: `SHOW CREATE FUNCTION memory.app.plus_one` answered TWO rows, a
+    // `CREATE OR REPLACE FUNCTION memory.app.plus_one(x varchar)` succeeded, and the reply then
+    // answered THREE with the addressed `(x bigint)` row byte-identical. That is the question
+    // this guard asks: not whether the addressed row's RENDERING moved, which is the formatter's
+    // output and moves for reasons that are not a fork, but whether a signature appeared that
+    // was not there before.
+    const outcome = await applyAgainst({
+      before: READ_TEXT,
+      after: FORKING_TEXT,
+      forced: true,
+      gained: [CREATE_PLUS_ONE_VARCHAR],
+    });
     if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
     // Trino has no transaction to take it back and this design will not issue a DROP to clean up.
     expect(outcome.undone).toBe(false);
+    // The engine's own name for what it wrote, in the shape a path segment addresses it with, so
+    // the dialog can say WHICH object is now there instead of only that one is.
+    expect(outcome.wrote).toBe("plus_one(varchar)");
+  });
+
+  test("a fork onto an overload that ALREADY EXISTS adds no row and is still `applied-elsewhere`", async () => {
+    // THE MEASURED FALSE NEGATIVE of the row-set question, which is why the provider asks the
+    // sent statement's own parameter list instead. MEASURED through this provider against the
+    // live container above with a hand-built plan: with `plus_one(varchar)` already present, a
+    // plan whose statement declares `(x varchar)` gains NO row, the reply holds the same three
+    // signatures before and after, and `plus_one(bigint)` was never touched.
+    const outcome = await applyAgainst({
+      before: READ_TEXT,
+      after: FORKING_TEXT,
+      forced: true,
+      siblings: [CREATE_PLUS_ONE_DOUBLE, CREATE_PLUS_ONE_VARCHAR],
+    });
+    if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+    expect(outcome.wrote).toBe("plus_one(varchar)");
+  });
+
+  test("another session creating a SIBLING overload in the window is not a fork", async () => {
+    // THE FALSE POSITIVE of the row-set question, and the reason this provider does not ask it:
+    // the re-read happens AFTER the write, so any other session that creates another overload of
+    // the same NAME in that window adds a row to the reply. This apply is an ordinary in-place
+    // edit and the reader must be told it landed.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: EDITED, gained: [CREATE_PLUS_ONE_VARCHAR] });
+    expect(outcome.outcome).toBe("applied");
+  });
+
+  test("an edit the FORMATTER canonicalizes back to the pre-image is `applied`, not a fork", async () => {
+    // THE DEFECT THIS TEST PINS, measured end to end on trinodb/trino:476 on 2026-09-14 in
+    // container `libredb-trino-t08fix`, host port 18509: applying CANONICALIZED over the fixture's
+    // `plus_one(x bigint)` SUCCEEDS and `SHOW CREATE FUNCTION` comes back byte-identical to the
+    // pre-image. A post-apply check that compared the two renderings answered `applied-elsewhere`
+    // for it, so the dialog printed "This text does not name `plus_one(bigint)`, so that object
+    // was not changed" and "A different object was created and LibreDB did not remove it" over a
+    // change that had landed, the audit recorded `object_edit_applied_elsewhere`, and the draft
+    // and its dirty mark stayed. It is the same defect `6fdcc8bb` repaired on PostgreSQL.
+    const outcome = await applyAgainst({ before: READ_TEXT, after: CANONICALIZED, then: READ_TEXT });
+    if (outcome.outcome !== "applied") throw new Error("narrowing");
+    // The token of what is REALLY on the server, which after a canonicalizing apply is the
+    // pre-image's own bytes. MEASURED live through the shipped provider on the container above:
+    // `d7062c697f432ce5bb6743b59f6fe84c53db7b333181658038ed013339b80d3d`, which is that digest.
+    expect(outcome.revision).toEqual({
+      check: "compared",
+      token: await sha256Hex(READ_TEXT),
+      basis: "SHOW CREATE FUNCTION",
+      scope: "server",
+    });
   });
 
   test("NOT_SUPPORTED errorCode 13 is `unsupported` and carries the coordinator's own name", async () => {
@@ -3839,6 +3950,51 @@ describe("Trino object edit: the apply", () => {
       errorCode: 1,
       message: "line 1:9: mismatched input 'OR'",
       errorLocation: { lineNumber: 1, columnNumber: 9 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "outside" });
+  });
+
+  test("an <EOF> coordinate, which is one past the last character, is `outside`", async () => {
+    // MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port
+    // 18509: a truncated `RETURN (x +` answers `line 3:12: mismatched input '<EOF>'. Expecting:
+    // <expression>` on an 83-character statement whose third line is 11 characters, so the
+    // coordinate the coordinator reports at end of input is exactly `lastLine.length + 1`. The
+    // statement THIS test sends has a 14-character third line, so the same rule puts it at 3:15
+    // and the offset at 86 of 86. The fault name and the coordinate rule are measured; this
+    // document is assembled from them, because the harness sends one fixed statement.
+    const outcome = await applyWithTrinoError({
+      errorName: "SYNTAX_ERROR",
+      errorCode: 1,
+      message: "line 3:15: mismatched input '<EOF>'. Expecting: <expression>",
+      errorLocation: { lineNumber: 3, columnNumber: 15 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "outside" });
+  });
+
+  test("a coordinate whose LINE is not a line at all is `outside` and never a placed marker", async () => {
+    // THE POPULATION IS THIS PROVIDER'S OWN TRANSPORT, not a reply measured on 476: `readLocation`
+    // in `http-transport.ts` takes any FINITE number, so a `lineNumber` of 0 crosses the seam. It
+    // matters because 0 is not merely rejected downstream: without the coordinate validation the
+    // offset is 72 of 86 and lands in the reader's THIRD line, so the product would underline a
+    // token the engine never named and Monaco would accept it in silence.
+    const outcome = await applyWithTrinoError({
+      errorName: "SYNTAX_ERROR",
+      errorCode: 1,
+      message: "mismatched input",
+      errorLocation: { lineNumber: 0, columnNumber: 1 },
+    });
+    if (outcome.outcome !== "refused") throw new Error("narrowing");
+    expect(outcome.refusal.at).toEqual({ within: "outside" });
+  });
+
+  test("a FRACTIONAL line is `outside` too, and without the check it would point at line 1", async () => {
+    const outcome = await applyWithTrinoError({
+      errorName: "SYNTAX_ERROR",
+      errorCode: 1,
+      message: "mismatched input",
+      errorLocation: { lineNumber: 1.5, columnNumber: 1 },
     });
     if (outcome.outcome !== "refused") throw new Error("narrowing");
     expect(outcome.refusal.at).toEqual({ within: "outside" });
@@ -4005,5 +4161,26 @@ describe("Trino object edit: the derivations, driven to their BOUND values", () 
     expect(trinoSpliceAt("ALTER FUNCTION f()")).toBeNull();
     expect(trinoSpliceAt("   ")).toBeNull();
     expect(trinoSpliceAt("")).toBeNull();
+  });
+
+  test("the coordinate conversion answers null for every coordinate that is not IN the text", () => {
+    // THE CONTRACT OF THE EXPORTED FUNCTION, and it is asserted here because the caller hides
+    // two of these three shapes: `userPositionOf` answers `outside` for a negative, a fractional
+    // and an out-of-range offset on its own, so at the provider they are indistinguishable from
+    // a correct null. WHICH ONE THE PRODUCT DEPENDS ON is separated out rather than blurred: the
+    // `lineNumber` shapes are pinned end to end in "the apply" above, because without them the
+    // offset is a REAL position and the reader gets a marker on a token the engine never named.
+    const text = "one\ntwo\nthree";
+    expect(trinoSentOffsetOf(text, 1, 1)).toBe(0);
+    expect(trinoSentOffsetOf(text, 2, 3)).toBe(6);
+    expect(trinoSentOffsetOf(text, 3, 5)).toBe(12);
+    // End of input, which is the coordinate a `mismatched input '<EOF>'` reports: measured on
+    // 476, `lastLine.length + 1`, resolving to exactly `text.length`.
+    expect(trinoSentOffsetOf(text, 3, 6)).toBeNull();
+    expect(trinoSentOffsetOf(text, 4, 1)).toBeNull();
+    expect(trinoSentOffsetOf(text, 0, 1)).toBeNull();
+    expect(trinoSentOffsetOf(text, 1.5, 1)).toBeNull();
+    expect(trinoSentOffsetOf(text, 1, 0)).toBeNull();
+    expect(trinoSentOffsetOf(text, 1, 1.5)).toBeNull();
   });
 });

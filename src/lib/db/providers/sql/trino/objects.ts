@@ -1064,12 +1064,43 @@ export function trinoFunctionSegmentParts(segment: string): { name: string; argu
  * left. Resolving to an offset and handing that to `userPositionOf` subtracts the splice
  * exactly where the splice is, which on line 1 is exactly the eleven characters of
  * {@link TRINO_REPLACE_CLAUSE} and everywhere else is nothing.
+ *
+ * WHAT EACH REFUSAL BUYS, AND WHICH POPULATION BUILDS IT, written out because a review measured
+ * all three surviving their own mutation with the suite green and 100% line coverage over them.
+ *
+ * 1. THE COORDINATE VALIDATION IS LOAD-BEARING FOR `line`, and its population is this provider's
+ *    own transport rather than any coordinator reply observed on 476. `readLocation` in
+ *    `http-transport.ts` accepts ANY finite number for `lineNumber` and `columnNumber`, so a
+ *    document carrying `0` or `1.5` crosses the seam intact. Without this line, MEASURED by
+ *    running the body over the statement the apply sends, `line 0` resolves to offset 72 of 86
+ *    and `line 1.5` to offset 0, both of which are REAL positions in the reader's text: the
+ *    product would then underline a token the engine never named, and Monaco accepts it in
+ *    silence. The `column` half of the same condition is a different matter and is stated as
+ *    such: `column 0` resolves to -1 and `column 1.5` to 0.5, and `userPositionOf` answers
+ *    `outside` for both on its own, so those two disjuncts hold this function to its contract
+ *    and change no outcome at the only caller.
+ * 2. THE `line > lines.length` ARM WAS DELETED BY THAT REVIEW RATHER THAN TESTED, because it can
+ *    change no answer at all and no test could go red for it. Summing `length + 1` over every
+ *    line of a text is `text.length + 1`, so a line past the end always resolves PAST the end
+ *    and arm 3 already answers `null`. VERIFIED by running the body without it over six text
+ *    shapes, every line from `lines.length + 1` to `lines.length + 5` and every column from 1 to
+ *    200, 6,000 coordinates: 0 of them answered anything but `null`.
+ * 3. THE END-OF-INPUT ARM HAS A LIVE POPULATION AND IS THIS FUNCTION'S CONTRACT rather than a
+ *    second safety net at the caller. MEASURED on trinodb/trino:476 on 2026-09-14, container
+ *    `libredb-trino-t08fix`, host port 18509: a truncated `RETURN (x +` answers
+ *    `line 3:12: mismatched input '<EOF>'` on an 83-character statement whose third line is 11
+ *    characters, so the coordinate resolves to offset 83, exactly one past the last character.
+ *    `userPositionOf` answers `outside` for that offset on its own, so deleting this arm changes
+ *    nothing the product does; what it changes is what this exported function returns, and the
+ *    suite pins it here. The reader is told the engine reported a position that is not in their
+ *    text, which for an `<EOF>` coordinate is true.
  */
 export function trinoSentOffsetOf(text: string, line: number, column: number): number | null {
   if (!Number.isInteger(line) || !Number.isInteger(column) || line < 1 || column < 1) return null;
-  const lines = text.split("\n");
-  if (line > lines.length) return null;
-  const before = lines.slice(0, line - 1).reduce((total, one) => total + one.length + 1, 0);
+  const before = text
+    .split("\n")
+    .slice(0, line - 1)
+    .reduce((total, one) => total + one.length + 1, 0);
   const offset = before + column - 1;
   return offset < text.length ? offset : null;
 }

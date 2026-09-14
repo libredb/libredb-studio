@@ -1248,13 +1248,41 @@ time as `unsupported`, carrying the connector's own `NOT_SUPPORTED` and errorCod
 
 #### The addressed overload is verified AFTER the apply
 
-The provider re-reads `SHOW CREATE FUNCTION` and checks that the row for the ADDRESSED argument-type
-list changed. If it did not, the outcome is `applied-elsewhere` with `undone: false`, because Trino has
-no transaction to take it back and this design will not issue a `DROP` to clean up.
+The provider re-reads `SHOW CREATE FUNCTION`, which is where the new revision token comes from, and
+asks whether the object the statement WROTE is the object the plan was addressed to: the parameter
+list the SENT statement declares, read with the same comparison that found the addressed row in the
+first place.
+If it is a different one, the outcome is `applied-elsewhere` with `undone: false` and `wrote` naming
+the overload that was written, because Trino has no transaction to take it back and this design will
+not issue a `DROP` to clean up.
 
 Why that arm is reachable at all: a fork needs an argument-type edit, which the first-line check above
 already refuses, so this is the CONTROL that catches a first-line rule this design got wrong rather
 than a path anybody expects to take.
+The named UNMEASURED case above, a formatter that wraps a long parameter list onto a second line, is
+exactly such a rule: a first-line comparison would pass an argument-list change made below the wrap,
+and this is what would catch it.
+
+**It asks that question and NOT whether the addressed row's text moved, and the difference is a
+defect this provider shipped.** The read text is the formatter's CANONICAL rendering, so an edit that
+differs from the server's bytes and canonicalizes back to them passes the byte-identical refusal and
+then trips a comparison of the two renderings.
+Measured on 476 through this provider, container `libredb-trino-t08fix` on host port 18509: with
+`plus_one(x bigint)` in place, applying
+`CREATE OR REPLACE FUNCTION memory.app.plus_one(x bigint) RETURNS bigint RETURN ((x  +  1)) -- I reformatted this and added a comment`
+SUCCEEDS, `SHOW CREATE FUNCTION` comes back byte-identical to the pre-image, and the rendering
+comparison called that legitimate in-place apply somebody else's object.
+It is the same defect the PostgreSQL provider carried and repaired.
+
+**The catalog's own row set was tried as the replacement and measured unsound in both directions**,
+recorded because it is the obvious repair and reads as the right one.
+A fork does add a row: measured in the same container, two rows for `memory.app.plus_one` before,
+three after a `CREATE OR REPLACE FUNCTION memory.app.plus_one(x varchar)`, the addressed `(x bigint)`
+row byte-identical, and the new row first in the reply.
+But a fork onto an argument list that ALREADY EXISTS adds no row, measured through this provider with
+a hand-built plan, so the row set answers `applied` while the addressed object was never touched; and
+the re-read happens after the write, so another session creating a sibling overload of the same name
+in that window adds a row to a perfectly ordinary in-place apply.
 
 #### Coordinates, and why it is not a subtraction
 
@@ -1266,6 +1294,14 @@ A rule that subtracted eleven columns from every line would be wrong, measured: 
 error answers `line 3:8` BOTH bare and spliced, because the splice is on line 1 only. A coordinate
 that lands inside the eleven characters this product wrote is reported as `outside` and never as a
 number, because an out-of-range coordinate handed to Monaco is silently CLAMPED rather than rejected.
+
+Two more coordinates answer `outside`, and only the first of them was observed on 476. A syntax error
+at END OF INPUT reports one column past the last character: measured, a truncated `RETURN (x +`
+answers `line 3:12: mismatched input '<EOF>'. Expecting: <expression>` on an 83-character statement
+whose third line is 11 characters. And a `lineNumber` that is not a line at all, `0` or a fraction, is
+refused rather than resolved: the transport accepts any FINITE number from the failure document, and
+without that refusal `line 0` resolves to a REAL offset in the reader's text and underlines a token
+the engine never named.
 
 #### A timeout is `interrupted` and never a `TimeoutError`
 

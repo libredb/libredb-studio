@@ -1284,7 +1284,8 @@ export class TrinoProvider extends SQLBaseProvider {
   // ==========================================================================
 
   /**
-   * The `SHOW CREATE FUNCTION` reply row belonging to ONE overload, or `undefined`.
+   * The `SHOW CREATE FUNCTION` reply for ONE NAME: the addressed overload's row, and the
+   * SIGNATURE OF EVERY ROW the reply carried.
    *
    * ONE WRITER FOR TWO READERS, the build and the apply, so the statement the build read and
    * the statement the apply re-reads can never drift apart: the provider suite asserts they
@@ -1295,12 +1296,22 @@ export class TrinoProvider extends SQLBaseProvider {
    * `compared` means. {@link trinoFunctionSegmentParts} is the exact inverse of the
    * {@link functionSegment} this provider minted, and the fixture's `we(ird`, `rowparen` and
    * `hard` are what make it non-vacuous.
+   *
+   * `signature` IS RETURNED RATHER THAN RECOMPUTED BY THE CALLER, because the apply's post-apply
+   * verification compares the parameter list the SENT statement declares against the one the
+   * addressed row was FOUND by, and two computations of "the addressed signature" that could
+   * drift apart would make that comparison answer about nothing.
+   *
+   * The `SHOW CREATE FUNCTION <name>` reply carries one row per overload of the name, MEASURED
+   * on trinodb/trino:476 on 2026-09-14 (container `libredb-trino-t08fix`, host port 18509):
+   * `memory.app.plus_one` answers two, and the order is not stable, so the row is found by its
+   * parameter list and never by its position.
    */
   private async readOverload(
     path: readonly string[],
     kind: string,
     spec: ObjectKindSpec,
-  ): Promise<{ sql: string; definition: string | undefined }> {
+  ): Promise<{ sql: string; name: string; signature: string; definition: string | undefined }> {
     const read = objectRead(this.getCapabilities(), spec, path);
     const parts = trinoFunctionSegmentParts(read.name);
     if (parts === null) {
@@ -1318,7 +1329,12 @@ export class TrinoProvider extends SQLBaseProvider {
     const signature = trinoArgumentSignature(parts.argumentTypes);
     const row = rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === signature);
     const definition = row?.[statement.column];
-    return { sql, definition: typeof definition === "string" ? definition : undefined };
+    return {
+      sql,
+      name: parts.name,
+      signature,
+      definition: typeof definition === "string" ? definition : undefined,
+    };
   }
 
   /**
@@ -1514,12 +1530,15 @@ export class TrinoProvider extends SQLBaseProvider {
    * 2. `plan.unit.steps[0].text`, verbatim, with no parameters and no re-derivation. Nothing here
    *    re-reads the object to re-assemble a statement and nothing consults `getCapabilities()`
    *    for anything the plan carries.
-   * 3. the POST-APPLY VERIFICATION, which asks whether the ADDRESSED overload changed. MEASURED
-   *    on 476 why that arm is reachable at all: only the ARGUMENT TYPE LIST forks, a changed
-   *    return type and a renamed parameter are replaced in place, so a fork needs an
-   *    argument-type edit and the build's first-line check already refuses one. This is the
-   *    CONTROL that catches a first-line rule this design got wrong, and `undone` is FALSE
-   *    because Trino has no transaction to take it back and this design will not issue a DROP.
+   * 3. the POST-APPLY RE-READ, which supplies the NEW revision token, and the verification that
+   *    goes with it: whether the object the statement WROTE is the object the plan was
+   *    addressed to, asked of the parameter list the sent statement declares and never of
+   *    whether the addressed row's RENDERING moved. MEASURED on 476 why that arm is reachable
+   *    at all: only the ARGUMENT TYPE LIST forks, a changed return type and a renamed parameter
+   *    are replaced in place, so a fork needs an argument-type edit and the build's first-line
+   *    check already refuses one. This is the CONTROL that catches a first-line rule this
+   *    design got wrong, and `undone` is FALSE because Trino has no transaction to take it back
+   *    and this design will not issue a DROP.
    *
    * THIS METHOD OPENS NO TRANSACTION, which on this engine is a statement of fact rather than a
    * prohibition: a Trino catalog function is created outside any transaction the client can hold.
@@ -1565,11 +1584,81 @@ export class TrinoProvider extends SQLBaseProvider {
       return this.classifyApplyFailure(step, error, Date.now() - started);
     }
 
+    // THE POST-APPLY VERIFICATION ASKS WHETHER THE ADDRESSED ROW WAS REWRITTEN, NOT WHETHER ITS
+    // RENDERING MOVED. It compared the two renderings until this was measured, and that
+    // comparison is the SAME SEVERITY 1 DEFECT `6fdcc8bb` repaired on PostgreSQL: the read text
+    // is the FORMATTER's canonical output, this file's own build docblock says so, and an edit
+    // that differs from the server's bytes and canonicalizes back to them passes the build's
+    // byte-identical refusal and then trips a rendering comparison.
+    //
+    // MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port
+    // 18509: with `memory.app.plus_one(x bigint)` in place, `CREATE OR REPLACE FUNCTION
+    // memory.app.plus_one(x bigint) RETURNS bigint RETURN ((x  +  1)) -- I reformatted this and
+    // added a comment` SUCCEEDED and `SHOW CREATE FUNCTION` came back byte-identical to the
+    // pre-image, two rows before and two after. Under the rendering comparison that legitimate
+    // in-place apply answered `applied-elsewhere`, which prints "this text does not name
+    // plus_one(bigint), so that object was not changed" over a change that landed.
+    //
+    // WHAT IT ASKS INSTEAD, AND WHY IT IS NOT THE ROW-SET COMPARISON THE REVIEW PROPOSED. The
+    // question is "is the object this statement wrote the object the plan was addressed to", and
+    // on this engine the only SOUND evidence for it is the parameter list the SENT statement
+    // itself declares, read with the same {@link trinoCreateSignature} that FOUND the addressed
+    // row. MEASURED on 476: only the ARGUMENT TYPE LIST forks, a changed return type and a
+    // renamed parameter are replaced in place, so a statement whose parameter list is the
+    // addressed one replaced the addressed one, and a statement whose parameter list is a
+    // different one did not.
+    //
+    // THE CATALOG'S OWN ROW SET WAS TRIED FIRST AND MEASURED UNSOUND IN BOTH DIRECTIONS, which
+    // is recorded here because it is the obvious repair and the next reader will propose it
+    // again. A fork does ADD a row, MEASURED in this container: two rows for
+    // `memory.app.plus_one` before, three after a `CREATE OR REPLACE FUNCTION
+    // memory.app.plus_one(x varchar)`, the addressed `(x bigint)` row byte-identical, and the
+    // new row FIRST in the reply. But:
+    //
+    //   * FALSE NEGATIVE, MEASURED through this provider with a hand-built plan on the same
+    //     container: with `plus_one(varchar)` ALREADY present, a plan whose statement declares
+    //     `(x varchar)` gains NO row, so the row-set question answered `applied` while
+    //     `plus_one(bigint)`, the object the plan was addressed to, was never touched and the
+    //     reader would have been told their edit landed.
+    //   * FALSE POSITIVE, by construction rather than measured: the re-read happens AFTER the
+    //     write, so any other session creating another overload of the same NAME in that window
+    //     gains a row, and a legitimate in-place apply would be reported as somebody else's
+    //     object. That is the same shape of false alarm this whole repair is removing.
+    //
+    // WHAT THE SENT-STATEMENT QUESTION IS A CONTROL ON, since it reads the same bytes the build
+    // checked: the build compares the whole FIRST LINE, and this compares the PARAMETER LIST
+    // wherever it is. The named UNMEASURED case in the build's docblock, a formatter that WRAPS
+    // a long parameter list onto a second line, is exactly a first-line rule that would pass an
+    // argument-list change, and this catches that one. It is not a control on the parameter-list
+    // reader itself, and this comment does not claim to be one: `trinoFunctionSegmentParts` and
+    // `trinoCreateSignature` are the same code on both sides, and the suite's round trip over
+    // every function in the fixture is what holds them.
+    //
+    // `undone` is FALSE because Trino has no transaction to take it back and this design will
+    // not issue a DROP. Through the product this arm is a CONTROL and not an everyday outcome:
+    // the build's first-line check already refuses an edited header, so the suite reaches it
+    // with a plan built by hand, which is the only way to reach a control on a rule.
     const after = await this.readOverload(plan.path, plan.kind, spec);
-    const written = after.definition ?? "";
-    if (written === current) {
-      return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
+    const wrote = trinoCreateSignature(step.text);
+    if (wrote !== before.signature) {
+      return {
+        outcome: "applied-elsewhere",
+        undone: false,
+        // The engine's own name for what it wrote, in the shape this provider addresses an
+        // overload with, so the reader can go and look at it. Omitted rather than guessed for a
+        // statement whose parameter list could not be read at all, which is the other way this
+        // arm is reached.
+        ...(wrote === null ? {} : { wrote: `${after.name}(${wrote})` }),
+        duration: Date.now() - started,
+      };
     }
+    // The addressed row's text after the write. It is the EMPTY STRING only when the reply no
+    // longer carries the addressed overload at all, which is an out-of-band DROP between the
+    // write and this re-read: unmeasured on 476, reported as `applied` because the engine did
+    // accept the statement, and the digest of the empty string is then what a later apply
+    // compares against and answers `conflict` with an empty current text, which is what is
+    // there.
+    const written = after.definition ?? "";
     return {
       outcome: "applied",
       // The NEW token, because the one the plan carried is by definition the OLD one and a client
