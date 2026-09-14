@@ -8,8 +8,11 @@ import {
   CONNECTION,
   CONSEQUENCE,
   EVERY_OUTCOME,
+  REFUSAL,
+  OUTCOME_BY_AUDIT_KEY,
   REVISION,
   mintValidPlan,
+  mintValidPlanContaining,
   mockGetOrCreateProvider,
   mockGetSession,
   mockResolveConnection,
@@ -110,6 +113,24 @@ describe("POST /api/db/objects/edit-apply", () => {
     expect((await POST(request({ plan, planToken, acknowledged: ["replaces-whole-container"] }))).status).toBe(200);
   });
 
+  test("a kind the CONNECTED provider does not declare editable answers 400 and calls no apply", async () => {
+    // Fix round 1, finding 2. The apply route re-resolves editability on the CONNECTED provider
+    // (D57) and NOTHING drove that line: deleting the whole `requireEditableKind` call from
+    // `edit-apply/route.ts` left `bun test tests/api/db/objects` at 27 pass / 0 fail, so the line
+    // was covered by the happy path walking past it and killed by no mutation. Its build-route twin
+    // was pinned all along. `view` is DECLARED by the harness capabilities and NOT editable, which
+    // drives `requireEditableKind`'s SECOND sentence rather than its undeclared-kind first one.
+    const { plan, planToken } = await mintValidPlan({ kind: "view" });
+    const response = await POST(request({ plan, planToken }));
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      'postgres does not apply an edited definition for the kind "view"',
+    );
+    expect(provider.applyObjectEdit).toHaveBeenCalledTimes(0);
+    // Refused BEFORE the decision event, so a write that could never happen leaves no record.
+    expect(getServerAuditBuffer().getAll()).toHaveLength(0);
+  });
+
   test("a provider that declares the kind and holds no applyObjectEdit answers 400", async () => {
     // NOT in the brief's list, and here for the same reason its build-route twin is: the method is
     // OPTIONAL on `DatabaseProvider`, so the route holds a branch for its absence and a branch
@@ -129,11 +150,20 @@ describe("POST /api/db/objects/edit-apply", () => {
   });
 
   test("every outcome answers 200 with the typed union", async () => {
+    // The loop's own non-vacuity is asserted, and fix round 1 finding 6 is why: emptying
+    // `EVERY_OUTCOME` left this suite at 27 pass / 0 fail, because a loop over nothing satisfies
+    // every assertion inside it. The number is the audit record's key count and the harness derives
+    // the array from that record, so an eighth arm moves both together or fails to compile.
+    expect(EVERY_OUTCOME).toHaveLength(Object.keys(OUTCOME_BY_AUDIT_KEY).length);
+    expect(EVERY_OUTCOME.length).toBe(7);
+    let driven = 0;
     for (const outcome of EVERY_OUTCOME) {
       provider.applyObjectEdit.mockResolvedValueOnce(outcome);
       const response = await POST(request(await mintValidPlan()));
       expect([outcome.outcome, response.status]).toEqual([outcome.outcome, 200]);
+      driven += 1;
     }
+    expect(driven).toBe(EVERY_OUTCOME.length);
   });
 
   test("a provider that THROWS answers 200 interrupted, never a 500, and the audit records it", async () => {
@@ -208,15 +238,128 @@ describe("POST /api/db/objects/edit-apply", () => {
     expect(calls).toBe(2);
   });
 
+  test("THE HARNESS'S SENTINEL PLAN PLANTS NOTHING IN A FIELD THE AUDIT LEGITIMATELY CARRIES", async () => {
+    // Fix round 1, finding 1, and the reason it is HERE rather than in wave 8: Task 12's headline
+    // assertion is `for (const event of events) expect(JSON.stringify(event)).not.toContain(SENTINEL)`
+    // over the events THIS route emits, and `mintValidPlanContaining` is the only producer of that
+    // population. Task 11's brief asked for the sentinel in the plan id, and `plan.planId` IS the
+    // audit's `correlationId`, so the shipped harness made that assertion go RED against a route
+    // that leaks nothing. MEASURED before the harness was changed: EVENTS 2, CONTAINS-SENTINEL true
+    // for both. The brief was wrong and this is the test that pins the correction, so a later hand
+    // putting the sentinel back into the plan id fails here rather than in another wave's budget.
+    const SENTINEL = "libredb-audit-sentinel-9f3a2c";
+    const sealed = await mintValidPlanContaining(SENTINEL);
+    // Still PRESENT in the two fields Task 12 asserts it is present in, so this is not a test that
+    // passes by the sentinel having gone missing altogether.
+    expect(sealed.plan.unit.medium === "statement" ? sealed.plan.unit.steps[0].text : "").toContain(SENTINEL);
+    expect(sealed.plan.revision.check === "unavailable" ? "" : sealed.plan.revision.token).toContain(SENTINEL);
+    expect(sealed.plan.planId).not.toContain(SENTINEL);
+    await POST(request(sealed));
+    const events = getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.type === "object_edit");
+    expect(events).toHaveLength(2);
+    for (const event of events) expect(JSON.stringify(event)).not.toContain(SENTINEL);
+  });
+
   test("the two events share one correlation id and carry the strategy as the outcome's action", async () => {
+    // Fix round 1, findings 7 and 8: every field the brief's audit table pins BY VALUE is asserted
+    // against the value it is supposed to be, and not against the other event. The equality
+    // `events[0].correlationId === events[1].correlationId` is true BY CONSTRUCTION, because both
+    // events spread one `auditFields` object, so it was satisfied by `correlationId: "constant"`
+    // and killed nothing. Same for `details`, which the outcome event's own `action` happens to
+    // equal here, and for `duration`, which was unasserted.
+    const sealed = await mintValidPlan();
+    provider.applyObjectEdit.mockResolvedValueOnce({ outcome: "applied", revision: REVISION, duration: 4_711 });
+    await POST(request(sealed));
+    const events = getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.type === "object_edit");
+    expect(events).toHaveLength(2);
+    expect(events[0].correlationId).toBe(sealed.plan.planId);
+    expect(events[1].correlationId).toBe(sealed.plan.planId);
+    expect(events[0].action).toBe("PLAN");
+    expect(events[1].action).toBe("guarded-atomic-batch");
+    expect(events[0].target).toBe("function:app/order_total(integer):definition");
+    expect(events[1].target).toBe("function:app/order_total(integer):definition");
+    expect(events[0].details).toBe(sealed.plan.strategy);
+    expect(events[1].details).toBe(sealed.plan.strategy);
+    expect(events[0].result).toBe("success");
+    expect(events[1].result).toBe("success");
+    // `duration` is the OUTCOME's own number and never the wall clock the route measured: a
+    // hardcoded 0 or a re-measured elapsed time would both pass a "there is a duration" assertion.
+    expect(events[1].duration).toBe(4_711);
+    // The DECISION event carries no duration and no reason: nothing has happened yet to time, and
+    // `auditReadingFor({ outcome: "applied" })` returns no reason, so the outcome event carries
+    // none either. `reason: undefined` spread in would make both of these true, which is why the
+    // assertion is on the KEY and not on the value.
+    expect(Object.hasOwn(events[0], "duration")).toBe(false);
+    expect(Object.hasOwn(events[0], "reason")).toBe(false);
+    expect(Object.hasOwn(events[1], "reason")).toBe(false);
+  });
+
+  test("the audit names the connection and the caller, and falls back through the arms in order", async () => {
+    // Fix round 1, finding 8. `connectionName` is `name || database || "unknown"`, inherited
+    // verbatim from `src/app/api/db/maintenance/route.ts:117`, and BOTH its fallback arms had no
+    // population: the harness fixture always carries a name, so `?? "unknown"` on that line killed
+    // nothing. `resolveConnection` returns an INLINE caller-supplied connection object verbatim, so
+    // a connection whose `name` is empty is the caller's to send and is the live population here.
+    //
+    // `user`'s own `|| "unknown"` arm is NOT driven here and the reason is MEASURED rather than
+    // preferred: `guardRoute` keys the rate limiter on `session.username` BEFORE the handler runs,
+    // and a session without one dies at `truncatedKey` in `src/lib/api/rate-limit.ts:213` with
+    // `TypeError: undefined is not an object (evaluating 'key.slice')`, which is what a first draft
+    // of this test measured. `SessionPayload.username` is a required `string`; the fallback is an
+    // obligation of `ObjectRouteContext`'s looser `username?: string` and has no live population.
+    const sealed = await mintValidPlan();
+
+    getServerAuditBuffer().clear();
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, name: "" });
+    await POST(request(sealed));
+    let events = getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.type === "object_edit");
+    expect(events).toHaveLength(2);
+    // The DATABASE arm, which `?? "unknown"` skips entirely.
+    expect(events[0].connectionName).toBe("appdb");
+
+    getServerAuditBuffer().clear();
+    // Sealed against a connection with NO database, because `connectionFingerprint` folds
+    // `database ?? ""` in: minting against `""` and resolving `undefined` are the same fingerprint,
+    // and sealing against `appdb` here would drive the plan-invalid arm instead of this one.
+    const noDatabase = await mintValidPlan({ database: "" });
+    mockResolveConnection.mockResolvedValueOnce({ ...CONNECTION, name: "", database: undefined });
+    await POST(request(noDatabase));
+    events = getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.type === "object_edit");
+    expect(events).toHaveLength(2);
+    expect(events[0].connectionName).toBe("unknown");
+    // And the default arm, so the two fallbacks above are not the only thing this route can answer.
+    expect(events[0].user).toBe("reader");
+
+    getServerAuditBuffer().clear();
+    await POST(request(sealed));
+    events = getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.type === "object_edit");
+    expect(events[0].connectionName).toBe("Task 11");
+  });
+
+  test("the outcome event carries the reading's reason, and the decision event never does", async () => {
+    // Fix round 1, finding 8: `...(reading.reason === undefined ? {} : { reason: reading.reason })`
+    // had no test that distinguished it from `reason: reading.reason`, because the reason-ABSENT
+    // arm (`applied`) was unasserted. Both arms are driven here, one test, so the conditional
+    // spread is what is under test rather than the happy path.
+    provider.applyObjectEdit.mockResolvedValueOnce({ outcome: "refused", refusal: REFUSAL, duration: 12 });
     await POST(request(await mintValidPlan()));
     const events = getServerAuditBuffer()
       .getAll()
       .filter((event) => event.type === "object_edit");
     expect(events).toHaveLength(2);
-    expect(events[0].correlationId).toBe(events[1].correlationId);
-    expect(events[0].action).toBe("PLAN");
-    expect(events[1].action).toBe("guarded-atomic-batch");
-    expect(events[1].target).toBe("function:app/order_total(integer):definition");
+    expect(Object.hasOwn(events[0], "reason")).toBe(false);
+    expect(events[1].reason).toBe("object_edit_refused");
+    expect(events[1].result).toBe("failure");
+    expect(events[1].duration).toBe(12);
   });
 });

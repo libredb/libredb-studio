@@ -1513,7 +1513,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `INTERNAL_ERROR` | Unhandled server error (500) |
 | `NETWORK_ERROR` | Network failure |
 | `RATE_LIMITED` | Application-level rate limit exceeded (429) - see "Rate Limiting" below |
-| `EDIT_PLAN_INVALID` | An object edit plan did not verify: forged, expired, digest mismatch, wrong connection fingerprint, or an unknown `planVersion` (400). Returned by the two `/api/db/objects/edit-*` routes directly rather than through `createErrorResponse`, and it is the one refusal a browser responds to specifically, by rebuilding the preview |
+| `EDIT_PLAN_INVALID` | An object edit plan did not verify: forged, expired, digest mismatch, wrong connection fingerprint, or an unknown `planVersion` (400). Returned by the two `/api/db/objects/edit-*` routes directly rather than through `createErrorResponse`. It is a machine-readable code and not a sentence, so a client can tell a plan that no longer verifies apart from an apply that failed and offer to rebuild the preview; no shipped UI branches on it yet |
 
 The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned
 directly by the request middleware (`src/proxy.ts`), before a request ever reaches

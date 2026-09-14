@@ -198,6 +198,19 @@ export async function POST(req: NextRequest) {
  * `action` and `result` are supplied per event and `reason` and `duration` only by the outcome, so
  * they are not here: a shared default for either would be a value one of the two events did not
  * mean.
+ *
+ * THE TWO FALLBACKS ARE NOT THE SAME KIND OF THING, and the difference is measured rather than
+ * assumed. `connectionName`'s two arms both have a live population: `resolveConnection` returns an
+ * INLINE caller-supplied connection object verbatim, so a connection whose `name` is empty is the
+ * caller's to send, and both the database arm and the `"unknown"` arm are driven by
+ * `tests/api/db/objects/edit-apply.test.ts`. `user`'s arm has NONE: `guardRoute` keys the rate
+ * limiter on `session.username` before this handler runs, and a session without one dies at
+ * `truncatedKey` in `src/lib/api/rate-limit.ts` with
+ * `TypeError: undefined is not an object (evaluating 'key.slice')`, which is what a draft of that
+ * test MEASURED. `SessionPayload.username` is a required `string`, so the fallback here is an
+ * obligation of `ObjectRouteContext`'s looser `username?: string` and nothing more; it is kept
+ * because the type requires it and because `src/app/api/db/maintenance/route.ts` spells the same
+ * expression the same way.
  */
 function auditFields(
   plan: ObjectEditPlan,

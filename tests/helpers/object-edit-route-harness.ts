@@ -5,6 +5,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { mintPlanToken } from "@/lib/api/object-edit-plan-token";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { QueryError } from "@/lib/db/errors";
+import type { ObjectEditAuditKey } from "@/lib/db/object-edit";
 import type { DatabaseConnection } from "@/lib/types";
 import type {
   ObjectEditBuild,
@@ -288,35 +289,90 @@ export async function mintValidPlan(
 }
 
 /**
- * The same, with `sentinel` placed in the unit's text, in the revision token and in the plan id.
+ * The same, with `sentinel` placed in the unit's text and in the revision token, and DELIBERATELY
+ * NOT in the plan id.
  *
- * Three fields rather than one, because Task 12's single leak assertion is over the audit record
- * and the stdout line, and a sentinel sitting only in the statement would certify nothing about
- * the other plan strings an audit field could pick up. The plan id is the audit's `correlationId`,
- * so that one is deliberately a field the events DO carry.
+ * Two fields rather than one, because the leak assertion this exists for is over the audit record
+ * and the stdout line, and a sentinel sitting only in the statement would certify nothing about the
+ * other plan strings an audit field could pick up.
+ *
+ * NOT THE PLAN ID, and the brief asked for the plan id. `plan.planId` IS the audit's
+ * `correlationId`, which both events carry BY DESIGN, so a sentinel planted there makes
+ * `expect(JSON.stringify(event)).not.toContain(SENTINEL)` go RED against a route that leaks
+ * nothing. MEASURED at commit `4a7dda43` with the plan id carrying it: two `object_edit` events,
+ * `JSON.stringify(event).includes(SENTINEL)` TRUE for both, from
+ * `"correlationId":"plan-libredb-audit-sentinel-9f3a2c"`. The brief was wrong on this one value and
+ * the correction is pinned by a test rather than left as a comment: see
+ * "THE HARNESS'S SENTINEL PLAN PLANTS NOTHING IN A FIELD THE AUDIT LEGITIMATELY CARRIES" in
+ * `tests/api/db/objects/edit-apply.test.ts`.
  */
 export async function mintValidPlanContaining(sentinel: string): Promise<{ plan: ObjectEditPlan; planToken: string }> {
   const text = `${STEP_PROVIDER_TEXT}${sentinel}`;
   return mintValidPlan({
-    planId: `plan-${sentinel}`,
+    planId: "plan-task-11-leak-probe",
     unit: { medium: "statement", steps: [{ text, language: "pgsql", segments: [{ from: "provider", text }] }] },
     revision: { check: "guarded", token: sentinel, basis: "pg_proc.xmin", scope: "server" },
   });
 }
 
 /**
- * One member per arm of `ObjectEditOutcome`, INCLUDING BOTH `conflict` arms, so a loop over this is
- * a loop over the union and not over six of its seven.
+ * One member per arm of `ObjectEditOutcome`, INCLUDING BOTH `conflict` arms.
+ *
+ * DERIVED FROM A TOTAL RECORD rather than hand-listed, on `OBJECT_EDIT_AUDIT`'s own precedent in
+ * `src/lib/db/object-edit.ts`: the keys are `ObjectEditAuditKey`, which is computed FROM the union
+ * and carries `conflict`'s second discriminant, so an eighth arm or a third `conflict` discriminant
+ * fails to COMPILE here instead of quietly never being driven. A hand-listed array has no tie to
+ * the union it claims to enumerate, and fix round 1 finding 6 measured what that costs: emptying it
+ * to `[]` left `bun test tests/api/db/objects` at 27 pass / 0 fail, so "every outcome answers 200
+ * with the typed union" certified nothing when its loop ran zero times.
+ *
+ * The `Record` is the invariant and the array is the consumer's shape, so both are exported: the
+ * loop wants something iterable and the compile-time totality wants the keys.
  */
-export const EVERY_OUTCOME: readonly ObjectEditOutcome[] = [
-  { outcome: "applied", revision: REVISION, duration: 4 },
-  { outcome: "applied-with-collateral", lost: [CONSEQUENCE], revision: REVISION, duration: 5 },
-  { outcome: "applied-elsewhere", undone: true, wrote: "app.order_total(bigint)", duration: 6 },
-  { outcome: "conflict", conflict: "object-changed", current: { text: "SELECT 2", language: "pgsql" }, duration: 7 },
-  { outcome: "conflict", conflict: "engine-refused-concurrent", sentence: "tuple concurrently updated", duration: 8 },
-  { outcome: "refused", refusal: REFUSAL, duration: 9 },
-  { outcome: "interrupted", committed: "unknown", sentence: "Connection terminated unexpectedly", duration: 10 },
-];
+export const OUTCOME_BY_AUDIT_KEY: Readonly<Record<ObjectEditAuditKey, ObjectEditOutcome>> = Object.freeze({
+  applied: { outcome: "applied", revision: REVISION, duration: 4 },
+  "applied-with-collateral": {
+    outcome: "applied-with-collateral",
+    lost: [CONSEQUENCE],
+    revision: REVISION,
+    duration: 5,
+  },
+  "applied-elsewhere": { outcome: "applied-elsewhere", undone: true, wrote: "app.order_total(bigint)", duration: 6 },
+  "conflict:object-changed": {
+    outcome: "conflict",
+    conflict: "object-changed",
+    current: { text: "SELECT 2", language: "pgsql" },
+    duration: 7,
+  },
+  "conflict:engine-refused-concurrent": {
+    outcome: "conflict",
+    conflict: "engine-refused-concurrent",
+    sentence: "tuple concurrently updated",
+    duration: 8,
+  },
+  refused: { outcome: "refused", refusal: REFUSAL, duration: 9 },
+  interrupted: {
+    outcome: "interrupted",
+    committed: "unknown",
+    sentence: "Connection terminated unexpectedly",
+    duration: 10,
+  },
+});
+
+/**
+ * The same members as an array, and it ASSERTS ITS OWN NON-EMPTINESS at module load.
+ *
+ * The assertion is not decoration: a loop over an empty array passes every assertion inside it, and
+ * the type alone cannot say the spread produced anything, so the one number that makes the loop
+ * non-vacuous is checked where it is produced rather than in each consumer.
+ */
+export const EVERY_OUTCOME: readonly ObjectEditOutcome[] = Object.freeze(Object.values(OUTCOME_BY_AUDIT_KEY));
+
+if (EVERY_OUTCOME.length !== Object.keys(OUTCOME_BY_AUDIT_KEY).length || EVERY_OUTCOME.length === 0) {
+  throw new Error(
+    `EVERY_OUTCOME carries ${EVERY_OUTCOME.length} members and the record has ${Object.keys(OUTCOME_BY_AUDIT_KEY).length}`,
+  );
+}
 
 /** One valid apply, and the two `object_edit` events it left in the ring, in order. */
 export async function applyAndRead(): Promise<readonly AuditEvent[]> {
