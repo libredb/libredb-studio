@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D81, U17 · 39
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X21, U2–U21 · 14
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X22, U2–U21 · 15
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1565,6 +1565,25 @@ Nothing is visible to the reader and nothing is lost. It matters because it is n
 
 **Done when:** the widget releases the models before they are disposed, and the E2E spec can assert an
 empty console after an apply.
+
+### X22. The object-edit E2E's restored-tab test is flaky on its first CI run
+
+MEASURED on the first run this spec ever had in CI, #831's `Functional Smoke (PostgreSQL)` job
+(actions run 34868635360, job 104060110399, 2026-09-14): 6 tests, **1 flaky, 5 passed**. The flaky one
+is `e2e/object-edit.spec.ts:409`, `a RESTORED tab is read-only until the reader presses Edit again`.
+It failed its first attempt at line 416, `expect(page.getByTestId("object-source-edit")).toBeVisible({
+timeout: 30_000 })`, with `element(s) not found` after the full 30 seconds, and passed on the retry.
+The job is green because Playwright retries, so nothing turns red and the intermittency is invisible
+unless a person reads the log.
+
+The step under test is a `page.reload()` immediately after an edit that was not applied: the tab is
+restored from `localStorage`, the source is re-read, and the edit affordance appears once that read
+lands. WHY the affordance was absent for thirty seconds is NOT measured. Two candidates, neither
+checked: the re-read was still in flight on a cold runner, or the restored tab reached a state where
+the affordance is withheld. They are different defects and the log does not separate them.
+
+**Done when:** the failure is reproduced with the reason named, either as a wait this test is missing
+or as a product state the reload can reach, and the retry is no longer what makes the job green.
 
 ## Dependencies
 
