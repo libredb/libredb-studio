@@ -139,7 +139,6 @@ import {
   TRINO_SOURCE_PART_ID,
   sha256Hex,
   trinoArgumentSignature,
-  trinoCreateArgumentTypes,
   trinoCreateSignature,
   trinoFunctionSegmentParts,
   trinoObjectSourceSql,
@@ -1494,7 +1493,7 @@ export class TrinoProvider extends SQLBaseProvider {
     //    that produced this refusal is the case-folded, whitespace-free and quote-free form both
     //    of them reduce to.
     const address = `${read.catalog}.${read.schema}.${read.name}`;
-    const submitted = trinoCreateIdentity(request.text, statement.object);
+    const submitted = trinoCreateIdentity(request.text, ["CREATE", statement.object]);
     if (submitted === null) {
       return refuse(
         "identity",
@@ -1505,7 +1504,7 @@ export class TrinoProvider extends SQLBaseProvider {
           "in the SQL editor instead",
       );
     }
-    const current = trinoCreateIdentity(definition, statement.object);
+    const current = trinoCreateIdentity(definition, ["CREATE", statement.object]);
     if (submitted.key !== current?.key) {
       return refuse(
         "identity",
@@ -1689,9 +1688,30 @@ export class TrinoProvider extends SQLBaseProvider {
     // the build's first-line check already refuses an edited header, so the suite reaches it
     // with a plan built by hand, which is the only way to reach a control on a rule.
     const after = await this.readOverload(plan.path, plan.kind, spec);
-    const wroteSignature = trinoCreateSignature(step.text);
-    if (wroteSignature !== before.signature) {
-      const declared = trinoCreateArgumentTypes(step.text);
+    // THE IDENTITY AND NOT THE SIGNATURE ALONE, and the difference is a hole this control had.
+    // A signature is the ARGUMENT TYPES, so a statement declaring `plus_two(x bigint)` over a plan
+    // addressed to `plus_one(bigint)` compared EQUAL: the addressed row came back unchanged, this
+    // method answered `applied`, and the revision token it handed back was the digest of a text
+    // the reader's edit never reached. MEASURED on trinodb/trino:476 in container `trino-t32` on
+    // host port 18532 on 2026-09-15 that a changed NAME forks exactly as a changed argument type
+    // does: `rename_probe2` beside `rename_probe`, two rows where there was one.
+    //
+    // The comparison is the SENT bytes against the PRE-IMAGE the digest check just accepted, read
+    // by the same {@link trinoCreateIdentity} the build compares with, so the control and the rule
+    // it is a control on cannot disagree about what an identity is while disagreeing about a text.
+    const sentStatement = trinoSourceStatementFor(plan.kind);
+    // The SENT bytes carry the clause this provider spliced, so their keyword prefix is the one
+    // this provider wrote, and the constant is where it comes from: three things already have to
+    // agree about those eleven characters and a literal here would be a fourth.
+    const wrote = trinoCreateIdentity(step.text, ["CREATE", TRINO_REPLACE_CLAUSE.trim(), sentStatement.object]);
+    const addressed = trinoCreateIdentity(current, ["CREATE", sentStatement.object]);
+    if (wrote === null) {
+      // A plan whose statement no header can be read out of at all. It cannot say the addressed
+      // object was written and it cannot name what was, so it says the first and omits the second,
+      // which is the arm the dialog already renders without a name.
+      return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
+    }
+    if (wrote.key !== addressed?.key) {
       return {
         outcome: "applied-elsewhere",
         undone: false,
@@ -1700,7 +1720,7 @@ export class TrinoProvider extends SQLBaseProvider {
         // being told only that one is.
         //
         // IT IS THE RENDERING AND NOT THE COMPARISON SIGNATURE, and that distinction is the whole
-        // reason {@link trinoCreateArgumentTypes} exists. The signature is lower-cased and has
+        // reason {@link TrinoCreateIdentity} carries both. The signature is lower-cased and has
         // its whitespace and its quotes removed, which is what makes the engine's two renderings
         // of one list comparable and what makes it unreadable: measured with the shipped helper
         // on the fixture's own `hard` shape, a `wrote` built from the signature prints
@@ -1715,9 +1735,12 @@ export class TrinoProvider extends SQLBaseProvider {
         // is the reader's own bytes rather than the coordinator's. That is the honest thing to
         // show, because those bytes are what created the object being named.
         //
-        // Omitted rather than guessed for a statement whose parameter list could not be read at
-        // all, which is the other way this arm is reached.
-        ...(declared === null ? {} : { wrote: functionSegment(after.name, declared.join(", ")) }),
+        // THE NAME IS THE DECLARED ONE AND NOT THE ADDRESSED ONE, which the arm above this one is
+        // the reason for: on a NAME fork the addressed name is precisely the object that was not
+        // written, and printing it here would name the wrong object in the one sentence whose job
+        // is to name the right one. It is therefore QUALIFIED, as the statement wrote it, rather
+        // than the bare segment the path carries.
+        wrote: functionSegment(wrote.name, wrote.argumentTypes.join(", ")),
         duration: Date.now() - started,
       };
     }

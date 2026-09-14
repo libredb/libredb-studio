@@ -4018,11 +4018,12 @@ describe("Trino object edit: the apply", () => {
     // Trino has no transaction to take it back and this design will not issue a DROP to clean up.
     expect(outcome.undone).toBe(false);
     // NOT the engine's own name for what it wrote: neither half of this string comes from the
-    // coordinator. The bare name is the one the plan's own path segment carries and the parameter
-    // list is the one the SENT statement declares, minted in the shape a path segment addresses
-    // an overload with, so the dialog can say WHICH object is now there instead of only that one
-    // is.
-    expect(outcome.wrote).toBe("plus_one(varchar)");
+    // coordinator. BOTH halves are the SENT statement's own, the qualified name it declares and
+    // the parameter list it declares, minted in the shape a path segment addresses an overload
+    // with, so the dialog can say WHICH object is now there instead of only that one is. The name
+    // is the declared one and not the addressed one because a NAME fork is one of the two ways
+    // this arm is reached, and there the addressed name is the object that was NOT written.
+    expect(outcome.wrote).toBe("memory.app.plus_one(varchar)");
   });
 
   test("`wrote` carries the parameter list the SENT statement declares, not the comparison form", async () => {
@@ -4035,18 +4036,39 @@ describe("Trino object edit: the apply", () => {
     // `row(abigint,bvarchar)` at the reader, which names no type Trino will parse.
     const outcome = await applyAgainst({ before: READ_TEXT, after: FORKING_HARD_TEXT, forced: true });
     if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
-    expect(outcome.wrote).toBe("plus_one(decimal(10, 2), array(varchar), ROW(a bigint, b varchar))");
+    expect(outcome.wrote).toBe("memory.app.plus_one(decimal(10, 2), array(varchar), ROW(a bigint, b varchar))");
     // AND IT IS AN ADDRESS RATHER THAN A LABEL, which is what the claim beside it says it is: the
     // segment reader takes it apart and the signature it yields is the one the written row would
     // be FOUND by, so the reader can put it in an object path and reach what was written.
     const parts = trinoFunctionSegmentParts(outcome.wrote ?? "");
     if (parts === null) throw new Error("narrowing");
-    expect(parts.name).toBe("plus_one");
+    expect(parts.name).toBe("memory.app.plus_one");
     const COMPARISON_FORM = "decimal(10,2),array(varchar),row(abigint,bvarchar)";
     expect(trinoArgumentSignature(parts.argumentTypes)).toBe(COMPARISON_FORM);
     // And the form the comment above names, pinned by value rather than left as prose: this is
     // what the reader WOULD have been shown, and it is what the check itself runs on.
     expect(trinoCreateSignature(FORKING_HARD_TEXT)).toBe(COMPARISON_FORM);
+  });
+
+  test("a fork onto a different NAME with the SAME argument types is caught too", async () => {
+    // THE HOLE THE SIGNATURE COMPARISON LEFT IN THIS CONTROL, and it is the same class as the
+    // first-line identity check it is a control on: a signature is the ARGUMENT TYPES alone, so a
+    // statement naming `plus_two(x bigint)` over a plan addressed to `plus_one(bigint)` compared
+    // EQUAL, the addressed row came back unchanged, and the reader was told `applied` with a
+    // revision token over text their edit never reached. MEASURED on trinodb/trino:476 in
+    // container `trino-t32` on host port 18532 on 2026-09-15 that a name change forks:
+    // `CREATE OR REPLACE FUNCTION memory.app.rename_probe2(renamed bigint)` over
+    // `rename_probe(renamed bigint)` left TWO functions.
+    const outcome = await applyAgainst({
+      before: READ_TEXT,
+      after: READ_TEXT.replace("plus_one", "plus_two").replace("RETURN (x + 1)", "RETURN (x + 3)"),
+      forced: true,
+    });
+    if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+    expect(outcome.undone).toBe(false);
+    // The name is the one the SENT statement declared and not the one the plan addresses, which is
+    // the whole point: on a name fork the addressed name is the object that was NOT written.
+    expect(outcome.wrote).toBe("memory.app.plus_two(bigint)");
   });
 
   test("a fork onto an overload that ALREADY EXISTS adds no row and is still `applied-elsewhere`", async () => {
@@ -4062,7 +4084,25 @@ describe("Trino object edit: the apply", () => {
       siblings: [CREATE_PLUS_ONE_DOUBLE, CREATE_PLUS_ONE_VARCHAR],
     });
     if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
-    expect(outcome.wrote).toBe("plus_one(varchar)");
+    expect(outcome.wrote).toBe("memory.app.plus_one(varchar)");
+  });
+
+  test("a plan whose statement carries no readable header says so and names nothing", async () => {
+    // The other way this arm is reached, and it is the honest end of the same reading: a plan this
+    // provider did not build can carry any bytes, and a statement no header can be read out of
+    // cannot be claimed to have written the addressed object either. It says the first and omits
+    // `wrote`, which is the sentence the dialog already renders without a name. Unreachable
+    // through the product: the build refuses such a text before a plan exists, and the route
+    // refuses a plan it did not seal, so this is driven with a hand-built plan exactly as the
+    // fork arm above it is.
+    const outcome = await applyAgainst({
+      before: READ_TEXT,
+      after: READ_TEXT.replace("CREATE FUNCTION", "CREATE ROUTINE"),
+      forced: true,
+    });
+    if (outcome.outcome !== "applied-elsewhere") throw new Error("narrowing");
+    expect(outcome.undone).toBe(false);
+    expect(outcome.wrote).toBeUndefined();
   });
 
   test("another session creating a SIBLING overload in the window is not a fork", async () => {

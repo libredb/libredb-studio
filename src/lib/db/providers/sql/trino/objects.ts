@@ -979,10 +979,22 @@ export function trinoArgumentSignature(argumentTypes: string): string {
  * scan, so the string a reader is shown and the string the provider compares can never come from
  * two different readings of one statement.
  */
-export function trinoCreateArgumentTypes(createStatement: unknown): readonly string[] | null {
+function trinoCreateArgumentTypes(createStatement: unknown): readonly string[] | null {
   if (typeof createStatement !== "string") return null;
   const list = trinoParenthesisedList(createStatement);
   if (list === null) return null;
+  return trinoArgumentTypesIn(list);
+}
+
+/**
+ * One parenthesised list read as its parameter TYPES, one element per parameter.
+ *
+ * ONE WRITER, because {@link trinoCreateArgumentTypes} and {@link trinoCreateIdentity} both need
+ * it and they find the list by different routes: the first slices it and the second already holds
+ * the offsets of the pair it came from. Two copies of `split, then drop the names` is two readings
+ * that can drift, and this file's whole overload comparison rests on them not drifting.
+ */
+function trinoArgumentTypesIn(list: string): string[] {
   return trinoSplitTopLevel(list).map(trinoParameterType);
 }
 
@@ -1080,10 +1092,18 @@ export function trinoSpliceAt(text: string): number | null {
  * this engine will quote, including a newline and a comma: concatenating the name and the
  * signature with a plain separator lets one slide across the boundary into the other.
  *
- * The keyword walk is over `CREATE` plus the object's own words, taken from
- * {@link TRINO_SOURCE_STATEMENTS}, so nothing here branches on a kind or on a type id. It is a
- * token walk rather than a regular expression because the NAME may hold whitespace between its
- * quotes and a `\s+`-separated pattern would have to stop guessing where the name begins.
+ * THE KEYWORDS ARE THE CALLER'S, and that is what lets one reader serve both sides of the apply.
+ * The BUILD reads the reader's own text, which opens `CREATE <object>`, and the APPLY reads the
+ * bytes it SENDS, which open `CREATE OR REPLACE <object>` because this provider spliced
+ * {@link TRINO_REPLACE_CLAUSE} into them. Passing the words rather than inferring them is also
+ * what keeps `CREATE OR REPLACE FUNCTION` REFUSED on the build side: the reader's text is not
+ * allowed to carry the clause this product adds, because the splice would then add a second one.
+ * A phrase may hold spaces, `MATERIALIZED VIEW` and `OR REPLACE` both do, so the list is
+ * flattened on whitespace and nothing here branches on a kind or on a type id.
+ *
+ * It is a token walk rather than a regular expression because the NAME may hold whitespace
+ * between its quotes and a `\s+`-separated pattern would have to stop guessing where the name
+ * begins.
  *
  * THERE IS NO "THE HEAD RAN OUT OF TOKENS" ARM, and its absence is measured rather than an
  * oversight. `if (offset === -1) return null` was written here for a head like `CREATE   (`, and
@@ -1113,12 +1133,12 @@ export interface TrinoCreateIdentity {
   readonly key: string;
 }
 
-export function trinoCreateIdentity(createStatement: string, object: string): TrinoCreateIdentity | null {
+export function trinoCreateIdentity(createStatement: string, keywords: readonly string[]): TrinoCreateIdentity | null {
   const span = trinoParenthesisedSpan(createStatement);
   if (span === null) return null;
   const head = createStatement.slice(0, span.open);
   let cursor = 0;
-  for (const keyword of ["CREATE", ...object.split(" ")]) {
+  for (const keyword of keywords.flatMap((phrase) => phrase.split(" "))) {
     const from = cursor + head.slice(cursor).search(/\S/);
     // `\s|$` and never `\s` alone: the last keyword may run to the end of the head, and a -1 arm
     // for that would be a second way to say the same thing.
@@ -1129,7 +1149,7 @@ export function trinoCreateIdentity(createStatement: string, object: string): Tr
   const name = head.slice(cursor).trim();
   // `CREATE FUNCTION(x bigint)` names nothing, and neither does a head that is only keywords.
   if (name === "") return null;
-  const argumentTypes = trinoSplitTopLevel(createStatement.slice(span.open + 1, span.close)).map(trinoParameterType);
+  const argumentTypes = trinoArgumentTypesIn(createStatement.slice(span.open + 1, span.close));
   return { name, argumentTypes, key: `${String(name.length)}:${name}:${trinoNormalisedSignature(argumentTypes)}` };
 }
 
