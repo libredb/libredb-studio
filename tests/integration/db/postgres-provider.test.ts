@@ -5119,30 +5119,43 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         { what: "the body delimiter", text: withoutNewline },
         { what: "a semicolon of the reader's own", text: `${withoutNewline};` },
       ];
+      // BOTH DAY-ONE ROUTINE KINDS, and the two length pins are what stop this loop certifying
+      // nothing by running fewer times than it reads as (fix round 1, findings 2 and 3 of the
+      // task 22 review). Both arrays are literals today, so neither can empty by accident, but the
+      // four endings are the population this test carries the load for, and a future edit that
+      // trimmed either array would leave every assertion below passing over a smaller one.
+      // `procedure` composes its suffix on the SAME line as `function`, so it cannot diverge, and
+      // it is here because the two are the day-one routine kinds and the cost of covering both is
+      // one loop.
+      const kinds: readonly string[] = ["function", "procedure"];
+      expect(endings.length).toBe(4);
+      expect(kinds).toEqual(["function", "procedure"]);
       for (const ending of endings) {
-        const build = await provider.buildObjectEdit({
-          path: ["app", "order_total(integer)"],
-          kind: "function",
-          partId: "definition",
-          text: ending.text,
-        });
-        if (!build.built) throw new Error(`${ending.what}: ${build.refusal.sentence}`);
-        if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
-        const [step] = build.plan.unit.steps;
-        const [prefix, user, suffix] = step.segments;
-        if (prefix.from !== "provider" || user.from !== "user" || suffix.from !== "provider") {
-          throw new Error("narrowing");
+        for (const kind of kinds) {
+          const build = await provider.buildObjectEdit({
+            path: ["app", "order_total(integer)"],
+            kind,
+            partId: "definition",
+            text: ending.text,
+          });
+          if (!build.built) throw new Error(`${ending.what}: ${build.refusal.sentence}`);
+          if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+          const [step] = build.plan.unit.steps;
+          const [prefix, user, suffix] = step.segments;
+          if (prefix.from !== "provider" || user.from !== "user" || suffix.from !== "provider") {
+            throw new Error("narrowing");
+          }
+          // THE COORDINATES DO NOT MOVE. The suffix is the only thing the repair touches, and the
+          // marker arithmetic reads the user segment, so this is the assertion that says the repair
+          // cost the reader's line and column nothing.
+          expect(user.start).toBe(0);
+          expect(user.end).toBe(ending.text.length);
+          expect(step.text.slice(prefix.text.length, prefix.text.length + ending.text.length)).toBe(ending.text);
+          // The character that follows the reader's last one is a LINE BREAK, so no `--` comment of
+          // theirs can reach the terminator, whatever they ended with.
+          expect(step.text.slice(prefix.text.length + ending.text.length)).toStartWith("\n;\n");
+          expect(renderSegments(ending.text, step.segments)).toBe(step.text);
         }
-        // THE COORDINATES DO NOT MOVE. The suffix is the only thing the repair touches, and the
-        // marker arithmetic reads the user segment, so this is the assertion that says the repair
-        // cost the reader's line and column nothing.
-        expect(user.start).toBe(0);
-        expect(user.end).toBe(ending.text.length);
-        expect(step.text.slice(prefix.text.length, prefix.text.length + ending.text.length)).toBe(ending.text);
-        // The character that follows the reader's last one is a LINE BREAK, so no `--` comment of
-        // theirs can reach the terminator, whatever they ended with.
-        expect(step.text.slice(prefix.text.length + ending.text.length)).toStartWith("\n;\n");
-        expect(renderSegments(ending.text, step.segments)).toBe(step.text);
       }
       await provider.disconnect();
     });
