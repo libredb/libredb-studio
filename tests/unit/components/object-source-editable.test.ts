@@ -8,6 +8,7 @@ import {
   type SourceEditablePart,
   type SourceEditRefusal,
 } from "@/components/object-source/source-editable";
+import type { ObjectPartEdit } from "@/lib/db/types";
 
 /**
  * The brief's two `.refusal` assertions do not compile against the union, because the `editable:
@@ -105,10 +106,37 @@ describe("partEditability", () => {
     });
   });
 
+  test("a withheld affordance carrying NO reason is not the provider's arm", () => {
+    // THE DISCRIMINATING POPULATION for the reason guard, and it is not a hand-written double's
+    // population: `isPartShape` in `source-reader.ts` checks id, label, unavailable/text, language,
+    // form, origin and truncated, and NEVER examines `edit`, so on the embedded shell a host
+    // handing `offered: false` with no `reason` reaches this predicate untouched. Without the
+    // `typeof edit.reason === "string"` half of the guard, `sentence` would be `undefined` and the
+    // pane would draw its refusal headline over a blank line, which is the empty-versus-unreadable
+    // collapse this design exists to prevent.
+    expect(partEditability({ ...READABLE, edit: { offered: false } as unknown as ObjectPartEdit })).toEqual({
+      editable: false,
+      refusal: "not-offered",
+      sentence: NOT_OFFERED_SENTENCE,
+    });
+  });
+
+  test("a withheld affordance whose reason is BLANK is not the provider's arm either", () => {
+    // Same seam, and the reason a type check alone is not enough: a whitespace-only string is a
+    // string, and a refusal headline over three spaces says no more than one over nothing.
+    expect(partEditability({ ...READABLE, edit: { offered: false, reason: "   " } })).toEqual({
+      editable: false,
+      refusal: "not-offered",
+      sentence: NOT_OFFERED_SENTENCE,
+    });
+  });
+
   test("a malformed affordance reads as not offered rather than as editable", () => {
-    // A host can hand anything. `isSourceDocumentShape` drops a malformed `edit` before this is
-    // called, and this is the second line of the same defence: absence and malformation both read
-    // as not editable, and neither makes the DOCUMENT unrenderable.
+    // A host can hand anything, and nothing upstream takes it away: measured at this commit,
+    // `isPartShape` in `source-reader.ts` validates every other field of the text arm and never
+    // examines `edit` at all, so this predicate IS the defence rather than its second line.
+    // Absence and malformation both read as not editable, and neither makes the DOCUMENT
+    // unrenderable.
     expect(refusalOf(partEditability({ ...READABLE, edit: { offered: "yes" } as unknown as { offered: true } }))).toBe(
       "not-offered",
     );

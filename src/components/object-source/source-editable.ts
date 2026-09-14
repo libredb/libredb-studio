@@ -19,9 +19,12 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  * Both of the core facts travel ON THE DOCUMENT, so both arms are reachable on BOTH shells: the
  * standalone app, which reads through `/api/db/objects/source`, and the embedded library
  * surface, where a HOST supplies the document and no route of ours runs at all. That second
- * half is the one the server-side stripping cannot cover: the route deletes `edit` from any
- * part whose kind the CONNECTED provider does not declare editable, but a host never reaches
- * `boundSourceDocument`, so on the embedded shell `edit` arrives exactly as the host wrote it.
+ * half is the one the server-side stripping cannot cover. The route is SPECIFIED to delete
+ * `edit` from any part whose kind the CONNECTED provider does not declare editable, and at the
+ * time this file is written that stripping IS NOT WRITTEN YET: measured at this commit,
+ * `boundSourceDocument` carries `edit` through untouched and `acceptsSourceEdits` has no reader
+ * outside `kindAcceptsSourceEdits`. Either way a host never reaches `boundSourceDocument`, so on
+ * the embedded shell `edit` arrives exactly as the host wrote it.
  * Ordering the core facts first is what lets the embedded shell inherit the truncation and form
  * refusals with no route in the path, and it is what gives three of the four false arms a
  * producer on both shells rather than on one.
@@ -58,6 +61,17 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  *   this arm is built for is `app.order_total` read through the `src_probe` login in
  *   `docker/postgres-init/03-object-fixture.sql`, which owns nothing. Every test of this arm in
  *   the unit suite is a driver double, and no claim here says otherwise.
+ *
+ * THE ARM BOUNDARY, stated because it is not obvious from the ids. A withheld affordance whose
+ * `reason` is absent, not a string, or blank is answered `not-offered` and not
+ * `provider-refused`, so its reader is told this database offers no route where in fact the
+ * provider had one and withheld it without saying why. That is the lesser of the two wrongs:
+ * the alternative is a refusal headline drawn over a blank line, the empty-versus-unreadable
+ * collapse this design exists to prevent. The population is real and is not a test double:
+ * measured at this commit, `isPartShape` in `source-reader.ts` validates id, label,
+ * unavailable/text, language, form, origin and truncated and NEVER examines `edit`, so a host on
+ * the embedded seam reaches this predicate with any `edit` it likes. Both inputs are pinned in
+ * the unit suite.
  */
 
 /**
