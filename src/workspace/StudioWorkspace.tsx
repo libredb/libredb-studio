@@ -2,7 +2,7 @@
 
 import type { CsvDelimiter } from "@/lib/export/csv";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useImperativeHandle, useRef, useMemo, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { type TreeRowActionHandlers } from "@/components/object-tree";
 import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
@@ -179,6 +179,7 @@ export function StudioWorkspace({
   // onLoadSavedQueries — reserved for future saved-queries panel integration
   features: featuresProp,
   className,
+  ref,
 }: StudioWorkspaceProps) {
   const queryEditorRef = useRef<QueryEditorRef>(null);
   const { toast } = useToast();
@@ -247,6 +248,30 @@ export function StudioWorkspace({
    * See the mount below for what a reader is told as a result, and what they are not.
    */
   const [objectRefreshToken, setObjectRefreshToken] = useState(0);
+
+  /**
+   * The counter, moved by whoever moved the catalog: this shell, or the HOST saying so (D79).
+   *
+   * One writer for both, so the banner keeps a single meaning. `handleApplied` below calls it for
+   * an apply this workspace issued and clears the tab that applied as well, because that one is
+   * addressed; `catalogChanged` on the published handle calls it and clears nothing, because an
+   * announcement is not.
+   */
+  const catalogChanged = useCallback(() => setObjectRefreshToken((previous) => previous + 1), []);
+
+  /**
+   * What a host can ASK this workspace to do (D79).
+   *
+   * The reasoning for a handle rather than a field on the `onQueryExecute` answer is on
+   * `StudioWorkspaceHandle` in `src/workspace/types.ts`, where a host reads the contract. What
+   * belongs here is why the shell needs one at all: every statement leaves through
+   * `onQueryExecute`, that callback answers a result set and never says what the statement
+   * changed, so a `CREATE OR REPLACE` a person runs in the query editor, or a migration the host
+   * runs somewhere this package cannot see, was invisible to the counter below.
+   *
+   * `useImperativeHandle` with no ref is a no-op, so a host that passes none is unchanged.
+   */
+  useImperativeHandle(ref, () => ({ catalogChanged }), [catalogChanged]);
   const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
   const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
   const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
@@ -526,9 +551,9 @@ export function StudioWorkspace({
    * was built for, which is a key this shell does not hold and must not guess.
    */
   const handleApplied = useCallback(() => {
-    setObjectRefreshToken((previous) => previous + 1);
+    catalogChanged();
     onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined });
-  }, [onSourceChange]);
+  }, [catalogChanged, onSourceChange]);
 
   /**
    * Whether the Source pane has an apply in flight: sent, and no answer back yet (D82).
@@ -826,13 +851,22 @@ export function StudioWorkspace({
                                 nothing, because every statement goes out through the host's
                                 `onQueryExecute` and nothing reports back what it changed.
 
-                                An apply breaks that premise and only that premise, because an
-                                apply THIS shell issues IS a DDL this shell knows about. So the
-                                original sentence still holds for everything else and is kept
-                                rather than replaced: this counter STILL cannot see a DDL the host
-                                ran through `onQueryExecute`. A stale banner here therefore means
-                                "this workspace changed something" and its absence NEVER means
-                                "nothing changed".
+                                An apply breaks that premise, because an apply THIS shell issues IS
+                                a DDL this shell knows about, and D79 breaks the rest of it: the
+                                host can now say so itself, through `catalogChanged()` on the
+                                published handle. So the sentence this block used to carry, that a
+                                stale banner means "this workspace changed something" and its
+                                absence never means "nothing changed", is REPLACED rather than
+                                kept, because it is no longer what the counter counts.
+
+                                WHAT IT COUNTS NOW, and it is still not "everything": an object
+                                apply this workspace issued, plus every announcement the host
+                                made. The host is the only party that can see a statement it ran
+                                through `onQueryExecute` or outside this package altogether, so
+                                the absence of a banner means "nothing this workspace ran changed
+                                anything, and the host announced nothing" - which is the whole
+                                truth for a host that calls the handle, and reads exactly as it
+                                did before for a host that does not.
                               */
                               refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}

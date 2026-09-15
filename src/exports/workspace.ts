@@ -2,6 +2,7 @@
 export { StudioWorkspace } from "../workspace/StudioWorkspace";
 export type {
   StudioWorkspaceProps,
+  StudioWorkspaceHandle,
   WorkspaceConnection,
   WorkspaceUser,
   WorkspaceQueryResult,

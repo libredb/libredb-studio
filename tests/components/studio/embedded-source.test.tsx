@@ -149,7 +149,7 @@ mock.module("@/components/ui/resizable", () => {
 });
 
 import { StudioWorkspace } from "@/workspace/StudioWorkspace";
-import type { WorkspaceObjectReader } from "@/workspace/types";
+import type { StudioWorkspaceHandle, WorkspaceObjectReader } from "@/workspace/types";
 import type {
   ObjectEditBuild,
   ObjectEditConsequenceClass,
@@ -249,6 +249,8 @@ function workspace(options: {
    * does when a person deletes the last one in the host's own UI while a Source tab is open.
    */
   connections?: "none";
+  /** The published handle, so a test can announce a catalog change the way a host does (D79). */
+  handleRef?: { current: StudioWorkspaceHandle | null };
 }) {
   const declared = options.declared === undefined ? capabilities : options.declared;
   return (
@@ -271,6 +273,7 @@ function workspace(options: {
       }}
       onSchemaFetch={async () => []}
       onObjectsFetch={options.reader}
+      ref={options.handleRef}
     />
   );
 }
@@ -1977,5 +1980,118 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
     pressNewTab(document.body);
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+});
+
+/**
+ * D79: the host tells the workspace the catalog moved, and the workspace believes it.
+ *
+ * `objectRefreshToken` counted exactly one thing before this: an object apply this shell issued.
+ * Every other statement leaves through `onQueryExecute`, which answers a result set and never says
+ * what the statement changed, so a `CREATE OR REPLACE` a person ran in the query editor left every
+ * open Source tab showing the pre-apply text with no stale banner. MEASURED on the standalone
+ * shell during Phase 3, where the absence was found first: a new body applied to
+ * `p3probe.order_total` through `POST /api/db/query` while its Source tab was open left the tab
+ * unchanged and unmarked.
+ *
+ * The published surface is a HANDLE and not a field on the `onQueryExecute` answer; the docblock on
+ * `StudioWorkspaceHandle` in `src/workspace/types.ts` carries the reasoning.
+ */
+describe("a host can tell the embedded workspace that the catalog moved", () => {
+  /** A reader that counts its reads, so "the announcement re-read nothing" is an assertion. */
+  function countingReader(reads: { count: number }): WorkspaceObjectReader {
+    return {
+      ...treeReader(),
+      readObjectSource: async () => {
+        reads.count += 1;
+        return EDITABLE_DOCUMENT;
+      },
+    } as unknown as WorkspaceObjectReader;
+  }
+
+  test("the announcement marks an open Source tab stale, and the counter it moves is the shell's own", async () => {
+    const reads = { count: 0 };
+    const handle: { current: StudioWorkspaceHandle | null } = { current: null };
+    render(workspace({ reader: countingReader(reads), handleRef: handle }));
+    await openSourceTab();
+
+    // The control: the tab was read at token zero and nothing has moved, so it is not stale.
+    expect(refreshTokenPassedToTheViewer()).toBe(0);
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
+
+    act(() => {
+      handle.current?.catalogChanged();
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
+    expect(refreshTokenPassedToTheViewer()).toBe(1);
+  });
+
+  test("the announcement marks the tab and re-reads nothing, because it does not say WHAT changed", async () => {
+    /*
+     * The boundary of the surface, driven rather than argued. `handleApplied` clears the tab that
+     * applied because this shell knows exactly which object it just changed. A host announcement
+     * carries no address, so clearing would throw away a definition on the strength of "something,
+     * somewhere, moved" and would send the pane at a read for an object that may be untouched. The
+     * banner and its own re-read control are what a reader gets instead.
+     */
+    const reads = { count: 0 };
+    const handle: { current: StudioWorkspaceHandle | null } = { current: null };
+    render(workspace({ reader: countingReader(reads), handleRef: handle }));
+    await openSourceTab();
+    expect(reads.count).toBe(1);
+
+    act(() => {
+      handle.current?.catalogChanged();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
+
+    expect(reads.count).toBe(1);
+    expect(shownText()).toBe(DEFINITION);
+    // And the control the banner offers does read again, so the reader is not stuck with the mark.
+    await click("object-source-stale-reread");
+    await waitFor(() => expect(reads.count).toBe(2));
+  });
+
+  test("the host's announcement and this workspace's own apply move the SAME counter", async () => {
+    /*
+     * One counter and not two, which is what makes the banner's meaning single: "the catalog moved
+     * since this tab was read". A second counter would need the pane to take a second token and
+     * would let the two disagree about which read is current.
+     */
+    const handle: { current: StudioWorkspaceHandle | null } = { current: null };
+    render(
+      workspace({
+        reader: editingReader({ build: async () => BUILT, apply: async () => APPLIED } as unknown as HostEditor),
+        handleRef: handle,
+      }),
+    );
+    await openSourceTab();
+
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() => expect(refreshTokenPassedToTheViewer()).toBe(1));
+
+    act(() => {
+      handle.current?.catalogChanged();
+    });
+
+    await waitFor(() => expect(refreshTokenPassedToTheViewer()).toBe(2));
+  });
+
+  test("a host that passes no ref is unchanged, which is what makes the surface additive", async () => {
+    /*
+     * Every other test in this file mounts without a ref and this one says so on purpose: the
+     * handle is opt-in, and `useImperativeHandle` with no ref is a no-op rather than a throw.
+     */
+    const reads = { count: 0 };
+    render(workspace({ reader: countingReader(reads) }));
+    await openSourceTab();
+
+    expect(refreshTokenPassedToTheViewer()).toBe(0);
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
 });

@@ -1,4 +1,6 @@
 // src/workspace/types.ts
+import type { Ref } from "react";
+
 import type { DatabaseType, SavedQuery, QueryWarning } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type {
@@ -295,6 +297,55 @@ export interface SavedQueryInput {
   tags?: string[];
 }
 
+// === Host-callable handle ===
+
+/**
+ * What a host can ASK the workspace to do, as opposed to what the workspace asks the host (D79).
+ *
+ * Reached through the `ref` prop below, which React 19 passes to a function component like any
+ * other prop:
+ *
+ * ```tsx
+ * const studio = useRef<StudioWorkspaceHandle>(null);
+ * <StudioWorkspace ref={studio} ... />;
+ * // after the host's own migration runner, editor or admin screen changed the schema:
+ * studio.current?.catalogChanged();
+ * ```
+ *
+ * A HANDLE AND NOT A FIELD ON THE `onQueryExecute` ANSWER, and the two are not equivalent, which
+ * is why the choice is recorded rather than assumed. A field would be answered per statement, so
+ * it would only ever describe a statement the WORKSPACE issued, and the party this entry is about
+ * is the host: a host that runs its own migration, its own schema editor or another tab of its own
+ * app never routes that through `onQueryExecute` at all, and there would be no answer to put a
+ * field on. A handle is callable at any time, by a host that routes through `onQueryExecute` and
+ * by one that does not, and a host that only wants the per-statement behaviour gets it by calling
+ * the handle from inside its own `onQueryExecute`. The field is reachable from the handle and the
+ * handle is not reachable from the field, so the handle is the surface, and the answer type stays
+ * a result set rather than growing a second meaning.
+ *
+ * Additive and optional, like every other member of this published interface. A host that passes
+ * no ref behaves exactly as it did before the handle existed.
+ */
+export interface StudioWorkspaceHandle {
+  /**
+   * Tell the workspace that the catalog it is looking at has changed.
+   *
+   * WHAT IT DOES: moves the workspace's catalog-change counter, which marks every open Source tab
+   * read before the call as stale. The reader gets the viewer's stale banner and its "read again"
+   * control on each of them.
+   *
+   * WHAT IT DELIBERATELY DOES NOT DO: re-read anything. The call carries no address, so the
+   * workspace does not know WHICH object moved, and clearing a tab on "something, somewhere,
+   * changed" would throw away a definition that is still current and send a read for an object
+   * that may be untouched. An apply the workspace itself issued does clear its own tab, because
+   * that one is addressed. The object tree is not re-read either: it reads lazily through
+   * `WorkspaceObjectReader` as folders are opened, and it has its own load action.
+   *
+   * Idempotent in effect and cheap: calling it twice marks the same tabs stale twice.
+   */
+  catalogChanged(): void;
+}
+
 // === Main props ===
 
 export interface StudioWorkspaceProps {
@@ -355,4 +406,11 @@ export interface StudioWorkspaceProps {
 
   features?: WorkspaceFeatures;
   className?: string;
+  /**
+   * The host's handle on this workspace (D79). See `StudioWorkspaceHandle`.
+   *
+   * Declared as a prop rather than reached through `forwardRef`, which React 19 made the plain
+   * spelling for a function component.
+   */
+  ref?: Ref<StudioWorkspaceHandle>;
 }
