@@ -2082,8 +2082,17 @@ describe("endOpenQueryTransaction()", () => {
     // declared anything.
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
     expect(doc).toContain("endOpenQueryTransaction");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
-      "the engine has no transaction to leave open",
-    ]);
+
+    // The enumeration in the same sentence has to name every implementer. `redis` joined
+    // them in this same wave, and a list that goes stale in silence is exactly the
+    // boundary the next reader trusts. Matched over collapsed whitespace, so re-wrapping
+    // the paragraph does not turn this red.
+    expect(doc.replace(/\s+/g, " ")).toContain("implemented on `postgres`, `sqlite`, `duckdb` and `redis`");
+    // Which one it is, and not merely that it is one of three. `BEGIN WORK` DOES leave a
+    // transaction open on this cluster (the doc records the `txid` and its 15s window), so
+    // "the engine has no transaction to leave open" would be the wrong absence and would
+    // tell the next reader to stop looking. What is missing is a way to name it: the HTTP
+    // transport sends no `txid` field.
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });

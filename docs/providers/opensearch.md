@@ -687,8 +687,8 @@ seam does not expose.
 ### 5.7 `endOpenQueryTransaction()` is absent, and which absence it is (D75)
 
 The optional provider surface that ends a transaction a statement left open on the session
-`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
-`duckdb`) is **not implemented here, because the engine has no transaction to leave open.**
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite`,
+`duckdb` and `redis`) is **not implemented here, because the engine has no transaction to leave open.**
 
 What was read, and measured verbatim on OpenSearch 3.8.0 through this provider:
 

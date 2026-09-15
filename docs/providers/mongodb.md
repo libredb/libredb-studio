@@ -284,8 +284,8 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 ### `endOpenQueryTransaction()` is absent, and which absence it is (D75)
 
 The optional provider surface that ends a transaction a statement left open on the session
-`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
-`duckdb`) is **not implemented here: on the session `query()` runs on,
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite`,
+`duckdb` and `redis`) is **not implemented here: on the session `query()` runs on,
 the engine has no transaction to leave open.**
 
 MongoDB really does have multi-document transactions on a replica set, so this is not an argument

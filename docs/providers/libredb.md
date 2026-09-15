@@ -448,8 +448,8 @@ is legal in every target language (`users:*` -> `User`), keeping Unicode letters
 ### 5.4 `endOpenQueryTransaction()` is absent, and which absence it is (D75)
 
 The optional provider surface that ends a transaction a statement left open on the session
-`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
-`duckdb`) is **not implemented here, because the engine has no transaction to leave open.**
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite`,
+`duckdb` and `redis`) is **not implemented here, because the engine has no transaction to leave open.**
 
 The command grammar (§5.1) is a closed set of five verbs and the dispatcher refuses everything else
 by name. Measured 2026-09-15 through this provider against `@libredb/libredb`: `begin`, `commit`,

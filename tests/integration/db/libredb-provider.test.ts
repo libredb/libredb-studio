@@ -1176,6 +1176,12 @@ describe("endOpenQueryTransaction()", () => {
     // declared anything.
     const doc = fs.readFileSync(path.join(import.meta.dir, "../../../docs/providers/libredb.md"), "utf8");
     expect(doc).toContain("endOpenQueryTransaction");
+
+    // The enumeration in the same sentence has to name every implementer. `redis` joined
+    // them in this same wave, and a list that goes stale in silence is exactly the
+    // boundary the next reader trusts. Matched over collapsed whitespace, so re-wrapping
+    // the paragraph does not turn this red.
+    expect(doc.replace(/\s+/g, " ")).toContain("implemented on `postgres`, `sqlite`, `duckdb` and `redis`");
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);
