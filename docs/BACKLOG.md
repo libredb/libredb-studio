@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 38
+- [Drivers and connections](#drivers-and-connections) — D1–D88, U17 · 40
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X26, U2–U21 · 15
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X26, U2–U21 · 14
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -993,26 +993,48 @@ statement MEANS, and none of them is reset.
 **Done when:** either the pool resets a connection on release, or every route that mutates session state
 restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
 
-### D74. The single-statement query route leaks a transaction the way `/api/db/multi-query` did, and needs only ONE request
+### D74. A single statement can leave a transaction open on the shared pooled handle, and no route-level fix is possible
 
-`src/app/api/db/query/route.ts` resolves a connection, takes a provider from `getOrCreateProvider`
-(`:72`) and executes. It has no `finally`, no transaction handling and nothing that asks whether a
-transaction is open.
-That is the same missing `finally` #823 added to `/api/db/multi-query`, over the same process-wide
-provider cache, reached by a single request rather than by a script.
+MEASURED 2026-09-15 on PostgreSQL 18.4 (`pg` 8.23) through `POST /api/db/query` itself, with the real
+`PostgresProvider`, the real process-wide provider cache and only the session mocked. A lone `BEGIN`
+answers HTTP 200 and releases its pooled client in status `T`. The next request on the same cached
+provider, which is any other signed-in user of that stored connection, then runs its `CREATE TABLE`
+INSIDE that stranger's transaction: HTTP 200, same client object, and an independent reader on its own
+connection sees no such table. Driven a second way the loss is loud instead of silent: `BEGIN` followed
+by a statement naming a missing relation leaves the client in `E`, and the next request answers HTTP 500
+"current transaction is aborted, commands ignored until end of transaction block".
 
-READ, 2026-09-14, and stated as READ deliberately: the route's text was verified and the mechanism is
-identical, but NOBODY HAS RUN a lone `BEGIN` through this route.
-The reproduction behind #823 drove the SECOND request through `/api/db/query` and watched it fail on a
-client another route had poisoned, which establishes that this route shares the poisoned handle and not
-that it can create one.
+**What was tried and REVERTED, because it is worse than the leak.** Copying the `finally` that calls
+`provider.endOpenQueryTransaction()` from `/api/db/multi-query` (#823) into this route closes the leak
+for SERIAL traffic and destroys other people's committed work under concurrent traffic. Measured the
+same day on the same engine, each arm twice, each against a pre-change control:
 
-The reason it was recorded separately rather than folded into #823: that fix is scoped to the route its
-own entry named, and closing that route leaves this one with the same defect and one fewer statement
-needed to reach it.
+- A plain `SELECT pg_sleep(3)` sent to `POST /api/db/query` rolled back a concurrent
+  `POST /api/db/multi-query` script mid-flight. The script answered 200, `hasError: false`, all four
+  statements "success" including its `COMMIT`, and its `CREATE TABLE` was gone (`to_regclass` null; the
+  same probe on the pre-change tree: present). The plain SELECT's own response claimed
+  `openTransaction: "rolled-back"` for a transaction it never opened.
+- The same plain `SELECT pg_sleep(3)` discarded an interactive `POST /api/db/transaction` session's
+  committed `CREATE TABLE`. The status route still read `{"inTransaction":true,"ownedByYou":true}`,
+  `commit` answered `{"status":"committed","message":"Transaction committed"}`, and the table was gone
+  (pre-change control: present). Nothing threw in either run.
+- The leak the entry is about survives that `finally` anyway. Request A `BEGIN; SELECT pg_sleep(2)` with
+  request B `SELECT 1` 700 ms in leaves one backend `idle in transaction`, and the next request's
+  `CREATE TABLE` answers 200 and is invisible to an independent reader. A's own client stayed in `T`
+  because B had overwritten the pointer before A's `finally` ran.
 
-**Done when:** a lone `BEGIN` is sent through this route and what happens is recorded, and then either the
-route ends what it opened or the entry says with evidence why it cannot.
+**Why no route can fix this.** `PostgresProvider.endOpenQueryTransaction()` acts on `lastQueryClient`,
+a SINGLE field that `query()` overwrites on every call (`postgres.ts:2300`, read at `:2545`) for every
+concurrent caller of the provider `getOrCreateProvider` caches per connection id. A route holds a
+provider, never a client, so it cannot ask for "the client MY statement ran on". The route now carries
+this measurement as a comment and ends nothing, and `tests/api/db/query.test.ts` pins that a request
+here must not discard a transaction another caller of the shared provider opened.
+
+**Done when:** `query()` can name the client its call borrowed (return it, or key the recorded client by
+call) and the ender takes that client, so ending a transaction acts on the caller's own session and
+nothing else; then the routes that want it, this one and `/api/db/multi-query`, use the naming form.
+Two tests: the serial leak closes, and the cross-request probe above leaves the other caller's
+transaction untouched. Blocked on D87, which is the same aliasing seen from the provider side.
 
 ### D75. `endOpenQueryTransaction()` covers three type-ids, and the other fourteen still leak
 
@@ -1032,57 +1054,6 @@ It is recorded because a boundary nobody wrote down becomes a fallback the next 
 **Done when:** each remaining type-id either implements the surface, or its provider doc says which
 absence it is: the engine has no transaction to leave open, the driver cannot be asked, or nobody has
 measured it yet.
-
-### D76. A PostgreSQL object edit runs every statement the reader's text carries, and only the first one is accounted for
-
-`readObjectSource`'s edit path on `postgres` splices the reader's text between a provider prefix and a
-provider suffix and sends the whole thing as one parameterless simple query, and PostgreSQL runs every
-statement in such a query. Nothing above the wire is a single-statement check: the build compares the
-rendered HEADER for identity, and the post-condition only asks whether the addressed row was rewritten,
-which a `CREATE OR REPLACE` followed by a rider answers yes to.
-
-MEASURED live on PostgreSQL 18.4 through `POST /api/db/objects/edit-plan` and
-`POST /api/db/objects/edit-apply` (#789 Phase 3, task 19 fix round 1): the definition of
-`app.order_total(integer)` followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with
-`consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and the victim routine's
-`count(*)` went 1 to 0. The bytes are in the sealed preview, so the seal is intact and the user was
-shown them, but the plan's consequence model says nothing was lost, no acknowledgement is asked for, and
-both `object_edit` audit events name only
-`target: "function:app/order_total(integer):definition"` with the dropped routine's name nowhere in
-either.
-
-This run measured PostgreSQL alone. THE OTHER TWO ENGINES ARE SOMEBODY ELSE'S MEASUREMENT: the review
-of #789 Phase 3 task 19 fix round 1, on 2026-09-14, reports the same shape refused by Trino at the
-coordinator (`mismatched input ';'`, `SYNTAX_ERROR`) and by Redis at load time. Neither was re-driven
-here, so a later reader who re-drives the rider on Trino or Redis is re-running that review's
-measurement and not this entry's, and a result that disagrees is a finding against the review rather
-than a regression of anything measured above. The Trino half has a second source inside this
-repository, which the Redis half does not: `docs/providers/trino.md`, section *A trailing semicolon is
-a syntax error*, records `SELECT 1;` answering `mismatched input ';'` as its own measurement.
-
-**The audit half of the same fact, and it is the half a log reader meets.** An `object_edit` event says
-an edit was applied at one address, with one strategy, and with one outcome. It does NOT say the round
-trip carried nothing else, and it cannot. `docs/SECURITY.md`'s note on control 3.6 states that limit
-where a reader of the control meets it; this entry is the work.
-
-Three things narrow the residual and none of them closes it. They are readings of the shipped code, not
-separate measurements. First, the bytes are in the SEALED plan and the preview drew them, so a rider is
-something the user was given the chance to read rather than something the server added. Second, the
-decision event is emitted before the provider is called and outside any try/catch, so an apply that
-cannot be audited does not run: what is narrow is the event's CLAIM and not its coverage. Third, the
-address in the event is the address the plan was built for, so a rider cannot make the event name the
-wrong object; it makes the event name too few.
-
-Closing the audit half needs a PostgreSQL statement counter. This repository does not have one and has
-measured itself unable to fake one: a dollar-quoted routine body may contain any number of semicolons,
-and no reader in `src/lib/sql/` can tell a statement separator from a character of a definition. Splitting
-the unit into one statement per round trip is not available either, because ruling 3a of #789 Phase 3
-measured that a `SET LOCAL` sent as its own round trip answers a WARNING and pins nothing.
-
-**Done when:** either the reader's text is refused when it carries more than one statement, or every
-statement it carries is named in the plan's consequences and in the audit target, so a success destroys
-nothing the plan did not show and the log's claim is as wide as the round trip. The provider doc says the
-same thing where it bites, in `docs/providers/postgres.md`'s measured acceptance run.
 
 ### D77. The PostgreSQL object fixture builds no producer for the post-condition, so `applied-elsewhere` has only a test double
 
@@ -1122,17 +1093,42 @@ What is STILL OPEN and is this entry: the refusal does not CLEAR the transaction
 route. Rolling it back would destroy work the refused user was never shown, so the apply must not; but
 `src/app/api/db/objects/edit-apply/route.ts` has no `finally` and calls nothing, so a client poisoned by
 another route stays poisoned and every object edit on that connection id keeps refusing until some other
-request happens to end it. Measured as the control in the same run: a plain `ROLLBACK` on that client,
-which is what `endOpenQueryTransaction()` issues, returns the status to `I` and the identical apply then
-succeeds.
+request happens to end it.
 
-The population is bounded by D74 rather than open: #823 gave `/api/db/multi-query` a `finally`, so the
-remaining producer of a poisoned client is the single-statement route, which D74 records as READ and not
-yet run.
+**The producer inventory, MEASURED 2026-09-15 on PostgreSQL 18.4 through the shipped routes and the
+real process-wide provider cache, with only the session mocked.** It is three surfaces and not one:
 
-**Done when:** either D74 closes, which removes the producer, or the edit-apply route ends a transaction
-it did not open on the same terms `/api/db/multi-query` does, with the cross-user question that raises
-answered rather than assumed.
+- `POST /api/db/multi-query`: has a `finally` since #823. It closes the serial case and, per D74's
+  measurements, misfires on other callers' clients under concurrency, so it is not a clean producer
+  either way until D87 lands.
+- `POST /api/db/query`: STILL A PRODUCER. A lone `BEGIN` leaves the pooled client in `T`. D74 records
+  why the route-level `finally` was tried and removed.
+- `POST /api/db/transaction` is NOT a producer, and this was the open question. Driven live: with an
+  interactive transaction open and a `CREATE TABLE` run through it, the pooled client `query()` borrows
+  read `I` throughout, and a plain `POST /api/db/query` on the same connection id answered 200 on a
+  DIFFERENT client. The interactive session holds its own checked-out client for its whole life, so it
+  poisons nothing an apply can borrow. (What it does NOT survive is the ender: see D83, where a plain
+  query's rollback reached this session's client through `pg`'s LIFO idle list.)
+- `applyObjectEdit` ITSELF is a producer, through D76's rider. Measured on `pg` 8.23: a simple query of
+  the form `<CREATE OR REPLACE ...>; BEGIN` leaves the client in `T`, and a plan built from reader text
+  with that rider applied at `outcome: "applied"` and then refused the NEXT two clean applies on the
+  same provider with class `guard`, permanently. D76's single-statement check refuses that text at mint
+  time, so if D76 lands this producer goes with it.
+
+**Why the second arm of the Done when cannot be met at the route, measured rather than argued.**
+`endOpenQueryTransaction()` names `lastQueryClient`, and `applyObjectEdit` borrows its client straight
+from the pool and never records it. Driven on a provider whose first act was an apply with a rider: the
+pool was poisoned, `endOpenQueryTransaction()` answered `"none"`, and the next apply was still refused
+with class `guard`. A `finally` in `edit-apply/route.ts` spelled the way `/api/db/multi-query` spells it
+would therefore be a guard over a population it cannot reach, and on a provider where a plain `query()`
+ran first it would hit the apply's client only by `pg`'s LIFO aliasing rather than by naming it. Any
+clearing path belongs in `postgres.ts`, where the borrowed client is in scope.
+
+**Done when:** either D76 lands its single-statement refusal, which empties the producer population and
+makes this entry deletable with that noted, or `applyObjectEdit` ends a transaction ITS OWN round trip
+left open on the client it borrowed, with the cross-user question answered rather than assumed: the
+provider cache is keyed per connection id, so two signed-in users of one stored connection share one
+pooled client and a rollback is visible to both.
 
 ### D79. The embedded shell learns about its own object apply and about no other DDL
 
@@ -1186,6 +1182,119 @@ keeping the pane mounted for the tab that owns it. The pane's own state is alrea
 **Done when:** an apply in flight cannot be unmounted by the new-tab shortcut, or its answer reaches the
 reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
 reachability paragraph in `Studio.tsx` is corrected in the same change.
+
+### D86. A pooled SSH tunnel serves a far end the record no longer names, and the seal now agrees with it
+
+`createSSHTunnel` (`src/lib/ssh/tunnel.ts:110-115`) returns a pooled tunnel keyed on the CONNECTION ID
+alone, ignoring `remoteHost`, `remotePort` and the bastion config, and `TunnelInfo` carries no
+`remoteHost`/`remotePort` for a caller to check. So the second provider built on a live tunnel's id
+dials the forward the FIRST one opened, whatever address it asked for. `getOrCreateProvider` builds
+`TUNNEL_FAR_END` from `connection.host`/`connection.port`, the address it ASKED to forward to, so both
+sides of the object-edit seal then agree on a server the statement never reaches.
+
+MEASURED 2026-09-15 against the live `p3fix-bastion` and `pg-p3fix`, no mocks, through the real
+`getOrCreateProvider`:
+
+```
+B1 tunnel opened: 127.0.0.1:45391 -> pg-p3fix:5432
+B2 second provider dials 127.0.0.1:45391          # record now says db-elsewhere.invalid:6543
+B3 same local endpoint, so the SAME pooled tunnel: true
+B4 the statement actually lands on: {"db":"libredb_dev","addr":"172.23.0.2/32"}
+B5 provider seal : 70f2a016d6289c077ff95fbc440fc156a2202b6ce3e37072f356578e35ea6e8c
+B6 route digest  : 70f2a016d6289c077ff95fbc440fc156a2202b6ce3e37072f356578e35ea6e8c
+B7 the edit-plan route would ACCEPT this plan: true
+B8 the record it agrees on is NOT the server reached: {"host":"db-elsewhere.invalid","port":6543}
+B9 pre-fix digest: 6381d7d2c1e845c48ddfbbe360f3cf6f6410f3c90d7fd542c4fab34aacac88f4
+B10 pre-fix would have REFUSED: true
+```
+
+The second call used the same id with a different host and a changed `queryTimeout`; the timeout change
+is what makes the provider cache miss (`factory.ts:511-520` disconnects and deletes the entry) without
+closing the tunnel, and `hasTunnel` then hands the new provider the old forward. `isConnected() === false`
+on the cached provider opens the same window with no timeout change at all.
+
+THIS IS NOT ONLY AN EDIT-PATH DEFECT. The mis-route is in the transport, so every query on the stale
+tunnel lands on the old machine; X23's seal is what stopped the EDIT path noticing, and before X23 this
+case was refused by the accident of an unequal digest rather than by a check. Reachable from the
+ordinary UI: `/api/db/disconnect` is called from exactly one place, `src/components/Studio.tsx:703`, on
+connection DELETE, so editing a tunnelled connection's host and saving leaves the pooled tunnel on the
+old machine. Reachable by choice too: `src/lib/seed/resolve-connection.ts:21-23` returns an inline
+connection verbatim, id included, so a caller picks which pooled tunnel their provider reuses.
+
+No test can catch it today and none was written for that reason: the CI mock in
+`tests/isolated/factory.test.ts` returns a fixed local endpoint and has no far end to be wrong about,
+so a test asserting the current behaviour would only pin the defect.
+
+**Done when:** `TunnelInfo` carries the `remoteHost`/`remotePort` the forward was opened for, and the
+pooled lookup either keys on them or refuses when they differ from what the caller asked for. Refusing
+whenever `tunnelPreexisted` is true is NOT a substitute: every second provider on a live tunnel reuses
+it, so that would refuse a large part of the honest population. The factory then takes the far end from
+the tunnel rather than from the record, and the three narrowed sentences that state this limit go with
+the fix: `tunnelledConnection`'s docblock in `src/lib/db/factory.ts`, `TunnelFarEnd`'s in
+`src/lib/types.ts`, and the "WHAT IT DOES ADMIT" paragraph in `src/lib/db/connection-fingerprint.ts`,
+plus the sentence in `docs/SECURITY.md` that names it as an open limit. Two tests: a pooled tunnel asked
+for a second far end does not silently serve the first, and the digest a provider seals is the address
+its forward actually reaches.
+
+### D87. `endOpenQueryTransaction()` names one shared pointer, so it rolls back whoever recorded a client last
+
+`PostgresProvider.endOpenQueryTransaction()` (`postgres.ts:2545`) acts on `this.lastQueryClient`, which
+`query()` overwrites on every call (`postgres.ts:2300`). `getOrCreateProvider` caches one provider per
+connection id for the whole process, so that single field is shared by every concurrent request on that
+stored connection, and the client the ender rolls back is "whichever client anybody recorded last", not
+the client the calling request's statement ran on.
+
+MEASURED 2026-09-15 on PostgreSQL 18.4 through `pg` 8.23 and the shipped routes, each arm twice against
+a control, with NO exception thrown anywhere:
+
+- Cross-request. A slow plain read on one route, and a `/api/db/multi-query` script
+  `BEGIN; CREATE TABLE ...; SELECT pg_sleep(5); COMMIT;` started 1 s later on the same connection id.
+  The plain read's ender rolled back the script's client mid-script. The script answered 200,
+  `hasError: false`, all four statements "success", and its table did not exist afterwards. The control
+  without the ender: the table exists.
+- Interactive session. The docblock at `postgres.ts:2540-2543` (repeated on the declaration in
+  `src/lib/db/types.ts`) says the interactive session's client "can never be `lastQueryClient`". It can.
+  `beginTransaction()` calls `pool.connect()`, `pg`'s idle list is LIFO, and it is handed the SAME
+  object a previous `query()` recorded, so `txClient === lastQueryClient`. The ender then rolled the
+  session's transaction away: its committed `CREATE TABLE` was gone, while the status route still read
+  `inTransaction` and `commit` answered "Transaction committed". Control: the table exists.
+- Missing the case it is for. Request A `BEGIN; SELECT pg_sleep(2)` with request B `SELECT 1` 700 ms in:
+  A's ender fired on B's client, A's own client was left `idle in transaction`, and the next user's
+  `CREATE TABLE` answered 200 and was invisible to an independent reader.
+
+This is NOT "reachable only when `query()` throws before recording the client". It is reachable by
+ordinary concurrent traffic, which is the normal condition of a per-connection-id shared provider. It
+predates D74: `/api/db/multi-query` has carried this `finally` since #823, where a script was needed to
+fire it. D74's route-level copy widened it to every single-statement request and was reverted for that
+reason.
+
+**Done when:** the ender cannot act on a client the caller did not run on. Clearing `lastQueryClient`
+when `beginTransaction()` takes a client, or comparing it with `txClient`, fixes only the interactive
+arm and leaves the cross-request one, so the surface has to carry the client: `query()` names the client
+its call borrowed and `endOpenQueryTransaction(client)` takes it, or the provider keys the recorded
+client per call. Tests drive the three arms above against a live engine rather than asserting the
+docblock, and the two false docblock sentences (`postgres.ts`, `src/lib/db/types.ts`) go with the fix.
+
+### D88. A multi-statement text sent to the single-statement query route answers HTTP 500
+
+`POST /api/db/query` is the single-statement route and nothing stops a caller sending two. PostgreSQL
+runs both, `pg` answers an ARRAY of results for a multi-statement simple query, and
+`PostgresProvider.query()` reads `result.rows` off that array, which is `undefined`. The route then
+reads `result.rows.length` and throws, so the caller gets a 500 with no sentence about what was wrong
+with their request, after both statements have already run.
+
+MEASURED 2026-09-15 on PostgreSQL 18.4 through `pg` 8.23: a simple query of two statements answers
+`[Result, Result]` with the engine's own command tags, and `Array.prototype.rows` does not exist.
+Read in the tree at the same commit: `src/lib/db/providers/sql/postgres.ts` returns `rows: result.rows`
+from `query()`, and `src/app/api/db/query/route.ts` reads `result.rows.length`.
+
+Found while probing D74. Not caused by it and not fixed by it.
+
+**Done when:** the route either refuses a text carrying more than one statement with a sentence, or the
+provider names which result of an array it answers with. The first is the smaller change and is what
+the route's own name claims; D76's single-statement check on the object-edit path is the precedent for
+asking the engine rather than splitting the text.
+
 
 ## Value interpolation
 
@@ -1554,36 +1663,6 @@ a slow runner.
 **Done when:** the failure is reproduced with the reason named, and the first attempt passes, so
 Playwright's retry is no longer what makes the job green. If the cause is the refused read, closing
 this also means deciding whether the source pane should offer the recovery the tree already does.
-
-### X23. An SSH-tunnelled connection can never build an object edit plan
-
-`getOrCreateProvider` (`src/lib/db/factory.ts:485-492`) rewrites `host` and `port` to the tunnel's
-LOCAL endpoint before the provider is constructed, and `src/lib/db/base-provider.ts:149` stores that
-rewritten object as `this.config`. Every provider seals the plan it issues with
-`connectionFingerprint(this.config)`, so the plan carries the digest of `127.0.0.1:<ephemeral>`. The
-routes fingerprint the record the request RESOLVED, which still carries the far-end address, so
-`src/app/api/db/objects/edit-plan/route.ts:155` compares two digests that cannot be equal and answers
-400 `EDIT_PLAN_INVALID`. The reader sees an object they can read and cannot edit, with no sentence
-saying why.
-
-EVIDENCE CLASS. The digest arithmetic is MEASURED and is pinned by the test "the tunnel-REWRITTEN
-twin of a connection is a different digest" in `tests/unit/lib/db/connection-fingerprint.test.ts`, so
-this entry is re-derivable without an SSH server. The wiring above is CODE READING of the three files
-named: no bastion was stood up and no tunnelled edit was driven end to end.
-
-It is filed rather than fixed because the fix belongs in the factory and not in the seal. The
-fingerprint cannot recover the far-end address from the rewritten record, and folding `host` and
-`port` out of the frame whenever a tunnel is enabled would make two different databases behind the
-same bastion collide, which is the failure the fingerprint exists to prevent. The shape that works is
-for `getOrCreateProvider` to carry the pre-rewrite endpoint on the effective connection so both sides
-fingerprint the same address.
-
-Found while closing the OTHER half of the same asymmetry: `sshTunnel` was absent from the frame
-entirely, so a caller could re-point an approved plan through a bastion they own. That half is fixed
-(#789, discussion #778); this half is the same blind spot seen from the honest side.
-
-**Done when:** a connection with an enabled SSH tunnel can build and apply an object edit plan, with a
-test that drives the two sides through the factory rather than asserting the digest alone.
 
 ### X26. Nothing in CI reads the browser console across an object-edit apply
 
