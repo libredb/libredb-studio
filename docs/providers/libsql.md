@@ -255,7 +255,7 @@ facts was re-measured over Hrana rather than assumed:
 
 ### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
 
-`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 `sqlite.ts` is the closest relative here and it does implement it, which is exactly why the difference is worth writing down: **the engine has no transaction to leave open** on anything this provider holds.
 
 Hrana keeps a server-side stream alive between requests and hands back a `baton` to continue it.

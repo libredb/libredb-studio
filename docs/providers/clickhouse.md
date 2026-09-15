@@ -571,7 +571,7 @@ instance.
 
 ### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
 
-`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and the reason is the one [§3.11](#311-statelessness-no-session_id-is-pinned) already states: **the engine has no transaction to leave open** on anything this provider holds.
 
 The transport sends one HTTP request per statement and pins no `session_id` ([`http-transport.ts`](../../src/lib/db/providers/sql/clickhouse/http-transport.ts) sets `default_format`, `output_format_json_quote_64bit_integers` and `database`, and nothing else identifies a session), and `close()` there has nothing to release for the same reason.

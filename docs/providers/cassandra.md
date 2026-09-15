@@ -436,7 +436,7 @@ is reported as the server spelled it rather than guessed into a CQL word.
 
 ### 3.9 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
 
-`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and here **the engine has no transaction to leave open** at all.
 
 CQL has no statement that opens one.

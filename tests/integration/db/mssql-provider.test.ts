@@ -4099,6 +4099,18 @@ describe("endOpenQueryTransaction()", () => {
     // declared anything.
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mssql.md"), "utf8");
     expect(doc).toContain("endOpenQueryTransaction");
+
+    // The set that DOES implement the surface is read from the type, never enumerated
+    // here: a closed list repeated across the provider docs went stale the day a further
+    // provider implemented the surface, which is exactly what happened during D75.
+    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
+
+    // The absence here is the DRIVER's: `mssql.Request` never hands the provider the
+    // connection its statement ran on. It is NOT the pool's, and it is not the server's:
+    // SQL Server answers this from any other connection, which was measured, so the doc
+    // must name the ask it is one unavailable session id away from being able to make.
+    expect(doc).not.toContain("a pool cannot be asked");
+    expect(doc).toContain("sys.dm_tran_session_transactions");
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });

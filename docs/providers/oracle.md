@@ -853,7 +853,7 @@ Surfaced via `POST /api/db/transaction`.
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the engine has no transaction to leave open
 
-`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) for a transaction a statement run through `query()` left behind on the session the next request borrows.
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) end a transaction a statement run through `query()` left behind on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and the reason is that on this path **the engine has no transaction to leave open**.
 
 Two independent facts in `query()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) make that true, and neither is an inference about the engine's name:

@@ -575,12 +575,28 @@ A `BEGIN` sent through `query()` is a different thing from the lifecycle above.
 It opens a transaction on the pooled connection that one call borrowed, and `query()` releases that connection without ending it: the pool is built with `resetOnRelease` left at its `mysql2` default of `false` ([`pool_config.js`](https://github.com/sidorares/node-mysql2/blob/master/lib/pool_config.js)), so the connection goes back into the free list with its transaction, and its locks, intact.
 The provider itself is cached per `connection.id` for the whole process, so whoever borrows that connection next inherits it.
 
-`postgres`, `sqlite` and `duckdb` answer this with `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)).
-This provider does not, and the reason is the driver: **the driver cannot be asked**.
+The providers that answer this implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)), and that set is read from the type rather than listed here: a list repeated across provider docs goes stale the moment it grows.
+This provider does not implement it, and the reason is the driver: **the driver cannot be asked**.
 MySQL does publish the state — the OK packet carries `SERVER_STATUS_IN_TRANS` — but `mysql2` 3.24.4 keeps no transaction flag on `Connection` or `PoolConnection`, and surfaces the byte only as `ResultSetHeader.serverStatus`, on results that carry an OK packet.
 A statement that FAILED, which is the case the whole surface exists for, answers an error packet and carries no status at all.
-The handle this provider holds between calls is the pool, and a pool cannot be asked what a session it already handed back is doing.
+Retaining the connection the way `postgres.ts` retains its client would therefore buy nothing, and the reason is NOT that the session becomes unreachable once it is released: `cancelQuery()` already addresses a handed-back session by name, running `KILL QUERY <threadId>` from a different connection ([§5.3](#53-query-cancellation)).
+It is that there is nothing on a `mysql2` connection to read.
 That rules out the shape `postgres.ts` uses, where the answer is read off the client the statement ran on, and it rules out the shape `duckdb/index.ts` uses, where the engine's refusal of a `ROLLBACK` is the answer: MySQL accepts `ROLLBACK` with no transaction open, so an unconditional one would report `"rolled-back"` for every script that ended cleanly.
+
+**The server can be asked, which is a different question from the driver, and it was measured.** MySQL 8.0.46, `mysql2` 3.24.4, statements run on a pooled connection and the question asked afterwards from a connection outside that pool, keyed on the released session's `threadId`:
+
+| Ask | `BEGIN` alone | `BEGIN` + failing statement | `BEGIN` + `INSERT` + failing statement | no `BEGIN` (control) |
+|---|---|---|---|---|
+| `information_schema.innodb_trx` on `trx_mysql_thread_id` | no row | no row | `RUNNING` | no row |
+| `performance_schema.events_transactions_current` joined to `performance_schema.threads` on `processlist_id` | `ACTIVE` | `ACTIVE` | `ACTIVE` | `ROLLED BACK` |
+
+Every reading above is taken AFTER `release()`, so the table is also the measurement that the leak is real rather than inferred from `resetOnRelease`.
+`information_schema.innodb_trx` is not the ask it looks like: InnoDB registers a transaction only once that transaction does InnoDB work, so it answers "no transaction" for precisely the script this surface exists for, a `BEGIN` followed by a statement that failed before it reached a table.
+`performance_schema.events_transactions_current` does answer, and `ACTIVE` is distinguishable there from the terminal state a transaction that already ended leaves behind.
+
+So the absence is the driver's and not the engine's, and implementing the surface on the `performance_schema` ask is open rather than shut.
+It is not done here for a reason peculiar to this type-id: `mysql` also serves MariaDB ([§1.1](#11-mariadb-and-the-other-mysql-protocol-engines)), where `performance_schema` is OFF by default and its tables answer NULL instead of failing, so the same query would report no open transaction on a default MariaDB while one is open, and rolling nothing back is the one outcome worse than reporting nothing.
+Doing it needs a per-server capability probe of the kind `objectKinds` and the EXPLAIN grammar already use here, which is a change of its own and is filed as one rather than smuggled into a doc note.
 
 Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
 The cost while it stands: an abandoned transaction keeps its InnoDB row locks until the connection is reused by a caller that ends it, or the pool closes.

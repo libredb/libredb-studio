@@ -5173,6 +5173,20 @@ describe("endOpenQueryTransaction()", () => {
     // declared anything.
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mysql.md"), "utf8");
     expect(doc).toContain("endOpenQueryTransaction");
+
+    // The set that DOES implement the surface is read from the type, never enumerated
+    // here: a closed list repeated across the provider docs went stale the day a further
+    // provider implemented the surface, which is exactly what happened during D75.
+    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
+
+    // The absence here is the DRIVER's: mysql2 3.24.4 publishes no transaction flag on
+    // a connection. It is NOT the pool's - this provider already addresses a session it
+    // handed back, with `KILL QUERY` in `cancelQuery()` - and it is not the server's,
+    // which was measured. The doc has to name both server-side asks, including the one
+    // that does not answer, or the next reader reads a shut door where one stands open.
+    expect(doc).not.toContain("a pool cannot be asked");
+    expect(doc).toContain("performance_schema.events_transactions_current");
+    expect(doc).toContain("information_schema.innodb_trx");
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });

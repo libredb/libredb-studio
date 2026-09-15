@@ -714,7 +714,7 @@ Strategy details:
 
 ### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
 
-`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and here **the engine has no transaction to leave open**.
 
 Two facts, and neither is an inference from the engine's name.

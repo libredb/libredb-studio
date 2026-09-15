@@ -2809,6 +2809,11 @@ describe("endOpenQueryTransaction()", () => {
     // declared anything.
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/druid.md"), "utf8");
     expect(doc).toContain("endOpenQueryTransaction");
+
+    // The set that DOES implement the surface is read from the type, never enumerated
+    // here: a closed list repeated across the provider docs went stale the day a further
+    // provider implemented the surface, which is exactly what happened during D75.
+    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);

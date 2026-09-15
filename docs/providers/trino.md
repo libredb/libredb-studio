@@ -469,7 +469,7 @@ quote character in its grammar at all.
 
 ### 3.14 `endOpenQueryTransaction()` is not implemented, and the honest reason is that nobody has measured it yet
 
-`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and unlike the other absences in this repository the reason is not settled: **nobody has measured it yet**.
 
 What the code says is clear enough.
