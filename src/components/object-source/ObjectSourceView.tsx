@@ -123,6 +123,19 @@ export interface ObjectSourceViewProps {
   readonly onApply?: ObjectSourceApplier;
   /** Called once after an apply that CHANGED the addressed object, so a shell can re-read. */
   readonly onApplied?: () => void;
+  /**
+   * Whether an apply is IN FLIGHT: the statement has been sent and no answer has landed (D82).
+   *
+   * A shell that can unmount this pane needs this, because unmounting it in that window throws
+   * the answer away: the conflict, the refusal and the failure are all rendered by the dialog
+   * this pane owns, and only `applied` escapes through `onApplied`. It is a CALLBACK and not a
+   * patch through `onChange` on purpose: `SourceTabState` is persisted with the workspace, and a
+   * flag that is true only between two round trips has no business surviving a reload.
+   *
+   * MUST be stable across renders, like `onChange`, and it is called with `false` when the pane
+   * unmounts, so a shell can never hold the flag for a pane that is gone.
+   */
+  readonly onApplyInFlightChange?: (inFlight: boolean) => void;
   /** MUST be stable across renders, or the read effect re-issues for ever. */
   readonly onChange: (patch: ObjectSourcePatch) => void;
 }
@@ -519,6 +532,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
     reader,
     onApply,
     onApplied,
+    onApplyInFlightChange,
     onChange: patchTab,
   } = props;
   const theme = useEffectiveTheme();
@@ -878,14 +892,37 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * defect. While `preview` is defined the modal is open, and no shipped shell re-addresses this
    * pane through it: a mouse press on the strip hits the overlay, which closes the dialog and
    * retires the generation; focus is trapped, so the keyboard cannot reach the strip; and the one
-   * document-level shortcut that does move the active tab, Ctrl/Cmd+Shift+T in `StudioTabBar`,
-   * UNMOUNTS this pane rather than re-addressing it, which is its own defect and is filed as D82
-   * rather than guarded here. Its test reaches the case by rerendering props at a moment no shell
-   * rerenders them. The binding is kept because it is one word of the same rule the other three
-   * states carry, and a state bound by construction cannot be the one somebody forgets.
+   * document-level shortcut that does move the active tab, the new-tab shortcut in `StudioTabBar`,
+   * UNMOUNTS this pane rather than re-addressing it. That was D82 and it is now answered by the
+   * shell, which refuses the shortcut for as long as `onApplyInFlightChange` below says an apply
+   * is in flight. Its test reaches the case by rerendering props at a moment no shell rerenders
+   * them. The binding is kept because it is one word of the same rule the other three states
+   * carry, and a state bound by construction cannot be the one somebody forgets.
    */
   const previewHere = boundTo(address, preview);
   const refusalHere = boundTo(address, buildRefusal);
+
+  /**
+   * The shell's copy of the one fact it cannot see: the statement is sent and nothing is back yet
+   * (D82).
+   *
+   * The dialog ALREADY refuses every way out of this window it owns: `showCloseButton={!applying}`,
+   * and Escape, a pointer press outside and any other interaction outside are all prevented while
+   * `applying`. What it cannot refuse is a shortcut registered on `document` by a component it does
+   * not contain, and the shell that owns that component is the only place that can. So the fact is
+   * published, and the refusal is written there.
+   *
+   * ONE effect with a cleanup that also reports `false`, rather than two. On the true-to-false
+   * transition the cleanup and the effect both report `false`, which costs a shell holding this in
+   * `useState` nothing, and on unmount the cleanup is the only thing that runs: a pane that goes
+   * away mid apply must not leave a shell latched on a pane that no longer exists.
+   */
+  const applyInFlight = previewHere?.state.kind === "applying";
+  useEffect(() => {
+    if (onApplyInFlightChange === undefined) return;
+    onApplyInFlightChange(applyInFlight);
+    return () => onApplyInFlightChange(false);
+  }, [applyInFlight, onApplyInFlightChange]);
   /**
    * The definition MOVED under an open edit, said out loud rather than resolved silently.
    *

@@ -258,11 +258,18 @@ export default function Studio() {
    * pane captures it through `onApplied`, so the clear addresses the tab that was active when the
    * reader pressed Confirm. That is the tab that applied, which is what this is for.
    *
-   * Reachability of the disagreement, also measured: the strip cannot be moved while the dialog is
-   * open, because Radix's modal aria-hides it, and `setActiveTabId` has no caller outside the strip
-   * and the sidebar tree, both of which the modal covers. So the two readings agree on every path
-   * that exists today, and this comment is here so that a change which decouples them is read as
-   * the change it is.
+   * Reachability of the disagreement, MEASURED AGAIN AND THE OTHER WAY (D82). An earlier reading
+   * here said the strip cannot be moved while the dialog is open, because Radix's modal aria-hides
+   * it, and that `setActiveTabId` has no caller outside the strip and the sidebar tree. Both halves
+   * were wrong. Aria-hidden is not removed: the strip stays in the tree, and `StudioTabBar`
+   * registers the new-tab shortcut on `document` on purpose, so it works while Monaco owns focus
+   * (#745), and a keydown from a control INSIDE the dialog reaches that listener. `addTab` ends
+   * with `setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover.
+   *
+   * What follows from that is worse than a mis-addressed clear and is answered in `handleAddTab`
+   * below: the new Query tab unmounts the Source pane, and the dialog with it, mid apply. The
+   * stale closure above is still the reason the clear reaches the right tab; it is now the reason
+   * on a path where the two readings CAN disagree, rather than one where nothing could tell.
    *
    * The DRAFT is not dropped here. The pane drops it itself, keyed on the part its PLAN was built
    * for, which is a key this shell does not hold and must not guess.
@@ -272,6 +279,57 @@ export default function Studio() {
     onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined });
     toast({ title: "Applied. Reading the definition again." });
   }, [objectsChanged, onSourceChange, toast]);
+
+  /**
+   * Whether the Source pane has an apply in flight: sent, and no answer back yet (D82).
+   *
+   * The pane publishes it and this shell only mirrors it, because the shell cannot see it: the
+   * plan, the round trip and the dialog all live inside the pane.
+   */
+  const [applyInFlight, setApplyInFlight] = useState(false);
+
+  const { addTab } = tabMgr;
+  /**
+   * The new-tab shortcut, REFUSED while an object apply is in flight, and answered out loud (D82).
+   *
+   * MEASURED: the shortcut is registered on `document`, the aria-hidden strip is still in the tree,
+   * and `addTab` ends with `setActiveTabId`. This shell renders the Source pane only while the
+   * ACTIVE tab is a Source tab, so the new Query tab unmounted the pane and took the apply dialog
+   * with it after the statement had been sent. A `conflict` landing into that left the reader with
+   * nothing at all: no dialog, no banner, no throw. Only `applied` survives, through `onApplied`,
+   * so the one outcome the reader could still see was the one they did not need to be told about.
+   *
+   * WHY REFUSE THE KEYSTROKE RATHER THAN KEEP THE PANE MOUNTED, chosen and not defaulted into.
+   * Keeping the pane mounted for the tab that owns it costs the reader nothing and is the larger
+   * change: the shell renders one pane, `onSourceChange` addresses `activeTabId`, and a second
+   * mounted pane would need its own per-tab patch channel and a second live read, while the dialog
+   * it kept alive would be drawn over a Query tab the reader had just asked for. That is a wider
+   * seam than the defect. Refusing is the smaller change and it matches what the dialog ALREADY
+   * does: while `applying` it withholds its own close button and prevents Escape, a press outside
+   * and any other interaction outside. This window already refuses every way out; the shortcut was
+   * the one way out the dialog could not reach, because the listener is not inside it.
+   *
+   * REFUSED IS NOT SWALLOWED, which is the cost of this shape and is paid rather than accepted.
+   * A keystroke that does nothing and says nothing reads as a broken shortcut, so the refusal
+   * toasts, and it says what the reader is waiting for and what to do. Deferring the tab until the
+   * answer lands was considered and rejected: a tab that opens by itself some seconds later is a
+   * gesture the reader no longer connects to anything they did.
+   *
+   * The `+` button takes the same handler. It is covered by the modal and cannot be pressed in this
+   * window, so the guard is unreachable through it, but one gesture and its keyboard twin refusing
+   * on different rules is the drift this handler exists to prevent.
+   */
+  const handleAddTab = useCallback(() => {
+    if (applyInFlight) {
+      toast({
+        title: "Waiting for the apply to answer",
+        description:
+          "A new tab would close this dialog before the apply reports. Press it again once the answer is on screen.",
+      });
+      return;
+    }
+    addTab();
+  }, [addTab, applyInFlight, toast]);
 
   // 5. Query Execution
   const queryExec = useQueryExecution({
@@ -865,7 +923,7 @@ export default function Studio() {
               onSetEditingTabName={tabMgr.setEditingTabName}
               onSetTabs={tabMgr.setTabs}
               onCloseTab={tabMgr.closeTab}
-              onAddTab={tabMgr.addTab}
+              onAddTab={handleAddTab}
             />
 
             <main className="flex-1 overflow-hidden relative">
@@ -1065,6 +1123,7 @@ export default function Studio() {
                               */
                               onApply={httpSourceApplier}
                               onApplied={handleApplied}
+                              onApplyInFlightChange={setApplyInFlight}
                               onChange={onSourceChange}
                             />
                           </div>
