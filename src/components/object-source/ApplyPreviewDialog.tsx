@@ -259,7 +259,10 @@ function applyFrame(state: ApplyPreviewState): {
  * The widget lets go of its two models before anything disposes them (#789 Phase 3, X21).
  *
  * MEASURED in Chromium on 2026-09-14, on EVERY successful apply driven through the UI:
- * `TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.
+ * `TextModel got disposed before DiffEditorWidget model got reset`. NO COUNT is claimed for it and
+ * X21's "one console error per apply" is not repeated: `diffEditorWidget.js:233-240` subscribes
+ * `onWillDispose` to BOTH models, so the sentence is raised once per model DISPOSAL rather than
+ * once per apply, and the browser reading was of the sentence's presence.
  * `@monaco-editor/react`'s unmount reads `editor.getModel()`, disposes `original` and `modified`
  * unless the two keep flags are set, and disposes the widget LAST, so both models go while the
  * widget still holds them and Monaco's own disposal path writes that line. Nothing is visible to

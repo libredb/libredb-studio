@@ -62,6 +62,15 @@ let modelIsNull = false;
  */
 let monacoErrors: string[] = [];
 let modelLog: string[] = [];
+/**
+ * Monaco's loader has not resolved, so `onMount` never fires and nothing hands the dialog a widget.
+ *
+ * The real `DiffEditor` renders its loading node and calls `onMount` only once `monaco` is there,
+ * so a dialog closed while the loader is still in flight unmounts with the ref never written. That
+ * is the only way `ReleasedDiffEditor`'s null guard is reached, and the double fires `onMount`
+ * synchronously in an effect, so without this switch no test can reach it.
+ */
+let monacoNeverResolves = false;
 
 class RangeDouble implements FakeRange {
   constructor(
@@ -163,6 +172,7 @@ mock.module("@monaco-editor/react", () => ({
     React.useEffect(() => {
       if (mounted.current) return;
       mounted.current = true;
+      if (monacoNeverResolves) return;
       editor.current = diffEditorDouble();
       props.beforeMount?.(monacoDouble());
       props.onMount?.(editor.current, monacoDouble());
@@ -447,6 +457,7 @@ describe("ApplyPreviewDialog", () => {
     modelIsNull = false;
     monacoErrors = [];
     modelLog = [];
+    monacoNeverResolves = false;
     handlers.onApply.mockClear();
     handlers.onRebuild.mockClear();
     handlers.onGoToError.mockClear();
@@ -1256,9 +1267,14 @@ describe("ApplyPreviewDialog", () => {
   test("closing the dialog RELEASES the two models before anything disposes them", () => {
     /*
      * X21, MEASURED in Chromium on 2026-09-14: every successful apply driven through the UI wrote
-     * `TextModel got disposed before DiffEditorWidget model got reset` to the console, once. The
+     * `TextModel got disposed before DiffEditorWidget model got reset` to the console. The
      * disposal is deliberate, the ORDER was not: `@monaco-editor/react` disposes both models and
      * only then the widget, so Monaco's own disposal path fires while the widget still holds them.
+     * The assertion is count-free on purpose, and X21's "one console error per apply" is not taken
+     * on trust: Monaco subscribes `onWillDispose` to BOTH models, so the sentence is raised once
+     * per model DISPOSAL. MEASURED here by deleting `setModel(null)` from the release and running
+     * this test: four, two from this component's own disposal and two more from the wrapper's,
+     * which without the release still reads both models back out of the live widget.
      *
      * Nothing is visible to the reader. It matters because it is noise on the channel Phase 3's
      * CSP assertion reads, and it is what would stop an E2E spec asserting an empty console after
@@ -1295,6 +1311,28 @@ describe("ApplyPreviewDialog", () => {
     expect(query("-diff")).toBeNull();
     expect(monacoErrors).toEqual([]);
     expect(modelLog).toEqual(["release", "dispose:original", "dispose:modified", "dispose:widget"]);
+  });
+
+  test("a diff unmounted before Monaco resolved has nothing to release and releases nothing", () => {
+    /*
+     * The null arm of the release, and it is REACHABLE in the product: `@monaco-editor/react` calls
+     * `onMount` only once its loader has resolved, so a reader who presses Escape, or a preview
+     * that expires, while Monaco is still loading unmounts a diff whose `editorRef` was never
+     * written. Without this the guard is only a line the coverage gate counts: it shares a physical
+     * line with its `return`, so a per-line report reads 100 percent with the branch never taken.
+     */
+    monacoNeverResolves = true;
+    draw(PREVIEW);
+    expect(query("-diff")).toBeTruthy();
+    expect(modelLog).toEqual([]);
+
+    cleanup();
+
+    // Not "no error": no CALL. Dereferencing the unwritten ref is what the guard exists to stop,
+    // and an unmount that released or disposed anything here would be acting on a widget that was
+    // never handed over.
+    expect(modelLog).toEqual([]);
+    expect(monacoErrors).toEqual([]);
   });
 
   test("the diff is not a keyboard trap, and is read-only on both sides", () => {
