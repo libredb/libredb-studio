@@ -64,8 +64,20 @@ import {
   type ObjectEditStep,
   type ObjectKindSpec,
   type ObjectSourceDocument,
+  type OpenQueryTransactionOutcome,
 } from "../../types";
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
+
+/**
+ * The server's own words for "you asked me to discard and there is nothing queued".
+ *
+ * MEASURED on redis 7.4.11 through ioredis 5.11.1: `DISCARD` on a connection with no open
+ * `MULTI` answers the error reply "ERR DISCARD without MULTI", and the refusal costs the
+ * connection nothing - the very next command runs normally. That is what makes an
+ * attempted `DISCARD` a safe way to ASK the question on a driver that publishes no reading
+ * of it (see `RedisProvider.endOpenQueryTransaction`).
+ */
+const NO_TRANSACTION_MARKER = "DISCARD without MULTI";
 
 // JSON query payload: { "command": "GET", "args": ["key"] }
 type RedisJsonCommand = { command: string; args?: string[] };
@@ -974,6 +986,47 @@ export class RedisProvider extends BaseDatabaseProvider {
 
       return { ...result, executionTime };
     });
+  }
+
+  /**
+   * End a `MULTI` a statement left open on this connection, and say whether there was one
+   * (D75).
+   *
+   * ioredis holds ONE connection here (`this.client`, a single `new Redis(...)`), and
+   * `getOrCreateProvider` caches this provider per `connection.id` for the whole process,
+   * so a `MULTI` a script sent through `query()` and never finished belongs to whoever
+   * borrows the handle next. MEASURED 2026-09-15 on redis 7.4.11 through ioredis 5.11.1:
+   * after a bare `MULTI`, every later command on that connection answers the string
+   * "QUEUED" and does nothing - `SET`, `GET` and even `CLIENT INFO` alike - while a second
+   * connection is untouched. So the next user's command does not fail, it silently does
+   * not happen, and the schema explorer's `SCAN` is queued with it.
+   *
+   * The ask and the act are one call because the driver cannot be asked separately:
+   * ioredis exposes no transaction state for a `MULTI` sent through `call()` (`status`
+   * stays "ready", and the queueing belongs to `Redis.prototype.multi()`'s pipeline
+   * object, which a raw command never touches), and the server cannot be asked on this
+   * connection either, because a `CLIENT INFO` sent inside the `MULTI` is itself queued.
+   * The server's own refusal of a `DISCARD` is the only reading available, and it is a
+   * complete one.
+   *
+   * `DISCARD` and not `EXEC`, for the reason at `OpenQueryTransactionOutcome`: a script
+   * that queued commands and never said `EXEC` did not ask for them to run.
+   */
+  public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
+    this.ensureConnected();
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (this.client as any).call("DISCARD");
+      return "rolled-back";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Only the server's own "there was nothing queued" is an answer. Anything else is a
+      // real failure and is raised: a DISCARD that failed for another reason leaves the
+      // connection in a state this must not report as clean.
+      if (message.includes(NO_TRANSACTION_MARKER)) return "none";
+      throw error;
+    }
   }
 
   /**

@@ -308,6 +308,13 @@ function replyError(message: string): Error {
   return error;
 }
 
+/**
+ * When set, `DISCARD` rejects with this error instead of answering. Only the server's own
+ * "ERR DISCARD without MULTI" is an answer; every other failure has to reach the caller
+ * (D75).
+ */
+let discardFailure: Error | null = null;
+
 /** When set, `SCAN` rejects with this sentence, whatever database it was opened on. */
 let scanRefusal: string | null = null;
 
@@ -357,6 +364,13 @@ mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
     private _db: number;
+    /**
+     * Whether this connection has an open `MULTI`, tracked per INSTANCE because that is
+     * where a real server tracks it: measured on redis 7.4.11 through ioredis 5.11.1, a
+     * `MULTI` sent on one connection leaves every later command on THAT connection
+     * answering "QUEUED" while a second connection is untouched (D75).
+     */
+    private _inMulti = false;
 
     constructor(config?: unknown) {
       this._config = config;
@@ -413,6 +427,18 @@ mock.module("ioredis", () => {
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
       if (cmd === "BOGUS") {
         throw new Error("ERR unknown command 'BOGUS'");
+      }
+      if (cmd === "MULTI") {
+        this._inMulti = true;
+        return "OK";
+      }
+      if (cmd === "DISCARD") {
+        if (discardFailure !== null) throw discardFailure;
+        // The server's own words, measured on redis 7.4.11: a DISCARD with nothing queued
+        // is refused, and the refusal costs the connection nothing.
+        if (!this._inMulti) throw replyError("ERR DISCARD without MULTI");
+        this._inMulti = false;
+        return "OK";
       }
       if (cmd === "CONFIG") return databasesReply;
       if (cmd === "FUNCTION") {
@@ -1078,6 +1104,49 @@ describe("RedisProvider", () => {
     test("query on a disconnected provider throws", async () => {
       const disconnected = new RedisProvider({ ...baseConfig });
       await expect(disconnected.query("PING")).rejects.toThrow();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // endOpenQueryTransaction() (D75)
+  // --------------------------------------------------------------------------
+
+  describe("endOpenQueryTransaction()", () => {
+    beforeEach(async () => {
+      discardFailure = null;
+      await provider.connect();
+    });
+
+    test("discards a MULTI a statement left open on this connection", async () => {
+      await provider.query("MULTI");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+    });
+
+    test("answers none when no MULTI is open, and leaves the connection usable", async () => {
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect((await provider.query("PING")).rows[0]).toEqual({ result: "PONG" });
+    });
+
+    test("answers none once the MULTI has already been discarded", async () => {
+      await provider.query("MULTI");
+      await provider.query("DISCARD");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+    });
+
+    test("refuses to answer before connect()", async () => {
+      const disconnected = new RedisProvider({ ...baseConfig });
+
+      await expect(disconnected.endOpenQueryTransaction()).rejects.toThrow(DatabaseConfigError);
+    });
+
+    test("raises a DISCARD failure that is not the server's own refusal", async () => {
+      // Reading every failure as "there was nothing open" would report an unknown
+      // connection state as a clean one. Only "ERR DISCARD without MULTI" is an answer.
+      discardFailure = new Error("Connection is closed.");
+
+      await expect(provider.endOpenQueryTransaction()).rejects.toThrow("Connection is closed.");
     });
   });
 

@@ -462,6 +462,30 @@ HGETALL user:1
 `INFO` is special-cased: `parseInfoResult()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))
 splits the bulk reply into one row per metric, tagging each with its `# Section` header.
 
+### 5.2a A `MULTI` a statement left open (D75)
+
+A bare `MULTI` sent through `query()` opens a transaction on the ONE connection this provider holds
+(§3.6), and the provider is cached per `connection.id` for the whole process, so nothing in the
+request cycle closes it and it belongs to whoever borrows the handle next.
+Measured 2026-09-15 on redis 7.4.11 through ioredis 5.11.1: after a bare `MULTI`, every later
+command on that connection answers the string `QUEUED` and does nothing, `SET`, `GET` and even
+`CLIENT INFO` alike, while a second connection is untouched.
+So the next user's command does not fail, it silently does not happen, and the schema explorer's
+`SCAN` is queued with it.
+
+`endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
+
+**The ask and the act are one call, because on this engine they cannot be separated.** ioredis
+publishes no transaction state for a `MULTI` sent through `call()`: `status` stays `ready`, and the
+queueing that `Redis.prototype.multi()` tracks lives on a pipeline object a raw command never
+touches. The server cannot be asked on this connection either, because a `CLIENT INFO` sent inside
+the `MULTI` is itself answered `QUEUED`. So the server's own refusal of a `DISCARD`, the error reply
+`ERR DISCARD without MULTI`, is the answer, and it costs the connection nothing: measured, the very
+next command runs normally. Any OTHER `DISCARD` failure is raised rather than read as an answer.
+
+`DISCARD` and not `EXEC`: a script that queued commands and never said `EXEC` did not ask for them
+to run, so the queue is dropped rather than executed on an authority nobody gave.
+
 ### 5.3 Schema-explorer menu actions
 
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that node,
@@ -1244,7 +1268,7 @@ no control offers it.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
-| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464) |
+| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464). A `MULTI` a script types into the editor anyway is ended by `endOpenQueryTransaction()` (§5.2a) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |
