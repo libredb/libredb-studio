@@ -6480,11 +6480,53 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         expect(createHash("md5").update(fixture.definition).digest("hex")).toBe(fixture.revision);
       });
 
-      test("a plan built ELSEWHERE that forks that routine is `applied-elsewhere` and UNDONE", async () => {
+      /**
+       * THE DOUBLE ANSWERS THE POST-CONDITION'S QUESTION AND NOT A CONSTANT (wave 3 review of this
+       * commit, finding 1).
+       *
+       * `pg` is mocked at this file's module boundary, so no test here can reach an engine. What a
+       * double can still do is DISCRIMINATE, and the first version of this test did not: it raised
+       * `LB003` whatever SQL it was handed, so the outcome came from `APPLY_VERDICT_BY_SQLSTATE`
+       * alone and the fork spliced into the unit changed nothing. MEASURED by the reviewer and
+       * re-measured here on 2026-09-15 by replacing `text: forked` with `text: step.text`: the test
+       * still passed, 2 pass 0 fail. An assertion that holds with the fork removed certifies the
+       * SQLSTATE table and not the fork, and the table is already certified on its own by the test
+       * named "a fork detected by the post-condition is ..." in the `applyObjectEdit` describe.
+       *
+       * So this double reads the unit it is sent and asks what the emitted post-condition `DO`
+       * block asks: is the routine this plan ADDRESSES the routine the text rewrote? A routine is
+       * addressed by the parameter list `pg_get_functiondef` renders for it, so a text declaring
+       * `b bigint` creates a SECOND routine, leaves `app.dl(text,integer)`'s `xmin` where it was
+       * and raises `LB003`, which is what the live run above measured. A text that does carry the
+       * addressed list rewrites that row, so the round trip answers and the re-read answers the
+       * bytes just written. The control at the end of the test drives exactly that arm, so the
+       * fork is now the only difference between an `applied-elsewhere` and an `applied`.
+       */
+      test("a plan built ELSEWHERE that forks that routine is `applied-elsewhere` and UNDONE, and the same plan unforked is not", async () => {
         const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dl(text,integer)");
         if (fixture === undefined) throw new Error("app.dl is not in the measured population");
+        // The rendered parameter list of the routine the plan addresses. A unit whose `CREATE`
+        // does not carry it is addressing something else, which is the fork.
+        const addressed = "app.dl(a text DEFAULT ')'::text, b integer DEFAULT 1)";
+        let served: string = fixture.definition;
+        mockQueryFn = async (sql: string) => {
+          // Everything that is not the apply's own unit is a read: the build's, and the re-read
+          // the `applied` arm takes for the new revision. It answers whatever is on the server.
+          if (!sql.startsWith(APPLY_UNIT_PREFIX)) {
+            return { rows: [rowFor(served, createHash("md5").update(served).digest("hex"))] };
+          }
+          const written = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION"), sql.lastIndexOf("\n;\nDO "));
+          if (!written.includes(addressed)) {
+            throw Object.assign(new Error("libredb: this apply did not change the object it was addressed to"), {
+              code: "LB003",
+            });
+          }
+          served = written;
+          // One row answer, which `mockClient` turns into the four results a simple query gives
+          // for the four statements this unit is made of.
+          return { rows: [] };
+        };
         const provider = await connected();
-        mockQueryFn = async () => ({ rows: [rowFor(fixture.definition, fixture.revision)] });
         // The consumer's starting point is a plan this provider DID mint, for a legitimate body
         // edit, because that is the only way a caller outside this repository gets a sealed unit.
         const legitimate = fixture.definition.replace("SELECT 1", "SELECT 2");
@@ -6501,19 +6543,24 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         // THE CONTROL ON THE SETUP: the splice must actually have changed the unit, or the apply
         // below would be driving the legitimate plan and the assertion would certify nothing.
         expect(forked).not.toBe(step.text);
-        // The engine's own answer to that unit, measured live above: the post-condition sees an
-        // `xmin` that did not move, raises LB003, and the whole round trip rolls back.
-        mockQueryFn = async () => {
-          throw Object.assign(new Error("libredb: this apply did not change the object it was addressed to"), {
-            code: "LB003",
-          });
-        };
         const outcome = await provider.applyObjectEdit({
           ...built.plan,
           unit: { medium: "statement", steps: [{ ...step, text: forked }] },
         });
         if (outcome.outcome !== "applied-elsewhere") throw new Error(`expected a fork, got ${outcome.outcome}`);
+        // The post-condition raises inside PostgreSQL's implicit transaction, so the round trip
+        // rolls back, and nothing the forked text created survives it.
         expect(outcome.undone).toBe(true);
+        // THE CONTROL THAT MAKES THE FORK LOAD-BEARING: the same provider, the same double, the
+        // same sealed plan, with only the splice gone. Put `text: step.text` back into the apply
+        // above and this pair is what goes red.
+        const control = await provider.applyObjectEdit(built.plan);
+        if (control.outcome !== "applied")
+          throw new Error(`expected the unforked plan to apply, got ${control.outcome}`);
+        if (control.revision.check !== "guarded") throw new Error("narrowing");
+        // And the token is the md5 of the reader's own bytes, so the control also pins that what
+        // reached the server was the text the plan carried rather than the pre-image.
+        expect(control.revision.token).toBe(createHash("md5").update(legitimate).digest("hex"));
         await provider.disconnect();
       });
     });
@@ -6644,6 +6691,52 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         // count and must keep reaching the SQLSTATE classifier.
         const outcome = await applyWithEngineError(Object.assign(new Error("boom"), { code: "LB001" }));
         expect(outcome.outcome).toBe("conflict");
+      });
+
+      /**
+       * THE CITATION THE TWO DOCBLOCKS AROUND THIS ARM MAKE, ASSERTED (wave 3 review, finding 2).
+       *
+       * This arm is used outside what `src/lib/db/types.ts` documents it as, and both the provider
+       * and `docs/providers/postgres.md` record that deviation on purpose. The first version of
+       * those two paragraphs also said the residual was "in the backlog". It was not:
+       * `docs/BACKLOG.md` carries no entry for it, the proposal lives in a gitignored work file,
+       * and a reader following either sentence finds nothing. That is the same class as the
+       * dangling `src/lib/audit.ts` citation this same commit was sent to repair, so it gets a
+       * check rather than a correction.
+       *
+       * THE GENERAL FORM RATHER THAN THAT ONE SENTENCE, because a sentence is just reworded next
+       * time. Every mention of the backlog in these two files must NAME the entry, the way
+       * `docs/providers/postgres.md` already names B4 for the cancel mapper, and that entry must
+       * be a heading `docs/BACKLOG.md` really carries. A residual with nowhere to be filed is
+       * recorded in the two files themselves and does not send the reader anywhere else.
+       *
+       * MEASURED before the correction: exactly two sentences failed it, one per file.
+       */
+      test("every backlog mention in this provider and in its doc names an entry docs/BACKLOG.md carries", () => {
+        const read = (file: string) => readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
+        const filed = new Set([...read("docs/BACKLOG.md").matchAll(/^### ([A-Z]+\d+)\./gm)].map((match) => match[1]));
+        // POPULATION CONTROL ON THE BACKLOG ITSELF: a file that moved or changed heading shape
+        // would report every citation below as unfiled, which is a different defect entirely.
+        expect(filed.size).toBeGreaterThan(50);
+        const unfiled: string[] = [];
+        let mentions = 0;
+        for (const file of ["src/lib/db/providers/sql/postgres.ts", "docs/providers/postgres.md"]) {
+          // Comment markers off and wrapped lines rejoined, so a claim spread over four comment
+          // lines is ONE sentence here; then split where a sentence ends.
+          const prose = read(file)
+            .replace(/^[ \t]*(?:\/\/|\*\/|\/\*\*?|\*)[ \t]?/gm, "")
+            .replace(/\s*\n\s*/g, " ");
+          for (const sentence of prose.split(/(?<=\.)\s+/)) {
+            if (!/backlog/i.test(sentence)) continue;
+            mentions++;
+            if ([...sentence.matchAll(/\b([A-Z]+\d+)\b/g)].some((match) => filed.has(match[1]))) continue;
+            unfiled.push(`${file} :: ${sentence.trim().slice(0, 160)}`);
+          }
+        }
+        // AND THE CONTROL THAT KEEPS THE ASSERTION ABOVE NON-VACUOUS: two files with no mention of
+        // the backlog at all would satisfy it while checking nothing.
+        expect(mentions).toBeGreaterThan(0);
+        expect(unfiled).toEqual([]);
       });
     });
 

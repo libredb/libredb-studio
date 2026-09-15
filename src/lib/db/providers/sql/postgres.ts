@@ -3728,8 +3728,8 @@ export class PostgresProvider extends SQLBaseProvider {
     // did not name. That is strictly worse than today, where the dialog's second line, which X20
     // narrowed, already says the true thing: LibreDB holds no answer that settles whether the
     // change landed. What is left wrong is that dialog's FIRST line, "Whether it reached the server
-    // is unknown", over a member where it demonstrably did. Both files belong to other hands and
-    // the residual is in the backlog and in `docs/providers/postgres.md`.
+    // is unknown", over a member where it demonstrably did. Both files belong to other hands, so
+    // the residual is recorded HERE and in `docs/providers/postgres.md` and nowhere else.
     const carried = Array.isArray(answered) ? answered.length : 1;
     if (carried !== GUARDED_BATCH_STATEMENT_COUNT) {
       return {
