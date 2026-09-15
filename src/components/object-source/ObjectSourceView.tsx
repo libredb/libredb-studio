@@ -1443,6 +1443,34 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
           >
             {shownFailure}
           </p>
+          {/*
+            The recovery the object tree has always offered (`tree-retry`) and this pane did not
+            (X22). Bound to `failure` and not to `shownFailure`, because only that arm is a read
+            that was ATTEMPTED and refused: a rate limit, a reset, a route error. The other two
+            arms cannot be answered by asking again. `DISCONNECTED` has no connection to ask over
+            and the read effect bails before the reader is called, and `UNRENDERABLE`/`MISMATCHED`
+            are properties of an answer already in hand, so both would clear the pane and land
+            back on the same sentence having done nothing.
+
+            `reread` rather than a private handler: this clears the same three fields the stale
+            banner's control clears, which is what makes `needsRead` true again. That matters
+            because `needsRead` is `document === undefined && failure === undefined`, so a tab
+            holding a failure never re-reads on its own and a reader without this control has to
+            reopen the tab or reload the page.
+          */}
+          {failure !== undefined && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="mt-3 h-7 px-3 text-xs"
+              data-testid="object-source-failure-retry"
+              onClick={reread}
+            >
+              <RefreshCw aria-hidden="true" className="mr-1 h-3 w-3" />
+              Try again
+            </Button>
+          )}
         </div>
       ) : part === undefined ? (
         // `output` rather than a div carrying role="status": both announce, and `jsx-a11y`'s

@@ -292,6 +292,61 @@ function watchForCspViolations(page: Page): string[] {
   return violations;
 }
 
+/**
+ * Messages this page is ALLOWED to write, and nothing else (X26, the unlanded half of X21).
+ *
+ * A whitelist of SENTENCES rather than a filter over one known string, because a guard over one
+ * message is a guard over a population of one: X21's `TextModel got disposed before
+ * DiffEditorWidget model got reset` was invisible to `watchForCspViolations` for exactly that
+ * reason, and a guard named after X21's message would be equally blind to whatever comes next.
+ *
+ * Every entry is MEASURED on this page and matched on its ORIGIN as well as its text. Chromium's
+ * resource-load failure reads `Failed to load resource: the server responded with a status of N`
+ * and names no URL in the text, so an entry keyed on the text alone would excuse that status
+ * anywhere on the page. `location().url` is what makes an entry about one route.
+ */
+const ALLOWED_CONSOLE: readonly { readonly text: RegExp; readonly from: RegExp; readonly why: string }[] = [
+  {
+    text: /^error: Failed to load resource: the server responded with a status of 400 \(Bad Request\)$/,
+    from: /\/api\/db\/objects\/counts$/,
+    why:
+      "The object tree's FIRST read of a connection, refused once per session and recovered from " +
+      "immediately. MEASURED on 2026-09-15 against the fixture: the browser posts " +
+      '{"container":[]} to /api/db/objects/counts and the route answers 400 "A PostgreSQL ' +
+      'container path is [schema], received []". `containerDepth()` reads ' +
+      "`capabilities.containerLevels`, which is empty until provider-meta lands, so `rootRead(0)` " +
+      "in src/components/object-tree/use-tree-nodes.ts issues the depth-0 read at first paint and " +
+      "the depth-1 `containers` read follows once the capabilities arrive. Nothing is lost and the " +
+      "tree draws, so it is allowed here rather than left to fail this assertion, and it is filed " +
+      "rather than fixed: the tree hook is not this spec's file.",
+  },
+];
+
+/**
+ * Everything the browser wrote that ALLOWED_CONSOLE does not account for.
+ *
+ * Both channels, because they are different populations: `console` carries what page code logged,
+ * and `pageerror` carries an uncaught exception, which reaches Playwright's `console` channel on no
+ * guarantee at all. `warning` is collected with `error` on purpose: Monaco's disposal line and
+ * React's own complaints are warnings on some builds and errors on others, and a guard that read
+ * only `error` would have let X21's class through on the wrong build.
+ */
+function watchTheWholeConsole(page: Page): string[] {
+  const unexpected: string[] = [];
+  const record = (text: string, from: string) => {
+    if (!ALLOWED_CONSOLE.some((allowed) => allowed.text.test(text) && allowed.from.test(from))) {
+      unexpected.push(`${text} [from ${from}]`);
+    }
+  };
+  page.on("console", (message) => {
+    const type = message.type();
+    if (type === "error" || type === "warning") record(`${type}: ${message.text()}`, message.location().url);
+  });
+  // An uncaught exception has no resource URL of its own, so it is matched against the page's.
+  page.on("pageerror", (error) => record(`pageerror: ${error.message}`, page.url()));
+  return unexpected;
+}
+
 async function markersOnTheSourceEditor(page: Page): Promise<MarkerReading[]> {
   return page.evaluate((owner) => {
     const monaco = (
@@ -317,7 +372,7 @@ async function markersOnTheSourceEditor(page: Page): Promise<MarkerReading[]> {
 }
 
 /**
- * Reload, and reload AGAIN whenever the restored tab's source read was REFUSED (X22, #789).
+ * Reload once, and then press the PANE'S OWN Try again until the restored tab's read lands (X22).
  *
  * MEASURED on 2026-09-14, locally, with `--retries=0` and the CI selection
  * (`--project=chromium --grep "Functional smoke"`, one worker): the assertion below failed on its
@@ -336,24 +391,26 @@ async function markersOnTheSourceEditor(page: Page): Promise<MarkerReading[]> {
  * does not increment the counter, so waiting out the `Retry-After` the server itself names buys a
  * full fresh budget rather than one slot.
  *
- * A RELOAD AND NOT A RETRY BUTTON, and the difference is the product gap this test met rather than
- * a choice made for convenience. The object tree offers `tree-retry` when its read is refused and
- * `waitForTheObjectTree` presses it; the source pane's failure region offers NO control at all, and
- * a tab that has recorded a failure never re-reads, because `needsRead` in `ObjectSourceView` is
- * `document === undefined && failure === undefined`. So reloading is the only way back for a
- * restored tab whose read was refused, for this test and for a reader. That is filed, with this
- * measurement behind it, rather than fixed here: the pane is not this spec's file.
+ * THE PANE'S OWN CONTROL, and not a second reload, which is the difference X22's fix made. The
+ * source pane used to draw the engine's sentence and no control at all, so a tab that had recorded
+ * a failure never re-read - `needsRead` in `ObjectSourceView` is
+ * `document === undefined && failure === undefined` - and reloading the page was the only way back
+ * for this test and for a reader. It is also the expensive way back: a reload re-hydrates the whole
+ * application against the very budget that was exhausted, so each attempt spends more of what it is
+ * waiting for. `object-source-failure-retry` costs one request, and pressing the control the
+ * product offers is what the reader in front of that message now does, exactly as
+ * `waitForTheObjectTree` presses `tree-retry`.
  *
- * The reload is still the restore under test. `PersistedTabState` persists a Source tab's address
- * and never its document or its failure, so every reload restores the same tab from localStorage
- * and issues the same fresh read, and the draft the previous step saved is still in the draft
- * store. A second reload weakens nothing.
+ * The single reload is still the restore under test. `PersistedTabState` persists a Source tab's
+ * address and never its document or its failure, so the reload restores the tab from localStorage
+ * and issues a fresh read, and the draft the previous step saved is still in the draft store.
  */
-async function reloadUntilTheRestoredTabIsRead(page: Page): Promise<void> {
+async function restoreTheTabAndWaitForItsRead(page: Page): Promise<void> {
   const edit = page.getByTestId("object-source-edit");
   const failure = page.getByTestId("object-source-failure-message");
+  const retry = page.getByTestId("object-source-failure-retry");
+  await page.reload();
   await expect(async () => {
-    await page.reload();
     // Either outcome, so a refusal is READ rather than waited out for the full timeout: without
     // the `or` this is the 30-second wait that made X22 look like a slow affordance.
     await expect(edit.or(failure).first()).toBeVisible({ timeout: 30_000 });
@@ -366,6 +423,10 @@ async function reloadUntilTheRestoredTabIsRead(page: Page): Promise<void> {
     // Without it this helper would hide exactly the fact X22 was filed about.
     test.info().annotations.push({ type: "rate-limited", description: sentence });
     await sleep((Number(named?.[1] ?? 10) + 2) * 1000);
+    // The control this pane did not have before X22. Asserted rather than clicked blind: if it
+    // ever stops being drawn for a refused read, this helper says so instead of timing out.
+    await expect(retry).toBeVisible();
+    await retry.click();
     throw new Error(`the restored tab's source read did not land: ${sentence}`);
   }).toPass({ timeout: 240_000, intervals: [0] });
 }
@@ -436,6 +497,10 @@ test.describe("Functional smoke: object edit end to end", () => {
     // console channel; the compile-time exemption that made the earlier probe's CSP control invalid
     // applies to `Runtime.evaluate`'d CODE and not to a blocked RESOURCE LOAD.
     const violations = watchForCspViolations(page);
+    // The SAME control serves the whole-console watcher X26 added: `expect(consoleMessages)
+    // .toEqual([])` above is the same empty array on a clean page and on a watcher that was never
+    // wired, and one blocked resource load exercises both listeners at once for one login.
+    const consoleMessages = watchTheWholeConsole(page);
     await openSourceTabOnSeededPostgres(page);
     await page.evaluate(() => {
       const blocked = document.createElement("script");
@@ -443,10 +508,18 @@ test.describe("Functional smoke: object edit end to end", () => {
       document.head.appendChild(blocked);
     });
     await expect.poll(() => violations.length, { timeout: 20_000 }).toBeGreaterThan(0);
+    // The whole-console watcher's own control: it saw the blocked load too, so the empty array the
+    // apply test asserts is a clean page and not a dead listener.
+    expect(consoleMessages.length).toBeGreaterThan(0);
     // And nothing was applied by this test, so it leaves the fixture as it found it.
   });
 
   test("Edit, type, preview, apply, and the pane RE-READS and shows the new text", async ({ page }) => {
+    // The console is read ACROSS this apply (X26). It rides on the test that already drives a real
+    // apply rather than on a sixth test of its own: every test here spends the same shared
+    // account's `query` budget, which is the cause X22 measured, and a whole extra login-connect-
+    // read-apply chain to watch a channel this one already crosses would buy nothing and cost that.
+    const consoleMessages = watchTheWholeConsole(page);
     await applyThroughTheUi(page);
     await expect(page.getByTestId("object-source-apply-dialog")).toBeHidden({ timeout: 30_000 });
     // `object-source-view` rather than the brief's `source-editor`: this pane renders Monaco through
@@ -458,6 +531,10 @@ test.describe("Functional smoke: object edit end to end", () => {
     expect(definitionInTheEngine()).toContain("edited by the e2e");
     // And the pane is read-only again: the Edit button is what a reader gets back after an apply.
     await expect(page.getByTestId("object-source-edit")).toBeVisible();
+    // Asserted LAST, so the whole span is covered: mount under the production CSP, the diff widget
+    // opening and being torn down by the confirm, the apply round trip, and the re-read after it.
+    // X21's error was written by the teardown, which is inside this span and after the confirm.
+    expect(consoleMessages).toEqual([]);
   });
 
   test("a RESTORED tab is read-only until the reader presses Edit again", async ({ page }) => {
@@ -466,9 +543,9 @@ test.describe("Functional smoke: object edit end to end", () => {
     // of four fields plus the address, so a restored tab is always read-only and a reader always
     // re-enters editing deliberately.
     await editWithoutApplying(page);
-    // The reload, retried on a REFUSED read rather than waited out: X22, and the helper's docblock
+    // The reload, then the pane's own Try again on a REFUSED read: X22, and the helper's docblock
     // carries the measurement that named the cause.
-    await reloadUntilTheRestoredTabIsRead(page);
+    await restoreTheTabAndWaitForItsRead(page);
     await expect(page.getByTestId("object-source-edit")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("object-source-draft-restore")).toBeVisible({ timeout: 30_000 });
   });

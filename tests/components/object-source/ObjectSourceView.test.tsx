@@ -755,6 +755,83 @@ describe("ObjectSourceView", () => {
     expect(reader.calls).toBe(2);
   });
 
+  test("a REFUSED read offers the same recovery the object tree does, and pressing it re-reads", async () => {
+    /*
+     * X22, and the failure it was measured on is a rate limit rather than an outage. The object
+     * tree has always drawn `tree-retry` when its own read is refused; this pane drew the
+     * engine's sentence and no control at all, and `needsRead` is
+     * `document === undefined && failure === undefined`, so a tab that has recorded a failure
+     * never re-reads by itself. The reader's only way back was to close the tab and reopen it,
+     * or to reload the page, which is what `reloadUntilTheRestoredTabIsRead` in
+     * `e2e/object-edit.spec.ts` had to do because no control existed.
+     *
+     * The stale control is NOT that recovery: it is drawn only when a DDL in this session bumped
+     * `refreshToken`, and a refused read bumps nothing.
+     */
+    let attempt = 0;
+    const reader = Object.assign(
+      async () => {
+        reader.calls += 1;
+        attempt += 1;
+        if (attempt === 1) throw new Error("Too many requests. Try again in 41 seconds.");
+        return oneReadablePart;
+      },
+      { calls: 0 },
+    );
+    render(<Harness reader={reader} refreshToken={0} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    // Nothing made this tab stale, so the control the reader would otherwise reach for is absent.
+    expect(screen.queryByTestId("object-source-stale-reread")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("object-source-failure-retry"));
+
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(reader.calls).toBe(2);
+    expect(screen.queryByTestId("object-source-failure")).toBeNull();
+  });
+
+  test("a withdrawn connection draws NO retry, because a re-read cannot be issued without one", async () => {
+    /*
+     * The control for the test above, and the reason the retry is bound to `failure` rather than
+     * to `shownFailure`. `DISCONNECTED` is not a read that was refused: the read effect bails on
+     * a null connection before it calls the reader, so a Try again here would clear the pane and
+     * land straight back on the same sentence, having done nothing. A control that cannot work is
+     * worse than no control.
+     */
+    const reader = readerFor(oneReadablePart);
+    render(
+      <ObjectSourceView
+        connection={null}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        refreshToken={0}
+        reader={reader}
+        onChange={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-failure-retry")).toBeNull();
+    expect(reader.calls).toBe(0);
+  });
+
+  test("an UNRENDERABLE body draws no retry either: the answer is in hand and re-reading repeats it", () => {
+    /*
+     * The other arm of `shownFailure`. The route answered, the pane holds the answer, and the
+     * refusal is a property of that answer rather than of the attempt, so the same read would
+     * produce the same sentence. The stale control remains the way to ask the engine again after
+     * something in this session actually changed the object.
+     */
+    renderWithDocument({ parts: [] } as unknown as ObjectSourceDocument);
+
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+    expect(screen.queryByTestId("object-source-failure-retry")).toBeNull();
+  });
+
   test("re-reads when the address changes", async () => {
     // Each answer names the object it is FOR, which is what every provider in the fleet writes
     // (`path: [...path]`, 55 sites) and what the viewer now checks before rendering one.
