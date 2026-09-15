@@ -107,9 +107,16 @@ async function runStatement(
  * A runtime shape check, the same one `POST /api/db/transaction` uses for the
  * interactive session: the method is optional on `DatabaseProvider` because only a
  * provider that can name the session its statements ran on can answer truthfully
- * (`endOpenQueryTransaction`'s declaration argues why). `postgres`, `sqlite` and
- * `duckdb` implement it; on the rest this route leaves the handle exactly as it found
- * it, because inventing a rollback there would be guessing at another engine's state.
+ * (`endOpenQueryTransaction`'s declaration argues why). `postgres`, `sqlite`, `duckdb` and
+ * `redis` implement it; on the rest this route leaves the handle exactly as it found it,
+ * because inventing a rollback there would be guessing at another engine's state.
+ *
+ * THIS CALL CARRIES D87 AND THIS ROUTE IS THE ONLY CALLER THAT STILL MAKES IT. The ender
+ * acts on one shared pointer, so under concurrent traffic on the same connection id it can
+ * roll back a client this request never ran on, measured as far as another caller's
+ * committed work disappearing. The call stays because removing it reopens the leak #823
+ * closed and D74 measured the route-level copy to be worse than the leak; the fix is D87,
+ * in the provider, where the borrowed client is in scope.
  */
 function endsOpenTransactions(
   provider: DatabaseProvider,

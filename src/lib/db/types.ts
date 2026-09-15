@@ -701,13 +701,21 @@ export interface DatabaseProvider {
    *
    * OPTIONAL, for the reason `queryReadOnly` is: only a provider that can name the session
    * its own `query()` ran on can answer truthfully, and a provider that cannot must say
-   * nothing rather than guess. `postgres`, `sqlite` and `duckdb` implement it, which are
-   * the three engines D71 was measured on. A caller shape-checks for it; there is no
-   * default, because a default that answered `"none"` would certify an absence nobody read.
+   * nothing rather than guess. `postgres`, `sqlite`, `duckdb` and `redis` implement it: the
+   * first three are the engines D71 was measured on, and `redis` was added by D75, which
+   * walked every remaining type-id and wrote the absence down where it could not. A caller
+   * shape-checks for it; there is no default, because a default that answered `"none"` would
+   * certify an absence nobody read. Every type-id that does NOT implement it says which
+   * absence it is in its own `docs/providers/<type-id>.md`.
    *
-   * It does NOT touch the interactive transaction session `POST /api/db/transaction`
-   * drives (`beginTransaction()` and friends). That session holds a connection of its own
-   * that `query()` never runs on, so it is never the session this method names.
+   * WHAT THIS SURFACE CANNOT DO, and an earlier form of this paragraph claimed it could.
+   * It said the method "does NOT touch the interactive transaction session
+   * `POST /api/db/transaction` drives", because that session holds a connection of its own.
+   * MEASURED FALSE on 2026-09-15 (D87): a provider records one client per PROVIDER, not per
+   * call, and `pg`'s LIFO idle list hands `beginTransaction()` the very object a previous
+   * `query()` recorded. The implementation that names a single last client therefore rolls
+   * back whoever recorded one last, which under concurrent traffic on a shared cached
+   * provider is not the caller. D87 is the fix and D74 is why no route can work around it.
    */
   endOpenQueryTransaction?(): Promise<OpenQueryTransactionOutcome>;
 

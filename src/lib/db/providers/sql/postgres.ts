@@ -2542,10 +2542,23 @@ export class PostgresProvider extends SQLBaseProvider {
    * no choice in any case — PostgreSQL ignores everything but a transaction-ending
    * command there, and COMMIT on an aborted transaction rolls back regardless.
    *
-   * The interactive session `POST /api/db/transaction` drives is never touched: its
-   * client is checked out for the session's whole life and handed back only by
-   * `commitTransaction` / `rollbackTransaction` / `expireTransaction`, so `query()` never
-   * borrows it and it can never be `lastQueryClient`.
+   * THIS METHOD ACTS ON ONE SHARED POINTER AND CANNOT NAME THE CALLER'S OWN SESSION (D87).
+   * `query()` overwrites `lastQueryClient` on every call, and `getOrCreateProvider` caches
+   * one provider per connection id for the whole process, so under concurrent traffic the
+   * client rolled back here is whichever client anybody recorded last.
+   *
+   * An earlier form of this paragraph said the interactive session `POST /api/db/transaction`
+   * drives "can never be `lastQueryClient`", because its client is checked out for the
+   * session's whole life. MEASURED FALSE on 2026-09-15: `beginTransaction()` calls
+   * `pool.connect()`, `pg`'s idle list is LIFO, and it is handed the SAME object a previous
+   * `query()` recorded, so `txClient === lastQueryClient`. The ender then rolled that
+   * session's transaction away while the status route still read `inTransaction` and
+   * `commit` answered "Transaction committed".
+   *
+   * D87 carries the three measured arms and the shape that fixes them: `query()` naming the
+   * client its call borrowed, and this method taking it. Until that lands, `/api/db/query`
+   * deliberately calls nothing (D74), and `/api/db/multi-query` keeps the call it has had
+   * since #823 with the same exposure.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     const client = this.lastQueryClient;
