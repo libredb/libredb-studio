@@ -1220,19 +1220,25 @@ describe("RedisProvider", () => {
       await expect(provider.endOpenQueryTransaction()).rejects.toThrow("NOPERM");
     });
 
-    test("the doc names the ONE route that calls this, and says the editor is not on it", () => {
-      // `POST /api/db/multi-query` is the only caller of `endOpenQueryTransaction()` in the
-      // product, and `use-query-execution.ts` keeps a Redis buffer off that route: it gates
-      // the multi-statement endpoint on `dialectIsSql`, read from this capability. An
-      // editor run therefore goes to `POST /api/db/query`, which ends nothing on purpose
-      // (D74), so the leak this method closes stays open on the editor path. A doc that
-      // promised otherwise would be the boundary the next reader trusts.
+    test("the doc names BOTH routes that call this, and says the editor path is now covered", () => {
+      // This test used to pin the opposite, and the change is the point. `use-query-execution.ts`
+      // keeps a Redis buffer off `/api/db/multi-query` by gating that endpoint on `dialectIsSql`,
+      // read from this capability, so an editor run goes to `/api/db/query`. That route ended
+      // nothing while the ender named one shared client (D74 measured the naive `finally` there
+      // destroying other callers' committed work). D87 bound the ender to a call scope the route
+      // mints, D74 then gave the route its `finally`, and the editor path closed with it.
+      //
+      // The capability assertion is what makes the doc assertions non-vacuous: if this provider
+      // ever declared a SQL dialect, an editor run would take the other route and every sentence
+      // below would be about a path the editor no longer uses.
       expect(provider.getCapabilities().queryLanguage).toBe("json");
 
       const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/redis.md"), "utf8").replace(/\s+/g, " ");
-      expect(doc).toContain("The surface has exactly one caller in the product, `POST /api/db/multi-query`");
-      expect(doc).toContain("The editor never sends a Redis buffer there.");
-      expect(doc).toContain("a `MULTI` typed into the editor is still open when the response is sent");
+      expect(doc).toContain("The surface now has TWO callers in the product");
+      expect(doc).toContain("**The editor never sends a Redis buffer to the first of those.**");
+      expect(doc).toContain("a `MULTI` typed into the editor IS discarded when the response is sent");
+      // And the doc must not still carry the claim this test used to pin.
+      expect(doc).not.toContain("still open when the response is sent");
     });
 
     test("raises when PING answers neither its own reply nor QUEUED", async () => {

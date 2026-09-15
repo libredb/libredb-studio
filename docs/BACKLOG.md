@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D90, U17 · 40
+- [Drivers and connections](#drivers-and-connections) — D1–D92, U17 · 37
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X27, U2–U21 · 15
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -993,163 +993,6 @@ statement MEANS, and none of them is reset.
 **Done when:** either the pool resets a connection on release, or every route that mutates session state
 restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
 
-### D74. A single statement can leave a transaction open on the shared pooled handle, and no route-level fix is possible
-
-MEASURED 2026-09-15 on PostgreSQL 18.4 (`pg` 8.23) through `POST /api/db/query` itself, with the real
-`PostgresProvider`, the real process-wide provider cache and only the session mocked. A lone `BEGIN`
-answers HTTP 200 and releases its pooled client in status `T`. The next request on the same cached
-provider, which is any other signed-in user of that stored connection, then runs its `CREATE TABLE`
-INSIDE that stranger's transaction: HTTP 200, same client object, and an independent reader on its own
-connection sees no such table. Driven a second way the loss is loud instead of silent: `BEGIN` followed
-by a statement naming a missing relation leaves the client in `E`, and the next request answers HTTP 500
-"current transaction is aborted, commands ignored until end of transaction block".
-
-**What was tried and REVERTED, because it is worse than the leak.** Copying the `finally` that calls
-`provider.endOpenQueryTransaction()` from `/api/db/multi-query` (#823) into this route closes the leak
-for SERIAL traffic and destroys other people's committed work under concurrent traffic. Measured the
-same day on the same engine, each arm twice, each against a pre-change control:
-
-- A plain `SELECT pg_sleep(3)` sent to `POST /api/db/query` rolled back a concurrent
-  `POST /api/db/multi-query` script mid-flight. The script answered 200, `hasError: false`, all four
-  statements "success" including its `COMMIT`, and its `CREATE TABLE` was gone (`to_regclass` null; the
-  same probe on the pre-change tree: present). The plain SELECT's own response claimed
-  `openTransaction: "rolled-back"` for a transaction it never opened.
-- The same plain `SELECT pg_sleep(3)` discarded an interactive `POST /api/db/transaction` session's
-  committed `CREATE TABLE`. The status route still read `{"inTransaction":true,"ownedByYou":true}`,
-  `commit` answered `{"status":"committed","message":"Transaction committed"}`, and the table was gone
-  (pre-change control: present). Nothing threw in either run.
-- The leak the entry is about survives that `finally` anyway. Request A `BEGIN; SELECT pg_sleep(2)` with
-  request B `SELECT 1` 700 ms in leaves one backend `idle in transaction`, and the next request's
-  `CREATE TABLE` answers 200 and is invisible to an independent reader. A's own client stayed in `T`
-  because B had overwritten the pointer before A's `finally` ran.
-
-**Why no route can fix this.** `PostgresProvider.endOpenQueryTransaction()` acts on `lastQueryClient`,
-a SINGLE field that `query()` overwrites on every call (`postgres.ts:2300`, read at `:2545`) for every
-concurrent caller of the provider `getOrCreateProvider` caches per connection id. A route holds a
-provider, never a client, so it cannot ask for "the client MY statement ran on". The route now carries
-this measurement as a comment and ends nothing, and `tests/api/db/query.test.ts` pins that a request
-here must not discard a transaction another caller of the shared provider opened.
-
-**Done when:** `query()` can name the client its call borrowed (return it, or key the recorded client by
-call) and the ender takes that client, so ending a transaction acts on the caller's own session and
-nothing else; then the routes that want it, this one and `/api/db/multi-query`, use the naming form.
-Two tests: the serial leak closes, and the cross-request probe above leaves the other caller's
-transaction untouched. Blocked on D87, which is the same aliasing seen from the provider side.
-
-### D78. An object edit refuses on a pooled client somebody else left in a transaction, and nothing clears it
-
-MEASURED 2026-09-14 on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23, on a throwaway
-container, driving `PostgresProvider` itself rather than a hand-written statement.
-
-What was WRONG and is now fixed here: `applyObjectEdit` sent the plan on whatever pooled client it
-borrowed. A lone `BEGIN` through `query()` releases that client in status `T`, `pg`'s idle list is LIFO
-so the next `pool.connect()` hands the SAME client back, and the apply then ran inside the foreign
-transaction and answered `applied` with a `guarded` revision token. The write was uncommitted, so
-`endOpenQueryTransaction()` on the same connection rolled it away, `xmin` 856 back to 825 and the
-definition byte-identical to the pre-image; the revision handed back was whichever image the re-read's
-own borrowed client happened to see; and the `SET LOCAL search_path` pin survived into the rest of the
-foreign transaction, `SHOW search_path` reading `app, pg_catalog`. The same borrow in status `E`
-answered SQLSTATE `25P02` and, that code not being in `APPLY_VERDICT_BY_SQLSTATE`, was classified
-`refused` with class `definition`, telling the reader their definition was rejected. `applyObjectEdit`
-now reads the client's ReadyForQuery status before it sends anything and refuses with class `guard` when
-it is not `I`, which closes both.
-
-What is STILL OPEN and is this entry: the refusal does not CLEAR the transaction, and neither does the
-route. Rolling it back would destroy work the refused user was never shown, so the apply must not; but
-`src/app/api/db/objects/edit-apply/route.ts` has no `finally` and calls nothing, so a client poisoned by
-another route stays poisoned and every object edit on that connection id keeps refusing until some other
-request happens to end it.
-
-**The producer inventory, MEASURED 2026-09-15 on PostgreSQL 18.4 through the shipped routes and the
-real process-wide provider cache, with only the session mocked.** It is three surfaces and not one:
-
-- `POST /api/db/multi-query`: has a `finally` since #823. It closes the serial case and, per D74's
-  measurements, misfires on other callers' clients under concurrency, so it is not a clean producer
-  either way until D87 lands.
-- `POST /api/db/query`: STILL A PRODUCER. A lone `BEGIN` leaves the pooled client in `T`. D74 records
-  why the route-level `finally` was tried and removed.
-- `POST /api/db/transaction` is NOT a producer, and this was the open question. Driven live: with an
-  interactive transaction open and a `CREATE TABLE` run through it, the pooled client `query()` borrows
-  read `I` throughout, and a plain `POST /api/db/query` on the same connection id answered 200 on a
-  DIFFERENT client. The interactive session holds its own checked-out client for its whole life, so it
-  poisons nothing an apply can borrow. (What it does NOT survive is the ender: see D83, where a plain
-  query's rollback reached this session's client through `pg`'s LIFO idle list.)
-- `applyObjectEdit` ITSELF is a producer, through D76's rider. Measured on `pg` 8.23: a simple query of
-  the form `<CREATE OR REPLACE ...>; BEGIN` leaves the client in `T`, and a plan built from reader text
-  with that rider applied at `outcome: "applied"` and then refused the NEXT two clean applies on the
-  same provider with class `guard`, permanently. D76's single-statement check refuses that text at mint
-  time, so if D76 lands this producer goes with it.
-
-**Why the second arm of the Done when cannot be met at the route, measured rather than argued.**
-`endOpenQueryTransaction()` names `lastQueryClient`, and `applyObjectEdit` borrows its client straight
-from the pool and never records it. Driven on a provider whose first act was an apply with a rider: the
-pool was poisoned, `endOpenQueryTransaction()` answered `"none"`, and the next apply was still refused
-with class `guard`. A `finally` in `edit-apply/route.ts` spelled the way `/api/db/multi-query` spells it
-would therefore be a guard over a population it cannot reach, and on a provider where a plain `query()`
-ran first it would hit the apply's client only by `pg`'s LIFO aliasing rather than by naming it. Any
-clearing path belongs in `postgres.ts`, where the borrowed client is in scope.
-
-**Done when:** either D76 lands its single-statement refusal, which empties the producer population and
-makes this entry deletable with that noted, or `applyObjectEdit` ends a transaction ITS OWN round trip
-left open on the client it borrowed, with the cross-user question answered rather than assumed: the
-provider cache is keyed per connection id, so two signed-in users of one stored connection share one
-pooled client and a rollback is visible to both.
-
-### D79. The embedded shell learns about its own object apply and about no other DDL
-
-`StudioWorkspace` owns a catalog-change counter and moves it after an object apply the workspace itself
-issued (#789 Phase 3). It cannot see a DDL the HOST ran. Every statement in that shell leaves through
-`onQueryExecute`, and that callback answers a result set and never says what the statement changed, so a
-`CREATE OR REPLACE` a person runs in the query editor leaves every open Source tab showing the pre-apply
-text with no stale banner.
-
-MEASURED for the STANDALONE shell during the same phase, which is where the absence was found first: a
-new body applied to `p3probe.order_total` through `POST /api/db/query` while its Source tab was open left
-the tab unchanged and unmarked. The embedded shell inherits it, and this is a Phase 2 limitation rather
-than something the apply introduced: the counter was the constant `0` before, and saw nothing at all.
-
-The consequence is bounded where it bites, in the mount's own docblock: a stale banner in the embedded
-shell means "this workspace changed it", and the absence of one never means "nothing changed".
-
-**Done when:** a host can tell the workspace the catalog moved, either through a host-callable handle or
-through a field on the `onQueryExecute` answer. Both are NEW PUBLISHED SURFACES on `@libredb/studio`,
-which is why this is filed rather than folded into the apply.
-
-### D82. The new-tab shortcut still unmounts an apply mid flight in the EMBEDDED shell
-
-The standalone half is closed (commits `ae1c8cc5` and the review-fix commit that follows it).
-`ObjectSourceView` publishes the in-flight window through the optional `onApplyInFlightChange`, and
-`Studio.tsx` refuses BOTH gestures that open and activate a tab for as long as it is open, with a
-toast rather than a swallowed keystroke: the new-tab shortcut (`handleAddTab`) and the command
-palette's table rows (`onTableClick`). The false reachability paragraph in `Studio.tsx` is corrected
-and the two document-level listeners are enumerated by measurement rather than asserted. Five tests
-in `tests/components/studio/source-tab.test.tsx` drive both gestures from the dialog's own element,
-including the conflict landing on a dialog that is still mounted, plus a control for each.
-
-What is left is the SAME defect in `src/workspace/StudioWorkspace.tsx`, which was outside that task's
-ownership. That shell renders `StudioTabBar` with the bare `tabMgr.addTab` (line ~629) and renders
-`ObjectSourceView` only for an active Source tab (line ~681), and it passes
-`onApply={conn.sourceApplier}` (line ~786) with no `onApplyInFlightChange`, so a host that declares
-an `objectEditor` reaches exactly the window D82 measured.
-
-MEASURED on this shell, not inferred from the file. With the host's `apply` held between Confirm and
-the answer and the shortcut pressed from the apply dialog's own element, the tab strip went to
-`["Query 1", "Source: app.order_total(integer)", "Query 3"]`, the dialog was GONE, and after the
-held `conflict` landed no conflict surface rendered at all. Probe:
-`.../scratchpad/probes/post/tests/components/studio/zz2-probe-embedded.test.tsx`, PROBE F.
-
-The palette half does NOT apply here: `StudioWorkspace.tsx` renders no `CommandPalette`, so the
-embedded shell has exactly one document-level listener that moves the active tab.
-
-The mechanism to reuse already exists and needs no new code in the pane: mirror
-`onApplyInFlightChange` into shell state and wrap `onAddTab`, as `handleAddTab` in `Studio.tsx` does.
-
-**Done when:** the embedded shell refuses the new-tab shortcut while an object apply is in flight and
-says so, with a test in `tests/components/studio/embedded-source.test.tsx` that presses the shortcut
-between Confirm and the answer and asserts the answer still reaches the reader.
-
-FILE
-
 ### D86. A pooled SSH tunnel serves a far end the record no longer names, and the seal now agrees with it
 
 `createSSHTunnel` (`src/lib/ssh/tunnel.ts:110-115`) returns a pooled tunnel keyed on the CONNECTION ID
@@ -1202,45 +1045,6 @@ the fix: `tunnelledConnection`'s docblock in `src/lib/db/factory.ts`, `TunnelFar
 plus the sentence in `docs/SECURITY.md` that names it as an open limit. Two tests: a pooled tunnel asked
 for a second far end does not silently serve the first, and the digest a provider seals is the address
 its forward actually reaches.
-
-### D87. `endOpenQueryTransaction()` names one shared pointer, so it rolls back whoever recorded a client last
-
-`PostgresProvider.endOpenQueryTransaction()` (`postgres.ts:2545`) acts on `this.lastQueryClient`, which
-`query()` overwrites on every call (`postgres.ts:2300`). `getOrCreateProvider` caches one provider per
-connection id for the whole process, so that single field is shared by every concurrent request on that
-stored connection, and the client the ender rolls back is "whichever client anybody recorded last", not
-the client the calling request's statement ran on.
-
-MEASURED 2026-09-15 on PostgreSQL 18.4 through `pg` 8.23 and the shipped routes, each arm twice against
-a control, with NO exception thrown anywhere:
-
-- Cross-request. A slow plain read on one route, and a `/api/db/multi-query` script
-  `BEGIN; CREATE TABLE ...; SELECT pg_sleep(5); COMMIT;` started 1 s later on the same connection id.
-  The plain read's ender rolled back the script's client mid-script. The script answered 200,
-  `hasError: false`, all four statements "success", and its table did not exist afterwards. The control
-  without the ender: the table exists.
-- Interactive session. The docblock at `postgres.ts:2540-2543` (repeated on the declaration in
-  `src/lib/db/types.ts`) says the interactive session's client "can never be `lastQueryClient`". It can.
-  `beginTransaction()` calls `pool.connect()`, `pg`'s idle list is LIFO, and it is handed the SAME
-  object a previous `query()` recorded, so `txClient === lastQueryClient`. The ender then rolled the
-  session's transaction away: its committed `CREATE TABLE` was gone, while the status route still read
-  `inTransaction` and `commit` answered "Transaction committed". Control: the table exists.
-- Missing the case it is for. Request A `BEGIN; SELECT pg_sleep(2)` with request B `SELECT 1` 700 ms in:
-  A's ender fired on B's client, A's own client was left `idle in transaction`, and the next user's
-  `CREATE TABLE` answered 200 and was invisible to an independent reader.
-
-This is NOT "reachable only when `query()` throws before recording the client". It is reachable by
-ordinary concurrent traffic, which is the normal condition of a per-connection-id shared provider. It
-predates D74: `/api/db/multi-query` has carried this `finally` since #823, where a script was needed to
-fire it. D74's route-level copy widened it to every single-statement request and was reverted for that
-reason.
-
-**Done when:** the ender cannot act on a client the caller did not run on. Clearing `lastQueryClient`
-when `beginTransaction()` takes a client, or comparing it with `txClient`, fixes only the interactive
-arm and leaves the cross-request one, so the surface has to carry the client: `query()` names the client
-its call borrowed and `endOpenQueryTransaction(client)` takes it, or the provider keys the recorded
-client per call. Tests drive the three arms above against a live engine rather than asserting the
-docblock, and the two false docblock sentences (`postgres.ts`, `src/lib/db/types.ts`) go with the fix.
 
 ### D88. A multi-statement text sent to the single-statement query route answers HTTP 500
 
@@ -1323,6 +1127,52 @@ anything a later user of the same cluster notices.
 that closes the question. For `mysql` that is a per-server `performance_schema` capability probe
 plus the implementation behind it. For `mssql` it is whether a pinned `ConnectionPool.acquire()`
 connection can carry a statement at all. For `trino` it is one run against a live coordinator.
+
+### D91. The embedded shell's apply refusal cannot be placed, styled or suppressed by the host
+
+`src/workspace/StudioWorkspace.tsx` renders the D82 refusal itself, as an `output` portaled to
+`document.body` at `fixed bottom-4 right-4 z-[60]`. That is the only viewport-fixed element the
+package's own shell paints, and it lands in the HOST's chrome: the adopter cannot move it, restyle
+it, route it into their own notification surface or turn it off. MEASURED and written into the
+docblock: a body child also falls outside `STUDIO_SCOPED_CSS`, so it renders in the host page's font
+at `letter-spacing: normal` while the workspace box renders at `-0.011em`. The colour tokens are on
+`:root` and survive. The portal itself is not the negotiable part, it is what makes the live region
+reachable at all (`hideOthers` marks the box and installs no observer).
+
+Second, smaller, and in the same surface: `onApplyInFlightChange` on
+`src/components/object-source/ObjectSourceView.tsx` is optional, and the `undefined` arm now has no
+shipped caller. The pane has exactly two mounts in `src` (`Studio.tsx:1127`,
+`StudioWorkspace.tsx:833`) and both pass it; `src/exports/` re-exports the pane from nowhere and
+`dist/*.d.ts` carries no `ObjectSourceView`, so no adopter can mount it without the prop. The arm
+exists for the 14 mounts in `tests/components/object-source/ObjectSourceView.test.tsx` and for
+nothing else.
+
+**Done when:** the host has a documented way to receive or place this refusal instead of having it
+painted into their chrome, with a test for the default (still shown) and for the host-handled path;
+AND `onApplyInFlightChange` is either made required, with the pane's test mounts updated, or its
+optionality is justified in the props docblock by a caller that actually exists.
+
+### D92. A multi-statement script is not guaranteed one pooled backend, so its BEGIN and its COMMIT can land apart
+
+`POST /api/db/multi-query` runs a script by calling `provider.query()` once per statement, and each
+call does its own `pool.connect()`. Nothing holds one backend for the script's lifetime. Under
+concurrent traffic on the same connection id, a script's `BEGIN` and its `COMMIT` can therefore be
+served by different backends, which commits nothing and leaves the first backend's transaction to
+D87's scope-bound ender.
+
+NOT REPRODUCED, and said in that voice. `pg`'s idle list is LIFO and a script's statements run back
+to back, so the same client comes back nearly always: measured 2026-09-15 on PostgreSQL 18.4, six
+concurrent script runs answered identical backend pids throughout. What is missing is a construction
+that forces the interleave, not an argument that it cannot happen.
+
+Found while reviewing D87. It is independent of D87 and was not introduced by it: D87 bound the
+ENDER to the caller's own scope, which is what makes the first backend's transaction reachable at
+all, and this entry is about the script's own statements being spread across backends in the first
+place.
+
+**Done when:** either a probe forces the interleave and the result is recorded, or the route holds
+one client for the script's scope. The second changes pool semantics for every caller of `query()`
+and is the larger change, which is why this is filed rather than folded into D87.
 
 
 ## Value interpolation
@@ -1661,79 +1511,6 @@ stated in `readDefaultBody`'s own docblock.
 
 **Done when:** a body above the framework's clone limit gets one answer that names the size, on every
 route, rather than an empty-body claim on five and a parser error on one.
-
-### X22. The object-edit E2E's restored-tab test fails its first attempt on every CI run so far
-
-MEASURED on BOTH runs this spec has had in CI, #831's `Functional Smoke (PostgreSQL)` job (job
-104060110399 and job 104066966292, 2026-09-14): 6 tests, **1 flaky, 5 passed**, the same one each
-time. It is `e2e/object-edit.spec.ts:409`, `a RESTORED tab is read-only until the reader presses Edit
-again`, failing its first attempt at line 416,
-`expect(page.getByTestId("object-source-edit")).toBeVisible({ timeout: 30_000 })`, with
-`element(s) not found` after the full 30 seconds, and passing on the retry. Two runs out of two is
-not an intermittency: the first attempt fails every time and Playwright's retry is what makes the job
-green, so nothing turns red unless a person reads the log.
-
-The step under test is a `page.reload()` immediately after an edit that was not applied: the tab is
-restored from `localStorage`, the source is re-read, and the edit affordance appears once that read
-lands. WHY the affordance was absent for thirty seconds is NOT measured, and the log does not say.
-Two candidates, neither checked. First, the re-read was refused: every test in the file signs in as
-the same shared account and the spec's own `waitForTheObjectTree` documents that account hitting the
-120-requests-per-60-seconds `query` bucket on the fifth test of a run, and 60 seconds is longer than
-this assertion's 30. Second, the restored tab reached a state that withholds the affordance. They are
-different defects.
-
-One fact that bears on the first and is worth having before anyone re-drives this: the OBJECT TREE
-offers the reader a `tree-retry` button when its read is refused, and `waitForTheObjectTree` presses
-it, but the source pane's failure region (`object-source-failure` in `ObjectSourceView.tsx`) offers
-NO retry control at all. A reader whose source read is refused has no way back except reopening the
-tab, so if the first candidate is the cause then the test is meeting a real product gap and not just
-a slow runner.
-
-**Done when:** the failure is reproduced with the reason named, and the first attempt passes, so
-Playwright's retry is no longer what makes the job green. If the cause is the refused read, closing
-this also means deciding whether the source pane should offer the recovery the tree already does.
-
-### X26. Nothing in CI reads the browser console across an object-edit apply
-
-X21 asked for two things and only one of them landed. The fix is in (`ef37e436`): `ReleasedDiffEditor`
-in `src/components/object-source/ApplyPreviewDialog.tsx` calls `setModel(null)` before it disposes the
-two diff models, which is what stops Monaco raising `TextModel got disposed before DiffEditorWidget
-model got reset` (`monaco-editor/esm/vs/editor/browser/widget/diffEditor/diffEditorWidget.js:233-240`
-registers `onWillDispose` on BOTH models inside an autorun keyed on the diff model, and resetting the
-model disposes that autorun's store). The other half of X21's "Done when", "the E2E spec can assert an
-empty console after an apply", was not done, and the entry was deleted anyway. This is that half.
-
-`e2e/object-edit.spec.ts` DOES install a console listener, `watchForCspViolations`, and it keeps only
-messages whose text contains `Content Security Policy`, so it cannot see this class of error or any
-other. Nothing else under `e2e/` reads the console.
-
-The consequence is an evidence gap, not a live defect: the symptom X21 was filed for, a Chromium
-console error on every apply driven through the UI, was never re-read after the fix. What pins the fix
-is a component test against a hand-written Monaco double
-(`tests/components/object-source/ApplyPreviewDialog.test.tsx`, "closing the dialog RELEASES the two
-models before anything disposes them"), whose error condition is a reconstruction of Monaco's rather
-than a transcription of it.
-
-Widening `watchForCspViolations` is not the fix by itself. The page is not known to be console clean
-today, so this needs the live console read first and then a decision about what the allowed set is,
-otherwise the assertion lands red on messages that have nothing to do with the apply.
-
-**Done when:** an E2E spec reads the whole browser console across an object-edit apply and fails on an
-unexpected message, with the allowed set named and justified, so a regression of X21 turns a job red.
-
-### X27. The published description of the new-tab shortcut does not name its two exceptions
-
-`src/lib/keyboard-shortcuts.ts:32` describes `newTab` as "open a new query tab (except while renaming
-a tab)". D82 added a second, equally transient exception: the shortcut is refused while an object
-apply is in flight. The string is what `docs/FEATURES.md:12` renders, so the shipped shortcut table
-under-describes the shortcut.
-
-No gate catches it: `readme:check` does not cover `FEATURES.md`, and `shortcuts:sync` is not in the
-required check set. Both files were outside the D82 task's ownership.
-
-**Done when:** the `newTab` description names both exceptions, `docs/FEATURES.md` is regenerated from
-it by its own generator rather than hand-edited, and the existing `keyboard-shortcuts` test asserts
-the new string.
 
 
 ## Dependencies

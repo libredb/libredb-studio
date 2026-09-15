@@ -475,15 +475,19 @@ So the next user's command does not fail, it silently does not happen, and the s
 
 `endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
 
-**WHICH CALLER ENDS IT, AND WHICH DOES NOT.** The surface has exactly one caller in the product,
-`POST /api/db/multi-query`, which awaits it in a `finally` after the last statement. **The editor
-never sends a Redis buffer there.** `use-query-execution.ts` gates the multi-statement route on
-`dialectIsSql`, read from `queryLanguage`, and this provider declares `json` (§9), so an editor run
-goes to `POST /api/db/query` (§12.2), and that route ends no transaction, deliberately, for the
-reason D74 records in it. So a `MULTI` typed into the editor is still open when the response is
-sent, and the schema explorer's next `SCAN` is queued behind it; what this method closes is the
-same leak for an API caller that posts a script to `/api/db/multi-query` directly. Closing the
-editor path is D74's, not this provider's: it needs a route that can name the session a call ran on.
+**WHICH CALLERS END IT, AND WHY THAT CHANGED.** The surface now has TWO callers in the product,
+`POST /api/db/multi-query` and `POST /api/db/query`, each awaiting it in a `finally` under a call
+scope of its own. **The editor never sends a Redis buffer to the first of those.**
+`use-query-execution.ts` gates the multi-statement route on `dialectIsSql`, read from
+`queryLanguage`, and this provider declares `json` (§9), so an editor run goes to
+`POST /api/db/query` (§12.2).
+
+When this section was first written that was the end of the story, because the single-statement
+route ended nothing: it could not, since the ender named one shared client rather than the caller's
+own session, and copying the other route's `finally` there was measured to destroy other callers'
+committed work. D87 closed that by binding the ender to a call scope the route mints, and D74 then
+gave this route the `finally` it had been refused. So a `MULTI` typed into the editor IS discarded
+when the response is sent, and the schema explorer's next `SCAN` is no longer queued behind it.
 
 **The ask and the act are TWO commands, and the order is what makes the method safe to call.** The
 substitution is the reading: inside a `MULTI` the server answers the status `QUEUED` instead of the
