@@ -1975,10 +1975,11 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
   test("the shortcut opens a tab again once the answer is on screen", async () => {
     /*
      * A CONTROL, and labelled one rather than counted as a guard: it passes against the pre-fix
-     * shell too, where nothing refuses anything (measured against `7fe83dcc^`, where of the D82
-     * tests only the refusal test above fails). Without it the refusal could be "the shortcut
-     * never works over a Source tab", which would close D82 by breaking #745 instead of by
-     * guarding it, and that is the regression this control would catch.
+     * shell too, where nothing refuses anything. MEASURED by replaying THIS file's current tests
+     * against `7fe83dcc^` source with this describe filtered: 3 fail, 1 pass, and the pass is this
+     * test. The three failures are the other three tests here, every one of them a guard. Without
+     * this one the refusal could be "the shortcut never works over a Source tab", which would close
+     * D82 by breaking #745 instead of by guarding it, and that is the regression it would catch.
      */
     await confirmAndHold();
     await release(CONFLICT);

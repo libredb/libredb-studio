@@ -1088,20 +1088,41 @@ export function StudioWorkspace({
         exist when the dialog opens and installs no observer (`node_modules/aria-hidden` carries no
         `MutationObserver`), so a body child created afterwards - which is exactly when this renders
         - is not marked: portaled, the same measurement answers `[]` and the region IS returned by
-        `byRole("status")`. Everything else that floats in this shell reaches the body the same way,
-        through a Radix portal.
+        `byRole("status")`. A portal is NOT this shell's house style for a float: `QuerySafetyDialog`
+        and `DataProfiler`, both mounted below, are in-place `fixed inset-0 z-50` divs
+        (`src/components/QuerySafetyDialog.tsx:216`, `src/components/DataProfiler.tsx:217`), and
+        `DataProfiler.tsx:186-196` records staying inside the subtree as a deliberate choice. This
+        one leaves the box because the live region needs it to, and for nothing else.
 
         FIXED, and that is a cost paid on purpose in an embeddable surface. This is the only
         viewport-fixed element the shell renders itself, so it paints in the HOST's chrome rather
-        than in the workspace box, with no way for the host to place or style it. The alternative is
-        not "put it in the box": the only moment it renders, this pane's own full-viewport overlay
-        is already covering the host's page, that overlay is a body-level portal at `z-50`, and
-        nothing inside the workspace box can paint above it, so a sentence in the box is a sentence
-        nobody reads. Being a body child is also what makes `z-[60]` an argument rather than an
-        assumption - both layers are then in the root stacking context, and a `transform`, `filter`
-        or `contain` on the host's wrapper can no longer become this element's containing block. The
-        one placement that would cost the host nothing is inside the dialog, and that belongs to
-        `ApplyPreviewDialog`, whose window this shell only observes.
+        than in the workspace box, with no way for the host to place or style it.
+
+        The alternative is not "put it in the box", but NOT because a sentence in the box cannot be
+        seen. MEASURED in Chromium with the two layers reproduced - shell root static with
+        `overflow-hidden` and no `transform`, an in-box child at `fixed z-[60]`, the dialog's
+        body-level `fixed inset-0 z-50` overlay beside it - `elementFromPoint` at the child's centre
+        answers the CHILD. The root builds no stacking context and does not clip a fixed descendant,
+        so 7fe83dcc's in-box placement did paint over the overlay; what it cost was the live region,
+        not the pixels. The same probe with a `transform` on that root answers the OVERLAY instead,
+        because the box then becomes both the containing block and a stacking context. The host owns
+        `className` and every wrapper above it, so that arm is theirs to reach and not ours to rule
+        out, and being a body child removes it by construction: both layers are then in the root
+        stacking context, and no `transform`, `filter` or `contain` on the host's side can become
+        this element's containing block. The one placement that would cost the host nothing is
+        inside the dialog, and that belongs to `ApplyPreviewDialog`, whose window this shell only
+        observes.
+
+        The cost the portal does pay is the FONT, and the colours are not part of it.
+        `STUDIO_SCOPED_CSS` above scopes the font stack, `font-feature-settings` and
+        `letter-spacing` to `[data-studio-workspace]` and re-asserts the family on every descendant,
+        so a `document.body` child falls outside all of it: measured, the identical node renders in
+        the workspace face at `letter-spacing: -0.011em` inside the box and in the HOST page's face
+        at `letter-spacing: normal` on the body. The `--studio-*` colour tokens are declared on
+        `:root` and `.dark` in `src/styles/theme.css`, which `build:lib` ships, so `bg-overlay`,
+        `border-hairline` and `text-fg` read the same either side. That font hazard is the one
+        `DataProfiler.tsx:186-196` weighs the other way; here two sentences of chrome in the host's
+        own font is the smaller loss against a refusal no screen reader is told about.
 
         Rendered only while the refusal is live: the mirror above clears it the moment the apply
         answers or the pane goes away, so it cannot linger over a dialog that is gone.
