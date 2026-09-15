@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import {
   isObjectEditBuildResponseShape,
   isObjectEditOutcomeShape,
@@ -629,6 +631,33 @@ describe("every host-supplied string is bounded", () => {
     expect(isObjectEditUnitShape(command("FUNCTION", PROSE_OVER_LIMIT))).toBe(false);
   });
 
+  test("isObjectEditUnitShape bounds a COMMAND unit's executable text, name and tokens included", () => {
+    // The command arm's own case, and it is not covered by the statement one: `planExecutableLength`
+    // counts `name` plus every argument token plus `payload.text` there, so a payload sized against
+    // the bound ALONE would sit over it once the name and the token are added. The at-the-limit
+    // control subtracts them, which is also what proves they are counted.
+    const NAME = "FUNCTION";
+    const TOKEN = "LOAD";
+    const overhead = NAME.length + TOKEN.length;
+    const commandOf = (payloadLength: number) => ({
+      medium: "command",
+      name: NAME,
+      arguments: [TOKEN],
+      payload: {
+        text: "x".repeat(payloadLength),
+        language: "lua",
+        segments: [{ from: "user", start: 0, end: payloadLength }],
+      },
+    });
+    expect(isObjectEditUnitShape(commandOf(EDIT_BODY_BYTE_LIMIT - overhead))).toBe(true);
+    expect(isObjectEditUnitShape(commandOf(EDIT_BODY_BYTE_LIMIT - overhead + 1))).toBe(false);
+    // And the same payload with the name and the token gone is accepted, so the refusal above is
+    // the SUM and not the payload on its own.
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [stepOf(EDIT_BODY_BYTE_LIMIT - overhead + 1)] })).toBe(
+      true,
+    );
+  });
+
   test("isObjectEditPlanShape bounds every string it accepts", () => {
     const cases: readonly (readonly [string, (text: string) => unknown])[] = [
       ["planId", (text) => ({ ...PLAN, planId: text })],
@@ -792,5 +821,65 @@ describe("every host-supplied string is bounded", () => {
         `${name} over the limit: false`,
       );
     }
+  });
+});
+// The module's "NO SERVER IMPORT IN THIS FILE" rule, which stopped holding by construction the day
+// this module gained its first two VALUE imports and now holds by a property of the files it reaches
+// (fix round 2). `object-kinds.ts` is a file that grows, so without this a value import added there
+// puts `jose` or `node:crypto` into the client bundle with every other gate green.
+
+const REPO_ROOT = join(import.meta.dir, "../../../../");
+
+/** The file a specifier names, resolved the way the bundler resolves it, or `undefined`. */
+function moduleFileOf(specifier: string, fromDirectory: string): string | undefined {
+  const base = specifier.startsWith("@/")
+    ? join(REPO_ROOT, "src", specifier.slice("@/".length))
+    : join(fromDirectory, specifier);
+  return [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")].find((candidate) =>
+    existsSync(candidate),
+  );
+}
+
+describe("the wire module's import closure stays free of the server", () => {
+  test("no VALUE import anywhere in the closure leaves this repository's own source", () => {
+    // Type-only imports are erased and cannot pull a package into a bundle, so only the value ones
+    // are walked. A BARE specifier is what would drag `jose`, `node:crypto` or `next/server` in;
+    // `@/` and relative ones are followed. The closure's answer today is that there are no bare
+    // value imports at all, which is the strongest form of the rule and the clearest failure.
+    const entry = join(REPO_ROOT, "src/lib/api/object-edit-wire.ts");
+    const walked = new Set<string>();
+    const pending = [entry];
+    const external: string[] = [];
+    const unresolved: string[] = [];
+    while (pending.length > 0) {
+      const file = pending.pop() as string;
+      if (walked.has(file)) continue;
+      walked.add(file);
+      const here = dirname(file);
+      for (const match of readFileSync(file, "utf8").matchAll(/^import\s+(type\s+)?[^;]*?from\s+"([^"]+)";/gm)) {
+        if (match[1] !== undefined) continue;
+        const specifier = match[2] as string;
+        const named = `${relative(REPO_ROOT, file)} imports ${specifier}`;
+        if (!specifier.startsWith("@/") && !specifier.startsWith(".")) {
+          external.push(named);
+          continue;
+        }
+        const resolved = moduleFileOf(specifier, here);
+        if (resolved === undefined) unresolved.push(named);
+        else pending.push(resolved);
+      }
+    }
+    expect(external).toEqual([]);
+    expect(unresolved).toEqual([]);
+    // A control on the walk itself, because an assertion over an empty or one-file closure would
+    // pass for the wrong reason: the two value imports this module's docblock names, and what THEY
+    // reach, must all be in it.
+    expect([...walked].map((file) => relative(REPO_ROOT, file)).sort()).toEqual([
+      "src/lib/api/error-codes.ts",
+      "src/lib/api/object-edit-wire.ts",
+      "src/lib/db/errors.ts",
+      "src/lib/db/object-edit.ts",
+      "src/lib/db/object-kinds.ts",
+    ]);
   });
 });

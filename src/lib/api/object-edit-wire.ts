@@ -19,7 +19,10 @@ import type {
  * drag `jose` and `node:crypto` into the client bundle. The two VALUE imports above are within
  * that rule and are checked rather than assumed: `object-edit.ts` and `object-kinds.ts` reach
  * `errors.ts` and `api/error-codes.ts` and nothing else, and both are already imported by the
- * client components in `src/components/object-source/`.
+ * client components in `src/components/object-source/`. The rule used to hold BY CONSTRUCTION,
+ * when every import here was type-only, and now holds by a property of files that grow, so
+ * `tests/unit/lib/api/object-edit-wire.test.ts` walks the closure and fails on the first bare
+ * value import anywhere in it.
  *
  * Every predicate asserts EXACTLY the properties of the arm its discriminant names and refuses any
  * other own STRING-KEYED property, enumerable or not (see `hasExactKeys` for why the distinction is
@@ -250,8 +253,9 @@ function spansTheText(text: string, segments: readonly unknown[]): boolean {
  * when it runs zero times.
  *
  * `text` IS BOUNDED, one level out: the unit sums it across every step and checks the total
- * against `EDIT_PLAN_EXECUTABLE_LIMIT` (see `isWithinTheExecutableBound`), because the number
- * that constant names is the whole plan's executable text and not one step's.
+ * against `EDIT_BODY_BYTE_LIMIT` (see `isWithinTheExecutableBound`, which says why that constant
+ * and not the tighter one), because the quantity being bounded is the whole unit's executable
+ * text and not one step's.
  */
 function isStep(value: unknown): boolean {
   if (!isRecord(value)) return false;
@@ -285,11 +289,29 @@ function isStep(value: unknown): boolean {
  *
  * The number is honest at that job rather than borrowed for it: `EDIT_BODY_BYTE_LIMIT` is the
  * whole request body in BYTES, one UTF-16 code unit is at least one UTF-8 byte, so an executable
- * text longer than this many characters cannot have come through either route's body. What it is
- * really for is the seam with no route in front of it, where a host's answer is a live JS object
- * and nothing between it and the dialog counts anything. `EDIT_PLAN_EXECUTABLE_LIMIT` stays the
- * product's answer and is enforced, with its sentence, at both routes and in
- * `ApplyPreviewDialog`'s refusal to draw a diff above it.
+ * text longer than this many characters cannot have come through either route's body.
+ *
+ * WHAT IT IS AND IS NOT, because an earlier form of this docblock claimed a live uncounted seam and
+ * that claim is FALSE in this tree. Every one of the four call sites has a tighter count in front
+ * of it, so this predicate cannot answer `false` today:
+ * - `edit-apply/route.ts` reads the body through `readBoundedJson` at `EDIT_BODY_BYTE_LIMIT` BYTES
+ *   before the parse, and the unit is a fragment of that body;
+ * - `edit-plan/route.ts` narrows a plan a provider built from text already bounded at
+ *   `EDIT_CHARACTER_LIMIT`, and measures the same unit against `EDIT_PLAN_EXECUTABLE_LIMIT` on the
+ *   very next line;
+ * - the standalone `ObjectSourceView` narrows what those two routes answered;
+ * - the embedded shell counts the WHOLE host answer at `EDIT_PLAN_EXECUTABLE_LIMIT * 2 +
+ *   SOURCE_CHARACTER_LIMIT * 2` = 4,400,000 characters, as it snapshots it
+ *   (`src/workspace/hooks/use-connection-adapter.ts`), which is tighter than this for the answer
+ *   entire, let alone for the unit inside it.
+ * So this is a CEILING held above every bound in front of it and nothing else: it exists so that a
+ * fifth caller, or any of those four losing its own count, meets a number here rather than handing
+ * an unbounded executable text to the dialog. The `SOURCE_CHARACTER_LIMIT` bounds elsewhere in this
+ * module are NOT in that position and do bite today: a 2,000,000-character `refusal.sentence`
+ * passes the embedded answer bound and both routes' body bounds and is refused here.
+ *
+ * `EDIT_PLAN_EXECUTABLE_LIMIT` stays the product's answer and is enforced, with its sentence, at
+ * both routes and in `ApplyPreviewDialog`'s refusal to draw a diff above it.
  */
 function isWithinTheExecutableBound(unit: Record<string, unknown>): boolean {
   return planExecutableLength(unit as unknown as ObjectEditUnit) <= EDIT_BODY_BYTE_LIMIT;
