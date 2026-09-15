@@ -375,6 +375,22 @@ export function StudioWorkspace({
   /** Whether a tab-opening gesture was refused in the window that is still open (D82). */
   const [refusedWhileApplying, setRefusedWhileApplying] = useState(false);
 
+  /**
+   * The one rule every tab-opening gesture in this shell is refused by, in one place (D82).
+   *
+   * Five handlers below ask it and there is no sixth spelling of the answer, which is the point:
+   * the defect this guard exists for was one funnel guarded and its neighbour on the same tree
+   * left open, and five copies of `if (applyInFlight) { setRefusedWhileApplying(true); return; }`
+   * is that defect waiting to be written again. `true` means the caller must return without doing
+   * anything; the caller does the returning, because a guard that swallowed the gesture itself
+   * would have to know what each one returns.
+   */
+  const refuseWhileApplying = useCallback((): boolean => {
+    if (!applyInFlight) return false;
+    setRefusedWhileApplying(true);
+    return true;
+  }, [applyInFlight]);
+
   // === Table click handler ===
   /**
    * Open and run the statement for one object, addressed by its PATH (#789).
@@ -396,13 +412,10 @@ export function StudioWorkspace({
    */
   const onTableClick = useCallback(
     (path: readonly string[]) => {
-      if (applyInFlight) {
-        setRefusedWhileApplying(true);
-        return;
-      }
+      if (refuseWhileApplying()) return;
       tabMgr.handleTableClick(path, queryExec.executeQuery);
     },
-    [applyInFlight, tabMgr, queryExec.executeQuery],
+    [refuseWhileApplying, tabMgr, queryExec.executeQuery],
   );
 
   /**
@@ -434,10 +447,15 @@ export function StudioWorkspace({
        * The gate is the DECLARATION and never the kind id, exactly as the branch above is.
        */
       if (conn.sourceReader !== undefined && kindHasSource(capabilities, object.kind)) {
+        // REFUSED on the same rule as the relation branch above, and this is the branch that
+        // carries the sharper loss: `openSourceTab` FOCUSES a Source tab already open for another
+        // object, so the pane does not merely unmount, it re-addresses under a dialog whose
+        // statement has already gone out.
+        if (refuseWhileApplying()) return;
         tabMgr.openSourceTab(object);
       }
     },
-    [conn.metadata, conn.sourceReader, onTableClick, tabMgr],
+    [conn.metadata, conn.sourceReader, onTableClick, refuseWhileApplying, tabMgr],
   );
 
   /**
@@ -619,9 +637,38 @@ export function StudioWorkspace({
    *
    * WHAT ELSE IS REACHABLE IN THIS WINDOW, ENUMERATED BY MEASUREMENT, because an unmeasured
    * "nothing else can reach this" is the mistake D82 was filed over. The dialog refuses every exit
-   * it owns while `applying`: no close button, no Escape, no press outside. What it cannot refuse
-   * is a global listener, and `grep -rE 'addEventListener\(\s*"keydown' src` answers FOUR, of
-   * which exactly one can move the active tab here:
+   * it owns while `applying`: no close button, no Escape, no press outside. Everything else is
+   * enumerated in two passes, KEYDOWN and CLICK, because the first pass alone answered a narrower
+   * question than the paragraph claimed and a click moves the active tab here too.
+   *
+   * THE CLICK PASS first, since it is the larger one. Every mover of the active tab is a
+   * `setActiveTabId` in `src/hooks/use-tab-manager.ts`, and `grep -n "setActiveTabId(" ` there
+   * answers eleven calls: the four that restore a workspace at mount, which no gesture reaches,
+   * `reopenClosedTab`, which is reached only from the Undo toast and this shell mounts no
+   * `<Toaster />` for the reason `handleApplied` records, and SIX gestures. Those six are `addTab`,
+   * `handleTableClick`, `handleGenerateSelect`, `openSourceTab` (twice, mint and focus), `closeTab`
+   * and the setter `StudioTabBar` is handed directly. Four are refused here, all through
+   * `refuseWhileApplying` above: this handler, `onTableClick`, and the row menu's
+   * `onGenerateSelect` and `onViewSource`, the last of which the tree activation in
+   * `onObjectClick` shares. Each is driven under the overlay in
+   * `tests/components/studio/embedded-source.test.tsx`, by a DOM click on a row the Radix modal
+   * has aria-hidden and covered, which is the one path that still reaches them.
+   *
+   * THE TAB STRIP'S OWN TWO ARE DELIBERATELY NOT REFUSED, and this is a decision with a cost
+   * rather than a door nobody looked at. `onSetActiveTabId` and `onCloseTab` on `StudioTabBar`
+   * below both move the active tab and both unmount this pane with the host's statement already
+   * sent. They are left open because they are the reader's only way out of an apply that never
+   * answers: the dialog refuses every exit it owns while `applying`, so a host whose `apply`
+   * never settles would otherwise leave a shell in which no gesture works at all. The four
+   * refusals above are gestures that open or focus ANOTHER tab, which is a loss the reader did not
+   * ask for; the strip is the one place they say "leave this". The cost if that is the wrong call:
+   * a reader who presses a tab under an overlay that stopped covering it loses the dialog and the
+   * outcome of a statement already sent, exactly as D82 describes. `src/components/Studio.tsx`
+   * leaves the same two open, so the two shells do not disagree.
+   *
+   * THE KEYDOWN PASS. What the dialog cannot refuse is a global listener, and
+   * `grep -rE 'addEventListener\(\s*"keydown' src` answers FOUR, of which exactly one can move
+   * the active tab here:
    *
    * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
    *   the one this handler guards. It opens a tab and `addTab` activates it.
@@ -654,12 +701,9 @@ export function StudioWorkspace({
    * refusing on different rules is the drift this handler exists to prevent.
    */
   const handleAddTab = useCallback(() => {
-    if (applyInFlight) {
-      setRefusedWhileApplying(true);
-      return;
-    }
+    if (refuseWhileApplying()) return;
     addTab();
-  }, [addTab, applyInFlight]);
+  }, [addTab, refuseWhileApplying]);
 
   /**
    * The row menu's actions in THIS shell, which is four of the six (U22, #789).
@@ -683,7 +727,17 @@ export function StudioWorkspace({
    * shells, which is a change to those hooks rather than to this line.
    */
   const objectActions: TreeRowActionHandlers = {
-    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
+    /*
+     * REFUSED while an apply is in flight, like every other gesture that moves the active tab
+     * (D82). `handleGenerateSelect` mints a `Query: <object>` tab and activates it, and this row
+     * menu hangs off the SAME tree rows the activation above does, so it is reachable by exactly
+     * the path that one is. The three modal openers below move no tab and are not guarded: they
+     * set a path this shell renders a modal from, and the Source pane stays mounted behind it.
+     */
+    onGenerateSelect: (object) => {
+      if (refuseWhileApplying()) return;
+      tabMgr.handleGenerateSelect(object.path);
+    },
     onProfileObject: features.codeGenerator ? (object) => setProfilerPath(object.path) : undefined,
     onGenerateCode: features.codeGenerator ? (object) => setCodeGenPath(object.path) : undefined,
     onGenerateTestData: features.testDataGenerator ? (object) => setTestDataPath(object.path) : undefined,
@@ -693,7 +747,13 @@ export function StudioWorkspace({
      * withholds follow, and here it is what keeps a host that implements nothing from being
      * offered an action no route in this package can serve.
      */
-    onViewSource: conn.sourceReader === undefined ? undefined : (object) => tabMgr.openSourceTab(object),
+    onViewSource:
+      conn.sourceReader === undefined
+        ? undefined
+        : (object) => {
+            if (refuseWhileApplying()) return;
+            tabMgr.openSourceTab(object);
+          },
   };
 
   // === No-op callbacks for disabled features ===

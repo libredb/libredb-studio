@@ -1929,6 +1929,40 @@ describe("the embedded shell refuses a tab-opening gesture while a host apply is
     });
   }
 
+  /**
+   * One row-menu item, opened and pressed through the DOM, for the reason `clickRowInDom` gives.
+   *
+   * The menu is hand-rolled rather than Radix (`src/components/object-tree/RowMenu.tsx`), so the
+   * trigger is an ordinary `onClick` button and both presses land the same way a row activation
+   * does: through React's delegated listener, under an overlay that `pointer-events` alone would
+   * otherwise be credited with closing.
+   *
+   * NOT WHILE THE DIALOG IS OPEN AND NOT APPLYING, which is why each control below dismisses the
+   * dialog first. MEASURED: with the conflict on screen, this function finds no `role="menuitem"`
+   * at all, in a fresh mount as well as a reused one. `RowMenu` closes on BLUR, and the Radix
+   * dialog's focus trap pulls focus back inside itself the moment the menu mounts and focuses its
+   * first item, so the menu closes in the same flush it opened in. The refused press is the one
+   * that works, because the applying dialog holds focus on its own control and does not chase it.
+   */
+  function clickRowMenuItemInDom(rowLabel: string, item: string): void {
+    const rowNode = [...document.querySelectorAll('[role="treeitem"]')].find((node) =>
+      (node.textContent ?? "").includes(rowLabel),
+    );
+    if (rowNode === undefined) throw new Error(`No tree row matching ${rowLabel}`);
+    const trigger = rowNode.querySelector('[data-testid="tree-row-menu-trigger"]');
+    if (trigger === null) throw new Error(`The row ${rowLabel} offers no menu`);
+    act(() => {
+      (trigger as HTMLElement).click();
+    });
+    const menuItem = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (node) => (node.textContent ?? "") === item,
+    );
+    if (menuItem === undefined) throw new Error(`No menu item ${item} on ${rowLabel}`);
+    act(() => {
+      (menuItem as HTMLElement).click();
+    });
+  }
+
   /** The shortcut as a reader presses it, from the control the dialog has focus in. */
   function pressNewTab(target: HTMLElement): void {
     act(() => {
@@ -2012,6 +2046,103 @@ describe("the embedded shell refuses a tab-opening gesture while a host apply is
 
     await waitFor(() => expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
     await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders LIMIT 50;"]));
+  });
+
+  test("a SECOND routine's row opens no Source tab while the apply is in flight", async () => {
+    /*
+     * THE THIRD DOOR, and the sharpest of the three: `onObjectClick`'s non-relation branch calls
+     * `tabMgr.openSourceTab`, which for an object with no tab open yet mints one and activates it,
+     * and for one already open FOCUSES it. Either way this shell renders the Source pane only for
+     * the ACTIVE Source tab, so the pane re-addresses or unmounts with the host's statement
+     * already sent. The relation branch beside it was guarded first and this one was not, which is
+     * the drift a single funnel is supposed to prevent.
+     */
+    await confirmAndHold();
+
+    clickRowInDom("tax_rate");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    // The control, in the same test: the identical gesture opens the tab once the apply answers,
+    // so the refusal above cannot be "a DOM click on a covered row never worked".
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    clickRowInDom("tax_rate");
+    await waitFor(() =>
+      expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: app.tax_rate(integer)"]),
+    );
+  });
+
+  test("the row menu's Generate Query is refused too, on the same rule and with the same words", async () => {
+    /*
+     * THE FOURTH DOOR. `objectActions.onGenerateSelect` is a row action on the SAME tree the
+     * activation above drives, and `tabMgr.handleGenerateSelect` ends with `setActiveTabId(newId)`
+     * on a freshly minted `Query: <object>` tab. The row menu is reachable by exactly the DOM path
+     * the activation is, so guarding the activation and not the menu item beside it would close a
+     * door and leave its handle.
+     */
+    const executed: string[] = [];
+    await confirmAndHold(executed);
+
+    clickRowMenuItemInDom("orders", "Generate Query");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    // The generated statement never went out either: the refusal is before the tab and the run.
+    expect(executed).toEqual([]);
+
+    /*
+     * THE CONTROL, in the same mount and after a real refusal, which is what rules out "a DOM
+     * click on a covered menu never worked". The dialog is dismissed first for the reason
+     * `clickRowMenuItemInDom` records, so the control measures the guard and not the focus trap.
+     */
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    await click("object-source-apply-cancel");
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    clickRowMenuItemInDom("orders", "Generate Query");
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query: orders"]));
+  });
+
+  test("the row menu's View Source is refused too, on the same rule and with the same words", async () => {
+    /*
+     * THE FIFTH DOOR, and it reaches the same `openSourceTab` the activation above does, from the
+     * menu instead of from the row. Driven on a DIFFERENT routine on purpose: View Source on the
+     * object already open would only focus the tab that is already active, which moves nothing and
+     * would pass over an unguarded shell.
+     */
+    await confirmAndHold();
+
+    clickRowMenuItemInDom("tax_rate", "View Source");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    // THE CONTROL, in the same mount and after a real refusal; the dialog is dismissed first for
+    // the reason `clickRowMenuItemInDom` records.
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    await click("object-source-apply-cancel");
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    clickRowMenuItemInDom("tax_rate", "View Source");
+
+    await waitFor(() =>
+      expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: app.tax_rate(integer)"]),
+    );
   });
 
   test("the refusal retires the moment the apply answers, rather than sitting on screen for ever", async () => {
