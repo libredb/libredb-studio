@@ -828,6 +828,12 @@ Two more measured consequences of that path: the revision handed back was whiche
 With the guard, the same sequence answers `refused` with class `guard`, `xmin` does not move and `SHOW search_path` reads `"$user", public`; the control, the identical apply on an idle client, still answers `applied` and its write survives the later rollback.
 Neither a rollback nor a retry: rolling the foreign transaction back destroys work this user was never shown, and `POSTGRES_POOL_MAX=1`, which a single-slot PgBouncer also produces, has no other client to retry on.
 
+**The apply re-resolves the editable kind before it sends anything.**
+`applyObjectEdit` calls `requireEditableKind` on the plan's kind against this connection's own capabilities and discards the return, exactly as Redis does, because the apply sends the plan's bytes verbatim and needs nothing off the spec.
+Neither shipped path can reach the refusal: `POST /api/db/objects/edit-apply` asks the same question on the connected provider, and the plan's statement was minted by a `buildObjectEdit` that asked it too.
+The population it closes is a `@libredb/studio` library consumer calling `applyObjectEdit` directly.
+Without it a plan carrying a kind this provider does not declare editable reached the round trip and was refused only afterwards, by the re-read's address derivation, with the wrong sentence and the DDL already sent.
+
 **A position is converted into the reader's own coordinates.**
 PostgreSQL's `position` is a 1-based CHARACTER offset into the text that was SENT, and it arrives from `pg` as a string although `QueryError.position` is typed `number`.
 The plan carries a segment map, so an offset inside the provider's guard block is reported as `outside` rather than as a number, and an offset in the reader's text is converted to the line and column of THEIR text.

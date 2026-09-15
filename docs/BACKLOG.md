@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D83, U17 · 41
+- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 40
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 16
@@ -1231,31 +1231,6 @@ keeping the pane mounted for the tab that owns it. The pane's own state is alrea
 **Done when:** an apply in flight cannot be unmounted by the new-tab shortcut, or its answer reaches the
 reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
 reachability paragraph in `Studio.tsx` is corrected in the same change.
-
-### D83. PostgreSQL is the only day-one apply that does not re-resolve the editable kind
-
-`applyObjectEdit` calls `requireEditableKind` on Trino (`src/lib/db/providers/sql/trino/index.ts:1562`)
-and on Redis (`src/lib/db/providers/keyvalue/redis.ts:1869`) and NOT on PostgreSQL
-(`src/lib/db/providers/sql/postgres.ts:3266`, which consults `plan.kind` nowhere at all). Trino needs the
-returned spec for its re-read; Redis DISCARDS the return value, so on that provider the call is a guard
-and nothing else, which is what makes PostgreSQL's absence an inconsistency rather than a shape
-difference.
-
-NOT A LIVE DEFECT THROUGH ANY SHIPPED PATH, said in that voice rather than left implied.
-`src/app/api/db/objects/edit-apply/route.ts:141` re-resolves editability on the CONNECTED provider for
-every apply, which is D57 closed on the write path, and the plan's statement was minted by a
-`buildObjectEdit` that called `requireEditableKind` itself (`postgres.ts:2968`). The population that
-reaches the provider without either check is a `@libredb/studio` library consumer calling
-`provider.applyObjectEdit` directly, and PostgreSQL's apply sends `plan.unit.steps[0].text` verbatim, so
-what it would execute is a statement its own build already minted.
-
-Found by the external review of PR #831 (#789, discussion #778) and verified by grep rather than
-adopted from the review.
-
-**Done when:** the three day-one applies agree, with a test that drives an apply plan carrying a kind the
-provider does not declare editable and asserts the refusal, or with a docblock on `postgres.ts` saying by
-name why the check is not there and what carries it instead.
-
 
 ## Value interpolation
 

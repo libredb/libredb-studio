@@ -6587,6 +6587,33 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       await provider.disconnect();
     });
 
+    test("a plan carrying a kind this provider will not write back is refused before anything is sent", async () => {
+      // The same guard Trino and Redis open their apply with, and Redis discards its return exactly
+      // as this one does. The population it closes is a `@libredb/studio` consumer calling
+      // `applyObjectEdit` directly, past the edit-apply route that asks the same question (D57).
+      const provider = await connected();
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [ROUTINE_ROW] };
+      };
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      sent.length = 0;
+      await expect(provider.applyObjectEdit({ ...build.plan, kind: "view" })).rejects.toThrow(
+        /does not apply an edited definition for the kind "view"/,
+      );
+      // Nothing was sent. The guard sits ahead of the pooled client, so a kind this provider will
+      // not write back costs no round trip and cannot half-apply.
+      expect(sent).toEqual([]);
+      await provider.disconnect();
+    });
+
     test("a command unit is not a plan this provider issued and raises", async () => {
       const provider = await connected();
       mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });

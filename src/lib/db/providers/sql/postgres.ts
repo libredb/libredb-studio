@@ -3344,6 +3344,16 @@ export class PostgresProvider extends SQLBaseProvider {
       throw new QueryError("A PostgreSQL object edit plan carries a statement unit, received a command", "postgres");
     }
     const [step] = plan.unit.steps;
+    // THE SAME ENTRY GUARD THE OTHER TWO DAY-ONE APPLIES OPEN WITH (D83), and the return is
+    // DISCARDED here exactly as Redis discards it: this method sends `plan.unit.steps[0].text`
+    // verbatim and needs nothing off the spec, so the call is a guard and nothing else. Neither
+    // shipped path can reach it, because `edit-apply/route.ts` re-resolves editability on the
+    // CONNECTED provider and the statement was minted by a `buildObjectEdit` that asked the same
+    // question; the population is a `@libredb/studio` consumer calling this method directly. It is
+    // here rather than absent because three applies that answer the same question differently is
+    // how one of them later answers it wrongly, and because without it a foreign kind reaches the
+    // round trip and is refused only by the re-read's address derivation, AFTER the DDL was sent.
+    requireEditableKind(this.getCapabilities(), plan.kind, { displayName: "PostgreSQL", type: "postgres" });
     const started = Date.now();
     const client = await this.pool!.connect();
     // A CLIENT THAT IS NOT IDLE BELONGS TO SOMEBODY ELSE'S TRANSACTION, and this apply refuses
