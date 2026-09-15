@@ -1157,8 +1157,8 @@ async function openSourceTab(): Promise<void> {
 }
 
 /** Mount a host, open the tab, and take the two gestures that reach the preview: Edit, Preview. */
-async function previewThrough(objectEditor: HostEditor): Promise<void> {
-  render(workspace({ reader: editingReader(objectEditor) }));
+async function previewThrough(objectEditor: HostEditor, executed?: string[]): Promise<void> {
+  render(workspace({ reader: editingReader(objectEditor), ...(executed === undefined ? {} : { executed }) }));
   await openSourceTab();
   await click("object-source-edit");
   await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
@@ -1864,7 +1864,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
  * `handleAddTab` in `src/workspace/StudioWorkspace.tsx` says what each one does; the only one this
  * shell mounts that moves the active tab is `StudioTabBar`'s new-tab shortcut (#745).
  */
-describe("the embedded shell refuses the new-tab shortcut while a host apply is in flight", () => {
+describe("the embedded shell refuses a tab-opening gesture while a host apply is in flight", () => {
   const CONFLICT = {
     outcome: "conflict",
     conflict: "object-changed",
@@ -1882,12 +1882,12 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
    * `applying` in the same promise continuation the answer arrives in, so there is no frame in
    * between for a keystroke to land in.
    */
-  async function confirmAndHold(): Promise<void> {
+  async function confirmAndHold(executed?: string[]): Promise<void> {
     const holdingHost = {
       build: async () => BUILT,
       apply: () => new Promise<ObjectEditOutcome>((resolve) => (releaseApply = resolve)),
     } as unknown as HostEditor;
-    await previewThrough(holdingHost);
+    await previewThrough(holdingHost, executed);
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
     await click("object-source-apply-confirm");
     await waitFor(() =>
@@ -1911,6 +1911,22 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
    */
   function tabNamesInDom(): string[] {
     return [...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent ?? "");
+  }
+
+  /**
+   * A tree row read from the DOM and activated there, which is the only way the object tree is
+   * reachable while the dialog is open: Radix aria-hides everything outside the modal, so
+   * `getByRole("treeitem")` answers nothing and the row is still mounted and still listening.
+   * The same reading `tabNamesInDom` takes of the tab strip, for the same reason.
+   */
+  function clickRowInDom(label: string): void {
+    const node = [...document.querySelectorAll('[role="treeitem"]')].find((item) =>
+      (item.textContent ?? "").includes(label),
+    );
+    if (node === undefined) throw new Error(`No tree row matching ${label}`);
+    act(() => {
+      (node as HTMLElement).click();
+    });
   }
 
   /** The shortcut as a reader presses it, from the control the dialog has focus in. */
@@ -1950,6 +1966,52 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
     expect(screen.getByTestId("mock-monaco-diff-editor").getAttribute("data-original")).toContain(
       "somebody else got there first",
     );
+  });
+
+  test("activating an object-tree row is refused too, on the same rule and with the same words", async () => {
+    /*
+     * THE SECOND DOOR. `onTableClick` calls `tabMgr.handleTableClick`, which opens a new tab and
+     * ends with `setActiveTabId(newId)`; this shell renders the Source pane only for an ACTIVE
+     * Source tab, so an unguarded activation unmounts the pane and takes the dialog down with the
+     * host's statement already sent, which is exactly what the new-tab shortcut was guarded for.
+     *
+     * It is not reachable by a reader TODAY: this shell renders no command palette, and the Radix
+     * modal covers and aria-hides the tree. That is the argument and not the guard. An unmeasured
+     * "nothing else can reach this" is the class D82 was filed over, the covering overlay is one
+     * `className` on the host's side away from being the wrong answer, and the standalone shell
+     * guards its equivalent door. So the row is driven through the DOM here, which is the one path
+     * that still reaches the handler under the overlay.
+     */
+    const executed: string[] = [];
+    await confirmAndHold(executed);
+
+    clickRowInDom("orders");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    // The generated statement did not go out either: the refusal is before the execution.
+    expect(executed).toEqual([]);
+    // One rule, one surface: the same live region the shortcut raises, not a second wording.
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
+  test("the same row opens its tab once the apply has answered, which is the guard's control", async () => {
+    // Without this the refusal above could be "a DOM click on a covered row never worked", which
+    // would pass over a shell that guards nothing.
+    const executed: string[] = [];
+    await confirmAndHold(executed);
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    clickRowInDom("orders");
+
+    await waitFor(() => expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
+    await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders LIMIT 50;"]));
   });
 
   test("the refusal retires the moment the apply answers, rather than sitting on screen for ever", async () => {

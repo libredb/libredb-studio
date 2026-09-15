@@ -361,13 +361,48 @@ export function StudioWorkspace({
     [buildResultFile, toast],
   );
 
+  /**
+   * Whether the Source pane has an apply in flight: sent, and no answer back yet (D82).
+   *
+   * The pane publishes it and this shell only mirrors it, because the shell cannot see it: the
+   * plan, the round trip and the dialog all live inside the pane. `src/components/Studio.tsx`
+   * mirrors the same callback into the same shape, and the two are deliberately one spelling.
+   *
+   * Declared HERE, above the two handlers that read it, rather than beside the mirror below: both
+   * tab-opening gestures are refused on it and a `const` cannot be read before it is bound.
+   */
+  const [applyInFlight, setApplyInFlight] = useState(false);
+  /** Whether a tab-opening gesture was refused in the window that is still open (D82). */
+  const [refusedWhileApplying, setRefusedWhileApplying] = useState(false);
+
   // === Table click handler ===
-  /** Open and run the statement for one object, addressed by its PATH (#789). */
+  /**
+   * Open and run the statement for one object, addressed by its PATH (#789).
+   *
+   * REFUSED while an object apply is in flight, on the same rule and through the same surface as
+   * the new-tab shortcut below (D82). `handleTableClick` ends with `setActiveTabId(newId)` and this
+   * shell renders the Source pane only for an ACTIVE Source tab, so an unguarded activation
+   * unmounts the pane and takes the dialog with it after the host's statement has been sent, which
+   * is the loss D82 records.
+   *
+   * THE GUARD IS HERE BECAUSE THE REACHABILITY ARGUMENT IS A COVERING OVERLAY AND NOT AN ABSENCE.
+   * Measured: no reader can take this gesture in that window today, because this shell renders no
+   * command palette (the standalone shell's second door, enumerated below) and the Radix modal
+   * covers and aria-hides the object tree. But a cover is a fact about one render of one host's
+   * page, not about this handler: the host owns `className` and every wrapper above this box, and
+   * an unmeasured "nothing else can reach this" is the class D82 was filed over. The standalone
+   * shell guards its equivalent door in `src/components/Studio.tsx`, and one funnel refusing on two
+   * different rules in two shells is the drift the guard prevents.
+   */
   const onTableClick = useCallback(
     (path: readonly string[]) => {
+      if (applyInFlight) {
+        setRefusedWhileApplying(true);
+        return;
+      }
       tabMgr.handleTableClick(path, queryExec.executeQuery);
     },
-    [tabMgr, queryExec.executeQuery],
+    [applyInFlight, tabMgr, queryExec.executeQuery],
   );
 
   /**
@@ -557,17 +592,6 @@ export function StudioWorkspace({
   }, [catalogChanged, onSourceChange]);
 
   /**
-   * Whether the Source pane has an apply in flight: sent, and no answer back yet (D82).
-   *
-   * The pane publishes it and this shell only mirrors it, because the shell cannot see it: the
-   * plan, the round trip and the dialog all live inside the pane. `src/components/Studio.tsx`
-   * mirrors the same callback into the same shape, and the two are deliberately one spelling.
-   */
-  const [applyInFlight, setApplyInFlight] = useState(false);
-  /** Whether a tab-opening gesture was refused in the window that is still open (D82). */
-  const [refusedWhileApplying, setRefusedWhileApplying] = useState(false);
-
-  /**
    * The mirror, which also RETIRES the sentence the refusal left on screen (D82).
    *
    * The pane calls this with `false` both when the answer lands and when it unmounts, so the
@@ -606,7 +630,9 @@ export function StudioWorkspace({
    *   profiler's `onClose`. It moves no tab, and it cannot unmount this pane.
    * - `src/components/CommandPalette.tsx:103`, on `document`, whose table rows call
    *   `handleTableClick` and DO move the active tab. That is the standalone shell's second gesture
-   *   in D82; this shell renders no palette, so there is nothing here to guard.
+   *   in D82, and this shell renders no palette. It is still the reason `onTableClick` above now
+   *   carries the same guard: what keeps that door shut here is a covering overlay and a component
+   *   this shell happens not to render, and neither is an absence.
    * - `src/components/ui/sidebar.tsx:94`, on `window`, toggling a sidebar. It is an unused shadcn
    *   primitive with no importer anywhere in `src` (P5), so it is not mounted here or anywhere.
    *
