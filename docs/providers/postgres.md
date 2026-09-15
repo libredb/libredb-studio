@@ -1542,6 +1542,13 @@ MEASURED at provider level on 2026-09-15: with `query("BEGIN", scope)` having re
 The window is only open when an EARLIER statement left something open, which is what makes it the leak above rather than the aliasing D87 closed: 46 attempts through the shipped routes lost nothing, because each route ends its own scope inside the same request.
 Ten apparent losses in the first run of that probe were `HTTP 429` from the route's own rate limiter and not losses at all, which is recorded because the first reading of it looked like the defect.
 
+**A ROLLBACK THIS PROVIDER COULD NOT ISSUE RAISES, and the raise takes the response with it.**
+Every client the scope recorded is attempted inside its own `try`, so one dead socket cannot strand the clients behind it in the loop, and the held failures are raised together once the loop is done: `Could not roll back the transaction this request left open on N of M pooled clients: ...`, where `M` counts the clients ASKED and not the clients recorded, because a client a later statement of the same scope already returned to `I` was never sent anything.
+Neither arm of the outcome type is true of a client still sitting in `T`: `"none"` denies the transaction and `"rolled-back"` certifies a rollback that did not happen.
+The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because [`errors.ts`](../../src/lib/api/errors.ts) maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
+The cost is two losses and both are deliberate: the throw is inside the route's `finally`, so it replaces the response the request had already produced, a script's per-statement results included, and a `finally` that throws also DISCARDS the exception the body was leaving with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
+A pooled client left `idle in transaction` poisons every later user of that stored connection, which is the failure this whole surface exists for, so it is raised rather than reported quietly.
+
 ---
 
 ## 9. Maintenance

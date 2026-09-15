@@ -61,10 +61,12 @@ import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
   ConnectionError,
+  DatabaseError,
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
 } from "../../errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
@@ -2584,9 +2586,28 @@ export class PostgresProvider extends SQLBaseProvider {
    * A FAILED ROLLBACK RAISES, after all of them have been tried. Neither arm of
    * `OpenQueryTransactionOutcome` is true of a client still sitting in "T": `"none"` denies
    * the transaction and `"rolled-back"` certifies a rollback that did not happen, and this
-   * surface exists precisely so that a caller can tell the user what became of the work. The
-   * cost is real and deliberate: both routes call this in a `finally`, so the throw replaces
-   * the response the request had already produced with a 500. A leaked transaction that
+   * surface exists precisely so that a caller can tell the user what became of the work.
+   *
+   * THE CLASS IS THE STATUS CODE, which is why this one raise is a `DatabaseError` and not
+   * the `QueryError` every other raise in this provider uses. MEASURED against the mapper
+   * both routes answer through, `createErrorResponse` in `src/lib/api/errors.ts`: the
+   * `QueryError` arm answers HTTP 400 with `code: "QUERY_ERROR"` and logs "Query error", so a
+   * rollback this SERVER could not issue on a client of its OWN pool would be reported to the
+   * caller as a fault in the SQL they sent, with nothing in the request to correct. The base
+   * `DatabaseError` arm answers HTTP 500 with `code: "DATABASE_ERROR"` and logs at error
+   * level, which is what a poisoned pooled client is. The postgres provider's own test drives
+   * the raised value through `createErrorResponse` and reads the 500 off the response, rather
+   * than asserting a class name and inferring the rest.
+   *
+   * THE COST IS REAL AND DELIBERATE, and it is two losses rather than one. Both routes call
+   * this in a `finally`, so the throw replaces the response the request had already produced
+   * with that 500, a script's per-statement results included. And a `finally` that throws
+   * DISCARDS the exception the body was already leaving with: on `POST /api/db/query` the
+   * ordinary case is one dead socket that killed the statement AND this ROLLBACK, so the
+   * engine's own message and its `position` and `detail` are dropped and the reader is handed
+   * the sentence below instead. That half predates the per-client loop, since the bare
+   * `await client.query("ROLLBACK")` threw the same way, and it is written here because a
+   * paragraph that claims to state the cost has to state all of it. A leaked transaction that
    * could not be ended poisons the pooled client for every later user of that stored
    * connection, which is the failure this whole surface was built for, so it is louder than
    * one lost result set. Reporting it in the response body instead would need a third arm on
@@ -2604,6 +2625,10 @@ export class PostgresProvider extends SQLBaseProvider {
     if (clients === undefined) return "none";
 
     let outcome: OpenQueryTransactionOutcome = "none";
+    // The denominator of the sentence below, and it counts ATTEMPTS rather than `clients.size`.
+    // A client the loop skipped is not a rollback that succeeded, it is one the server was
+    // never sent, and "1 of 2" over a skipped client reads as "one of two rollbacks failed".
+    let attempted = 0;
     const failures: string[] = [];
     for (const client of clients) {
       try {
@@ -2611,6 +2636,7 @@ export class PostgresProvider extends SQLBaseProvider {
         // been ended in the meantime by a later statement of this same scope.
         const status = client.getTransactionStatus();
         if (status !== "T" && status !== "E") continue;
+        attempted += 1;
         await client.query("ROLLBACK");
         outcome = "rolled-back";
       } catch (error) {
@@ -2623,9 +2649,10 @@ export class PostgresProvider extends SQLBaseProvider {
     this.openQueryScopes.delete(scope);
 
     if (failures.length > 0) {
-      throw new QueryError(
-        `Could not roll back the transaction this request left open on ${failures.length} of ${clients.size} pooled clients: ${failures.join("; ")}`,
+      throw new DatabaseError(
+        `Could not roll back the transaction this request left open on ${failures.length} of ${attempted} pooled clients: ${failures.join("; ")}`,
         "postgres",
+        ApiErrorCode.DATABASE_ERROR,
         "ROLLBACK",
       );
     }

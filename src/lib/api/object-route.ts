@@ -105,11 +105,14 @@ export async function handleObjectRequest(
  * The wire body for one `ObjectRouteError`, `{ error }` plus `code` when the refusal carries one.
  *
  * A named function rather than an object literal inside the catch above, and the reason is
- * measurement rather than tidiness: the `code` arm has NO PRODUCER IN THIS REPOSITORY YET. The one
- * code that uses it, `EDIT_PLAN_INVALID`, is thrown by the two edit routes, which are a later
- * task's, so a ternary buried in the catch would be a branch nothing in this phase's own suite can
- * reach, covered by line count and unexercised in fact. Exported, so the test drives BOTH arms
- * directly and the shape is asserted rather than assumed.
+ * measurement rather than tidiness. The one code that uses the `code` arm, `EDIT_PLAN_INVALID`, has
+ * exactly ONE producer: `src/app/api/db/objects/edit-apply/route.ts` raises
+ * `ObjectRouteError(verdict.reason, 400, ApiErrorCode.EDIT_PLAN_INVALID)` for a plan that no longer
+ * verifies. A ternary buried in the catch would therefore be a branch one route reaches and
+ * everything else in this file's own suite cannot, covered by line count and unexercised in fact.
+ * Exported, so the test drives BOTH arms directly and the shape is asserted rather than assumed.
+ * An earlier revision of this paragraph said the arm had no producer at all and that the edit
+ * routes were a later task's, which was true before they landed.
  *
  * The key is OMITTED rather than sent as `undefined`. `JSON.stringify` drops an undefined value, so
  * the two spellings reach a client identically, and a reader of this line should not have to know
@@ -644,7 +647,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * There are THREE producers of `edit`: `providers/sql/postgres.ts:3110`, gated on
+ * There are THREE producers of `edit`: `providers/sql/postgres.ts:3137`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1257` and
  * `providers/keyvalue/redis.ts:1780`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
@@ -678,7 +681,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3267`, `providers/keyvalue/redis.ts:1870`
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3294`, `providers/keyvalue/redis.ts:1870`
  * and `providers/sql/trino/index.ts:1451`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.

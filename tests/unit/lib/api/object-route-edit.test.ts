@@ -186,12 +186,14 @@ describe("the affordance the route strips", () => {
 });
 
 describe("the wire body one refusal renders as", () => {
-  // ADDED to the plan's own test list, with its reason, because the `code` arm of the catch in
-  // `handleObjectRequest` HAS NO PRODUCER IN THIS REPOSITORY YET: `EDIT_PLAN_INVALID` is thrown by
-  // the two edit routes, which a later task owns. Left inline in the catch it would be a branch
-  // this phase's suite cannot reach, which line coverage reports as covered because it shares a
-  // line with the arm every existing refusal takes. That is this epic's signature defect, a guard
-  // over a population nothing builds, so the population is built here instead.
+  // ADDED to the plan's own test list, with its reason: the `code` arm of the catch in
+  // `handleObjectRequest` has exactly ONE producer, `EDIT_PLAN_INVALID` raised by
+  // `src/app/api/db/objects/edit-apply/route.ts`, and nothing else in this file's suite reaches it.
+  // Left inline in the catch it would be a branch line coverage reports as covered because it
+  // shares a line with the arm every other refusal takes. That is this epic's signature defect, a
+  // guard measured by a population nothing here builds, so the population is built here instead.
+  // An earlier revision of this comment said the arm had no producer anywhere, which was true
+  // before the edit routes landed.
   test("a refusal with no code renders `{ error }` and does NOT carry the key", () => {
     const body = objectRouteErrorBody(new ObjectRouteError("this request carried no body", 400));
     expect(body).toEqual({ error: "this request carried no body" });

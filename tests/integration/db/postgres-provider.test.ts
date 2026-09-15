@@ -22,6 +22,10 @@ import {
   ExecutionProfileError,
   QueryError,
 } from "@/lib/db/errors";
+// The ender's raise is measured through the mapper the two routes answer through, because the
+// cost its docblock states is an HTTP status and not a class name.
+import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
@@ -1292,9 +1296,26 @@ describe("PostgresProvider", () => {
 
       // It raises rather than answering: neither arm of the outcome type is true of a
       // client still sitting in T, and "rolled-back" would certify a rollback that failed.
-      await expect(provider.endOpenQueryTransaction("scope-script")).rejects.toThrow(
-        /1 of 2 pooled clients: Connection terminated unexpectedly/,
+      const raised: unknown = await provider.endOpenQueryTransaction("scope-script").then(
+        () => undefined,
+        (error: unknown) => error,
       );
+      expect((raised as Error).message).toMatch(/1 of 2 pooled clients: Connection terminated unexpectedly/);
+
+      /*
+       * THE CLASS IS THE STATUS CODE, read off the mapper both routes answer through rather
+       * than asserted as a class name. `QueryError`, which every other raise in this provider
+       * uses, is mapped to HTTP 400 with `code: "QUERY_ERROR"` and logged as "Query error",
+       * which tells the caller their own SQL was at fault. It was not: this server could not
+       * roll back a transaction on a client of its OWN pool, and there is nothing in the
+       * request to correct. The base `DatabaseError` arm is the one that answers a server
+       * fault, and it is what the docblock's stated cost, a 500, is true of.
+       */
+      expect(raised).toBeInstanceOf(DatabaseError);
+      expect(raised).not.toBeInstanceOf(QueryError);
+      const response = createErrorResponse(raised, { route: "api/db/query" });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ code: ApiErrorCode.DATABASE_ERROR, statusCode: 500 });
 
       // The point of the test: the client AFTER the failing one was still attempted.
       expect(second.issued).toContain("ROLLBACK");
@@ -1306,6 +1327,33 @@ describe("PostgresProvider", () => {
       // owns it is over, so keeping the entry would grow the map with clients no caller
       // can name.
       expect(await provider.endOpenQueryTransaction("scope-script")).toBe("none");
+    });
+
+    test("the denominator counts the clients ASKED, and never the ones this call skipped", async () => {
+      /*
+       * "1 of 2 pooled clients" over a scope whose second client was never asked reads as
+       * "one of two rollbacks failed", and the second rollback did not succeed, it did not
+       * happen. The scope records every client a statement released in `T` or `E`; the ender
+       * asks the server again and skips the ones a later statement of the same scope has
+       * since ended, so the recorded count and the attempted count are different numbers.
+       */
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      first.failRollbackWith = new Error("Connection terminated unexpectedly");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+      // The scope's own later statement committed the second client's transaction, which is
+      // the staleness `getTransactionStatus()` is asked again for.
+      second.status = "I";
+
+      await expect(provider.endOpenQueryTransaction("scope-script")).rejects.toThrow(
+        /on 1 of 1 pooled clients: Connection terminated unexpectedly/,
+      );
+      // Non-vacuity: the skipped client is skipped, so the denominator really is one attempt.
+      expect(second.issued).not.toContain("ROLLBACK");
     });
 
     test("the control: with neither client failing the scope reports rolled-back", async () => {
