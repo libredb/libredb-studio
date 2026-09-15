@@ -49,10 +49,11 @@ const factorySource = readFileSync(join(repoRoot, "src", "lib", "db", "factory.t
 function parseDatabaseTypes(): DatabaseType[] {
   const declaration = /export type DatabaseType =([\s\S]*?);\n/.exec(typesSource);
   if (!declaration) throw new Error("could not locate the DatabaseType declaration in src/lib/types.ts");
-  const ids = [...declaration[1].matchAll(/^\s*\|\s*"([a-z]+)"/gm)].map((match) => match[1] as DatabaseType);
+  const ids = [...declaration[1].matchAll(/^\s*\|\s*"([a-z][a-z0-9]*)"/gm)].map((match) => match[1] as DatabaseType);
   if (ids.length === 0) throw new Error("parsed no ids out of the DatabaseType declaration");
-  // A union arm whose id the `[a-z]+` class cannot spell (a digit, a hyphen) would be
-  // dropped SILENTLY, and the factory scan below would drop it in the same way, so the
+  // A union arm whose id the id class cannot spell would be dropped SILENTLY. The class
+  // admits a digit after the first letter because `db2` is a real id (#786); a hyphen is
+  // still outside it, and the factory scan below would drop it in the same way, so the
   // parity test would still pass and the new engine would go unmeasured. Counting the
   // arms independently of their spelling makes that a hard failure instead.
   const arms = [...declaration[1].matchAll(/^\s*\|/gm)].length;
@@ -71,7 +72,7 @@ function parseFactoryDispatch(): Map<DatabaseType, { exportName: string; specifi
   // `case "` boundary makes such a case fail to parse, which the union-parity test below
   // then reports as a missing id.
   const cases = factorySource.matchAll(
-    /case "([a-z]+)": \{(?:(?!case ")[\s\S])*?const \{ (\w+) \} = await import\("(\.[^"]+)"\)/g,
+    /case "([a-z][a-z0-9]*)": \{(?:(?!case ")[\s\S])*?const \{ (\w+) \} = await import\("(\.[^"]+)"\)/g,
   );
   for (const [, id, exportName, specifier] of cases) {
     dispatch.set(id as DatabaseType, { exportName, specifier });

@@ -31,7 +31,7 @@ LibreDB Studio
 **Search results summary** (limit 100):
 
 <!-- limit:100 -->
-Open-source SQL IDE for 17 engines: PostgreSQL, MySQL, SQL Server, Oracle, Db2, MongoDB, Redis and more
+Open-source SQL IDE for 17 engines: PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, Redis and more
 
 **Short description** (limit 256):
 

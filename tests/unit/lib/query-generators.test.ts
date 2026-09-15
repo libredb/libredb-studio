@@ -68,7 +68,7 @@ describe("generateTableQuery", () => {
   });
 
   test("Db2 (port 50000) uses FETCH FIRST 50 ROWS ONLY", () => {
-    const result = generateTableQuery("users", makeCaps({ defaultPort: 50000 }));
+    const result = generateTableQuery(["users"], makeCaps({ defaultPort: 50000 }));
     expect(result).toContain("FETCH FIRST 50 ROWS ONLY");
     // Db2 has no LIMIT clause, so the PostgreSQL fallback would emit invalid SQL.
     expect(result).not.toContain("LIMIT");
@@ -295,7 +295,7 @@ describe("generateSelectQuery", () => {
   });
 
   test("Db2 uses FETCH FIRST 100 ROWS ONLY", () => {
-    const result = generateSelectQuery("users", sampleColumns, makeCaps({ defaultPort: 50000 }));
+    const result = generateSelectQuery(["users"], sampleColumns, makeCaps({ defaultPort: 50000 }));
     expect(result).toContain("FETCH FIRST 100 ROWS ONLY");
     expect(result).not.toContain("LIMIT");
   });
