@@ -5,7 +5,7 @@
  * model wrote "all seventeen providers implement the method" into every task brief without
  * re-measuring it, and it was FALSE: two providers never got the method, and the conformance
  * guard's own early return hid the gap because a provider that answers `undefined` was simply
- * skipped. A number typed by a person is not a measurement. So the claim "58 kinds across the
+ * skipped. A number typed by a person is not a measurement. So the claim "63 kinds across the
  * fleet declare a readable definition" is produced HERE, by building every provider through
  * `createDatabaseProvider` and reading what each one actually declares, and compared against
  * an expectation committed from the design's own table.
@@ -116,6 +116,7 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   duckdb: unconnected("duckdb"),
   oracle: unconnected("oracle"),
   mssql: unconnected("mssql"),
+  db2: unconnected("db2"),
   clickhouse: unconnected("clickhouse"),
   druid: unconnected("druid"),
   trino: unconnected("trino"),
@@ -162,6 +163,8 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
     "trigger/sql",
   ],
   mssql: ["view/sql", "procedure/sql", "function/sql", "trigger/sql"],
+  // SYSCAT keeps the author's statement for these five and for nothing else (#786).
+  db2: ["view/sql", "materialized_query_table/sql", "procedure/sql", "function/sql", "trigger/sql"],
   clickhouse: ["table/sql", "view/sql", "materialized_view/sql", "dictionary/sql", "function/sql"],
   druid: [],
   trino: ["table/sql", "view/sql", "materialized_view/sql", "function/sql"],
@@ -254,7 +257,7 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(17);
+    expect(CENSUS_TYPES).toHaveLength(18);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -272,10 +275,10 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(58);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(58);
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(22);
-    expect(rows).toHaveLength(80);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(63);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(63);
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(26);
+    expect(rows).toHaveLength(89);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -301,10 +304,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 60 on a MariaDB connection against 58 unconnected: the design states both numbers because
+    // 65 on a MariaDB connection against 63 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(60);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(65);
   });
 
   /*
@@ -390,7 +393,7 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    expect(rows).toHaveLength(88);
+    expect(rows).toHaveLength(97);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

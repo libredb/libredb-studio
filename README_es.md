@@ -87,9 +87,9 @@ Tomada en serio, esa frase deja de ser una preferencia y se vuelve una especific
 
 ## Capacidades principales
 
-### Dieciséis motores, una sola interfaz
+### Diecisiete motores, una sola interfaz
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · IBM Db2 LUW · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
 Todos los motores SQL comparten el mismo explorador de esquemas, los diagramas ER, la comparación de esquemas y los paneles de monitoreo. MongoDB y Redis no son motores SQL: no tienen diagrama ER ni comparación de esquemas. Druid, Elasticsearch, OpenSearch y Trino son doblemente excepcionales: sus interfaces SQL sobre HTTP no tienen una forma de URI que este build sepa interpretar, así que se configuran por host y puerto, y las migraciones que se generan explican la limitación en lugar de inventar DDL para un motor cuyo SQL no tiene sentencias de cambio de columna. Lo mismo pasa con las colecciones sin esquema de Couchbase. El diagrama ER de los clústeres de búsqueda tiene cajas pero no líneas: los índices no declaran claves foráneas, y en el modelo del motor no hay ninguna que declarar.
 
@@ -99,6 +99,7 @@ Todos los motores SQL comparten el mismo explorador de esquemas, los diagramas E
 | **MySQL** | `mysql2` | IDE SQL completo, EXPLAIN, transacciones, cancelación de consultas (`KILL QUERY`) |
 | **Oracle** | `oracledb` (modo Thin) | IDE SQL completo, paginación con `FETCH FIRST N ROWS`, vistas de monitoreo `V$`, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transacciones |
 | **SQL Server** | `mssql` (tedious) | IDE SQL completo, paginación con `TOP N` / `OFFSET FETCH`, DMV `sys.dm_*`, `UPDATE STATISTICS`, `DBCC CHECKDB`, transacciones, detección automática de Azure SQL |
+| **IBM Db2 LUW** | `ibm_db` (complemento nativo; su instalación descarga el driver CLI de IBM) | IDE SQL sobre el protocolo DRDA, paginación con `FETCH FIRST` / `OFFSET FETCH`, exploración del catálogo `SYSCAT.*`, mantenimiento con `RUNSTATS` y `REORG TABLE`. EXPLAIN y la barra de transacciones interactivas aún no están conectados |
 | **SQLite** | `bun:sqlite` / `node:sqlite` (según el runtime) | IDE SQL completo, sobre archivo o en memoria |
 | **libSQL** | Sin driver, HTTP puro (protocolo Hrana, `POST /v2/pipeline`, puerto 8080) | IDE SQL completo. El mismo type-id conecta tanto a un servidor libSQL propio (`sqld`) como a Turso Cloud. Es el dialecto de SQLite a través de la red, y con `dbstat` da el tamaño real en bytes de tablas e índices. La credencial es un auth token, no una contraseña. Solo hay dos operaciones de mantenimiento, Reindex y verificación de integridad: `VACUUM`, `ANALYZE` y `PRAGMA optimize` los rechaza el servidor |
 | **DuckDB** | `@duckdb/node-api` (complemento nativo N-API, unos 68 MB por plataforma) | IDE SQL completo sobre archivos DuckDB locales o `:memory:`, ejecutando en el mismo servidor que la aplicación. Árbol de plan físico con `EXPLAIN (FORMAT JSON)`, introspección del catálogo `duckdb_*`, tamaño real por tabla a partir de la asignación de bloques de `pragma_storage_info`, y cancelación de consultas mediante el `interrupt()` del propio driver. Tres operaciones de mantenimiento: `VACUUM`, `ANALYZE` y `CHECKPOINT`. Acá `REINDEX` es un error de sintaxis, y `PRAGMA integrity_check` y `PRAGMA optimize` no existen, así que no se ofrecen. No hay log de consultas lentas ni lista de sesiones: DuckDB no expone ninguna de las dos, así que esos paneles lo dicen en lugar de mostrar 0. Un archivo de base solo admite un proceso del sistema operativo (incluso en modo lectura), así que una segunda instancia de Studio no puede abrir el archivo que ya tiene abierto la primera |

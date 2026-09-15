@@ -14,18 +14,19 @@ published it on 2026-08-05 from an earlier revision of this file). Edits here do
 propagate automatically — SUSE owns the page, so any change has to be mailed to the
 partner contact.
 
-> **Accuracy gate — engine count.** The wording below says sixteen engines. That is true only
-> from the release that carries **DuckDB** ([#424](https://github.com/libredb/libredb-studio/issues/424)),
-> which followed libSQL; fourteen was true from **0.13.0** onwards, the release that carried
+> **Accuracy gate — engine count.** The wording below says seventeen engines. That is true only
+> from the release that carries **IBM Db2 LUW**, which followed DuckDB
+> ([#424](https://github.com/libredb/libredb-studio/issues/424)); sixteen was true from the DuckDB
+> release, and fourteen was true from **0.13.0** onwards, the release that carried
 > Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra alongside the ten of 0.11.0.
 > The number is the `SHIPPED` record in
 > `src/lib/db/compatibility.ts` minus the embedded `libredb`, which `EXTERNAL` in the same
 > file already splits out; read it from there rather than from this file. The catalog entry
-> is version-scoped, so do not publish the sixteen-engine wording against a version that
-> predates DuckDB — send the fourteen-engine variant (0.13.0 onwards), the ten-engine one
-> (0.11.0 onwards) or the eight-engine one instead.
+> is version-scoped, so do not publish the seventeen-engine wording against a version that
+> predates Db2 — send the sixteen-engine variant (DuckDB release onwards), the fourteen-engine
+> variant (0.13.0 onwards), the ten-engine one (0.11.0 onwards) or the eight-engine one instead.
 >
-> **The scope goes with the count.** Browsing and querying reach all sixteen; editing data does
+> **The scope goes with the count.** Browsing and querying reach all seventeen; editing data does
 > not, so "manage data across …" must never be written over the whole list. Read the split from
 > the providers: `supportsInlineRowEdit` and `supportsCreateTable` default to `true` in
 > `src/lib/db/base-provider.ts` and each provider that cannot turns them off, which leaves inline
@@ -77,7 +78,7 @@ partner contact.
 > `operator/helm-charts/libredb-studio/` by hand, or the sync guard fails the required check.
 >
 > What *is* release-coupled is every marketplace description that spells the count:
-> `deploy/azure`, `deploy/railway` and `deploy/caprover` all say sixteen as of the DuckDB
+> `deploy/azure`, `deploy/railway` and `deploy/caprover` all say seventeen as of the Db2
 > release - and all three were still on fourteen when it landed, a full engine behind, because
 > libSQL had moved the code and not them. `deploy/railway/template.json` and
 > `deploy/caprover/libredb-studio.yml` were on thirteen once for the same reason: each channel
@@ -90,7 +91,7 @@ partner contact.
 > day the next engine lands (issue #445) - but their exhaustive descriptions still name every
 > engine, and so does `desktop/src-tauri/tauri.conf.json`.
 > `packaging/linux/nfpm.yaml` and the operator CSVs are consumed at release time from `main`,
-> so they name sixteen now and the next tag publishes it.
+> so they name seventeen now and the next tag publishes it.
 
 ## Listing facts
 
@@ -114,18 +115,18 @@ partner contact.
 ## Short description (one sentence)
 
 LibreDB Studio is an MIT-licensed, AI-assisted open source SQL IDE that connects to
-PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
+PostgreSQL, MySQL, Oracle, SQL Server, IBM Db2 LUW, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
 ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 directly from the browser.
 
 ## Long description
 
 LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse
-schemas and run queries across PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB,
+schemas and run queries across PostgreSQL, MySQL, Oracle, SQL Server, IBM Db2 LUW, SQLite, libSQL, DuckDB,
 MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino
 and Apache Cassandra from a single web interface, with no desktop client to install. Editing
 data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, libSQL and DuckDB, table creation on those seven and Apache Trino, and
+Oracle, SQL Server, Db2, SQLite, libSQL and DuckDB, table creation on those eight and Apache Trino, and
 everywhere else the controls are reported as unsupported rather than offered and then
 failed — Elasticsearch SQL has no mutation in its grammar at all, OpenSearch's one
 mutation (`DELETE`) is off by default, and Druid SQL has no `UPDATE`, no `DELETE` and no
@@ -147,8 +148,8 @@ versions are documented and validated for every release.
 
 ## Key features (bullet form, if the catalog template asks for them)
 
-- Sixteen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
-  SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
+- Seventeen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
+  SQL Server, Db2 LUW, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
   Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
 - One-click install from the Rancher Apps catalog — deployable with default values,
   zero configuration required

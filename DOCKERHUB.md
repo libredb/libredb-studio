@@ -107,7 +107,7 @@ The network route is the one to prefer for a real deployment: put Studio and its
 
 ## Supported databases
 
-Sixteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has seventeen rows: the seventeenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Seventeen external engines share one interface, and three of them are read-only because their own SQL is. The table below has eighteen rows: the eighteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -115,6 +115,7 @@ Sixteen external engines share one interface, and three of them are read-only be
 | **MySQL** | `mysql2` | EXPLAIN plans, transactions, `KILL QUERY`, SSL/TLS, SSH tunnel |
 | **Oracle** | `oracledb` (thin) | `FETCH FIRST` pagination, `V$` monitoring, `ANALYZE`, transactions |
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
+| **IBM Db2 LUW** | `ibm_db` (a native addon; installs the IBM CLI driver) | SQL IDE over the DRDA protocol, `FETCH FIRST` / `OFFSET FETCH` pagination, `SYSCAT.*` catalog browser, `RUNSTATS` and `REORG TABLE` maintenance. EXPLAIN and the interactive-transaction toolbar are not wired yet |
 | **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
 | **libSQL** | none — HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
 | **DuckDB** | `@duckdb/node-api` (a native N-API addon) | Full SQL IDE against a local DuckDB file or `:memory:` on the server this image runs on; `EXPLAIN (FORMAT JSON)` plan trees, `duckdb_*` catalog introspection, real per-table bytes from `pragma_storage_info` block allocation, and cancellation through the driver's `interrupt()`. `VACUUM`, `ANALYZE` and `CHECKPOINT` only, and no slow-query or session panel, because DuckDB publishes neither. One operating-system process may hold the file, refused in read-only mode too |
@@ -133,7 +134,7 @@ Sixteen external engines share one interface, and three of them are read-only be
 
 ### Engines with no provider of their own
 
-Twenty-six further engines speak the wire protocol of one of the sixteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-six further engines speak the wire protocol of one of the seventeen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

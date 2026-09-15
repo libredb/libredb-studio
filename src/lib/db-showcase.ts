@@ -28,33 +28,37 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   redis: 5,
   oracle: 6,
   mssql: 7,
+  // IBM Db2 sits with the other enterprise relational names it is most often compared
+  // to (Oracle, SQL Server), ahead of the search and analytical groups: it is a
+  // first-rank name for that audience.
+  db2: 8,
   // The two search engines sit here, ahead of the analytical stores: Elasticsearch is
   // one of the best-known names on this page, and OpenSearch reads as its sibling to
   // anyone who knows it - which is also what the code says, since the two type-ids
   // share one HTTP SQL transport (#424).
-  elasticsearch: 8,
-  opensearch: 9,
+  elasticsearch: 9,
+  opensearch: 10,
   // Ahead of the analytical stores and behind the search pair: Cassandra is a
   // first-rank name for anyone who has met a wide-column store, and it is the only
   // one of those on this page.
-  cassandra: 10,
-  couchbase: 11,
-  clickhouse: 12,
-  druid: 13,
+  cassandra: 11,
+  couchbase: 12,
+  clickhouse: 13,
+  druid: 14,
   // Ahead of the embedded store and behind the three analytical ones: Trino is the
   // name an evaluator is most likely to already know out of this last group, because
   // it is the engine a data platform is usually met THROUGH rather than one more
   // store to choose between.
-  trino: 14,
+  trino: 15,
   // Behind Trino and ahead of the embedded store: libSQL is the newest name on this
   // page and the one an evaluator is least likely to have met, but it is a product
   // name (Turso's server) rather than our own, so it goes ahead of `libredb`.
-  libsql: 15,
+  libsql: 16,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 16,
+  libredb: 17,
 };
 
 /**

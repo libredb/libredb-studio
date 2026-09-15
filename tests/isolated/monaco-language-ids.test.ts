@@ -221,7 +221,7 @@ describe("the installed editor's language ids", () => {
     // first.
     expect(declared.map((entry) => entry.where)).toContain("mysql/package");
     expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
-    expect(declared).toHaveLength(60);
+    expect(declared).toHaveLength(65);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

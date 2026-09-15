@@ -10,7 +10,7 @@ enforces them, along with the character set the portal accepts (ASCII 0-126 plus
 (R), (C), (TM) and currency symbols). The engine count is checked against the
 code by the repo-wide catalog gate, not by a number kept here.
 
-<!-- engines:16 -->
+<!-- engines:17 -->
 
 ## Product title
 
@@ -27,7 +27,7 @@ sentence verbatim, which is what the AMI product checklist asks for.
 
 <!-- limit:3 -->
 
-- Sixteen engines behind one interface, among them PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis, ClickHouse and Trino.
+- Seventeen engines behind one interface, among them PostgreSQL, MySQL, Oracle, SQL Server, Db2, MongoDB, Redis, ClickHouse and Trino.
 - AI query assistance using your own model key, or run it with no AI at all.
 - Self-hosted on a single instance: connections, query history and results stay in your account.
 

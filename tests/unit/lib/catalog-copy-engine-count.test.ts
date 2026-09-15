@@ -253,7 +253,7 @@ describe("the gate fails the copy it exists to catch", () => {
 
   test("an English numeral is read as well as a digit", () => {
     expect(engineCountProblems("Query fourteen engines from your browser.", "fixture")).toHaveLength(1);
-    expect(engineCountProblems(`Sixteen database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
+    expect(engineCountProblems(`Seventeen database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
   });
 
   test("a deliberately abridged list is checked on its numeral only", () => {

@@ -77,6 +77,11 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // '\' ( '\' | '"' | "'" | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex )`.
   // Doubling is not in that grammar, so a doubled quote is not one literal there.
   couchbase: "backslash",
+  // Db2 LUW uses standard SQL string literals: the single quote is doubled and a
+  // backslash is ordinary data (Db2 has no backslash-escape mode by default). Not yet
+  // live-verified; the standard reading is Db2's documented behaviour and matches its
+  // ANSI-SQL lineage.
+  db2: "standard",
 };
 
 /**
@@ -165,6 +170,9 @@ export function positionalPlaceholder(dialect: DatabaseType, position: number): 
     case "mysql":
     case "sqlite":
     case "druid":
+    // Db2 LUW binds a positional parameter array against `?`, the same as MySQL and
+    // SQLite. `ibm_db` uses the driver's own array binding for it.
+    case "db2":
       return "?";
     case "oracle":
       return `:${position}`;

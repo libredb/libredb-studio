@@ -10,6 +10,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | MySQL | `mysql` | SQL | `mysql2` | SQL | [mysql.md](./mysql.md) |
 | Oracle | `oracle` | SQL | `oracledb` (Thin) | SQL | [oracle.md](./oracle.md) |
 | Microsoft SQL Server | `mssql` | SQL | `mssql` | SQL (T-SQL) | [mssql.md](./mssql.md) |
+| IBM Db2 LUW | `db2` | SQL | `ibm_db` (native addon) | SQL | [db2.md](./db2.md) |
 | SQLite | `sqlite` | SQL (embedded) | `bun:sqlite` (Bun) / `node:sqlite` (Node) | SQL | [sqlite.md](./sqlite.md) |
 | libSQL | `libsql` | SQL (SQLite over a network) | none (HTTP: the Hrana protocol, `POST /v2/pipeline`) | SQL (SQLite) | [libsql.md](./libsql.md) |
 | DuckDB | `duckdb` | SQL (embedded, analytical) | `@duckdb/node-api` (native N-API addon) | SQL (DuckDB) | [duckdb.md](./duckdb.md) |
@@ -258,6 +259,7 @@ provider's integration pass.
 | MySQL | `mysql` | localhost | 3306 | `root` | `root` | `mysql` | — |
 | Oracle | `oracle` | localhost | 1521 | `system` | `Password123!` | `XEPDB1` (service name) | — |
 | SQL Server | `mssql` | localhost | 1433 | `sa` | `Password123!` | `master` | — |
+| IBM Db2 LUW | `db2` | localhost | 50000 | `db2inst1` | `Password123!` | `testdb` | privileged container, `LICENSE=accept`, slow first boot |
 | MongoDB | `mongodb` | localhost | 27017 | `admin` | `admin` | any; auth source `admin` | — |
 | Redis | `redis` | localhost | 6379 | *none* | *none* | *none* (db index 0) | — |
 | Couchbase | `couchbase` | localhost | 8091 | `Administrator` | `password123` | `travel` (bucket) | — |
@@ -304,6 +306,10 @@ from the running container instead:
 - **SQL Server** sets `MSSQL_DATABASE: mssql`, which the official image ignores; it creates no
   database. `master` is what the fixture guarantees (verified: `SELECT name FROM sys.databases`), and
   a `shop` database appears only once an E2E seed has run.
+- **IBM Db2 LUW** needs a privileged container and `LICENSE=accept`, and its first boot is slow
+  (minutes) while the instance and the `testdb` database are created — the healthcheck's
+  `start_period` and retry budget cover that. The exact boot time and the live-pass findings are
+  not measured yet; this row records the fixture, not a verified probe.
 
 **The two search services share a port inside the container.** OpenSearch publishes **9201** on the
 host because both products ship on 9200 and the `elasticsearch` service claims it; the provider's own

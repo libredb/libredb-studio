@@ -24,6 +24,9 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   cassandra: ['ADD "extra" integer;', 'DROP "old";'],
   clickhouse: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
   trino: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
+  // Db2 LUW uses standard `ADD COLUMN`/`DROP COLUMN` with double-quoted identifiers,
+  // the same spelling as PostgreSQL and DuckDB.
+  db2: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
   couchbase: null,
   druid: null,
   elasticsearch: null,

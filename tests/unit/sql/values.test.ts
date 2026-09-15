@@ -19,6 +19,9 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "mysql")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "sqlite")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "oracle")).toBe("'O''Brien'");
+    // Db2 uses standard escaping: doubled quote, backslash is data.
+    expect(quoteLiteral("O'Brien", "db2")).toBe("'O''Brien'");
+    expect(quoteLiteral("a\\b", "db2")).toBe("'a\\b'");
     expect(quoteLiteral("O'Brien", "mssql")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "clickhouse")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "druid")).toBe("'O''Brien'");
@@ -109,6 +112,9 @@ describe("positionalPlaceholder", () => {
     // because `$` also opens a dollar-quoted literal in this dialect.
     expect(positionalPlaceholder("duckdb", 1)).toBe("?");
     expect(positionalPlaceholder("duckdb", 2)).toBe("?");
+    // Db2 LUW binds a positional array against `?`, the same as MySQL/SQLite.
+    expect(positionalPlaceholder("db2", 1)).toBe("?");
+    expect(positionalPlaceholder("db2", 2)).toBe("?");
   });
 
   test("trino has no positional placeholder, because its provider refuses to bind one", () => {

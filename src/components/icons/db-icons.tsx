@@ -419,3 +419,30 @@ export const DuckDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="18.3" cy="5.2" r="0.85" fill="currentColor" stroke="none" />
   </svg>
 );
+
+/**
+ * IBM Db2 LUW: a relational server the app dials over the DRDA protocol.
+ *
+ * Not a copy of IBM's wordmark. The house idiom instead — one stroke at weight 1.5 —
+ * drawing the two halves of the id: a database cylinder (the server, telling it apart
+ * from the SQLite/libSQL document outlines) with a numeral "2" beside it, which is the
+ * one glyph that distinguishes Db2 from every other cylinder on the page. It still
+ * reads at 14px.
+ */
+export const Db2Icon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <ellipse cx="8" cy="5.5" rx="5" ry="2.2" />
+    <path d="M3 5.5v13c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2v-13" />
+    <path d="M3 12c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2" />
+    <path d="M16.5 10.2c0-1 .8-1.7 1.8-1.7s1.8.7 1.8 1.7c0 1.7-3.6 2.9-3.6 5.1h3.7" />
+  </svg>
+);

@@ -96,11 +96,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">سولہ engines، ایک interface</span>
+### <span dir="rtl">سترہ engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · IBM Db2 LUW · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
 <div dir="rtl" align="right">
 
@@ -114,6 +114,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **MySQL** | `mysql2` | <span dir="rtl">مکمل SQL IDE، EXPLAIN، transactions، query cancellation (`KILL QUERY`)</span> |
 | **Oracle** | <span dir="rtl">`oracledb` (Thin موڈ)</span> | <span dir="rtl">مکمل SQL IDE، `FETCH FIRST N ROWS` کے ساتھ pagination، `V$` monitoring views، `ANALYZE TABLE`، `ALTER INDEX REBUILD`، transactions</span> |
 | **SQL Server** | <span dir="rtl">`mssql` (tedious)</span> | <span dir="rtl">مکمل SQL IDE، `TOP N` / `OFFSET FETCH` کے ساتھ pagination، `sys.dm_*` DMV، `UPDATE STATISTICS`، `DBCC CHECKDB`، transactions، Azure SQL کی خودکار شناخت</span> |
+| **IBM Db2 LUW** | <span dir="rtl">`ibm_db` (native addon؛ اس کا install مرحلہ IBM CLI driver download کرتا ہے)</span> | <span dir="rtl">DRDA protocol پر SQL IDE، `FETCH FIRST` / `OFFSET FETCH` کے ساتھ pagination، `SYSCAT.*` catalog سے object browser، `RUNSTATS` اور `REORG TABLE` maintenance۔ EXPLAIN اور interactive transactions toolbar ابھی wired نہیں</span> |
 | **SQLite** | <span dir="rtl">`bun:sqlite` / `node:sqlite` (runtime کے مطابق)</span> | <span dir="rtl">file یا memory میں مکمل SQL IDE</span> |
 | **libSQL** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (Hrana protocol، `POST /v2/pipeline`، port 8080)</span> | <span dir="rtl">مکمل SQL IDE۔ یہی type-id آپ کے اپنے libSQL server (`sqld`) اور Turso Cloud، دونوں سے connect کرتا ہے۔ یہ network پر SQLite dialect ہے، اور `dbstat` کے ساتھ tables اور indexes کا اصل size bytes میں دیتا ہے۔ credential password نہیں بلکہ auth token ہے۔ صرف دو maintenance operations ہیں، Reindex اور integrity check: server `VACUUM`، `ANALYZE` اور `PRAGMA optimize` کو رد کرتا ہے</span> |
 | **DuckDB** | <span dir="rtl">`@duckdb/node-api` (مقامی N-API addon، ہر platform کے لیے تقریباً 68 MB)</span> | <span dir="rtl">مقامی DuckDB files یا `:memory:` پر مکمل SQL IDE، جو application کے اسی server پر چلتا ہے۔ `EXPLAIN (FORMAT JSON)` کے ساتھ physical plan tree، `duckdb_*` catalog introspection، `pragma_storage_info` کی block allocation سے table کا اصل size، اور خود driver کے `interrupt()` سے query cancellation۔ تین maintenance operations: `VACUUM`، `ANALYZE` اور `CHECKPOINT`۔ یہاں `REINDEX` syntax error ہے، جبکہ `PRAGMA integrity_check` اور `PRAGMA optimize` موجود نہیں، اس لیے پیش نہیں کیے جاتے۔ slow-query log یا sessions list نہیں: DuckDB ان میں سے کوئی بھی ظاہر نہیں کرتا، اس لیے panels 0 دکھانے کے بجائے یہ بات بتاتے ہیں۔ ایک database file کو operating system کا صرف ایک process کھول سکتا ہے (read-only mode میں بھی)، اس لیے Studio کی دوسری instance اس file کو نہیں کھول سکتی جو پہلی instance نے کھولی ہوئی ہے</span> |

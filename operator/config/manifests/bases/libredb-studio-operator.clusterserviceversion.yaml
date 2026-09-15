@@ -6,10 +6,10 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.0.0
-    description: Open-source web-based SQL IDE for sixteen engines - PostgreSQL, MySQL,
-      Oracle, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache
-      Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
-      - with AI-powered query assistance.
+    description: Open-source web-based SQL IDE for seventeen engines - PostgreSQL,
+      MySQL, Oracle, SQL Server, IBM Db2 LUW, SQLite, DuckDB, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra
+      and libSQL - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.0.0'
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
@@ -31,7 +31,7 @@ spec:
       version: v1alpha1
   description: |
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
-    MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
+    MySQL, Oracle, SQL Server, IBM Db2 LUW, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
     Cassandra from the browser —
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),

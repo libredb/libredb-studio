@@ -235,6 +235,33 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── Db2 LUW ─────────────────────────────────────────────────────────────
+
+  describe("db2:// URLs", () => {
+    test("parses a db2 URL into host/port/user/password/database", () => {
+      const result = parseConnectionString("db2://db2inst1:pass@db2host:50000/testdb");
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("db2");
+      expect(result!.host).toBe("db2host");
+      expect(result!.port).toBe("50000");
+      expect(result!.user).toBe("db2inst1");
+      expect(result!.database).toBe("testdb");
+    });
+
+    test("uses default port 50000 when omitted", () => {
+      const result = parseConnectionString("db2://db2inst1:pass@host/testdb");
+      expect(result!.port).toBe("50000");
+    });
+
+    test("detectConnectionStringType recognizes db2://", () => {
+      expect(detectConnectionStringType("db2://host:50000/testdb")).toBe("db2");
+    });
+
+    test("db2 is published in the scheme map", () => {
+      expect(ENGINE_URI_SCHEMES.db2).toBe("db2");
+    });
+  });
+
   // ── Couchbase ───────────────────────────────────────────────────────────
 
   describe("couchbase:// and couchbases:// URLs", () => {

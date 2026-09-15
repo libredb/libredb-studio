@@ -232,6 +232,15 @@ const nextConfig: NextConfig = {
   // from `.next/server/chunks`. The addon itself is still a file-tracing blind
   // spot; the Dockerfile runner stage and scripts/build-standalone-payload.sh
   // copy the package for that.
+  // `ibm_db` is external for the same reason as `oracledb` (#538 class), and the error
+  // is the concrete one: its `bindings` package locates `odbc_bindings.node` relative to
+  // the calling module, which Turbopack rewrites into `.next/dev/...`, so a bundled build
+  // threw "Could not locate the bindings file" listing a dozen `.next/...` paths before
+  // the connection was even attempted. Externalizing leaves `require('ibm_db')` to resolve
+  // from node_modules at runtime, where `bindings` finds the addon in
+  // `node_modules/ibm_db/build/Release`. The addon (and the bundled CLI driver under
+  // `node_modules/ibm_db/installer/clidriver`) is a file-tracing blind spot the same way
+  // oracledb's is; the Dockerfile/standalone payload must copy the whole `ibm_db` package.
   serverExternalPackages: [
     "pg",
     "mysql2",
@@ -240,6 +249,7 @@ const nextConfig: NextConfig = {
     "ssh2",
     "cassandra-driver",
     "oracledb",
+    "ibm_db",
     "@duckdb/node-api",
     "@duckdb/node-bindings",
   ],

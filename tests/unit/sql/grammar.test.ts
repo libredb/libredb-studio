@@ -415,6 +415,12 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   couchbase: "default",
   druid: "default",
   libredb: "default",
+  // Db2 LUW's four facts (no `#` line comment, `"..."` rather than `[...]` for
+  // identifiers, non-nesting block comments, no `q'...'`) match the compatibility
+  // default, so no SQL_GRAMMARS entry is added. Left at the default rather than
+  // asserted from a neighbour; a live probe on the gate-4 pass can promote it to
+  // "established" if any fact turns out to differ.
+  db2: "default",
   // Not SQL at all - see SQL_TEXT_COVERAGE below.
   mongodb: "default",
   redis: "default",
@@ -460,6 +466,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // would switch the SQL checks off for text that is SQL, which is the mirror of the
   // defect #297 fixed.
   cassandra: true,
+  // SQL, and the editor text is what `ibm_db.query` sends. The provider extends
+  // SQLBaseProvider.
+  db2: true,
   mongodb: false,
   redis: false,
 };
