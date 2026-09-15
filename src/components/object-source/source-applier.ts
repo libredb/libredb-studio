@@ -41,13 +41,12 @@ import type { DatabaseConnection } from "@/lib/types";
  * shell is a later wave of this phase: measured at this commit, `grep -rn httpSourceApplier src/`
  * finds no consumer outside this directory, so every sentence here about a shell is design intent
  * and not a description of code that runs. As measured at
- * this commit, that is nobody: `src/lib/api/object-edit-wire.ts` bounds no string in any of its
- * four predicates, so the unbounded arm is closed downstream by `ApplyPreviewDialog`, which
- * refuses to draw a diff above `EDIT_PLAN_EXECUTABLE_LIMIT`, and is still OPEN for every other
- * string a host can supply (`refusal.sentence`, `refusal.hint`, `plan.revision.reason`, each
- * consequence's `fact`). That is a gap this task reports and does not close here, because the
- * owner is the predicate that narrows the host's value and not a seam the host path never
- * traverses.
+ * this commit, that is nobody. The gap this paragraph used to report is CLOSED (D80):
+ * `src/lib/api/object-edit-wire.ts` bounds every string its four predicates accept, prose and
+ * identifiers at `SOURCE_CHARACTER_LIMIT` and the unit's executable text at `EDIT_BODY_BYTE_LIMIT`,
+ * and `ApplyPreviewDialog` still holds the tighter `EDIT_PLAN_EXECUTABLE_LIMIT` on what it will
+ * draw a diff of. The owner was the predicate that narrows the host's value, which is what this
+ * paragraph said, and not a seam the host path never traverses.
  *
  * `planToken` is `string | undefined` BECAUSE A HOST HAS NO KEY. The binding between a host's
  * preview and a host's apply is the host's own; this server's token does not exist there and is

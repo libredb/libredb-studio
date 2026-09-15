@@ -1470,14 +1470,15 @@ describe("the embedded workspace applies an object edit through the host", () =>
   /*
    * THE BOUND, and this shell is the only place it can exist (#789 Phase 3).
    *
-   * `src/lib/api/object-edit-wire.ts` bounds NO string in any of its four shape predicates, and it
-   * does not because its brief specified none. Round 1 said here that the standalone shell does not
-   * care because its two routes bound what they answer. MEASURED and false, and the docblock in
-   * `use-connection-adapter.ts` now carries the grep: the two routes bound only what they RECEIVE,
-   * so the hazard is on both shells and only its author differs. This is the shell where a test can
-   * drive it, because here the answer is a plain object a test can construct. The dialog renders a
-   * refusal sentence, a refusal hint, a revision reason and each consequence's observed fact
-   * verbatim, with only the plan's executable text bounded by anything at all.
+   * The two edit routes bound only what they RECEIVE and never what they answer, and the docblock
+   * in `use-connection-adapter.ts` carries that grep. So the hazard is on both shells and only its
+   * author differs. This is the shell where a test can drive it, because here the answer is a plain
+   * object a test can construct.
+   *
+   * `src/lib/api/object-edit-wire.ts` has since bounded every string its four shape predicates
+   * accept (D80), which closes the PER-STRING half on both shells. What this bound still does, and
+   * the reason this test is still here, is measure the WHOLE answer, and measure it before any
+   * predicate walks the object.
    *
    * Phase 2 measured the same hazard on the READ seam and closed it there: a part carrying a
    * five-million-character truncation reason passed `isSourceDocumentShape` and the whole of it

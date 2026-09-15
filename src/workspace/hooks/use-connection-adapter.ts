@@ -15,20 +15,22 @@ import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/typ
  * The largest host answer this shell will read, in UTF-16 code units, and the arithmetic behind
  * every term of it (#789 Phase 3, from discussion #778).
  *
- * WHY THIS EXISTS HERE, and a correction to what the round-1 form of this docblock claimed (fix
- * round 1). `src/lib/api/object-edit-wire.ts` bounds no string in any of its four shape
- * predicates, and it does not because its brief specified none. The round-1 text then said the
- * standalone shell was covered because its two routes "bound what they answer". MEASURED and
- * FALSE: `grep -nE "LIMIT|length"` over `src/app/api/db/objects/edit-plan/route.ts` and
- * `.../edit-apply/route.ts` finds exactly three bounds and all three are on what the routes
- * RECEIVE, the body bytes (`EDIT_BODY_BYTE_LIMIT`), the submitted text (`EDIT_CHARACTER_LIMIT`)
- * and the plan's executable length (`EDIT_PLAN_EXECUTABLE_LIMIT`). Nothing bounds what they
- * ANSWER: `libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds `observed` straight
- * from `FUNCTION LIST`, and a refusal sentence is whatever the engine said. So the hazard is on
- * BOTH shells and only its author differs: there a provider's catalog read, here a plain
- * JavaScript object an adopter constructed. The bound is in this file because this file is where
- * it could be written; the standalone half is filed for the phase's gate rather than claimed as
- * covered.
+ * WHY THIS EXISTS HERE. The two edit routes bound only what they RECEIVE: `grep -nE "LIMIT|length"`
+ * over `src/app/api/db/objects/edit-plan/route.ts` and `.../edit-apply/route.ts` finds exactly three
+ * bounds and all three are inbound, the body bytes (`EDIT_BODY_BYTE_LIMIT`), the submitted text
+ * (`EDIT_CHARACTER_LIMIT`) and the plan's executable length (`EDIT_PLAN_EXECUTABLE_LIMIT`). Nothing
+ * there bounds what they ANSWER: `libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds
+ * `observed` straight from `FUNCTION LIST`, and a refusal sentence is whatever the engine said. So
+ * the hazard is on BOTH shells and only its author differs: there a provider's catalog read, here a
+ * plain JavaScript object an adopter constructed.
+ *
+ * WHAT HAS CHANGED UNDER THIS PARAGRAPH SINCE IT WAS WRITTEN, said here because the round-1 text
+ * closed on "the standalone half is filed rather than claimed as covered" and that is no longer the
+ * state. `src/lib/api/object-edit-wire.ts` now bounds every string its four shape predicates accept
+ * (D80), and `ObjectSourceView` runs those predicates on every build answer on EITHER shell, so the
+ * per-string half of the hazard is closed for both. THIS BOUND DOES NOT BECOME REDUNDANT: it
+ * measures the WHOLE answer, which no per-string bound can, and it measures it BEFORE any predicate
+ * walks the object, so an answer too large to read is refused rather than traversed.
  *
  * What the hazard IS, on either shell. The answer reaches `ApplyPreviewDialog`, and the dialog
  * bounds exactly one of the strings in it, the plan's executable text, which it refuses to draw a

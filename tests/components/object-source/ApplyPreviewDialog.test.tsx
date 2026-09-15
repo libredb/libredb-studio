@@ -683,10 +683,10 @@ describe("ApplyPreviewDialog", () => {
     // The trust boundary this dialog sits on, and the bound is the EXISTING one rather than a
     // third number invented here: `EDIT_PLAN_EXECUTABLE_LIMIT` is what both apply routes enforce.
     // The population: the STANDALONE path is bounded at both routes, and the EMBEDDED path passes
-    // through no route at all. `isObjectEditPlanShape` bounds NO string (grep `length` in
-    // `src/lib/api/object-edit-wire.ts`: four shape predicates, no bound), so an embedded host's
-    // `objectEditor.build` can answer a well-formed plan whose step text is 50 MB, and the tab
-    // hangs building a diff model for bytes no apply could ever send.
+    // through no route at all. Since D80 `isObjectEditPlanShape` does bound the unit's executable
+    // text, but at `EDIT_BODY_BYTE_LIMIT` and deliberately looser than the routes, so an embedded
+    // host's `objectEditor.build` can still answer a well-formed plan whose step text is millions of
+    // characters above anything an apply could send, and the tab hangs building a diff model for it.
     const huge = "-".repeat(EDIT_PLAN_EXECUTABLE_LIMIT + 1);
     draw({
       kind: "preview",

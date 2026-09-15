@@ -460,10 +460,12 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
    * be sent and a diff of it would be a preview of an impossible apply. The population is the
    * EMBEDDED seam and not the standalone one: the standalone path is bounded at the build route
    * and again at the apply route, while an embedded host's `objectEditor.build` passes through no
-   * route at all, and `isObjectEditPlanShape` bounds NO string. A 50 MB `unit.steps[0].text` is a
-   * well-formed plan by that predicate, and handing it to a Monaco model hangs the host's tab
-   * before the reader ever sees a preview. The measured cost of getting this wrong is the tab, so
-   * the answer is a sentence rather than a model.
+   * route at all. Since D80 `isObjectEditPlanShape` does bound that text, but at
+   * `EDIT_BODY_BYTE_LIMIT` (8,388,608) and deliberately looser than the routes, so the band between
+   * that number and this one is still a well-formed plan no apply could ever send. A
+   * `unit.steps[0].text` of eight million characters is such a plan, and handing it to a Monaco
+   * model hangs the host's tab before the reader ever sees a preview. The measured cost of getting
+   * this wrong is the tab, so the answer is a sentence rather than a model.
    *
    * `planExecutableLength` is in the maximum as well as the two diff sides, because the command
    * arm's verb and arguments are also host-supplied and are also rendered.
