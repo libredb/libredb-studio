@@ -46,7 +46,7 @@ const registrations = sourceFiles(SRC)
   .sort((a, b) => a.file.localeCompare(b.file));
 
 describe("every global keydown listener in src", () => {
-  test("the registrations are the four this repository has enumerated", () => {
+  test("the registrations are the five this repository has enumerated", () => {
     expect(registrations).toEqual([
       // Cmd/Ctrl+K. Its table rows move the active tab, so the standalone shell refuses them
       // while an object apply is in flight (D82). The embedded shell renders no palette.
@@ -54,6 +54,10 @@ describe("every global keydown listener in src", () => {
       // Escape, bound only while the profiler is open, and it closes the profiler. Moves no tab,
       // and it is the listener the two-listener sentence used to miss.
       { file: "src/components/DataProfiler.tsx", target: "document" },
+      // `?` (#746), guarded against the editor and every text input. Opens a dialog of shortcut
+      // labels and moves no tab. `DataProfiler.tsx` always mounts one while it is open, so this
+      // site is live on both shells even though only `Studio.tsx` mounts it directly.
+      { file: "src/components/ShortcutsDialog.tsx", target: "document" },
       // The new-tab shortcut (#745), on `document` deliberately so it works while Monaco owns
       // focus. Both shells refuse it while an object apply is in flight (D82).
       { file: "src/components/studio/StudioTabBar.tsx", target: "document" },
@@ -62,10 +66,11 @@ describe("every global keydown listener in src", () => {
     ]);
   });
 
-  test("exactly three of them are on document, which is what the apply dialog cannot refuse", () => {
+  test("exactly four of them are on document, which is what the apply dialog cannot refuse", () => {
     expect(registrations.filter((one) => one.target === "document").map((one) => one.file)).toEqual([
       "src/components/CommandPalette.tsx",
       "src/components/DataProfiler.tsx",
+      "src/components/ShortcutsDialog.tsx",
       "src/components/studio/StudioTabBar.tsx",
     ]);
   });

@@ -1868,7 +1868,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
  * `conflict` then rendered nothing at all.
  *
  * ONE DOCUMENT-LEVEL LISTENER MOVES THE ACTIVE TAB IN THIS SHELL, enumerated rather than assumed.
- * `grep -rE 'addEventListener\(\s*"keydown' src` answers four sites and the docblock on
+ * `grep -rE 'addEventListener\(\s*"keydown' src` answers five sites and the docblock on
  * `handleAddTab` in `src/workspace/StudioWorkspace.tsx` says what each one does; the only one this
  * shell mounts that moves the active tab is `StudioTabBar`'s new-tab shortcut (#745).
  */

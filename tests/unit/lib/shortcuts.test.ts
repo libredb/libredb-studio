@@ -40,4 +40,15 @@ describe("SHORTCUT_GROUPS", () => {
       expect.arrayContaining([shortcutLabel(SHORTCUTS.commandPalette), "?"]),
     );
   });
+
+  // The four tests above each pin ONE known entry by name, so none of them would
+  // fail if a fifth were added to `SHORTCUTS` and never given a row here - this is
+  // the generic version that holds the two together regardless of how many entries
+  // `SHORTCUTS` grows to (#821 review).
+  test("every SHORTCUTS entry's label is listed somewhere in SHORTCUT_GROUPS", () => {
+    const listedKeys = SHORTCUT_GROUPS.flatMap((group) => group.shortcuts.map((shortcut) => shortcut.keys));
+    for (const shortcut of Object.values(SHORTCUTS)) {
+      expect(listedKeys).toContain(shortcutLabel(shortcut));
+    }
+  });
 });

@@ -54,4 +54,18 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     heading: "Data profiler",
     shortcuts: [{ keys: "Escape", description: "Close the data profiler" }],
   },
+  {
+    // Display-only, same reasoning as the tab-strip arrows above: `ObjectTree.tsx`'s
+    // `onKeyDown` (bound on the `role="tree"` root) implements this itself against the
+    // W3C tree pattern, none of it is a Monaco command, and it only runs while the tree
+    // itself has focus - there is nothing here for `SHORTCUTS`/`monacoKeybinding` to hold.
+    heading: "Object tree",
+    shortcuts: [
+      { keys: "Up / Down arrow", description: "Move focus between rows" },
+      { keys: "Left / Right arrow", description: "Collapse / expand the focused row" },
+      { keys: "Home / End", description: "Jump to the first / last row" },
+      { keys: "Enter / Space", description: "Open the focused row" },
+      { keys: "Shift+F10 / Menu key", description: "Open the row's context menu" },
+    ],
+  },
 ];

@@ -667,7 +667,7 @@ export function StudioWorkspace({
    * leaves the same two open, so the two shells do not disagree.
    *
    * THE KEYDOWN PASS. What the dialog cannot refuse is a global listener, and
-   * `grep -rE 'addEventListener\(\s*"keydown' src` answers FOUR, of which exactly one can move
+   * `grep -rE 'addEventListener\(\s*"keydown' src` answers FIVE, of which exactly one can move
    * the active tab here:
    *
    * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
@@ -675,6 +675,9 @@ export function StudioWorkspace({
    * - `src/components/DataProfiler.tsx:210`, on `document`, and MOUNTED BY THIS SHELL below. It is
    *   bound only while the profiler is open, it answers Escape alone, and all it does is call the
    *   profiler's `onClose`. It moves no tab, and it cannot unmount this pane.
+   * - `src/components/ShortcutsDialog.tsx:117`, on `document` (#746), and MOUNTED BY THIS SHELL
+   *   indirectly - `DataProfiler.tsx` always renders one while it is open. It answers `?` alone,
+   *   opens a dialog of shortcut labels, and moves no tab.
    * - `src/components/CommandPalette.tsx:103`, on `document`, whose table rows call
    *   `handleTableClick` and DO move the active tab. That is the standalone shell's second gesture
    *   in D82, and this shell renders no palette. It is still the reason `onTableClick` above now

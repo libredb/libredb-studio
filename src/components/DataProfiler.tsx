@@ -206,6 +206,11 @@ export function DataProfiler({
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Radix's Dialog (the shortcuts dialog, #746) handles Escape in the capture
+      // phase and only calls preventDefault(), never stopPropagation() - so with
+      // both open, this bubble-phase listener still fires. Without this check, one
+      // Escape closed the shortcuts dialog AND the profiler underneath it.
+      if (event.defaultPrevented) return;
       onClose();
     };
     document.addEventListener("keydown", handleKeyDown);

@@ -812,6 +812,28 @@ describe("DataProfiler", () => {
     expect(queryByText("Keyboard Shortcuts")).toBeNull();
   });
 
+  // Radix's Dialog handles Escape in the capture phase and only calls
+  // preventDefault() - not stopPropagation() - so this component's OWN Escape
+  // listener (bound on `document`, above) still ran and closed the profiler
+  // underneath the shortcuts dialog on the very same keypress.
+  test("Escape closes only the shortcuts dialog, leaving the profiler open", async () => {
+    const onClosed = mock(() => {});
+    const { container, queryByText } = render(<ProfilerHost onClosed={onClosed} />);
+
+    await waitFor(() => {
+      expect(within(container).queryByText("Data Profiler")).not.toBeNull();
+    });
+
+    fireEvent.keyDown(document, { key: "?" });
+    expect(queryByText("Keyboard Shortcuts")).not.toBeNull();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(queryByText("Keyboard Shortcuts")).toBeNull();
+    expect(onClosed).not.toHaveBeenCalled();
+    expect(within(container).queryByText("Data Profiler")).not.toBeNull();
+  });
+
   // Same rule as every other connection-bearing request: a managed (seed)
   // connection is sent as its seed id, because the copy the browser holds has had
   // `password` and `connectionString` stripped. Sending the object made
