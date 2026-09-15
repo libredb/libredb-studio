@@ -315,6 +315,14 @@ function replyError(message: string): Error {
  */
 let discardFailure: Error | null = null;
 
+/**
+ * When set, `PING` rejects with this error instead of answering.
+ *
+ * A real ACL can refuse the reading itself: `ACL SETUSER x on >pw ~* +@read` grants neither
+ * `PING` nor `DISCARD`, so a provider that cannot ask has to say so rather than guess (D75).
+ */
+let pingFailure: Error | null = null;
+
 /** When set, `SCAN` rejects with this sentence, whatever database it was opened on. */
 let scanRefusal: string | null = null;
 
@@ -440,6 +448,14 @@ mock.module("ioredis", () => {
         this._inMulti = false;
         return "OK";
       }
+      if (cmd === "PING" && pingFailure !== null) throw pingFailure;
+      // Inside a `MULTI` the server answers the status "QUEUED" INSTEAD of the command's
+      // own reply and runs nothing, every command alike except the ones above. Measured on
+      // redis 7.4.11 through ioredis 5.11.1: `SET`, `GET`, `PING` and `CLIENT INFO` all
+      // answer "QUEUED" there while a second connection is untouched (D75). That
+      // substitution is the only reading of the state this connection can be given, so the
+      // mock has to make it or a provider that never asks would pass.
+      if (this._inMulti) return "QUEUED";
       if (cmd === "CONFIG") return databasesReply;
       if (cmd === "FUNCTION") {
         if (mockCall !== null) return await mockCall(command, ...args);
@@ -1112,19 +1128,29 @@ describe("RedisProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("endOpenQueryTransaction()", () => {
+    /** An ordinary read-only ACL's refusal, in the server's own words (see the NOPERM test). */
+    const noPermDiscard = () => replyError("NOPERM User ro has no permissions to run the 'discard' command");
+
     beforeEach(async () => {
       discardFailure = null;
+      pingFailure = null;
       await provider.connect();
+      capturedCalls.length = 0;
     });
 
     test("discards a MULTI a statement left open on this connection", async () => {
       await provider.query("MULTI");
+      capturedCalls.length = 0;
 
       expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+      // The ask and the act are two commands and in this order: the reading is what says
+      // a DISCARD is warranted, and a DISCARD sent before it would be a write nobody read.
+      expect(capturedCalls.map((call) => call.command)).toEqual(["PING", "DISCARD"]);
     });
 
-    test("answers none when no MULTI is open, and leaves the connection usable", async () => {
+    test("answers none when no MULTI is open, and sends no DISCARD at all", async () => {
       expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(capturedCalls.map((call) => call.command)).toEqual(["PING"]);
       expect((await provider.query("PING")).rows[0]).toEqual({ result: "PONG" });
     });
 
@@ -1133,6 +1159,42 @@ describe("RedisProvider", () => {
       await provider.query("DISCARD");
 
       expect(await provider.endOpenQueryTransaction()).toBe("none");
+    });
+
+    test("answers none on a connection whose ACL refuses DISCARD, because it never sends one", async () => {
+      // MEASURED on redis 7.4.11: `ACL SETUSER ro on >pw ~* +@read +ping +info` answers
+      // PONG to `PING` and "NOPERM User ro has no permissions to run the 'discard'
+      // command" to `DISCARD`, and cannot run `MULTI` either. Asking first is what keeps
+      // an ordinary read-only connection from turning every caller's request into an
+      // error: `POST /api/db/multi-query` awaits this in a `finally`, so a raise here
+      // replaces a response that already carried the statement results it earned.
+      discardFailure = noPermDiscard();
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(capturedCalls.map((call) => call.command)).toEqual(["PING"]);
+    });
+
+    test("raises when the ACL refuses the DISCARD of a MULTI that IS open", async () => {
+      // The other half of the same ACL reading, and the opposite answer. MEASURED on the
+      // same server with `+@read +ping +multi +set`: the `MULTI` opens, `PING` answers
+      // QUEUED, `DISCARD` is refused with NOPERM, and the next command is still QUEUED. The
+      // transaction really is open and really cannot be ended, so saying "none" here would
+      // certify a clean connection that is not clean.
+      await provider.query("MULTI");
+      discardFailure = noPermDiscard();
+
+      await expect(provider.endOpenQueryTransaction()).rejects.toThrow("NOPERM");
+    });
+
+    test("answers rolled-back when the MULTI went away between the ask and the act", async () => {
+      // One connection serves every concurrent caller of the cached provider, so another
+      // caller's DISCARD or EXEC can land in between. The queue is gone either way, which
+      // is what "rolled-back" says; only the server's own "there was nothing queued" reads
+      // that way, and it reads that way only after the ask saw one.
+      await provider.query("MULTI");
+      discardFailure = replyError("ERR DISCARD without MULTI");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
     });
 
     test("refuses to answer before connect()", async () => {
@@ -1144,9 +1206,44 @@ describe("RedisProvider", () => {
     test("raises a DISCARD failure that is not the server's own refusal", async () => {
       // Reading every failure as "there was nothing open" would report an unknown
       // connection state as a clean one. Only "ERR DISCARD without MULTI" is an answer.
+      await provider.query("MULTI");
       discardFailure = new Error("Connection is closed.");
 
       await expect(provider.endOpenQueryTransaction()).rejects.toThrow("Connection is closed.");
+    });
+
+    test("raises when the reading itself is refused", async () => {
+      // An ACL that grants neither PING nor DISCARD leaves nothing to read. A provider that
+      // cannot ask has to say so: answering "none" would certify an absence nobody read.
+      pingFailure = replyError("NOPERM User locked has no permissions to run the 'ping' command");
+
+      await expect(provider.endOpenQueryTransaction()).rejects.toThrow("NOPERM");
+    });
+
+    test("the doc names the ONE route that calls this, and says the editor is not on it", () => {
+      // `POST /api/db/multi-query` is the only caller of `endOpenQueryTransaction()` in the
+      // product, and `use-query-execution.ts` keeps a Redis buffer off that route: it gates
+      // the multi-statement endpoint on `dialectIsSql`, read from this capability. An
+      // editor run therefore goes to `POST /api/db/query`, which ends nothing on purpose
+      // (D74), so the leak this method closes stays open on the editor path. A doc that
+      // promised otherwise would be the boundary the next reader trusts.
+      expect(provider.getCapabilities().queryLanguage).toBe("json");
+
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/redis.md"), "utf8").replace(/\s+/g, " ");
+      expect(doc).toContain("The surface has exactly one caller in the product, `POST /api/db/multi-query`");
+      expect(doc).toContain("The editor never sends a Redis buffer there.");
+      expect(doc).toContain("a `MULTI` typed into the editor is still open when the response is sent");
+    });
+
+    test("raises when PING answers neither its own reply nor QUEUED", async () => {
+      // The reading is the SUBSTITUTION of "QUEUED" for the command's own reply, so a third
+      // answer is a reading this code does not have, not a clean connection.
+      mockCallResults.PING = "SOMETHING ELSE";
+      try {
+        await expect(provider.endOpenQueryTransaction()).rejects.toThrow("SOMETHING ELSE");
+      } finally {
+        mockCallResults.PING = "PONG";
+      }
     });
   });
 

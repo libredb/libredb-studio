@@ -73,11 +73,26 @@ import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
  *
  * MEASURED on redis 7.4.11 through ioredis 5.11.1: `DISCARD` on a connection with no open
  * `MULTI` answers the error reply "ERR DISCARD without MULTI", and the refusal costs the
- * connection nothing - the very next command runs normally. That is what makes an
- * attempted `DISCARD` a safe way to ASK the question on a driver that publishes no reading
- * of it (see `RedisProvider.endOpenQueryTransaction`).
+ * connection nothing - the very next command runs normally. Under
+ * `RedisProvider.endOpenQueryTransaction` it is reached only AFTER the reading said a
+ * `MULTI` was open, where it means another caller on this shared connection ended it in
+ * between.
  */
 const NO_TRANSACTION_MARKER = "DISCARD without MULTI";
+
+/**
+ * The status reply a Redis server sends INSTEAD of a command's own reply while a `MULTI`
+ * is open on that connection.
+ *
+ * MEASURED on redis 7.4.11 through ioredis 5.11.1: inside a `MULTI`, `SET`, `GET`, `PING`
+ * and `CLIENT INFO` all answer this and run nothing, while a second connection is
+ * untouched. The substitution is the reading: a command with a known reply of its own
+ * answers the question just by being answered (see `RedisProvider.endOpenQueryTransaction`).
+ */
+const QUEUED_REPLY = "QUEUED";
+
+/** `PING`'s own reply, the other half of the reading above. */
+const PONG_REPLY = "PONG";
 
 // JSON query payload: { "command": "GET", "args": ["key"] }
 type RedisJsonCommand = { command: string; args?: string[] };
@@ -1001,13 +1016,22 @@ export class RedisProvider extends BaseDatabaseProvider {
    * connection is untouched. So the next user's command does not fail, it silently does
    * not happen, and the schema explorer's `SCAN` is queued with it.
    *
-   * The ask and the act are one call because the driver cannot be asked separately:
-   * ioredis exposes no transaction state for a `MULTI` sent through `call()` (`status`
-   * stays "ready", and the queueing belongs to `Redis.prototype.multi()`'s pipeline
-   * object, which a raw command never touches), and the server cannot be asked on this
-   * connection either, because a `CLIENT INFO` sent inside the `MULTI` is itself queued.
-   * The server's own refusal of a `DISCARD` is the only reading available, and it is a
-   * complete one.
+   * THE ASK IS THAT SUBSTITUTION, AND IT IS NOT THE ACT. ioredis publishes no transaction
+   * state for a `MULTI` sent through `call()` (`status` stays "ready", and the queueing
+   * belongs to `Redis.prototype.multi()`'s pipeline object, which a raw command never
+   * touches), so the server has to be asked - but a queued reply IS the server answering.
+   * `PING` answers "PONG" outside a `MULTI` and "QUEUED" inside one, so one command with a
+   * known reply of its own reads the state without changing it.
+   *
+   * Asking first is not a refinement, it is what keeps an ordinary connection working.
+   * MEASURED on the same server: a read-only ACL (`+@read +ping +info`) answers "PONG" to
+   * `PING` and "NOPERM User ro has no permissions to run the 'discard' command" to
+   * `DISCARD`, and cannot run `MULTI` at all. `POST /api/db/multi-query` awaits this call
+   * in a `finally`, so a blind `DISCARD` would turn every request on such a connection into
+   * an error response and throw away the statement results it had already earned. With the
+   * ask first, no `DISCARD` is sent unless there is one to send. The narrower ACL that CAN
+   * open a `MULTI` but not discard it (`+@read +ping +multi +set`, measured) still raises,
+   * and must: that transaction is open and this provider cannot end it.
    *
    * `DISCARD` and not `EXEC`, for the reason at `OpenQueryTransactionOutcome`: a script
    * that queued commands and never said `EXEC` did not ask for them to run.
@@ -1015,18 +1039,29 @@ export class RedisProvider extends BaseDatabaseProvider {
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reading = await (this.client as any).call("PING");
+    if (reading === PONG_REPLY) return "none";
+    if (reading !== QUEUED_REPLY) {
+      // A third answer is a reading this code does not have. Reporting it as a clean
+      // connection would certify an absence nobody read.
+      throw new QueryError(`Cannot read Redis transaction state: PING answered ${String(reading)}`, "redis");
+    }
+
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (this.client as any).call("DISCARD");
-      return "rolled-back";
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // Only the server's own "there was nothing queued" is an answer. Anything else is a
-      // real failure and is raised: a DISCARD that failed for another reason leaves the
-      // connection in a state this must not report as clean.
-      if (message.includes(NO_TRANSACTION_MARKER)) return "none";
-      throw error;
+      // The reading already said a `MULTI` was open, so the server's own "there was nothing
+      // queued" can only mean another caller on this shared connection ended it in between.
+      // The queue is gone either way, which is what "rolled-back" reports. Anything else is
+      // a real failure - an ACL that refuses the `DISCARD`, a dead socket - and is raised:
+      // the transaction is still open and this must not report it as ended.
+      if (!message.includes(NO_TRANSACTION_MARKER)) throw error;
     }
+
+    return "rolled-back";
   }
 
   /**
