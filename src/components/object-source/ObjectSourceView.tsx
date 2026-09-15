@@ -896,13 +896,12 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * and the command palette's Cmd/Ctrl+K, both UNMOUNT this pane rather than re-addressing it.
    * That unmount is D82, and the binding here survives it either way.
    *
-   * D82 is answered for ONE of this pane's two shells, which is why the prop below is optional.
-   * `Studio.tsx` passes `onApplyInFlightChange` and refuses both gestures while an apply is in
-   * flight. `StudioWorkspace.tsx` passes none, hands `StudioTabBar` the bare `tabMgr.addTab` and
-   * mounts this pane only for an active Source tab, so on the embedded shell the shortcut still
-   * takes the dialog down mid apply: MEASURED on a held host `apply`, the tab strip went to
-   * `["Query 1", "Source: ...", "Query 3"]`, the dialog was gone and the conflict never rendered.
-   * Do not read the paragraph above as an all-clear for a host that declares an `objectEditor`.
+   * D82 is now answered for BOTH of this pane's two shells, and the binding above is what holds
+   * while an apply is in flight rather than the shell's refusal being what holds. `Studio.tsx`
+   * passes `onApplyInFlightChange` and refuses both gestures; `StudioWorkspace.tsx` passes it too
+   * as of `7fe83dcc` and refuses the one gesture that reaches it, the new-tab shortcut, since it
+   * renders no palette. Neither refusal is a reason to drop this binding: a shell is free not to
+   * pass the callback, and the four states stay bound by construction either way.
    *
    * Its test reaches the case by rerendering props at a moment no shell rerenders them. The binding
    * is kept because it is one word of the same rule the other three states carry, and a state bound
@@ -921,9 +920,14 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * not contain, and the shell that owns that component is the only place that can. So the fact is
    * published, and the refusal is written there.
    *
-   * OPTIONAL, and the undefined arm is a SHIPPED shell rather than a convenience for callers that
-   * have not caught up: `StudioWorkspace.tsx` passes nothing, and until it does, an embedded host
-   * keeps losing a `conflict`, a `refused` or a `failed` answer in this window.
+   * OPTIONAL, and the undefined arm now has NO SHIPPED CALLER: both mounts of this pane,
+   * `src/components/Studio.tsx` and `src/workspace/StudioWorkspace.tsx`, pass it, and this
+   * component is not re-exported from `src/exports/`, so nothing outside this repository mounts it
+   * either. What the arm serves is the pane's own test mounts, which set the props each case is
+   * about and nothing else. Making the prop REQUIRED is a real option and a deliberate non-change
+   * here: it would trade this runtime guard for a compile-time one, which is the better trade, at
+   * the cost of editing every mount in `ObjectSourceView.test.tsx` that does not care about the
+   * callback, and it changes no behaviour in either shell.
    *
    * ONE effect with a cleanup that also reports `false`, rather than two. On the true-to-false
    * transition the cleanup and the effect both report `false`, which costs a shell holding this in
