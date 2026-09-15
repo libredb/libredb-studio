@@ -5,6 +5,9 @@
  * before importing the MongoDBProvider class.
  */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 // The REAL Extended JSON serializer, taken before `mock.module` replaces the driver below
 // and handed straight back to the mock, so the source read's rendering is exercised against
@@ -2558,5 +2561,34 @@ describe("object surface", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ============================================================================
+// endOpenQueryTransaction() (D75)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new MongoDBProvider({ ...baseConfig });
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mongodb.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
+      "the engine has no transaction to leave open",
+    ]);
   });
 });

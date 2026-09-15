@@ -281,6 +281,33 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
   `country` values (output shape `{ "country": <value> }`). The key is required: a missing or
   non-string one is a `QueryError`, never a silent `_id`.
 
+### `endOpenQueryTransaction()` is absent, and which absence it is (D75)
+
+The optional provider surface that ends a transaction a statement left open on the session
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
+`duckdb`) is **not implemented here: on the session `query()` runs on,
+the engine has no transaction to leave open.**
+
+MongoDB really does have multi-document transactions on a replica set, so this is not an argument
+from the engine's name. It is what the driver and this provider make reachable:
+
+- A MongoDB transaction lives on a **`ClientSession`**: `startSession()` creates one,
+  `session.startTransaction()` opens the transaction, `session.inTransaction()` is the reading, and
+  an operation joins it only when that session is passed in its options (mongodb 7.6.0,
+  `mongodb.d.ts`). This provider holds a `MongoClient` and a `Db` and never creates a session, so no
+  operation it sends can be inside one.
+- `query()` dispatches over the closed `SUPPORTED_OPERATIONS` set — `find`, `findOne`, `aggregate`,
+  `count`, `distinct`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `deleteOne`,
+  `deleteMany` — and refuses everything else. Measured 2026-09-15 against MongoDB 8 in a replica
+  set: `startTransaction`, `commitTransaction`, `abortTransaction`, `runCommand` and `bulkWrite` are
+  each refused with *"Unsupported operation: `<name>`"*, so the editor cannot open one at all.
+- A transaction open elsewhere is invisible here rather than inherited. In the same run, a separate
+  client held an uncommitted `insertOne` inside `session.inTransaction() === true` while this
+  provider's `count` answered `0`.
+
+So the surface would have nothing to report, and the absence is a declared boundary rather than a
+fallback: the caller shape-checks for the method and this provider does not answer it.
+
 ---
 
 ## 6. Schema introspection
@@ -1070,7 +1097,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   aggregate output.
 - **No `EXPLAIN`.** MongoDB's `explain()` is not wired (`supportsExplain: false`).
 - **No multi-document transactions.** MongoDB supports them on replica sets/sharded clusters, but the
-  provider exposes no begin/commit/rollback API.
+  provider exposes no begin/commit/rollback API, and no statement it accepts can open one, which is
+  why `endOpenQueryTransaction()` is absent ([§5](#endopenquerytransaction-is-absent-and-which-absence-it-is-d75)).
 - **No `cancelQuery`.** A running operation can only be terminated via maintenance `killOp` (needs the
   opid and privileges).
 - **No column modification in a generated migration.** Since
