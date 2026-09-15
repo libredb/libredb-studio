@@ -16,16 +16,28 @@ import { getAppVersion } from "@/lib/app-version";
 import { REPO_URL } from "@/lib/community/repo";
 
 const DEFAULT_PORT = "3000";
+const DEFAULT_HOST = "127.0.0.1";
 
 function isSuppressed(): boolean {
   const value = (process.env.LIBREDB_NO_BANNER ?? "").trim().toLowerCase();
   return value === "1" || value === "true";
 }
 
-/** The port the server actually listens on; never invent a hostname. */
+/**
+ * The URL the server actually answers on. The bind address comes from
+ * HOSTNAME — the same variable bin/studio.js forwards to the standalone
+ * server — so a non-loopback bind prints a usable URL instead of a
+ * hardcoded localhost that only works on loopback. Wildcards print a
+ * loopback URL (the same convention as bin/lib/launcher-utils.mjs).
+ */
 function resolveUrl(): string {
   const port = (process.env.PORT ?? "").trim();
-  return `http://localhost:${port || DEFAULT_PORT}`;
+  let host = (process.env.HOSTNAME ?? "").trim();
+  if (!host) host = DEFAULT_HOST;
+  if (host === "0.0.0.0") host = DEFAULT_HOST;
+  else if (host === "::" || host === "[::]") host = "[::1]";
+  else if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`;
+  return `http://${host}:${port || DEFAULT_PORT}`;
 }
 
 /**
