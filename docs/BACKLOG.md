@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 39
+- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 38
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 15
@@ -1153,34 +1153,6 @@ shell means "this workspace changed it", and the absence of one never means "not
 **Done when:** a host can tell the workspace the catalog moved, either through a host-callable handle or
 through a field on the `onQueryExecute` answer. Both are NEW PUBLISHED SURFACES on `@libredb/studio`,
 which is why this is filed rather than folded into the apply.
-
-### D80. `object-edit-wire.ts` bounds no host-supplied string, so the standalone dialog is unbounded end to end
-
-The four shape predicates in `src/lib/api/object-edit-wire.ts` (`isObjectEditPlanShape`,
-`isObjectEditUnitShape`, `isObjectEditOutcomeShape`, `isObjectEditBuildResponseShape`) check shape and
-bound no string. So `refusal.sentence`, `refusal.hint`, `plan.revision.reason`,
-`preimage.truncated.reason` and each consequence's `fact.source` and `fact.observed` reach the DOM at
-whatever length their producer wrote them.
-
-MEASURED 2026-09-14: every bound the two edit routes enforce is on what they RECEIVE.
-`grep -rn ' > EDIT_' src/app/api/db/objects/` returns exactly 3 hits, `EDIT_CHARACTER_LIMIT` on the
-submitted text and `EDIT_PLAN_EXECUTABLE_LIMIT` on the plan's executable length at both routes, and the
-third inbound bound, `EDIT_BODY_BYTE_LIMIT`, is applied by `readBoundedJson` on the body. Nothing bounds
-what they ANSWER, and the answers are not this application's own prose:
-`libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds `observed` from `FUNCTION LIST`, and a
-refusal sentence is the engine's own message. `ApplyPreviewDialog` bounds exactly one string, the plan's
-executable text, which it refuses to draw a diff above.
-
-The EMBEDDED half is closed: `use-connection-adapter.ts` bounds the whole host answer and snapshots it as
-it counts, so the measured characters are the drawn characters. The standalone half is open, and so is
-the shape layer itself, which is where a reader looks for a bound and where a future third caller would
-inherit one.
-
-Phase 2's `isSourceDocumentShape` bounds all four of its host-supplied rendered strings with
-`SOURCE_CHARACTER_LIMIT` (`src/components/object-source/source-reader.ts`). That is the shape of the fix.
-
-**Done when:** every string those four predicates accept is bounded by an existing limit, with a test per
-predicate feeding it one character over the bound and a control exactly on it.
 
 ### D82. A new-tab shortcut fires through the apply modal, unmounts the Source pane and loses the answer
 
