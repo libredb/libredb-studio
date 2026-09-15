@@ -251,9 +251,9 @@ fields, because the same `db:5432` reached through two different bastions is two
 `host` and `port` are the FAR END on both sides of the compare. The provider factory rewrites a
 tunnelled record to the tunnel's loopback endpoint before the driver opens, so it carries the far end
 alongside that rewrite and the seal hashes the far end, never the ephemeral local port, which is a
-property of this process and not of the server. The measured limit of that, open in the backlog: the
-far end is the address the factory ASKED the bastion to forward to, and a tunnel pooled under the same
-connection id may be forwarding somewhere else. The connection's `id` and `name` are deliberately OUT,
+property of this process and not of the server. The far end is read back off the tunnel and is never
+the address the factory asked for: the pool keys a forward by connection id AND far end, so a provider
+handed a reused tunnel seals the machine that forward actually reaches. The connection's `id` and `name` are deliberately OUT,
 because a caller supplies them, and so is the password, because rotating a credential must not
 invalidate a plan built five minutes earlier. Both of the last two additions came from external review
 of the change that introduced the control, each with a colliding pair measured against the real

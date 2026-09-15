@@ -15,7 +15,7 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
  * `hostKeyFingerprint`, which records what this connection TRUSTS rather than where it goes.
  *
  * `enabled` is in because the tunnel branch in `getOrCreateProvider`
- * (`src/lib/db/factory.ts:534`) tests exactly that flag: a switched-off tunnel is not a route at
+ * (`src/lib/db/factory.ts:533`) tests exactly that flag: a switched-off tunnel is not a route at
  * all, and an absent `sshTunnel` frames to the empty string, which no present tunnel can produce.
  */
 function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
@@ -73,7 +73,7 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * - `serviceName` is Oracle's connect-string tail, `oracle.ts:1551-1560` building
  *   `host:port/serviceName`, so it selects WHICH DATABASE on that listener.
  * - `sshTunnel` is the ROUTE and not a credential. `getOrCreateProvider`
- *   (`src/lib/db/factory.ts:534-538`) REWRITES `host` and `port` to the tunnel's local endpoint
+ *   (`src/lib/db/factory.ts:533-537`) REWRITES `host` and `port` to the tunnel's local endpoint
  *   before the provider is constructed, so with a tunnel enabled the bastion, and not the record's
  *   own `host`, decides which machine the sealed statement reaches. Only the four route values are
  *   framed, by `tunnelRoute` above. Live under the day-one editable set: any of the three engines
@@ -95,13 +95,15 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * cannot tell". What stops a caller deciding the digest with it is in {@link TUNNEL_FAR_END}'s
  * docblock: the key is a symbol, so no stored or posted connection can carry one.
  *
- * WHAT IT DOES ADMIT, measured rather than argued, and open in the backlog. The marker is the
- * address the factory ASKED the bastion to forward to, not one read back from the forward, and
- * `createSSHTunnel` pools by connection id alone. So a provider that reuses a pooled tunnel opened
- * for a DIFFERENT address seals the record's claimed far end, the route recomputes the same value,
- * and the plan verifies for a machine the statement never reaches - a case the pre-X23 digest
- * refused by accident rather than by a check. The live measurement is on `tunnelledConnection` in
- * `src/lib/db/factory.ts`; closing it needs `TunnelInfo` to carry what it forwards to.
+ * WHICH FAR END, AND WHY IT IS THE FORWARD'S AND NOT THE RECORD'S (D86). The marker is read off
+ * the tunnel: `TunnelInfo` carries the `remoteHost` and `remotePort` the forward was opened for,
+ * and the factory frames those. It used to be the address the factory ASKED the bastion to
+ * forward to, while `createSSHTunnel` pooled by connection id alone, so a provider that reused a
+ * pooled tunnel opened for a DIFFERENT address sealed the record's claimed far end, the route
+ * recomputed the same value, and the plan verified for a machine the statement never reached - a
+ * case the pre-X23 digest refused by accident rather than by a check. Measured against the live
+ * bastion on 2026-09-15, and closed on both sides: the pool now keys on the far end, so a request
+ * for an address nothing is forwarding to opens its own forward.
  *
  * Every provider path in the five bullets above is relative to `src/lib/db/providers/`, and the
  * line numbers are a reading taken on 2026-09-14: they are a pointer to the branch, not a contract,

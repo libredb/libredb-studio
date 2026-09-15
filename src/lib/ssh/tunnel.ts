@@ -13,6 +13,17 @@ import { logger } from "@/lib/logger";
 export interface TunnelInfo {
   localHost: string;
   localPort: number;
+  /**
+   * The far end this forward was actually opened for: the address `forwardOut` dials for
+   * every socket accepted on the local endpoint, and therefore the machine the bytes reach.
+   *
+   * It is on the returned value, and not left to the caller's own memory of what it asked
+   * for, because a pooled tunnel is not always the one this call opened. The factory reads
+   * these two to build the object-edit seal, so what a plan is bound to is the address the
+   * transport reaches rather than the address a record claims (D86).
+   */
+  remoteHost: string;
+  remotePort: number;
   close: () => Promise<void>;
   /**
    * The bastion host key this tunnel accepted, in OpenSSH's `SHA256:...` presentation.
@@ -21,8 +32,47 @@ export interface TunnelInfo {
   hostKeyFingerprint?: string;
 }
 
-// Cache active tunnels by connection ID
-const activeTunnels = new Map<string, TunnelInfo>();
+/** The far end a caller wants forwarded, as the pool's lookups ask for it. */
+export interface TunnelRemoteEndpoint {
+  host: string;
+  port: number;
+}
+
+interface PooledTunnel {
+  /** Kept beside the entry so the by-connection lookups can answer without parsing the key. */
+  connectionId: string;
+  info: TunnelInfo;
+}
+
+/**
+ * Active pooled tunnels, keyed by connection id AND the far end the forward was opened for.
+ *
+ * WHY THE FAR END IS IN THE KEY (D86). Keyed by the connection id alone, this map answered a
+ * lookup for `db-b:5432` with the forward a previous caller had opened to `db-a:5432`, and
+ * `TunnelInfo` carried nothing for the caller to notice with. That is a mis-route in the
+ * TRANSPORT, so every statement on the stale tunnel landed on the old machine; it became
+ * reachable from the ordinary UI once editing a tunnelled connection's host was possible,
+ * because `/api/db/disconnect` is called on connection DELETE and nothing else closes a
+ * pooled tunnel when the record's address changes.
+ *
+ * Keying on the far end rather than REFUSING a mismatch, deliberately: refusing would leave
+ * the connection unusable until something closed the stale forward, and nothing on that path
+ * does. Refusing only when a tunnel pre-existed would be worse still, since every second
+ * provider on a live tunnel legitimately reuses it. A request for an address nothing is
+ * forwarding to now opens the forward it asked for, which is what the caller meant, and the
+ * superseded one is closed by the same eviction that already owns it: `removeProvider` and
+ * the idle sweep close BY CONNECTION ID, and `closeSSHTunnel` closes every far end under it.
+ */
+const activeTunnels = new Map<string, PooledTunnel>();
+
+/**
+ * Length-framed so two different (id, far end) triples cannot collide on one key - the same
+ * rule `connectionFingerprint` frames its fields with, for the same reason: a connection id
+ * is a string the caller supplies.
+ */
+function poolKey(connectionId: string, remoteHost: string, remotePort: number): string {
+  return `${connectionId.length}:${connectionId}${remoteHost.length}:${remoteHost}:${remotePort}`;
+}
 
 /**
  * Trust-on-first-use host key memory, keyed by BASTION ADDRESS (`host:port`).
@@ -103,14 +153,15 @@ export async function createSSHTunnel(
   options: CreateSSHTunnelOptions = {},
 ): Promise<TunnelInfo> {
   const shared = options.shared !== false;
+  const key = poolKey(connectionId, remoteHost, remotePort);
 
-  // Return existing tunnel if already active
+  // Return the existing tunnel to THIS far end if one is already active.
   // Note: cached tunnel may be stale if the SSH connection dropped silently.
   // Callers should handle connection errors and call closeSSHTunnel() to evict stale entries.
   if (shared) {
-    const existing = activeTunnels.get(connectionId);
+    const existing = activeTunnels.get(key);
     if (existing) {
-      return existing;
+      return existing.info;
     }
   }
 
@@ -128,7 +179,7 @@ export async function createSSHTunnel(
       // pooled one serving live providers, and deleting that entry would orphan it: the
       // SSH client and local server would stay open with nothing left holding a handle.
       if (shared) {
-        activeTunnels.delete(connectionId);
+        activeTunnels.delete(key);
       }
       if (localServer) {
         localServer.close();
@@ -168,11 +219,13 @@ export async function createSSHTunnel(
         const tunnelInfo: TunnelInfo = {
           localHost: "127.0.0.1",
           localPort: address.port,
+          remoteHost,
+          remotePort,
           close: cleanup,
           hostKeyFingerprint: acceptedFingerprint,
         };
         if (shared) {
-          activeTunnels.set(connectionId, tunnelInfo);
+          activeTunnels.set(key, { connectionId, info: tunnelInfo });
         }
         logger.info(`Tunnel created for ${connectionId}: 127.0.0.1:${address.port} -> ${remoteHost}:${remotePort}`, {
           connectionId,
@@ -229,25 +282,44 @@ export async function createSSHTunnel(
 }
 
 /**
- * Close an SSH tunnel by connection ID
+ * Close every pooled tunnel for a connection ID.
+ *
+ * All of them, not one: a connection may hold a forward to an address its record no longer
+ * names, and this is the teardown for the whole connection - `removeProvider`, the idle
+ * sweep and `/api/db/disconnect` all call it when nothing is left serving the connection.
+ * Iterated over a copy because `close` deletes the entry it owns.
  */
 export async function closeSSHTunnel(connectionId: string): Promise<void> {
-  const tunnel = activeTunnels.get(connectionId);
-  if (tunnel) {
-    await tunnel.close();
+  for (const pooled of [...activeTunnels.values()]) {
+    if (pooled.connectionId === connectionId) {
+      await pooled.info.close();
+    }
   }
 }
 
 /**
- * Check if a tunnel exists for a connection
+ * Whether a tunnel is pooled for a connection: to `farEnd` specifically when one is given,
+ * and to any far end otherwise.
+ *
+ * The factory asks the specific question, because the answer decides whether a failed
+ * connect may tear the tunnel down: only a forward this call opened may be closed, and with
+ * the far end in the pool key that is exactly "nothing was pooled for this far end before".
  */
-export function hasTunnel(connectionId: string): boolean {
-  return activeTunnels.has(connectionId);
+export function hasTunnel(connectionId: string, farEnd?: TunnelRemoteEndpoint): boolean {
+  return getTunnelInfo(connectionId, farEnd) !== undefined;
 }
 
 /**
- * Get tunnel info for a connection
+ * The pooled tunnel for a connection: the one forwarding to `farEnd` when one is given, and
+ * otherwise the first pooled for the id, which is all a caller asking the loose question can
+ * be told once a connection may hold more than one.
  */
-export function getTunnelInfo(connectionId: string): TunnelInfo | undefined {
-  return activeTunnels.get(connectionId);
+export function getTunnelInfo(connectionId: string, farEnd?: TunnelRemoteEndpoint): TunnelInfo | undefined {
+  if (farEnd) {
+    return activeTunnels.get(poolKey(connectionId, farEnd.host, farEnd.port))?.info;
+  }
+  for (const pooled of activeTunnels.values()) {
+    if (pooled.connectionId === connectionId) return pooled.info;
+  }
+  return undefined;
 }

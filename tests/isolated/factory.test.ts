@@ -285,9 +285,21 @@ mock.module("ioredis", () => ({
   },
 }));
 
-const mockCreateSSHTunnel = mock(async () => ({
+/**
+ * The tunnel this mock stands in for now HAS a far end, and a test can make it a different
+ * one from the address the record names (D86).
+ *
+ * It used to answer a local endpoint and nothing else, so there was no far end to be wrong
+ * about and a test asserting what the factory sealed could only have pinned the defect. The
+ * default echoes the address it was asked to forward to, which is the honest case; the D86
+ * test overrides one call with a forward that reaches somewhere else, which is what a pooled
+ * tunnel opened for a previous record actually is.
+ */
+const mockCreateSSHTunnel = mock(async (_id: string, _sshConfig: unknown, remoteHost: string, remotePort: number) => ({
   localHost: "127.0.0.1",
   localPort: 54321,
+  remoteHost,
+  remotePort,
   close: mock(async () => {}),
 }));
 
@@ -604,6 +616,42 @@ describe("getOrCreateProvider", () => {
 
     await getOrCreateProvider(conn);
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+  });
+
+  test("seals the far end the tunnel forwards to, not the one the record names", async () => {
+    // D86. The factory used to build the far end from the RECORD it was handed, while the
+    // pooled tunnel could be forwarding somewhere else entirely, so a plan verified against
+    // a machine the statement never reached. The far end now comes off the tunnel.
+    const forwardedTo = { host: "forwarded-db.internal", port: 15432 };
+    const conn = makeConnection("sqlite", {
+      id: "ssh-seal-far-end",
+      host: "record-db.example.com",
+      port: 5432,
+      database: ":memory:",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    } as Partial<DatabaseConnection>);
+    // The forward reaches an address this record does not name: a tunnel opened before the
+    // record's host was edited. The factory is handed it and must seal what it reaches.
+    mockCreateSSHTunnel.mockImplementationOnce(async () => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost: forwardedTo.host,
+      remotePort: forwardedTo.port,
+      close: mock(async () => {}),
+    }));
+
+    const provider = await getOrCreateProvider(conn);
+
+    const sealed = await connectionFingerprint(provider.config);
+    expect(sealed).toBe(await connectionFingerprint({ ...conn, host: forwardedTo.host, port: forwardedTo.port }));
+    expect(sealed).not.toBe(await connectionFingerprint(conn));
   });
 
   test("closes SSH tunnel when provider connect fails", async () => {
@@ -1635,9 +1683,11 @@ describe("withOneShotTunnel", () => {
   });
 
   test("propagates the callback failure even when closing the tunnel throws", async () => {
-    mockCreateSSHTunnel.mockImplementationOnce(async () => ({
+    mockCreateSSHTunnel.mockImplementationOnce(async (_id, _sshConfig, remoteHost, remotePort) => ({
       localHost: "127.0.0.1",
       localPort: 54321,
+      remoteHost,
+      remotePort,
       close: mock(async () => {
         throw new Error("close failed");
       }),

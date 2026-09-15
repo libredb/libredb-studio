@@ -179,13 +179,14 @@ export interface SSHTunnelConfig {
 export const TUNNEL_FAR_END: unique symbol = Symbol("libredb.tunnelFarEnd");
 
 /**
- * The far side of an SSH forward AS THE FACTORY ASKED FOR IT: the `host` and `port` it passed to
- * `createSSHTunnel` for this connection, which is the record's own address.
+ * The far side of an SSH forward AS THE FORWARD REACHES IT: the `remoteHost` and `remotePort`
+ * the factory reads back off `TunnelInfo`, which is the address `forwardOut` dials for every
+ * socket the tunnel accepts.
  *
- * It is not read back from the forward, and the two can differ. `createSSHTunnel` pools by
- * connection id ALONE, so a second provider on that id is handed whatever the first one opened,
- * whatever address it asks for. The limit and the live measurement behind it are stated on
- * `tunnelledConnection` in `src/lib/db/factory.ts`.
+ * It is deliberately not the address the factory ASKED for. The two could differ while
+ * `createSSHTunnel` pooled by connection id alone, and a provider on a reused tunnel then
+ * sealed a machine its statements never reached (D86). The pool keys on the far end now, and
+ * the measurement that closed it is on `tunnelledConnection` in `src/lib/db/factory.ts`.
  */
 export interface TunnelFarEnd {
   readonly host: string;
