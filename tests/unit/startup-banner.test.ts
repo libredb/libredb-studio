@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { printStartupBanner } from "@/lib/startup-banner";
 
-const ENV_KEYS = ["LIBREDB_NO_BANNER", "NEXT_PUBLIC_APP_VERSION", "PORT"] as const;
+const ENV_KEYS = ["LIBREDB_NO_BANNER", "NEXT_PUBLIC_APP_VERSION", "PORT", "HOSTNAME"] as const;
 
 /** Run the banner with console.log captured and return everything it printed. */
 function capture(): string {
@@ -39,7 +39,7 @@ describe("printStartupBanner", () => {
     const output = capture();
 
     expect(output).toContain("LibreDB Studio 1.2.3");
-    expect(output).toContain("http://localhost:3000");
+    expect(output).toContain("http://127.0.0.1:3000");
     expect(output).toContain("Star the project if it helps you");
     expect(output).toContain("https://github.com/libredb/libredb-studio");
   });
@@ -50,14 +50,36 @@ describe("printStartupBanner", () => {
 
     const output = capture();
 
-    expect(output).toContain("http://localhost:8080");
-    expect(output).not.toContain("localhost:3000");
+    expect(output).toContain("http://127.0.0.1:8080");
+    expect(output).not.toContain("127.0.0.1:3000");
   });
 
   test("falls back to the default port when PORT is blank", () => {
     process.env.PORT = "   ";
 
-    expect(capture()).toContain("http://localhost:3000");
+    expect(capture()).toContain("http://127.0.0.1:3000");
+  });
+
+  test("prints the bind address from HOSTNAME instead of inventing localhost", () => {
+    process.env.NEXT_PUBLIC_APP_VERSION = "1.2.3";
+    process.env.HOSTNAME = "studio.internal";
+
+    const output = capture();
+
+    expect(output).toContain("http://studio.internal:3000");
+    expect(output).not.toContain("localhost");
+  });
+
+  test("prints a loopback URL for the 0.0.0.0 wildcard bind", () => {
+    process.env.HOSTNAME = "0.0.0.0";
+
+    expect(capture()).toContain("http://127.0.0.1:3000");
+  });
+
+  test("brackets a bare IPv6 bind address", () => {
+    process.env.HOSTNAME = "fe80::1";
+
+    expect(capture()).toContain("http://[fe80::1]:3000");
   });
 
   test("never prints 'undefined' when the version is missing", () => {
