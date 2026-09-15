@@ -5943,6 +5943,78 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         expect(mockWire).not.toContain("BEGIN");
         await provider.disconnect();
       });
+
+      /**
+       * THE ORDER OF THE SIX REFUSALS IS LOAD-BEARING, and not only a saving (D76, wave 2 review).
+       *
+       * The check above says the sixth refusal answers LAST because it is the only one that costs
+       * a round trip. That is true and it is not the whole reason, and the missing half is what
+       * these two tests pin.
+       *
+       * MEASURED on 18.4 in `pg-p3fix` on 2026-09-15, one `BEGIN` plus `SELECT 1/0` plus a NAMED
+       * Parse per row, `pg_prepared_statements` counted after the `ROLLBACK`, the block's state
+       * read with a plain `SELECT 1`:
+       *
+       * | text | Parse answered | the block after | prepared |
+       * | --- | --- | --- | --- |
+       * | `COMMIT`, `ROLLBACK`, `END`, `ABORT` | no error at all | ENDED | 1 |
+       * | `SAVEPOINT s1`, a definition | 25P02 | still aborted | 0 |
+       * | empty, whitespace only, comment only | 25P02 | still aborted | 1 |
+       *
+       * So the aborted block is NOT a universal brake. `exec_parse_message` exempts a
+       * transaction-exit statement, which therefore parses, binds, executes and ends the very
+       * block the check opened; and for a text with no statement in it the server takes its empty
+       * branch, the named statement IS created, the 25P02 comes from Bind instead, and the
+       * statement survives the `ROLLBACK` on a client that then goes back to the pool.
+       *
+       * Neither class reaches the check TODAY, and the identity refusal is the only reason:
+       * `routineIdentityHeader` answers the whole text when it finds no closing parenthesis, so
+       * `COMMIT` and an empty text both render a header that is not the addressed routine's and
+       * are refused two refusals earlier. A diff that moves the count check above the identity
+       * check would send both classes to the server, so the order is asserted here rather than
+       * left to a comment.
+       */
+      test("a TRANSACTION-EXIT text never reaches the server, because the identity refusal answers first", async () => {
+        // `COMMIT` is exempt from the aborted-block check: MEASURED, it runs and it ENDS the block
+        // the check opened. It is refused here without a round trip at all.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockWire = [];
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: "COMMIT",
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        // THE CONTROL ON THE ORDER: the probe never opened its transaction, so the exempt
+        // statement was never parsed and the block it would have ended was never begun.
+        expect(mockWire).not.toContain("BEGIN");
+        expect(mockWire).not.toContain("SELECT 1/0");
+        await provider.disconnect();
+      });
+
+      test("a text with NO statement in it never reaches the server either, for the same reason", async () => {
+        // A zero-statement text leaves a prepared statement behind on the pooled client: MEASURED,
+        // the server skips the aborted-block check on an empty parse list, the statement is
+        // created, and it survives the `ROLLBACK`. The identity refusal is what keeps that off
+        // every pooled session.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockWire = [];
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: "   \n  ",
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(mockWire).not.toContain("BEGIN");
+        expect(mockWire).not.toContain("SELECT 1/0");
+        await provider.disconnect();
+      });
     });
 
     /**

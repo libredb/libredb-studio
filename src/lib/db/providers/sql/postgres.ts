@@ -3245,9 +3245,16 @@ export class PostgresProvider extends SQLBaseProvider {
     }
 
     // 6. ONE STATEMENT, and PostgreSQL counts it (D76). The only refusal here that costs a round
-    //    trip, so it answers last, and it executes nothing: `countSubmittedStatements` parses the
-    //    reader's text inside a transaction block it has already poisoned and rolls that block
-    //    back. Its docblock carries the mechanism and the measurement.
+    //    trip, and it executes nothing: `countSubmittedStatements` parses the reader's text inside
+    //    a transaction block it has already poisoned and rolls that block back. Its docblock
+    //    carries the mechanism and the measurement.
+    //
+    //    IT ANSWERS LAST FOR A SECOND REASON, and that one is not cost. MEASURED, the aborted
+    //    block exempts a transaction-exit statement, which runs and ends the block, and it lets a
+    //    text with no statement in it leave a prepared statement on the pooled client. Refusal 5
+    //    above is what keeps both classes off the wire, because `routineIdentityHeader` answers
+    //    the whole text for either one and neither renders this routine's header. So this call
+    //    stays BELOW it, and the suite asserts the order rather than trusting this comment.
     const counted = await this.countSubmittedStatements(request.text);
     if (counted.kind === "many") {
       return {
@@ -3455,7 +3462,7 @@ export class PostgresProvider extends SQLBaseProvider {
    * grammar parse, so it understands dollar quoting, `BEGIN ATOMIC`, comments and string literals
    * exactly the way the engine does, because it IS the engine.
    *
-   * NOTHING CAN RUN HERE, and each of the three moves below is what buys that:
+   * NOTHING THAT REACHES THIS CHECK CAN RUN, and each of the three moves below is what buys that:
    *
    * - the block is POISONED first, so the server answers `25P02` and performs no parse analysis,
    *   no planning and no execution, and the multi-command check is still reached because it
@@ -3463,6 +3470,23 @@ export class PostgresProvider extends SQLBaseProvider {
    * - the statement is NAMED, because `client.query({ text, values: [] })` with no name takes
    *   node-postgres's SIMPLE query path, which MEASURED runs a rider;
    * - the block is ROLLED BACK, so the pooled client goes home idle.
+   *
+   * THE ABORTED BLOCK IS NOT A UNIVERSAL BRAKE, and the sentence above is narrowed to "reaches
+   * this check" for two MEASURED exemptions rather than for caution (wave 2 review). On 18.4,
+   * `pg-p3fix`, 2026-09-15, one `BEGIN` plus `SELECT 1/0` plus a named Parse per row, the block's
+   * state read afterwards with a plain `SELECT 1` and `pg_prepared_statements` counted after the
+   * `ROLLBACK`: `COMMIT`, `ROLLBACK`, `END` and `ABORT` answer NO error, END the block this check
+   * opened, and leave one prepared statement behind, because `exec_parse_message` exempts a
+   * transaction-exit statement from the aborted-block check; and an empty, whitespace-only or
+   * comment-only text answers `25P02` from Bind rather than from Parse, because the server takes
+   * its empty-parse-list branch, so the named statement IS created and survives the `ROLLBACK`.
+   *
+   * WHAT KEEPS BOTH CLASSES AWAY IS THE ORDER OF THE REFUSALS IN `buildObjectEdit`, which is
+   * therefore load-bearing and not only a saving. `routineIdentityHeader` answers the WHOLE text
+   * when it finds no closing parenthesis, so a transaction-exit statement and a text with nothing
+   * in it both render a header that is not the addressed routine's and are refused two refusals
+   * earlier, with no round trip at all. Moving this check above the identity refusal would send
+   * both classes to the server; the provider's own suite asserts that neither reaches the wire.
    *
    * MEASURED on 18.4 in container `pg-p3fix` on 2026-09-15, with a `pg_proc` count for the probe's
    * own objects answering 0 after every row: the verbatim `pg_get_functiondef` output, a `BEGIN
@@ -3499,9 +3523,10 @@ export class PostgresProvider extends SQLBaseProvider {
       }
       try {
         // A NAMED statement with an EMPTY values array, which is the only shape that reaches
-        // Parse. The name is unique per call: nothing is ever prepared, because the aborted block
-        // refuses before the statement is created, but a collision would be a second failure mode
-        // for no gain.
+        // Parse. The name is unique per call, and the docblock's two exemptions are why that is
+        // not decoration: for every text that reaches this check the aborted block refuses before
+        // the statement is created, but a text with no statement in it would leave one behind, and
+        // a reused name would then make a collision the second failure mode.
         await client.query({
           text,
           values: [],
