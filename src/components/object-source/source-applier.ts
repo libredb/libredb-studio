@@ -122,10 +122,15 @@ async function postJson(path: string, body: unknown, whenSilent: (status: number
 
 /**
  * The default applier: this application's own two routes, `POST /api/db/objects/edit-plan` and
- * `POST /api/db/objects/edit-apply`, NEITHER OF WHICH EXISTS AT THIS COMMIT. The two URLs and the
- * two request bodies are a contract taken from this phase's design, asserted in
- * `tests/unit/components/object-source-applier.test.ts` against a recorded `fetch`, and the first
- * thing that will measure them against a live handler is this phase's end-to-end spec.
+ * `POST /api/db/objects/edit-apply`. BOTH ARE WRITTEN, and both are measured against a live
+ * handler: `src/app/api/db/objects/` holds `edit-plan` and `edit-apply`, and `tests/api/db/objects/`
+ * holds `edit-plan.test.ts` and `edit-apply.test.ts`, which drive the handlers themselves. The two
+ * URLs and the two request bodies are asserted from this side as well, in
+ * `tests/unit/components/object-source-applier.test.ts` against a recorded `fetch`, so this client
+ * and those handlers are pinned separately and a drift between them fails on one side or the other.
+ * An earlier revision of this docblock said neither route existed yet and that an end-to-end spec
+ * would be the first thing to measure them; both sentences were true before those handlers landed
+ * and the paragraph at the head of this file already records the same correction.
  *
  * `buildConnectionPayload` sends a managed seed by id and anything else in full, which is how
  * every other db route is called and the only way a connection the server has never heard of can
