@@ -225,7 +225,7 @@ The suite runs on Linux, macOS and Windows, from whichever shell the platform gi
 | [Node.js](https://nodejs.org/) | 24+, the `engines` floor | The `scripts/*.mjs` gates, including `merge-lcov.mjs` and `check-coverage.mjs` |
 | Git | any | Cloning, and on Windows it is also where the POSIX tools below come from |
 | [Helm](https://helm.sh/) | 4.1.3, the version CI runs | Optional locally: the chart tests, see below |
-| A POSIX shell plus `tar`, `unzip` and `7z` | any | The packaging tests, which run the `packaging/` shell scripts and unpack what they produce |
+| A POSIX shell plus `tar`, `zip`, `unzip` and `7z` | any | The packaging tests, which run the `packaging/` shell scripts and unpack what they produce |
 
 Twelve of the thirteen `helm-chart-*.test.ts` files under `tests/unit/` spawn the `helm` binary; the exception is `helm-chart-readme-recipes.test.ts`, a static lint over the chart README.
 Each of the twelve opens with `// @requires helm`, and the runner reads that before it starts a file.
@@ -243,11 +243,19 @@ helm dependency build charts/libredb-studio --skip-refresh
 
 Trap: a stale `docker login` can make that build fail with `401 Unauthorized` from `registry-1.docker.io` even though the chart is anonymously pullable. `docker logout` fixes it.
 
+A tool your platform does not have is not a failure here.
+The tests that need it become skips whose titles carry the reason, the summary lists every one of them under its file at the end of the run, and `bun run test` still ends green.
+So the table above is what you need to run the WHOLE suite; a machine without one of those tools runs the rest of it.
+
 On Windows the POSIX tools come from the Git for Windows installation the clone already needed, and the tests locate them through git itself rather than through `PATH`.
 PowerShell's `PATH` carries `git.exe` but not the `bin` and `usr\bin` directories beside it that hold `bash.exe`, `grep.exe` and `unzip.exe`, and where WSL is installed a bare `bash` does resolve, to `C:\Windows\System32\bash.exe`, a Linux shell that cannot read the Windows temp paths the fixtures hand it.
 So `tests/helpers/posix-tools.ts` asks the git binary for its exec path, derives the installation root from it, falls back to `%LOCALAPPDATA%\Programs\Git` and the two `Program Files` defaults, and spawns each tool by absolute path; 7-Zip is looked for at `C:\Program Files\7-Zip\7z.exe` as well as on `PATH`.
-A tool it cannot find turns the tests that need it into skips whose titles carry the reason, instead of a spawn that throws and takes the rest of the file with it.
+Git for Windows carries no `zip`, so the tests that build the Azure package skip there whatever else you install (`docs/BACKLOG.md` D87).
 Assertions about POSIX file modes skip on Windows in every case: NTFS has no exec bit, and Windows cannot exec an extension-less `#!` script.
+
+macOS needs nothing of its own, and the one thing that used to stop it is gone: the old shell runner called `mapfile`, a bash 4 builtin that the system bash 3.2 does not have, and the runner is TypeScript now.
+The gap that remains is `7z`, which the tests look for by that name, so an installation that provides only `7zz` leaves the standalone-zip packaging tests skipped.
+`bash`, `tar`, `zip` and `unzip` come with the system, so everything else runs.
 
 You do not need a `.env` file or a `data/` directory to run the tests.
 `tests/setup.ts`, which `bunfig.toml` preloads into every test process, pins the credentials and settings the suite runs under, so a local `.env` cannot decide a test's outcome.

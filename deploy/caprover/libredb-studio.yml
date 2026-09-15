@@ -27,8 +27,8 @@ caproverOneClickApp:
     variables:
         - id: $$cap_version
           label: LibreDB Studio Version
-          defaultValue: '0.9.66'
-          description: Image tag to deploy. Always pin a fixed version, never "latest". Example - 0.9.66. Browse all valid tags at https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+          defaultValue: '0.16.0'
+          description: Image tag to deploy. Always pin a fixed version, never "latest". Example - 0.16.0. Browse all valid tags at https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
           validRegex: '/^([^\s^\/])+$/'
         - id: $$cap_admin_email
           label: Admin Email
@@ -53,7 +53,7 @@ caproverOneClickApp:
         - id: $$cap_llm_provider
           label: AI Provider (optional)
           defaultValue: ''
-          description: OPTIONAL - turns on AI query help (natural-language to SQL, explain, fix). One of - gemini | openai | ollama | custom. Leave blank to keep AI off. Example - gemini
+          description: OPTIONAL - turns on the AI rail (schema description, EXPLAIN summaries, query-safety checks). One of - gemini | openai | ollama | custom. Leave blank to keep AI off. Example - gemini
         - id: $$cap_llm_api_key
           label: AI API Key (optional)
           defaultValue: ''
@@ -65,7 +65,7 @@ caproverOneClickApp:
         - id: $$cap_llm_api_url
           label: AI API URL (optional)
           defaultValue: ''
-          description: OPTIONAL - base URL for ollama/custom providers only (not for gemini/openai). Example for an Ollama app on this same CapRover - http://srv-captain--ollama:11434/v1
+          description: OPTIONAL - base URL override, honoured by every provider (required for ollama/custom, optional for gemini/openai). Example for an Ollama app on this same CapRover - http://srv-captain--ollama:11434/v1
     instructions:
         start: |-
             LibreDB Studio is a modern, open-source, web-based SQL IDE for the cloud era.
@@ -106,6 +106,12 @@ caproverOneClickApp:
 
             Your data (saved connections & settings) is stored in SQLite on the
             persistent volume "$$cap_appname-data" and survives restarts and redeploys.
+
+            ⚠️  JWT_SECRET (generated above) also encrypts every saved connection's
+            password. Do not edit it after connections are saved — rotating it makes
+            those passwords unreadable. To rotate JWT_SECRET safely, set a separate
+            STORAGE_ENCRYPTION_KEY env var first (App Configs tab) so the two are
+            independent.
 
             To enable SSO (Auth0/Keycloak/Okta/Azure AD) or change AI settings later,
             add the OIDC_* / LLM_* environment variables under the app's
