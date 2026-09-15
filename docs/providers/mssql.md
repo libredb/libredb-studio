@@ -418,6 +418,22 @@ Explicit lifecycle via `mssql.Transaction` (`beginTransaction()`, [`mssql.ts`](.
 | `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. |
 | `isInTransaction()` | Current state. |
 
+### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
+
+A `BEGIN TRAN` sent through `query()` is a different thing from the lifecycle above.
+It opens a transaction on the pooled connection that one request borrowed, and nothing in the request cycle ends it: `_poolValidate` ([`mssql`](https://github.com/tediousjs/node-mssql) 12.7.2) checks that the connection is alive and never resets its session, so it returns to the pool with the transaction, and its locks, intact.
+The provider is cached per `connection.id` for the whole process, so whoever borrows that connection next inherits it.
+
+`postgres`, `sqlite` and `duckdb` answer this with `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)).
+This provider does not, and the reason is the driver: **the driver cannot be asked**.
+The state itself is readable — `tedious` 20.3.0 maintains `Connection.inTransaction` from the server's own ENVCHANGE tokens, the way `pg` maintains its ReadyForQuery status — but nothing hands this provider that `Connection`.
+`query()` runs on `pool.request()`, and `Request.query()` acquires a connection and releases it inside its own callback; the object never escapes.
+The only supported way to pin one is a `Transaction` or a `PreparedStatement`, and a `Transaction` opened to find out whether a transaction is open is not an ask, it is a second transaction.
+So the handle this provider holds between calls is the `ConnectionPool`, and a pool cannot be asked what a session it already handed back is doing.
+
+Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
+The cost while it stands: an abandoned transaction holds its locks until the connection is reused by a caller that ends it, or the pool closes.
+
 ---
 
 ## 7. Schema introspection

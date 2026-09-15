@@ -5,8 +5,10 @@
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { DatabaseConnection } from "@/lib/types";
-import type { ObjectKindSpec } from "@/lib/db/types";
+import type { DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
@@ -5145,5 +5147,32 @@ describe("MySQL object source", () => {
     const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
 
     await expect(provider.readObjectSource(["app", "customers"], "table")).rejects.toThrow();
+  });
+});
+
+// ============================================================================
+// endOpenQueryTransaction(): the absence is declared, not accidental (D75)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new MySQLProvider(makeMySQLConfig());
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mysql.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });

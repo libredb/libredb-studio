@@ -119,6 +119,9 @@ import { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseProvider } from "@/lib/db/types";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Default mock query implementation
@@ -4070,5 +4073,32 @@ describe("SQL Server bulk column read", () => {
       ["libredb_objects", "reporting", "daily"],
     ]);
     await provider.disconnect();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// endOpenQueryTransaction(): the absence is declared, not accidental (D75)
+// ---------------------------------------------------------------------------
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new MSSQLProvider(baseConfig);
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/mssql.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
   });
 });

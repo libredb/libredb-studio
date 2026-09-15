@@ -569,6 +569,22 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |
 
+### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
+
+A `BEGIN` sent through `query()` is a different thing from the lifecycle above.
+It opens a transaction on the pooled connection that one call borrowed, and `query()` releases that connection without ending it: the pool is built with `resetOnRelease` left at its `mysql2` default of `false` ([`pool_config.js`](https://github.com/sidorares/node-mysql2/blob/master/lib/pool_config.js)), so the connection goes back into the free list with its transaction, and its locks, intact.
+The provider itself is cached per `connection.id` for the whole process, so whoever borrows that connection next inherits it.
+
+`postgres`, `sqlite` and `duckdb` answer this with `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)).
+This provider does not, and the reason is the driver: **the driver cannot be asked**.
+MySQL does publish the state — the OK packet carries `SERVER_STATUS_IN_TRANS` — but `mysql2` 3.24.4 keeps no transaction flag on `Connection` or `PoolConnection`, and surfaces the byte only as `ResultSetHeader.serverStatus`, on results that carry an OK packet.
+A statement that FAILED, which is the case the whole surface exists for, answers an error packet and carries no status at all.
+The handle this provider holds between calls is the pool, and a pool cannot be asked what a session it already handed back is doing.
+That rules out the shape `postgres.ts` uses, where the answer is read off the client the statement ran on, and it rules out the shape `duckdb/index.ts` uses, where the engine's refusal of a `ROLLBACK` is the answer: MySQL accepts `ROLLBACK` with no transaction open, so an unconditional one would report `"rolled-back"` for every script that ended cleanly.
+
+Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
+The cost while it stands: an abandoned transaction keeps its InnoDB row locks until the connection is reused by a caller that ends it, or the pool closes.
+
 ---
 
 ## 7. Schema introspection
