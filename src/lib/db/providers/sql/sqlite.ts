@@ -1271,6 +1271,12 @@ export class SQLiteProvider extends SQLBaseProvider {
    * handle, so the next user's INSERT joined the abandoned transaction, answered HTTP 200
    * and read its own row back, while `sqlite3` in another process saw nothing and a second
    * writer was refused with "database is locked".
+   *
+   * THE `scope` PARAMETER IS DECLARED ON THE INTERFACE AND IGNORED HERE, deliberately (D87). It
+   * exists so a provider that borrows a DIFFERENT pooled client per call can name the one the
+   * caller's own statements ran on; this provider holds ONE connection for its whole life, so there is no other client to
+   * name and no request whose transaction this could be. A signature that took it and did nothing
+   * with it would only suggest the question had been considered per call, which it has not.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();

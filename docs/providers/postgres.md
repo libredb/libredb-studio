@@ -1537,6 +1537,11 @@ Both controls, run without the ender, kept the table.
 What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
 That is the leak ending it promptly is for, not a second defect.
 
+THE OTHER REQUEST CAN BE THE INTERACTIVE SESSION, and then its `commit` lies, which is sharper than the sentence above and is said here rather than left to be met.
+MEASURED at provider level on 2026-09-15: with `query("BEGIN", scope)` having recorded a client in `T`, `beginTransaction()` was handed that same client off the LIFO idle list, its `CREATE TABLE` was destroyed by the ender, and `commit` still answered "Transaction committed".
+The window is only open when an EARLIER statement left something open, which is what makes it the leak above rather than the aliasing D87 closed: 46 attempts through the shipped routes lost nothing, because each route ends its own scope inside the same request.
+Ten apparent losses in the first run of that probe were `HTTP 429` from the route's own rate limiter and not losses at all, which is recorded because the first reading of it looked like the defect.
+
 ---
 
 ## 9. Maintenance

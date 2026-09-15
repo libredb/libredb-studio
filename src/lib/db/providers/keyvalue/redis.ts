@@ -1035,6 +1035,12 @@ export class RedisProvider extends BaseDatabaseProvider {
    *
    * `DISCARD` and not `EXEC`, for the reason at `OpenQueryTransactionOutcome`: a script
    * that queued commands and never said `EXEC` did not ask for them to run.
+   *
+   * THE `scope` PARAMETER IS DECLARED ON THE INTERFACE AND IGNORED HERE, deliberately (D87). It
+   * exists so a provider that borrows a DIFFERENT pooled client per call can name the one the
+   * caller's own statements ran on; this provider holds ONE cached connection for its whole life, so there is no other client to
+   * name and no request whose transaction this could be. A signature that took it and did nothing
+   * with it would only suggest the question had been considered per call, which it has not.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();
