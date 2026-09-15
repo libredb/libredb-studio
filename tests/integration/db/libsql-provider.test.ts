@@ -2762,6 +2762,8 @@ describe("endOpenQueryTransaction()", () => {
     // declared anything.
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/libsql.md"), "utf8");
     expect(doc).toContain("endOpenQueryTransaction");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the engine has no transaction to leave open"]);
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
+      "the engine has no transaction to leave open",
+    ]);
   });
 });
