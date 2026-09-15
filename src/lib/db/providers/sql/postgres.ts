@@ -2620,7 +2620,15 @@ export class PostgresProvider extends SQLBaseProvider {
    * defect: the statement was already inside a transaction nobody had committed, and the
    * window is exactly what ending it promptly is for.
    */
-  public async endOpenQueryTransaction(scope: string): Promise<OpenQueryTransactionOutcome> {
+  public async endOpenQueryTransaction(scope?: string): Promise<OpenQueryTransactionOutcome> {
+    // AN UNNAMED CALL ENDS NOTHING, which is the same rule `recordOpenTransaction` applies on the
+    // way in: a caller that did not name a scope recorded no client under one, so there is nothing
+    // of theirs to end and ending somebody else's is the defect D87 closed. The parameter is
+    // OPTIONAL rather than required because `DatabaseProvider` is published on `@libredb/studio`
+    // (`dist/types-*.d.ts` carries this declaration), and a required parameter would break every
+    // consumer that already calls this method with none.
+    if (scope === undefined) return "none";
+
     const clients = this.openQueryScopes.get(scope);
     if (clients === undefined) return "none";
 
@@ -3676,6 +3684,17 @@ export class PostgresProvider extends SQLBaseProvider {
         await client.query("ROLLBACK");
       }
     } finally {
+      // THE PROBE NEVER RETURNS A POISONED CLIENT TO THE POOL, and the inner `finally` above is
+      // not enough for that on its own: it only runs once the `BEGIN` has resolved. A `BEGIN` the
+      // server accepted and whose reply this client failed to read would leave the block open with
+      // no `ROLLBACK` sent, and the client would go home in `T` for the next borrower to meet.
+      // Asked rather than assumed, and the status is the server's own last word.
+      if (client.getTransactionStatus() !== "I") {
+        // Swallowed deliberately: this is a last-resort tidy on a client that is already being
+        // released, the caller's answer is the count and not this, and a client that cannot take
+        // a ROLLBACK is one `pg` will drop from the pool on its own error path.
+        await client.query("ROLLBACK").catch(() => {});
+      }
       client.release();
     }
   }

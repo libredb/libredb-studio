@@ -521,9 +521,15 @@ export function useQueryExecution({
          * silently rolled back and their next statement autocommitted instead of joining the
          * transaction they had asked for, which is exactly the harm this notice exists to prevent.
          */
+        // THE KEYWORD IS THE ENGINE'S, not SQL's. This sentence said "Add COMMIT" while the only
+        // caller of the ender was a SQL script route. D74 gave the single-statement route the same
+        // `finally`, and `redis` implements the surface, so the notice now reaches a reader whose
+        // open transaction is a `MULTI` and whose keyword is `EXEC`. Naming the wrong one tells
+        // them to type a command their engine does not have.
+        const keepKeyword = activeConnection.type === "redis" ? "EXEC" : "COMMIT";
         const transactionNotice =
           resultData.openTransaction === "rolled-back"
-            ? " This left a transaction open and it was rolled back, so its changes were discarded. Add COMMIT to keep them."
+            ? ` This left a transaction open and it was rolled back, so its changes were discarded. Add ${keepKeyword} to keep them.`
             : "";
 
         // A lone statement gets no summary toast of its own, so the notice is the whole message:

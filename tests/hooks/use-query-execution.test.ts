@@ -1317,6 +1317,28 @@ describe("useQueryExecution", () => {
     expect(description.description).toContain("rolled back");
   });
 
+  test("names the ENGINE's keyword, not SQL's, when the engine is not SQL", async () => {
+    // D74 gave the single-statement route the ender's `finally`, and `redis` implements the
+    // surface, so this notice now reaches a reader whose open transaction is a `MULTI`. Telling
+    // them to add COMMIT names a command Redis does not have. The control below is the same flow
+    // on postgres, which must still say COMMIT.
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, openTransaction: "rolled-back" } },
+    });
+
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: { ...mockConnection, type: "redis" } })),
+    );
+
+    await act(async () => {
+      await result.current.executeQuery("MULTI");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("Add EXEC to keep them");
+    expect(description.description).not.toContain("COMMIT");
+  });
+
   test("says nothing when a lone statement left no transaction open", async () => {
     // THE CONTROL, and it is what makes the assertion above non-vacuous: the same endpoint, the
     // same lone statement, and the only difference is the field. Without it, a notice raised on

@@ -765,7 +765,7 @@ export interface DatabaseProvider {
    * an unnamed call on a POOLED implementer has no truthful answer, and answering `"none"`
    * there would certify an absence nobody read.
    */
-  endOpenQueryTransaction?(scope: string): Promise<OpenQueryTransactionOutcome>;
+  endOpenQueryTransaction?(scope?: string): Promise<OpenQueryTransactionOutcome>;
 
   /**
    * Containers at `parent`, or the top level when `parent` is absent (#789).

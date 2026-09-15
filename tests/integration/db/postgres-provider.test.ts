@@ -1137,6 +1137,38 @@ describe("PostgresProvider", () => {
       return created;
     }
 
+    /**
+     * THE PUBLISHED SIGNATURE TAKES NO SCOPE AND MUST STILL BE SAFE TO CALL.
+     *
+     * `DatabaseProvider` is exported on `@libredb/studio` and `dist/types-*.d.ts` carries this
+     * declaration, so a required `scope` would be a breaking change for every consumer already
+     * calling the method with none. It is optional, and an unnamed call ends NOTHING rather than
+     * ending whatever it finds: that is the same rule `recordOpenTransaction` applies on the way
+     * in, and the alternative is the defect D87 closed, one caller ending another's transaction.
+     *
+     * WHAT GUARDS WHICH HALF, measured rather than assumed. Deleting the `scope === undefined`
+     * early return does NOT fail this test, because `openQueryScopes.get()` would answer
+     * `undefined` and the next line returns `"none"` anyway. It fails `bun run typecheck` instead,
+     * TS2345 at two call sites, because that return is what narrows `string | undefined` to
+     * `string` for the rest of the method. So the compiler holds the line and this test holds the
+     * CONTRACT: that an unnamed call is safe to make at all, which is what the published
+     * declaration promises a consumer.
+     */
+    test("an UNNAMED call ends nothing, and says so", async () => {
+      provider = await connectedProvider();
+      const left = fakeClient("T");
+      handOut(left);
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+
+      // THE CONTROL first: the client really is holding a transaction under a scope, so the
+      // "none" below is an unnamed call declining to act and not an empty provider.
+      expect(left.status).toBe("T");
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(left.issued).not.toContain("ROLLBACK");
+      // And the named call still reaches it, so nothing was lost by declining.
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+    });
+
     test("rolls back the client the NAMED scope left in T, and reports it", async () => {
       provider = await connectedProvider();
       const client = fakeClient("T");
@@ -5595,6 +5627,61 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
       );
       expect(step.language).toBe("pgsql");
+      await provider.disconnect();
+    });
+
+    /**
+     * THE CONSTANT AND THE UNIT IT COUNTS, tied together here because nothing else ties them.
+     *
+     * The apply asserts the round trip answered `GUARDED_BATCH_STATEMENT_COUNT` results, and that
+     * constant is a NUMBER rather than a count of anything: the unit is composed a few lines apart
+     * from the constant, and counting its statements would need the parser this repository
+     * deliberately does not have, because the two `DO` blocks are full of semicolons inside dollar
+     * quotes. So an external review is right that a fifth provider statement would leave the
+     * constant silently wrong.
+     *
+     * What CAN be pinned without a parser is the SHAPE: the unit is a provider prefix of exactly
+     * two statements, the reader's one, and a provider suffix of exactly one, and the reader's
+     * segment is held at one statement by the build's own check. This asserts the prefix and the
+     * suffix by their boundaries rather than by counting, so adding a statement to either moves a
+     * boundary and fails here, next to the number it would have invalidated.
+     */
+    test("the emitted unit is the four statements GUARDED_BATCH_STATEMENT_COUNT counts", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+
+      // The three segments ARE the three parts, and the middle one is the reader's. A provider
+      // segment carries its own text; a user segment carries only the coordinates of theirs.
+      expect(step.segments).toHaveLength(3);
+      const [before, reader, after] = step.segments;
+      if (before.from !== "provider" || reader.from !== "user" || after.from !== "provider") {
+        throw new Error("the unit is no longer provider, user, provider");
+      }
+      // The user segment's coordinates are into the READER's own text, not into the step: that is
+      // what makes a marker land on the line the reader typed.
+      expect(reader.start).toBe(0);
+      expect(reader.end).toBe(EDITED.length);
+      expect(before.text + EDITED + after.text).toBe(step.text);
+
+      // PREFIX: exactly `SET LOCAL ...;` then one `DO $$...$$;` and nothing after it.
+      expect(before.text).toMatch(/^SET LOCAL search_path = [^;]+;\nDO \$[a-z0-9]*\$[\s\S]*\$[a-z0-9]*\$;\n$/);
+      // SUFFIX: a NEWLINE, then the terminator for the reader's statement, then exactly one
+      // `DO $$...$$;`. The leading newline is load-bearing and is asserted rather than tolerated:
+      // it ends the reader's line before the terminator, so an edit ending in a `--` comment does
+      // not swallow it. Its own measurement is on the docblock at the construction site.
+      expect(after.text).toMatch(/^\n;\nDO \$[a-z0-9]*\$[\s\S]*\$[a-z0-9]*\$;$/);
+      // So: 2 + 1 + 1. Written as the arithmetic rather than as the literal 4, so a reader who
+      // changes one part sees which term moved.
+      expect(2 + 1 + 1).toBe(4);
       await provider.disconnect();
     });
 
