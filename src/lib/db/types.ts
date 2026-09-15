@@ -630,6 +630,33 @@ export interface QueryPrepareOptions {
  */
 export type OpenQueryTransactionOutcome = "none" | "rolled-back";
 
+/**
+ * A fresh name for one caller's call scope (D87). One per request, minted by the route
+ * that will also end it, so that the token cannot collide with another request's and
+ * cannot be supplied by the client: a caller-chosen scope would let one request end
+ * another's transaction, which is the defect this parameter exists to close.
+ */
+export function newQueryCallScope(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * Whether this provider can end a transaction its own `query()` path left open.
+ *
+ * A runtime shape check, the same one `POST /api/db/transaction` uses for the interactive
+ * session: the method is optional on `DatabaseProvider` because only a provider that can
+ * name the session its statements ran on can answer truthfully (`endOpenQueryTransaction`'s
+ * declaration argues why). `postgres`, `sqlite`, `duckdb` and `redis` implement it; on the
+ * rest a caller leaves the handle exactly as it found it, because inventing a rollback
+ * there would be guessing at another engine's state. Shared by the two routes that end
+ * what they opened, so they cannot disagree about who can be asked.
+ */
+export function endsOpenQueryTransactions(
+  provider: DatabaseProvider,
+): provider is DatabaseProvider & Required<Pick<DatabaseProvider, "endOpenQueryTransaction">> {
+  return typeof provider.endOpenQueryTransaction === "function";
+}
+
 export interface DatabaseProvider {
   /** Database type identifier */
   readonly type: DatabaseType;
@@ -656,9 +683,20 @@ export interface DatabaseProvider {
    * Execute a SQL query
    * @param sql - SQL query string
    * @param params - Optional query parameters for prepared statements
+   * @param queryId - The caller's own name for this run, so that `cancelQuery(queryId)`
+   *   can reach the statement while it is still on the wire. Declared here because six
+   *   providers already take it as their third parameter and the query route reached it
+   *   through a cast; a provider that cannot cancel ignores it.
+   * @param scope - The caller's own name for the CALL SCOPE this statement belongs to,
+   *   which is what makes `endOpenQueryTransaction(scope)` able to name the session this
+   *   request ran on rather than whichever one anybody touched last (D87). One request
+   *   mints one scope and passes the same one to every statement it runs and to the
+   *   ender; two concurrent requests on the same cached provider therefore never see
+   *   each other's sessions. Absent means "this caller will not end anything", and a
+   *   provider then records nothing for it.
    * @returns Query result with rows, fields, and execution time
    */
-  query(sql: string, params?: unknown[]): Promise<QueryResult>;
+  query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult>;
 
   /**
    * Execute exactly one statement under the DATABASE's own read-only
@@ -708,16 +746,26 @@ export interface DatabaseProvider {
    * certify an absence nobody read. Every type-id that does NOT implement it says which
    * absence it is in its own `docs/providers/<type-id>.md`.
    *
-   * WHAT THIS SURFACE CANNOT DO, and an earlier form of this paragraph claimed it could.
+   * `scope` IS THE WHOLE CONTRACT, and an earlier form of this surface took no argument.
    * It said the method "does NOT touch the interactive transaction session
    * `POST /api/db/transaction` drives", because that session holds a connection of its own.
-   * MEASURED FALSE on 2026-09-15 (D87): a provider records one client per PROVIDER, not per
-   * call, and `pg`'s LIFO idle list hands `beginTransaction()` the very object a previous
-   * `query()` recorded. The implementation that names a single last client therefore rolls
-   * back whoever recorded one last, which under concurrent traffic on a shared cached
-   * provider is not the caller. D87 is the fix and D74 is why no route can work around it.
+   * MEASURED FALSE on 2026-09-15 (D87), on PostgreSQL 18.4 through `pg` 8.23: a provider
+   * that records one client per PROVIDER records it for every concurrent caller at once,
+   * and `pg`'s LIFO idle list hands `beginTransaction()` the very object a previous
+   * `query()` recorded, so the ender rolled an interactive session's committed CREATE TABLE
+   * away while `commit` still answered "Transaction committed", and a plain read's ender
+   * rolled back a concurrent multi-statement script mid-flight while the script was told
+   * all four of its statements had succeeded. So the caller now NAMES its own call scope:
+   * the same string it passed to every `query()` it made, and nothing this scope did not
+   * run on can be ended here. A scope that left nothing open answers `"none"`.
+   *
+   * An implementer that holds ONE session for the whole provider — `sqlite`, `duckdb` and
+   * `redis` do — has nothing to disambiguate and takes no argument at all, which is exactly
+   * assignable to this declaration. The parameter is required rather than optional because
+   * an unnamed call on a POOLED implementer has no truthful answer, and answering `"none"`
+   * there would certify an absence nobody read.
    */
-  endOpenQueryTransaction?(): Promise<OpenQueryTransactionOutcome>;
+  endOpenQueryTransaction?(scope: string): Promise<OpenQueryTransactionOutcome>;
 
   /**
    * Containers at `parent`, or the top level when `parent` is absent (#789).

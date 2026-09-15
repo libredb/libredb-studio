@@ -1524,9 +1524,18 @@ Every later request that drew that client answered HTTP 500 "current transaction
 
 `endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
 It reads the server's own answer rather than inferring one: `pg` records the ReadyForQuery status byte of every statement — `I` idle, `T` in a transaction, `E` in a failed one — and publishes it as `getTransactionStatus()` (pg 8.23).
-It targets the exact client the last `query()` ran on, kept in `lastQueryClient`, because a rollback issued through a fresh `pool.connect()` is not guaranteed to reach the same one and rolling back somebody else's transaction is worse than leaving this one open.
-The interactive session above is never touched: its client is checked out for the session's whole life, so `query()` never borrows it.
-`POST /api/db/multi-query` calls this in a `finally` and reports the outcome.
+It targets the exact clients the CALLER'S OWN scope left a transaction open on, because a rollback issued through a fresh `pool.connect()` is not guaranteed to reach the client the statement ran on, and rolling back somebody else's transaction is worse than leaving this one open.
+A caller passes one `scope` string to every `query()` it makes and the same one to `endOpenQueryTransaction(scope)`; a client is recorded under that scope only when the server's status byte says `T` or `E` at the moment the call releases it, so a statement that left nothing open puts nothing within any ender's reach.
+
+An earlier form targeted one `lastQueryClient` field and said the interactive session above "is never touched", because its client is checked out for the session's whole life.
+Both were false, measured 2026-09-15 on 18.4 (D87).
+`query()` overwrote that one field for every concurrent caller of the per-`connection.id` cached provider, so a plain read's ender rolled a concurrent `/api/db/multi-query` script's transaction back mid-script while the script was told all four of its statements had succeeded, its `COMMIT` included, and its `CREATE TABLE` was gone.
+And `beginTransaction()` calls `pool.connect()` on a LIFO idle list, so it is handed the very object a previous `query()` recorded: the ender rolled the interactive session's committed `CREATE TABLE` away while the status route still read `inTransaction` and `commit` answered "Transaction committed".
+Both controls, run without the ender, kept the table.
+
+`POST /api/db/multi-query` and `POST /api/db/query` each call this in a `finally` under a scope of their own and report the outcome.
+What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
+That is the leak ending it promptly is for, not a second defect.
 
 ---
 

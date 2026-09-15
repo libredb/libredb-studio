@@ -1090,24 +1090,54 @@ describe("PostgresProvider", () => {
       mockTxStatus = "I";
     });
 
-    test("rolls back on the client the last statement ran on when the server says T", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
+    /**
+     * A pooled client of its own, because the defect D87 records is about TELLING TWO
+     * CLIENTS APART: the shared `mockClient` above is one object for the whole pool, so a
+     * test written on it cannot fail the way concurrent traffic does. This one carries the
+     * server's ReadyForQuery byte the way `pg` does — the statement that ends a transaction
+     * moves it back to "I" — and records what was issued on it.
+     */
+    function fakeClient(afterStatement: "I" | "T" | "E" = "I") {
       const issued: string[] = [];
-      mockQueryFn = (sql: string) => {
-        issued.push(sql);
-        return defaultMockQuery(sql);
+      const client = {
+        status: "I" as "I" | "T" | "E",
+        issued,
+        query: async (sql: string) => {
+          issued.push(String(sql));
+          client.status = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(String(sql)) ? "I" : afterStatement;
+          return { rows: [], fields: [], rowCount: 0 };
+        },
+        getTransactionStatus: () => client.status,
+        release: () => {},
       };
+      return client;
+    }
 
-      await provider.query("BEGIN");
-      mockTxStatus = "T";
+    /** Hand the provider's pool these clients, in this order, one per `connect()`. */
+    function handOut(...clients: ReturnType<typeof fakeClient>[]) {
+      const queue = [...clients];
+      (lastPool as unknown as { connect: () => Promise<unknown> }).connect = async () =>
+        queue.shift() ?? clients[clients.length - 1];
+    }
 
-      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
-      expect(issued.at(-1)).toBe("ROLLBACK");
-      // The rollback really reached the wire: the mock client moves its own status to "I"
-      // when it sees a COMMIT or a ROLLBACK, exactly as the server's ReadyForQuery does.
-      expect(String(mockTxStatus)).toBe("I");
+    async function connectedProvider() {
+      const created = new PostgresProvider(makePgConfig());
+      await created.connect();
+      return created;
+    }
+
+    test("rolls back the client the NAMED scope left in T, and reports it", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+      expect(client.issued.at(-1)).toBe("ROLLBACK");
+      // The rollback really reached the wire: the client moves its own status the way the
+      // server's ReadyForQuery byte does.
+      expect(client.getTransactionStatus()).toBe("I");
     });
 
     test("rolls back an ABORTED transaction, which is the shape that poisons the pool", async () => {
@@ -1116,43 +1146,155 @@ describe("PostgresProvider", () => {
       // later request that drew that client answered HTTP 500 "current transaction is
       // aborted, commands ignored until end of transaction block" — a different user,
       // a different route, twelve retries over 60 seconds and eight minutes later.
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+      provider = await connectedProvider();
+      const client = fakeClient("E");
+      handOut(client);
 
-      const issued: string[] = [];
-      mockQueryFn = (sql: string) => {
-        issued.push(sql);
-        return defaultMockQuery(sql);
-      };
+      await provider.query("SELECT 1", undefined, undefined, "scope-a");
 
-      await provider.query("SELECT 1");
-      mockTxStatus = "E";
-
-      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
-      expect(issued.at(-1)).toBe("ROLLBACK");
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+      expect(client.issued.at(-1)).toBe("ROLLBACK");
     });
 
-    test("answers none when the server says the client is idle", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    test("answers none when the scope's own statement left the client idle", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("I");
+      handOut(client);
 
-      const issued: string[] = [];
-      mockQueryFn = (sql: string) => {
-        issued.push(sql);
-        return defaultMockQuery(sql);
-      };
+      await provider.query("SELECT 1", undefined, undefined, "scope-a");
 
-      await provider.query("SELECT 1");
-
-      expect(await provider.endOpenQueryTransaction()).toBe("none");
-      expect(issued).not.toContain("ROLLBACK");
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
     });
 
-    test("answers none when no statement has run on this provider yet", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    test("answers none for a scope that has run nothing on this provider", async () => {
+      provider = await connectedProvider();
 
-      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(await provider.endOpenQueryTransaction("scope-nobody-used")).toBe("none");
+    });
+
+    // ── D87: WHOSE transaction is ended ───────────────────────────────────────
+    //
+    // One provider is cached per connection id for the whole process, so these are not
+    // hypotheticals: they are what two signed-in users of one stored connection do.
+
+    test("a scope cannot end a transaction ANOTHER scope opened", async () => {
+      // MEASURED 2026-09-15 on PostgreSQL 18.4 through the shipped routes: with the ender
+      // acting on one shared pointer, a plain read on /api/db/query rolled back a
+      // concurrent /api/db/multi-query script mid-script. The script answered 200,
+      // hasError false, all four statements "success" including its COMMIT, and its
+      // CREATE TABLE was gone; the control without the ender kept the table.
+      provider = await connectedProvider();
+      const scriptClient = fakeClient("T");
+      const readClient = fakeClient("I");
+      handOut(scriptClient, readClient);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("SELECT pg_sleep(3)", undefined, undefined, "scope-read");
+
+      // The plain read's own ender. It ran on a client of its own and has nothing to end.
+      expect(await provider.endOpenQueryTransaction("scope-read")).toBe("none");
+      expect(scriptClient.issued).not.toContain("ROLLBACK");
+      expect(scriptClient.getTransactionStatus()).toBe("T");
+
+      // The control that makes those two assertions non-vacuous: the script's own scope
+      // reaches the very transaction the read could not, so the ender is live.
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("rolled-back");
+      expect(scriptClient.getTransactionStatus()).toBe("I");
+    });
+
+    test("the interactive session's client is out of every query scope's reach", async () => {
+      // The docblock this replaces said the session's client "can never be the recorded
+      // one". MEASURED FALSE on 18.4: `beginTransaction()` calls `pool.connect()`, pg's
+      // idle list is LIFO, and it is handed the very object a previous `query()` recorded,
+      // so the plain read's ender rolled the session's committed CREATE TABLE away while
+      // `commit` still answered "Transaction committed". Recording only a client released
+      // WITH a transaction open is what closes it: the plain read released this one idle.
+      provider = await connectedProvider();
+      const shared = fakeClient("I");
+      handOut(shared);
+
+      await provider.query("SELECT 1", undefined, undefined, "scope-read");
+      // LIFO: the session is handed the same object.
+      await provider.beginTransaction();
+      shared.status = "T";
+
+      expect(await provider.endOpenQueryTransaction("scope-read")).toBe("none");
+      expect(shared.issued).not.toContain("ROLLBACK");
+      expect(provider.isInTransaction()).toBe(true);
+      expect(shared.getTransactionStatus()).toBe("T");
+    });
+
+    test("ends every client its own scope left open, not just the last one", async () => {
+      // A script's statements are not guaranteed the same pooled client under concurrent
+      // traffic, so the scope holds a set and the ender walks it.
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("rolled-back");
+      expect(first.issued).toContain("ROLLBACK");
+      expect(second.issued).toContain("ROLLBACK");
+    });
+
+    test("asks the server again at end time, so a transaction already ended is not rolled back twice", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+      // The scope's own next statement committed it; the record is stale by design.
+      client.status = "I";
+
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
+    });
+
+    test("a scope is spent once it is ended, so a second call ends nothing", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+
+      client.status = "T";
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued.filter((sql) => sql === "ROLLBACK")).toHaveLength(1);
+    });
+
+    test("an UNNAMED call records nothing, so no ender can find its client", async () => {
+      // Every other caller of query() in this codebase passes no scope. Recording those
+      // would put a client somebody else's ender could reach back into the map.
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN");
+
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
+      expect(client.getTransactionStatus()).toBe("T");
+    });
+
+    test("disconnect drops every recorded client, dead ones included", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+      await provider.disconnect();
+      await provider.connect();
+      handOut(client);
+
+      // pool.end() ended that client; its last reported status never changes again, so the
+      // record must not survive to answer for a session that no longer exists.
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
     });
   });
 

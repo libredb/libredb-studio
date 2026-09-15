@@ -5,7 +5,8 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
-import type { ExplainFormat } from "@/lib/db/types";
+import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
+import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
 
 /**
  * The error an unreadable `explain` field gets. It names the whole allowed shape
@@ -104,46 +105,49 @@ export async function POST(req: NextRequest) {
 
     const prepared = provider.prepareQuery(statement, options);
 
-    // THIS ROUTE ENDS NO TRANSACTION, AND THE OMISSION IS DELIBERATE (D74).
+    // A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THIS ROUTE ENDS IT (D74).
     //
-    // A single statement CAN leave one open. MEASURED 2026-09-15 against PostgreSQL 18.4
-    // through this handler with the real provider and the real process-wide cache: a lone
-    // `BEGIN` answered 200 and released its pooled client in status `T`, and the next
-    // request on the same cached provider ran its `CREATE TABLE` inside that stranger's
-    // transaction, answered 200, and an independent reader saw no such table.
+    // MEASURED 2026-09-15 against PostgreSQL 18.4 through this handler with the real
+    // provider and the real process-wide cache: a lone `BEGIN` answered 200 and released
+    // its pooled client in status `T`, and the next request on the same cached provider —
+    // which is any other signed-in user of that stored connection — ran its `CREATE TABLE`
+    // inside that stranger's transaction, answered 200, and an independent reader saw no
+    // such table. Driven the other way the loss is loud: a `BEGIN` followed by a statement
+    // naming a missing relation leaves the client in `E` and the next request answers 500.
     //
-    // The obvious answer, the `finally` calling `provider.endOpenQueryTransaction()` that
-    // `/api/db/multi-query` spells, is worse than the leak, and was measured to be on the
-    // same engine. `PostgresProvider.endOpenQueryTransaction()` acts on `lastQueryClient`,
-    // ONE field that every concurrent caller of the per-connection-id cached provider
-    // overwrites, so it names whichever client anybody recorded last and not the client
-    // this request's statement ran on. With that finally in place a plain
-    // `SELECT pg_sleep(3)` sent here rolled back a concurrent `/api/db/multi-query`
-    // script mid-flight: the script was told all four statements succeeded, its `COMMIT`
-    // included, and its `CREATE TABLE` was gone. The same plain SELECT discarded an
-    // interactive `POST /api/db/transaction` session's committed `CREATE TABLE` while the
-    // status route still read `inTransaction` and `commit` answered "Transaction
-    // committed". Nothing threw in either run, and both survive without the finally.
+    // This `finally` was tried once before and REVERTED, because the ender it calls named
+    // one shared pointer: it rolled back whichever client anybody had recorded last, which
+    // cost a concurrent `/api/db/multi-query` script its committed `CREATE TABLE` and an
+    // interactive `POST /api/db/transaction` session its own. D87 fixed that in the
+    // provider, where the borrowed client is in scope, and the `scope` minted here is what
+    // names this request's own session: nothing this handler did not run on can be ended.
     //
-    // So D74 stays open until the provider surface can NAME the client a call ran on,
-    // which is `postgres.ts` and not this route. Ending a transaction this handler cannot
-    // identify would trade a leak for silent loss of somebody else's committed work.
+    // It is a `finally` and not a line after the call because the statement that poisons a
+    // client is usually the one that threw, and the response must not be able to leave by
+    // a path that skips this.
+    const scope = newQueryCallScope();
+    let openTransaction: OpenQueryTransactionOutcome = "none";
+
     // Pass queryId to provider for cancellation tracking
     const supportsCancel = "cancelQuery" in provider;
-    const result =
-      supportsCancel && queryId
-        ? await (
-            provider as unknown as {
-              query(sql: string, params?: unknown[], queryId?: string): ReturnType<typeof provider.query>;
-            }
-          ).query(prepared.query, bound.params, queryId)
-        : await provider.query(prepared.query, bound.params);
+    let result: Awaited<ReturnType<typeof provider.query>>;
+    try {
+      result = await provider.query(prepared.query, bound.params, supportsCancel ? queryId : undefined, scope);
+    } finally {
+      if (endsOpenQueryTransactions(provider)) {
+        openTransaction = await provider.endOpenQueryTransaction(scope);
+      }
+    }
 
     const hasMore = result.rows.length === prepared.limit;
 
     return NextResponse.json({
       ...result,
       ...(explainFormat !== undefined && { explainFormat }),
+      // Present only when there was a transaction to end, the way `/api/db/multi-query`
+      // reports it: the client renders the notice from the field's presence alone, so an
+      // always-present "none" would announce something that did not happen.
+      ...(openTransaction === "rolled-back" && { openTransaction }),
       pagination: {
         limit: prepared.limit,
         offset: prepared.offset,

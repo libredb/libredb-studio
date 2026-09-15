@@ -1956,18 +1956,32 @@ export class PostgresProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
 
   /**
-   * The pooled client the most recent `query()` ran a statement on, kept so that
-   * `endOpenQueryTransaction()` can name it (D71).
+   * Per CALL SCOPE, the pooled clients a `query()` in that scope released with a
+   * transaction still open on them, kept so that `endOpenQueryTransaction(scope)` can
+   * name the caller's own session and nothing else (D87).
    *
-   * A reference to a RELEASED client, deliberately, and it is not a leak: `release()`
-   * returns the client to the pool's idle list without ending it, so the object stays a
-   * live `pg` Client and `getTransactionStatus()` on it still reports the last
-   * ReadyForQuery status the server sent. Naming the client is the whole point — a
+   * Keyed by scope and not one field, because one provider is cached per connection id
+   * for the whole process and every concurrent request on that stored connection calls
+   * this same object. A single field named whichever client anybody recorded last, which
+   * was measured rolling a concurrent script's transaction back mid-flight and rolling
+   * an interactive session's committed work away.
+   *
+   * Recorded only when the server's own ReadyForQuery byte says "T" or "E" AT RELEASE,
+   * while this call still holds the client, which is what keeps the record honest: a
+   * statement that left nothing open puts nothing in the map, so the pool is free to hand
+   * that client to an interactive session or to another request without the ender ever
+   * being able to reach it. It also keeps the map small — ordinary traffic records
+   * nothing at all.
+   *
+   * The references are to RELEASED clients, deliberately, and they are not a leak:
+   * `release()` returns the client to the pool's idle list without ending it, so the
+   * object stays a live `pg` Client and `getTransactionStatus()` on it still reports the
+   * last ReadyForQuery status the server sent. Naming the client is the whole point — a
    * rollback issued through a fresh `pool.connect()` is not guaranteed to reach the
    * client the script's statements ran on, and rolling back somebody else's transaction
    * is worse than leaving this one open.
    */
-  private lastQueryClient: PoolClient | null = null;
+  private readonly openQueryScopes = new Map<string, Set<PoolClient>>();
 
   // Transaction support: dedicated client held outside pool
   private txClient: PoolClient | null = null;
@@ -2196,11 +2210,11 @@ export class PostgresProvider extends SQLBaseProvider {
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
-      // `pool.end()` ends every client it holds. The reference kept for
+      // `pool.end()` ends every client it holds. A reference kept for
       // `endOpenQueryTransaction()` would then name a dead client whose last reported
-      // ReadyForQuery status never changes again, so it is dropped here rather than left
-      // to answer for a session that no longer exists.
-      this.lastQueryClient = null;
+      // ReadyForQuery status never changes again, so they are dropped here rather than
+      // left to answer for sessions that no longer exist.
+      this.openQueryScopes.clear();
       this.setConnected(false);
     }
   }
@@ -2292,17 +2306,13 @@ export class PostgresProvider extends SQLBaseProvider {
   // Track running query PIDs for cancellation
   private runningQueryPids = new Map<string, number>();
 
-  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
+  public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const client = await this.pool!.connect();
-          // Recorded BEFORE the statement runs and kept after the release: a statement
-          // that FAILS inside a transaction is exactly the case D71 is about, and the
-          // client it failed on goes back to the pool in status "E".
-          this.lastQueryClient = client;
           try {
             // Track PID for cancellation support
             if (queryId) {
@@ -2313,6 +2323,12 @@ export class PostgresProvider extends SQLBaseProvider {
             return res;
           } finally {
             if (queryId) this.runningQueryPids.delete(queryId);
+            // Read while this call still HOLDS the client, and before the release that
+            // puts it back within reach of everybody else: after the release the status
+            // can be another caller's, and a statement that FAILS inside a transaction —
+            // exactly the case D71 is about — is the one that most needs recording, so
+            // this sits in the finally and not on the success path.
+            this.recordOpenTransaction(scope, client);
             client.release();
           }
         } catch (error) {
@@ -2542,33 +2558,65 @@ export class PostgresProvider extends SQLBaseProvider {
    * no choice in any case — PostgreSQL ignores everything but a transaction-ending
    * command there, and COMMIT on an aborted transaction rolls back regardless.
    *
-   * THIS METHOD ACTS ON ONE SHARED POINTER AND CANNOT NAME THE CALLER'S OWN SESSION (D87).
-   * `query()` overwrites `lastQueryClient` on every call, and `getOrCreateProvider` caches
-   * one provider per connection id for the whole process, so under concurrent traffic the
-   * client rolled back here is whichever client anybody recorded last.
+   * IT ACTS ONLY ON THE CALLER'S OWN SCOPE (D87). `getOrCreateProvider` caches one provider
+   * per connection id for the whole process, so every concurrent request on that stored
+   * connection calls this same object. An earlier form recorded ONE client per provider and
+   * rolled back whichever client anybody recorded last. Measured 2026-09-15 on 18.4, twice
+   * per arm against a control: a plain read's ender rolled a concurrent `/api/db/multi-query`
+   * script's transaction back mid-flight, with the script told all four statements including
+   * its COMMIT had succeeded and its table gone; the same ender rolled an interactive
+   * `POST /api/db/transaction` session's committed CREATE TABLE away, because
+   * `beginTransaction()` had been handed the very client a previous `query()` recorded
+   * (`pg`'s idle list is LIFO), while `commit` still answered "Transaction committed"; and
+   * the leak it exists for survived anyway, the opener's own client left `idle in
+   * transaction` because another request had overwritten the pointer first.
    *
-   * An earlier form of this paragraph said the interactive session `POST /api/db/transaction`
-   * drives "can never be `lastQueryClient`", because its client is checked out for the
-   * session's whole life. MEASURED FALSE on 2026-09-15: `beginTransaction()` calls
-   * `pool.connect()`, `pg`'s idle list is LIFO, and it is handed the SAME object a previous
-   * `query()` recorded, so `txClient === lastQueryClient`. The ender then rolled that
-   * session's transaction away while the status route still read `inTransaction` and
-   * `commit` answered "Transaction committed".
+   * So the caller names the scope it ran under and only the clients THAT scope left open are
+   * ended. The scope is spent here: the entry is dropped whether anything was rolled back or
+   * not, so a second call for the same scope answers `"none"` and the map cannot grow past
+   * the requests in flight.
    *
-   * D87 carries the three measured arms and the shape that fixes them: `query()` naming the
-   * client its call borrowed, and this method taking it. Until that lands, `/api/db/query`
-   * deliberately calls nothing (D74), and `/api/db/multi-query` keeps the call it has had
-   * since #823 with the same exposure.
+   * WHAT IT STILL CANNOT UNDO, written down rather than left to be rediscovered. A client
+   * this scope released in "T" is back in the pool's idle list, and the pool may hand it to
+   * another request before this runs. That request's statement then runs inside this
+   * transaction and this rollback discards it. That is the leak D74 describes, not a second
+   * defect: the statement was already inside a transaction nobody had committed, and the
+   * window is exactly what ending it promptly is for.
    */
-  public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
-    const client = this.lastQueryClient;
-    if (client === null) return "none";
+  public async endOpenQueryTransaction(scope: string): Promise<OpenQueryTransactionOutcome> {
+    const clients = this.openQueryScopes.get(scope);
+    this.openQueryScopes.delete(scope);
+    if (clients === undefined) return "none";
+
+    let outcome: OpenQueryTransactionOutcome = "none";
+    for (const client of clients) {
+      // Asked again here rather than trusted from the record: the transaction can have
+      // been ended in the meantime by a later statement of this same scope.
+      const status = client.getTransactionStatus();
+      if (status !== "T" && status !== "E") continue;
+      await client.query("ROLLBACK");
+      outcome = "rolled-back";
+    }
+    return outcome;
+  }
+
+  /**
+   * Record the client this call is about to release, if and only if it is releasing it with
+   * a transaction still open on it and the caller named a scope to end it under (D87).
+   *
+   * The status is the server's own, not an inference, and the same byte the ender reads.
+   * An unnamed call records nothing: a caller that will not end anything must not leave a
+   * client behind for somebody else's ender to find.
+   */
+  private recordOpenTransaction(scope: string | undefined, client: PoolClient): void {
+    if (scope === undefined) return;
 
     const status = client.getTransactionStatus();
-    if (status !== "T" && status !== "E") return "none";
+    if (status !== "T" && status !== "E") return;
 
-    await client.query("ROLLBACK");
-    return "rolled-back";
+    const clients = this.openQueryScopes.get(scope);
+    if (clients === undefined) this.openQueryScopes.set(scope, new Set([client]));
+    else clients.add(client);
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {

@@ -1,6 +1,6 @@
 /**
- * The implementer list for `endOpenQueryTransaction` is written in prose in two places, and
- * prose goes stale (D75).
+ * The implementer list for `endOpenQueryTransaction` is written in prose, and prose goes stale
+ * (D75).
  *
  * It said `postgres`, `sqlite` and `duckdb` for as long as that was true. D75 added `redis`, and
  * the sentence stayed wrong in `src/lib/db/types.ts` and `src/app/api/db/multi-query/route.ts`
@@ -39,7 +39,12 @@ const implementers = providerSources(PROVIDERS)
   .map((file) => (path.basename(file) === "index.ts" ? path.basename(path.dirname(file)) : path.basename(file, ".ts")))
   .sort();
 
-const PROSE_SITES = ["src/lib/db/types.ts", "src/app/api/db/multi-query/route.ts"];
+// One site since D87. The second was the local shape check in `src/app/api/db/multi-query/route.ts`,
+// which moved to `endsOpenQueryTransactions` in `types.ts` when `/api/db/query` became the second
+// caller: two routes asking the same question in two copies is how one of them later asks it
+// differently. The claim now lives beside the declaration it is about, which is where a reader of
+// the surface meets it.
+const PROSE_SITES = ["src/lib/db/types.ts"];
 
 /**
  * The ONE sentence that makes the claim, found inside the ONE docblock that makes it.

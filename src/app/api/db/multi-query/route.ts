@@ -7,6 +7,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import type { DatabaseType, QueryWarning } from "@/lib/types";
+import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
 
 export interface StatementResult {
@@ -61,6 +62,7 @@ async function runStatement(
   isLast: boolean,
   dialect: DatabaseType,
   options: Record<string, unknown>,
+  scope: string,
 ): Promise<StatementResult> {
   const startTime = performance.now();
   const identity = { index, sql: stmt.sql, startLine: stmt.startLine };
@@ -80,7 +82,11 @@ async function runStatement(
         ? provider.prepareQuery(stmt.sql, options)
         : { query: stmt.sql, wasLimited: false, limit: 0, offset: 0 };
 
-    const result = await provider.query(prepared.query);
+    // Every statement of the script runs under the SAME scope, which is what lets the
+    // `finally` below end a transaction any of them left open — including one opened by a
+    // statement whose own client is not the last one the script borrowed (D87). No params
+    // and no queryId here: this route binds nothing and cancels nothing.
+    const result = await provider.query(prepared.query, undefined, undefined, scope);
 
     return {
       ...identity,
@@ -99,29 +105,6 @@ async function runStatement(
       error: error instanceof Error ? error.message : "Unknown error",
     };
   }
-}
-
-/**
- * Whether this provider can end a transaction its own `query()` path left open.
- *
- * A runtime shape check, the same one `POST /api/db/transaction` uses for the
- * interactive session: the method is optional on `DatabaseProvider` because only a
- * provider that can name the session its statements ran on can answer truthfully
- * (`endOpenQueryTransaction`'s declaration argues why). `postgres`, `sqlite`, `duckdb` and
- * `redis` implement it; on the rest this route leaves the handle exactly as it found it,
- * because inventing a rollback there would be guessing at another engine's state.
- *
- * THIS CALL CARRIES D87 AND THIS ROUTE IS THE ONLY CALLER THAT STILL MAKES IT. The ender
- * acts on one shared pointer, so under concurrent traffic on the same connection id it can
- * roll back a client this request never ran on, measured as far as another caller's
- * committed work disappearing. The call stays because removing it reopens the leak #823
- * closed and D74 measured the route-level copy to be worse than the leak; the fix is D87,
- * in the provider, where the borrowed client is in scope.
- */
-function endsOpenTransactions(
-  provider: DatabaseProvider,
-): provider is DatabaseProvider & Required<Pick<DatabaseProvider, "endOpenQueryTransaction">> {
-  return typeof provider.endOpenQueryTransaction === "function";
 }
 
 export async function POST(req: NextRequest) {
@@ -153,6 +136,10 @@ export async function POST(req: NextRequest) {
     const results: StatementResult[] = [];
     let totalExecutionTime = 0;
     let openTransaction: OpenQueryTransactionOutcome = "none";
+    // This request's own name for everything it runs, minted here and passed to every
+    // statement and to the ender, so that the transaction ended below is one THIS script
+    // left open and never another caller's (D87).
+    const scope = newQueryCallScope();
 
     // MAY A SCRIPT LEAVE A TRANSACTION OPEN? No, and this finally is the answer.
     //
@@ -171,6 +158,12 @@ export async function POST(req: NextRequest) {
     // It is a finally and not a line after the loop because the loop must not be able to
     // leave by any path that skips this.
     //
+    // WHOSE transaction it ends is now named rather than hoped for: the provider is cached
+    // per connection id and shared by every concurrent request on that stored connection,
+    // and until D87 this call reached whichever client anybody had recorded last — measured
+    // rolling a concurrent script's and an interactive session's work away. The `scope`
+    // above is this request's own, and nothing it did not run on can be ended here.
+    //
     // What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
     // inside a statement the splitter cannot see through, so the leak is the missing
     // rollback and not the keyword. And it is not an unconditional ROLLBACK either:
@@ -185,6 +178,7 @@ export async function POST(req: NextRequest) {
           i === statements.length - 1,
           connection.type,
           options,
+          scope,
         );
         totalExecutionTime += outcome.executionTime;
         results.push(outcome);
@@ -193,8 +187,8 @@ export async function POST(req: NextRequest) {
         if (outcome.status === "error") break;
       }
     } finally {
-      if (endsOpenTransactions(provider)) {
-        openTransaction = await provider.endOpenQueryTransaction();
+      if (endsOpenQueryTransactions(provider)) {
+        openTransaction = await provider.endOpenQueryTransaction(scope);
       }
     }
 
