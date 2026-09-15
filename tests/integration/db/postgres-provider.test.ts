@@ -4994,7 +4994,7 @@ describe("PostgreSQL object source", () => {
   });
 
   test("a declared EDITABLE kind with no routine statement raises the build's own sentence", async () => {
-    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
     const provider = makeProvider();
     await provider.connect();
     const capabilities = provider.getCapabilities();
@@ -5013,6 +5013,12 @@ describe("PostgreSQL object source", () => {
       await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
         /declares an editable kind "view" but has no statement that reads it/,
       );
+      // AND IT COSTS NO QUERY, which is what `docs/providers/postgres.md` and the comment at the
+      // guard both claim and neither the sentence above nor coverage can see: moving the guard
+      // below the read leaves the thrown sentence identical and this assertion is the only thing
+      // that goes red. The recorder is live in this very test, because the sibling reads through
+      // `sourceDouble` assert what it captured.
+      expect(sent).toEqual([]);
     } finally {
       spy.mockRestore();
     }

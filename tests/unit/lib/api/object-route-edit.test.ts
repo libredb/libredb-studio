@@ -267,3 +267,105 @@ describe("the test files object-route.ts cites in its docblocks", () => {
     expect(missing).toEqual([]);
   });
 });
+
+/**
+ * The same docblocks cite SOURCE lines as `path:line`, and that pointer rots in silence. Any
+ * insertion ABOVE the cited line invalidates it, from a hand nowhere near this module, and nothing
+ * in CI reads a code-comment citation. It happened inside the branch that WROTE the paragraph:
+ * backlog entry DOC5 was filed because the docblock told a reader a write-path guard was missing
+ * when it was two files away, the rewrite named where each half is enforced, and a later commit on
+ * the same branch moved the read-definition bound twelve lines down. The paragraph went on naming
+ * the old number, which by then was a comment inside a helper, so the closure re-created a smaller
+ * copy of the defect it closed.
+ *
+ * This is the guard, and it holds every number in ONE place: the cited file itself. The table names
+ * the ANCHOR rather than the line, the test greps the anchor, derives the number the docblock must
+ * be writing and asserts it writes it. A correct renumbering needs no edit here, and a stale one
+ * fails with the number to write.
+ *
+ * The last test is what keeps that honest: every `path:line` in the source must be produced by this
+ * table, so a citation added later cannot slip past unguarded, and an anchor that stops being
+ * unique is a failure rather than a silently arbitrary pick.
+ */
+type CitedSite = {
+  /** The path exactly as the docblock writes it, which is relative to whatever the prose is about. */
+  as: string;
+  /** The same file, repo-relative, for reading. */
+  file: string;
+  /** The line the citation means, or the first and last line when the citation is a range. */
+  anchor: string | [string, string];
+};
+
+const SRC_POSTGRES = "src/lib/db/providers/sql/postgres.ts";
+const SRC_TRINO = "src/lib/db/providers/sql/trino/index.ts";
+const SRC_REDIS = "src/lib/db/providers/keyvalue/redis.ts";
+const SRC_EDIT_PLAN = "src/app/api/db/objects/edit-plan/route.ts";
+const SRC_EDIT_APPLY = "src/app/api/db/objects/edit-apply/route.ts";
+
+const CITED_SITES: CitedSite[] = [
+  // The three producers of `edit`: the spread that attaches the affordance, one per day-one engine.
+  { as: "providers/sql/postgres.ts", file: SRC_POSTGRES, anchor: "edit: routineEditAffordance(" },
+  { as: "providers/sql/trino/index.ts", file: SRC_TRINO, anchor: "spec.acceptsSourceEdits === true" },
+  { as: "providers/keyvalue/redis.ts", file: SRC_REDIS, anchor: "spec.acceptsSourceEdits === true" },
+  // Redis states the offer-on-a-truncated-part position in prose, so the citation is a range.
+  {
+    as: "redis.ts",
+    file: SRC_REDIS,
+    anchor: [
+      "IT IS OFFERED ON A TRUNCATED PART TOO",
+      "and refuses `guard` when the server's bytes are longer than the read bound.",
+    ],
+  },
+  // The write path, THE KIND: asked of the connected provider on both edit routes.
+  {
+    as: "src/app/api/db/objects/edit-plan/route.ts",
+    file: SRC_EDIT_PLAN,
+    anchor: "requireEditableKind(provider.getCapabilities(), kind,",
+  },
+  {
+    as: "src/app/api/db/objects/edit-apply/route.ts",
+    file: SRC_EDIT_APPLY,
+    anchor: "requireEditableKind(provider.getCapabilities(), plan.kind,",
+  },
+  // The write path, THE BOUND: the submitted text, then the read definition in all three builders.
+  { as: "edit-plan/route.ts", file: SRC_EDIT_PLAN, anchor: "if (text.length > EDIT_CHARACTER_LIMIT) {" },
+  { as: "providers/sql/postgres.ts", file: SRC_POSTGRES, anchor: "if (definition.length > EDIT_CHARACTER_LIMIT) {" },
+  { as: "providers/keyvalue/redis.ts", file: SRC_REDIS, anchor: "if (definition.length > EDIT_CHARACTER_LIMIT) {" },
+  { as: "providers/sql/trino/index.ts", file: SRC_TRINO, anchor: "if (definition.length > EDIT_CHARACTER_LIMIT) {" },
+];
+
+describe("the source lines object-route.ts cites in its docblocks", () => {
+  const repoRoot = join(import.meta.dir, "../../../..");
+  const source = readFileSync(join(repoRoot, "src/lib/api/object-route.ts"), "utf8");
+  const linesOf = (file: string, anchor: string): number[] =>
+    readFileSync(join(repoRoot, file), "utf8")
+      .split("\n")
+      .flatMap((line, index) => (line.includes(anchor) ? [index + 1] : []));
+  const anchorsOf = (site: CitedSite): string[] => (Array.isArray(site.anchor) ? site.anchor : [site.anchor]);
+  const citationOf = (site: CitedSite): string =>
+    `${site.as}:${anchorsOf(site)
+      .map((anchor) => linesOf(site.file, anchor)[0])
+      .join("-")}`;
+
+  test("every anchor sits on exactly one line of the file that holds it", () => {
+    const ambiguous = CITED_SITES.flatMap((site) =>
+      anchorsOf(site)
+        .filter((anchor) => linesOf(site.file, anchor).length !== 1)
+        .map((anchor) => `${site.file} :: ${anchor}`),
+    );
+    expect(ambiguous).toEqual([]);
+  });
+
+  test("every cited line number is the line its anchor actually sits on", () => {
+    const stale = CITED_SITES.map(citationOf).filter((citation) => !source.includes(citation));
+    expect(stale).toEqual([]);
+  });
+
+  test("no citation escapes the table", () => {
+    const cited = [...new Set(source.match(/[A-Za-z0-9_./-]+\.ts:\d+(?:-\d+)?/g) ?? [])];
+
+    expect(cited.length).toBeGreaterThan(0);
+    const unguarded = cited.filter((citation) => !CITED_SITES.some((site) => citation.startsWith(`${site.as}:`)));
+    expect(unguarded).toEqual([]);
+  });
+});

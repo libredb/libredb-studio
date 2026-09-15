@@ -644,9 +644,9 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * There are THREE producers of `edit`: `providers/sql/postgres.ts:2799`, gated on
- * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1249` and
- * `providers/keyvalue/redis.ts:1657`, both gated on `spec.acceptsSourceEdits === true`, which is the
+ * There are THREE producers of `edit`: `providers/sql/postgres.ts:2947`, gated on
+ * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1257` and
+ * `providers/keyvalue/redis.ts:1674`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
@@ -658,7 +658,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
  * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
  * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
- * stated at `redis.ts:1649-1656`: the affordance is offered on a truncated part deliberately, because
+ * stated at `redis.ts:1667-1673`: the affordance is offered on a truncated part deliberately, because
  * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
  * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
@@ -678,10 +678,17 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3090`, `providers/keyvalue/redis.ts:1764`
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3102`, `providers/keyvalue/redis.ts:1764`
  * and `providers/sql/trino/index.ts:1451`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.
+ *
+ * EVERY `path:line` ABOVE IS PINNED BY A TEST, because "measured at this commit" is a claim that
+ * expires at the next one and nothing in CI reads a code comment. One of these pointers rotted by
+ * twelve lines inside the very branch that wrote this paragraph, from an insertion above it in the
+ * provider file it names. `tests/unit/lib/api/object-route-edit.test.ts` greps the anchor each citation
+ * means, derives the number this docblock must be writing and fails with it, so a correct
+ * renumbering costs nothing here and a stale one cannot reach `main`.
  *
  * So this function decides what the UI is OFFERED, and the two edit routes decide what the server
  * ACCEPTS.
