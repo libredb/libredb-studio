@@ -1860,10 +1860,9 @@ describe("the embedded workspace applies an object edit through the host", () =>
  * `conflict` then rendered nothing at all.
  *
  * ONE DOCUMENT-LEVEL LISTENER MOVES THE ACTIVE TAB IN THIS SHELL, enumerated rather than assumed.
- * `StudioWorkspace.tsx` renders no `CommandPalette`, so the palette half of D82 has nothing to
- * reach here; `StudioTabBar` registers the new-tab shortcut on `document` (#745) and is the only
- * listener left. `src/components/ui/sidebar.tsx` registers a second one, on `window`, and it
- * toggles a sidebar rather than opening a tab.
+ * `grep -rE 'addEventListener\(\s*"keydown' src` answers four sites and the docblock on
+ * `handleAddTab` in `src/workspace/StudioWorkspace.tsx` says what each one does; the only one this
+ * shell mounts that moves the active tab is `StudioTabBar`'s new-tab shortcut (#745).
  */
 describe("the embedded shell refuses the new-tab shortcut while a host apply is in flight", () => {
   const CONFLICT = {
@@ -1933,6 +1932,16 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
     expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
       "Opening a tab would close this dialog before the apply reports",
     );
+    /*
+     * ANSWERED TO A SCREEN READER TOO, asserted through the accessibility tree and not through
+     * `getByTestId`, which is blind to it. Radix aria-hides everything outside the modal, so an
+     * `output` this shell renders inside its own box is present, visible and role-carrying while
+     * assistive technology is never told about it: MEASURED before the portal, `queryAllByRole
+     * ("status")` answered `["object-source-apply-applying"]` and the refusal was not in it.
+     */
+    expect(screen.queryAllByRole("status").map((node) => node.getAttribute("data-testid"))).toContain(
+      "workspace-apply-refusal",
+    );
 
     await release(CONFLICT);
 
@@ -1943,10 +1952,33 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
     );
   });
 
-  test("the refusal lasts exactly as long as the apply: the shortcut opens a tab once the answer is on screen", async () => {
+  test("the refusal retires the moment the apply answers, rather than sitting on screen for ever", async () => {
     /*
-     * The control for the test above. Without it the refusal could be "the shortcut never works
-     * over a Source tab", which would close D82 by breaking #745 instead of by guarding it.
+     * The one thing that pins `if (!inFlight) setRefusedWhileApplying(false)` in the mirror.
+     * MEASURED before this test existed: deleting that line left the whole file at 51 pass, 0
+     * fail, because the two tests whose comments spoke about the retirement never RAISED the
+     * refusal, so their `queryByTestId(...).toBeNull()` was a negative with nothing that had to
+     * match. This one raises it first, which is what makes the absence afterwards mean something.
+     */
+    await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+    expect(screen.getByTestId("workspace-apply-refusal")).toBeTruthy();
+
+    await release(CONFLICT);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    // The advice is about a dialog that is still waiting, so it goes when the waiting does.
+    expect(screen.queryByTestId("workspace-apply-refusal")).toBeNull();
+  });
+
+  test("the shortcut opens a tab again once the answer is on screen", async () => {
+    /*
+     * A CONTROL, and labelled one rather than counted as a guard: it passes against the pre-fix
+     * shell too, where nothing refuses anything (measured against `7fe83dcc^`, where of the D82
+     * tests only the refusal test above fails). Without it the refusal could be "the shortcut
+     * never works over a Source tab", which would close D82 by breaking #745 instead of by
+     * guarding it, and that is the regression this control would catch.
      */
     await confirmAndHold();
     await release(CONFLICT);
@@ -1955,27 +1987,33 @@ describe("the embedded shell refuses the new-tab shortcut while a host apply is 
     pressNewTab(screen.getByTestId("object-source-apply-dialog"));
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
-    // The sentence goes with the window that raised it rather than sitting on screen for ever.
-    expect(screen.queryByTestId("workspace-apply-refusal")).toBeNull();
   });
 
   test("the refusal does not outlive the pane that raised it", async () => {
     /*
-     * The latch is the pane's state and this shell only mirrors it, so a pane that goes away with
-     * an apply still in flight has to take the refusal with it. Otherwise the shortcut would be
-     * dead for the rest of the session, which is a worse defect than the one D82 reports.
+     * The other arm of the same retirement: the pane's effect cleanup reports `false` on unmount,
+     * and the mirror has to drop the latch there too. Otherwise the shortcut would be dead for the
+     * rest of the session, which is a worse defect than the one D82 reports.
+     *
+     * The refusal is RAISED first, deliberately. Without that press this test walks a flow that
+     * has no latch in it, and it then proves nothing about releasing one: measured, it passed
+     * unchanged with the release deleted.
      *
      * The tab click is a DIRECT DOM click, which is how the strip is reachable under an
      * aria-hidden modal at all. It is not a gesture a reader can make; it is the one path that can
-     * still unmount the pane mid apply, and it is here to prove the flag is released rather than
-     * held.
+     * still unmount the pane mid apply.
      */
     await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+    expect(screen.getByTestId("workspace-apply-refusal")).toBeTruthy();
 
     act(() => {
       (document.querySelectorAll('[role="tab"]')[0] as HTMLElement).click();
     });
     await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    // The pane is gone, so the sentence pointing at its dialog has to be gone with it.
+    expect(screen.queryByTestId("workspace-apply-refusal")).toBeNull();
 
     pressNewTab(document.body);
 

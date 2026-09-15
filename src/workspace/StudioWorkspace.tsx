@@ -3,6 +3,7 @@
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useState, useEffect, useImperativeHandle, useRef, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Sidebar } from "@/components/sidebar";
 import { type TreeRowActionHandlers } from "@/components/object-tree";
 import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
@@ -595,11 +596,19 @@ export function StudioWorkspace({
    * WHAT ELSE IS REACHABLE IN THIS WINDOW, ENUMERATED BY MEASUREMENT, because an unmeasured
    * "nothing else can reach this" is the mistake D82 was filed over. The dialog refuses every exit
    * it owns while `applying`: no close button, no Escape, no press outside. What it cannot refuse
-   * is a listener on `document`, and this shell has exactly ONE that opens and activates a tab.
-   * The standalone shell has a second, `CommandPalette`'s Cmd/Ctrl+K, whose table rows call its
-   * `handleTableClick`; this shell renders no palette, so there is nothing there to guard. The
-   * one other global listener in the package, in `src/components/ui/sidebar.tsx`, is on `window`
-   * and toggles a sidebar rather than moving the active tab.
+   * is a global listener, and `grep -rE 'addEventListener\(\s*"keydown' src` answers FOUR, of
+   * which exactly one can move the active tab here:
+   *
+   * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
+   *   the one this handler guards. It opens a tab and `addTab` activates it.
+   * - `src/components/DataProfiler.tsx:210`, on `document`, and MOUNTED BY THIS SHELL below. It is
+   *   bound only while the profiler is open, it answers Escape alone, and all it does is call the
+   *   profiler's `onClose`. It moves no tab, and it cannot unmount this pane.
+   * - `src/components/CommandPalette.tsx:103`, on `document`, whose table rows call
+   *   `handleTableClick` and DO move the active tab. That is the standalone shell's second gesture
+   *   in D82; this shell renders no palette, so there is nothing here to guard.
+   * - `src/components/ui/sidebar.tsx:94`, on `window`, toggling a sidebar. It is an unused shadcn
+   *   primitive with no importer anywhere in `src` (P5), so it is not mounted here or anywhere.
    *
    * REFUSED IS NOT SWALLOWED, and on this shell that costs a surface rather than a toast. A
    * keystroke that does nothing and says nothing reads as a broken shortcut. `useToast` wraps
@@ -843,21 +852,22 @@ export function StudioWorkspace({
                               failure={sourceFailure}
                               activePartId={sourceTab.activePartId}
                               /*
-                                A COUNTER THIS SHELL OWNS, and it counts exactly one thing: an
-                                object apply this workspace issued that came back applied (#789
-                                Phase 3). It was the constant zero until this phase, and that was
-                                a DECISION and not a stub: the standalone shell increments a
+                                A COUNTER THIS SHELL OWNS, and it counts TWO things: an object
+                                apply this workspace issued that came back applied (#789 Phase 3),
+                                and every `catalogChanged()` the host announces on the published
+                                handle (D79). It was the constant zero until this phase, and that
+                                was a DECISION and not a stub: the standalone shell increments a
                                 catalog-change counter for everything it runs, and this shell runs
                                 nothing, because every statement goes out through the host's
                                 `onQueryExecute` and nothing reports back what it changed.
 
-                                An apply breaks that premise, because an apply THIS shell issues IS
-                                a DDL this shell knows about, and D79 breaks the rest of it: the
-                                host can now say so itself, through `catalogChanged()` on the
-                                published handle. So the sentence this block used to carry, that a
-                                stale banner means "this workspace changed something" and its
-                                absence never means "nothing changed", is REPLACED rather than
-                                kept, because it is no longer what the counter counts.
+                                An apply broke the first half of that premise, because an apply
+                                THIS shell issues IS a DDL this shell knows about, and D79 broke
+                                the rest of it: the host can now say so itself. So the sentence
+                                this block used to carry, that a stale banner means "this
+                                workspace changed something" and its absence never means "nothing
+                                changed", is REPLACED rather than kept, because it is no longer
+                                what the counter counts.
 
                                 WHAT IT COUNTS NOW, and it is still not "everything": an object
                                 apply this workspace issued, plus every announcement the host
@@ -1064,26 +1074,51 @@ export function StudioWorkspace({
       </AlertDialog>
 
       {/*
-        The refusal, said where an adopter can actually read it (D82).
+        The refusal, said where an adopter can actually read it AND where it can be announced (D82).
 
         `output` rather than a div with `role="status"`: it carries the live region natively, the
-        same choice `LazyView` and the pane's own loading region make. Fixed and above the
-        dialog's `z-50` overlay, because the only moment this renders is while that overlay is up,
-        and a sentence painted underneath it is a sentence nobody reads. It is rendered only while
-        the refusal is live: the mirror above clears it the moment the apply answers or the pane
-        goes away, so it cannot linger over a dialog that is gone.
+        same choice `LazyView` and the pane's own loading region make.
+
+        PORTALED TO `document.body`, and that is what makes the live region real. Radix's modal
+        calls `hideOthers`, which `aria-hidden`s everything outside the dialog, and this shell's own
+        box is outside it. MEASURED with the refusal rendered inside the box, the apply dialog open:
+        `ancestors-with-aria-hidden` answered `["DIV[aria-hidden=true]"]` and `queryAllByRole
+        ("status")` answered the pane's `applying` region alone, so the sentence was on screen for a
+        sighted reader and invisible to assistive technology. `hideOthers` marks the nodes that
+        exist when the dialog opens and installs no observer (`node_modules/aria-hidden` carries no
+        `MutationObserver`), so a body child created afterwards - which is exactly when this renders
+        - is not marked: portaled, the same measurement answers `[]` and the region IS returned by
+        `byRole("status")`. Everything else that floats in this shell reaches the body the same way,
+        through a Radix portal.
+
+        FIXED, and that is a cost paid on purpose in an embeddable surface. This is the only
+        viewport-fixed element the shell renders itself, so it paints in the HOST's chrome rather
+        than in the workspace box, with no way for the host to place or style it. The alternative is
+        not "put it in the box": the only moment it renders, this pane's own full-viewport overlay
+        is already covering the host's page, that overlay is a body-level portal at `z-50`, and
+        nothing inside the workspace box can paint above it, so a sentence in the box is a sentence
+        nobody reads. Being a body child is also what makes `z-[60]` an argument rather than an
+        assumption - both layers are then in the root stacking context, and a `transform`, `filter`
+        or `contain` on the host's wrapper can no longer become this element's containing block. The
+        one placement that would cost the host nothing is inside the dialog, and that belongs to
+        `ApplyPreviewDialog`, whose window this shell only observes.
+
+        Rendered only while the refusal is live: the mirror above clears it the moment the apply
+        answers or the pane goes away, so it cannot linger over a dialog that is gone.
       */}
-      {refusedWhileApplying && (
-        <output
-          data-testid="workspace-apply-refusal"
-          className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-lg border border-hairline bg-overlay px-4 py-3 shadow-lg"
-        >
-          <span className="block text-xs font-medium text-fg">Waiting for the apply to answer</span>
-          <span className="mt-1 block text-xs leading-relaxed text-fg-muted">
-            Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.
-          </span>
-        </output>
-      )}
+      {refusedWhileApplying &&
+        createPortal(
+          <output
+            data-testid="workspace-apply-refusal"
+            className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-lg border border-hairline bg-overlay px-4 py-3 shadow-lg"
+          >
+            <span className="block text-xs font-medium text-fg">Waiting for the apply to answer</span>
+            <span className="mt-1 block text-xs leading-relaxed text-fg-muted">
+              Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.
+            </span>
+          </output>,
+          document.body,
+        )}
 
       {/* Mobile Navigation — hidden in embedded mode, platform provides its own */}
     </div>
