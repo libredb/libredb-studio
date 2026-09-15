@@ -838,13 +838,22 @@ function OutcomeRegion({
      *
      * The two `committed` values get DIFFERENT first lines, and X20 is why. `rolled-back` may be
      * claimed only by a provider that opened and closed the transaction itself, so there something
-     * watched the engine stop the statement and roll it back. `unknown` is everything else the
-     * type's own docblock lists, a timeout, a cancellation, a dropped socket or any throw out of
-     * `applyObjectEdit`, PLUS the answer `ObjectSourceView` synthesises for a reply
-     * `isObjectEditOutcomeShape` refuses. On that last population the engine may have finished
-     * perfectly and the ANSWER is what could not be read, so "The engine stopped this statement
-     * before it finished" was a claim nobody measured. The replacement says the one thing true of
-     * the whole `unknown` population: this product never read an answer for the apply.
+     * watched the engine stop the statement and roll it back. `unknown` is everything else, and
+     * "The engine stopped this statement before it finished" was a claim nobody measured for it.
+     *
+     * The replacement clause says the DISPOSITION and nothing about the transport, because the
+     * transport is the half this arm cannot know either way. `src/lib/db/types.ts` describes what a
+     * PROVIDER mints here, a timeout, a cancellation, a dropped socket or a throw out of
+     * `applyObjectEdit`, and it is not the whole population: `ObjectSourceView.landApplyError`
+     * turns EVERY rejection of `applier.apply` except `EDIT_PLAN_INVALID` into this arm, and
+     * `source-applier.postJson` rejects on every non-ok status carrying the route's own sentence,
+     * so a proxy's 502 arrives here WITH the answer it produced, printed on the very next line.
+     * Trino is the second such member: `TRINO_APPLY_VERDICT` maps `timeout` and `cancelled` to
+     * `interrupted` from the coordinator's own `EXCEEDED_TIME_LIMIT` and `ADMINISTRATIVELY_KILLED`
+     * fault names. Pointing the other way, "the apply was sent" is equally unmeasured: an
+     * `appFetch` rejection on a dead network reaches this arm too, and `applyFrame` above already
+     * tells the same reader "Whether it reached the server is unknown." So the one thing true of
+     * every member is that LibreDB holds no answer that settles whether the change landed.
      *
      * X20 offered a SEVENTH STATE or a PER-OUTCOME SENTENCE OVERRIDE and this file takes neither,
      * because both put the fix in the caller. `ApplyPreviewState` is this component's type but the
@@ -852,14 +861,14 @@ function OutcomeRegion({
      * reaches and an override prop ships a parameter nothing passes, and in both the shipped
      * product keeps printing the wrong clause. The defect is a sentence this file writes about a
      * discriminant this file already reads, so it is fixed where it is written. The cost if that
-     * is wrong: the unreadable-answer population and a dropped socket now read alike on the first
-     * line and are told apart only by `outcome.sentence` on the second, where the pane's own
-     * wording already names an answer it could not read.
+     * is wrong: every `unknown` member now reads alike on the first line and they are told apart
+     * only by `outcome.sentence` on the second, which is where each one's own answer, or the
+     * pane's wording for the answer it could not read, already is.
      */
     lines.push(
       outcome.committed === "rolled-back"
         ? "The engine stopped this statement before it finished, and this apply rolled it back, so nothing was applied."
-        : "The apply was sent and LibreDB never read an answer for it. Whether it was applied is unknown.",
+        : "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
     );
     lines.push(outcome.sentence);
   } else {

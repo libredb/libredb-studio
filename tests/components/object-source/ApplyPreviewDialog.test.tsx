@@ -1003,7 +1003,9 @@ describe("ApplyPreviewDialog", () => {
         duration: 30_000,
       },
     });
-    expect(text("-outcome")).toContain("The apply was sent and LibreDB never read an answer for it.");
+    expect(text("-outcome")).toContain(
+      "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
+    );
     expect(query("-confirm")).toBeNull();
     cleanup();
 
@@ -1045,7 +1047,9 @@ describe("ApplyPreviewDialog", () => {
       }),
     );
     expect(text("-outcome")).not.toContain("The engine stopped");
-    expect(text("-outcome")).toContain("The apply was sent and LibreDB never read an answer for it.");
+    expect(text("-outcome")).toContain(
+      "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
+    );
     expect(text("-outcome")).toContain("Re-read this definition before trying again.");
     cleanup();
 
@@ -1057,6 +1061,68 @@ describe("ApplyPreviewDialog", () => {
     );
     expect(text("-outcome")).toContain(
       "The engine stopped this statement before it finished, and this apply rolled it back",
+    );
+  });
+
+  test("an interrupted apply whose sentence IS the answer LibreDB read does not claim it read none", () => {
+    /*
+     * The rest of X20's population, and the one the `unknown` first line must not talk past.
+     * `ObjectSourceView.landApplyError` turns EVERY rejection of `applier.apply` except
+     * `EDIT_PLAN_INVALID` into `{ outcome: "interrupted", committed: "unknown" }`, and
+     * `source-applier.postJson` rejects on every non-ok status carrying the route's own sentence,
+     * so a proxy's 502 arrives here WITH the answer it produced and that answer is printed on the
+     * very next line. Trino is the second member: `TRINO_APPLY_VERDICT` maps `timeout` and
+     * `cancelled` to `interrupted`, and `http-transport` mints those two from the coordinator's own
+     * `EXCEEDED_TIME_LIMIT` and `ADMINISTRATIVELY_KILLED` fault names, i.e. from an answer read in
+     * full. So the first line may claim nothing about the TRANSPORT, neither that the apply was
+     * sent nor that no answer came back; the one thing every member shares is the DISPOSITION.
+     *
+     * The two sentences are verbatim: `httpSourceApplier.apply`'s silent-status sentence
+     * (`source-applier.ts:155`) and Trino's kill message (`http-transport.ts` KILL_MESSAGE path).
+     */
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: "The apply failed: HTTP 502.",
+        duration: 0,
+      }),
+    );
+    expect(text("-outcome")).not.toContain("never read an answer");
+    expect(text("-outcome")).not.toContain("The apply was sent");
+    expect(text("-outcome")).toContain(
+      "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
+    );
+    expect(text("-outcome")).toContain("The apply failed: HTTP 502.");
+    cleanup();
+
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: "Query killed. Message: Terminated from LibreDB Studio",
+        duration: 1_200,
+      }),
+    );
+    expect(text("-outcome")).not.toContain("never read an answer");
+    expect(text("-outcome")).not.toContain("The apply was sent");
+    cleanup();
+
+    /*
+     * The control on the other half of the contradiction the transport clause created: the frame's
+     * own description for this arm says the transport is what is unknown, so a body line asserting
+     * the apply was sent contradicts the paragraph directly above it. Both come from this file.
+     */
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: "The apply failed: HTTP 502.",
+        duration: 0,
+      }),
+    );
+    expect(document.querySelector("[data-slot='dialog-description']")?.textContent).toContain(
+      "Whether it reached the server is unknown.",
     );
   });
 
