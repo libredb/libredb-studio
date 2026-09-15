@@ -547,6 +547,31 @@ The EXPLAIN button is available (`supportsExplain: true`) and renders the plan t
 [§3.11](#311-explain-reuses-the-shared-tree-model). Couchbase has no analyze mode, so both the
 direct action and the background pre-warm show the estimated plan.
 
+### 5.5 `endOpenQueryTransaction()` is absent, and which absence it is (D75)
+
+The optional provider surface that ends a transaction a statement left open on the session
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
+`duckdb`) is **not implemented here: on the session `query()` runs on,
+the engine has no transaction to leave open.**
+
+SQL++ does have transactions over REST, so this is measured rather than assumed. On Couchbase
+Community Edition 8.0.2, 2026-09-15, against `POST /query/service`:
+
+- `BEGIN WORK` succeeds and answers a **`txid`**, with `transactionRemainingTime: 15s` in the
+  metrics. The transaction is named by that id, not by a connection.
+- A later request that does not carry the `txid` is **not inside it**: `SELECT 1` straight after
+  `BEGIN WORK` answered `success` with no `transactionRemainingTime` at all. The transport sends
+  `statement`, `timeout`, `metrics`, `scan_consistency` and at most `query_context`, `args`,
+  `readonly` and `profile` ([`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)),
+  and never a `txid`, so nothing this provider sends can join one.
+- There is nothing for the provider to end, either: `ROLLBACK WORK` with no `txid` is refused with
+  code 17002, *"ROLLBACK statement is not supported outside the transaction"*. The cluster ends it
+  itself — reusing the `txid` after the window answered code 17010, *"Transaction timeout"*.
+
+So a `BEGIN WORK` a user types costs the cluster one transaction that times out on its own, and
+costs the next borrower of this provider nothing. The absence is a declared boundary rather than a
+fallback: the caller shape-checks for the method and this provider does not answer it.
+
 ---
 
 ## 6. Schema introspection
@@ -1322,7 +1347,8 @@ and all UI registration are untouched.
 Everything else:
 
 - **No transactions.** SQL++ transactions work over REST (`BEGIN TRANSACTION` returns a `txid`), but
-  the provider exposes no begin/commit/rollback API.
+  the provider exposes no begin/commit/rollback API, and the `txid` it never sends is why
+  `endOpenQueryTransaction()` is absent ([§5.5](#55-endopenquerytransaction-is-absent-and-which-absence-it-is-d75)).
 - **No `cancelQuery`.** A running statement is terminated through maintenance `kill` with its
   request id, which needs the Query System Catalog role.
 - **`UPDATE STATISTICS` is Enterprise-only.** On Community Edition the maintenance action returns
