@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 40
+- [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 39
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 16
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 15
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1182,23 +1182,6 @@ Phase 2's `isSourceDocumentShape` bounds all four of its host-supplied rendered 
 **Done when:** every string those four predicates accept is bounded by an existing limit, with a test per
 predicate feeding it one character over the bound and a control exactly on it.
 
-### D81. A non-routine PostgreSQL kind declared editable would be refused in the words of an ownership problem
-
-`readObjectSource` in `src/lib/db/providers/sql/postgres.ts` calls `routineEditAffordance` whenever
-`kindAcceptsSourceEdits` is true, and that helper reads `may_replace` and `owner`, which only the ROUTINE
-statement selects. If a non-routine kind were ever declared editable, the pane would draw `offered: false`
-with the sentence "owned by another role", which is a misleading refusal rather than the declaration
-drift it actually is.
-
-Nothing can be applied in that state: the BUILD already refuses it by name
-(`declares an editable kind "view" but has no statement that reads it`, with a test). And no shipped
-declaration reaches it: only `function` and `procedure` declare `acceptsSourceEdits` and both are in
-`PROKIND_BY_KIND`. So this is a state nothing in this repository builds, which is why it is filed rather
-than folded in.
-
-**Done when:** the read raises the same sentence the build does when a kind declares an edit this file has
-no routine statement for, with its own test.
-
 ### D82. A new-tab shortcut fires through the apply modal, unmounts the Source pane and loses the answer
 
 MEASURED 2026-09-14 in this repository's own component environment, with two probes rather than by
@@ -1568,21 +1551,6 @@ stated in `readDefaultBody`'s own docblock.
 
 **Done when:** a body above the framework's clone limit gets one answer that names the size, on every
 route, rather than an empty-body claim on five and a parser error on one.
-
-### X20. A malformed apply answer is reported to the reader in the words of a timeout
-
-The Source pane synthesises `{ outcome: "interrupted", committed: "unknown" }` for an apply answer that
-`isObjectEditOutcomeShape` refuses, because that is the closest arm the outcome type has and its
-`committed: "unknown"` half is exactly right. `FailureRegion` in
-`src/components/object-source/ApplyPreviewDialog.tsx` then prints "The engine stopped this statement
-before it finished." above our own sentence, and for this population that first clause is a claim nobody
-measured: the engine may have finished perfectly and the ANSWER is what could not be read.
-
-Our own sentence carries the truth ("The apply was sent and its answer could not be read ... Re-read this
-definition before trying again"), so the reader is not misled about what to do, only about why.
-
-**Done when:** the dialog has a seventh arm, or a per-outcome sentence override, so an unreadable answer
-is described as one.
 
 ### X21. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
 

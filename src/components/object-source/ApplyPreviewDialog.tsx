@@ -216,8 +216,15 @@ function applyFrame(state: ApplyPreviewState): {
     return { title: "The engine refused this change", disposition: unchanged, preimageIsCurrent: true };
   }
   if (outcome.outcome === "interrupted") {
+    // The TITLE splits on `committed` as well, and X20 is why. `rolled-back` is claimable only by
+    // a provider that opened and closed the transaction itself, so there the engine really did
+    // stop the statement. On `unknown` nothing observed the engine at all, and a title naming a
+    // stopped statement is the loudest copy of a claim nobody measured. See `OutcomeRegion`.
     return {
-      title: "This apply was stopped before it finished",
+      title:
+        outcome.committed === "rolled-back"
+          ? "This apply was stopped before it finished"
+          : "This apply's outcome is unknown",
       disposition:
         outcome.committed === "rolled-back"
           ? unchanged
@@ -769,13 +776,35 @@ function OutcomeRegion({
           : `A different object was created and LibreDB did not remove it: \`${outcome.wrote}\`.`,
     );
   } else if (outcome.outcome === "interrupted") {
-    // No retry on this arm at any status, and that is the point of the arm: MEASURED, a PostgreSQL
-    // DDL timeout answers HTTP 499 and a Trino one answers 408 with `retryable: true`, and a client
-    // that retries an apply whose disposition is unknown applies twice.
+    /*
+     * No retry on this arm at any status, and that is the point of the arm: MEASURED, a PostgreSQL
+     * DDL timeout answers HTTP 499 and a Trino one answers 408 with `retryable: true`, and a client
+     * that retries an apply whose disposition is unknown applies twice.
+     *
+     * The two `committed` values get DIFFERENT first lines, and X20 is why. `rolled-back` may be
+     * claimed only by a provider that opened and closed the transaction itself, so there something
+     * watched the engine stop the statement and roll it back. `unknown` is everything else the
+     * type's own docblock lists, a timeout, a cancellation, a dropped socket or any throw out of
+     * `applyObjectEdit`, PLUS the answer `ObjectSourceView` synthesises for a reply
+     * `isObjectEditOutcomeShape` refuses. On that last population the engine may have finished
+     * perfectly and the ANSWER is what could not be read, so "The engine stopped this statement
+     * before it finished" was a claim nobody measured. The replacement says the one thing true of
+     * the whole `unknown` population: this product never read an answer for the apply.
+     *
+     * X20 offered a SEVENTH STATE or a PER-OUTCOME SENTENCE OVERRIDE and this file takes neither,
+     * because both put the fix in the caller. `ApplyPreviewState` is this component's type but the
+     * only mount that builds it is `ObjectSourceView`, so a seventh `kind` ships an arm nothing
+     * reaches and an override prop ships a parameter nothing passes, and in both the shipped
+     * product keeps printing the wrong clause. The defect is a sentence this file writes about a
+     * discriminant this file already reads, so it is fixed where it is written. The cost if that
+     * is wrong: the unreadable-answer population and a dropped socket now read alike on the first
+     * line and are told apart only by `outcome.sentence` on the second, where the pane's own
+     * wording already names an answer it could not read.
+     */
     lines.push(
       outcome.committed === "rolled-back"
         ? "The engine stopped this statement before it finished, and this apply rolled it back, so nothing was applied."
-        : "The engine stopped this statement before it finished. Whether it was applied is unknown.",
+        : "The apply was sent and LibreDB never read an answer for it. Whether it was applied is unknown.",
     );
     lines.push(outcome.sentence);
   } else {

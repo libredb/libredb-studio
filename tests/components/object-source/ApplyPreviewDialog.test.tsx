@@ -922,9 +922,7 @@ describe("ApplyPreviewDialog", () => {
         duration: 30_000,
       },
     });
-    expect(text("-outcome")).toContain(
-      "The engine stopped this statement before it finished. Whether it was applied is unknown.",
-    );
+    expect(text("-outcome")).toContain("The apply was sent and LibreDB never read an answer for it.");
     expect(query("-confirm")).toBeNull();
     cleanup();
 
@@ -941,6 +939,44 @@ describe("ApplyPreviewDialog", () => {
     });
     expect(text("-outcome")).toContain("rolled it back, so nothing was applied");
     expect(query("-confirm")).toBeNull();
+  });
+
+  test("an apply whose ANSWER could not be read is not described in the words of a timeout", () => {
+    /*
+     * X20's population. `ObjectSourceView` synthesises `{ outcome: "interrupted", committed:
+     * "unknown" }` for an apply answer `isObjectEditOutcomeShape` refuses, because that arm's
+     * `committed: "unknown"` half is exactly right and the outcome type carries no better arm. The
+     * engine may have finished perfectly and the ANSWER is what could not be read, so a first line
+     * saying the engine stopped the statement is a claim nobody measured for it.
+     *
+     * The synthesised sentence is reproduced here VERBATIM from `ObjectSourceView`'s
+     * `UNREADABLE_OUTCOME`, so the assertion reads the two lines a real reader of this population
+     * gets and not a shape invented for the test.
+     */
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence:
+          "The apply was sent and its answer could not be read, so LibreDB cannot say whether this change landed. " +
+          "Re-read this definition before trying again.",
+        duration: 0,
+      }),
+    );
+    expect(text("-outcome")).not.toContain("The engine stopped");
+    expect(text("-outcome")).toContain("The apply was sent and LibreDB never read an answer for it.");
+    expect(text("-outcome")).toContain("Re-read this definition before trying again.");
+    cleanup();
+
+    // The control, and the reason this is a SPLIT and not a rewrite of the arm: `rolled-back` is
+    // claimable only by a provider that opened and closed the transaction itself, so there the
+    // engine did stop the statement and the measured clause stays exactly as it was.
+    draw(
+      refusal({ outcome: "interrupted", committed: "rolled-back", sentence: "statement timeout", duration: 30_000 }),
+    );
+    expect(text("-outcome")).toContain(
+      "The engine stopped this statement before it finished, and this apply rolled it back",
+    );
   });
 
   test("the concurrent refusal is its own variant with Try again, and it REBUILDS", () => {
@@ -1253,8 +1289,11 @@ describe("ApplyPreviewDialog", () => {
     draw(
       refusal({ outcome: "interrupted", committed: "unknown", sentence: "connection terminated", duration: 30_000 }),
     );
+    // The TITLE splits with the disposition and for the same reason X20 gives: on `unknown` the
+    // statement may have run to completion and it is the ANSWER that is missing, so a title naming
+    // a stopped statement is the loudest copy of the claim nobody measured.
     expect(frame()).toEqual({
-      title: "This apply was stopped before it finished",
+      title: "This apply's outcome is unknown",
       description: `${LABEL}Whether it reached the server is unknown. Read the definition again before you edit it.`,
     });
   });
