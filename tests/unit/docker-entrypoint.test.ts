@@ -16,12 +16,27 @@
  * OTHER (root -> gosu) path, and resolution placed inside either branch would
  * silently apply to only half of the deployments.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
 
 const ENTRYPOINT = join(import.meta.dir, "../../docker-entrypoint.sh");
+/*
+  The shell is resolved, not spawned by bare name: `Bun.spawnSync(["sh", ...])` THROWS
+  ("Executable not found in $PATH", measured in this worktree) rather than returning a non-zero
+  exit code, and in a PowerShell session there is no `sh` - Git for Windows keeps sh.exe in usr\bin,
+  which is not on that PATH.
+
+  And where the shell resolves, the fixture still cannot stand up: the stub `node` below is a
+  `#!/bin/sh` script made runnable with chmod 0755 and found through PATH, which is POSIX process
+  execution. Windows has no exec bit and cannot exec an extension-less #! file. The entrypoint
+  itself only ever runs as /bin/sh PID 1 inside the Linux image, so a Windows contributor has
+  nothing to verify here - better said by name than passed quietly.
+*/
+const SHELL = posixShell("sh");
+const CANNOT_RUN = missingPosixShell("sh") ?? MISSING_POSIX_FILE_MODES;
 
 /**
  * A stub `node`: when handed the resolver path it runs the fixture as a shell
@@ -39,7 +54,7 @@ const STUB_NODE_SCRIPT = [
   "",
 ].join("\n");
 
-describe("docker-entrypoint.sh bind address (#432)", () => {
+describeIf(CANNOT_RUN, "docker-entrypoint.sh bind address (#432)", () => {
   const fixtureRoots: string[] = [];
 
   afterEach(() => {
@@ -59,10 +74,10 @@ describe("docker-entrypoint.sh bind address (#432)", () => {
     const resolver = join(root, "bind-address.mjs");
     if (resolverScript !== null) writeFileSync(resolver, resolverScript);
 
-    return Bun.spawnSync(["sh", ENTRYPOINT, ...args], {
+    return Bun.spawnSync([SHELL!, ENTRYPOINT, ...args], {
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH}`,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
         LIBREDB_BIND_RESOLVER: resolver,
         HOSTNAME: "",
       },

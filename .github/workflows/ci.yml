@@ -152,9 +152,17 @@ jobs:
       - name: Build chart dependencies
         run: helm dependency build charts/libredb-studio --skip-refresh
 
-      - name: Run merged test coverage (core + components)
+      - name: Run the test suite with coverage
+        # tests/run-tests.ts runs every test file in its own bun process, several
+        # at a time, and merges the per-file lcov reports. It is the same command
+        # a contributor runs (`bun run test`) with coverage turned on, which is
+        # the point: the gate and the documented command cannot drift apart.
         run: bun run test:coverage
         env:
+          # Optional on a contributor's machine, mandatory here: this job installs Helm and
+          # builds the chart dependency, so a chart test that did not run is a defect, and the
+          # runner refuses the run instead of listing it as not run (tests/runner/requirements.ts).
+          LIBREDB_REQUIRE_HELM: "1"
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org
           ADMIN_PASSWORD: test-admin
@@ -195,6 +203,86 @@ jobs:
           # `merge-lcov.mjs` already folded in.
           disable_search: true
           fail_ci_if_error: false
+
+  # The same suite, on the two platforms the project has never measured. Linux is
+  # covered by the `test` job above, which runs the identical runner with coverage.
+  #
+  # A SEPARATE job rather than a matrix on `test`: GitHub appends the matrix values
+  # to a matrix job's name, so matrixing `test` would rename the required check
+  # "Unit & Integration Tests" out of existence and every pull request would wait
+  # forever for a check that can no longer report. This job is deliberately not a
+  # required check yet; promote it once it has a history of being green.
+  #
+  # It uses no secrets, so it runs on fork pull requests like any other job.
+  test-cross-platform:
+    name: Cross-platform Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node
+        # Both images ship Node 22 by default, below the product's floor, and the
+        # tests that spawn bin/studio.js get whatever `node` is on PATH (#709).
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.1.3
+
+      - name: Add Bitnami repo
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami --timeout 5m
+
+      - name: Build chart dependencies
+        run: helm dependency build charts/libredb-studio --skip-refresh
+
+      - name: Report the toolchain
+        # A red leg on a platform nobody here runs is only actionable if the run
+        # says what it had: a missing 7z or an older bash changes what "red" means.
+        shell: bash
+        run: |
+          echo "platform: $(uname -s 2>/dev/null || echo windows) $(uname -m 2>/dev/null || echo unknown)"
+          echo "bun:      $(bun --version)"
+          echo "node:     $(node --version)"
+          echo "bash:     ${BASH_VERSION:-unknown}"
+          echo "helm:     $(helm version --short)"
+          for tool in sh bash tar unzip 7z git; do
+            printf '%-9s %s\n' "$tool:" "$(command -v "$tool" || echo "not on PATH")"
+          done
+
+      - name: Run the test suite
+        # Deliberately NOT `shell: bash`. On Windows that would be Git Bash, whose
+        # PATH carries the whole unix toolset, and the contributor this job stands
+        # in for runs the command from PowerShell. Running it the way they do is
+        # what makes this job evidence.
+        run: bun run test
+        env:
+          # Optional on a contributor's machine, mandatory here: this job installs Helm and
+          # builds the chart dependency, so a chart test that did not run is a defect, and the
+          # runner refuses the run instead of listing it as not run (tests/runner/requirements.ts).
+          LIBREDB_REQUIRE_HELM: "1"
+          JWT_SECRET: test-secret-for-ci-build-only-32ch
+          ADMIN_EMAIL: admin@libredb.org
+          ADMIN_PASSWORD: test-admin
+          USER_EMAIL: user@libredb.org
+          USER_PASSWORD: test-user
 
   e2e:
     name: E2E Tests

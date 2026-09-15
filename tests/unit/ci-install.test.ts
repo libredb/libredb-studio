@@ -7,12 +7,24 @@
  * publish. The script is exercised against a stub `bun` on PATH that fails a
  * chosen number of times, so the retry policy is verified without a network.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
 
 const SCRIPT = join(import.meta.dir, "../../scripts/ci-install.sh");
+/*
+  The script itself is not POSIX-only - .github/actions/bun-install runs it under Git Bash on
+  windows-latest too - but this fixture is: it replaces PATH with `<stub dir>:/usr/bin:/bin` and puts
+  two `#!/usr/bin/env bash` stubs there, made runnable with chmod 0755. Windows has no exec bit, no
+  shebang dispatch for an extension-less file, and no /usr/bin to fall back on, and
+  `Bun.spawnSync(["bash", ...])` THROWS there ("Executable not found in $PATH", measured in this
+  worktree) or resolves to WSL's Linux bash, which cannot see the Win32 stub directory. So the
+  retry policy is measured on Linux and macOS and the skip says so by name.
+*/
+const SHELL = posixShell("bash");
+const CANNOT_RUN = missingPosixShell("bash") ?? MISSING_POSIX_FILE_MODES;
 const roots: string[] = [];
 
 afterEach(() => {
@@ -64,7 +76,7 @@ exit 0
 }
 
 function run(bin: string, env: Record<string, string> = {}) {
-  return Bun.spawnSync(["bash", SCRIPT], {
+  return Bun.spawnSync([SHELL!, SCRIPT], {
     // PATH is replaced, not prepended: the stub must be the only bun in reach.
     env: { PATH: `${bin}:/usr/bin:/bin`, CI_INSTALL_BACKOFF_SECONDS: "0", ...env },
     stdout: "pipe",
@@ -80,7 +92,7 @@ function callCount(log: string): number {
   }
 }
 
-describe("scripts/ci-install.sh", () => {
+describeIf(CANNOT_RUN, "scripts/ci-install.sh", () => {
   test("installs once when the first attempt succeeds", () => {
     const { bin, log } = stubBun(0);
     const result = run(bin);

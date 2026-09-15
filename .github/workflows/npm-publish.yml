@@ -34,6 +34,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        # The suite spawns `node bin/studio.js`, and the launcher refuses anything below
+        # its own Node 24 floor, so the test that asserts its startup URL fails on the
+        # runner image's default Node. ci.yml's test job was pinned for exactly this in
+        # #709 and #737; this job runs the same suite before every npm release and was
+        # not, and the tests that need it arrived after the last release it validated.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -61,10 +71,16 @@ jobs:
         run: bun run typecheck
 
       - name: Test
-        # Per-file process isolation (run-core.sh) — bun's mock.module() is
-        # process-wide, so the single-process `bun run test` is load-order flaky
-        # here. This mirrors the reliable path ci.yml uses via test:coverage.
-        run: bun run test:ci
+        # `bun run test` is tests/run-tests.ts: one bun process per test file, so
+        # the process-wide mock.module() cannot leak between files. There is no
+        # separate test:ci script any more, because there is no longer a
+        # shared-process form of the suite for it to be the alternative to.
+        run: bun run test
+        env:
+          # Optional on a contributor's machine, mandatory here: this job installs Helm and
+          # builds the chart dependency, so a chart test that did not run is a defect, and the
+          # runner refuses the run instead of listing it as not run (tests/runner/requirements.ts).
+          LIBREDB_REQUIRE_HELM: "1"
 
       - name: Build
         run: bun run build

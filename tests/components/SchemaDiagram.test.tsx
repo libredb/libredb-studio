@@ -162,7 +162,7 @@ mock.module("@zumer/snapdom", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, fireEvent, within, cleanup, act } from "@testing-library/react";
+import { render, fireEvent, within, cleanup, act, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import React from "react";
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -383,6 +383,36 @@ function createDefaultProps(overrides: Partial<Parameters<typeof SchemaDiagram>[
   };
 }
 
+/**
+ * Clicks an export button and returns when the export has actually finished.
+ *
+ * WHY THERE IS A HELPER AT ALL. Ten tests used to click and then sleep for a fixed 20ms or
+ * 40ms, which is not a wait for the export but a bet on how long one takes. The chain is
+ * `setExporting(format)`, two `yieldToPaint` hops (`requestAnimationFrame` then `setTimeout`),
+ * `getNodesBounds`, snapdom, a blob, a download; on an idle box that is a couple of
+ * milliseconds and on a box running one bun process per test file it is not. Every assertion
+ * after such a sleep - the capture happened, the toast was raised, culling went back on -
+ * then reads state the export may not have reached, and the test reports a product defect.
+ *
+ * WHAT IS WAITED ON. `exporting` is the component's own name for "an export is in flight":
+ * it is set before the first yield and cleared in the `finally`, so it spans the whole chain
+ * including the error path, and `disabled={exporting !== null}` puts it on the button where a
+ * test can read it. Going idle again is therefore co-extensive with the export being over.
+ *
+ * THE CONTROL. `expect(button.disabled).toBe(true)` right after the click is what stops the
+ * wait from being vacuous: `fireEvent` is act-wrapped and `setExporting` runs before the first
+ * await, so a click that started an export is disabled by then. Without that line, a click
+ * that started nothing at all - the early return when there are no nodes, say - would satisfy
+ * "not disabled" immediately and every assertion after it would be about an export that never
+ * ran.
+ */
+async function exportAndSettle(view: ReturnType<typeof within>, format: "PNG" | "SVG"): Promise<void> {
+  const button = view.getByText(format).closest("button") as HTMLButtonElement;
+  fireEvent.click(button);
+  expect(button.disabled).toBe(true);
+  await waitFor(() => expect(button.disabled).toBe(false));
+}
+
 // =============================================================================
 // SchemaDiagram Tests
 // =============================================================================
@@ -519,13 +549,9 @@ describe("SchemaDiagram", () => {
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
-    const pngButton = view.getByText("PNG").closest("button")!;
     // Let the async export flow finish inside this test so it cannot bleed
     // into later tests (the mocks are shared module-level state).
-    await act(async () => {
-      fireEvent.click(pngButton);
-      await new Promise((r) => setTimeout(r, 40));
-    });
+    await exportAndSettle(view, "PNG");
     // Should not throw
   });
 
@@ -534,11 +560,7 @@ describe("SchemaDiagram", () => {
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
-    const svgButton = view.getByText("SVG").closest("button")!;
-    await act(async () => {
-      fireEvent.click(svgButton);
-      await new Promise((r) => setTimeout(r, 40));
-    });
+    await exportAndSettle(view, "SVG");
     // Should not throw
   });
 
@@ -1200,11 +1222,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      const pngButton = view.getByText("PNG").closest("button")!;
-      await act(async () => {
-        fireEvent.click(pngButton);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      await exportAndSettle(view, "PNG");
 
       expect(mockSnapdom).toHaveBeenCalledTimes(1);
       const [capturedEl, options] = mockSnapdom.mock.calls[0] as unknown as [HTMLElement, Record<string, unknown>];
@@ -1256,11 +1274,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      const svgButton = view.getByText("SVG").closest("button")!;
-      await act(async () => {
-        fireEvent.click(svgButton);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      await exportAndSettle(view, "SVG");
 
       expect(mockSnapdom).toHaveBeenCalledTimes(1);
       const [capturedEl] = mockSnapdom.mock.calls[0] as unknown as [HTMLElement];
@@ -1287,11 +1301,7 @@ describe("SchemaDiagram", () => {
         const { container } = render(<SchemaDiagram {...props} />);
         const view = within(container);
 
-        const pngButton = view.getByText("PNG").closest("button")!;
-        await act(async () => {
-          fireEvent.click(pngButton);
-          await new Promise((r) => setTimeout(r, 20));
-        });
+        await exportAndSettle(view, "PNG");
 
         const [, options] = mockSnapdom.mock.calls[0] as unknown as [HTMLElement, Record<string, unknown>];
         expect(options.backgroundColor).toBe("#050505");
@@ -1319,11 +1329,7 @@ describe("SchemaDiagram", () => {
           await Promise.resolve();
         });
 
-        const pngButton = view.getByText("PNG").closest("button")!;
-        await act(async () => {
-          fireEvent.click(pngButton);
-          await new Promise((r) => setTimeout(r, 20));
-        });
+        await exportAndSettle(view, "PNG");
 
         const [, options] = mockSnapdom.mock.calls[0] as unknown as [HTMLElement, Record<string, unknown>];
         expect(options.backgroundColor).toBe("#050505");
@@ -1352,22 +1358,23 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps({ schema: schemaNoFK });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // No wait here: the grid fallback is the FIRST paint's own node set, and the ELK result
+      // cannot land before the `resolveLayout()` below, which this test holds. Nothing is in
+      // flight, so a sleep would only be a window in which nothing could happen anyway.
       // Still on the grid fallback: 320px apart, not the ELK 100px.
       expect((lastReactFlowProps.nodes as Array<{ position: { x: number } }>)[1].position.x).toBe(320);
 
-      const pngButton = view.getByText("PNG").closest("button")!;
+      // The one export in this file that cannot use `exportAndSettle`: the halves have to
+      // stay apart, because the ELK result is committed in the MIDDLE of the chain.
+      const pngButton = view.getByText("PNG").closest("button") as HTMLButtonElement;
       fireEvent.click(pngButton);
+      expect(pngButton.disabled).toBe(true);
       // Commit the ELK result in its own act, so it lands between the click
       // and the macrotasks the two paint yields wait on.
       await act(async () => {
         resolveLayout();
       });
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      await waitFor(() => expect(pngButton.disabled).toBe(false));
 
       expect(mockGetNodesBounds).toHaveBeenCalledTimes(1);
       const measured = mockGetNodesBounds.mock.calls[0][0] as Array<{ position: { x: number } }>;
@@ -1394,11 +1401,9 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      const pngButton = view.getByText("PNG").closest("button")!;
-      await act(async () => {
-        fireEvent.click(pngButton);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // `exporting` is cleared in the `finally`, so the failure path settles the same way a
+      // successful one does and the toast is on screen when the wait ends.
+      await exportAndSettle(view, "PNG");
 
       expect(mockToastError).toHaveBeenCalled();
     });
@@ -1411,11 +1416,15 @@ describe("SchemaDiagram", () => {
       fireEvent.change(view.getByPlaceholderText("Filter tables..."), { target: { value: "no-such-table" } });
       expect(view.queryByText("0 tables")).not.toBeNull();
 
-      const pngButton = view.getByText("PNG").closest("button")!;
-      await act(async () => {
-        fireEvent.click(pngButton);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // Asserted synchronously, and that is the point rather than an economy: the refusal
+      // runs BEFORE `exportDiagram`'s first await - no nodes, so it toasts and returns
+      // without ever setting `exporting` - so there is nothing in flight to wait for.
+      // `disabled` still being false is the control that keeps the negative below honest: it
+      // says the export was refused, not that it had merely not started yet, which is exactly
+      // what a fixed sleep cannot tell apart.
+      const pngButton = view.getByText("PNG").closest("button") as HTMLButtonElement;
+      fireEvent.click(pngButton);
+      expect(pngButton.disabled).toBe(false);
 
       expect(mockSnapdom).not.toHaveBeenCalled();
       expect(mockToastError).toHaveBeenCalled();
@@ -1430,11 +1439,7 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      const pngButton = view.getByText("PNG").closest("button")!;
-      await act(async () => {
-        fireEvent.click(pngButton);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      await exportAndSettle(view, "PNG");
 
       expect(mockToastError).toHaveBeenCalled();
     });
@@ -1462,11 +1467,7 @@ describe("SchemaDiagram", () => {
         const { container } = render(<SchemaDiagram {...props} />);
         const view = within(container);
 
-        const pngButton = view.getByText("PNG").closest("button")!;
-        await act(async () => {
-          fireEvent.click(pngButton);
-          await new Promise((r) => setTimeout(r, 40));
-        });
+        await exportAndSettle(view, "PNG");
 
         expect(mockSnapdom).toHaveBeenCalledTimes(1);
         expect(mockToBlob).toHaveBeenCalledTimes(1);
@@ -1594,11 +1595,7 @@ describe("SchemaDiagram", () => {
 
       expect(lastReactFlowProps.onlyRenderVisibleElements).toBe(true);
 
-      const pngButton = view.getByText("PNG").closest("button")!;
-      await act(async () => {
-        fireEvent.click(pngButton);
-        await new Promise((r) => setTimeout(r, 40));
-      });
+      await exportAndSettle(view, "PNG");
 
       // Culled (unmounted) nodes cannot be captured - the snapshot must run
       // with culling off so every table is in the DOM.
@@ -1638,30 +1635,35 @@ describe("SchemaDiagram", () => {
           foreignKeys: [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
         },
       ];
-      await act(async () => {
-        rerender(<SchemaDiagram schema={withFk} onClose={onClose} />);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      rerender(<SchemaDiagram schema={withFk} onClose={onClose} />);
 
-      // posts is now a neighbor of the still-selected users -> highlighted
-      expect(
-        container.querySelector('[data-node-id="posts"]')!.querySelector(".border-brand-tint\\/60"),
-      ).not.toBeNull();
+      // posts is now a neighbor of the still-selected users -> highlighted.
+      // The wait is on that class arriving, which is the fact this test is about; the 20ms
+      // sleep it replaces asserted only that 20ms had passed, and the neighbour set is
+      // recomputed off the new FK data through the highlight store rather than in the render
+      // that `rerender` flushed.
+      await waitFor(() =>
+        expect(
+          container.querySelector('[data-node-id="posts"]')!.querySelector(".border-brand-tint\\/60"),
+        ).not.toBeNull(),
+      );
     });
 
     test("node internals re-measure when FK anchors appear on existing tables", async () => {
       const onClose = mock(() => {});
       const { rerender } = render(<SchemaDiagram schema={schemaNoFK} onClose={onClose} />);
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // The baseline has to be taken once the mount has stopped moving, and `fitView` is the
+      // signal that it has: it is called after the layout completes, which is the last thing
+      // that rebuilds the graph and so the last thing that can re-measure a node.
+      await waitFor(() => expect(mockFitView).toHaveBeenCalled());
       const callsBefore = mockUpdateNodeInternals.mock.calls.length;
 
-      // Identity-only rebuild (same schema content) must NOT re-measure
-      await act(async () => {
-        rerender(<SchemaDiagram schema={[...schemaNoFK]} onClose={onClose} />);
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // Identity-only rebuild (same schema content) must NOT re-measure.
+      // No wait after the rerender: `TableNode`'s re-measure is a passive effect keyed on the
+      // handle signature, and RTL act-wraps `rerender`, so any effect this rebuild was going
+      // to run has already run when the line below reads the counter. A sleep here would add
+      // a window in which nothing new can happen and call it evidence.
+      rerender(<SchemaDiagram schema={[...schemaNoFK]} onClose={onClose} />);
       expect(mockUpdateNodeInternals.mock.calls.length).toBe(callsBefore);
 
       // FK arrival adds handles -> React Flow must be told to re-measure,
@@ -1674,11 +1676,8 @@ describe("SchemaDiagram", () => {
           foreignKeys: [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
         },
       ];
-      await act(async () => {
-        rerender(<SchemaDiagram schema={withFk} onClose={onClose} />);
-        await new Promise((r) => setTimeout(r, 20));
-      });
-      expect(mockUpdateNodeInternals.mock.calls.length).toBeGreaterThan(callsBefore);
+      rerender(<SchemaDiagram schema={withFk} onClose={onClose} />);
+      await waitFor(() => expect(mockUpdateNodeInternals.mock.calls.length).toBeGreaterThan(callsBefore));
     });
   });
 
@@ -1717,17 +1716,18 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps({ schema: wideTable });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // The spinner is derived from `signature !== layoutedSignature`, so it is on screen
+      // from the first paint and clears when the layout settles - including this one, which
+      // settles by answering null. Waiting for it to go is waiting for the fact; the 20ms
+      // sleep it replaces was a guess at how long a promise takes to come back.
+      await waitForElementToBeRemoved(() => view.queryByText("layout"));
       expect(layoutCalls).toBe(1);
 
       // Expanding a table changes graph identity but not structure - the
-      // known-failed layout must not rerun (no spinner churn).
+      // known-failed layout must not rerun (no spinner churn). No wait after the click:
+      // the layout effect calls the engine synchronously when it runs, and `fireEvent` is
+      // act-wrapped, so a rerun would already be counted below.
       fireEvent.click(view.getByText(/\+\d+ more/));
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
       expect(layoutCalls).toBe(1);
       expect(view.queryByText("col_29")).not.toBeNull();
     });
@@ -1745,18 +1745,15 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps({ schema: wideTable });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // The catch handler must clear the layouting spinner, and its removal is both the
+      // wait and the assertion: `waitForElementToBeRemoved` refuses to run at all unless the
+      // spinner was there to begin with, so it carries its own control.
+      await waitForElementToBeRemoved(() => view.queryByText("layout"));
       expect(layoutCalls).toBe(1);
-      // The catch handler must clear the layouting spinner...
-      expect(view.queryByText("layout")).toBeNull();
 
-      // ...and record the signature so cosmetic rebuilds do not retry.
+      // ...and record the signature so cosmetic rebuilds do not retry. No wait after the
+      // click, for the reason the null-layout test above gives.
       fireEvent.click(view.getByText(/\+\d+ more/));
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
       expect(layoutCalls).toBe(1);
       expect(view.queryByText("col_29")).not.toBeNull();
     });
@@ -1771,14 +1768,13 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps();
       render(<SchemaDiagram {...props} />);
 
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
-
       // fitView is scheduled behind a paint yield, so any bookkeeping write
       // that re-runs the layout effect would fire its cleanup, set
       // `cancelled` and swallow this call — leaving the diagram unfitted.
-      expect(mockFitView).toHaveBeenCalledWith({ padding: 0.15 });
+      // Waited on directly rather than behind a sleep: the call IS the assertion, so a wait
+      // for it cannot end early, and a machine slower than the sleep no longer reports a
+      // swallowed fit-view that was merely late.
+      await waitFor(() => expect(mockFitView).toHaveBeenCalledWith({ padding: 0.15 }));
     });
 
     test("the layout spinner shows while ELK is in flight and clears when it resolves", async () => {
@@ -1795,17 +1791,16 @@ describe("SchemaDiagram", () => {
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
 
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // No wait for the spinner to appear: it is derived during render rather than set by an
+      // effect, so it is on screen from the first paint and stays there for as long as this
+      // test holds the layout promise. Nothing can take it away in the meantime.
       expect(view.queryByText("layout")).not.toBeNull();
 
-      await act(async () => {
+      act(() => {
         // null keeps the grid fallback but still completes the layout.
         resolveLayout(null);
-        await new Promise((r) => setTimeout(r, 20));
       });
-      expect(view.queryByText("layout")).toBeNull();
+      await waitForElementToBeRemoved(() => view.queryByText("layout"));
     });
   });
 
@@ -1903,9 +1898,11 @@ describe("SchemaDiagram", () => {
       const props = createDefaultProps({ schema: wideTable });
       const { container } = render(<SchemaDiagram {...props} />);
       const view = within(container);
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 20));
-      });
+      // The drag has to happen AFTER the layout has landed, or the ELK positions arrive on
+      // top of the dragged one and this test fails for a reason that is not the subject.
+      // `fitView` is called once the layout completes, so it is that moment by name rather
+      // than 20ms of hoping.
+      await waitFor(() => expect(mockFitView).toHaveBeenCalled());
 
       const onNodesChange = lastReactFlowProps.onNodesChange as (changes: unknown[]) => void;
       act(() => {

@@ -22,12 +22,13 @@ import {
  * sentinel value and asserts the sentinel never leaves the process: what goes on
  * the wire is what `resolveConfig` resolved from `LLM_*`, or nothing.
  *
- * This file lives in `tests/isolated/` — its own group in
- * `tests/run-components.sh` — because every `tests/api/ai/*.test.ts` replaces
- * `@/lib/llm/types` with stub error classes whose constructors take a message
- * only. `mock.module` is process-wide, so in a shared process the mapper's
- * provider tag silently vanishes while the class identity still matches, and
- * the assertions below would fail against perfectly correct code.
+ * This file may not share a process with `tests/api/ai/*.test.ts`, every one of
+ * which replaces `@/lib/llm/types` with stub error classes whose constructors
+ * take a message only. `mock.module` is process-wide, so in a shared process the
+ * mapper's provider tag silently vanishes while the class identity still
+ * matches, and the assertions below would fail against perfectly correct code.
+ * The runner gives every test file a process of its own, so that is already the
+ * case and this paragraph, not a directory or a registration, records why.
  */
 
 // ─── environment isolation ──────────────────────────────────────────────────

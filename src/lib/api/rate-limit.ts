@@ -352,9 +352,9 @@ export function resetRateLimit(bucket: RateLimitBucket, key: string): void {
 }
 
 /**
- * Test seam. `bun run test` runs tests/unit, tests/api, tests/integration and tests/security in a
- * single process, so this module's state is shared across every file in that run; any test file
- * that exercises a rate-limited route calls this in beforeEach.
+ * Test seam. These counters are module state, and `bun run test` gives each test FILE its own
+ * process but not each test, so every test in a file that exercises a rate-limited route shares
+ * them, and one such file calls this in beforeEach.
  */
 export function clearRateLimitState(): void {
   for (const store of Object.values(bucketStores)) store.clear();

@@ -21,6 +21,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { auditAppDirPermissions, formatOffenders } from "../../scripts/check-appimage-perms.mjs";
+import { MISSING_POSIX_FILE_MODES, describeIf } from "../helpers/posix-tools";
 
 /** Build a throwaway AppDir. `entries` maps a relative path to its octal mode. */
 const appDir = (entries: Record<string, number>): string => {
@@ -34,7 +35,15 @@ const appDir = (entries: Record<string, number>): string => {
   return root;
 };
 
-describe("auditAppDirPermissions", () => {
+/*
+  What this audit measures IS the POSIX mode bits, so the fixture cannot be built on Windows: chmod
+  there only toggles the read-only flag and stat reads every file back as 0o666 or 0o444, which
+  would leave auditAppDirPermissions seeing a clean AppDir and the three "reports an offender" cases
+  asserting against an empty list. The underlying artifact is a Linux AppImage AppDir. The two cases
+  that need no mode - the refusal on a missing directory, and formatOffenders - are kept out of this
+  group so they keep running everywhere.
+*/
+describeIf(MISSING_POSIX_FILE_MODES, "auditAppDirPermissions over POSIX mode bits", () => {
   test("passes an AppDir whose files are all world-readable", () => {
     const root = appDir({ AppRun: 0o755, "usr/bin/app": 0o755, "usr/share/icon.png": 0o644 });
     expect(auditAppDirPermissions(root)).toEqual([]);
@@ -72,7 +81,9 @@ describe("auditAppDirPermissions", () => {
     fs.symlinkSync("usr/share/icons/hicolor/32x32/apps/app.png", path.join(root, ".DirIcon"));
     expect(auditAppDirPermissions(root)).toEqual([]);
   });
+});
 
+describe("auditAppDirPermissions", () => {
   test("throws when the directory does not exist, rather than reporting a clean audit", () => {
     // A silent pass on a mistyped path would turn this gate into decoration.
     expect(() => auditAppDirPermissions(path.join(os.tmpdir(), "appdir-perms-absent-xyz"))).toThrow(/not a directory/);

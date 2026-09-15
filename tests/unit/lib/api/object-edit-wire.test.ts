@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 import {
   isObjectEditBuildResponseShape,
   isObjectEditOutcomeShape,
   isObjectEditPlanShape,
   isObjectEditUnitShape,
 } from "@/lib/api/object-edit-wire";
+import { EDIT_BODY_BYTE_LIMIT, EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
+import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 
 const STEP = { text: "SELECT 1", language: "pgsql", segments: [{ from: "user", start: 0, end: 8 }] };
 const UNIT = { medium: "statement", steps: [STEP] };
@@ -558,5 +562,327 @@ describe("the refusals that had no population", () => {
         duration: 1,
       }),
     ).toBe(true);
+  });
+});
+
+// D80. Every host-supplied string these four predicates accept is bounded, and each case below
+// feeds ONE CHARACTER over the bound with a control sitting exactly on it. The strings are not
+// this application's prose: a refusal sentence is the engine's own message and `libraryFact` in
+// `src/lib/db/providers/keyvalue/redis.ts` builds a consequence's `observed` from `FUNCTION LIST`.
+
+const PROSE_AT_LIMIT = "x".repeat(SOURCE_CHARACTER_LIMIT);
+const PROSE_OVER_LIMIT = `${PROSE_AT_LIMIT}x`;
+
+/** A statement step whose text is exactly `length` characters and whose map spans it. */
+const stepOf = (length: number) => ({
+  text: "x".repeat(length),
+  language: "pgsql",
+  segments: [{ from: "user", start: 0, end: length }],
+});
+
+describe("every host-supplied string is bounded", () => {
+  test("isObjectEditUnitShape bounds the executable text by EDIT_BODY_BYTE_LIMIT", () => {
+    // The whole unit and not one step, measured with `planExecutableLength`, which is the function
+    // both routes measure with.
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [stepOf(EDIT_BODY_BYTE_LIMIT)] })).toBe(true);
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [stepOf(EDIT_BODY_BYTE_LIMIT + 1)] })).toBe(false);
+    // Two steps that are each acceptable and together are not: a per-step bound would pass this.
+    const half = stepOf(EDIT_BODY_BYTE_LIMIT / 2);
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [half, half] })).toBe(true);
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [half, half, stepOf(1)] })).toBe(false);
+  });
+
+  test("the wire's executable ceiling stays ABOVE the routes', so the route keeps the better sentence", () => {
+    // Both edit routes call this predicate FIRST and measure the executable length SECOND, and it
+    // is the second check that can name the number. MEASURED with this bound set to
+    // `EDIT_PLAN_EXECUTABLE_LIMIT`: `tests/api/db/objects/edit-plan.test.ts` and its apply twin
+    // both went red, answering "the build answered a plan this server cannot read as a plan" where
+    // they assert "this apply would send". A unit one character over the routes' bound must
+    // therefore still be a WELL FORMED unit here.
+    expect(EDIT_BODY_BYTE_LIMIT).toBeGreaterThan(EDIT_PLAN_EXECUTABLE_LIMIT);
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [stepOf(EDIT_PLAN_EXECUTABLE_LIMIT + 1)] })).toBe(true);
+  });
+
+  test("isObjectEditUnitShape bounds a provider segment's text through the text it must span", () => {
+    // A provider segment's bytes ARE the step's bytes at that offset, which `spansTheText` proves,
+    // so the executable bound is the segment's bound and no second number is needed.
+    const provider = (length: number) => ({
+      text: "x".repeat(length),
+      language: "pgsql",
+      segments: [{ from: "provider", text: "x".repeat(length) }],
+    });
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [provider(EDIT_BODY_BYTE_LIMIT)] })).toBe(true);
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [provider(EDIT_BODY_BYTE_LIMIT + 1)] })).toBe(false);
+  });
+
+  test("isObjectEditUnitShape bounds a step's language, a command's name and each argument token", () => {
+    const statement = (language: string) => ({ medium: "statement", steps: [{ ...STEP, language }] });
+    expect(isObjectEditUnitShape(statement(PROSE_AT_LIMIT))).toBe(true);
+    expect(isObjectEditUnitShape(statement(PROSE_OVER_LIMIT))).toBe(false);
+    const command = (name: string, argument: string) => ({
+      medium: "command",
+      name,
+      arguments: [argument],
+      payload: { text: "#!lua", language: "lua", segments: [{ from: "user", start: 0, end: 5 }] },
+    });
+    expect(isObjectEditUnitShape(command(PROSE_AT_LIMIT, "LOAD"))).toBe(true);
+    expect(isObjectEditUnitShape(command(PROSE_OVER_LIMIT, "LOAD"))).toBe(false);
+    expect(isObjectEditUnitShape(command("FUNCTION", PROSE_AT_LIMIT))).toBe(true);
+    expect(isObjectEditUnitShape(command("FUNCTION", PROSE_OVER_LIMIT))).toBe(false);
+  });
+
+  test("isObjectEditUnitShape bounds a COMMAND unit's executable text, name and tokens included", () => {
+    // The command arm's own case, and it is not covered by the statement one: `planExecutableLength`
+    // counts `name` plus every argument token plus `payload.text` there, so a payload sized against
+    // the bound ALONE would sit over it once the name and the token are added. The at-the-limit
+    // control subtracts them, which is also what proves they are counted.
+    const NAME = "FUNCTION";
+    const TOKEN = "LOAD";
+    const overhead = NAME.length + TOKEN.length;
+    const commandOf = (payloadLength: number) => ({
+      medium: "command",
+      name: NAME,
+      arguments: [TOKEN],
+      payload: {
+        text: "x".repeat(payloadLength),
+        language: "lua",
+        segments: [{ from: "user", start: 0, end: payloadLength }],
+      },
+    });
+    expect(isObjectEditUnitShape(commandOf(EDIT_BODY_BYTE_LIMIT - overhead))).toBe(true);
+    expect(isObjectEditUnitShape(commandOf(EDIT_BODY_BYTE_LIMIT - overhead + 1))).toBe(false);
+    // And the same payload with the name and the token gone is accepted, so the refusal above is
+    // the SUM and not the payload on its own.
+    expect(isObjectEditUnitShape({ medium: "statement", steps: [stepOf(EDIT_BODY_BYTE_LIMIT - overhead + 1)] })).toBe(
+      true,
+    );
+  });
+
+  test("isObjectEditPlanShape bounds every string it accepts", () => {
+    const cases: readonly (readonly [string, (text: string) => unknown])[] = [
+      ["planId", (text) => ({ ...PLAN, planId: text })],
+      ["issuedAt", (text) => ({ ...PLAN, issuedAt: text })],
+      ["connectionFingerprint", (text) => ({ ...PLAN, connectionFingerprint: text })],
+      ["type", (text) => ({ ...PLAN, type: text })],
+      ["path", (text) => ({ ...PLAN, path: ["app", text] })],
+      ["kind", (text) => ({ ...PLAN, kind: text })],
+      ["partId", (text) => ({ ...PLAN, partId: text })],
+      ["session.setting", (text) => ({ ...PLAN, session: [{ mode: "asserted", setting: text, value: "on" }] })],
+      ["session.value", (text) => ({ ...PLAN, session: [{ mode: "pinned", setting: "search_path", value: text }] })],
+      [
+        "revision.token",
+        (text) => ({ ...PLAN, revision: { check: "guarded", token: text, basis: "b", scope: "server" } }),
+      ],
+      [
+        "revision.basis",
+        (text) => ({ ...PLAN, revision: { check: "compared", token: "t", basis: text, scope: "connection" } }),
+      ],
+      ["revision.reason", (text) => ({ ...PLAN, revision: { check: "unavailable", reason: text } })],
+      [
+        "consequences.fact.source",
+        (text) => ({ ...PLAN, consequences: [{ loses: "destroys-overloads", fact: { source: text, observed: "o" } }] }),
+      ],
+      [
+        "consequences.fact.observed",
+        (text) => ({ ...PLAN, consequences: [{ loses: "destroys-overloads", fact: { source: "s", observed: text } }] }),
+      ],
+      [
+        "unit.steps.language",
+        (text) => ({ ...PLAN, unit: { medium: "statement", steps: [{ ...STEP, language: text }] } }),
+      ],
+    ];
+    for (const [name, build] of cases) {
+      expect(`${name} at the limit: ${isObjectEditPlanShape(build(PROSE_AT_LIMIT))}`).toBe(
+        `${name} at the limit: true`,
+      );
+      expect(`${name} over the limit: ${isObjectEditPlanShape(build(PROSE_OVER_LIMIT))}`).toBe(
+        `${name} over the limit: false`,
+      );
+    }
+  });
+
+  test("isObjectEditOutcomeShape bounds every string it accepts", () => {
+    const refusalOf = (refusal: Record<string, unknown>) => ({
+      outcome: "refused",
+      refusal: { refusal: "privilege", sentence: "s", at: { within: "none" }, ...refusal },
+      duration: 1,
+    });
+    const cases: readonly (readonly [string, (text: string) => unknown])[] = [
+      [
+        "revision.token",
+        (text) => ({
+          outcome: "applied",
+          revision: { check: "guarded", token: text, basis: "b", scope: "server" },
+          duration: 1,
+        }),
+      ],
+      [
+        "lost.fact.observed",
+        (text) => ({
+          outcome: "applied-with-collateral",
+          lost: [{ loses: "replaces-whole-container", fact: { source: "s", observed: text } }],
+          revision: PLAN.revision,
+          duration: 1,
+        }),
+      ],
+      ["wrote", (text) => ({ outcome: "applied-elsewhere", undone: false, wrote: text, duration: 1 })],
+      [
+        "current.text",
+        (text) => ({
+          outcome: "conflict",
+          conflict: "object-changed",
+          current: { text, language: "pgsql" },
+          duration: 1,
+        }),
+      ],
+      [
+        "current.language",
+        (text) => ({
+          outcome: "conflict",
+          conflict: "object-changed",
+          current: { text: "x", language: text },
+          duration: 1,
+        }),
+      ],
+      [
+        "current.truncated.reason",
+        (text) => ({
+          outcome: "conflict",
+          conflict: "object-changed",
+          current: { text: "x", language: "pgsql", truncated: { limit: 10, reason: text } },
+          duration: 1,
+        }),
+      ],
+      [
+        "conflict.sentence",
+        (text) => ({ outcome: "conflict", conflict: "engine-refused-concurrent", sentence: text, duration: 1 }),
+      ],
+      [
+        "conflict.code",
+        (text) => ({
+          outcome: "conflict",
+          conflict: "engine-refused-concurrent",
+          sentence: "s",
+          code: text,
+          duration: 1,
+        }),
+      ],
+      ["refusal.sentence", (text) => refusalOf({ sentence: text })],
+      ["refusal.code", (text) => refusalOf({ code: text })],
+      ["refusal.hint", (text) => refusalOf({ hint: text })],
+      [
+        "interrupted.sentence",
+        (text) => ({ outcome: "interrupted", committed: "unknown", sentence: text, duration: 1 }),
+      ],
+    ];
+    for (const [name, build] of cases) {
+      expect(`${name} at the limit: ${isObjectEditOutcomeShape(build(PROSE_AT_LIMIT))}`).toBe(
+        `${name} at the limit: true`,
+      );
+      expect(`${name} over the limit: ${isObjectEditOutcomeShape(build(PROSE_OVER_LIMIT))}`).toBe(
+        `${name} over the limit: false`,
+      );
+    }
+  });
+
+  test("isObjectEditBuildResponseShape bounds every string it accepts", () => {
+    const built = (preimage: unknown, planToken: string, plan: unknown = PLAN) => ({
+      built: true,
+      plan,
+      preimage,
+      planToken,
+    });
+    const cases: readonly (readonly [string, (text: string) => unknown])[] = [
+      ["planToken", (text) => built({ text: "x", language: "pgsql" }, text)],
+      ["preimage.text", (text) => built({ text, language: "pgsql" }, "t")],
+      ["preimage.language", (text) => built({ text: "x", language: text }, "t")],
+      [
+        "preimage.truncated.reason",
+        (text) => built({ text: "x", language: "pgsql", truncated: { limit: 10, reason: text } }, "t"),
+      ],
+      ["plan.planId", (text) => built({ text: "x", language: "pgsql" }, "t", { ...PLAN, planId: text })],
+      [
+        "refusal.sentence",
+        (text) => ({ built: false, refusal: { refusal: "identity", sentence: text, at: { within: "none" } } }),
+      ],
+      [
+        "refusal.hint",
+        (text) => ({
+          built: false,
+          refusal: { refusal: "identity", sentence: "s", hint: text, at: { within: "none" } },
+        }),
+      ],
+    ];
+    for (const [name, build] of cases) {
+      expect(`${name} at the limit: ${isObjectEditBuildResponseShape(build(PROSE_AT_LIMIT))}`).toBe(
+        `${name} at the limit: true`,
+      );
+      expect(`${name} over the limit: ${isObjectEditBuildResponseShape(build(PROSE_OVER_LIMIT))}`).toBe(
+        `${name} over the limit: false`,
+      );
+    }
+  });
+});
+// The module's "NO SERVER IMPORT IN THIS FILE" rule, which stopped holding by construction the day
+// this module gained its first two VALUE imports and now holds by a property of the files it reaches
+// (fix round 2). `object-kinds.ts` is a file that grows, so without this a value import added there
+// puts `jose` or `node:crypto` into the client bundle with every other gate green.
+
+const REPO_ROOT = join(import.meta.dir, "../../../../");
+
+/** Repository-relative and POSIX-spelled, so the closure reads the same on Windows as on Linux. */
+const repoRelative = (file: string): string => relative(REPO_ROOT, file).split(sep).join("/");
+
+/** The file a specifier names, resolved the way the bundler resolves it, or `undefined`. */
+function moduleFileOf(specifier: string, fromDirectory: string): string | undefined {
+  const base = specifier.startsWith("@/")
+    ? join(REPO_ROOT, "src", specifier.slice("@/".length))
+    : join(fromDirectory, specifier);
+  return [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")].find((candidate) =>
+    existsSync(candidate),
+  );
+}
+
+describe("the wire module's import closure stays free of the server", () => {
+  test("no VALUE import anywhere in the closure leaves this repository's own source", () => {
+    // Type-only imports are erased and cannot pull a package into a bundle, so only the value ones
+    // are walked. A BARE specifier is what would drag `jose`, `node:crypto` or `next/server` in;
+    // `@/` and relative ones are followed. The closure's answer today is that there are no bare
+    // value imports at all, which is the strongest form of the rule and the clearest failure.
+    const entry = join(REPO_ROOT, "src/lib/api/object-edit-wire.ts");
+    const walked = new Set<string>();
+    const pending = [entry];
+    const external: string[] = [];
+    const unresolved: string[] = [];
+    while (pending.length > 0) {
+      const file = pending.pop() as string;
+      if (walked.has(file)) continue;
+      walked.add(file);
+      const here = dirname(file);
+      for (const match of readFileSync(file, "utf8").matchAll(/^import\s+(type\s+)?[^;]*?from\s+"([^"]+)";/gm)) {
+        if (match[1] !== undefined) continue;
+        const specifier = match[2] as string;
+        const named = `${repoRelative(file)} imports ${specifier}`;
+        if (!specifier.startsWith("@/") && !specifier.startsWith(".")) {
+          external.push(named);
+          continue;
+        }
+        const resolved = moduleFileOf(specifier, here);
+        if (resolved === undefined) unresolved.push(named);
+        else pending.push(resolved);
+      }
+    }
+    expect(external).toEqual([]);
+    expect(unresolved).toEqual([]);
+    // A control on the walk itself, because an assertion over an empty or one-file closure would
+    // pass for the wrong reason: the two value imports this module's docblock names, and what THEY
+    // reach, must all be in it.
+    expect([...walked].map(repoRelative).sort()).toEqual([
+      "src/lib/api/error-codes.ts",
+      "src/lib/api/object-edit-wire.ts",
+      "src/lib/db/errors.ts",
+      "src/lib/db/object-edit.ts",
+      "src/lib/db/object-kinds.ts",
+    ]);
   });
 });

@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Regression tests for the chart-0.1.20 OpenShift and seed-connection
  * behaviors introduced with the operator PR (#152):
@@ -20,8 +21,9 @@
  * `--api-versions security.openshift.io/v1`, which feeds
  * .Capabilities.APIVersions exactly like a live API server would.
  */
-import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
 
@@ -42,8 +44,11 @@ interface RenderedManifest {
   };
 }
 
-function helmTemplate(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  const run = Bun.spawnSync(["helm", "template", "release-under-test", CHART_DIR, ...args], {
+function helmTemplate(
+  args: string[],
+  chartDir: string = CHART_DIR,
+): { exitCode: number; stdout: string; stderr: string } {
+  const run = Bun.spawnSync(["helm", "template", "release-under-test", chartDir, ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -164,18 +169,44 @@ describe("charts/libredb-studio seedConnections source guard (#152)", () => {
  * fails loudly when that is impossible rather than silently skipping.
  */
 describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
+  /**
+   * A private copy of the chart, because vendoring writes: `helm dependency build` drops
+   * `charts/postgresql-*.tgz` and rewrites `Chart.lock`. Doing that in `charts/libredb-studio`
+   * mutated the repository working tree, which a drift guard running beside the suite sees, and
+   * with several test files rendering that one directory at once, a file reading it mid-write
+   * gets a render failure that has nothing to do with what it asserts. Helm's repository config
+   * and cache are redirected into the copy for the same reason: `helm repo add` otherwise edits
+   * one shared file under the contributor's home directory.
+   */
+  let pgChartDir: string;
+  let helmHome: string;
+
   beforeAll(() => {
+    helmHome = mkdtempSync(join(tmpdir(), "libredb-helm-openshift-"));
+    pgChartDir = join(helmHome, "libredb-studio");
+    cpSync(CHART_DIR, pgChartDir, { recursive: true });
+
     const vendored =
-      existsSync(join(CHART_DIR, "charts")) &&
-      readdirSync(join(CHART_DIR, "charts")).some((f) => f.startsWith("postgresql-") && f.endsWith(".tgz"));
+      existsSync(join(pgChartDir, "charts")) &&
+      readdirSync(join(pgChartDir, "charts")).some((f) => f.startsWith("postgresql-") && f.endsWith(".tgz"));
     if (vendored) {
       return;
     }
+    // Only a clone that has never vendored the subchart reaches the network here.
+    const helmEnv = {
+      ...process.env,
+      HELM_REPOSITORY_CONFIG: join(helmHome, "repositories.yaml"),
+      HELM_REPOSITORY_CACHE: join(helmHome, "cache"),
+    };
     const repoAdd = Bun.spawnSync(
       ["helm", "repo", "add", "bitnami", "https://charts.bitnami.com/bitnami", "--force-update"],
-      { stdout: "pipe", stderr: "pipe" },
+      { stdout: "pipe", stderr: "pipe", env: helmEnv },
     );
-    const depBuild = Bun.spawnSync(["helm", "dependency", "build", CHART_DIR], { stdout: "pipe", stderr: "pipe" });
+    const depBuild = Bun.spawnSync(["helm", "dependency", "build", pgChartDir], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: helmEnv,
+    });
     if (repoAdd.exitCode !== 0 || depBuild.exitCode !== 0) {
       throw new Error(
         `could not vendor the postgresql subchart dependency: ${repoAdd.stderr.toString()} ${depBuild.stderr.toString()}`,
@@ -183,10 +214,14 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
     }
   });
 
+  afterAll(() => {
+    rmSync(helmHome, { recursive: true, force: true });
+  });
+
   const PG_ARGS = ["--set", "postgresql.enabled=true", "--set", "postgresql.auth.password=test-pg-pass"];
 
   function statefulSetSource(args: string[]): string {
-    const run = helmTemplate([...PG_ARGS, ...args]);
+    const run = helmTemplate([...PG_ARGS, ...args], pgChartDir);
     if (run.exitCode !== 0) {
       throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
     }

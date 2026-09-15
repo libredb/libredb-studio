@@ -123,6 +123,19 @@ export interface ObjectSourceViewProps {
   readonly onApply?: ObjectSourceApplier;
   /** Called once after an apply that CHANGED the addressed object, so a shell can re-read. */
   readonly onApplied?: () => void;
+  /**
+   * Whether an apply is IN FLIGHT: the statement has been sent and no answer has landed (D82).
+   *
+   * A shell that can unmount this pane needs this, because unmounting it in that window throws
+   * the answer away: the conflict, the refusal and the failure are all rendered by the dialog
+   * this pane owns, and only `applied` escapes through `onApplied`. It is a CALLBACK and not a
+   * patch through `onChange` on purpose: `SourceTabState` is persisted with the workspace, and a
+   * flag that is true only between two round trips has no business surviving a reload.
+   *
+   * MUST be stable across renders, like `onChange`, and it is called with `false` when the pane
+   * unmounts, so a shell can never hold the flag for a pane that is gone.
+   */
+  readonly onApplyInFlightChange?: (inFlight: boolean) => void;
   /** MUST be stable across renders, or the read effect re-issues for ever. */
   readonly onChange: (patch: ObjectSourcePatch) => void;
 }
@@ -519,6 +532,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
     reader,
     onApply,
     onApplied,
+    onApplyInFlightChange,
     onChange: patchTab,
   } = props;
   const theme = useEffectiveTheme();
@@ -877,15 +891,55 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * `previewHere` is DEFENCE IN DEPTH and is labelled as such rather than as a measured live
    * defect. While `preview` is defined the modal is open, and no shipped shell re-addresses this
    * pane through it: a mouse press on the strip hits the overlay, which closes the dialog and
-   * retires the generation; focus is trapped, so the keyboard cannot reach the strip; and the one
-   * document-level shortcut that does move the active tab, Ctrl/Cmd+Shift+T in `StudioTabBar`,
-   * UNMOUNTS this pane rather than re-addressing it, which is its own defect and is filed as D82
-   * rather than guarded here. Its test reaches the case by rerendering props at a moment no shell
-   * rerenders them. The binding is kept because it is one word of the same rule the other three
-   * states carry, and a state bound by construction cannot be the one somebody forgets.
+   * retires the generation; focus is trapped, so the keyboard cannot reach the strip; and the
+   * document-level listeners that DO move the active tab, the new-tab shortcut in `StudioTabBar`
+   * and the command palette's Cmd/Ctrl+K, both UNMOUNT this pane rather than re-addressing it.
+   * That unmount is D82, and the binding here survives it either way.
+   *
+   * D82 is now answered for BOTH of this pane's two shells, and the binding above is what holds
+   * while an apply is in flight rather than the shell's refusal being what holds. `Studio.tsx`
+   * passes `onApplyInFlightChange` and refuses both gestures; `StudioWorkspace.tsx` passes it too
+   * as of `7fe83dcc` and refuses the one gesture that reaches it, the new-tab shortcut, since it
+   * renders no palette. Neither refusal is a reason to drop this binding: a shell is free not to
+   * pass the callback, and the four states stay bound by construction either way.
+   *
+   * Its test reaches the case by rerendering props at a moment no shell rerenders them. The binding
+   * is kept because it is one word of the same rule the other three states carry, and a state bound
+   * by construction cannot be the one somebody forgets.
    */
   const previewHere = boundTo(address, preview);
   const refusalHere = boundTo(address, buildRefusal);
+
+  /**
+   * The shell's copy of the one fact it cannot see: the statement is sent and nothing is back yet
+   * (D82).
+   *
+   * The dialog ALREADY refuses every way out of this window it owns: `showCloseButton={!applying}`,
+   * and Escape, a pointer press outside and any other interaction outside are all prevented while
+   * `applying`. What it cannot refuse is a listener registered on `document` by a component it does
+   * not contain, and the shell that owns that component is the only place that can. So the fact is
+   * published, and the refusal is written there.
+   *
+   * OPTIONAL, and the undefined arm now has NO SHIPPED CALLER: both mounts of this pane,
+   * `src/components/Studio.tsx` and `src/workspace/StudioWorkspace.tsx`, pass it, and this
+   * component is not re-exported from `src/exports/`, so nothing outside this repository mounts it
+   * either. What the arm serves is the pane's own test mounts, which set the props each case is
+   * about and nothing else. Making the prop REQUIRED is a real option and a deliberate non-change
+   * here: it would trade this runtime guard for a compile-time one, which is the better trade, at
+   * the cost of editing every mount in `ObjectSourceView.test.tsx` that does not care about the
+   * callback, and it changes no behaviour in either shell.
+   *
+   * ONE effect with a cleanup that also reports `false`, rather than two. On the true-to-false
+   * transition the cleanup and the effect both report `false`, which costs a shell holding this in
+   * `useState` nothing, and on unmount the cleanup is the only thing that runs: a pane that goes
+   * away mid apply must not leave a shell latched on a pane that no longer exists.
+   */
+  const applyInFlight = previewHere?.state.kind === "applying";
+  useEffect(() => {
+    if (onApplyInFlightChange === undefined) return;
+    onApplyInFlightChange(applyInFlight);
+    return () => onApplyInFlightChange(false);
+  }, [applyInFlight, onApplyInFlightChange]);
   /**
    * The definition MOVED under an open edit, said out loud rather than resolved silently.
    *
@@ -1393,6 +1447,34 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
           >
             {shownFailure}
           </p>
+          {/*
+            The recovery the object tree has always offered (`tree-retry`) and this pane did not
+            (X22). Bound to `failure` and not to `shownFailure`, because only that arm is a read
+            that was ATTEMPTED and refused: a rate limit, a reset, a route error. The other two
+            arms cannot be answered by asking again. `DISCONNECTED` has no connection to ask over
+            and the read effect bails before the reader is called, and `UNRENDERABLE`/`MISMATCHED`
+            are properties of an answer already in hand, so both would clear the pane and land
+            back on the same sentence having done nothing.
+
+            `reread` rather than a private handler: this clears the same three fields the stale
+            banner's control clears, which is what makes `needsRead` true again. That matters
+            because `needsRead` is `document === undefined && failure === undefined`, so a tab
+            holding a failure never re-reads on its own and a reader without this control has to
+            reopen the tab or reload the page.
+          */}
+          {failure !== undefined && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="mt-3 h-7 px-3 text-xs"
+              data-testid="object-source-failure-retry"
+              onClick={reread}
+            >
+              <RefreshCw aria-hidden="true" className="mr-1 h-3 w-3" />
+              Try again
+            </Button>
+          )}
         </div>
       ) : part === undefined ? (
         // `output` rather than a div carrying role="status": both announce, and `jsx-a11y`'s

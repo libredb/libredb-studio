@@ -186,3 +186,155 @@ describe("storage facade: threshold config", () => {
     expect(result[0].metric).toBe("custom");
   });
 });
+
+// ── Favorite connections ─────────────────────────────────────────────────────
+
+describe("storage facade: favorite connections", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("getFavoriteConnectionIds returns an empty array when nothing stored", () => {
+    expect(storage.getFavoriteConnectionIds()).toEqual([]);
+  });
+
+  test("toggleFavoriteConnection adds an id not already favorited", () => {
+    const result = storage.toggleFavoriteConnection("conn-1");
+    expect(result).toEqual(["conn-1"]);
+    expect(storage.getFavoriteConnectionIds()).toEqual(["conn-1"]);
+  });
+
+  test("toggleFavoriteConnection removes an id already favorited", () => {
+    storage.toggleFavoriteConnection("conn-1");
+    const result = storage.toggleFavoriteConnection("conn-1");
+    expect(result).toEqual([]);
+    expect(storage.getFavoriteConnectionIds()).toEqual([]);
+  });
+
+  test("toggleFavoriteConnection preserves other favorited ids", () => {
+    storage.toggleFavoriteConnection("conn-1");
+    storage.toggleFavoriteConnection("conn-2");
+    const result = storage.toggleFavoriteConnection("conn-1");
+    expect(result).toEqual(["conn-2"]);
+  });
+
+  test("toggleFavoriteConnection dispatches libredb-storage-change with collection favorite_connections", () => {
+    let captured: CustomEvent | null = null;
+    const handler = (e: Event) => {
+      captured = e as CustomEvent;
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.toggleFavoriteConnection("conn-1");
+
+    window.removeEventListener("libredb-storage-change", handler);
+    expect(captured).not.toBeNull();
+    expect((captured as unknown as CustomEvent).detail.collection).toBe("favorite_connections");
+    expect((captured as unknown as CustomEvent).detail.data).toEqual(["conn-1"]);
+  });
+
+  test("deleteConnection prunes the deleted id out of favorite_connections", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.toggleFavoriteConnection("conn-1");
+    storage.toggleFavoriteConnection("conn-2"); // a favorite for a connection that isn't this one
+
+    storage.deleteConnection("conn-1");
+
+    expect(storage.getFavoriteConnectionIds()).toEqual(["conn-2"]);
+  });
+
+  test("deleteConnection does not touch favorite_connections when the deleted id wasn't favorited", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.toggleFavoriteConnection("conn-2");
+
+    storage.deleteConnection("conn-1");
+
+    expect(storage.getFavoriteConnectionIds()).toEqual(["conn-2"]);
+  });
+
+  test("deleteConnection dispatches a favorite_connections change only when the deleted id was favorited", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.toggleFavoriteConnection("conn-1");
+    const collections: string[] = [];
+    const handler = (e: Event) => {
+      collections.push((e as CustomEvent).detail.collection);
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.deleteConnection("conn-1");
+
+    expect(collections).toContain("favorite_connections");
+    window.removeEventListener("libredb-storage-change", handler);
+  });
+});
+
+// ── Connection order (#748) ──────────────────────────────────────────────────
+
+describe("storage facade: connection order", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("getConnectionOrder returns an empty array when nothing stored", () => {
+    expect(storage.getConnectionOrder()).toEqual([]);
+  });
+
+  test("setConnectionOrder persists the full id list", () => {
+    storage.setConnectionOrder(["conn-2", "conn-1"]);
+    expect(storage.getConnectionOrder()).toEqual(["conn-2", "conn-1"]);
+  });
+
+  test("setConnectionOrder replaces any previously persisted order", () => {
+    storage.setConnectionOrder(["conn-1", "conn-2"]);
+    storage.setConnectionOrder(["conn-2", "conn-1"]);
+    expect(storage.getConnectionOrder()).toEqual(["conn-2", "conn-1"]);
+  });
+
+  test("setConnectionOrder dispatches libredb-storage-change with collection connection_order", () => {
+    let captured: CustomEvent | null = null;
+    const handler = (e: Event) => {
+      captured = e as CustomEvent;
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.setConnectionOrder(["conn-1"]);
+
+    window.removeEventListener("libredb-storage-change", handler);
+    expect(captured).not.toBeNull();
+    expect((captured as unknown as CustomEvent).detail.collection).toBe("connection_order");
+    expect((captured as unknown as CustomEvent).detail.data).toEqual(["conn-1"]);
+  });
+
+  test("deleteConnection prunes the deleted id out of connection_order", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.setConnectionOrder(["conn-2", "conn-1"]);
+
+    storage.deleteConnection("conn-1");
+
+    expect(storage.getConnectionOrder()).toEqual(["conn-2"]);
+  });
+
+  test("deleteConnection does not touch connection_order when the deleted id wasn't in it", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.setConnectionOrder(["conn-2"]);
+
+    storage.deleteConnection("conn-1");
+
+    expect(storage.getConnectionOrder()).toEqual(["conn-2"]);
+  });
+
+  test("deleteConnection dispatches a connection_order change only when the deleted id was ordered", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.setConnectionOrder(["conn-1"]);
+    const collections: string[] = [];
+    const handler = (e: Event) => {
+      collections.push((e as CustomEvent).detail.collection);
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.deleteConnection("conn-1");
+
+    expect(collections).toContain("connection_order");
+    window.removeEventListener("libredb-storage-change", handler);
+  });
+});

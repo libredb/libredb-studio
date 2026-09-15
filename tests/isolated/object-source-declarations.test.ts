@@ -20,8 +20,9 @@
  *
  * 1. The type-id list is DRIVEN from `EXTERNAL_DATABASE_TYPES` plus the embedded store, never
  *    typed here, so a new engine is censused the day it lands rather than being silently
- *    omitted. `CENSUS_CONNECTION` is a `Record<DatabaseType, ...>`, so a new member of the
- *    union is a COMPILE error rather than a missing row.
+ *    omitted. `CENSUS_CONNECTION` (`tests/helpers/census-connection.ts`, shared with the edit
+ *    census) is a `Record<DatabaseType, ...>`, so a new member of the union is a COMPILE error
+ *    rather than a missing row.
  * 2. `createDatabaseProvider("mysql")` is UNCONNECTED, and mysql is the one provider whose
  *    `objectKinds` is not a constant: `objectKindsFor(undefined)` answers the MySQL six and
  *    structurally excludes MariaDB's `package` and `sequence`, which the design flags as the
@@ -53,15 +54,16 @@
  * sees every provider's declarations at once, so the half-declaration guard lives here, and it is
  * not a duplicate of anything: deleting it makes the class invisible again.
  *
- * WHY THIS FILE LIVES UNDER `tests/isolated/` (#789). It builds providers through the REAL
+ * WHAT THIS FILE CANNOT SHARE A PROCESS WITH (#789). It builds providers through the REAL
  * `createDatabaseProvider`, which is the whole point: a declaration census that read a double
  * would certify the double. Every file under `tests/api/` mocks `@/lib/db` with a
  * `createDatabaseProvider: mock()` answering undefined, and that mock reaches
  * `@/lib/db/factory` through the index re-export, so in a shared process this file reads
  * `provider.getCapabilities` off undefined. Measured 2026-09-13: alone it is green; beside
  * `tests/api/db-objects.test.ts` it is not. Nothing this file can do prevents it, because
- * mocking the factory is what the api layer is for, so the isolation sits here and
- * `tests/run-components.sh` gives it a group of its own.
+ * mocking the factory is what the api layer is for. The runner gives every test file a bun
+ * process of its own, so that isolation is already in force and this paragraph, rather than a
+ * directory or an entry in a runner script, is where the requirement is written down.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -71,62 +73,9 @@ import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree
 import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds, findKind } from "@/lib/db/object-kinds";
-import type { DatabaseConnection, DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
-
-/**
- * The fields every provider's `validate()` demands, none of which is ever dialled.
- *
- * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a
- * constructor, and the constructors validate their configuration without opening a socket or a
- * file. The host is the loopback address and the port is 1 so that a provider which ever did
- * try to dial would fail loudly rather than reach something real.
- */
-const UNCONNECTED = {
-  id: "census",
-  name: "census",
-  host: "127.0.0.1",
-  port: 1,
-  database: "census",
-  user: "census",
-  password: "census",
-  filePath: ":memory:",
-  url: "http://127.0.0.1:1",
-  connectionString: "mongodb://127.0.0.1:1/census",
-  // Cassandra's driver refuses to build a client without one, so the census cannot reach that
-  // provider's declarations at all without it. A stock single-node install reports datacenter1.
-  localDataCenter: "datacenter1",
-  createdAt: new Date(0),
-} as const;
-
-const unconnected = (type: DatabaseType): DatabaseConnection => ({ ...UNCONNECTED, type }) as DatabaseConnection;
-
-/**
- * One connection per shipped type-id, as a Record so the compiler owns exhaustiveness.
- *
- * A new member of `DatabaseType` fails to compile here, which is a stronger failure than the
- * runtime one the driven population below also gives: the census cannot be extended to a new
- * engine by accident, and it cannot skip one either.
- */
-export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection>> = Object.freeze({
-  postgres: unconnected("postgres"),
-  mysql: unconnected("mysql"),
-  sqlite: unconnected("sqlite"),
-  libsql: unconnected("libsql"),
-  duckdb: unconnected("duckdb"),
-  oracle: unconnected("oracle"),
-  mssql: unconnected("mssql"),
-  clickhouse: unconnected("clickhouse"),
-  druid: unconnected("druid"),
-  trino: unconnected("trino"),
-  cassandra: unconnected("cassandra"),
-  elasticsearch: unconnected("elasticsearch"),
-  opensearch: unconnected("opensearch"),
-  mongodb: unconnected("mongodb"),
-  redis: unconnected("redis"),
-  couchbase: unconnected("couchbase"),
-  libredb: unconnected("libredb"),
-});
+import { CENSUS_CONNECTION } from "../helpers/census-connection";
 
 /**
  * The committed expectation, transcribed from the design's kind-declaration table, one entry

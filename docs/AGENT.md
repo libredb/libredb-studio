@@ -2618,6 +2618,12 @@ the role's own grants are the whole boundary (A3).
   and never what it said, so an empty completion reaches it too and a model's recorded
   `retryEmptyTurn: false` decides nothing. Pinned as it behaves rather than narrowed, because the
   narrowing would move behaviour five passing runs were measured under.
+- **B81** — the seed list starts out claiming to be loaded and empty, so a non-OK the server did not
+  attribute to its seed configuration leaves the rail saying of a connection this application seeds
+  itself that its settings live in this browser. That is the same false sentence the seed-config
+  entry was filed about, reached through a proxy rather than through a malformed seed file. Not
+  fixed here because separating "unasked" from "measured empty" changes a type every consumer
+  reads, and two tests currently pin the wrong half as intended.
 
 **Settled as limits rather than as work.** The seven below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet

@@ -243,4 +243,170 @@ describe("ConnectionItem", () => {
     // onSelect should NOT have been called (stopPropagation)
     expect(defaultOnSelect).toHaveBeenCalledTimes(0);
   });
+
+  describe("favorite toggle", () => {
+    test("no star button when onToggleFavorite is not passed", () => {
+      const { queryByLabelText } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(queryByLabelText("Add to favorites")).toBeNull();
+      expect(queryByLabelText("Remove from favorites")).toBeNull();
+    });
+
+    test("shows an unfavorited star labeled to add, and toggles it with stopPropagation", () => {
+      const onToggleFavorite = mock(() => {});
+      const { getByLabelText } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          isFavorite={false}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+
+      const star = getByLabelText("Add to favorites");
+      expect(star.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.click(star);
+
+      expect(onToggleFavorite).toHaveBeenCalledTimes(1);
+      expect(onToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+      expect(defaultOnSelect).not.toHaveBeenCalled();
+    });
+
+    test("a favorited connection shows a filled star labeled to remove", () => {
+      const onToggleFavorite = mock(() => {});
+      const { getByLabelText } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          isFavorite={true}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+
+      const star = getByLabelText("Remove from favorites");
+      expect(star.getAttribute("aria-pressed")).toBe("true");
+
+      fireEvent.click(star);
+
+      expect(onToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+    });
+
+    test("star toggle is available for managed connections", () => {
+      const onToggleFavorite = mock(() => {});
+      const { getByLabelText } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, managed: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+
+      fireEvent.click(getByLabelText("Add to favorites"));
+      expect(onToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+    });
+  });
+
+  describe("drag reordering (#748)", () => {
+    test("not draggable and no drag handle when draggable is not passed", () => {
+      const { container, queryByTestId } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(queryByTestId(`drag-handle-${mockPostgresConnection.id}`)).toBeNull();
+      expect(container.querySelector('[class*="cursor-pointer"]')?.getAttribute("draggable")).toBe("false");
+    });
+
+    test("draggable renders a drag handle and fires the drag callbacks", () => {
+      const onDragStart = mock(() => {});
+      const onDragEnter = mock(() => {});
+      const onDragEnd = mock(() => {});
+      const onDrop = mock(() => {});
+      const { container, getByTestId } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          draggable
+          onDragStart={onDragStart}
+          onDragEnter={onDragEnter}
+          onDragEnd={onDragEnd}
+          onDrop={onDrop}
+        />,
+      );
+
+      expect(getByTestId(`drag-handle-${mockPostgresConnection.id}`)).not.toBeNull();
+      const item = container.querySelector('[class*="cursor-pointer"]')!;
+      expect(item.getAttribute("draggable")).toBe("true");
+
+      fireEvent.dragStart(item);
+      fireEvent.dragEnter(item);
+      fireEvent.dragOver(item);
+      fireEvent.drop(item);
+      fireEvent.dragEnd(item);
+
+      expect(onDragStart).toHaveBeenCalledTimes(1);
+      expect(onDragEnter).toHaveBeenCalledTimes(1);
+      expect(onDrop).toHaveBeenCalledTimes(1);
+      expect(onDragEnd).toHaveBeenCalledTimes(1);
+    });
+
+    test("isDragging dims the row and isDragOver highlights it", () => {
+      const { container, rerender } = render(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          draggable
+        />,
+      );
+      const item = () => container.querySelector('[class*="cursor-pointer"]')!;
+      expect(item().className).not.toContain("opacity-40");
+      expect(item().className).not.toContain("ring-brand-solid");
+
+      rerender(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          draggable
+          isDragging
+        />,
+      );
+      expect(item().className).toContain("opacity-40");
+
+      rerender(
+        <ConnectionItem
+          connection={mockPostgresConnection}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          draggable
+          isDragOver
+        />,
+      );
+      expect(item().className).toContain("ring-brand-solid");
+    });
+  });
 });

@@ -246,22 +246,67 @@ against", so it is named in the row above rather than left as an implementation 
 a change to the frame is a change to this control. Ten fields are hashed and each one, changed alone,
 sends the same approved statement somewhere else: `type`, `host`, `port`, `database`, `user`, the
 `connectionString` that overrides all of those when a record carries one, Trino's session `schema`,
-Oracle's `serviceName`, a MSSQL `instanceName`, and the SSH tunnel's route, which the provider
-factory rewrites `host` and `port` to before the driver ever opens. The connection's `id` and `name`
-are deliberately OUT, because a caller supplies them, and so is the password, because rotating a
+Oracle's `serviceName`, a MSSQL `instanceName`, and the SSH tunnel's ROUTE - its four addressing
+fields, because the same `db:5432` reached through two different bastions is two different databases.
+`host` and `port` are the FAR END on both sides of the compare. The provider factory rewrites a
+tunnelled record to the tunnel's loopback endpoint before the driver opens, so it carries the far end
+alongside that rewrite and the seal hashes the far end, never the ephemeral local port, which is a
+property of this process and not of the server. The far end is read back off the tunnel and is never
+the address the factory asked for, and the tunnel pool keys a forward by connection id, by that far
+end and by the same four bastion fields this seal frames, so the only forward a provider can be
+handed is one opened to the address it seals THROUGH the bastion its record names. Measured against a
+live bastion in both directions on 2026-09-15: with the far end alone in the key, a record edited to
+name a bastion that does not resolve was served the forward already open through the real one,
+reached the old machine, and sealed a digest the route recomputed to the same value; with the route
+in the key the same record opens its own forward and fails to connect, which is what the same record
+on a connection id nothing is pooled under has always done. The connection's `id` and `name` are
+deliberately OUT, because a caller supplies them, and so is the password, because rotating a
 credential must not invalidate a plan built five minutes earlier. Both of the last two additions came
 from external review of the change that introduced the control, each with a colliding pair measured
 against the real module, so this list is a measured floor rather than a design intention.
 
-**What 3.6 does NOT claim: that the round trip carried nothing but the addressed object.** The
-day-one PostgreSQL unit is a multi-statement simple query, and this repository has measured itself
-unable to count the statements in a routine body: a dollar-quoted body may contain any number of
-semicolons, and no parser here can tell a statement separator from a character of the definition.
-So the event says an edit was applied at this address, with this strategy, and with this outcome.
-It does not say that one statement, and only one, reached the engine, and a reader of the log must
-not take it that way. This paragraph is where a reader of the control meets the limit, and
-`docs/BACKLOG.md` D76 is the work: it records the same fact from the destruction side, measured live,
-with what closing it would take.
+**What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
+parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the
+reader's text carried used to run, and the audit event named only the addressed object. This
+repository cannot count the statements in a routine body itself: a dollar-quoted body may contain
+any number of semicolons, a `BEGIN ATOMIC` body contains them by construction, and no parser here
+can tell a statement separator from a character of the definition. So the engine is asked instead.
+The build parses the reader's submitted text alone as a NAMED prepared statement inside a
+transaction block it has already poisoned with `SELECT 1/0`, then rolls that block back: for every
+text that reaches this check the server performs no parse analysis, no planning and no execution,
+and its multi-command check still runs because it precedes the aborted-block check in the server's
+own `exec_parse_message`. A text PostgreSQL parses as more than one statement is refused, no plan is
+minted and nothing is sent; a server that does not answer that check is refused `unsupported`
+rather than trusted.
+
+**The aborted block is not a universal brake, and that is why the sentence above is bounded by the
+population it was measured over.** Measured on 18.4 on 2026-09-15, one `BEGIN` plus `SELECT 1/0`
+plus a named Parse per row: `exec_parse_message` exempts a transaction-exit statement, so `COMMIT`,
+`ROLLBACK`, `END` and `ABORT` answer no error at all, run, and end the very block this check opened;
+and an empty, whitespace-only or comment-only text answers `25P02` from Bind rather than from Parse,
+so the named statement is created and survives the rollback on a client that then goes back to the
+pool. Neither class can reach this check, and the reason is the ORDER of the build's refusals rather
+than the block: the identity comparison answers two refusals earlier and renders a header that is
+not the addressed routine's for either one. So the order is load-bearing and not only a saved round
+trip, and the provider's own suite asserts that neither class reaches the wire rather than leaving
+it to a comment.
+
+**On the apply side the round trip is counted rather than trusted.** A simple query answers one
+result per statement, so the provider counts the results it already receives and reports
+`interrupted` with `committed: "unknown"`, never a plain `applied`, when the count is not the four
+statements the unit is made of. Measured on PostgreSQL 18.4 on 2026-09-15, driven through the
+provider: the rider that used to drop another routine at HTTP 200 is now refused at build with the
+victim's `count(*)` unmoved, while a routine whose body carries semicolons inside `$function$` and
+a `BEGIN ATOMIC` body of two `SELECT`s both still build and apply. `docs/providers/postgres.md`
+carries the full table.
+
+**What that still does NOT claim.** The check is exactly as good as the server's own parser, and
+this type id also serves CockroachDB and Materialize, neither of which was probed. The result count
+says how many statements ran and never which, so it detects a round trip that did not match the
+plan and cannot name what it carried. And neither half widens the plan's consequence model: one
+statement whose effects reach beyond the addressed routine is still described by the empty
+consequence list the strategy carries. So the event says an edit was applied at this address, with
+this strategy, and with this outcome, and a reader of the log should read it as exactly that.
 
 ## Known limits
 

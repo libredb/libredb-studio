@@ -61,10 +61,12 @@ import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
   ConnectionError,
+  DatabaseError,
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
 } from "../../errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
@@ -993,6 +995,76 @@ const ROW_VERSION_SETTING_LITERAL = "'libredb.row_version'";
 const CONCURRENT_UPDATE_SENTENCE = "tuple concurrently updated";
 
 /**
+ * The statements the emitted unit is made of: the `SET LOCAL`, the pre `DO`, the reader's ONE
+ * statement, and the post `DO` (D76).
+ *
+ * A number rather than a count of anything, because there is nothing here to count: the shape is
+ * composed by `buildObjectEdit` a few lines apart and the reader's segment is held at exactly one
+ * statement by the check below. MEASURED on PostgreSQL 18.4 through `pg` on 2026-09-15: a simple
+ * query answers ONE RESULT PER STATEMENT with the engine's own command tag, so the emitted unit
+ * answers `[SET, DO, CREATE, DO]` and the same unit with a rider spliced into the reader's segment
+ * answers `[SET, DO, CREATE, DROP, DO]`. Four held for a reader's text ending in `;`, in a `--`
+ * line comment, in a newline and in `$$`, so the doubled semicolon the terminator can produce
+ * costs no result of its own.
+ */
+const GUARDED_BATCH_STATEMENT_COUNT = 4;
+
+/**
+ * The statement that poisons the transaction block the single-statement check parses inside (D76).
+ *
+ * It answers `22012 division_by_zero`, and that failure IS the mechanism: for every text that
+ * reaches this check the server performs no parse analysis, no planning and no execution in an
+ * aborted block, so the Parse that follows can never run the reader's text.
+ *
+ * THE BOUND ON THAT SENTENCE IS MEASURED AND IT IS NOT CAUTION. `exec_parse_message` exempts a
+ * transaction-exit statement and takes a separate branch for a text with no statement in it, so
+ * neither is stopped by the block; what keeps both away from here is the ORDER of the refusals in
+ * `buildObjectEdit`. `countSubmittedStatements` carries the measurement and the ordering argument.
+ */
+const STATEMENT_COUNT_POISON_SQL = "SELECT 1/0";
+
+/** `current transaction is aborted`, which the server answers for a text it parsed as ONE statement. */
+const ABORTED_BLOCK_SQLSTATE = "25P02";
+
+/** `syntax_error`, which carries BOTH the multi-command refusal and an ordinary grammar error. */
+const SYNTAX_ERROR_SQLSTATE = "42601";
+
+/**
+ * How many statements PostgreSQL parsed in the text the reader submitted (D76).
+ *
+ * `one` covers zero as well, because a whitespace-only or comment-only text reaches the
+ * aborted-block answer too. That is not a hole: such a text is already refused by the identity
+ * check above, whose rendered header cannot match.
+ */
+type SubmittedStatementCount =
+  | { readonly kind: "one" }
+  | { readonly kind: "many" }
+  | { readonly kind: "malformed"; readonly sentence: string; readonly code: string; readonly position?: unknown }
+  | { readonly kind: "borrowed" }
+  | { readonly kind: "unreadable"; readonly sentence: string };
+
+/**
+ * One Parse answer, turned into the count it means (D76).
+ *
+ * THE VERDICT IS THE SQLSTATE AND NEVER THE MESSAGE, which is this file's standing rule. The one
+ * substring here picks between two REFUSALS and never between refusing and proceeding: `42601` is
+ * the multi-command answer and an ordinary grammar error, both of them are refused, and the
+ * substring only decides which sentence the reader is shown. Only `25P02` lets a build continue,
+ * and that is a code.
+ */
+function classifySubmittedStatementCount(error: unknown): SubmittedStatementCount {
+  const sentence = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: unknown }).code;
+  if (code === ABORTED_BLOCK_SQLSTATE) return { kind: "one" };
+  if (code === SYNTAX_ERROR_SQLSTATE) {
+    return sentence.includes("multiple commands")
+      ? { kind: "many" }
+      : { kind: "malformed", sentence, code, position: (error as { position?: unknown }).position };
+  }
+  return { kind: "unreadable", sentence };
+}
+
+/**
  * Whether a failed source read is the SERVER refusing rather than nobody answering.
  *
  * Two codes and no others, and both are a wire-compatible FORK missing a piece of PostgreSQL
@@ -1886,18 +1958,32 @@ export class PostgresProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
 
   /**
-   * The pooled client the most recent `query()` ran a statement on, kept so that
-   * `endOpenQueryTransaction()` can name it (D71).
+   * Per CALL SCOPE, the pooled clients a `query()` in that scope released with a
+   * transaction still open on them, kept so that `endOpenQueryTransaction(scope)` can
+   * name the caller's own session and nothing else (D87).
    *
-   * A reference to a RELEASED client, deliberately, and it is not a leak: `release()`
-   * returns the client to the pool's idle list without ending it, so the object stays a
-   * live `pg` Client and `getTransactionStatus()` on it still reports the last
-   * ReadyForQuery status the server sent. Naming the client is the whole point — a
+   * Keyed by scope and not one field, because one provider is cached per connection id
+   * for the whole process and every concurrent request on that stored connection calls
+   * this same object. A single field named whichever client anybody recorded last, which
+   * was measured rolling a concurrent script's transaction back mid-flight and rolling
+   * an interactive session's committed work away.
+   *
+   * Recorded only when the server's own ReadyForQuery byte says "T" or "E" AT RELEASE,
+   * while this call still holds the client, which is what keeps the record honest: a
+   * statement that left nothing open puts nothing in the map, so the pool is free to hand
+   * that client to an interactive session or to another request without the ender ever
+   * being able to reach it. It also keeps the map small — ordinary traffic records
+   * nothing at all.
+   *
+   * The references are to RELEASED clients, deliberately, and they are not a leak:
+   * `release()` returns the client to the pool's idle list without ending it, so the
+   * object stays a live `pg` Client and `getTransactionStatus()` on it still reports the
+   * last ReadyForQuery status the server sent. Naming the client is the whole point — a
    * rollback issued through a fresh `pool.connect()` is not guaranteed to reach the
    * client the script's statements ran on, and rolling back somebody else's transaction
    * is worse than leaving this one open.
    */
-  private lastQueryClient: PoolClient | null = null;
+  private readonly openQueryScopes = new Map<string, Set<PoolClient>>();
 
   // Transaction support: dedicated client held outside pool
   private txClient: PoolClient | null = null;
@@ -2126,11 +2212,11 @@ export class PostgresProvider extends SQLBaseProvider {
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
-      // `pool.end()` ends every client it holds. The reference kept for
+      // `pool.end()` ends every client it holds. A reference kept for
       // `endOpenQueryTransaction()` would then name a dead client whose last reported
-      // ReadyForQuery status never changes again, so it is dropped here rather than left
-      // to answer for a session that no longer exists.
-      this.lastQueryClient = null;
+      // ReadyForQuery status never changes again, so they are dropped here rather than
+      // left to answer for sessions that no longer exist.
+      this.openQueryScopes.clear();
       this.setConnected(false);
     }
   }
@@ -2222,17 +2308,13 @@ export class PostgresProvider extends SQLBaseProvider {
   // Track running query PIDs for cancellation
   private runningQueryPids = new Map<string, number>();
 
-  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
+  public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const client = await this.pool!.connect();
-          // Recorded BEFORE the statement runs and kept after the release: a statement
-          // that FAILS inside a transaction is exactly the case D71 is about, and the
-          // client it failed on goes back to the pool in status "E".
-          this.lastQueryClient = client;
           try {
             // Track PID for cancellation support
             if (queryId) {
@@ -2243,6 +2325,12 @@ export class PostgresProvider extends SQLBaseProvider {
             return res;
           } finally {
             if (queryId) this.runningQueryPids.delete(queryId);
+            // Read while this call still HOLDS the client, and before the release that
+            // puts it back within reach of everybody else: after the release the status
+            // can be another caller's, and a statement that FAILS inside a transaction —
+            // exactly the case D71 is about — is the one that most needs recording, so
+            // this sits in the finally and not on the success path.
+            this.recordOpenTransaction(scope, client);
             client.release();
           }
         } catch (error) {
@@ -2472,20 +2560,130 @@ export class PostgresProvider extends SQLBaseProvider {
    * no choice in any case — PostgreSQL ignores everything but a transaction-ending
    * command there, and COMMIT on an aborted transaction rolls back regardless.
    *
-   * The interactive session `POST /api/db/transaction` drives is never touched: its
-   * client is checked out for the session's whole life and handed back only by
-   * `commitTransaction` / `rollbackTransaction` / `expireTransaction`, so `query()` never
-   * borrows it and it can never be `lastQueryClient`.
+   * IT ACTS ONLY ON THE CALLER'S OWN SCOPE (D87). `getOrCreateProvider` caches one provider
+   * per connection id for the whole process, so every concurrent request on that stored
+   * connection calls this same object. An earlier form recorded ONE client per provider and
+   * rolled back whichever client anybody recorded last. Measured 2026-09-15 on 18.4, twice
+   * per arm against a control: a plain read's ender rolled a concurrent `/api/db/multi-query`
+   * script's transaction back mid-flight, with the script told all four statements including
+   * its COMMIT had succeeded and its table gone; the same ender rolled an interactive
+   * `POST /api/db/transaction` session's committed CREATE TABLE away, because
+   * `beginTransaction()` had been handed the very client a previous `query()` recorded
+   * (`pg`'s idle list is LIFO), while `commit` still answered "Transaction committed"; and
+   * the leak it exists for survived anyway, the opener's own client left `idle in
+   * transaction` because another request had overwritten the pointer first.
+   *
+   * So the caller names the scope it ran under and only the clients THAT scope left open are
+   * ended. The scope is spent here: the entry is dropped whether anything was rolled back or
+   * not, so a second call for the same scope answers `"none"` and the map cannot grow past
+   * the requests in flight. It is dropped AFTER every client has been attempted, and each
+   * client is attempted inside its own try: a scope holds several clients whenever a script
+   * runs, because `/api/db/multi-query` passes one scope to a `query()` per statement and
+   * each of those borrows its own pooled client. Deleting first and awaiting the ROLLBACKs
+   * bare meant one dead socket left every LATER client of that scope in "T" or "E" with the
+   * map entry already gone, so nothing could name them again.
+   *
+   * A FAILED ROLLBACK RAISES, after all of them have been tried. Neither arm of
+   * `OpenQueryTransactionOutcome` is true of a client still sitting in "T": `"none"` denies
+   * the transaction and `"rolled-back"` certifies a rollback that did not happen, and this
+   * surface exists precisely so that a caller can tell the user what became of the work.
+   *
+   * THE CLASS IS THE STATUS CODE, which is why this one raise is a `DatabaseError` and not
+   * the `QueryError` every other raise in this provider uses. MEASURED against the mapper
+   * both routes answer through, `createErrorResponse` in `src/lib/api/errors.ts`: the
+   * `QueryError` arm answers HTTP 400 with `code: "QUERY_ERROR"` and logs "Query error", so a
+   * rollback this SERVER could not issue on a client of its OWN pool would be reported to the
+   * caller as a fault in the SQL they sent, with nothing in the request to correct. The base
+   * `DatabaseError` arm answers HTTP 500 with `code: "DATABASE_ERROR"` and logs at error
+   * level, which is what a poisoned pooled client is. The postgres provider's own test drives
+   * the raised value through `createErrorResponse` and reads the 500 off the response, rather
+   * than asserting a class name and inferring the rest.
+   *
+   * THE COST IS REAL AND DELIBERATE, and it is two losses rather than one. Both routes call
+   * this in a `finally`, so the throw replaces the response the request had already produced
+   * with that 500, a script's per-statement results included. And a `finally` that throws
+   * DISCARDS the exception the body was already leaving with: on `POST /api/db/query` the
+   * ordinary case is one dead socket that killed the statement AND this ROLLBACK, so the
+   * engine's own message and its `position` and `detail` are dropped and the reader is handed
+   * the sentence below instead. That half predates the per-client loop, since the bare
+   * `await client.query("ROLLBACK")` threw the same way, and it is written here because a
+   * paragraph that claims to state the cost has to state all of it. A leaked transaction that
+   * could not be ended poisons the pooled client for every later user of that stored
+   * connection, which is the failure this whole surface was built for, so it is louder than
+   * one lost result set. Reporting it in the response body instead would need a third arm on
+   * the outcome type and both routes to carry it.
+   *
+   * WHAT IT STILL CANNOT UNDO, written down rather than left to be rediscovered. A client
+   * this scope released in "T" is back in the pool's idle list, and the pool may hand it to
+   * another request before this runs. That request's statement then runs inside this
+   * transaction and this rollback discards it. That is the leak D74 describes, not a second
+   * defect: the statement was already inside a transaction nobody had committed, and the
+   * window is exactly what ending it promptly is for.
    */
-  public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
-    const client = this.lastQueryClient;
-    if (client === null) return "none";
+  public async endOpenQueryTransaction(scope?: string): Promise<OpenQueryTransactionOutcome> {
+    // AN UNNAMED CALL ENDS NOTHING, which is the same rule `recordOpenTransaction` applies on the
+    // way in: a caller that did not name a scope recorded no client under one, so there is nothing
+    // of theirs to end and ending somebody else's is the defect D87 closed. The parameter is
+    // OPTIONAL rather than required because `DatabaseProvider` is published on `@libredb/studio`
+    // (`dist/types-*.d.ts` carries this declaration), and a required parameter would break every
+    // consumer that already calls this method with none.
+    if (scope === undefined) return "none";
+
+    const clients = this.openQueryScopes.get(scope);
+    if (clients === undefined) return "none";
+
+    let outcome: OpenQueryTransactionOutcome = "none";
+    // The denominator of the sentence below, and it counts ATTEMPTS rather than `clients.size`.
+    // A client the loop skipped is not a rollback that succeeded, it is one the server was
+    // never sent, and "1 of 2" over a skipped client reads as "one of two rollbacks failed".
+    let attempted = 0;
+    const failures: string[] = [];
+    for (const client of clients) {
+      try {
+        // Asked again here rather than trusted from the record: the transaction can have
+        // been ended in the meantime by a later statement of this same scope.
+        const status = client.getTransactionStatus();
+        if (status !== "T" && status !== "E") continue;
+        attempted += 1;
+        await client.query("ROLLBACK");
+        outcome = "rolled-back";
+      } catch (error) {
+        // Held, not swallowed: it is raised below, once every OTHER client of this scope
+        // has had its own attempt. One unreachable client must not decide the fate of the
+        // rest, and it must not pass silently either.
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    this.openQueryScopes.delete(scope);
+
+    if (failures.length > 0) {
+      throw new DatabaseError(
+        `Could not roll back the transaction this request left open on ${failures.length} of ${attempted} pooled clients: ${failures.join("; ")}`,
+        "postgres",
+        ApiErrorCode.DATABASE_ERROR,
+        "ROLLBACK",
+      );
+    }
+    return outcome;
+  }
+
+  /**
+   * Record the client this call is about to release, if and only if it is releasing it with
+   * a transaction still open on it and the caller named a scope to end it under (D87).
+   *
+   * The status is the server's own, not an inference, and the same byte the ender reads.
+   * An unnamed call records nothing: a caller that will not end anything must not leave a
+   * client behind for somebody else's ender to find.
+   */
+  private recordOpenTransaction(scope: string | undefined, client: PoolClient): void {
+    if (scope === undefined) return;
 
     const status = client.getTransactionStatus();
-    if (status !== "T" && status !== "E") return "none";
+    if (status !== "T" && status !== "E") return;
 
-    await client.query("ROLLBACK");
-    return "rolled-back";
+    const clients = this.openQueryScopes.get(scope);
+    if (clients === undefined) this.openQueryScopes.set(scope, new Set([client]));
+    else clients.add(client);
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
@@ -2886,6 +3084,18 @@ export class PostgresProvider extends SQLBaseProvider {
       );
     }
 
+    // THE EDIT AFFORDANCE IS A ROUTINE FACT, so a kind that declares an edit with no routine
+    // statement behind it is refused here rather than drawn (D81). `routineEditAffordance` below
+    // reads `may_replace` and `owner`, which only `SOURCE_ROUTINE_SQL` selects, so such a kind
+    // would answer `offered: false` carrying "owned by another role": a DECLARATION DRIFT reported
+    // in the words of an ownership problem, which is a sentence the reader cannot act on.
+    // `routineAddress` is the BUILD's own guard over the same two lists and it raises the build's
+    // own sentence, so the read and the build refuse this with ONE spelling. Its return is
+    // discarded, because this method has already derived the schema and the name it uses, and it
+    // runs BEFORE the round trip, so the refusal costs no query.
+    const editable = kindAcceptsSourceEdits(capabilities, kind);
+    if (editable) this.routineAddress(capabilities, kind, path);
+
     const client = await this.pool!.connect();
     let rows: SourceRow[];
     try {
@@ -2932,7 +3142,7 @@ export class PostgresProvider extends SQLBaseProvider {
           ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
           // The affordance travels with the READ, and it is resolved on the CONNECTED provider, which
           // is the whole reason it is here rather than on the client's copy of the declaration (D57).
-          ...(kindAcceptsSourceEdits(capabilities, kind) ? { edit: routineEditAffordance(rows[0], schema, name) } : {}),
+          ...(editable ? { edit: routineEditAffordance(rows[0], schema, name) } : {}),
         },
       ],
     };
@@ -3028,7 +3238,9 @@ export class PostgresProvider extends SQLBaseProvider {
    * body that reads ANOTHER schema unqualified is refused rather than silently succeeding on
    * whichever path the last borrower happened to leave.
    *
-   * FIVE REFUSALS, IN THIS ORDER, and each one answers before anything is sent.
+   * SIX REFUSALS, IN THIS ORDER. The first five answer before anything is sent at all. The sixth
+   * asks PostgreSQL itself how many statements the reader's text carries, which costs a round trip
+   * and executes nothing, so it answers last (D76).
    *
    * THE READ HERE IS NOT THE PANE'S READ, and it cannot be taken from the document the pane is
    * showing: it produces the revision, it is the pre-image the preview's left side needs, it
@@ -3165,6 +3377,81 @@ export class PostgresProvider extends SQLBaseProvider {
       );
     }
 
+    // 6. ONE STATEMENT, and PostgreSQL counts it (D76). The only refusal here that costs a round
+    //    trip, and it executes nothing: `countSubmittedStatements` parses the reader's text inside
+    //    a transaction block it has already poisoned and rolls that block back. Its docblock
+    //    carries the mechanism and the measurement.
+    //
+    //    IT ANSWERS LAST FOR A SECOND REASON, and that one is not cost. MEASURED, the aborted
+    //    block exempts a transaction-exit statement, which runs and ends the block, and it lets a
+    //    text with no statement in it leave a prepared statement on the pooled client. Refusal 5
+    //    above is what keeps both classes off the wire, because `routineIdentityHeader` answers
+    //    the whole text for either one and neither renders this routine's header. So this call
+    //    stays BELOW it, and the suite asserts the order rather than trusting this comment.
+    const counted = await this.countSubmittedStatements(request.text);
+    if (counted.kind === "many") {
+      return {
+        built: false,
+        refusal: {
+          refusal: "definition",
+          sentence:
+            `PostgreSQL parsed this text as more than one statement, and an edit is one statement. ` +
+            `Everything in it would run in the same round trip, and only the statement that replaces ` +
+            `"${schema}.${name}" is what this plan describes, what the audit records and what the guards can ` +
+            `undo. Remove everything after the definition and run it in the SQL editor, where it is shown and ` +
+            `recorded as the statement it is`,
+          code: SYNTAX_ERROR_SQLSTATE,
+          // PostgreSQL reports no position for this refusal, and a guessed one is silently CLAMPED
+          // by Monaco rather than rejected.
+          at: { within: "none" },
+        },
+      };
+    }
+    if (counted.kind === "malformed") {
+      // The engine's own grammar error, answered at BUILD time now that the text is parsed here,
+      // which is earlier than the apply used to report it and with nothing sent.
+      //
+      // THE POSITION NEEDS NO SEGMENT ARITHMETIC: what was parsed IS the reader's text, so a
+      // one-segment step over it converts PostgreSQL's 1-based character offset with the same
+      // helper the apply uses, and an offset that does not land is `outside` rather than a number.
+      const submittedStep: ObjectEditStep = {
+        text: request.text,
+        language: spec.sourceLanguage,
+        segments: [{ from: "user", start: 0, end: request.text.length }],
+      };
+      return {
+        built: false,
+        refusal: {
+          refusal: "definition",
+          sentence: counted.sentence,
+          code: counted.code,
+          at:
+            typeof counted.position === "string" || typeof counted.position === "number"
+              ? userPositionOf(submittedStep, Number(counted.position) - 1)
+              : { within: "none" },
+        },
+      };
+    }
+    if (counted.kind === "borrowed") {
+      return refuse(
+        "guard",
+        "this connection's pooled session is inside a transaction somebody else opened, so the check that " +
+          "this edit is a single statement cannot be run on it without rolling their work back",
+      );
+    }
+    if (counted.kind === "unreadable") {
+      // The count was never established, and reading silence as "one statement" is the one reading
+      // that lets a rider through. The population is D62's: this type id also serves CockroachDB
+      // and Materialize, neither of which was probed, and a fork that does not refuse a Parse in an
+      // aborted block lands here.
+      return refuse(
+        "unsupported",
+        `this server did not answer PostgreSQL's own multi-statement check for this text (${counted.sentence}), so ` +
+          "LibreDB cannot establish that the edit is a single statement and refuses it rather than sending a text " +
+          "whose extra statements would run",
+      );
+    }
+
     const pinnedSearchPath = `${this.escapeIdentifier(schema)}, pg_catalog`;
     const guardSubject =
       `FROM pg_catalog.pg_proc p\n` +
@@ -3290,6 +3577,129 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
+   * HOW MANY STATEMENTS THE READER'S TEXT CARRIES, ANSWERED BY POSTGRESQL AND BY NO PARSER OF OURS
+   * (D76, the residual of #831 Phase 3).
+   *
+   * THE DEFECT THIS CLOSES, MEASURED live on PostgreSQL 18.4 through the two edit routes: the
+   * definition of `app.order_total(integer)` followed by `;` and `DROP FUNCTION
+   * app.r19f1_victim();` built with `consequences: []`, applied at HTTP 200 with a plain
+   * `"outcome": "applied"`, and the victim routine's `count(*)` went 1 to 0. The apply sends one
+   * parameterless simple query and PostgreSQL runs EVERY statement in one of those.
+   *
+   * IT IS NOT A SPLITTER AND IT MUST NEVER BECOME ONE. A dollar-quoted body may carry any number
+   * of semicolons and a `BEGIN ATOMIC` body carries them by construction, and this repository has
+   * measured that no reader in `src/lib/sql/` can tell a statement separator from a character of a
+   * definition. So the question goes to the engine: PostgreSQL's extended query protocol refuses a
+   * multi-statement string at Parse with `42601 cannot insert multiple commands into a prepared
+   * statement`, the check lives in the server's own `exec_parse_message`, and it runs on the raw
+   * grammar parse, so it understands dollar quoting, `BEGIN ATOMIC`, comments and string literals
+   * exactly the way the engine does, because it IS the engine.
+   *
+   * NOTHING THAT REACHES THIS CHECK CAN RUN, and each of the three moves below is what buys that:
+   *
+   * - the block is POISONED first, so the server answers `25P02` and performs no parse analysis,
+   *   no planning and no execution, and the multi-command check is still reached because it
+   *   precedes the aborted-block check in the server's own message handler;
+   * - the statement is NAMED, because `client.query({ text, values: [] })` with no name takes
+   *   node-postgres's SIMPLE query path, which MEASURED runs a rider;
+   * - the block is ROLLED BACK, so the pooled client goes home idle.
+   *
+   * THE ABORTED BLOCK IS NOT A UNIVERSAL BRAKE, and the sentence above is narrowed to "reaches
+   * this check" for two MEASURED exemptions rather than for caution (wave 2 review). On 18.4,
+   * `pg-p3fix`, 2026-09-15, one `BEGIN` plus `SELECT 1/0` plus a named Parse per row, the block's
+   * state read afterwards with a plain `SELECT 1` and `pg_prepared_statements` counted after the
+   * `ROLLBACK`: `COMMIT`, `ROLLBACK`, `END` and `ABORT` answer NO error, END the block this check
+   * opened, and leave one prepared statement behind, because `exec_parse_message` exempts a
+   * transaction-exit statement from the aborted-block check; and an empty, whitespace-only or
+   * comment-only text answers `25P02` from Bind rather than from Parse, because the server takes
+   * its empty-parse-list branch, so the named statement IS created and survives the `ROLLBACK`.
+   *
+   * WHAT KEEPS BOTH CLASSES AWAY IS THE ORDER OF THE REFUSALS IN `buildObjectEdit`, which is
+   * therefore load-bearing and not only a saving. `routineIdentityHeader` answers the WHOLE text
+   * when it finds no closing parenthesis, so a transaction-exit statement and a text with nothing
+   * in it both render a header that is not the addressed routine's and are refused two refusals
+   * earlier, with no round trip at all. Moving this check above the identity refusal would send
+   * both classes to the server; the provider's own suite asserts that neither reaches the wire.
+   *
+   * MEASURED on 18.4 in container `pg-p3fix` on 2026-09-15, with a `pg_proc` count for the probe's
+   * own objects answering 0 after every row: the verbatim `pg_get_functiondef` output, a `BEGIN
+   * ATOMIC` body of two `SELECT`s, a procedure, a text ending in a line comment or a block comment
+   * or no semicolon at all, and a whitespace-only text all answer `25P02`; the D76 reproduction,
+   * the same rider without its final semicolon, with a comment before it, and placed FIRST all
+   * answer `42601 cannot insert multiple commands`; and `CREATE OR REPLACE FUNCTIN app.x()`
+   * answers `42601 syntax error at or near "FUNCTIN"`, which is the third arm.
+   *
+   * IT ASKS ABOUT THE SUBMITTED TEXT ALONE AND NEVER ABOUT THE ASSEMBLED UNIT. The unit is
+   * multi-statement BY CONSTRUCTION, so probing it would refuse every legitimate edit.
+   *
+   * IT RUNS AT BUILD TIME ONLY, AND THE REASON IS WHAT THE APPLY HOLDS RATHER THAN AN EMPTY
+   * POPULATION. This docblock used to say a copy of this check inside `applyObjectEdit` "would
+   * guard an empty population", and `applyObjectEdit`'s own entry guard NAMES that population
+   * further down this file, so the file disagreed with itself (wave 2 review). It is not empty:
+   * the apply sends `plan.unit.steps[0].text` verbatim, so a `@libredb/studio` consumer that
+   * builds its own plan and puts a rider in it still RUNS one.
+   *
+   * What is true is narrower and it is about the SUBJECT. The plan is SEALED and the apply never
+   * sees the reader's text again; what it holds is the assembled unit, which is multi-statement BY
+   * CONSTRUCTION, so this check run there would refuse every legitimate apply. A copy is therefore
+   * impossible rather than unnecessary, and the consumer-built rider is REPORTED instead, by the
+   * result count the apply asserts on what came back.
+   */
+  private async countSubmittedStatements(text: string): Promise<SubmittedStatementCount> {
+    const client = await this.pool!.connect();
+    // A CLIENT THAT IS NOT IDLE BELONGS TO SOMEBODY ELSE'S TRANSACTION (D78), and this check opens
+    // one and rolls it back, which on such a client would destroy work this user was never shown.
+    // So it refuses on the same fact the apply refuses on rather than probing.
+    if (client.getTransactionStatus() !== "I") {
+      client.release();
+      return { kind: "borrowed" };
+    }
+    try {
+      await client.query("BEGIN");
+      try {
+        await client.query(STATEMENT_COUNT_POISON_SQL);
+      } catch {
+        // `22012 division_by_zero`, which is the POINT rather than a failure: it is what aborts
+        // the block. A server that somehow answered it without aborting is caught below, because
+        // the Parse then succeeds and that is the `unreadable` arm.
+      }
+      try {
+        // A NAMED statement with an EMPTY values array, which is the only shape that reaches
+        // Parse. The name is unique per call, and the docblock's two exemptions are why that is
+        // not decoration: for every text that reaches this check the aborted block refuses before
+        // the statement is created, but a text with no statement in it would leave one behind, and
+        // a reused name would then make a collision the second failure mode.
+        await client.query({
+          text,
+          values: [],
+          name: `libredb_statement_count_${randomBytes(8).toString("hex")}`,
+        });
+        return {
+          kind: "unreadable",
+          sentence: "this server accepted a prepared statement inside a transaction block it had already aborted",
+        };
+      } catch (error) {
+        return classifySubmittedStatementCount(error);
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    } finally {
+      // THE PROBE NEVER RETURNS A POISONED CLIENT TO THE POOL, and the inner `finally` above is
+      // not enough for that on its own: it only runs once the `BEGIN` has resolved. A `BEGIN` the
+      // server accepted and whose reply this client failed to read would leave the block open with
+      // no `ROLLBACK` sent, and the client would go home in `T` for the next borrower to meet.
+      // Asked rather than assumed, and the status is the server's own last word.
+      if (client.getTransactionStatus() !== "I") {
+        // Swallowed deliberately: this is a last-resort tidy on a client that is already being
+        // released, the caller's answer is the count and not this, and a client that cannot take
+        // a ROLLBACK is one `pg` will drop from the pool on its own error path.
+        await client.query("ROLLBACK").catch(() => {});
+      }
+      client.release();
+    }
+  }
+
+  /**
    * The routine's current definition and revision, re-read for the outcome that needs it.
    *
    * Two callers and two different questions: a SUCCESS needs the NEW revision, because the token
@@ -3328,6 +3738,10 @@ export class PostgresProvider extends SQLBaseProvider {
    * NO PARAMETERS, ever. Binding one does not degrade the atomicity, it REFUSES it: MEASURED,
    * `42601 cannot insert multiple commands into a prepared statement`.
    *
+   * THE ANSWER IS COUNTED AND NOT DISCARDED (D76). A simple query answers one result per statement,
+   * so the reply itself says how many statements ran, and an apply that did not carry exactly the
+   * statements the plan is made of is not reported as a plain `applied`.
+   *
    * THIS METHOD OPENS NO TRANSACTION OF ITS OWN, and that is a prohibition rather than an
    * omission: `txActive` is one flag per `connection.id` (D72), a dangling `BEGIN` poisons one
    * pooled client for the whole process (D71), and PostgreSQL's own implicit transaction around a
@@ -3344,6 +3758,16 @@ export class PostgresProvider extends SQLBaseProvider {
       throw new QueryError("A PostgreSQL object edit plan carries a statement unit, received a command", "postgres");
     }
     const [step] = plan.unit.steps;
+    // THE SAME ENTRY GUARD THE OTHER TWO DAY-ONE APPLIES OPEN WITH (D83), and the return is
+    // DISCARDED here exactly as Redis discards it: this method sends `plan.unit.steps[0].text`
+    // verbatim and needs nothing off the spec, so the call is a guard and nothing else. Neither
+    // shipped path can reach it, because `edit-apply/route.ts` re-resolves editability on the
+    // CONNECTED provider and the statement was minted by a `buildObjectEdit` that asked the same
+    // question; the population is a `@libredb/studio` consumer calling this method directly. It is
+    // here rather than absent because three applies that answer the same question differently is
+    // how one of them later answers it wrongly, and because without it a foreign kind reaches the
+    // round trip and is refused only by the re-read's address derivation, AFTER the DDL was sent.
+    requireEditableKind(this.getCapabilities(), plan.kind, { displayName: "PostgreSQL", type: "postgres" });
     const started = Date.now();
     const client = await this.pool!.connect();
     // A CLIENT THAT IS NOT IDLE BELONGS TO SOMEBODY ELSE'S TRANSACTION, and this apply refuses
@@ -3393,8 +3817,9 @@ export class PostgresProvider extends SQLBaseProvider {
     // that is invisible; on a pool of one, which `POSTGRES_POOL_MAX=1` and a single-slot PgBouncer
     // both produce, the re-read waits for a client that is waiting for it.
     let failure: { error: unknown } | undefined;
+    let answered: unknown;
     try {
-      await client.query(step.text);
+      answered = await client.query(step.text);
     } catch (error) {
       failure = { error };
     } finally {
@@ -3402,6 +3827,59 @@ export class PostgresProvider extends SQLBaseProvider {
     }
     if (failure !== undefined) {
       return await this.classifyApplyFailure(plan, step, failure.error, Date.now() - started);
+    }
+
+    // WHAT THE ROUND TRIP ACTUALLY CARRIED, counted, which is what makes the `object_edit` audit
+    // event's claim as wide as the write (D76). An `object_edit` event says an edit was applied at
+    // one address with one outcome; it did NOT say the round trip carried nothing else, and it
+    // could not, because this method used to throw the query's answer away.
+    //
+    // NO PARSER IS INVOLVED. A simple query answers ONE RESULT PER STATEMENT with the engine's own
+    // command tag, so the count is already in the reply. MEASURED on PostgreSQL 18.4 through `pg`
+    // on 2026-09-15: the emitted unit answers `[SET, DO, CREATE, DO]`, and the same unit with a
+    // rider spliced into the reader's segment answers `[SET, DO, CREATE, DROP, DO]`.
+    //
+    // ITS POPULATION IS NOT THE RIDER, which `buildObjectEdit` now refuses and the sealed plan
+    // cannot reacquire. It is this provider's own composition, and anything between it and the
+    // server that rewrites a round trip. It ships because the alternative is an audit line that
+    // asserts something nothing measured.
+    //
+    // `interrupted` AND NOT A SUCCESS, AND NOT A REFUSAL. Statements ran and this provider cannot
+    // say which, so the honest disposition is the one arm that tells a client the write is not
+    // established and that retrying would apply twice. A non-array answer counts as one result,
+    // which is what `pg` hands back for a single-statement query and is equally not this shape.
+    //
+    // THIS IS A DEVIATION FROM WHAT `src/lib/db/types.ts` DOCUMENTS THIS ARM AS, and it is written
+    // here rather than left to be found (wave 2 review). That arm is documented "the statement was
+    // SENT and the engine's answer never arrived", and here the answer ARRIVED and the engine
+    // spoke. It is used anyway because the union has no arm whose meaning fits better and every
+    // other one would be a worse lie: `applied` claims the plan is what ran, `refused` and
+    // `conflict` both claim nothing changed, `applied-elsewhere` claims the addressed object was
+    // not what moved, and `applied-with-collateral` requires a NON-EMPTY list of what was lost,
+    // which is exactly what a count cannot produce. The disposition this arm carries is the one
+    // that is true of a count mismatch: the write is not established and a retry applies twice.
+    //
+    // WHAT A NEW ARM WOULD COST, since that is the alternative and it was weighed rather than
+    // dismissed. The wire shape lives in `src/lib/db/types.ts` and `ApplyPreviewDialog` reads the
+    // discriminant directly, with no exhaustiveness check on `applyFrame`, so an arm added on this
+    // side alone falls into that function's `applied` tail and the reader is shown "This apply is
+    // done. The new definition is on the server." for a round trip that carried something the plan
+    // did not name. That is strictly worse than today, where the dialog's second line, which X20
+    // narrowed, already says the true thing: LibreDB holds no answer that settles whether the
+    // change landed. What is left wrong is that dialog's FIRST line, "Whether it reached the server
+    // is unknown", over a member where it demonstrably did. Both files belong to other hands, so
+    // the residual is filed as D89, which carries both ways out and the cost of each.
+    const carried = Array.isArray(answered) ? answered.length : 1;
+    if (carried !== GUARDED_BATCH_STATEMENT_COUNT) {
+      return {
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence:
+          `PostgreSQL answered ${carried} result(s) for a unit this plan built out of ` +
+          `${GUARDED_BATCH_STATEMENT_COUNT} statements, so this apply cannot say that what ran is what the plan ` +
+          "described. Read the object and the server log before you retry: a retry would apply it again",
+        duration: Date.now() - started,
+      };
     }
 
     const after = await this.readRoutineAfterApply(plan);

@@ -113,7 +113,7 @@ commit, treat it as blocking anyway.
 (Run this same query after tagging and `Release Artifacts` joins the list: the tag points at the bump
 commit, so it shares the SHA.)
 
-`helm repo add bitnami` (seven workflow sites: `ci.yml` x2, `helm-release.yml` x3, `npm-publish.yml`,
+`helm repo add bitnami` (eight workflow sites: `ci.yml` x3, `helm-release.yml` x3, `npm-publish.yml`,
 `operator-release.yml`) fetches a 27 MB index with no retry and flakes with
 `connection reset by peer`. Verify the repo really is reachable, then re-run only the failed job:
 
@@ -122,7 +122,7 @@ curl -sSL -o /dev/null -w '%{http_code}\n' https://charts.bitnami.com/bitnami/in
 gh run rerun <run-id> --failed
 ```
 
-Those seven sites do **not** all pin the same Helm CLI. Six run Helm 4.1.3; `helm-release.yml`'s
+Those eight sites do **not** all pin the same Helm CLI. Seven run Helm 4.1.3; `helm-release.yml`'s
 `lint-test` job stays on Helm 3.16 on purpose, because its two `ct install` runs are the only place
 the chart is installed into a cluster and our users install with Helm 3. The split is enforced by
 `tests/unit/helm-pin-matrix.test.ts` in the required test lane - do not unify the odd one out.
@@ -247,7 +247,7 @@ true on a tag ref.
 | `gh release create --target <short-sha>` | Rejected ("target_commitish is invalid") - use `--target main` |
 | A `release-artifacts` run reporting `failure` | The release may still have published fine; check `Verify assets and publish release` before assuming otherwise |
 | Reusing a failed release's version after Snap published | Snap store revisions are immutable per version; bump the patch instead |
-| Renaming or removing the `test:ci` script | `npm-publish.yml` validates with `bun run test:ci` (per-file process isolation via `tests/run-core.sh`), NOT `bun run test`. Losing that script breaks every release and every re-dispatch |
+| Renaming or removing the `test` script | `npm-publish.yml` validates with `bun run test`, which is `bun tests/run-tests.ts` (one bun process per test file). Losing that script breaks every release and every re-dispatch |
 | Recreating a draft after a failed run | The hand-written notes are gone with it. Keep the notes file in the scratchpad and re-apply with `gh release edit <version> --notes-file <f>` |
 | A release that touches `packaging/`, the Dockerfile or the payload scripts | The chain builds channels you cannot see locally. Validate them locally first (tarball/npx/docker build+run, deb/rpm with the CI-pinned nfpm) - that local pass is what separated the clean one-attempt releases from the four-attempt one |
 

@@ -1119,6 +1119,22 @@ export class SQLiteProvider extends SQLBaseProvider {
 
       this.setConnected(true);
     } catch (error) {
+      // The handle is opened before the pragmas run, so a failure past that line
+      // leaves this holding the user's file: the ordinary case is a connection that
+      // points at something which is not a SQLite database at all, where the open
+      // succeeds and `PRAGMA journal_mode` raises "file is not a database". Closing
+      // here for the reason disconnect() does: POSIX hides an unreleased handle,
+      // Windows does not, and a file the user picked by mistake would stay
+      // undeletable. Nulling it also keeps `connect()`'s own `if (this.db) return`
+      // from turning a retry into a silent no-op on a provider that is not connected.
+      //
+      // `finally`, because `close(true)` raises when SQLite cannot close, and a
+      // reference kept past that throw is exactly the silent no-op described above.
+      try {
+        this.db?.close(true);
+      } finally {
+        this.db = null;
+      }
       this.setError(error instanceof Error ? error : new Error(String(error)));
 
       // Typed refusals keep their own identity: wrapping them would strip the
@@ -1162,8 +1178,15 @@ export class SQLiteProvider extends SQLBaseProvider {
     try {
       this.enforceQueryOnly();
     } catch (error) {
-      this.db.close();
-      this.db = null;
+      // Released now, for the same reason disconnect() does it: a refused profile that
+      // left the file held open would be a lock on a database nobody is using. The
+      // reference goes in a `finally`, because `close(true)` raises when it cannot
+      // close, and the refusal the caller needs to see is still `error`.
+      try {
+        this.db.close(true);
+      } finally {
+        this.db = null;
+      }
       throw error;
     }
 
@@ -1178,7 +1201,11 @@ export class SQLiteProvider extends SQLBaseProvider {
 
   public async disconnect(): Promise<void> {
     if (this.db) {
-      this.db.close();
+      // `true` means "release the file now" rather than "once the last statement is
+      // collected" - see the measurement on `SQLiteDatabase.close`. A caller that has
+      // disconnected is entitled to delete, move or reopen the database, and on Windows
+      // a deferred close makes all three impossible.
+      this.db.close(true);
       this.db = null;
       this.setConnected(false);
     }
@@ -1271,6 +1298,21 @@ export class SQLiteProvider extends SQLBaseProvider {
    * handle, so the next user's INSERT joined the abandoned transaction, answered HTTP 200
    * and read its own row back, while `sqlite3` in another process saw nothing and a second
    * writer was refused with "database is locked".
+   *
+   * THE `scope` PARAMETER IS DECLARED ON THE INTERFACE AND IGNORED HERE, deliberately (D87). It
+   * exists so a provider that borrows a DIFFERENT pooled client per call can name the one the
+   * caller's own statements ran on; this provider holds ONE handle for its whole life, so
+   * there is no other client to name. A signature that took it and did nothing with it would only
+   * suggest the question had been considered per call, which it has not.
+   *
+   * WHAT THAT DOES NOT MEAN: that the transaction ended here is the caller's own. One handle shared by every
+   * request on this stored connection is what makes another request's transaction REACHABLE, not
+   * what puts it out of reach: `getOrCreateProvider` caches this provider per `connection.id` for
+   * the whole process, which is the same sharing the paragraph above measured from the other side.
+   * `inTransaction` reports the handle's state, not who opened it, so a request whose own
+   * statements left nothing open still rolls back a concurrent request's `BEGIN`. That is the D87
+   * shape on a single connection and it is NOT closed: closing it needs the transaction owned by a
+   * scope rather than by a client, which is a design change and not a parameter.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();

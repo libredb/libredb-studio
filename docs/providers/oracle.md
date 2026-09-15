@@ -851,6 +851,22 @@ Surfaced via `POST /api/db/transaction`.
 | `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`, then closes the connection. Throws if none active. |
 | `isInTransaction()` | Current state. |
 
+### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the engine has no transaction to leave open
+
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) end a transaction a statement run through `query()` left behind on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
+This provider does not, and the reason is that on this path **the engine has no transaction to leave open**.
+
+Two independent facts in `query()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) make that true, and neither is an inference about the engine's name:
+
+- Every statement executes with `autoCommit: true`, so Oracle ends the transaction that statement implicitly started, at that statement. A statement that FAILS ends it too: Oracle rolls a failed statement back to its own implicit savepoint, and the statement before it was already committed. `BEGIN` does not change this — in Oracle it opens a PL/SQL block, not a transaction.
+- The pooled connection is closed in the `finally` of every call, so nothing survives the statement for a later caller to inherit. `oracledb` 6.10.0 in Thin mode also rolls back inside that close: `ThinConnectionImpl.close()` issues a rollback when `_protocol.txnInProgress` is set, before the session goes back to the pool.
+
+The ask exists on this driver, unlike `mysql` and `mssql`: `oracledb` publishes `connection.transactionInProgress`, read from the server's own end-of-call `TXN_IN_PROGRESS` status flag.
+It is not usable here, because by the time a caller could ask, the connection the statement ran on has been closed.
+That is also why implementing the surface to answer `"none"` would be wrong rather than harmless: it would certify an absence on a session that no longer exists.
+
+The interactive lifecycle above is the only transaction this provider holds open, and it is not what the surface names: it runs on a connection of its own with `autoCommit: false`, which `query()` never borrows.
+
 ---
 
 ## 7. Schema introspection
@@ -1864,10 +1880,9 @@ package, and no `@types/oracledb` dependency here), so a driver upgrade that cha
 caught by a live probe, not by `tsc`.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
-> cross-contaminate in a shared process. A **single file** is safe (one file = one process). The
-> full `bun run test` script runs the core group in **one** process and is load-order flaky, so
-> **CI does not use it** — the deterministic runner is **`bun run test:ci`** (per-file isolation via
-> `tests/run-core.sh`); the coverage workflow uses `bun run test:coverage`. See [`CLAUDE.md`](../../CLAUDE.md).
+> would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its
+> own bun process, so a single file is safe and so is the whole suite, which is the same command CI
+> runs. `bun run test:coverage` is that runner with coverage on. See [`CLAUDE.md`](../../CLAUDE.md).
 
 ### 12.2 Coverage
 
@@ -1895,8 +1910,8 @@ go red, which caught two assertions that were passing vacuously.
 
 ```bash
 bun test tests/integration/db/oracle-provider.test.ts   # just this file (single process — safe)
-bun run test:ci                                          # CI publish gate — per-file isolation (tests/run-core.sh)
-bun run test:coverage                                    # CI coverage workflow — per-file core + components
+bun run test                                             # the whole suite, one process per file, what CI runs
+bun run test:coverage                                    # CI coverage workflow: the same runner, with coverage
 ```
 
 ### 12.4 Optional: verifying against a live Oracle

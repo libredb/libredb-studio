@@ -22,6 +22,10 @@ import {
   ExecutionProfileError,
   QueryError,
 } from "@/lib/db/errors";
+// The ender's raise is measured through the mapper the two routes answer through, because the
+// cost its docblock states is an HTTP status and not a class name.
+import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
@@ -50,13 +54,83 @@ let mockQueryFn: (
  */
 let mockTxStatus: "I" | "T" | "E" | null = "I";
 
+/** A `pg` named-statement config, which is the ONLY shape that reaches Parse rather than a simple query. */
+interface MockParseConfig {
+  text: string;
+  values?: unknown[];
+  name?: string;
+}
+
+/**
+ * What the server answers the single-statement Parse the build runs inside an aborted
+ * transaction block (D76). MEASURED on PostgreSQL 18.4 in container `pg-p3fix` on 2026-09-15,
+ * and every string below is the server's own, byte for byte:
+ *
+ * - `single`: `25P02`, which the server answers for ANY text it parsed as one statement, or
+ *   none, because the aborted-block check is what it reaches after the multi-command check.
+ * - `multi`: `42601 cannot insert multiple commands into a prepared statement`, reached BEFORE
+ *   the aborted-block check, which is the whole mechanism.
+ * - `syntax`: `42601` with the engine's own grammar error, the other producer of that SQLSTATE.
+ * - `accepted`: no error at all, which no PostgreSQL answers here and a fork might.
+ */
+let mockParseAnswer: "single" | "multi" | "syntax" | "accepted" | Error = "single";
+
+/**
+ * How many results the server answers for the apply's ONE multi-statement simple query (D76).
+ *
+ * MEASURED on 18.4 through `pg` 8.x: the emitted unit answers an ARRAY of one result per
+ * statement, `[SET, DO, CREATE, DO]`, and the same unit with a rider spliced into the reader's
+ * segment answers five, `[SET, DO, CREATE, DROP, DO]`. Four is therefore the default here and a
+ * test that wants the rider sets five.
+ */
+let mockApplyResultCount: number | "not-an-array" = 4;
+
+/** Every call the provider made on the mock client, in order, INCLUDING the Parse probe. */
+let mockWire: (string | MockParseConfig)[] = [];
+
+/** The prefix of the one multi-statement text this provider ever sends. */
+const APPLY_UNIT_PREFIX = "SET LOCAL search_path = ";
+
+function answerParseProbe(): Promise<{ rows: unknown[] }> {
+  if (mockParseAnswer === "accepted") return Promise.resolve({ rows: [] });
+  if (mockParseAnswer instanceof Error) return Promise.reject(mockParseAnswer);
+  if (mockParseAnswer === "single") {
+    return Promise.reject(
+      Object.assign(new Error("current transaction is aborted, commands ignored until end of transaction block"), {
+        code: "25P02",
+      }),
+    );
+  }
+  if (mockParseAnswer === "multi") {
+    return Promise.reject(
+      Object.assign(new Error("cannot insert multiple commands into a prepared statement"), { code: "42601" }),
+    );
+  }
+  return Promise.reject(
+    Object.assign(new Error('syntax error at or near "FUNCTIN"'), { code: "42601", position: "19" }),
+  );
+}
+
 const mockClient = {
-  query: (sql: string, params?: unknown[]) => {
+  query: (sql: string | MockParseConfig, params?: unknown[]) => {
+    mockWire.push(sql);
+    // A config carrying a `name` is a NAMED prepared statement, which is the only way
+    // node-postgres reaches Parse, and it is answered the way the server answers a Parse (D76).
+    // A config with no name is `queryMode: "extended"`, which the read-only profile sends and
+    // which goes to `mockQueryFn` exactly as it always did.
+    if (typeof sql !== "string" && typeof sql.name === "string") return answerParseProbe();
     // The two statements that end a transaction on the wire also end it here, so a
     // test can observe the provider's rollback rather than only the call to it.
-    const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql);
+    const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql as string);
     if (ended) mockTxStatus = "I";
-    return mockQueryFn(sql, params);
+    const answer = mockQueryFn(sql as string, params);
+    if (typeof sql !== "string") return answer;
+    // One result per statement, which is what `pg` hands back for a multi-statement simple
+    // query and what the apply's post-condition counts.
+    const count = mockApplyResultCount;
+    return sql.startsWith(APPLY_UNIT_PREFIX) && count !== "not-an-array"
+      ? answer.then((result) => Array.from({ length: count }, () => result))
+      : answer;
   },
   getTransactionStatus: () => mockTxStatus,
   // Real pg signature: release(err?) — an error argument destroys the client
@@ -1020,24 +1094,93 @@ describe("PostgresProvider", () => {
       mockTxStatus = "I";
     });
 
-    test("rolls back on the client the last statement ran on when the server says T", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
+    /**
+     * A pooled client of its own, because the defect D87 records is about TELLING TWO
+     * CLIENTS APART: the shared `mockClient` above is one object for the whole pool, so a
+     * test written on it cannot fail the way concurrent traffic does. This one carries the
+     * server's ReadyForQuery byte the way `pg` does — the statement that ends a transaction
+     * moves it back to "I" — and records what was issued on it.
+     */
+    function fakeClient(afterStatement: "I" | "T" | "E" = "I") {
       const issued: string[] = [];
-      mockQueryFn = (sql: string) => {
-        issued.push(sql);
-        return defaultMockQuery(sql);
+      const client = {
+        status: "I" as "I" | "T" | "E",
+        issued,
+        /**
+         * Set to make this client refuse its ROLLBACK the way a dead socket or a revoked
+         * grant does: the statement raises and the server never moves the status byte.
+         */
+        failRollbackWith: undefined as Error | undefined,
+        query: async (sql: string) => {
+          issued.push(String(sql));
+          const endsTransaction = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(String(sql));
+          if (endsTransaction && client.failRollbackWith !== undefined) throw client.failRollbackWith;
+          client.status = endsTransaction ? "I" : afterStatement;
+          return { rows: [], fields: [], rowCount: 0 };
+        },
+        getTransactionStatus: () => client.status,
+        release: () => {},
       };
+      return client;
+    }
 
-      await provider.query("BEGIN");
-      mockTxStatus = "T";
+    /** Hand the provider's pool these clients, in this order, one per `connect()`. */
+    function handOut(...clients: ReturnType<typeof fakeClient>[]) {
+      const queue = [...clients];
+      (lastPool as unknown as { connect: () => Promise<unknown> }).connect = async () =>
+        queue.shift() ?? clients[clients.length - 1];
+    }
 
-      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
-      expect(issued.at(-1)).toBe("ROLLBACK");
-      // The rollback really reached the wire: the mock client moves its own status to "I"
-      // when it sees a COMMIT or a ROLLBACK, exactly as the server's ReadyForQuery does.
-      expect(String(mockTxStatus)).toBe("I");
+    async function connectedProvider() {
+      const created = new PostgresProvider(makePgConfig());
+      await created.connect();
+      return created;
+    }
+
+    /**
+     * THE PUBLISHED SIGNATURE TAKES NO SCOPE AND MUST STILL BE SAFE TO CALL.
+     *
+     * `DatabaseProvider` is exported on `@libredb/studio` and `dist/types-*.d.ts` carries this
+     * declaration, so a required `scope` would be a breaking change for every consumer already
+     * calling the method with none. It is optional, and an unnamed call ends NOTHING rather than
+     * ending whatever it finds: that is the same rule `recordOpenTransaction` applies on the way
+     * in, and the alternative is the defect D87 closed, one caller ending another's transaction.
+     *
+     * WHAT GUARDS WHICH HALF, measured rather than assumed. Deleting the `scope === undefined`
+     * early return does NOT fail this test, because `openQueryScopes.get()` would answer
+     * `undefined` and the next line returns `"none"` anyway. It fails `bun run typecheck` instead,
+     * TS2345 at two call sites, because that return is what narrows `string | undefined` to
+     * `string` for the rest of the method. So the compiler holds the line and this test holds the
+     * CONTRACT: that an unnamed call is safe to make at all, which is what the published
+     * declaration promises a consumer.
+     */
+    test("an UNNAMED call ends nothing, and says so", async () => {
+      provider = await connectedProvider();
+      const left = fakeClient("T");
+      handOut(left);
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+
+      // THE CONTROL first: the client really is holding a transaction under a scope, so the
+      // "none" below is an unnamed call declining to act and not an empty provider.
+      expect(left.status).toBe("T");
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(left.issued).not.toContain("ROLLBACK");
+      // And the named call still reaches it, so nothing was lost by declining.
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+    });
+
+    test("rolls back the client the NAMED scope left in T, and reports it", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+      expect(client.issued.at(-1)).toBe("ROLLBACK");
+      // The rollback really reached the wire: the client moves its own status the way the
+      // server's ReadyForQuery byte does.
+      expect(client.getTransactionStatus()).toBe("I");
     });
 
     test("rolls back an ABORTED transaction, which is the shape that poisons the pool", async () => {
@@ -1046,43 +1189,247 @@ describe("PostgresProvider", () => {
       // later request that drew that client answered HTTP 500 "current transaction is
       // aborted, commands ignored until end of transaction block" — a different user,
       // a different route, twelve retries over 60 seconds and eight minutes later.
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+      provider = await connectedProvider();
+      const client = fakeClient("E");
+      handOut(client);
 
-      const issued: string[] = [];
-      mockQueryFn = (sql: string) => {
-        issued.push(sql);
-        return defaultMockQuery(sql);
-      };
+      await provider.query("SELECT 1", undefined, undefined, "scope-a");
 
-      await provider.query("SELECT 1");
-      mockTxStatus = "E";
-
-      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
-      expect(issued.at(-1)).toBe("ROLLBACK");
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+      expect(client.issued.at(-1)).toBe("ROLLBACK");
     });
 
-    test("answers none when the server says the client is idle", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    test("answers none when the scope's own statement left the client idle", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("I");
+      handOut(client);
 
-      const issued: string[] = [];
-      mockQueryFn = (sql: string) => {
-        issued.push(sql);
-        return defaultMockQuery(sql);
-      };
+      await provider.query("SELECT 1", undefined, undefined, "scope-a");
 
-      await provider.query("SELECT 1");
-
-      expect(await provider.endOpenQueryTransaction()).toBe("none");
-      expect(issued).not.toContain("ROLLBACK");
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
     });
 
-    test("answers none when no statement has run on this provider yet", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    test("answers none for a scope that has run nothing on this provider", async () => {
+      provider = await connectedProvider();
 
-      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(await provider.endOpenQueryTransaction("scope-nobody-used")).toBe("none");
+    });
+
+    // ── D87: WHOSE transaction is ended ───────────────────────────────────────
+    //
+    // One provider is cached per connection id for the whole process, so these are not
+    // hypotheticals: they are what two signed-in users of one stored connection do.
+
+    test("a scope cannot end a transaction ANOTHER scope opened", async () => {
+      // MEASURED 2026-09-15 on PostgreSQL 18.4 through the shipped routes: with the ender
+      // acting on one shared pointer, a plain read on /api/db/query rolled back a
+      // concurrent /api/db/multi-query script mid-script. The script answered 200,
+      // hasError false, all four statements "success" including its COMMIT, and its
+      // CREATE TABLE was gone; the control without the ender kept the table.
+      provider = await connectedProvider();
+      const scriptClient = fakeClient("T");
+      const readClient = fakeClient("I");
+      handOut(scriptClient, readClient);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("SELECT pg_sleep(3)", undefined, undefined, "scope-read");
+
+      // The plain read's own ender. It ran on a client of its own and has nothing to end.
+      expect(await provider.endOpenQueryTransaction("scope-read")).toBe("none");
+      expect(scriptClient.issued).not.toContain("ROLLBACK");
+      expect(scriptClient.getTransactionStatus()).toBe("T");
+
+      // The control that makes those two assertions non-vacuous: the script's own scope
+      // reaches the very transaction the read could not, so the ender is live.
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("rolled-back");
+      expect(scriptClient.getTransactionStatus()).toBe("I");
+    });
+
+    test("the interactive session's client is out of every query scope's reach", async () => {
+      // The docblock this replaces said the session's client "can never be the recorded
+      // one". MEASURED FALSE on 18.4: `beginTransaction()` calls `pool.connect()`, pg's
+      // idle list is LIFO, and it is handed the very object a previous `query()` recorded,
+      // so the plain read's ender rolled the session's committed CREATE TABLE away while
+      // `commit` still answered "Transaction committed". Recording only a client released
+      // WITH a transaction open is what closes it: the plain read released this one idle.
+      provider = await connectedProvider();
+      const shared = fakeClient("I");
+      handOut(shared);
+
+      await provider.query("SELECT 1", undefined, undefined, "scope-read");
+      // LIFO: the session is handed the same object.
+      await provider.beginTransaction();
+      shared.status = "T";
+
+      expect(await provider.endOpenQueryTransaction("scope-read")).toBe("none");
+      expect(shared.issued).not.toContain("ROLLBACK");
+      expect(provider.isInTransaction()).toBe(true);
+      expect(shared.getTransactionStatus()).toBe("T");
+    });
+
+    test("ends every client its own scope left open, not just the last one", async () => {
+      // A script's statements are not guaranteed the same pooled client under concurrent
+      // traffic, so the scope holds a set and the ender walks it.
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("rolled-back");
+      expect(first.issued).toContain("ROLLBACK");
+      expect(second.issued).toContain("ROLLBACK");
+    });
+
+    test("asks the server again at end time, so a transaction already ended is not rolled back twice", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+      // The scope's own next statement committed it; the record is stale by design.
+      client.status = "I";
+
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
+    });
+
+    test("a scope is spent once it is ended, so a second call ends nothing", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("rolled-back");
+
+      client.status = "T";
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued.filter((sql) => sql === "ROLLBACK")).toHaveLength(1);
+    });
+
+    test("one client whose ROLLBACK throws does not strand the rest of the scope", async () => {
+      // A script on /api/db/multi-query runs every statement under ONE scope and each
+      // statement borrows its own pooled client, so a scope holding several clients is
+      // ordinary traffic and not a corner. An earlier form deleted the scope before the
+      // loop and awaited ROLLBACK with no try/catch: the first dead socket left every
+      // later client of that scope in T or E with the map entry already gone, so nothing
+      // could ever reach them again.
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      first.failRollbackWith = new Error("Connection terminated unexpectedly");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+
+      // It raises rather than answering: neither arm of the outcome type is true of a
+      // client still sitting in T, and "rolled-back" would certify a rollback that failed.
+      const raised: unknown = await provider.endOpenQueryTransaction("scope-script").then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect((raised as Error).message).toMatch(/1 of 2 pooled clients: Connection terminated unexpectedly/);
+
+      /*
+       * THE CLASS IS THE STATUS CODE, read off the mapper both routes answer through rather
+       * than asserted as a class name. `QueryError`, which every other raise in this provider
+       * uses, is mapped to HTTP 400 with `code: "QUERY_ERROR"` and logged as "Query error",
+       * which tells the caller their own SQL was at fault. It was not: this server could not
+       * roll back a transaction on a client of its OWN pool, and there is nothing in the
+       * request to correct. The base `DatabaseError` arm is the one that answers a server
+       * fault, and it is what the docblock's stated cost, a 500, is true of.
+       */
+      expect(raised).toBeInstanceOf(DatabaseError);
+      expect(raised).not.toBeInstanceOf(QueryError);
+      const response = createErrorResponse(raised, { route: "api/db/query" });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ code: ApiErrorCode.DATABASE_ERROR, statusCode: 500 });
+
+      // The point of the test: the client AFTER the failing one was still attempted.
+      expect(second.issued).toContain("ROLLBACK");
+      expect(second.getTransactionStatus()).toBe("I");
+      // And the failing one really failed, so the assertion above is not vacuous.
+      expect(first.getTransactionStatus()).toBe("T");
+
+      // The scope is spent all the same: it is minted per request and the request that
+      // owns it is over, so keeping the entry would grow the map with clients no caller
+      // can name.
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("none");
+    });
+
+    test("the denominator counts the clients ASKED, and never the ones this call skipped", async () => {
+      /*
+       * "1 of 2 pooled clients" over a scope whose second client was never asked reads as
+       * "one of two rollbacks failed", and the second rollback did not succeed, it did not
+       * happen. The scope records every client a statement released in `T` or `E`; the ender
+       * asks the server again and skips the ones a later statement of the same scope has
+       * since ended, so the recorded count and the attempted count are different numbers.
+       */
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      first.failRollbackWith = new Error("Connection terminated unexpectedly");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+      // The scope's own later statement committed the second client's transaction, which is
+      // the staleness `getTransactionStatus()` is asked again for.
+      second.status = "I";
+
+      await expect(provider.endOpenQueryTransaction("scope-script")).rejects.toThrow(
+        /on 1 of 1 pooled clients: Connection terminated unexpectedly/,
+      );
+      // Non-vacuity: the skipped client is skipped, so the denominator really is one attempt.
+      expect(second.issued).not.toContain("ROLLBACK");
+    });
+
+    test("the control: with neither client failing the scope reports rolled-back", async () => {
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("rolled-back");
+      expect(first.getTransactionStatus()).toBe("I");
+      expect(second.getTransactionStatus()).toBe("I");
+    });
+
+    test("an UNNAMED call records nothing, so no ender can find its client", async () => {
+      // Every other caller of query() in this codebase passes no scope. Recording those
+      // would put a client somebody else's ender could reach back into the map.
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN");
+
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
+      expect(client.getTransactionStatus()).toBe("T");
+    });
+
+    test("disconnect drops every recorded client, dead ones included", async () => {
+      provider = await connectedProvider();
+      const client = fakeClient("T");
+      handOut(client);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-a");
+      await provider.disconnect();
+      await provider.connect();
+      handOut(client);
+
+      // pool.end() ended that client; its last reported status never changes again, so the
+      // record must not survive to answer for a session that no longer exists.
+      expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
+      expect(client.issued).not.toContain("ROLLBACK");
     });
   });
 
@@ -4993,6 +5340,38 @@ describe("PostgreSQL object source", () => {
     await provider.disconnect();
   });
 
+  test("a declared EDITABLE kind with no routine statement raises the build's own sentence", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "view" ? { ...kind, acceptsSourceEdits: true } : kind,
+      ),
+    });
+    try {
+      // The affordance is a ROUTINE fact: `routineEditAffordance` reads `may_replace` and `owner`,
+      // which only the routine statement selects. Without this the pane would have drawn
+      // `offered: false` with "owned by another role" over a kind nobody owns wrongly, reporting a
+      // declaration drift in the words of an ownership problem. One sentence and one helper with
+      // the build, which refuses the same drift by name.
+      await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
+        /declares an editable kind "view" but has no statement that reads it/,
+      );
+      // AND IT COSTS NO QUERY, which is what `docs/providers/postgres.md` and the comment at the
+      // guard both claim and neither the sentence above nor coverage can see: moving the guard
+      // below the read leaves the thrown sentence identical and this assertion is the only thing
+      // that goes red. The recorder is live in this very test, because the sibling reads through
+      // `sourceDouble` assert what it captured.
+      expect(sent).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
   test("a declared readable kind with no statement behind it is refused by name", async () => {
     sourceDouble(MEASURED_VIEW_DEFINITION);
     const provider = makeProvider();
@@ -5080,6 +5459,16 @@ const EDITED = MEASURED_FUNCTION_DEFINITION.replace("coalesce(sum(", "COALESCE(s
 const EDITED_TRAILING_COMMENT = `${EDITED.replace(/\n$/, "")} -- edited by task 22`;
 
 describe("PostgreSQL object edit (#789 Phase 3)", () => {
+  // Every knob the mock server carries is put back to what a healthy PostgreSQL 18.4 answers,
+  // because a test that sets one of them and a test that reads it are otherwise ordered by
+  // declaration and a rider answer would leak into the next build.
+  beforeEach(() => {
+    mockParseAnswer = "single";
+    mockApplyResultCount = 4;
+    mockTxStatus = "I";
+    mockWire = [];
+  });
+
   function makeProvider() {
     return new PostgresProvider(makePgConfig());
   }
@@ -5238,6 +5627,61 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
       );
       expect(step.language).toBe("pgsql");
+      await provider.disconnect();
+    });
+
+    /**
+     * THE CONSTANT AND THE UNIT IT COUNTS, tied together here because nothing else ties them.
+     *
+     * The apply asserts the round trip answered `GUARDED_BATCH_STATEMENT_COUNT` results, and that
+     * constant is a NUMBER rather than a count of anything: the unit is composed a few lines apart
+     * from the constant, and counting its statements would need the parser this repository
+     * deliberately does not have, because the two `DO` blocks are full of semicolons inside dollar
+     * quotes. So an external review is right that a fifth provider statement would leave the
+     * constant silently wrong.
+     *
+     * What CAN be pinned without a parser is the SHAPE: the unit is a provider prefix of exactly
+     * two statements, the reader's one, and a provider suffix of exactly one, and the reader's
+     * segment is held at one statement by the build's own check. This asserts the prefix and the
+     * suffix by their boundaries rather than by counting, so adding a statement to either moves a
+     * boundary and fails here, next to the number it would have invalidated.
+     */
+    test("the emitted unit is the four statements GUARDED_BATCH_STATEMENT_COUNT counts", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+
+      // The three segments ARE the three parts, and the middle one is the reader's. A provider
+      // segment carries its own text; a user segment carries only the coordinates of theirs.
+      expect(step.segments).toHaveLength(3);
+      const [before, reader, after] = step.segments;
+      if (before.from !== "provider" || reader.from !== "user" || after.from !== "provider") {
+        throw new Error("the unit is no longer provider, user, provider");
+      }
+      // The user segment's coordinates are into the READER's own text, not into the step: that is
+      // what makes a marker land on the line the reader typed.
+      expect(reader.start).toBe(0);
+      expect(reader.end).toBe(EDITED.length);
+      expect(before.text + EDITED + after.text).toBe(step.text);
+
+      // PREFIX: exactly `SET LOCAL ...;` then one `DO $$...$$;` and nothing after it.
+      expect(before.text).toMatch(/^SET LOCAL search_path = [^;]+;\nDO \$[a-z0-9]*\$[\s\S]*\$[a-z0-9]*\$;\n$/);
+      // SUFFIX: a NEWLINE, then the terminator for the reader's statement, then exactly one
+      // `DO $$...$$;`. The leading newline is load-bearing and is asserted rather than tolerated:
+      // it ends the reader's line before the terminator, so an edit ending in a `--` comment does
+      // not swallow it. Its own measurement is on the docblock at the construction site.
+      expect(after.text).toMatch(/^\n;\nDO \$[a-z0-9]*\$[\s\S]*\$[a-z0-9]*\$;$/);
+      // So: 2 + 1 + 1. Written as the arithmetic rather than as the literal 4, so a reader who
+      // changes one part sees which term moved.
+      expect(2 + 1 + 1).toBe(4);
       await provider.disconnect();
     });
 
@@ -5452,7 +5896,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       await provider.disconnect();
     });
 
-    describe("the five build refusals, in order", () => {
+    describe("the build refusals that answer before anything is sent, in order", () => {
       test("a truncated read is a GUARD refusal and carries core's own bound sentence", async () => {
         const provider = await connected();
         mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, definition: "x".repeat(1_000_001) }] });
@@ -5616,6 +6060,335 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         });
         if (build.built) throw new Error("expected a refusal");
         expect(build.refusal.refusal).toBe("identity");
+        await provider.disconnect();
+      });
+    });
+
+    /**
+     * ONE STATEMENT, COUNTED BY POSTGRESQL ITSELF (D76, the residual of #831 Phase 3).
+     *
+     * THE DEFECT, MEASURED live on PostgreSQL 18.4 through `POST /api/db/objects/edit-plan` and
+     * `POST /api/db/objects/edit-apply`: the definition of `app.order_total(integer)` followed by
+     * `;` and `DROP FUNCTION app.r19f1_victim();` built with `consequences: []`, applied at HTTP
+     * 200 with a plain `"outcome": "applied"`, and the victim routine's `count(*)` went 1 to 0.
+     * Every statement the reader's text carries runs, because the text is spliced into one
+     * parameterless simple query, and only the first one is named in either audit event.
+     *
+     * THE MECHANISM IS NOT A SPLITTER AND MUST NEVER BECOME ONE. A dollar-quoted body may carry
+     * any number of semicolons and a `BEGIN ATOMIC` body carries them by construction, and this
+     * repository has measured that no reader in `src/lib/sql/` can tell a separator from a
+     * character of a definition. So the build asks the ENGINE: a NAMED prepared statement inside
+     * an already-aborted transaction block reaches the server's own `exec_parse_message`, whose
+     * multi-command check precedes its aborted-block check and runs on the raw grammar parse.
+     *
+     * MEASURED on 18.4 in container `pg-p3fix` on 2026-09-15, re-run before this test was written,
+     * and NOTHING EXECUTED in any row, a `pg_proc` count for the probe's own objects answering 0
+     * after every one of them:
+     *
+     * | text | answer |
+     * | --- | --- |
+     * | `pg_get_functiondef` verbatim, semicolons inside its dollar-quoted body | 25P02 |
+     * | a `BEGIN ATOMIC` body of two `SELECT`s, and a procedure | 25P02 |
+     * | whitespace only, comment only | 25P02 |
+     * | the D76 reproduction, and the same rider with no final `;`, with a comment before it, and placed FIRST | 42601 `cannot insert multiple commands into a prepared statement` |
+     * | `CREATE OR REPLACE FUNCTIN app.x()` | 42601 `syntax error at or near "FUNCTIN"` |
+     *
+     * WHAT THE DOUBLE BELOW CAN AND CANNOT PROVE, said out loud because a negative assertion with
+     * no control is vacuous. The mock server cannot tell one text from another: it answers what
+     * `mockParseAnswer` says. So these tests pin THIS PROVIDER'S half, which is the half that can
+     * regress in a diff: the wire shape that makes the check non-executing, and the mapping from
+     * each answer to an outcome. The engine's half, that it is the rider and only the rider that
+     * answers 42601, is the measured table above and `docs/providers/postgres.md`.
+     */
+    describe("the single-statement check, and it is PostgreSQL's own (D76)", () => {
+      /** The D76 reproduction, byte for byte: the definition, a `;`, and a rider that drops another routine. */
+      const WITH_RIDER = `${EDITED};\nDROP FUNCTION app.r19f1_victim();`;
+
+      test("the check asks the SERVER, inside a transaction it poisons first, and rolls it back", async () => {
+        // THE GUARD ON THE GUARD. Every element of this sequence is load-bearing and each one is
+        // asserted here because dropping any of them turns the check into an EXECUTION:
+        //
+        // - `BEGIN` plus `SELECT 1/0`: without the poison the Parse succeeds and node-postgres
+        //   goes straight on to Bind and Execute, so a single-statement text RUNS.
+        // - `values: []` WITH a `name`: MEASURED, `query({ text, values: [] })` with no name takes
+        //   node-postgres's SIMPLE query path and ran a rider. Only a NAMED statement reaches
+        //   Parse at all.
+        // - `ROLLBACK`: the client goes back to the pool idle rather than poisoned.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockWire = [];
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (!build.built) throw new Error(build.refusal.sentence);
+        const probeAt = mockWire.findIndex((call) => call === "BEGIN");
+        expect(probeAt).toBeGreaterThan(-1);
+        expect(mockWire[probeAt + 1]).toBe("SELECT 1/0");
+        const parse = mockWire[probeAt + 2];
+        if (typeof parse === "string") throw new Error("the third call is a simple query, not a Parse");
+        // The READER'S TEXT ALONE, and never the assembled unit: the unit is multi-statement by
+        // construction, so probing it would refuse every legitimate edit.
+        expect(parse.text).toBe(EDITED);
+        expect(parse.values).toEqual([]);
+        expect(typeof parse.name).toBe("string");
+        expect(parse.name).not.toBe("");
+        expect(mockWire[probeAt + 3]).toBe("ROLLBACK");
+        await provider.disconnect();
+      });
+
+      test("the rider is REFUSED and no plan is minted", async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockParseAnswer = "multi";
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: WITH_RIDER,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("definition");
+        expect(build.refusal.code).toBe("42601");
+        expect(build.refusal.sentence).toContain("more than one statement");
+        // No coordinate: PostgreSQL reports no position for this one, and a guessed one is clamped
+        // by Monaco rather than rejected.
+        expect(build.refusal.at).toEqual({ within: "none" });
+        await provider.disconnect();
+      });
+
+      test("THE CONTROL: the same build, with the server answering the aborted block, mints the plan", async () => {
+        // Without this the test above is vacuous: it would also pass against a build that refused
+        // everything. `EDITED` carries a semicolon INSIDE its `$function$` body, which is the text
+        // a splitter would get wrong and which 18.4 answers 25P02 for.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        expect(EDITED).toContain(";\n$function$");
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        expect(build.built).toBe(true);
+        await provider.disconnect();
+      });
+
+      test("a grammar error is refused with the ENGINE'S sentence and a marker in the READER'S text", async () => {
+        // The other producer of 42601, and the substring only picks the WORDING: both answers
+        // refuse, so no verdict here rests on a message match. The position is PostgreSQL's own
+        // 1-based character offset into the text that was parsed, which for this probe IS the
+        // reader's text, so it converts with no segment arithmetic at all.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockParseAnswer = "syntax";
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("definition");
+        expect(build.refusal.code).toBe("42601");
+        expect(build.refusal.sentence).toBe('syntax error at or near "FUNCTIN"');
+        expect(build.refusal.sentence).not.toContain("more than one statement");
+        expect(build.refusal.at).toEqual({ within: "user", line: 1, column: 19 });
+        await provider.disconnect();
+      });
+
+      /**
+       * THE OTHER ARM OF THAT SAME REFUSAL, WHICH NOTHING DROVE AND THE LINE GATE COULD NOT SEE
+       * (D76, wave 2 review finding 4).
+       *
+       * The `malformed` refusal converts PostgreSQL's reported position into the reader's own
+       * coordinates when there is one and answers `{ within: "none" }` when there is not. Nothing
+       * reached the second half: every 42601 this suite produced carried `position: "19"`, so the
+       * ternary FOLDED and bun's lcov recorded the whole expression as covered, `LF:1574 LH:1574`
+       * with no `DA:...,0` anywhere in the file. A 100 percent line gate cannot see an arm that
+       * shares a line with a taken one, which is why this test exists rather than a coverage run.
+       *
+       * ITS POPULATION IS D62'S, the same one the `unreadable` arm above is written for, and it is
+       * measured rather than asserted. On 18.4 every non-"multiple commands" 42601 this task could
+       * produce carried a position: `syntax error` 19, `unterminated dollar-quoted string` 104,
+       * `unterminated /* comment` 230. So no PostgreSQL reaches this arm, and a fork under this
+       * same type id that answers 42601 without one does. Guessing a position instead would be
+       * worse than saying none: Monaco silently CLAMPS an out-of-range marker rather than
+       * rejecting it, so the reader would be sent to a character that is not the one at fault.
+       */
+      test("a 42601 carrying NO position places no marker, rather than guessing one", async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockParseAnswer = Object.assign(new Error("syntax error at end of input"), { code: "42601" });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("definition");
+        expect(build.refusal.code).toBe("42601");
+        expect(build.refusal.sentence).toBe("syntax error at end of input");
+        expect(build.refusal.at).toEqual({ within: "none" });
+        await provider.disconnect();
+      });
+
+      test("a server that ACCEPTS the Parse is refused as UNSUPPORTED, because the count was never established", async () => {
+        // No PostgreSQL answers this: an aborted block refuses every Parse. The population is
+        // D62's, a wire-compatible fork, and reading silence as "one statement" is the one reading
+        // that lets a rider through.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockParseAnswer = "accepted";
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("unsupported");
+        expect(build.refusal.sentence).toContain("did not answer");
+        await provider.disconnect();
+      });
+
+      test("an error carrying NO SQLSTATE is the same UNSUPPORTED refusal, quoting it", async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockParseAnswer = new Error("terminating connection due to administrator command");
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("unsupported");
+        expect(build.refusal.sentence).toContain("terminating connection due to administrator command");
+        await provider.disconnect();
+      });
+
+      test("the poison's OWN error is swallowed, because raising it IS the point", async () => {
+        // `SELECT 1/0` answers 22012 on a live server. It is not a failure of the check, it is the
+        // check's precondition, so it is caught and discarded and the Parse still happens.
+        //
+        // THIS TEST PASSES AGAINST THE PRE-FIX PROVIDER TOO, and it is labelled rather than left
+        // to look like a regression test (wave 2 review finding 5). Measured by rebuilding the
+        // tree at the D76 commit's parent with this file on it: of the thirteen tests that commit
+        // added, nine fail there and four pass, and this is the only one of the four not already
+        // carrying the word CONTROL. It is not vacuous: post-fix it discriminates, because
+        // removing the `catch {}` around the poison makes it red.
+        const provider = await connected();
+        mockQueryFn = async (sql) => {
+          if (sql === "SELECT 1/0") throw Object.assign(new Error("division by zero"), { code: "22012" });
+          return { rows: [ROUTINE_ROW] };
+        };
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        expect(build.built).toBe(true);
+        await provider.disconnect();
+      });
+
+      test("a pooled session inside SOMEBODY ELSE'S transaction is a GUARD refusal, and nothing is rolled back", async () => {
+        // The check opens a transaction and rolls it back. On a client that is already inside one,
+        // that ROLLBACK would destroy work this user was never shown, which is the axis D78 made
+        // the apply refuse on. So the build refuses on the same fact rather than probing.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockTxStatus = "T";
+        mockWire = [];
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("guard");
+        expect(build.refusal.sentence).toContain("transaction somebody else opened");
+        expect(build.refusal.at).toEqual({ within: "none" });
+        // THE CONTROL ON THE REFUSAL: it refused by NOT touching their transaction.
+        expect(mockWire).not.toContain("ROLLBACK");
+        expect(mockWire).not.toContain("BEGIN");
+        await provider.disconnect();
+      });
+
+      /**
+       * THE ORDER OF THE SIX REFUSALS IS LOAD-BEARING, and not only a saving (D76, wave 2 review).
+       *
+       * The check above says the sixth refusal answers LAST because it is the only one that costs
+       * a round trip. That is true and it is not the whole reason, and the missing half is what
+       * these two tests pin.
+       *
+       * MEASURED on 18.4 in `pg-p3fix` on 2026-09-15, one `BEGIN` plus `SELECT 1/0` plus a NAMED
+       * Parse per row, `pg_prepared_statements` counted after the `ROLLBACK`, the block's state
+       * read with a plain `SELECT 1`:
+       *
+       * | text | Parse answered | the block after | prepared |
+       * | --- | --- | --- | --- |
+       * | `COMMIT`, `ROLLBACK`, `END`, `ABORT` | no error at all | ENDED | 1 |
+       * | `SAVEPOINT s1`, a definition | 25P02 | still aborted | 0 |
+       * | empty, whitespace only, comment only | 25P02 | still aborted | 1 |
+       *
+       * So the aborted block is NOT a universal brake. `exec_parse_message` exempts a
+       * transaction-exit statement, which therefore parses, binds, executes and ends the very
+       * block the check opened; and for a text with no statement in it the server takes its empty
+       * branch, the named statement IS created, the 25P02 comes from Bind instead, and the
+       * statement survives the `ROLLBACK` on a client that then goes back to the pool.
+       *
+       * Neither class reaches the check TODAY, and the identity refusal is the only reason:
+       * `routineIdentityHeader` answers the whole text when it finds no closing parenthesis, so
+       * `COMMIT` and an empty text both render a header that is not the addressed routine's and
+       * are refused two refusals earlier. A diff that moves the count check above the identity
+       * check would send both classes to the server, so the order is asserted here rather than
+       * left to a comment.
+       */
+      test("a TRANSACTION-EXIT text never reaches the server, because the identity refusal answers first", async () => {
+        // `COMMIT` is exempt from the aborted-block check: MEASURED, it runs and it ENDS the block
+        // the check opened. It is refused here without a round trip at all.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockWire = [];
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: "COMMIT",
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        // THE CONTROL ON THE ORDER: the probe never opened its transaction, so the exempt
+        // statement was never parsed and the block it would have ended was never begun.
+        expect(mockWire).not.toContain("BEGIN");
+        expect(mockWire).not.toContain("SELECT 1/0");
+        await provider.disconnect();
+      });
+
+      test("a text with NO statement in it never reaches the server either, for the same reason", async () => {
+        // A zero-statement text leaves a prepared statement behind on the pooled client: MEASURED,
+        // the server skips the aborted-block check on an empty parse list, the statement is
+        // created, and it survives the `ROLLBACK`. The identity refusal is what keeps that off
+        // every pooled session.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockWire = [];
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: "   \n  ",
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(mockWire).not.toContain("BEGIN");
+        expect(mockWire).not.toContain("SELECT 1/0");
         await provider.disconnect();
       });
     });
@@ -5978,6 +6751,163 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         // place and empties the sentence, so this assertion is what makes that arm measured.
         expect(build.refusal.sentence).toContain(truncated);
       });
+
+      /**
+       * THE LIVE PRODUCER FOR THIS SCAN, AND FOR `applied-elsewhere` ON THIS ENGINE (D77).
+       *
+       * Everything above is a constant. Each `definition` is bytes a server once answered and each
+       * `revision` is the md5 it answered for them, and a constant is a transcription: a fixture
+       * this repository never builds cannot be re-measured, and the guard reads as one over a
+       * population nothing here creates. Until this test the whole parenthesis scan, and the
+       * `applied-elsewhere` outcome it exists to prevent a reader from reaching, had no producer
+       * on this engine at all other than a driver double. Every routine this repository's
+       * `docker/postgres-init/` builds had a header whose FIRST `)` was also its LAST, so the
+       * first-`)` reading and the real one answered the same thing for every live object here.
+       *
+       * So the fixture now BUILDS `app.dl`, and these two tests bind the file to this array: the
+       * first reads the SQL and locates the `CREATE`, and the second drives the outcome over the
+       * bytes that `CREATE` renders to. Delete the object from the fixture and the first goes red
+       * rather than the population going quietly empty again.
+       *
+       * MEASURED against that fixture on 18.4 in container `pg-p3fix` on 2026-09-15, rebuilt from
+       * this repository's own `docker/postgres-init/`, driving the real `PostgresProvider`:
+       *
+       * ```
+       * BEFORE rows for app.dl: [{"oid":16782,"xmin":"837","args":"a text, b integer"}]
+       * md5(pg_get_functiondef(oid)):  0c7937f7060d7bc0c2a583af49227203
+       * BUILD on a changed argument list: refused identity
+       *   this text declares "CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')'::text, b bigint
+       *   DEFAULT 1)" and the object being edited is "CREATE OR REPLACE FUNCTION app.dl(a text
+       *   DEFAULT ')'::text, b integer DEFAULT 1)"
+       * BUILD on a legitimate body edit: built
+       * APPLY of the consumer-built forked plan:
+       *   {"outcome":"applied-elsewhere","undone":true,"duration":4}
+       * AFTER rows for app.dl: [{"oid":16782,"xmin":"837","args":"a text, b integer"}]
+       * CONTROL, the same plan without the fork: {"outcome":"applied", ...}
+       * ```
+       *
+       * Both halves matter. The build refuses the fork, which is the scan working over a header
+       * whose parameter list closes AFTER a `)` inside a string literal; and a plan built elsewhere
+       * and carrying the fork still reaches the engine, raises `LB003` from the emitted unit's own
+       * post-condition, and is rolled back with ONE `pg_proc` row left and `xmin` unmoved. That
+       * second half is the population `applyObjectEdit`'s entry guard names, a `@libredb/studio`
+       * consumer building its own plan, and it is why this provider keeps the `applied-elsewhere`
+       * arm although no build of its own can now reach it.
+       */
+      test("the fixture this repository ships BUILDS the routine these constants describe", () => {
+        const sql = readFileSync(
+          path.join(import.meta.dir, "../../..", "docker/postgres-init/03-object-fixture.sql"),
+          "utf8",
+        );
+        const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dl(text,integer)");
+        if (fixture === undefined) throw new Error("app.dl is not in the measured population");
+        // THE WHOLE STATEMENT AND NOT ONLY ITS HEADER (wave 3 review, finding 4). The first
+        // version matched two substrings that both stopped at the parameter list's closing
+        // parenthesis, so `RETURNS bigint` or a body of `SELECT 2` in the SQL file left every
+        // assertion green while `definition` and `revision` stopped describing what the engine
+        // renders. Each piece is now asserted on BOTH sides, in the two spellings the two sides
+        // legitimately have: the file writes the default the reader types, `pg_get_functiondef`
+        // renders it back with its cast.
+        const statement = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION app.dl(")).split(";")[0];
+        // The parameter DEFAULT holding a closing parenthesis is the whole point of the object, so
+        // the header is matched rather than the routine name: a fixture that kept the name and
+        // dropped the literal would leave this array's population empty again and pass a name check.
+        for (const [written, rendered] of [
+          ["app.dl(a text DEFAULT ')', b integer DEFAULT 1)", "app.dl(a text DEFAULT ')'::text, b integer DEFAULT 1)"],
+          ["RETURNS integer", "RETURNS integer"],
+          ["LANGUAGE sql", "LANGUAGE sql"],
+          ["$function$ SELECT 1 $function$", "$function$ SELECT 1 $function$"],
+        ]) {
+          expect(statement).toContain(written);
+          expect(fixture.definition).toContain(rendered);
+        }
+        // `revision` is the md5 of `definition` for every entry in the array, asserted once over
+        // the whole population by the first test in this describe, so it is not restated here.
+      });
+
+      /**
+       * THE DOUBLE ANSWERS THE POST-CONDITION'S QUESTION AND NOT A CONSTANT (wave 3 review of this
+       * commit, finding 1).
+       *
+       * `pg` is mocked at this file's module boundary, so no test here can reach an engine. What a
+       * double can still do is DISCRIMINATE, and the first version of this test did not: it raised
+       * `LB003` whatever SQL it was handed, so the outcome came from `APPLY_VERDICT_BY_SQLSTATE`
+       * alone and the fork spliced into the unit changed nothing. MEASURED by the reviewer and
+       * re-measured here on 2026-09-15 by replacing `text: forked` with `text: step.text`: the test
+       * still passed, 2 pass 0 fail. An assertion that holds with the fork removed certifies the
+       * SQLSTATE table and not the fork, and the table is already certified on its own by the test
+       * named "a fork detected by the post-condition is ..." in the `applyObjectEdit` describe.
+       *
+       * So this double reads the unit it is sent and asks what the emitted post-condition `DO`
+       * block asks: is the routine this plan ADDRESSES the routine the text rewrote? A routine is
+       * addressed by the parameter list `pg_get_functiondef` renders for it, so a text declaring
+       * `b bigint` creates a SECOND routine, leaves `app.dl(text,integer)`'s `xmin` where it was
+       * and raises `LB003`, which is what the live run above measured. A text that does carry the
+       * addressed list rewrites that row, so the round trip answers and the re-read answers the
+       * bytes just written. The control at the end of the test drives exactly that arm, so the
+       * fork is now the only difference between an `applied-elsewhere` and an `applied`.
+       */
+      test("a plan built ELSEWHERE that forks that routine is `applied-elsewhere` and UNDONE, and the same plan unforked is not", async () => {
+        const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dl(text,integer)");
+        if (fixture === undefined) throw new Error("app.dl is not in the measured population");
+        // The rendered parameter list of the routine the plan addresses. A unit whose `CREATE`
+        // does not carry it is addressing something else, which is the fork.
+        const addressed = "app.dl(a text DEFAULT ')'::text, b integer DEFAULT 1)";
+        let served: string = fixture.definition;
+        mockQueryFn = async (sql: string) => {
+          // Everything that is not the apply's own unit is a read: the build's, and the re-read
+          // the `applied` arm takes for the new revision. It answers whatever is on the server.
+          if (!sql.startsWith(APPLY_UNIT_PREFIX)) {
+            return { rows: [rowFor(served, createHash("md5").update(served).digest("hex"))] };
+          }
+          const written = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION"), sql.lastIndexOf("\n;\nDO "));
+          if (!written.includes(addressed)) {
+            throw Object.assign(new Error("libredb: this apply did not change the object it was addressed to"), {
+              code: "LB003",
+            });
+          }
+          served = written;
+          // One row answer, which `mockClient` turns into the four results a simple query gives
+          // for the four statements this unit is made of.
+          return { rows: [] };
+        };
+        const provider = await connected();
+        // The consumer's starting point is a plan this provider DID mint, for a legitimate body
+        // edit, because that is the only way a caller outside this repository gets a sealed unit.
+        const legitimate = fixture.definition.replace("SELECT 1", "SELECT 2");
+        const built = await provider.buildObjectEdit({
+          path: [...fixture.path],
+          kind: "function",
+          partId: "definition",
+          text: legitimate,
+        });
+        if (!built.built) throw new Error(`expected a plan: ${built.refusal.sentence}`);
+        if (built.plan.unit.medium !== "statement") throw new Error("narrowing");
+        const step = built.plan.unit.steps[0];
+        const forked = step.text.replace(legitimate, fixture.definition.replace(...fixture.forked));
+        // THE CONTROL ON THE SETUP: the splice must actually have changed the unit, or the apply
+        // below would be driving the legitimate plan and the assertion would certify nothing.
+        expect(forked).not.toBe(step.text);
+        const outcome = await provider.applyObjectEdit({
+          ...built.plan,
+          unit: { medium: "statement", steps: [{ ...step, text: forked }] },
+        });
+        if (outcome.outcome !== "applied-elsewhere") throw new Error(`expected a fork, got ${outcome.outcome}`);
+        // The post-condition raises inside PostgreSQL's implicit transaction, so the round trip
+        // rolls back, and nothing the forked text created survives it.
+        expect(outcome.undone).toBe(true);
+        // THE CONTROL THAT MAKES THE FORK LOAD-BEARING: the same provider, the same double, the
+        // same sealed plan, with only the splice gone. Put `text: step.text` back into the apply
+        // above and this pair is what goes red.
+        const control = await provider.applyObjectEdit(built.plan);
+        if (control.outcome !== "applied")
+          throw new Error(`expected the unforked plan to apply, got ${control.outcome}`);
+        if (control.revision.check !== "guarded") throw new Error("narrowing");
+        // And the token is the md5 of the reader's own bytes, so the control also pins that what
+        // reached the server was the text the plan carried rather than the pre-image.
+        expect(control.revision.token).toBe(createHash("md5").update(legitimate).digest("hex"));
+        await provider.disconnect();
+      });
     });
   });
 
@@ -6034,6 +6964,125 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       // insert multiple commands into a prepared statement`.
       expect(sent[0].params).toEqual([]);
       await provider.disconnect();
+    });
+
+    /**
+     * THE ROUND TRIP'S OWN COUNT, which is the half of D76 a LOG READER meets.
+     *
+     * An `object_edit` audit event says an edit was applied at one address, with one strategy and
+     * one outcome. It did NOT say the round trip carried nothing else, and it could not: the
+     * provider threw the query's answer away. MEASURED on PostgreSQL 18.4 through `pg` on
+     * 2026-09-15, which is where the number four comes from and why it needs no parser:
+     *
+     * ```
+     * SET LOCAL search_path = ...; DO $p$..$p$; <definition>; DO $q$..$q$  -> 4 [SET,DO,CREATE,DO]
+     * the same with a rider spliced into the reader's segment              -> 5 [SET,DO,CREATE,DROP,DO]
+     * ```
+     *
+     * Four held for the reader's text ending in `;`, in a `--` line comment, in a newline and in
+     * `$$`, so the doubled semicolon the terminator can produce costs no result of its own.
+     */
+    describe("the apply asserts what the round trip carried (D76)", () => {
+      async function applyWith(results: number | "not-an-array") {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (!build.built) throw new Error(build.refusal.sentence);
+        mockApplyResultCount = results;
+        const outcome = await provider.applyObjectEdit(build.plan);
+        await provider.disconnect();
+        return outcome;
+      }
+
+      test("THE CONTROL: four results, the statements the plan names, is `applied`", async () => {
+        const outcome = await applyWith(4);
+        expect(outcome.outcome).toBe("applied");
+      });
+
+      test("five results is NOT reported applied, and the sentence carries both numbers", async () => {
+        // The engine ran a statement this plan did not describe. Nothing here can say WHICH, and
+        // guessing is what the audit event already did wrong, so the outcome says the disposition
+        // is not established and tells the reader not to retry.
+        const outcome = await applyWith(5);
+        expect(outcome.outcome).toBe("interrupted");
+        if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+        expect(outcome.committed).toBe("unknown");
+        expect(outcome.sentence).toContain("5");
+        expect(outcome.sentence).toContain("4");
+        expect(outcome.sentence).toContain("retry");
+      });
+
+      test("FEWER results is caught by the same assertion, because it is the same broken premise", async () => {
+        const outcome = await applyWith(3);
+        expect(outcome.outcome).toBe("interrupted");
+      });
+
+      test("an answer that is not an array at all counts as ONE result and is caught", async () => {
+        // What `pg` hands back for a SINGLE-statement query, and what a pooler that rewrote the
+        // unit would produce. It is not four, so it is not a plain success.
+        const outcome = await applyWith("not-an-array");
+        expect(outcome.outcome).toBe("interrupted");
+        if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+        expect(outcome.sentence).toContain("1");
+      });
+
+      test("an engine FAILURE is still classified, and never read as a count mismatch", async () => {
+        // The count is a post-condition on a round trip that SUCCEEDED. A throw has no results to
+        // count and must keep reaching the SQLSTATE classifier.
+        const outcome = await applyWithEngineError(Object.assign(new Error("boom"), { code: "LB001" }));
+        expect(outcome.outcome).toBe("conflict");
+      });
+
+      /**
+       * THE CITATION THE TWO DOCBLOCKS AROUND THIS ARM MAKE, ASSERTED (wave 3 review, finding 2).
+       *
+       * This arm is used outside what `src/lib/db/types.ts` documents it as, and both the provider
+       * and `docs/providers/postgres.md` record that deviation on purpose. The first version of
+       * those two paragraphs also said the residual was "in the backlog". It was not:
+       * `docs/BACKLOG.md` carries no entry for it, the proposal lives in a gitignored work file,
+       * and a reader following either sentence finds nothing. That is the same class as the
+       * dangling `src/lib/audit.ts` citation this same commit was sent to repair, so it gets a
+       * check rather than a correction.
+       *
+       * THE GENERAL FORM RATHER THAN THAT ONE SENTENCE, because a sentence is just reworded next
+       * time. Every mention of the backlog in these two files must NAME the entry, the way
+       * `docs/providers/postgres.md` already names B4 for the cancel mapper, and that entry must
+       * be a heading `docs/BACKLOG.md` really carries. A residual with nowhere to be filed is
+       * recorded in the two files themselves and does not send the reader anywhere else.
+       *
+       * MEASURED before the correction: exactly two sentences failed it, one per file.
+       */
+      test("every backlog mention in this provider and in its doc names an entry docs/BACKLOG.md carries", () => {
+        const read = (file: string) => readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
+        const filed = new Set([...read("docs/BACKLOG.md").matchAll(/^### ([A-Z]+\d+)\./gm)].map((match) => match[1]));
+        // POPULATION CONTROL ON THE BACKLOG ITSELF: a file that moved or changed heading shape
+        // would report every citation below as unfiled, which is a different defect entirely.
+        expect(filed.size).toBeGreaterThan(50);
+        const unfiled: string[] = [];
+        let mentions = 0;
+        for (const file of ["src/lib/db/providers/sql/postgres.ts", "docs/providers/postgres.md"]) {
+          // Comment markers off and wrapped lines rejoined, so a claim spread over four comment
+          // lines is ONE sentence here; then split where a sentence ends.
+          const prose = read(file)
+            .replace(/^[ \t]*(?:\/\/|\*\/|\/\*\*?|\*)[ \t]?/gm, "")
+            .replace(/\s*\n\s*/g, " ");
+          for (const sentence of prose.split(/(?<=\.)\s+/)) {
+            if (!/backlog/i.test(sentence)) continue;
+            mentions++;
+            if ([...sentence.matchAll(/\b([A-Z]+\d+)\b/g)].some((match) => filed.has(match[1]))) continue;
+            unfiled.push(`${file} :: ${sentence.trim().slice(0, 160)}`);
+          }
+        }
+        // AND THE CONTROL THAT KEEPS THE ASSERTION ABOVE NON-VACUOUS: two files with no mention of
+        // the backlog at all would satisfy it while checking nothing.
+        expect(mentions).toBeGreaterThan(0);
+        expect(unfiled).toEqual([]);
+      });
     });
 
     test("THE PREVIEW IS THE APPLY, proven against a provider whose state MOVED between the two calls", async () => {
@@ -6584,6 +7633,33 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       if (build.built) throw new Error("expected a refusal");
       expect(build.refusal.refusal).toBe("unsupported");
       expect(build.refusal.sentence).toContain("md5 of pg_get_functiondef");
+      await provider.disconnect();
+    });
+
+    test("a plan carrying a kind this provider will not write back is refused before anything is sent", async () => {
+      // The same guard Trino and Redis open their apply with, and Redis discards its return exactly
+      // as this one does. The population it closes is a `@libredb/studio` consumer calling
+      // `applyObjectEdit` directly, past the edit-apply route that asks the same question (D57).
+      const provider = await connected();
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [ROUTINE_ROW] };
+      };
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      sent.length = 0;
+      await expect(provider.applyObjectEdit({ ...build.plan, kind: "view" })).rejects.toThrow(
+        /does not apply an edited definition for the kind "view"/,
+      );
+      // Nothing was sent. The guard sits ahead of the pooled client, so a kind this provider will
+      // not write back costs no round trip and cannot half-apply.
+      expect(sent).toEqual([]);
       await provider.disconnect();
     });
 

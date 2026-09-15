@@ -1,3 +1,4 @@
+// @requires helm
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";

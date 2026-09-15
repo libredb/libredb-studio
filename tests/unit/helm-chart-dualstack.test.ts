@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Regression tests for the chart's dual-stack Service surface
  * (service.ipFamilyPolicy / service.ipFamilies), added for #432:
@@ -62,7 +63,7 @@
  * compared against it too: a hand-edit that reaches only one of the two trees
  * must fail here as well.
  */
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -377,14 +378,23 @@ describe("charts/libredb-studio install notes warn about an IPv4-pinned pod (#43
   // file's own bytes are wrapped in a named template and emitted as a
   // ConfigMap. Helm does the rendering, the template text is the shipped one,
   // and nothing here reimplements the condition under test.
-  const notesChart = mkdtempSync(join(tmpdir(), "libredb-notes-probe-"));
-  cpSync(CHART_DIR, notesChart, { recursive: true });
   const PROBE_TEMPLATE = "templates/zz-notes-probe.yaml";
-  writeFileSync(
-    join(notesChart, PROBE_TEMPLATE),
-    `{{- define "notesProbe" -}}\n${readFileSync(join(CHART_DIR, "templates/NOTES.txt"), "utf8")}\n{{- end -}}\n` +
-      'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-probe\ndata:\n  notes: {{ include "notesProbe" . | quote }}\n',
-  );
+  // Built in beforeAll rather than in the describe body: a recursive copy of the whole chart is
+  // real work, and work done at import time is attributed to the file rather than to a hook, so a
+  // per-file timeout starts counting against it before any test is named. Nothing below reads
+  // notesChart until a test runs, so the move changes nothing about what is tested.
+  let notesChart: string;
+
+  beforeAll(() => {
+    notesChart = mkdtempSync(join(tmpdir(), "libredb-notes-probe-"));
+    cpSync(CHART_DIR, notesChart, { recursive: true });
+    writeFileSync(
+      join(notesChart, PROBE_TEMPLATE),
+      `{{- define "notesProbe" -}}\n${readFileSync(join(CHART_DIR, "templates/NOTES.txt"), "utf8")}\n{{- end -}}\n` +
+        'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-probe\ndata:\n  notes: {{ include "notesProbe" . | quote }}\n',
+    );
+  });
+
   afterAll(() => rmSync(notesChart, { recursive: true, force: true }));
 
   function notes(args: string[]): string {

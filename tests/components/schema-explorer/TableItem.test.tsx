@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 
 // The SHARED sonner mock rather than a local `mock.module("sonner", ...)`: mock.module is
-// process-wide and the last call wins, so a second declaration here would hand
-// StudioMobileHeader.test.tsx — same group in tests/run-components.sh — a `toast` whose
-// error mock it holds no reference to.
+// process-wide and the last call wins, so a second declaration here would replace the one
+// bunfig preloads for this process and hand the tests below a `toast` whose error mock
+// nothing in this file holds a reference to.
 import { mockToastError, mockToastSuccess } from "../../helpers/mock-sonner";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent

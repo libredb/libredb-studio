@@ -5,7 +5,7 @@ import { AuthConfigError } from "@/lib/auth-errors";
 // module imports cleanly in the test runtime (signJWT itself never uses it).
 // The mock replaces the whole module, so every import auth.ts makes must appear
 // here - a missing name is a link-time "Export named 'x' not found" that fails
-// the file in isolation (which is how tests/run-core.sh runs it).
+// the whole file, which is the unit the runner works in: one bun process each.
 mock.module("next/headers", () => ({
   cookies: async () => ({ get: () => undefined, set: () => {}, delete: () => {} }),
   headers: async () => ({ get: () => null }),

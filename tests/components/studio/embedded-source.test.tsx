@@ -149,7 +149,7 @@ mock.module("@/components/ui/resizable", () => {
 });
 
 import { StudioWorkspace } from "@/workspace/StudioWorkspace";
-import type { WorkspaceObjectReader } from "@/workspace/types";
+import type { StudioWorkspaceHandle, WorkspaceObjectReader } from "@/workspace/types";
 import type {
   ObjectEditBuild,
   ObjectEditConsequenceClass,
@@ -249,6 +249,8 @@ function workspace(options: {
    * does when a person deletes the last one in the host's own UI while a Source tab is open.
    */
   connections?: "none";
+  /** The published handle, so a test can announce a catalog change the way a host does (D79). */
+  handleRef?: { current: StudioWorkspaceHandle | null };
 }) {
   const declared = options.declared === undefined ? capabilities : options.declared;
   return (
@@ -271,6 +273,7 @@ function workspace(options: {
       }}
       onSchemaFetch={async () => []}
       onObjectsFetch={options.reader}
+      ref={options.handleRef}
     />
   );
 }
@@ -1154,20 +1157,28 @@ async function openSourceTab(): Promise<void> {
 }
 
 /** Mount a host, open the tab, and take the two gestures that reach the preview: Edit, Preview. */
-async function previewThrough(objectEditor: HostEditor): Promise<void> {
-  render(workspace({ reader: editingReader(objectEditor) }));
+async function previewThrough(objectEditor: HostEditor, executed?: string[]): Promise<void> {
+  render(workspace({ reader: editingReader(objectEditor), ...(executed === undefined ? {} : { executed }) }));
   await openSourceTab();
   await click("object-source-edit");
   await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
   await click("object-source-preview");
 }
 
-/** The whole reader-visible round trip: Edit, Preview, Confirm, and the dialog gone. */
+/**
+ * The whole reader-visible round trip: Edit, Preview, Confirm, and the dialog gone.
+ *
+ * The closing poll compares with `=== null` rather than asserting `toBeNull()` on the node, and
+ * so does every other absence poll in this file. A FAILING poll would hand bun the live happy-dom
+ * node, and bun walks that node's whole object graph to build the diff: 301 ms for a 260-node
+ * subtree, measured, which burns waitFor's 5 s budget in a few polls and turns a healthy test red
+ * on a machine that is briefly busy. The boolean costs 0 ms and asserts the same removal.
+ */
 async function applySuccessfullyThroughTheHost(objectEditor: HostEditor): Promise<void> {
   await previewThrough(objectEditor);
   await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
   await click("object-source-apply-confirm");
-  await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+  await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
 }
 
 function refreshTokenPassedToTheViewer(): unknown {
@@ -1226,7 +1237,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
     await click("object-source-preview");
     await waitFor(() => expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy());
     await click("object-source-apply-confirm");
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
 
     // The connection ID, the address, the kind and the part: the whole surface, on both methods.
     expect(asked).toEqual([
@@ -1414,7 +1425,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
     seen.push(refreshTokenPassedToTheViewer());
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
     await click("object-source-apply-confirm");
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
     seen.push(refreshTokenPassedToTheViewer());
 
     expect(seen).toEqual([0, 1]);
@@ -1470,14 +1481,15 @@ describe("the embedded workspace applies an object edit through the host", () =>
   /*
    * THE BOUND, and this shell is the only place it can exist (#789 Phase 3).
    *
-   * `src/lib/api/object-edit-wire.ts` bounds NO string in any of its four shape predicates, and it
-   * does not because its brief specified none. Round 1 said here that the standalone shell does not
-   * care because its two routes bound what they answer. MEASURED and false, and the docblock in
-   * `use-connection-adapter.ts` now carries the grep: the two routes bound only what they RECEIVE,
-   * so the hazard is on both shells and only its author differs. This is the shell where a test can
-   * drive it, because here the answer is a plain object a test can construct. The dialog renders a
-   * refusal sentence, a refusal hint, a revision reason and each consequence's observed fact
-   * verbatim, with only the plan's executable text bounded by anything at all.
+   * The two edit routes bound only what they RECEIVE and never what they answer, and the docblock
+   * in `use-connection-adapter.ts` carries that grep. So the hazard is on both shells and only its
+   * author differs. This is the shell where a test can drive it, because here the answer is a plain
+   * object a test can construct.
+   *
+   * `src/lib/api/object-edit-wire.ts` has since bounded every string its four shape predicates
+   * accept (D80), which closes the PER-STRING half on both shells. What this bound still does, and
+   * the reason this test is still here, is measure the WHOLE answer, and measure it before any
+   * predicate walks the object.
    *
    * Phase 2 measured the same hazard on the READ seam and closed it there: a part carrying a
    * five-million-character truncation reason passed `isSourceDocumentShape` and the whole of it
@@ -1793,7 +1805,7 @@ describe("the embedded workspace applies an object edit through the host", () =>
       editorProbe.change?.(DEFINITION);
       await Promise.resolve();
     });
-    await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot") === null).toBe(true));
   });
   /**
    * WHAT THE READER IS LOOKING AT ONE RENDER AFTER A SUCCESSFUL APPLY (X25, #789).
@@ -1834,13 +1846,492 @@ describe("the embedded workspace applies an object edit through the host", () =>
     await click("object-source-preview");
     await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
     await click("object-source-apply-confirm");
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
 
     // The pane asked the host again, which is the only way new text can reach the screen here.
     await waitFor(() => expect(read).toBe(2));
     await waitFor(() => expect(shownText()).toBe(STEP_TEXT));
     // And the tab that applied is NOT marked stale: it re-read at the token its own apply moved to,
     // which is what `src/components/Studio.tsx` already produces for the same gesture.
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
+  });
+});
+
+/**
+ * D82 on THIS shell: the new-tab shortcut, pressed between Confirm and the host's answer.
+ *
+ * MEASURED here rather than inferred from the standalone half. `StudioWorkspace` rendered
+ * `StudioTabBar` with the bare `tabMgr.addTab` and passed `onApply` with no
+ * `onApplyInFlightChange`, so with the host's `apply` held the shortcut pressed from the apply
+ * dialog's own element took the strip to
+ * `["Query 1", "Source: app.order_total(integer)", "Query 3"]`, the dialog was GONE, and the held
+ * `conflict` then rendered nothing at all.
+ *
+ * ONE DOCUMENT-LEVEL LISTENER MOVES THE ACTIVE TAB IN THIS SHELL, enumerated rather than assumed.
+ * `grep -rE 'addEventListener\(\s*"keydown' src` answers four sites and the docblock on
+ * `handleAddTab` in `src/workspace/StudioWorkspace.tsx` says what each one does; the only one this
+ * shell mounts that moves the active tab is `StudioTabBar`'s new-tab shortcut (#745).
+ */
+describe("the embedded shell refuses a tab-opening gesture while a host apply is in flight", () => {
+  const CONFLICT = {
+    outcome: "conflict",
+    conflict: "object-changed",
+    current: { text: `${DEFINITION}\n-- somebody else got there first`, language: "sql" },
+    duration: 5,
+  } as unknown as ObjectEditOutcome;
+
+  /** The host's `apply`, HELD: sent, and no answer back until the test hands one over. */
+  let releaseApply: ((outcome: ObjectEditOutcome) => void) | undefined;
+
+  /**
+   * Edit, Preview, Confirm, and STOP with the host's apply in flight.
+   *
+   * The window D82 is about cannot be reached with a host that answers at once: the pane leaves
+   * `applying` in the same promise continuation the answer arrives in, so there is no frame in
+   * between for a keystroke to land in.
+   */
+  async function confirmAndHold(executed?: string[]): Promise<void> {
+    const holdingHost = {
+      build: async () => BUILT,
+      apply: () => new Promise<ObjectEditOutcome>((resolve) => (releaseApply = resolve)),
+    } as unknown as HostEditor;
+    await previewThrough(holdingHost, executed);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() =>
+      expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Applying this definition"),
+    );
+  }
+
+  async function release(outcome: ObjectEditOutcome): Promise<void> {
+    await act(async () => {
+      releaseApply?.(outcome);
+      await Promise.resolve();
+    });
+  }
+
+  /**
+   * The tab strip read from the DOM, which is the only way to read it while the dialog is open.
+   *
+   * `getAllByRole` applies the accessibility filter and Radix aria-hides everything outside the
+   * modal, so `tabNames()` answers nothing here. That is the entry's first measurement in one
+   * line: the strip is aria-hidden and covered, and it is still in the tree and still listening.
+   */
+  function tabNamesInDom(): string[] {
+    return [...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent ?? "");
+  }
+
+  /**
+   * A tree row read from the DOM and activated there, which is the only way the object tree is
+   * reachable while the dialog is open: Radix aria-hides everything outside the modal, so
+   * `getByRole("treeitem")` answers nothing and the row is still mounted and still listening.
+   * The same reading `tabNamesInDom` takes of the tab strip, for the same reason.
+   */
+  function clickRowInDom(label: string): void {
+    const node = [...document.querySelectorAll('[role="treeitem"]')].find((item) =>
+      (item.textContent ?? "").includes(label),
+    );
+    if (node === undefined) throw new Error(`No tree row matching ${label}`);
+    act(() => {
+      (node as HTMLElement).click();
+    });
+  }
+
+  /**
+   * One row-menu item, opened and pressed through the DOM, for the reason `clickRowInDom` gives.
+   *
+   * The menu is hand-rolled rather than Radix (`src/components/object-tree/RowMenu.tsx`), so the
+   * trigger is an ordinary `onClick` button and both presses land the same way a row activation
+   * does: through React's delegated listener, under an overlay that `pointer-events` alone would
+   * otherwise be credited with closing.
+   *
+   * NOT WHILE THE DIALOG IS OPEN AND NOT APPLYING, which is why each control below dismisses the
+   * dialog first. MEASURED: with the conflict on screen, this function finds no `role="menuitem"`
+   * at all, in a fresh mount as well as a reused one. `RowMenu` closes on BLUR, and the Radix
+   * dialog's focus trap pulls focus back inside itself the moment the menu mounts and focuses its
+   * first item, so the menu closes in the same flush it opened in. The refused press is the one
+   * that works, because the applying dialog holds focus on its own control and does not chase it.
+   */
+  function clickRowMenuItemInDom(rowLabel: string, item: string): void {
+    const rowNode = [...document.querySelectorAll('[role="treeitem"]')].find((node) =>
+      (node.textContent ?? "").includes(rowLabel),
+    );
+    if (rowNode === undefined) throw new Error(`No tree row matching ${rowLabel}`);
+    const trigger = rowNode.querySelector('[data-testid="tree-row-menu-trigger"]');
+    if (trigger === null) throw new Error(`The row ${rowLabel} offers no menu`);
+    act(() => {
+      (trigger as HTMLElement).click();
+    });
+    const menuItem = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (node) => (node.textContent ?? "") === item,
+    );
+    if (menuItem === undefined) throw new Error(`No menu item ${item} on ${rowLabel}`);
+    act(() => {
+      (menuItem as HTMLElement).click();
+    });
+  }
+
+  /** The shortcut as a reader presses it, from the control the dialog has focus in. */
+  function pressNewTab(target: HTMLElement): void {
+    act(() => {
+      fireEvent.keyDown(target, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+    });
+  }
+
+  test("the shortcut is refused, said out loud, and the host's answer still reaches the reader", async () => {
+    await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+
+    // No tab was opened, so nothing moved the active tab off the Source tab that is applying.
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    // And the keystroke is ANSWERED rather than swallowed.
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+    /*
+     * ANSWERED TO A SCREEN READER TOO, asserted through the accessibility tree and not through
+     * `getByTestId`, which is blind to it. Radix aria-hides everything outside the modal, so an
+     * `output` this shell renders inside its own box is present, visible and role-carrying while
+     * assistive technology is never told about it: MEASURED before the portal, `queryAllByRole
+     * ("status")` answered `["object-source-apply-applying"]` and the refusal was not in it.
+     */
+    expect(screen.queryAllByRole("status").map((node) => node.getAttribute("data-testid"))).toContain(
+      "workspace-apply-refusal",
+    );
+
+    await release(CONFLICT);
+
+    // The half the reader lost before: the conflict lands on a dialog that is still mounted.
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    expect(screen.getByTestId("mock-monaco-diff-editor").getAttribute("data-original")).toContain(
+      "somebody else got there first",
+    );
+  });
+
+  test("activating an object-tree row is refused too, on the same rule and with the same words", async () => {
+    /*
+     * THE SECOND DOOR. `onTableClick` calls `tabMgr.handleTableClick`, which opens a new tab and
+     * ends with `setActiveTabId(newId)`; this shell renders the Source pane only for an ACTIVE
+     * Source tab, so an unguarded activation unmounts the pane and takes the dialog down with the
+     * host's statement already sent, which is exactly what the new-tab shortcut was guarded for.
+     *
+     * It is not reachable by a reader TODAY: this shell renders no command palette, and the Radix
+     * modal covers and aria-hides the tree. That is the argument and not the guard. An unmeasured
+     * "nothing else can reach this" is the class D82 was filed over, the covering overlay is one
+     * `className` on the host's side away from being the wrong answer, and the standalone shell
+     * guards its equivalent door. So the row is driven through the DOM here, which is the one path
+     * that still reaches the handler under the overlay.
+     */
+    const executed: string[] = [];
+    await confirmAndHold(executed);
+
+    clickRowInDom("orders");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    // The generated statement did not go out either: the refusal is before the execution.
+    expect(executed).toEqual([]);
+    // One rule, one surface: the same live region the shortcut raises, not a second wording.
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
+  test("the same row opens its tab once the apply has answered, which is the guard's control", async () => {
+    // Without this the refusal above could be "a DOM click on a covered row never worked", which
+    // would pass over a shell that guards nothing.
+    const executed: string[] = [];
+    await confirmAndHold(executed);
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    clickRowInDom("orders");
+
+    await waitFor(() => expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
+    await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders LIMIT 50;"]));
+  });
+
+  test("a SECOND routine's row opens no Source tab while the apply is in flight", async () => {
+    /*
+     * THE THIRD DOOR, and the sharpest of the three: `onObjectClick`'s non-relation branch calls
+     * `tabMgr.openSourceTab`, which for an object with no tab open yet mints one and activates it,
+     * and for one already open FOCUSES it. Either way this shell renders the Source pane only for
+     * the ACTIVE Source tab, so the pane re-addresses or unmounts with the host's statement
+     * already sent. The relation branch beside it was guarded first and this one was not, which is
+     * the drift a single funnel is supposed to prevent.
+     */
+    await confirmAndHold();
+
+    clickRowInDom("tax_rate");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    // The control, in the same test: the identical gesture opens the tab once the apply answers,
+    // so the refusal above cannot be "a DOM click on a covered row never worked".
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    clickRowInDom("tax_rate");
+    await waitFor(() =>
+      expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: app.tax_rate(integer)"]),
+    );
+  });
+
+  test("the row menu's Generate Query is refused too, on the same rule and with the same words", async () => {
+    /*
+     * THE FOURTH DOOR. `objectActions.onGenerateSelect` is a row action on the SAME tree the
+     * activation above drives, and `tabMgr.handleGenerateSelect` ends with `setActiveTabId(newId)`
+     * on a freshly minted `Query: <object>` tab. The row menu is reachable by exactly the DOM path
+     * the activation is, so guarding the activation and not the menu item beside it would close a
+     * door and leave its handle.
+     */
+    const executed: string[] = [];
+    await confirmAndHold(executed);
+
+    clickRowMenuItemInDom("orders", "Generate Query");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    // The generated statement never went out either: the refusal is before the tab and the run.
+    expect(executed).toEqual([]);
+
+    /*
+     * THE CONTROL, in the same mount and after a real refusal, which is what rules out "a DOM
+     * click on a covered menu never worked". The dialog is dismissed first for the reason
+     * `clickRowMenuItemInDom` records, so the control measures the guard and not the focus trap.
+     */
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    await click("object-source-apply-cancel");
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    clickRowMenuItemInDom("orders", "Generate Query");
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query: orders"]));
+  });
+
+  test("the row menu's View Source is refused too, on the same rule and with the same words", async () => {
+    /*
+     * THE FIFTH DOOR, and it reaches the same `openSourceTab` the activation above does, from the
+     * menu instead of from the row. Driven on a DIFFERENT routine on purpose: View Source on the
+     * object already open would only focus the tab that is already active, which moves nothing and
+     * would pass over an unguarded shell.
+     */
+    await confirmAndHold();
+
+    clickRowMenuItemInDom("tax_rate", "View Source");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    // THE CONTROL, in the same mount and after a real refusal; the dialog is dismissed first for
+    // the reason `clickRowMenuItemInDom` records.
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    await click("object-source-apply-cancel");
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    clickRowMenuItemInDom("tax_rate", "View Source");
+
+    await waitFor(() =>
+      expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: app.tax_rate(integer)"]),
+    );
+  });
+
+  test("the refusal retires the moment the apply answers, rather than sitting on screen for ever", async () => {
+    /*
+     * The one thing that pins `if (!inFlight) setRefusedWhileApplying(false)` in the mirror.
+     * MEASURED before this test existed: deleting that line left the whole file at 51 pass, 0
+     * fail, because the two tests whose comments spoke about the retirement never RAISED the
+     * refusal, so their `queryByTestId(...).toBeNull()` was a negative with nothing that had to
+     * match. This one raises it first, which is what makes the absence afterwards mean something.
+     */
+    await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+    expect(screen.getByTestId("workspace-apply-refusal")).toBeTruthy();
+
+    await release(CONFLICT);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    // The advice is about a dialog that is still waiting, so it goes when the waiting does.
+    expect(screen.queryByTestId("workspace-apply-refusal")).toBeNull();
+  });
+
+  test("the shortcut opens a tab again once the answer is on screen", async () => {
+    /*
+     * A CONTROL, and labelled one rather than counted as a guard: it passes against the pre-fix
+     * shell too, where nothing refuses anything. MEASURED by replaying THIS file's current tests
+     * against `7fe83dcc^` source with this describe filtered: 3 fail, 1 pass, and the pass is this
+     * test. The three failures are the other three tests here, every one of them a guard. Without
+     * this one the refusal could be "the shortcut never works over a Source tab", which would close
+     * D82 by breaking #745 instead of by guarding it, and that is the regression it would catch.
+     */
+    await confirmAndHold();
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+
+  test("the refusal does not outlive the pane that raised it", async () => {
+    /*
+     * The other arm of the same retirement: the pane's effect cleanup reports `false` on unmount,
+     * and the mirror has to drop the latch there too. Otherwise the shortcut would be dead for the
+     * rest of the session, which is a worse defect than the one D82 reports.
+     *
+     * The refusal is RAISED first, deliberately. Without that press this test walks a flow that
+     * has no latch in it, and it then proves nothing about releasing one: measured, it passed
+     * unchanged with the release deleted.
+     *
+     * The tab click is a DIRECT DOM click, which is how the strip is reachable under an
+     * aria-hidden modal at all. It is not a gesture a reader can make; it is the one path that can
+     * still unmount the pane mid apply.
+     */
+    await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+    expect(screen.getByTestId("workspace-apply-refusal")).toBeTruthy();
+
+    act(() => {
+      (document.querySelectorAll('[role="tab"]')[0] as HTMLElement).click();
+    });
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    // The pane is gone, so the sentence pointing at its dialog has to be gone with it.
+    expect(screen.queryByTestId("workspace-apply-refusal")).toBeNull();
+
+    pressNewTab(document.body);
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+});
+
+/**
+ * D79: the host tells the workspace the catalog moved, and the workspace believes it.
+ *
+ * `objectRefreshToken` counted exactly one thing before this: an object apply this shell issued.
+ * Every other statement leaves through `onQueryExecute`, which answers a result set and never says
+ * what the statement changed, so a `CREATE OR REPLACE` a person ran in the query editor left every
+ * open Source tab showing the pre-apply text with no stale banner. MEASURED on the standalone
+ * shell during Phase 3, where the absence was found first: a new body applied to
+ * `p3probe.order_total` through `POST /api/db/query` while its Source tab was open left the tab
+ * unchanged and unmarked.
+ *
+ * The published surface is a HANDLE and not a field on the `onQueryExecute` answer; the docblock on
+ * `StudioWorkspaceHandle` in `src/workspace/types.ts` carries the reasoning.
+ */
+describe("a host can tell the embedded workspace that the catalog moved", () => {
+  /** A reader that counts its reads, so "the announcement re-read nothing" is an assertion. */
+  function countingReader(reads: { count: number }): WorkspaceObjectReader {
+    return {
+      ...treeReader(),
+      readObjectSource: async () => {
+        reads.count += 1;
+        return EDITABLE_DOCUMENT;
+      },
+    } as unknown as WorkspaceObjectReader;
+  }
+
+  test("the announcement marks an open Source tab stale, and the counter it moves is the shell's own", async () => {
+    const reads = { count: 0 };
+    const handle: { current: StudioWorkspaceHandle | null } = { current: null };
+    render(workspace({ reader: countingReader(reads), handleRef: handle }));
+    await openSourceTab();
+
+    // The control: the tab was read at token zero and nothing has moved, so it is not stale.
+    expect(refreshTokenPassedToTheViewer()).toBe(0);
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
+
+    act(() => {
+      handle.current?.catalogChanged();
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
+    expect(refreshTokenPassedToTheViewer()).toBe(1);
+  });
+
+  test("the announcement marks the tab and re-reads nothing, because it does not say WHAT changed", async () => {
+    /*
+     * The boundary of the surface, driven rather than argued. `handleApplied` clears the tab that
+     * applied because this shell knows exactly which object it just changed. A host announcement
+     * carries no address, so clearing would throw away a definition on the strength of "something,
+     * somewhere, moved" and would send the pane at a read for an object that may be untouched. The
+     * banner and its own re-read control are what a reader gets instead.
+     */
+    const reads = { count: 0 };
+    const handle: { current: StudioWorkspaceHandle | null } = { current: null };
+    render(workspace({ reader: countingReader(reads), handleRef: handle }));
+    await openSourceTab();
+    expect(reads.count).toBe(1);
+
+    act(() => {
+      handle.current?.catalogChanged();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-stale")).toBeTruthy());
+
+    expect(reads.count).toBe(1);
+    expect(shownText()).toBe(DEFINITION);
+    // And the control the banner offers does read again, so the reader is not stuck with the mark.
+    await click("object-source-stale-reread");
+    await waitFor(() => expect(reads.count).toBe(2));
+  });
+
+  test("the host's announcement and this workspace's own apply move the SAME counter", async () => {
+    /*
+     * One counter and not two, which is what makes the banner's meaning single: "the catalog moved
+     * since this tab was read". A second counter would need the pane to take a second token and
+     * would let the two disagree about which read is current.
+     */
+    const handle: { current: StudioWorkspaceHandle | null } = { current: null };
+    render(
+      workspace({
+        reader: editingReader({ build: async () => BUILT, apply: async () => APPLIED } as unknown as HostEditor),
+        handleRef: handle,
+      }),
+    );
+    await openSourceTab();
+
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() => expect(refreshTokenPassedToTheViewer()).toBe(1));
+
+    act(() => {
+      handle.current?.catalogChanged();
+    });
+
+    await waitFor(() => expect(refreshTokenPassedToTheViewer()).toBe(2));
+  });
+
+  test("a host that passes no ref is unchanged, which is what makes the surface additive", async () => {
+    /*
+     * Every other test in this file mounts without a ref and this one says so on purpose: the
+     * handle is opt-in, and `useImperativeHandle` with no ref is a no-op rather than a throw.
+     */
+    const reads = { count: 0 };
+    render(workspace({ reader: countingReader(reads) }));
+    await openSourceTab();
+
+    expect(refreshTokenPassedToTheViewer()).toBe(0);
     expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
 });

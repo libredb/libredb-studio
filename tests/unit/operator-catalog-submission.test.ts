@@ -16,7 +16,7 @@
  * FBC side. A skipRange satisfies neither.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -491,8 +491,11 @@ describe("CLI", () => {
     return `http://127.0.0.1:${server.port}`;
   }
 
-  async function run(args: string[]) {
-    const proc = Bun.spawn(["node", join(import.meta.dir, "../../scripts/operator-catalog-submission.mjs"), ...args], {
+  /** The one path the harness spawns, so the copy below cannot drift from it. */
+  const CLI = join(import.meta.dir, "../../scripts/operator-catalog-submission.mjs");
+
+  async function runScript(script: string, args: string[]) {
+    const proc = Bun.spawn(["node", script, ...args], {
       env: { ...process.env, GITHUB_TOKEN: "" },
       stdout: "pipe",
       stderr: "pipe",
@@ -504,6 +507,40 @@ describe("CLI", () => {
     ]);
     return { stdout, stderr, exitCode };
   }
+
+  const run = (args: string[]) => runScript(CLI, args);
+
+  /**
+   * The entry-point guard is the CLI's on/off switch, and it fails silently:
+   * when it reads "imported", node loads the module, runs nothing, exits 0 and
+   * prints not a line, so the workflow step that asked for a decision gets a
+   * green run and an empty GITHUB_OUTPUT. It compared `import.meta.url` against
+   * `file://${process.argv[1]}` - a URL against a path - which holds only while
+   * the path needs no encoding and already uses forward slashes.
+   *
+   * Measured on windows-latest: every CLI case in this file got exit 0 and an
+   * empty stdout, because argv[1] arrives as
+   * `D:\a\libredb-studio\libredb-studio\scripts\operator-catalog-submission.mjs`
+   * while the URL holds `file:///D:/a/...`. The same defect is reachable from a
+   * POSIX machine, which is what this drives: a directory name with a space is
+   * percent-encoded in the URL and not in argv[1].
+   */
+  test("runs when its own path needs URL encoding, where comparing a URL to a path stops", async () => {
+    // realpath'd because tmpdir() is /var/folders/... on macOS and /var is a
+    // symlink to /private/var: an unresolved path would make this fail for a
+    // second reason that is not under test (measured in
+    // tests/unit/docker-bind-address.test.ts, same guard, same trap).
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "operator cli-")));
+    roots.push(root);
+    const copy = join(root, "operator-catalog-submission.mjs");
+    // A copy rather than a link: the script imports node builtins only, so it
+    // runs from anywhere, and a link would resolve back to the unencoded path.
+    copyFileSync(CLI, copy);
+
+    const result = await runScript(copy, ["publish"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/unknown command/);
+  });
 
   test("prints the outputs a workflow step reads when a submission is due", async () => {
     const result = await run([

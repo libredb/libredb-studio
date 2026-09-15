@@ -213,7 +213,7 @@ export interface ConnectionReadResult {
 /**
  * Every read goes through this. An unreadable field is OMITTED and the record kept:
  *
- * - Throwing would empty all ten collections for a rotated key, taking the user's query history,
+ * - Throwing would empty all twelve collections for a rotated key, taking the user's query history,
  *   saved queries, charts and snapshots down with the passwords.
  * - Dropping the record would be worse. useStorageSync is a write-through cache, so a connection
  *   missing from a read is persisted as a deletion on the next push - destroying ciphertext that a

@@ -24,7 +24,11 @@ import * as path from "node:path";
  * instead of a browser.
  */
 
-const SOURCE = fs.readFileSync(path.join(process.cwd(), "src/lib/agent/plan-draft.ts"), "utf8");
+// Anchored to this file, not to process.cwd(): this read happens at module scope, so a runner
+// that launched the file from anywhere but the repository root would kill it before a test ran.
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+
+const SOURCE = fs.readFileSync(path.join(ROOT, "src/lib/agent/plan-draft.ts"), "utf8");
 
 /** Every module specifier the file imports, type-only imports included. */
 const specifiers = (source: string): readonly string[] =>
@@ -91,7 +95,7 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       than a browser.
     */
     const read = (specifier: string) =>
-      fs.readFileSync(path.join(process.cwd(), "src/lib/sql", `${specifier.replace("./", "")}.ts`), "utf8");
+      fs.readFileSync(path.join(ROOT, "src/lib/sql", `${specifier.replace("./", "")}.ts`), "utf8");
 
     const closure = new Set<string>();
     const pending = ["./statement-splitter"];
@@ -127,7 +131,7 @@ describe("the plan-draft reader stays reachable from a browser", () => {
   test("the validation half still holds the guard, so the split moved the reader and not the rule", () => {
     // The other direction of the same boundary: had the guard simply been dropped, this
     // test file would pass while the drafted statement stopped being classified at all.
-    const validation = fs.readFileSync(path.join(process.cwd(), "src/lib/agent/plan-statement.ts"), "utf8");
+    const validation = fs.readFileSync(path.join(ROOT, "src/lib/agent/plan-statement.ts"), "utf8");
 
     expect(validation).toContain("@/lib/db/operations/statement-guard");
   });

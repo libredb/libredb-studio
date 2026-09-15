@@ -690,6 +690,12 @@ Measured with the `src_probe` role that `docker/postgres-init/03-object-fixture.
 The CONTROL is in the same session: that same role creating a function OF ITS OWN in that same schema succeeds, so the refusal is about ownership and no grant can make the apply work.
 The engine's own sentence is `must be owner of function order_total`, SQLSTATE `42501`, and the shipped error mapper turns it into HTTP 500 because the message matches none of its substrings, which is why this answer is given before a statement is sent.
 
+**A kind that declares an edit with no routine statement is refused on the READ too.**
+The affordance is a routine fact: it reads `may_replace` and `owner`, which only the routine statement selects.
+So the source read raises the build's own sentence, `declares an editable kind "<kind>" but has no statement that reads it`, through the build's own address helper, rather than drawing `offered: false` with "owned by another role" over a declaration drift.
+No shipped declaration reaches it: only `function` and `procedure` declare `acceptsSourceEdits` and both have a routine statement.
+The refusal is raised before the round trip, so it costs no query.
+
 **The five build refusals, in the order they are answered.**
 
 | Class | When | The sentence, or its shape |
@@ -704,6 +710,9 @@ The identity comparison is everything up to and including the parenthesis that C
 It read the FIRST `)` until #789 task 31, and that ended the header early for every routine whose header carries a parenthesis before the parameter list closes, after which a change to a LATER parameter was never compared at all.
 SEVEN such shapes were measured on 18.4 by creating the object and reading `pg_get_functiondef` back, re-measured on 2026-09-15 on a `postgres:18` container answering `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)` where every one of those renderings and their `md5(pg_get_functiondef(oid))` came back byte for byte, and all of them are ordinary PostgreSQL: a parameter `DEFAULT` holding a call, rendered `DEFAULT abs('-1'::integer)`; a `DEFAULT` holding a `)` and a `DEFAULT` holding a `(` inside a string literal; a quoted function NAME as in `app."we)ird"(a integer, b integer)`; a quoted PARAMETER name as in `app.pn("a)b" integer, c integer)`; and the two mixed-quote shapes `app.mix("a')b" integer, c integer)` and `app.mix2(a text DEFAULT '")'::text, b integer DEFAULT 1)`, which are why the scan tracks both quote kinds and has each ignore the other.
 That numeral is the only count of this population in this document and it is not maintained by hand: `PAREN_HEADER_FIXTURES` in `tests/integration/db/postgres-provider.test.ts` is the population, and a test in that file reads the sentence above out of this file and asserts the word against the array's length, so adding an eighth shape without correcting this paragraph is a RED and not a silent drift.
+One of those shapes is now BUILT by this repository rather than transcribed from a run (D77): `docker/postgres-init/03-object-fixture.sql` creates `app.dl(a text DEFAULT ')', b integer DEFAULT 1)`, and a test in the same file reads that `CREATE` out of the SQL and matches it against these constants, so the object cannot be deleted from the fixture without going red.
+Before it existed, every routine in that fixture had a header whose first `)` was also its last, so the whole scan was a guard over an empty LIVE population and only a driver double could reach the outcome it prevents.
+MEASURED against the rebuilt container on 2026-09-15, driving this provider: `md5(pg_get_functiondef(oid))` answered `0c7937f7060d7bc0c2a583af49227203`, which is the constant the suite carries; the same edit that changes the LATER parameter to `bigint` was refused `identity` with both whole headers in the sentence; and a plan built elsewhere and carrying that fork applied, raised `LB003` from the emitted unit's own post-condition, answered `applied-elsewhere` with `undone: true`, and left ONE `pg_proc` row with `oid` 16782 and `xmin` 837 unmoved, against the control of the same plan without the fork, which answered `applied`.
 A second test in that file refuses any numeral written directly in front of the word `shapes` in this document or in its own, which is the drift the paragraph below carried until 2026-09-15: it stated the count a second time in prose with nothing bound to it, so an eighth shape would have been caught here and left that sentence wrong.
 The shape a reader expects to be the dangerous one is NOT in that population and cannot be: `pg_get_functiondef` renders parameter types through `format_type(t, NULL)` and DROPS the type modifier, so a function declared `(a numeric(10,2), b varchar(9), c char(5), d time(3), e timestamp(3), f decimal(8,4), g interval hour to second(2), h bit(4))` is rendered `(a numeric, b character varying, c character, d time without time zone, e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
 A typmod therefore only ever reaches this comparison from the text the READER submitted.
@@ -828,6 +837,12 @@ Two more measured consequences of that path: the revision handed back was whiche
 With the guard, the same sequence answers `refused` with class `guard`, `xmin` does not move and `SHOW search_path` reads `"$user", public`; the control, the identical apply on an idle client, still answers `applied` and its write survives the later rollback.
 Neither a rollback nor a retry: rolling the foreign transaction back destroys work this user was never shown, and `POSTGRES_POOL_MAX=1`, which a single-slot PgBouncer also produces, has no other client to retry on.
 
+**The apply re-resolves the editable kind before it sends anything.**
+`applyObjectEdit` calls `requireEditableKind` on the plan's kind against this connection's own capabilities and discards the return, exactly as Redis does, because the apply sends the plan's bytes verbatim and needs nothing off the spec.
+Neither shipped path can reach the refusal: `POST /api/db/objects/edit-apply` asks the same question on the connected provider, and the plan's statement was minted by a `buildObjectEdit` that asked it too.
+The population it closes is a `@libredb/studio` library consumer calling `applyObjectEdit` directly.
+Without it a plan carrying a kind this provider does not declare editable reached the round trip and was refused only afterwards, by the re-read's address derivation, with the wrong sentence and the DDL already sent.
+
 **A position is converted into the reader's own coordinates.**
 PostgreSQL's `position` is a 1-based CHARACTER offset into the text that was SENT, and it arrives from `pg` as a string although `QueryError.position` is typed `number`.
 The plan carries a segment map, so an offset inside the provider's guard block is reported as `outside` rather than as a number, and an offset in the reader's text is converted to the line and column of THEIR text.
@@ -836,6 +851,61 @@ An uncorrected coordinate would not be caught anywhere downstream: Monaco silent
 
 **The doubled semicolon.**
 `SELECT 1;;SELECT 2;` in one parameterless query is ACCEPTED and answers both rows, so the terminator after the reader's text is appended unconditionally rather than conditionally on their last character.
+
+**THE READER'S TEXT MUST BE ONE STATEMENT, AND POSTGRESQL IS WHAT COUNTS IT (D76).**
+The emitted unit is one parameterless simple query and PostgreSQL runs every statement in one of those, so a text carrying a second statement after its terminator used to run that statement too.
+The build now refuses such a text, and it does so WITHOUT a splitter of ours: a dollar-quoted body may carry any number of semicolons and a `BEGIN ATOMIC` body carries them by construction, and no reader in `src/lib/sql/` can tell a separator from a character of a definition.
+The question goes to the engine instead.
+The build opens a transaction on a pooled client, poisons it with `SELECT 1/0`, parses the reader's text alone as a NAMED prepared statement, and rolls the transaction back.
+For every text that reaches this check the server performs no parse analysis, no planning and no execution, and its multi-command check still runs because it precedes the aborted-block check in `exec_parse_message`, on the raw grammar parse.
+The probe therefore understands dollar quoting, `BEGIN ATOMIC`, comments and string literals exactly the way the engine does, because it IS the engine.
+
+The aborted block is NOT a universal brake, and the clause above is bounded by the population it was measured over rather than by caution.
+Measured on 18.4 on 2026-09-15, one `BEGIN` plus `SELECT 1/0` plus a named Parse per row, with `pg_prepared_statements` counted after the `ROLLBACK`: `COMMIT`, `ROLLBACK`, `END` and `ABORT` answer no error at all, run, END the block this check opened, and leave one prepared statement behind, because `exec_parse_message` exempts a transaction-exit statement from the aborted-block check.
+An empty, whitespace-only or comment-only text answers `25P02` from Bind rather than from Parse, because the server takes its empty-parse-list branch, so the named statement IS created and survives the `ROLLBACK` on a client that then goes back to the pool.
+Neither class can reach this check, and what keeps them away is the ORDER of the build's refusals rather than the block: `routineIdentityHeader` answers the WHOLE text when it finds no closing parenthesis, so both render a header that is not the addressed routine's and are refused two refusals earlier with no round trip at all.
+So the order is load-bearing and not only the saved round trip the code comment used to give as its whole reason, and the provider's own suite asserts it.
+
+Three things are load-bearing and each one alone would turn the check into an execution: the poison, the NAME on the prepared statement, since `query({ text, values: [] })` with no name takes node-postgres's simple-query path and measured running a rider, and the rollback.
+The probe reads the borrowed client's ReadyForQuery byte first and refuses `guard` when it is anything but `I`, because opening and rolling back a transaction on a client somebody else left inside one destroys work this user was never shown.
+It asks about the SUBMITTED text alone and never about the assembled unit, which is multi-statement by construction.
+It runs at build time only, and the reason is what the apply HOLDS rather than an empty population.
+The plan is sealed and `applyObjectEdit` never sees the reader's text again: what it holds is the assembled unit, which is multi-statement by construction, so this check cannot be run on it at all without refusing every legitimate apply.
+The population that survives is real and it is the same one the entry guard above names, a `@libredb/studio` consumer that builds its own plan: `applyObjectEdit` sends `plan.unit.steps[0].text` verbatim, so a consumer-built plan carrying a rider still RUNS.
+What answers it is the result count below, which REPORTS such a round trip and does not prevent it.
+
+| What the Parse answered | What the build does |
+| --- | --- |
+| `25P02`, the aborted block | the text is one statement, or none, and the build proceeds |
+| `42601` whose message contains `multiple commands` | refused `definition`, naming the addressed routine and pointing the reader at the SQL editor |
+| `42601` with any other message | refused `definition` with the engine's own sentence, its SQLSTATE, and the position converted into the reader's own line and column |
+| anything else, including no error at all | refused `unsupported`, because the count was never established and reading silence as "one statement" is what lets a rider through |
+
+Measured on 18.4 in a container built from this repository's `docker/postgres-init/` on 2026-09-15, with a `pg_proc` count for the probe's own objects answering 0 after every row, so nothing executed in any of them.
+`pg_get_functiondef` output verbatim, the same with a trailing newline or a trailing line comment or a trailing block comment, the same with its trailing `;` removed, a `BEGIN ATOMIC` body of two `SELECT`s, a procedure, and a whitespace-only or comment-only text all answer `25P02`.
+The D76 reproduction, the same rider with no final semicolon, a comment between the `;` and the rider, `; SELECT 1;` and `; COMMIT;` riders, and the rider placed FIRST all answer `42601 cannot insert multiple commands into a prepared statement`.
+`CREATE OR REPLACE FUNCTIN app.x()` answers `42601 syntax error at or near "FUNCTIN"`.
+
+Driven end to end through this provider against the same server on 2026-09-15, which is the control the table needs.
+The D76 reproduction is refused `definition` at build and `count(*)` for the victim routine reads 1 before and 1 after, where the shipped code took it to 0.
+The legitimate edit of `app.order_total(integer)`, whose body carries a semicolon inside `$function$`, builds and applies `applied`.
+A `BEGIN ATOMIC` function whose body is `SELECT 1; SELECT a;` builds and applies `applied`, which is the case a splitter would refuse.
+`RETURNZ numeric` in place of `RETURNS numeric` is refused at build with `syntax error at or near "RETURNZ"`, `42601`, at line 2 column 2 of the reader's own text, which the apply used to be the first thing to report.
+
+**THE APPLY COUNTS WHAT THE ROUND TRIP CARRIED (D76).**
+A simple query answers one result per statement with the engine's own command tag, so the reply already says how many statements ran and no parser is needed to read it.
+Measured on 18.4 through `pg`: the emitted unit answers four results, `[SET, DO, CREATE, DO]`, and the same unit with a rider spliced into the reader's segment answers five, `[SET, DO, CREATE, DROP, DO]`.
+Four held for a reader's text ending in `;`, in a `--` line comment, in a newline and in `$$`, so the doubled semicolon above costs no result of its own.
+An apply that answers anything but four is NOT reported `applied`: it answers `interrupted` with `committed: "unknown"` and a sentence carrying both numbers, because statements ran, this provider cannot say which, and a retry would apply it again.
+That is what makes the `object_edit` audit event's claim as wide as the round trip rather than as wide as the plan.
+Its population is not the rider a reader types, which the build now refuses.
+It is three other things: this provider's own composition, anything between it and the server that rewrites a round trip, and the consumer-built plan the entry guard above names, since `applyObjectEdit` sends `plan.unit.steps[0].text` verbatim and a `@libredb/studio` consumer can put a rider there.
+
+The arm it reports on is `interrupted` with `committed: "unknown"`, and that is a DEVIATION from what `src/lib/db/types.ts` documents that arm as, recorded here rather than left for a reader to hit.
+That arm is written for "the statement was SENT and the engine's answer never arrived", and for a count mismatch the answer DID arrive and the engine DID speak.
+It is used anyway because it is the only arm in the union whose disposition is right: statements ran, this provider cannot say which, the write is not established, and a retry would apply twice.
+`ApplyPreviewDialog` says the same thing on its own second line, "Whether it was applied is unknown: LibreDB has no answer that says whether it landed", which is true of this member; its FIRST line still reads "Whether it reached the server is unknown", which is not.
+Closing that means either a seventh outcome arm or a narrowed sentence in `src/lib/db/types.ts` and in the dialog, and both of those files sit outside this provider, so the residual is filed as D89 in `docs/BACKLOG.md` with the cost of each way out.
 
 **The limit every claim on this page carries (D62).**
 Every PostgreSQL row above is a claim about 18.4.
@@ -880,16 +950,25 @@ The same edit is now refused at build time as `identity`, with both whole header
 Whether ANY text that passes the identity comparison can still fork the routine was not measured, so the post-condition stays as the second line and `applied-elsewhere` stays in this provider's outcome set: a guard is not removed because nobody could name a case for it.
 What is measured is that the byte-identical re-render, which used to trip this post-condition and is recorded above, no longer does, because the guard compares `xmin` and not the rendering.
 
-**A SUCCESSFUL APPLY CAN DESTROY AN OBJECT THE PLAN NEVER NAMED, and that is open (`docs/BACKLOG.md` D76).**
-The reader's text is spliced into the emitted unit as a whole segment of one parameterless simple query, and PostgreSQL runs every statement in such a query, so a text that carries a second statement after its terminator runs that statement too.
-Nothing above the wire is a single-statement check: the build's identity comparison reads the rendered HEADER, and the post-condition asks whether the addressed row was rewritten, which a `CREATE OR REPLACE` followed by a rider answers yes to.
+**A SUCCESSFUL APPLY COULD DESTROY AN OBJECT THE PLAN NEVER NAMED, and the build now refuses that text (D76).**
+This is what the acceptance run measured against the code as it shipped, and the repair is the single-statement check in 3.1.6 above.
+The reader's text is spliced into the emitted unit as a whole segment of one parameterless simple query, and PostgreSQL runs every statement in such a query, so a text that carried a second statement after its terminator ran that statement too.
+Nothing above the wire looked at the statement count: the build's identity comparison reads the rendered HEADER, and the post-condition asks whether the addressed row was rewritten, which a `CREATE OR REPLACE` followed by a rider answers yes to.
 MEASURED end to end through the two routes on the same 18.4 image: `app.order_total(integer)`'s own definition followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with `consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and `count(*)` for `app.r19f1_victim` went 1 to 0.
-The bytes ARE in the sealed preview, so the seal holds and the user was shown them: in the shipped re-run the step measured 2,473 characters, the reader's own 268-character segment ran from 1,506 to 1,774, and the rider sat at offset 1,741, between a 1,506-character provider prefix and a 699-character provider suffix.
+The bytes ARE in the sealed preview, so the seal held and the user was shown them: in that re-run the step measured 2,473 characters, the reader's own 268-character segment ran from 1,506 to 1,774, and the rider sat at offset 1,741, between a 1,506-character provider prefix and a 699-character provider suffix.
 Those three offsets move with the reader's own text and the prefix's random dollar-quote tags; the prefix and suffix lengths are what the reader has to scroll past either way.
-What is missing is everything above the bytes.
-The plan's consequence model reported nothing lost, no acknowledgement was asked for, and the two `object_edit` audit events name `target: "function:app/order_total(integer):definition"` and carry the string `r19f1_victim` nowhere at all.
-So a definition pasted out of a migration script that carries a trailing statement is applied, reported `applied`, and the routine it dropped is named in no answer, no consequence and no audit row.
-This is ruling 1b clause (ii), a SUCCESS destroying something the user was not SHOWN in any surface that speaks about consequences, and it is unfixed here: this subsection is a measurement of the shipped code, and the repair belongs in the emitted unit above it.
+What was missing was everything above the bytes.
+The plan's consequence model reported nothing lost, no acknowledgement was asked for, and the two `object_edit` audit events named `target: "function:app/order_total(integer):definition"` and carried the string `r19f1_victim` nowhere at all.
+
+WHAT CHANGED, measured on the same engine on 2026-09-15 through this provider.
+The same rider text is now refused at build with class `definition` and SQLSTATE `42601`, no plan is minted, nothing is sent, and the victim routine's `count(*)` reads 1 before the build and 1 after it.
+The control in the same run, the legitimate edit whose body carries a semicolon inside `$function$`, still builds and still applies `applied`, and so does a `BEGIN ATOMIC` routine whose body is two semicolon-separated `SELECT`s.
+The apply additionally asserts that the round trip answered exactly the four results the emitted unit is made of, so an apply that carried more or fewer statements is reported `interrupted` with `committed: "unknown"` rather than `applied`.
+
+WHAT IS STILL NOT GUARDED, stated rather than implied.
+The check is PostgreSQL's own parser reached through the extended query protocol, so it is exactly as good as that server's `exec_parse_message`: this type id also serves CockroachDB and Materialize and neither was probed, and a fork that does not refuse a Parse inside an aborted block is refused `unsupported` rather than trusted.
+The result count says how MANY statements ran, never which, so it detects a round trip that did not match the plan and cannot name what it carried.
+Neither half makes the plan's consequence model wider: a single statement whose own effects reach beyond the addressed routine is still described only by the `consequences: []` the strategy carries.
 
 **A TRUNCATED PART CANNOT BE EDITED, and the two bounds are two different refusals.**
 The read of `app.over_limit_fn(integer)` carries `truncated: { limit: 1000000, ... }` and carries NO `edit` key at all, and 1,000,000 characters of text.
@@ -1445,9 +1524,30 @@ Every later request that drew that client answered HTTP 500 "current transaction
 
 `endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
 It reads the server's own answer rather than inferring one: `pg` records the ReadyForQuery status byte of every statement — `I` idle, `T` in a transaction, `E` in a failed one — and publishes it as `getTransactionStatus()` (pg 8.23).
-It targets the exact client the last `query()` ran on, kept in `lastQueryClient`, because a rollback issued through a fresh `pool.connect()` is not guaranteed to reach the same one and rolling back somebody else's transaction is worse than leaving this one open.
-The interactive session above is never touched: its client is checked out for the session's whole life, so `query()` never borrows it.
-`POST /api/db/multi-query` calls this in a `finally` and reports the outcome.
+It targets the exact clients the CALLER'S OWN scope left a transaction open on, because a rollback issued through a fresh `pool.connect()` is not guaranteed to reach the client the statement ran on, and rolling back somebody else's transaction is worse than leaving this one open.
+A caller passes one `scope` string to every `query()` it makes and the same one to `endOpenQueryTransaction(scope)`; a client is recorded under that scope only when the server's status byte says `T` or `E` at the moment the call releases it, so a statement that left nothing open puts nothing within any ender's reach.
+
+An earlier form targeted one `lastQueryClient` field and said the interactive session above "is never touched", because its client is checked out for the session's whole life.
+Both were false, measured 2026-09-15 on 18.4 (D87).
+`query()` overwrote that one field for every concurrent caller of the per-`connection.id` cached provider, so a plain read's ender rolled a concurrent `/api/db/multi-query` script's transaction back mid-script while the script was told all four of its statements had succeeded, its `COMMIT` included, and its `CREATE TABLE` was gone.
+And `beginTransaction()` calls `pool.connect()` on a LIFO idle list, so it is handed the very object a previous `query()` recorded: the ender rolled the interactive session's committed `CREATE TABLE` away while the status route still read `inTransaction` and `commit` answered "Transaction committed".
+Both controls, run without the ender, kept the table.
+
+`POST /api/db/multi-query` and `POST /api/db/query` each call this in a `finally` under a scope of their own and report the outcome.
+What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
+That is the leak ending it promptly is for, not a second defect.
+
+THE OTHER REQUEST CAN BE THE INTERACTIVE SESSION, and then its `commit` lies, which is sharper than the sentence above and is said here rather than left to be met.
+MEASURED at provider level on 2026-09-15: with `query("BEGIN", scope)` having recorded a client in `T`, `beginTransaction()` was handed that same client off the LIFO idle list, its `CREATE TABLE` was destroyed by the ender, and `commit` still answered "Transaction committed".
+The window is only open when an EARLIER statement left something open, which is what makes it the leak above rather than the aliasing D87 closed: 46 attempts through the shipped routes lost nothing, because each route ends its own scope inside the same request.
+Ten apparent losses in the first run of that probe were `HTTP 429` from the route's own rate limiter and not losses at all, which is recorded because the first reading of it looked like the defect.
+
+**A ROLLBACK THIS PROVIDER COULD NOT ISSUE RAISES, and the raise takes the response with it.**
+Every client the scope recorded is attempted inside its own `try`, so one dead socket cannot strand the clients behind it in the loop, and the held failures are raised together once the loop is done: `Could not roll back the transaction this request left open on N of M pooled clients: ...`, where `M` counts the clients ASKED and not the clients recorded, because a client a later statement of the same scope already returned to `I` was never sent anything.
+Neither arm of the outcome type is true of a client still sitting in `T`: `"none"` denies the transaction and `"rolled-back"` certifies a rollback that did not happen.
+The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because [`errors.ts`](../../src/lib/api/errors.ts) maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
+The cost is two losses and both are deliberate: the throw is inside the route's `finally`, so it replaces the response the request had already produced, a script's per-statement results included, and a `finally` that throws also DISCARDS the exception the body was leaving with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
+A pooled client left `idle in transaction` poisons every later user of that stored connection, which is the failure this whole surface exists for, so it is raised rather than reported quietly.
 
 ---
 
@@ -1831,12 +1931,10 @@ canned result sets keyed by query shape, which exercises the same provider code 
 server.
 
 > **Mock isolation:** `bun`'s `mock.module()` is process-wide, so test files that mock different
-> drivers (here `pg`, elsewhere `ioredis`, etc.) cross-contaminate when they share a process. Running
-> a **single file** is safe (one file = one process). The full `bun run test` script runs the core
-> group (`tests/unit tests/api tests/integration`) in **one process** and is therefore load-order
-> flaky — so **CI does not use it**. The deterministic runner is **`bun run test:ci`** (per-file
-> process isolation via `tests/run-core.sh`); the coverage workflow uses `bun run test:coverage`
-> (also per-file). See [`CLAUDE.md`](../../CLAUDE.md).
+> drivers (here `pg`, elsewhere `ioredis`, etc.) would cross-contaminate if they shared a process.
+> They never do: `bun run test` gives every test file its own bun process, so a single file is safe
+> and so is the whole suite, which is the same command CI runs. `bun run test:coverage` is that
+> runner with coverage on. See [`CLAUDE.md`](../../CLAUDE.md).
 
 ### 13.2 Coverage
 
@@ -1854,8 +1952,8 @@ table/index/storage stats, pool stats, capabilities, and `pg_stat_activity` pass
 
 ```bash
 bun test tests/integration/db/postgres-provider.test.ts   # just this file (single process — safe)
-bun run test:ci                                            # CI publish gate — per-file isolation (tests/run-core.sh)
-bun run test:coverage                                      # CI coverage workflow — per-file core + components
+bun run test                                               # the whole suite, one process per file, what CI runs
+bun run test:coverage                                      # CI coverage workflow: the same runner, with coverage
 ```
 
 ### 13.4 Optional: verifying against a live PostgreSQL

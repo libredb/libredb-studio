@@ -235,22 +235,28 @@ describe("instrumentation register()", () => {
     expect(output).not.toContain("Star the project");
   });
 
-  test("logs a warning and keeps boot alive when seeding fails", async () => {
-    if (process.platform === "win32" || process.getuid?.() === 0) return; // perms not enforceable
-    process.env.NEXT_RUNTIME = "nodejs";
-    process.env.AUTH_BOOTSTRAP = "off";
-    const lockedDir = path.join(tmpDir, "locked");
-    fs.mkdirSync(lockedDir);
-    fs.chmodSync(lockedDir, 0o500);
-    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(lockedDir, "sample.libredb");
-    const warn = spyOn(logger, "warn").mockImplementation(() => {});
-    try {
-      await expect(register()).resolves.toBeUndefined();
-      expect(warn).toHaveBeenCalled();
-      expect(String(warn.mock.calls[0]?.[0])).toContain("seeding skipped");
-    } finally {
-      warn.mockRestore();
-      fs.chmodSync(lockedDir, 0o700);
-    }
-  });
+  // The failure is produced by a directory whose mode forbids writing, which nothing can arrange
+  // on Windows (chmod there only toggles the read-only bit) or as root (mode bits do not apply).
+  // Named in the title rather than returned early from the body: a bare `return` reports a pass on
+  // a machine that never ran the assertion, which is the same output a real pass gives.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "logs a warning and keeps boot alive when seeding fails (POSIX non-root only: needs an unwritable directory)",
+    async () => {
+      process.env.NEXT_RUNTIME = "nodejs";
+      process.env.AUTH_BOOTSTRAP = "off";
+      const lockedDir = path.join(tmpDir, "locked");
+      fs.mkdirSync(lockedDir);
+      fs.chmodSync(lockedDir, 0o500);
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(lockedDir, "sample.libredb");
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        await expect(register()).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalled();
+        expect(String(warn.mock.calls[0]?.[0])).toContain("seeding skipped");
+      } finally {
+        warn.mockRestore();
+        fs.chmodSync(lockedDir, 0o700);
+      }
+    },
+  );
 });

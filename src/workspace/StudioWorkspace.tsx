@@ -2,7 +2,8 @@
 
 import type { CsvDelimiter } from "@/lib/export/csv";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useImperativeHandle, useRef, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Sidebar } from "@/components/sidebar";
 import { type TreeRowActionHandlers } from "@/components/object-tree";
 import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
@@ -179,6 +180,7 @@ export function StudioWorkspace({
   // onLoadSavedQueries — reserved for future saved-queries panel integration
   features: featuresProp,
   className,
+  ref,
 }: StudioWorkspaceProps) {
   const queryEditorRef = useRef<QueryEditorRef>(null);
   const { toast } = useToast();
@@ -247,6 +249,30 @@ export function StudioWorkspace({
    * See the mount below for what a reader is told as a result, and what they are not.
    */
   const [objectRefreshToken, setObjectRefreshToken] = useState(0);
+
+  /**
+   * The counter, moved by whoever moved the catalog: this shell, or the HOST saying so (D79).
+   *
+   * One writer for both, so the banner keeps a single meaning. `handleApplied` below calls it for
+   * an apply this workspace issued and clears the tab that applied as well, because that one is
+   * addressed; `catalogChanged` on the published handle calls it and clears nothing, because an
+   * announcement is not.
+   */
+  const catalogChanged = useCallback(() => setObjectRefreshToken((previous) => previous + 1), []);
+
+  /**
+   * What a host can ASK this workspace to do (D79).
+   *
+   * The reasoning for a handle rather than a field on the `onQueryExecute` answer is on
+   * `StudioWorkspaceHandle` in `src/workspace/types.ts`, where a host reads the contract. What
+   * belongs here is why the shell needs one at all: every statement leaves through
+   * `onQueryExecute`, that callback answers a result set and never says what the statement
+   * changed, so a `CREATE OR REPLACE` a person runs in the query editor, or a migration the host
+   * runs somewhere this package cannot see, was invisible to the counter below.
+   *
+   * `useImperativeHandle` with no ref is a no-op, so a host that passes none is unchanged.
+   */
+  useImperativeHandle(ref, () => ({ catalogChanged }), [catalogChanged]);
   const [profilerPath, setProfilerPath] = useState<readonly string[] | null>(null);
   const [codeGenPath, setCodeGenPath] = useState<readonly string[] | null>(null);
   const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
@@ -335,13 +361,61 @@ export function StudioWorkspace({
     [buildResultFile, toast],
   );
 
+  /**
+   * Whether the Source pane has an apply in flight: sent, and no answer back yet (D82).
+   *
+   * The pane publishes it and this shell only mirrors it, because the shell cannot see it: the
+   * plan, the round trip and the dialog all live inside the pane. `src/components/Studio.tsx`
+   * mirrors the same callback into the same shape, and the two are deliberately one spelling.
+   *
+   * Declared HERE, above the two handlers that read it, rather than beside the mirror below: both
+   * tab-opening gestures are refused on it and a `const` cannot be read before it is bound.
+   */
+  const [applyInFlight, setApplyInFlight] = useState(false);
+  /** Whether a tab-opening gesture was refused in the window that is still open (D82). */
+  const [refusedWhileApplying, setRefusedWhileApplying] = useState(false);
+
+  /**
+   * The one rule every tab-opening gesture in this shell is refused by, in one place (D82).
+   *
+   * Five handlers below ask it and there is no sixth spelling of the answer, which is the point:
+   * the defect this guard exists for was one funnel guarded and its neighbour on the same tree
+   * left open, and five copies of `if (applyInFlight) { setRefusedWhileApplying(true); return; }`
+   * is that defect waiting to be written again. `true` means the caller must return without doing
+   * anything; the caller does the returning, because a guard that swallowed the gesture itself
+   * would have to know what each one returns.
+   */
+  const refuseWhileApplying = useCallback((): boolean => {
+    if (!applyInFlight) return false;
+    setRefusedWhileApplying(true);
+    return true;
+  }, [applyInFlight]);
+
   // === Table click handler ===
-  /** Open and run the statement for one object, addressed by its PATH (#789). */
+  /**
+   * Open and run the statement for one object, addressed by its PATH (#789).
+   *
+   * REFUSED while an object apply is in flight, on the same rule and through the same surface as
+   * the new-tab shortcut below (D82). `handleTableClick` ends with `setActiveTabId(newId)` and this
+   * shell renders the Source pane only for an ACTIVE Source tab, so an unguarded activation
+   * unmounts the pane and takes the dialog with it after the host's statement has been sent, which
+   * is the loss D82 records.
+   *
+   * THE GUARD IS HERE BECAUSE THE REACHABILITY ARGUMENT IS A COVERING OVERLAY AND NOT AN ABSENCE.
+   * Measured: no reader can take this gesture in that window today, because this shell renders no
+   * command palette (the standalone shell's second door, enumerated below) and the Radix modal
+   * covers and aria-hides the object tree. But a cover is a fact about one render of one host's
+   * page, not about this handler: the host owns `className` and every wrapper above this box, and
+   * an unmeasured "nothing else can reach this" is the class D82 was filed over. The standalone
+   * shell guards its equivalent door in `src/components/Studio.tsx`, and one funnel refusing on two
+   * different rules in two shells is the drift the guard prevents.
+   */
   const onTableClick = useCallback(
     (path: readonly string[]) => {
+      if (refuseWhileApplying()) return;
       tabMgr.handleTableClick(path, queryExec.executeQuery);
     },
-    [tabMgr, queryExec.executeQuery],
+    [refuseWhileApplying, tabMgr, queryExec.executeQuery],
   );
 
   /**
@@ -373,10 +447,15 @@ export function StudioWorkspace({
        * The gate is the DECLARATION and never the kind id, exactly as the branch above is.
        */
       if (conn.sourceReader !== undefined && kindHasSource(capabilities, object.kind)) {
+        // REFUSED on the same rule as the relation branch above, and this is the branch that
+        // carries the sharper loss: `openSourceTab` FOCUSES a Source tab already open for another
+        // object, so the pane does not merely unmount, it re-addresses under a dialog whose
+        // statement has already gone out.
+        if (refuseWhileApplying()) return;
         tabMgr.openSourceTab(object);
       }
     },
-    [conn.metadata, conn.sourceReader, onTableClick, tabMgr],
+    [conn.metadata, conn.sourceReader, onTableClick, refuseWhileApplying, tabMgr],
   );
 
   /**
@@ -526,9 +605,105 @@ export function StudioWorkspace({
    * was built for, which is a key this shell does not hold and must not guess.
    */
   const handleApplied = useCallback(() => {
-    setObjectRefreshToken((previous) => previous + 1);
+    catalogChanged();
     onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined });
-  }, [onSourceChange]);
+  }, [catalogChanged, onSourceChange]);
+
+  /**
+   * The mirror, which also RETIRES the sentence the refusal left on screen (D82).
+   *
+   * The pane calls this with `false` both when the answer lands and when it unmounts, so the
+   * refusal cannot outlive the window that raised it, and a reader who pressed the shortcut while
+   * waiting is not left reading advice about a dialog that is gone.
+   */
+  const onApplyInFlightChange = useCallback((inFlight: boolean) => {
+    setApplyInFlight(inFlight);
+    if (!inFlight) setRefusedWhileApplying(false);
+  }, []);
+
+  const { addTab } = tabMgr;
+
+  /**
+   * The new-tab shortcut, REFUSED while an object apply is in flight, and answered out loud (D82).
+   *
+   * MEASURED on THIS shell and not carried over from the standalone one. `StudioTabBar` registers
+   * the shortcut on `document` on purpose, so it works while Monaco owns focus (#745), and a
+   * keydown from a control inside the apply dialog reaches that listener even though Radix has
+   * aria-hidden and covered the strip. `addTab` ends with `setActiveTabId(newId)` and this shell
+   * renders the Source pane only for an ACTIVE Source tab, so the new Query tab unmounted the pane
+   * and took the dialog with it after the host's statement had been sent: the held `conflict` then
+   * rendered nothing at all, and the one outcome that still reached the reader was `applied`,
+   * through `onApplied`, which is the outcome they did not need to be told about.
+   *
+   * WHAT ELSE IS REACHABLE IN THIS WINDOW, ENUMERATED BY MEASUREMENT, because an unmeasured
+   * "nothing else can reach this" is the mistake D82 was filed over. The dialog refuses every exit
+   * it owns while `applying`: no close button, no Escape, no press outside. Everything else is
+   * enumerated in two passes, KEYDOWN and CLICK, because the first pass alone answered a narrower
+   * question than the paragraph claimed and a click moves the active tab here too.
+   *
+   * THE CLICK PASS first, since it is the larger one. Every mover of the active tab is a
+   * `setActiveTabId` in `src/hooks/use-tab-manager.ts`, and `grep -n "setActiveTabId(" ` there
+   * answers eleven calls: the four that restore a workspace at mount, which no gesture reaches,
+   * `reopenClosedTab`, which is reached only from the Undo toast and this shell mounts no
+   * `<Toaster />` for the reason `handleApplied` records, and SIX gestures. Those six are `addTab`,
+   * `handleTableClick`, `handleGenerateSelect`, `openSourceTab` (twice, mint and focus), `closeTab`
+   * and the setter `StudioTabBar` is handed directly. Four are refused here, all through
+   * `refuseWhileApplying` above: this handler, `onTableClick`, and the row menu's
+   * `onGenerateSelect` and `onViewSource`, the last of which the tree activation in
+   * `onObjectClick` shares. Each is driven under the overlay in
+   * `tests/components/studio/embedded-source.test.tsx`, by a DOM click on a row the Radix modal
+   * has aria-hidden and covered, which is the one path that still reaches them.
+   *
+   * THE TAB STRIP'S OWN TWO ARE DELIBERATELY NOT REFUSED, and this is a decision with a cost
+   * rather than a door nobody looked at. `onSetActiveTabId` and `onCloseTab` on `StudioTabBar`
+   * below both move the active tab and both unmount this pane with the host's statement already
+   * sent. They are left open because they are the reader's only way out of an apply that never
+   * answers: the dialog refuses every exit it owns while `applying`, so a host whose `apply`
+   * never settles would otherwise leave a shell in which no gesture works at all. The four
+   * refusals above are gestures that open or focus ANOTHER tab, which is a loss the reader did not
+   * ask for; the strip is the one place they say "leave this". The cost if that is the wrong call:
+   * a reader who presses a tab under an overlay that stopped covering it loses the dialog and the
+   * outcome of a statement already sent, exactly as D82 describes. `src/components/Studio.tsx`
+   * leaves the same two open, so the two shells do not disagree.
+   *
+   * THE KEYDOWN PASS. What the dialog cannot refuse is a global listener, and
+   * `grep -rE 'addEventListener\(\s*"keydown' src` answers FOUR, of which exactly one can move
+   * the active tab here:
+   *
+   * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
+   *   the one this handler guards. It opens a tab and `addTab` activates it.
+   * - `src/components/DataProfiler.tsx:210`, on `document`, and MOUNTED BY THIS SHELL below. It is
+   *   bound only while the profiler is open, it answers Escape alone, and all it does is call the
+   *   profiler's `onClose`. It moves no tab, and it cannot unmount this pane.
+   * - `src/components/CommandPalette.tsx:103`, on `document`, whose table rows call
+   *   `handleTableClick` and DO move the active tab. That is the standalone shell's second gesture
+   *   in D82, and this shell renders no palette. It is still the reason `onTableClick` above now
+   *   carries the same guard: what keeps that door shut here is a covering overlay and a component
+   *   this shell happens not to render, and neither is an absence.
+   * - `src/components/ui/sidebar.tsx:94`, on `window`, toggling a sidebar. It is an unused shadcn
+   *   primitive with no importer anywhere in `src` (P5), so it is not mounted here or anywhere.
+   *
+   * REFUSED IS NOT SWALLOWED, and on this shell that costs a surface rather than a toast. A
+   * keystroke that does nothing and says nothing reads as a broken shortcut. `useToast` wraps
+   * `sonner`, whose toasts render only into a mounted `<Toaster />`; this package re-exports none
+   * and this shell mounts none, for the reason `handleApplied` above records, so the standalone
+   * shell's toast would be a line no adopter can see. The refusal is therefore rendered by this
+   * shell itself, as a live region, below.
+   *
+   * WHY REFUSE THE KEYSTROKE RATHER THAN KEEP THE PANE MOUNTED, chosen and not defaulted into, and
+   * it is the same choice `src/components/Studio.tsx` made for the same seam: this shell renders
+   * one pane, `onSourceChange` addresses `activeTabId`, and a second mounted pane would need its
+   * own per-tab patch channel and a second live read, while the dialog it kept alive would be
+   * drawn over a Query tab the reader had just asked for.
+   *
+   * The `+` button takes the same handler. It is covered by the modal and cannot be pressed in
+   * this window, so the guard is unreachable through it, but one gesture and its keyboard twin
+   * refusing on different rules is the drift this handler exists to prevent.
+   */
+  const handleAddTab = useCallback(() => {
+    if (refuseWhileApplying()) return;
+    addTab();
+  }, [addTab, refuseWhileApplying]);
 
   /**
    * The row menu's actions in THIS shell, which is four of the six (U22, #789).
@@ -552,7 +727,17 @@ export function StudioWorkspace({
    * shells, which is a change to those hooks rather than to this line.
    */
   const objectActions: TreeRowActionHandlers = {
-    onGenerateSelect: (object) => tabMgr.handleGenerateSelect(object.path),
+    /*
+     * REFUSED while an apply is in flight, like every other gesture that moves the active tab
+     * (D82). `handleGenerateSelect` mints a `Query: <object>` tab and activates it, and this row
+     * menu hangs off the SAME tree rows the activation above does, so it is reachable by exactly
+     * the path that one is. The three modal openers below move no tab and are not guarded: they
+     * set a path this shell renders a modal from, and the Source pane stays mounted behind it.
+     */
+    onGenerateSelect: (object) => {
+      if (refuseWhileApplying()) return;
+      tabMgr.handleGenerateSelect(object.path);
+    },
     onProfileObject: features.codeGenerator ? (object) => setProfilerPath(object.path) : undefined,
     onGenerateCode: features.codeGenerator ? (object) => setCodeGenPath(object.path) : undefined,
     onGenerateTestData: features.testDataGenerator ? (object) => setTestDataPath(object.path) : undefined,
@@ -562,7 +747,13 @@ export function StudioWorkspace({
      * withholds follow, and here it is what keeps a host that implements nothing from being
      * offered an action no route in this package can serve.
      */
-    onViewSource: conn.sourceReader === undefined ? undefined : (object) => tabMgr.openSourceTab(object),
+    onViewSource:
+      conn.sourceReader === undefined
+        ? undefined
+        : (object) => {
+            if (refuseWhileApplying()) return;
+            tabMgr.openSourceTab(object);
+          },
   };
 
   // === No-op callbacks for disabled features ===
@@ -626,7 +817,7 @@ export function StudioWorkspace({
               onSetEditingTabName={tabMgr.setEditingTabName}
               onSetTabs={tabMgr.setTabs}
               onCloseTab={tabMgr.closeTab}
-              onAddTab={tabMgr.addTab}
+              onAddTab={handleAddTab}
             />
 
             <main className="flex-1 overflow-hidden relative">
@@ -747,21 +938,31 @@ export function StudioWorkspace({
                               failure={sourceFailure}
                               activePartId={sourceTab.activePartId}
                               /*
-                                A COUNTER THIS SHELL OWNS, and it counts exactly one thing: an
-                                object apply this workspace issued that came back applied (#789
-                                Phase 3). It was the constant zero until this phase, and that was
-                                a DECISION and not a stub: the standalone shell increments a
+                                A COUNTER THIS SHELL OWNS, and it counts TWO things: an object
+                                apply this workspace issued that came back applied (#789 Phase 3),
+                                and every `catalogChanged()` the host announces on the published
+                                handle (D79). It was the constant zero until this phase, and that
+                                was a DECISION and not a stub: the standalone shell increments a
                                 catalog-change counter for everything it runs, and this shell runs
                                 nothing, because every statement goes out through the host's
                                 `onQueryExecute` and nothing reports back what it changed.
 
-                                An apply breaks that premise and only that premise, because an
-                                apply THIS shell issues IS a DDL this shell knows about. So the
-                                original sentence still holds for everything else and is kept
-                                rather than replaced: this counter STILL cannot see a DDL the host
-                                ran through `onQueryExecute`. A stale banner here therefore means
-                                "this workspace changed something" and its absence NEVER means
-                                "nothing changed".
+                                An apply broke the first half of that premise, because an apply
+                                THIS shell issues IS a DDL this shell knows about, and D79 broke
+                                the rest of it: the host can now say so itself. So the sentence
+                                this block used to carry, that a stale banner means "this
+                                workspace changed something" and its absence never means "nothing
+                                changed", is REPLACED rather than kept, because it is no longer
+                                what the counter counts.
+
+                                WHAT IT COUNTS NOW, and it is still not "everything": an object
+                                apply this workspace issued, plus every announcement the host
+                                made. The host is the only party that can see a statement it ran
+                                through `onQueryExecute` or outside this package altogether, so
+                                the absence of a banner means "nothing this workspace ran changed
+                                anything, and the host announced nothing" - which is the whole
+                                truth for a host that calls the handle, and reads exactly as it
+                                did before for a host that does not.
                               */
                               refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}
@@ -784,6 +985,15 @@ export function StudioWorkspace({
                                 the part, from whoever answered it.
                               */
                               onApply={conn.sourceApplier}
+                              /*
+                                The window D82 is about, published by the only party that can see
+                                it (D82). The pane sends the statement and waits, and the shell
+                                mirrors that into `applyInFlight` so `handleAddTab` above can
+                                refuse the one document-level gesture that would unmount this pane
+                                mid apply. Optional on the pane, so the standalone shell and this
+                                one pass the same prop rather than each growing their own.
+                              */
+                              onApplyInFlightChange={onApplyInFlightChange}
                               onApplied={handleApplied}
                               onChange={onSourceChange}
                             />
@@ -948,6 +1158,74 @@ export function StudioWorkspace({
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/*
+        The refusal, said where an adopter can actually read it AND where it can be announced (D82).
+
+        `output` rather than a div with `role="status"`: it carries the live region natively, the
+        same choice `LazyView` and the pane's own loading region make.
+
+        PORTALED TO `document.body`, and that is what makes the live region real. Radix's modal
+        calls `hideOthers`, which `aria-hidden`s everything outside the dialog, and this shell's own
+        box is outside it. MEASURED with the refusal rendered inside the box, the apply dialog open:
+        `ancestors-with-aria-hidden` answered `["DIV[aria-hidden=true]"]` and `queryAllByRole
+        ("status")` answered the pane's `applying` region alone, so the sentence was on screen for a
+        sighted reader and invisible to assistive technology. `hideOthers` marks the nodes that
+        exist when the dialog opens and installs no observer (`node_modules/aria-hidden` carries no
+        `MutationObserver`), so a body child created afterwards - which is exactly when this renders
+        - is not marked: portaled, the same measurement answers `[]` and the region IS returned by
+        `byRole("status")`. A portal is NOT this shell's house style for a float: `QuerySafetyDialog`
+        and `DataProfiler`, both mounted below, are in-place `fixed inset-0 z-50` divs
+        (`src/components/QuerySafetyDialog.tsx:216`, `src/components/DataProfiler.tsx:217`), and
+        `DataProfiler.tsx:186-196` records staying inside the subtree as a deliberate choice. This
+        one leaves the box because the live region needs it to, and for nothing else.
+
+        FIXED, and that is a cost paid on purpose in an embeddable surface. This is the only
+        viewport-fixed element the shell renders itself, so it paints in the HOST's chrome rather
+        than in the workspace box, with no way for the host to place or style it.
+
+        The alternative is not "put it in the box", but NOT because a sentence in the box cannot be
+        seen. MEASURED in Chromium with the two layers reproduced - shell root static with
+        `overflow-hidden` and no `transform`, an in-box child at `fixed z-[60]`, the dialog's
+        body-level `fixed inset-0 z-50` overlay beside it - `elementFromPoint` at the child's centre
+        answers the CHILD. The root builds no stacking context and does not clip a fixed descendant,
+        so 7fe83dcc's in-box placement did paint over the overlay; what it cost was the live region,
+        not the pixels. The same probe with a `transform` on that root answers the OVERLAY instead,
+        because the box then becomes both the containing block and a stacking context. The host owns
+        `className` and every wrapper above it, so that arm is theirs to reach and not ours to rule
+        out, and being a body child removes it by construction: both layers are then in the root
+        stacking context, and no `transform`, `filter` or `contain` on the host's side can become
+        this element's containing block. The one placement that would cost the host nothing is
+        inside the dialog, and that belongs to `ApplyPreviewDialog`, whose window this shell only
+        observes.
+
+        The cost the portal does pay is the FONT, and the colours are not part of it.
+        `STUDIO_SCOPED_CSS` above scopes the font stack, `font-feature-settings` and
+        `letter-spacing` to `[data-studio-workspace]` and re-asserts the family on every descendant,
+        so a `document.body` child falls outside all of it: measured, the identical node renders in
+        the workspace face at `letter-spacing: -0.011em` inside the box and in the HOST page's face
+        at `letter-spacing: normal` on the body. The `--studio-*` colour tokens are declared on
+        `:root` and `.dark` in `src/styles/theme.css`, which `build:lib` ships, so `bg-overlay`,
+        `border-hairline` and `text-fg` read the same either side. That font hazard is the one
+        `DataProfiler.tsx:186-196` weighs the other way; here two sentences of chrome in the host's
+        own font is the smaller loss against a refusal no screen reader is told about.
+
+        Rendered only while the refusal is live: the mirror above clears it the moment the apply
+        answers or the pane goes away, so it cannot linger over a dialog that is gone.
+      */}
+      {refusedWhileApplying &&
+        createPortal(
+          <output
+            data-testid="workspace-apply-refusal"
+            className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-lg border border-hairline bg-overlay px-4 py-3 shadow-lg"
+          >
+            <span className="block text-xs font-medium text-fg">Waiting for the apply to answer</span>
+            <span className="mt-1 block text-xs leading-relaxed text-fg-muted">
+              Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.
+            </span>
+          </output>,
+          document.body,
+        )}
 
       {/* Mobile Navigation — hidden in embedded mode, platform provides its own */}
     </div>

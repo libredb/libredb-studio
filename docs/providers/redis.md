@@ -462,6 +462,76 @@ HGETALL user:1
 `INFO` is special-cased: `parseInfoResult()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))
 splits the bulk reply into one row per metric, tagging each with its `# Section` header.
 
+### 5.2a A `MULTI` a statement left open (D75)
+
+A bare `MULTI` sent through `query()` opens a transaction on the ONE connection this provider holds
+(§3.6), and the provider is cached per `connection.id` for the whole process, so nothing in the
+request cycle closes it and it belongs to whoever borrows the handle next.
+Measured 2026-09-15 on redis 7.4.11 through ioredis 5.11.1: after a bare `MULTI`, every later
+command on that connection answers the string `QUEUED` and does nothing, `SET`, `GET` and even
+`CLIENT INFO` alike, while a second connection is untouched.
+So the next user's command does not fail, it silently does not happen, and the schema explorer's
+`SCAN` is queued with it.
+
+`endOpenQueryTransaction()` ends it and reports `"none"` or `"rolled-back"`.
+
+**WHICH CALLERS END IT, AND WHY THAT CHANGED.** The surface now has TWO callers in the product,
+`POST /api/db/multi-query` and `POST /api/db/query`, each awaiting it in a `finally` under a call
+scope of its own. **The editor never sends a Redis buffer to the first of those.**
+`use-query-execution.ts` gates the multi-statement route on `dialectIsSql`, read from
+`queryLanguage`, and this provider declares `json` (§9), so an editor run goes to
+`POST /api/db/query` (§12.2).
+
+When this section was first written that was the end of the story, because the single-statement
+route ended nothing: it could not, since the ender named one shared client rather than the caller's
+own session, and copying the other route's `finally` there was measured to destroy other callers'
+committed work. D87 closed that by binding the ender to a call scope the route mints, and D74 then
+gave this route the `finally` it had been refused. So a `MULTI` typed into the editor IS discarded
+when the response is sent, and the schema explorer's next `SCAN` is no longer queued behind it.
+
+**The ask and the act are TWO commands, and the order is what makes the method safe to call.** The
+substitution is the reading: inside a `MULTI` the server answers the status `QUEUED` instead of the
+command's own reply, so `PING` answers `PONG` when nothing is open and `QUEUED` when something is,
+and `endOpenQueryTransaction()` sends `DISCARD` only after it has seen `QUEUED`. ioredis itself
+publishes no transaction state for a `MULTI` sent through `call()`: `status` stays `ready`, and the
+queueing that `Redis.prototype.multi()` tracks lives on a pipeline object a raw command never
+touches. The server is the only thing that can be asked, and this is how it is asked.
+
+Asking first is not a refinement. Measured on redis 7.4.11 with an ordinary read-only ACL,
+`ACL SETUSER ro on >pw ~* +@read +ping +info`: `PING` answers `PONG` and `DISCARD` is refused with
+`NOPERM User ro has no permissions to run the 'discard' command`. Since the caller awaits this in a
+`finally`, a blind `DISCARD` made every multi-query request on such a connection answer an error and
+threw away the per-statement results it had already earned; with the ask first, no `DISCARD` is sent
+and the answer is `"none"`. That same ACL cannot run `MULTI` either, so there is never one to end.
+
+The narrower ACL that CAN open a `MULTI` but not discard it, `+@read +ping +multi +set`, measured
+on the same server, still raises, and must: `PING` answers `QUEUED`, the `DISCARD` is refused, the
+next command is still `QUEUED`, so the transaction is open and this provider cannot end it. The one
+`DISCARD` failure that is read rather than raised is the server's own `ERR DISCARD without MULTI`
+AFTER the reading said `QUEUED`, which on this shared connection means another caller ended it in
+between; the queue is gone either way, which is what `"rolled-back"` reports.
+
+`DISCARD` and not `EXEC`: a script that queued commands and never said `EXEC` did not ask for them
+to run, so the queue is dropped rather than executed on an authority nobody gave.
+
+**WHAT IS STILL OPEN: the ender cannot tell whose `MULTI` it is ending.**
+`endOpenQueryTransaction()` takes the caller's call scope on the interface and ignores it here,
+because this provider holds one connection and there is no other client to name.
+That is true and it is not the same as the transaction being the caller's own: a `MULTI` is state
+of the CONNECTION, and one connection serves every concurrent request on this stored connection.
+So `POST /api/db/query`, which now ends what it opened in a `finally` (above), PINGs and on `QUEUED`
+`DISCARD`s whatever `MULTI` is open there, whoever opened it.
+A plain `GET` typed by one user drops a `MULTI` another user had just queued commands into, and that
+user is told nothing: their next command answers `QUEUED` from no transaction.
+The one `DISCARD` failure this code reads rather than raises is the same collision seen from the
+other side.
+This is the D87 shape on a single connection and it is NOT closed.
+Closing it means the `MULTI` owned by a call scope rather than by the connection, which is a design
+change: the provider would have to record which scope opened the `MULTI` it observes, and a `MULTI`
+opened before any scope was recorded still has no owner.
+The same argument applies to `sqlite` and `duckdb`, which likewise hold one handle for every
+concurrent request and ignore the scope for the same reason.
+
 ### 5.3 Schema-explorer menu actions
 
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that node,
@@ -1130,7 +1200,7 @@ That build answer is no longer what this provider gives: a single-function libra
 The acknowledgement is enforced by the SERVER and not by the dialog: the identical collateral apply with an empty `acknowledged` answers HTTP 400, `this apply destroys something the plan warned about and the request did not acknowledge: replaces-whole-container`, and the library is untouched.
 
 **A FAILED APPLY LEAVES THE LIBRARY BYTE IDENTICAL.**
-This engine has no transaction, so the assertion is that `FUNCTION LIST WITHCODE` is byte identical across the apply and that the library-to-function map is unchanged.
+This engine has no transaction that can roll a failed apply back, so the assertion is that `FUNCTION LIST WITHCODE` is byte identical across the apply and that the library-to-function map is unchanged.
 Five failures were driven against `libredb_probe` and all five left both readings identical.
 
 | What was sent | Where it was refused, and what it answered |
@@ -1244,7 +1314,7 @@ no control offers it.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
-| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464) |
+| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464). A `MULTI` a script sends anyway is ended by `endOpenQueryTransaction()`, which BOTH query routes now call in a `finally`, `POST /api/db/multi-query` and `POST /api/db/query`, so an editor run ends its own too (D74, D87) ([§5.2a](#52a-a-multi-a-statement-left-open-d75)) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |
@@ -1333,9 +1403,9 @@ container in the suite. The mock simulates a Redis 7.2.x server (`redis_version:
 Redis 6.0+ instance.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide. Run the suite with
-> `bun run test` (which isolates execution groups), **never** bare `bun test` across multiple
-> files — see the note in [`CLAUDE.md`](../../CLAUDE.md). The Redis file mocks `ioredis`, which
-> would otherwise leak into any other test sharing the process.
+> `bun run test`, which gives every test file its own bun process, never bare `bun test` across
+> multiple files - see the note in [`CLAUDE.md`](../../CLAUDE.md). The Redis file mocks `ioredis`,
+> which would otherwise leak into any other test sharing the process.
 
 ### 11.2 Coverage
 

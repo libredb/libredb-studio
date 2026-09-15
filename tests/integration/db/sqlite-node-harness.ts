@@ -120,6 +120,12 @@ async function main(): Promise<void> {
 
   await provider.disconnect();
   report.disconnected = !provider.isConnected();
+  // disconnect() has to RELEASE the file on this adapter too, and the sidecars are the
+  // portable reading of it: SQLite checkpoints the WAL and removes `-wal` and `-shm` when
+  // the connection really closes, and leaves both when the close was only scheduled. The
+  // flag the bun adapter needs for that is meaningless to node:sqlite, which is exactly
+  // the kind of claim an adapter test cannot make for the real driver.
+  report.sidecarsAfterDisconnect = [`${dbPath}-wal`, `${dbPath}-shm`].filter((sidecar) => existsSync(sidecar));
 
   await runAgentReadOnlyProfile(dbPath, report);
 

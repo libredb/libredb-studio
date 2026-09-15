@@ -418,6 +418,33 @@ Explicit lifecycle via `mssql.Transaction` (`beginTransaction()`, [`mssql.ts`](.
 | `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. |
 | `isInTransaction()` | Current state. |
 
+### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
+
+A `BEGIN TRAN` sent through `query()` is a different thing from the lifecycle above.
+It opens a transaction on the pooled connection that one request borrowed, and nothing in the request cycle ends it: `_poolValidate` ([`mssql`](https://github.com/tediousjs/node-mssql) 12.7.2) checks that the connection is alive and never resets its session, so it returns to the pool with the transaction, and its locks, intact.
+The provider is cached per `connection.id` for the whole process, so whoever borrows that connection next inherits it.
+
+The providers that answer this implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)), and the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
+This provider does not, and the reason is the driver: **the driver cannot be asked**.
+The state itself is readable — `tedious` 20.3.0 maintains `Connection.inTransaction` from the server's own ENVCHANGE tokens, the way `pg` maintains its ReadyForQuery status — but nothing hands this provider that `Connection`.
+`query()` runs on `pool.request()`, and `Request.query()` acquires a connection and releases it inside its own callback; the object never escapes.
+`ConnectionPool.acquire()` is public and documented, so pinning a connection IS available; what is not available is running a statement on the pinned one through `mssql.Request`, and a `Transaction` opened to find out whether a transaction is open is not an ask, it is a second transaction.
+Measured on `mssql` 12.7.2: after `request.query()` resolves, the `Request` carries a `parent` (the pool) and no connection of any kind, so the session id is never handed over.
+
+**The server can be asked, which is a different question from the driver, and it was measured.** SQL Server 2022 (16.0.4265.3), statements run on one pooled session and the question asked afterwards from a second pool, keyed on that session's `@@SPID`:
+
+| Ask on `session_id` | `BEGIN TRAN` alone | `BEGIN TRAN` + failing statement | no `BEGIN TRAN` (control) |
+|---|---|---|---|
+| `sys.dm_exec_sessions.open_transaction_count` | 1 | 1 | 0 |
+| `sys.dm_tran_session_transactions` | one row | one row | no row |
+
+So the absence is not the server's refusal, and it is not the pool's either: it is that this provider cannot name the session to key the ask on.
+`SELECT @@SPID` issued afterwards is a NEW request, which the pool is free to place on another connection, and answering a question about the wrong session is how a rollback ends up rolling back somebody else's transaction.
+Closing that needs a different query path rather than a different question, which is its own change and is filed as D90.
+
+Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
+The cost while it stands: an abandoned transaction holds its locks until the connection is reused by a caller that ends it, or the pool closes.
+
 ---
 
 ## 7. Schema introspection
@@ -1314,10 +1341,9 @@ provider is imported — there is no live SQL Server in the suite. The mock's po
 canned `{ recordset, rowsAffected }` results, exercising the same code paths as the real driver.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
-> cross-contaminate in a shared process. A **single file** is safe (one file = one process). The
-> full `bun run test` script runs the core group in **one** process and is load-order flaky, so
-> **CI does not use it** — the deterministic runner is **`bun run test:ci`** (per-file isolation via
-> `tests/run-core.sh`); the coverage workflow uses `bun run test:coverage`. See [`CLAUDE.md`](../../CLAUDE.md).
+> would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its
+> own bun process, so a single file is safe and so is the whole suite, which is the same command CI
+> runs. `bun run test:coverage` is that runner with coverage on. See [`CLAUDE.md`](../../CLAUDE.md).
 
 ### 12.2 Coverage
 
@@ -1338,8 +1364,8 @@ a mock that filtered on the bind kept passing for a listing that had lost its `W
 
 ```bash
 bun test tests/integration/db/mssql-provider.test.ts   # just this file (single process — safe)
-bun run test:ci                                         # CI publish gate — per-file isolation (tests/run-core.sh)
-bun run test:coverage                                   # CI coverage workflow — per-file core + components
+bun run test                                            # the whole suite, one process per file, what CI runs
+bun run test:coverage                                   # CI coverage workflow: the same runner, with coverage
 ```
 
 ### 12.4 Optional: verifying against a live SQL Server

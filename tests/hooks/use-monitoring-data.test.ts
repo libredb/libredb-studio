@@ -896,16 +896,17 @@ describe("useMonitoringData", () => {
       result.current.setAutoRefresh(true);
     });
 
-    // Wait for interval to fire
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+    // Waits on the fact this test asserts - the call count rising - instead of on 200ms of
+    // wall clock. The interval is armed at 100ms, so the sleep this replaces was betting that
+    // two interval periods fit inside one 200ms sleep, which is a bet a machine running every
+    // other test file at the same time loses. The wait cannot pass early: nothing but the
+    // interval issues a monitoring call after `callsBefore` is read.
+    await waitFor(() => {
+      const callsAfter = fetchMock.mock.calls.filter(
+        (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
+      ).length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
     });
-
-    const callsAfter = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
-    ).length;
-
-    expect(callsAfter).toBeGreaterThan(callsBefore);
 
     // Clean up
     act(() => {
@@ -940,7 +941,13 @@ describe("useMonitoringData", () => {
       (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
-    // Wait and verify no more calls
+    // THE SLEEP STAYS HERE, and it is the one shape of sleep that survives a busy machine.
+    // This is a negative: it asserts that nothing fires. There is no fact to wait on, and a
+    // `waitFor` would only prove the count had not risen YET. What makes it sound under load
+    // is deadline ordering rather than elapsed time: the interval was armed at 100ms and this
+    // sleep is due at 200ms, so however far behind the machine falls, an interval that was
+    // never cleared is overdue before this timer and runs first. Slowness delays both timers
+    // together and cannot reorder them, so a stall makes this negative stricter, never vacuous.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
     });
@@ -981,15 +988,24 @@ describe("useMonitoringData", () => {
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
 
-    // Give the initial fetch time to reject
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    // The control, and it is deterministic rather than lucky: `fetchData` calls `setLoading(true)`
+    // before its first await, and `renderHook` is act-wrapped, so the mount effect has run and the
+    // state is committed by the time this line reads it. Reading `true` here is what proves the
+    // fetch was issued at all, so the three silence assertions below cannot pass because nothing
+    // ever happened.
+    expect(result.current.loading).toBe(true);
+
+    // Then wait on the `finally`, which is the moment the rejection has been handled. The 50ms
+    // sleep this replaces was a guess at how long a rejected promise takes to come back, and a
+    // machine that missed the guess read the three facts below while the fetch was still in
+    // flight - where they are all true for the wrong reason.
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
     });
 
     // Cancellation must be silent: no error, no data
     expect(result.current.error).toBeNull();
     expect(result.current.data).toBeNull();
-    expect(result.current.loading).toBe(false);
 
     globalThis.fetch = originalFetch;
   });

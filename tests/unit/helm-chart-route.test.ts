@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Regression tests for the Gateway API route surface of the chart
  * (templates/route.yaml), added by #362 and corrected by #366:

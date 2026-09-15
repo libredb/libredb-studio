@@ -206,7 +206,7 @@ Studio es MIT porque tiene que poder ir a cualquier parte. Lo que se cobra es li
 
 ## Pruebas y calidad
 
-- Seis capas de pruebas: unitarias, de API, de integración, de hooks, de componentes y end-to-end
+- Siete capas de pruebas: unitarias, de API, de integración, de hooks, de seguridad, de evaluaciones y de componentes, más las end-to-end
 - **Cobertura de líneas del 100%**, y es una barrera dura en CI. Si la cobertura baja, el merge se bloquea
 - Quality gate de SonarCloud
 - Pruebas de humo en Node 24 y 26 en cada release

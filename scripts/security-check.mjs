@@ -25,12 +25,13 @@
  * Pure functions below are unit tested in tests/unit/security-check.test.ts.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const POSTURE = "docs/SECURITY.md";
-const COMPONENTS_RUNNER = "tests/run-components.sh";
+const TEST_RUNNER = "tests/run-tests.ts";
 const PLAYWRIGHT_CONFIG = "playwright.config.ts";
 const SECURITY_TEST_DIR = "tests/security";
 
@@ -67,8 +68,27 @@ export const PROGRAMME_CONTROL_IDS = [
 
 export const STATUSES = new Set(["Implemented", "Partial", "Not implemented"]);
 
-/** Directories tests/run-core.sh enumerates with `find ... -name '*.test.ts' -o -name '*.test.tsx'`. */
-const CORE_TEST_DIRS = ["tests/unit/", "tests/api/", "tests/integration/", "tests/hooks/", "tests/security/"];
+/**
+ * Every test file `bun run test` runs, asked of the runner itself.
+ *
+ * This used to be a hardcoded directory list plus a grep of the component runner
+ * script, which drifted twice: the list omitted `tests/evals`, and a file could sit
+ * in `tests/isolated/` without being named by any group. The runner's own discovery
+ * rule is the repository's definition of "this test runs", so the gate asks it.
+ */
+function discoveredTestFiles(root) {
+  const listed = spawnSync("bun", [TEST_RUNNER, "--list"], { cwd: root, encoding: "utf8" });
+  if (listed.status !== 0) {
+    console.error(`ERROR: could not ask ${TEST_RUNNER} what it runs: ${listed.stderr || listed.error}`);
+    process.exit(1);
+  }
+  return new Set(
+    listed.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
 
 /** Splits a markdown row into trimmed cells, dropping the leading and trailing empties. */
 function cells(line) {
@@ -140,7 +160,7 @@ export function linkTargets(cell) {
  * document itself as its own verifier (0.4, 0.5) is not linking a test, and existence is not the
  * claim a "Verified by" cell makes.
  */
-export function isExecuted(target, { componentsRunner, playwrightConfig, requireTest = false }) {
+export function isExecuted(target, { discoveredTests, playwrightConfig, requireTest = false }) {
   if (!target.startsWith("tests/") && !target.startsWith("e2e/")) {
     return requireTest ? { executed: false, reason: "not a test" } : { executed: true, reason: "not a test path" };
   }
@@ -149,12 +169,8 @@ export function isExecuted(target, { componentsRunner, playwrightConfig, require
     if (inTestDir && target.endsWith(".spec.ts")) return { executed: true, reason: "playwright testDir" };
     return { executed: false, reason: "not collected by playwright.config.ts" };
   }
-  const isCoreName = target.endsWith(".test.ts") || target.endsWith(".test.tsx");
-  if (isCoreName && CORE_TEST_DIRS.some((dir) => target.startsWith(dir))) {
-    return { executed: true, reason: "tests/run-core.sh" };
-  }
-  if (componentsRunner.includes(target)) return { executed: true, reason: COMPONENTS_RUNNER };
-  return { executed: false, reason: `named by neither tests/run-core.sh nor ${COMPONENTS_RUNNER}` };
+  if (discoveredTests.has(target)) return { executed: true, reason: TEST_RUNNER };
+  return { executed: false, reason: `not collected by ${TEST_RUNNER}` };
 }
 
 /**
@@ -163,7 +179,7 @@ export function isExecuted(target, { componentsRunner, playwrightConfig, require
  * `exists` is injected rather than read here so the whole rule set is testable without a
  * filesystem, following checkReadmes in scripts/readme-check.mjs.
  */
-export function checkPosture({ posture, componentsRunner, playwrightConfig, exists, securityTestFiles }) {
+export function checkPosture({ posture, discoveredTests, playwrightConfig, exists, securityTestFiles }) {
   const table = findControlTable(parseTables(posture));
   if (!table) {
     return [`${POSTURE}: no control table found (expected a header of exactly: ${CONTROL_HEADER.join(" | ")})`];
@@ -193,7 +209,7 @@ export function checkPosture({ posture, componentsRunner, playwrightConfig, exis
         violations.push(`${POSTURE}: control ${id} links ${target}, which does not exist`);
         continue;
       }
-      const { executed, reason } = isExecuted(target, { componentsRunner, playwrightConfig });
+      const { executed, reason } = isExecuted(target, { discoveredTests, playwrightConfig });
       if (!executed) {
         violations.push(`${POSTURE}: control ${id} links ${target}, which is never executed (${reason})`);
       }
@@ -211,7 +227,7 @@ export function checkPosture({ posture, componentsRunner, playwrightConfig, exis
       // requireTest: true - a "Verified by" cell is a claim that a test verifies the control, and
       // isExecuted's normal existence-is-enough-for-a-source-file allowance would otherwise let a
       // checker script or a policy document stand in for a test that does not exist (0.4, 0.5).
-      const { executed, reason } = isExecuted(target, { componentsRunner, playwrightConfig, requireTest: true });
+      const { executed, reason } = isExecuted(target, { discoveredTests, playwrightConfig, requireTest: true });
       if (!executed) {
         violations.push(`${POSTURE}: control ${id} links ${target}, which is never executed (${reason})`);
       }
@@ -261,7 +277,7 @@ function main(argv) {
 
   const violations = checkPosture({
     posture: fs.readFileSync(posturePath, "utf8"),
-    componentsRunner: fs.readFileSync(path.join(root, COMPONENTS_RUNNER), "utf8"),
+    discoveredTests: discoveredTestFiles(root),
     playwrightConfig: fs.readFileSync(path.join(root, PLAYWRIGHT_CONFIG), "utf8"),
     exists: (target) => fs.existsSync(path.join(root, target)),
     securityTestFiles,

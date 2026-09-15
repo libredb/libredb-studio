@@ -80,6 +80,10 @@ const mockStorageSaveConnection = mock(() => {});
 const mockStorageGetConnections = mock(() => [] as unknown[]);
 const mockStorageDeleteConnection = mock(() => {});
 const mockStorageSaveQuery = mock(() => {});
+const mockStorageGetFavoriteConnectionIds = mock(() => [] as string[]);
+const mockStorageToggleFavoriteConnection = mock(() => [] as string[]);
+const mockStorageGetConnectionOrder = mock(() => [] as string[]);
+const mockStorageSetConnectionOrder = mock(() => {});
 // Data Masking
 const mockSaveMaskingConfig = mock(() => {});
 // URL (for export tests)
@@ -239,6 +243,10 @@ mock.module("@/lib/storage", () => ({
     deleteConnection: mockStorageDeleteConnection,
     saveQuery: mockStorageSaveQuery,
     getActiveConnectionId: mock(() => null),
+    getFavoriteConnectionIds: mockStorageGetFavoriteConnectionIds,
+    toggleFavoriteConnection: mockStorageToggleFavoriteConnection,
+    getConnectionOrder: mockStorageGetConnectionOrder,
+    setConnectionOrder: mockStorageSetConnectionOrder,
   },
 }));
 
@@ -444,8 +452,8 @@ mock.module("@/components/agent/AgentRail", () => ({
  * always holds an ask, and what the rail is handed has to BE it. The hook's own
  * behaviour — that nothing is asked for until a shortcut asks, and what an ask
  * contains — is covered in tests/hooks/use-agent-prefill.test.ts, which runs in a
- * different process: `mock.module` is process-wide, and Studio.test.tsx is its own
- * isolation group (tests/run-components.sh Group 1), so no suite shares this stub.
+ * different process: `mock.module` is process-wide, and the runner gives every test
+ * file a bun process of its own, so no other suite ever sees this stub.
  */
 const PREFILL_SENTINEL = {
   id: 7,
@@ -576,6 +584,12 @@ describe("Studio", () => {
     mockStorageGetConnections.mockReturnValue([]);
     mockStorageDeleteConnection.mockClear();
     mockStorageSaveQuery.mockClear();
+    mockStorageGetFavoriteConnectionIds.mockClear();
+    mockStorageGetFavoriteConnectionIds.mockReturnValue([]);
+    mockStorageToggleFavoriteConnection.mockClear();
+    mockStorageGetConnectionOrder.mockClear();
+    mockStorageGetConnectionOrder.mockReturnValue([]);
+    mockStorageSetConnectionOrder.mockClear();
     mockSaveMaskingConfig.mockClear();
     // Set rather than restored: one test turns masking on, and `mockRestore` in bun
     // drops the implementation entirely instead of returning it to this default.
@@ -1110,6 +1124,56 @@ describe("Studio", () => {
     expect(mockStorageSaveConnection).toHaveBeenCalledWith(secondCopy);
     expect(source).toEqual(original);
   });
+
+  test("loads favoriteConnectionIds from storage and forwards them to Sidebar", () => {
+    mockStorageGetFavoriteConnectionIds.mockReturnValue(["fav-1", "fav-2"]);
+
+    render(<Studio />);
+
+    expect(mockStorageGetFavoriteConnectionIds).toHaveBeenCalled();
+    const favoriteIds = capturedSidebarProps.favoriteConnectionIds as Set<string>;
+    expect(favoriteIds.has("fav-1")).toBe(true);
+    expect(favoriteIds.has("fav-2")).toBe(true);
+  });
+
+  test.each(["desktop", "mobile"] as const)(
+    "onToggleFavoriteConnection (%s) calls storage.toggleFavoriteConnection with the connection id",
+    (surface) => {
+      render(<Studio />);
+      if (surface === "mobile") {
+        act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+      }
+      const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+
+      act(() => (props.onToggleFavoriteConnection as (id: string) => void)("conn-1"));
+
+      expect(mockStorageToggleFavoriteConnection).toHaveBeenCalledWith("conn-1");
+    },
+  );
+
+  test("loads connectionOrder from storage and forwards it to Sidebar", () => {
+    mockStorageGetConnectionOrder.mockReturnValue(["conn-2", "conn-1"]);
+
+    render(<Studio />);
+
+    expect(mockStorageGetConnectionOrder).toHaveBeenCalled();
+    expect(capturedSidebarProps.connectionOrder).toEqual(["conn-2", "conn-1"]);
+  });
+
+  test.each(["desktop", "mobile"] as const)(
+    "onReorderConnections (%s) calls storage.setConnectionOrder with the new order",
+    (surface) => {
+      render(<Studio />);
+      if (surface === "mobile") {
+        act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+      }
+      const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+
+      act(() => (props.onReorderConnections as (order: string[]) => void)(["conn-2", "conn-1"]));
+
+      expect(mockStorageSetConnectionOrder).toHaveBeenCalledWith(["conn-2", "conn-1"]);
+    },
+  );
 
   test("onAddConnection opens connection modal", () => {
     render(<Studio />);

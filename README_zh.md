@@ -278,7 +278,7 @@ Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platfo
 
 ## 测试与质量
 
-- 单元、API、集成、hooks、组件、E2E 六层测试
+- 单元、API、集成、hooks、security、evals、组件七层测试，外加 E2E
 - **行覆盖率 100%**，并且是 CI 的硬性门禁。覆盖率掉下来，合并就被拦住
 - SonarCloud 质量门禁
 - 每次发布跨 Node 24 / 26 做冒烟测试

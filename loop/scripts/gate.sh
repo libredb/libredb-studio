@@ -22,13 +22,13 @@ bun run typecheck
 echo "=== gate: knip ==="
 bun run knip
 
-echo "=== gate: test ==="
-bun run test
-
-# The required "Unit & Integration Tests" job runs these two, not `bun run test`:
-# coverage goes through tests/run-core.sh per-file process isolation, and
-# scripts/check-coverage.mjs enforces 100% lines on the merged lcov.
-echo "=== gate: coverage ==="
+# One run of the suite, not two. `bun run test:coverage` is `bun run test` with
+# --coverage: the same runner over the same files, so a separate `bun run test` step
+# would run all of them twice and catch nothing the coverage run does not. It used to
+# be a different command, which is why both steps existed. The required "Unit &
+# Integration Tests" job runs exactly these two; scripts/check-coverage.mjs enforces
+# 100% of lines on the merged lcov.
+echo "=== gate: test (with coverage) ==="
 bun run test:coverage
 bun run coverage:check
 

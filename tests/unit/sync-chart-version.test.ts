@@ -509,9 +509,11 @@ describe("CLI (--check via subprocess)", () => {
 
 describe("CLI (--check against git fixtures, #151/#167)", () => {
   const fixtureRoots: string[] = [];
+  let emptyConfig: string | null = null;
 
   afterEach(() => {
     for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+    emptyConfig = null;
   });
 
   function makeDir(prefix: string): string {
@@ -520,14 +522,29 @@ describe("CLI (--check against git fixtures, #151/#167)", () => {
     return dir;
   }
 
+  /**
+   * A real, empty config file for GIT_CONFIG_GLOBAL/SYSTEM, in its own directory so it is never
+   * inside a fixture repository and never seen by `git add -A`. "/dev/null" was a POSIX device
+   * path: a git build that refuses a config path it cannot open would turn every fixture in this
+   * describe into a thrown "git ... failed", and on Windows there is no such path at all, so the
+   * isolation was accidental rather than stated.
+   */
+  function emptyConfigPath(): string {
+    if (emptyConfig === null) {
+      emptyConfig = join(makeDir("chart-sync-gitconfig-"), "empty.gitconfig");
+      writeFileSync(emptyConfig, "");
+    }
+    return emptyConfig;
+  }
+
   // Hermetic git: no user/system config, fixed identity, so fixtures behave the same on any box.
   function runGit(cwd: string, ...args: string[]): string {
     const result = Bun.spawnSync(["git", ...args], {
       cwd,
       env: {
         ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_CONFIG_GLOBAL: emptyConfigPath(),
+        GIT_CONFIG_SYSTEM: emptyConfigPath(),
         GIT_AUTHOR_NAME: "fixture",
         GIT_AUTHOR_EMAIL: "fixture@test",
         GIT_COMMITTER_NAME: "fixture",

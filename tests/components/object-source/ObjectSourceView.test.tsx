@@ -632,7 +632,15 @@ describe("ObjectSourceView", () => {
     render(<Harness reader={readerFor(oneReadablePart)} />);
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
 
-    expect(definedThemes).toContain(STUDIO_THEME_DARK);
+    /*
+     * The registration is polled, the theme in use is not, and the difference is where each one
+     * happens: `theme` is a render prop, so it is on the element the poll above already found,
+     * while `beforeMount` runs from the editor double's passive effect, which React schedules
+     * AFTER the commit that put that element on screen. Reading `definedThemes` straight after
+     * the element therefore races the effect, and it lost on 5 of 24 concurrent runs of this file
+     * with "Expected to contain: db-dark / Received: []" before this poll was here.
+     */
+    await waitFor(() => expect(definedThemes).toContain(STUDIO_THEME_DARK));
     expect(definedThemes).toContain(STUDIO_THEME_LIGHT);
     expect(screen.getByTestId("source-editor").getAttribute("data-theme")).toBe(STUDIO_THEME_LIGHT);
   });
@@ -703,7 +711,18 @@ describe("ObjectSourceView", () => {
     expect(clear).toBeTruthy();
     expect(Object.hasOwn(clear!, "failure")).toBe(true);
     expect(Object.hasOwn(clear!, "readAtToken")).toBe(true);
-    await waitFor(() => expect(screen.queryByTestId("object-source-stale")).toBeNull());
+    /*
+     * `=== null` and not `expect(node).toBeNull()`, here and at every other absence poll in this
+     * file. A poll that FAILS hands bun the live happy-dom node to pretty-print, and bun walks the
+     * whole node's object graph to build the diff: measured at 301 ms for a 260-node subtree, so a
+     * handful of failing polls eats waitFor's entire 5 s budget and a momentarily slow machine
+     * turns a healthy test red. The boolean costs 0 ms and asserts exactly the same removal.
+     *
+     * `waitForElementToBeRemoved` is not the alternative: it demands the element still be present
+     * when it is called, and at this site, and at all five others below, it is already gone by
+     * then. That was measured, by logging the element on the line above each poll.
+     */
+    await waitFor(() => expect(screen.queryByTestId("object-source-stale") === null).toBe(true));
   });
 
   test("keeps the part the reader was on across a re-read, so the stale control does not move them", async () => {
@@ -728,7 +747,7 @@ describe("ObjectSourceView", () => {
     rerender(<Harness reader={reader} refreshToken={1} />);
     await userEvent.click(screen.getByTestId("object-source-stale-reread"));
     await waitFor(() => expect(reader.calls).toBe(2));
-    await waitFor(() => expect(screen.queryByTestId("object-source-stale")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-stale") === null).toBe(true));
 
     expect(screen.getByTestId("source-editor").getAttribute("data-path")?.endsWith("/body")).toBe(true);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
@@ -753,6 +772,83 @@ describe("ObjectSourceView", () => {
 
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
     expect(reader.calls).toBe(2);
+  });
+
+  test("a REFUSED read offers the same recovery the object tree does, and pressing it re-reads", async () => {
+    /*
+     * X22, and the failure it was measured on is a rate limit rather than an outage. The object
+     * tree has always drawn `tree-retry` when its own read is refused; this pane drew the
+     * engine's sentence and no control at all, and `needsRead` is
+     * `document === undefined && failure === undefined`, so a tab that has recorded a failure
+     * never re-reads by itself. The reader's only way back was to close the tab and reopen it,
+     * or to reload the page, which is what `reloadUntilTheRestoredTabIsRead` in
+     * `e2e/object-edit.spec.ts` had to do because no control existed.
+     *
+     * The stale control is NOT that recovery: it is drawn only when a DDL in this session bumped
+     * `refreshToken`, and a refused read bumps nothing.
+     */
+    let attempt = 0;
+    const reader = Object.assign(
+      async () => {
+        reader.calls += 1;
+        attempt += 1;
+        if (attempt === 1) throw new Error("Too many requests. Try again in 41 seconds.");
+        return oneReadablePart;
+      },
+      { calls: 0 },
+    );
+    render(<Harness reader={reader} refreshToken={0} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    // Nothing made this tab stale, so the control the reader would otherwise reach for is absent.
+    expect(screen.queryByTestId("object-source-stale-reread")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("object-source-failure-retry"));
+
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(reader.calls).toBe(2);
+    expect(screen.queryByTestId("object-source-failure")).toBeNull();
+  });
+
+  test("a withdrawn connection draws NO retry, because a re-read cannot be issued without one", async () => {
+    /*
+     * The control for the test above, and the reason the retry is bound to `failure` rather than
+     * to `shownFailure`. `DISCONNECTED` is not a read that was refused: the read effect bails on
+     * a null connection before it calls the reader, so a Try again here would clear the pane and
+     * land straight back on the same sentence, having done nothing. A control that cannot work is
+     * worse than no control.
+     */
+    const reader = readerFor(oneReadablePart);
+    render(
+      <ObjectSourceView
+        connection={null}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        refreshToken={0}
+        reader={reader}
+        onChange={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-failure-retry")).toBeNull();
+    expect(reader.calls).toBe(0);
+  });
+
+  test("an UNRENDERABLE body draws no retry either: the answer is in hand and re-reading repeats it", () => {
+    /*
+     * The other arm of `shownFailure`. The route answered, the pane holds the answer, and the
+     * refusal is a property of that answer rather than of the attempt, so the same read would
+     * produce the same sentence. The stale control remains the way to ask the engine again after
+     * something in this session actually changed the object.
+     */
+    renderWithDocument({ parts: [] } as unknown as ObjectSourceDocument);
+
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(
+      "The source read answered with a body this viewer cannot render.",
+    );
+    expect(screen.queryByTestId("object-source-failure-retry")).toBeNull();
   });
 
   test("re-reads when the address changes", async () => {
@@ -2261,7 +2357,7 @@ describe("ObjectSourceView edit mode", () => {
 
     await click("object-source-apply-cancel");
 
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
     expect(editor().readOnly).toBe(false);
     expect((screen.getByTestId("object-source-preview") as HTMLButtonElement).disabled).toBe(false);
   });
@@ -2289,7 +2385,7 @@ describe("ObjectSourceView edit mode", () => {
 
     await click("object-source-apply-confirm");
 
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
     expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
     expect(patches).toContainEqual(expect.objectContaining({ editingPartId: undefined, dirty: undefined }));
     expect(applied).toHaveBeenCalledTimes(1);
@@ -2549,7 +2645,7 @@ describe("ObjectSourceView edit mode", () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
     expect(readDraft(window.localStorage, draftKey("definition"))).toBeUndefined();
   });
 
@@ -2946,7 +3042,7 @@ describe("ObjectSourceView across two Source tabs", () => {
     await waitFor(() => expect(screen.getByTestId("object-source-apply-building")).toBeTruthy());
 
     await click("object-source-apply-cancel");
-    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
     await act(async () => {
       land(BUILT);
       await Promise.resolve();
@@ -3056,9 +3152,14 @@ describe("ObjectSourceView across two Source tabs", () => {
      * DEFENCE IN DEPTH, and the population is named honestly rather than implied (#789, review
      * fix rounds 1 and 2). Unlike the refusal test above, this one is NOT something a reader can
      * drive today: while the build is in flight the modal is open, a mouse press on the strip hits
-     * the overlay and closes the dialog, focus is trapped, and the one document-level shortcut
-     * that moves the active tab unmounts this pane instead of re-addressing it (filed as D82). The
-     * rerender below moves the address at a moment no shipped shell moves it.
+     * the overlay and closes the dialog, focus is trapped, and the document-level listeners that
+     * move the active tab, the new-tab shortcut and the command palette, unmount this pane instead
+     * of re-addressing it. The rerender below moves the address at a moment no shipped shell moves
+     * it.
+     *
+     * That unmount is D82, and it is a BUILD window here rather than an apply window: nothing has
+     * been sent, so nothing is lost by it. The apply window is where it cost the reader an answer,
+     * and the standalone shell now refuses both gestures there. The embedded shell does not yet.
      *
      * What it now certifies, which the round-1 spelling did NOT: the answer landed is `A_BUILT`,
      * addressed to tab A, so the resolve arm's happy path runs and the only thing left holding the

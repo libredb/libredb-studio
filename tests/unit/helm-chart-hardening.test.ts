@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Regression tests for issue #45: Helm chart hardening items deferred from
  * the chart-introduction review (#44).

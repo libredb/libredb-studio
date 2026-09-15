@@ -27,10 +27,25 @@ export type AuditEventType =
    * has to be able to tell it from an editor statement.
    *
    * The claim it makes is narrow and deliberately so: it records that an edit was applied AT THIS
-   * ADDRESS, with this strategy, and with this outcome. It does NOT claim the round trip carried
-   * nothing else, and it cannot, because the day-one PostgreSQL unit is a multi-statement simple
-   * query with the reader's text concatenated into it and this repository has measured itself
-   * unable to count the statements in a routine body.
+   * ADDRESS, with this strategy, and with this outcome. What it does NOT claim is WHICH statements
+   * the round trip carried, and the reason is measured rather than argued (D76).
+   *
+   * The day-one PostgreSQL unit is a multi-statement simple query with the reader's text
+   * concatenated into it, and no reader in `src/lib/sql/` can count the statements in a routine
+   * body: a dollar-quoted body may carry any number of semicolons and a `BEGIN ATOMIC` body
+   * carries them by construction. So the count is not taken here, it is ASKED OF THE ENGINE, on
+   * both sides of the plan. `buildObjectEdit` parses the reader's submitted text alone as a named
+   * prepared statement inside a transaction block it has already poisoned, and refuses a text
+   * PostgreSQL answers `42601 cannot insert multiple commands` for; `applyObjectEdit` counts the
+   * results the round trip answered, one per statement, and reports `interrupted` with
+   * `committed: "unknown"` rather than a plain `applied` when that count is not the number of
+   * statements the plan is made of.
+   *
+   * So an `applied` event is now as wide as the write in the one way a count can make it. It still
+   * says how many statements ran and never which, and it still describes one statement whose
+   * effects reach past the addressed routine by the plan's own consequence list, which for this
+   * strategy is empty. `docs/SECURITY.md` control 3.6 carries both limits, and this docblock is
+   * the shipped source's copy of them: if one moves, move the other in the same commit.
    */
   | "object_edit"
   // Phase 1 auth events

@@ -1292,6 +1292,69 @@ describe("useQueryExecution", () => {
     expect(description.description).not.toContain("rolled back");
   });
 
+  /**
+   * THE SAME NOTICE ON THE LONE-STATEMENT PATH, which is where it was missing (D87).
+   *
+   * `/api/db/query` gained `openTransaction` when the ender learned to name the caller's own call
+   * scope, and the route's comment claimed the client rendered it "from the field's presence
+   * alone". It did not: the notice sat inside the `multiStatement` branch, and a lone statement
+   * never sets that flag. A reader who typed `BEGIN` on its own therefore had it rolled back in
+   * silence, and their next statement autocommitted instead of joining the transaction they asked
+   * for. These two drive the single-statement endpoint, which the script tests above never reach.
+   */
+  test("says a LONE statement's transaction was rolled back", async () => {
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, openTransaction: "rolled-back" } },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("BEGIN");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("rolled back");
+  });
+
+  test("names the ENGINE's keyword, not SQL's, when the engine is not SQL", async () => {
+    // D74 gave the single-statement route the ender's `finally`, and `redis` implements the
+    // surface, so this notice now reaches a reader whose open transaction is a `MULTI`. Telling
+    // them to add COMMIT names a command Redis does not have. The control below is the same flow
+    // on postgres, which must still say COMMIT.
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, openTransaction: "rolled-back" } },
+    });
+
+    const { result } = renderHook(() =>
+      useQueryExecution(createDefaultParams({ activeConnection: { ...mockConnection, type: "redis" } })),
+    );
+
+    await act(async () => {
+      await result.current.executeQuery("MULTI");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("Add EXEC to keep them");
+    expect(description.description).not.toContain("COMMIT");
+  });
+
+  test("says nothing when a lone statement left no transaction open", async () => {
+    // THE CONTROL, and it is what makes the assertion above non-vacuous: the same endpoint, the
+    // same lone statement, and the only difference is the field. Without it, a notice raised on
+    // every ordinary SELECT would pass the test above just as well.
+    mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    const raised = mockToastSuccess.mock.calls.some((call) => JSON.stringify(call).includes("rolled back"));
+    expect(raised).toBe(false);
+  });
+
   // ── executeQuery refreshes schema after DDL ────────────────────────────
 
   test("executeQuery calls fetchSchema after DDL query", async () => {

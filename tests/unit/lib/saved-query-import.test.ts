@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseSavedQueries } from "@/lib/saved-query-import";
 import type { SavedQuery } from "@/lib/types";
 
@@ -22,11 +24,19 @@ describe("parseSavedQueries", () => {
       globalThis.Function = new Proxy(Function, {
         construct() { evaluations++; throw new EvalError("CSP blocks eval"); },
       });
-      const { parseSavedQueries } = await import(${JSON.stringify(import.meta.dir + "/../../../src/lib/saved-query-import.ts")});
+      const { parseSavedQueries } = await import(${JSON.stringify(pathToFileURL(resolve(import.meta.dir, "../../../src/lib/saved-query-import.ts")).href)});
       const rows = parseSavedQueries(${JSON.stringify(JSON.stringify([query]))});
       process.stdout.write(JSON.stringify({ evaluations, name: rows[0].name, date: rows[0].createdAt instanceof Date }));
     `;
-    const processResult = Bun.spawnSync([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
+    // A file: URL, not a bare path: a Windows absolute path ("C:\\...") reads "C:" as a URL
+    // scheme in an ESM specifier. cwd is pinned to the repository root because the module under
+    // import resolves "@/lib/db/compatibility", and that alias comes from the tsconfig.json found
+    // from the child's working directory, not from the importing file.
+    const processResult = Bun.spawnSync([process.execPath, "-e", script], {
+      cwd: resolve(import.meta.dir, "../../.."),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     expect(new TextDecoder().decode(processResult.stderr)).toBe("");
     expect(processResult.exitCode).toBe(0);
     expect(JSON.parse(new TextDecoder().decode(processResult.stdout))).toEqual({

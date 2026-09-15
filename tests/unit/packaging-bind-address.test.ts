@@ -4,10 +4,24 @@
  * real subprocess against a stub "node" binary that only echoes the
  * HOSTNAME it was started with - no real server ever starts.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
+
+/*
+  Both wrappers are /bin/sh files shipped in the .deb/.rpm and in the Homebrew formula, and each is
+  exercised against a stub `node` that is itself a `#!/bin/sh` script made runnable with chmod 0755.
+  Windows has neither: the shell is not on a PowerShell PATH (`Bun.spawnSync(["sh", ...])` THROWS
+  "Executable not found in $PATH", measured in this worktree), NTFS carries no exec bit, and
+  CreateProcess cannot exec an extension-less #! file. There is no Windows artifact behind these
+  tests, so the skip names that rather than pretending the suite covered it.
+*/
+const SH = posixShell("sh");
+const BASH = posixShell("bash");
+const NO_SH = missingPosixShell("sh") ?? MISSING_POSIX_FILE_MODES;
+const NO_BASH = missingPosixShell("bash") ?? MISSING_POSIX_FILE_MODES;
 
 const STUB_NODE_SCRIPT = '#!/bin/sh\necho "HOSTNAME=$HOSTNAME"\n';
 /** Looks like what Docker exports as HOSTNAME for every container process. */
@@ -21,7 +35,7 @@ function writeStubNode(binDir: string): string {
   return nodePath;
 }
 
-describe("packaging/linux/libredb-studio bind address (#134)", () => {
+describeIf(NO_SH, "packaging/linux/libredb-studio bind address (#134)", () => {
   const WRAPPER = join(import.meta.dir, "../../packaging/linux/libredb-studio");
   const fixtureRoots: string[] = [];
 
@@ -34,7 +48,7 @@ describe("packaging/linux/libredb-studio bind address (#134)", () => {
     fixtureRoots.push(home);
     writeStubNode(join(home, "node/bin"));
     writeFileSync(join(home, "server.js"), "");
-    return Bun.spawnSync(["sh", WRAPPER], {
+    return Bun.spawnSync([SH!, WRAPPER], {
       env: {
         ...process.env,
         LIBREDB_STUDIO_HOME: home,
@@ -73,7 +87,7 @@ describe("packaging/linux/libredb-studio bind address (#134)", () => {
   });
 });
 
-describe("packaging/homebrew/libredb-studio.rb.tmpl bind address (#134)", () => {
+describeIf(NO_BASH, "packaging/homebrew/libredb-studio.rb.tmpl bind address (#134)", () => {
   const template = readFileSync(join(import.meta.dir, "../../packaging/homebrew/libredb-studio.rb.tmpl"), "utf8");
   const heredocMatch = /\(bin\/"libredb-studio"\)\.write <<~SCRIPT\n([\s\S]*?)\n\s*SCRIPT\b/.exec(template);
   if (!heredocMatch) throw new Error('could not locate the bin/"libredb-studio" heredoc in the Homebrew template');
@@ -94,7 +108,7 @@ describe("packaging/homebrew/libredb-studio.rb.tmpl bind address (#134)", () => 
     const script = rawScript
       .replaceAll('#{Formula["node@24"].opt_bin}/node', nodePath)
       .replaceAll("#{libexec}/server.js", serverPath);
-    return Bun.spawnSync(["bash", "-c", script], {
+    return Bun.spawnSync([BASH!, "-c", script], {
       env: { ...process.env, HOME: dir, HOSTNAME: "", LIBREDB_BIND: "", ...env },
       stdout: "pipe",
       stderr: "pipe",

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export type RouteModule = Record<string, ((req: never) => Promise<Response>) | undefined>;
 
@@ -15,7 +16,10 @@ export type RouteModule = Record<string, ((req: never) => Promise<Response>) | u
  * plain path has no such restriction - bun's dynamic import() resolves it like any other
  * runtime module specifier, and the "@/" imports *inside* each route.ts still resolve normally
  * there, since that resolution happens in that file's own context, independent of how the
- * importer named it.
+ * importer named it. It is handed to import() as a file: URL, which is the portable spelling of
+ * that same specifier: an ESM import of a bare Windows absolute path ("C:\\...") reads "C:" as a
+ * URL scheme and is rejected, and every route enumeration in the suite goes through this one
+ * function, so it would take all three files out at once.
  *
  * Shared by every route-enumeration test under tests/security/ - the AI-only enumeration in
  * rate-limit-routes.test.ts and the whole-tree enumeration in route-auth.test.ts both call this
@@ -30,7 +34,8 @@ export function discoverRoutes(rootDir: string): Array<[string, () => Promise<Ro
   function walk(dir: string, keySegments: string[]): void {
     const routeFile = join(dir, "route.ts");
     if (existsSync(routeFile)) {
-      results.push([keySegments.join("/"), () => import(routeFile) as Promise<RouteModule>]);
+      const specifier = pathToFileURL(routeFile).href;
+      results.push([keySegments.join("/"), () => import(specifier) as Promise<RouteModule>]);
     }
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.isDirectory()) {

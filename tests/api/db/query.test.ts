@@ -143,7 +143,12 @@ describe("POST /api/db/query", () => {
     const res = await POST(req as never);
 
     expect(res.status).toBe(200);
-    expect(providerWithCancel.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined, "query-42");
+    expect(providerWithCancel.query).toHaveBeenCalledWith(
+      "SELECT * FROM users LIMIT 50",
+      undefined,
+      "query-42",
+      expect.any(String),
+    );
   });
 
   // ── Bound parameters (#290) ───────────────────────────────────────────────
@@ -166,10 +171,12 @@ describe("POST /api/db/query", () => {
     const res = await POST(req as never);
 
     expect(res.status).toBe(200);
-    expect(mockProvider.query).toHaveBeenCalledWith(`UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`, [
-      "\\' WHERE 1=1 -- ",
-      7,
-    ]);
+    expect(mockProvider.query).toHaveBeenCalledWith(
+      `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
+      ["\\' WHERE 1=1 -- ", 7],
+      undefined,
+      expect.any(String),
+    );
   });
 
   test("binds parameters alongside a queryId when cancellation is supported", async () => {
@@ -196,6 +203,7 @@ describe("POST /api/db/query", () => {
       `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
       ["Alice", 7],
       "query-42",
+      expect.any(String),
     );
   });
 
@@ -467,7 +475,7 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
 
     expect(res.status).toBe(200);
     // Reached the driver verbatim: not refused, not rewritten, not downgraded.
-    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined);
+    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined, undefined, expect.any(String));
     // The shared, fully-privileged provider cache - never an execution profile.
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
   });
@@ -552,6 +560,8 @@ describe("POST /api/db/query with an explain request", () => {
     expect(provider.query).toHaveBeenCalledWith(
       "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
+      undefined,
+      expect.any(String),
     );
     expect(data.explainFormat).toBe("postgres-json");
   });
@@ -660,6 +670,8 @@ describe("POST /api/db/query with an explain request", () => {
     expect(provider.query).toHaveBeenCalledWith(
       "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
       [7],
+      undefined,
+      expect.any(String),
     );
     expect(data.explainFormat).toBe("postgres-json");
   });
@@ -693,7 +705,199 @@ describe("POST /api/db/query with an explain request", () => {
     const data = await parseResponseJSON<Record<string, unknown>>(res);
 
     expect(res.status).toBe(200);
-    expect(mockProvider.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined);
+    expect(mockProvider.query).toHaveBeenCalledWith(
+      "SELECT * FROM users LIMIT 50",
+      undefined,
+      undefined,
+      expect.any(String),
+    );
     expect("explainFormat" in data).toBe(false);
+  });
+});
+
+describe("POST /api/db/query and the transaction its own statement left open", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    // One test below installs a persistent provider double, so the default is put back
+    // here rather than at the end of that test, where a failing assertion would skip it.
+    mockGetOrCreateProvider.mockResolvedValue(mockProvider as never);
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+  });
+
+  // ── WHY THIS ROUTE ENDS ITS OWN TRANSACTION, AND ONLY ITS OWN (D74, D87) ──
+  //
+  // A single statement CAN leave a transaction open here: MEASURED 2026-09-15 against
+  // PostgreSQL 18.4 through this handler with the real provider and the real cache, a
+  // lone `BEGIN` answered 200, released its pooled client in status `T`, and the next
+  // request on the same cached provider ran its `CREATE TABLE` inside that stranger's
+  // transaction, answered 200, and an independent reader saw no such table.
+  //
+  // The finally below was tried once WITHOUT D87 and reverted, because the ender it calls
+  // named one shared pointer: it rolled back whichever client anybody had recorded last.
+  // Measured on the same engine, a plain `SELECT pg_sleep(3)` sent here rolled back a
+  // concurrent `/api/db/multi-query` script mid-flight — the script was told all four
+  // statements had succeeded, its `COMMIT` included, and its `CREATE TABLE` was gone — and
+  // also discarded an interactive `POST /api/db/transaction` session's committed work
+  // while `commit` still answered "Transaction committed". Nothing threw in either run.
+  //
+  // So the route mints a scope, passes it to the statement it runs, and ends THAT scope.
+  // The two tests below are the two halves: the serial leak closes, and the cross-request
+  // probe leaves the other caller's transaction untouched.
+
+  /**
+   * A stand-in for the shared `PostgresProvider`: clients recorded per call SCOPE, and an
+   * ender that can only reach the clients the scope it is given ran on. The scope is the
+   * fourth argument of `query()`, which is what the route supplies.
+   */
+  function sharedProviderKeyedByScope() {
+    const perScope = new Map<string, { inTransaction: boolean }>();
+    let releaseSlowQuery = () => {};
+    let slowQueryStarted = () => {};
+    const slowQueryRunning = new Promise<void>((resolve) => {
+      slowQueryStarted = resolve;
+    });
+
+    const provider = {
+      ...createMockProvider(),
+      query: mock(async (sql: string, _params?: unknown[], _queryId?: string, scope?: string) => {
+        const client = { inTransaction: /^\s*BEGIN/i.test(sql) };
+        // Only a call that left a transaction open is recorded, and only under the scope
+        // that ran it, which is what the provider does with the server's own status byte.
+        if (scope !== undefined && client.inTransaction) perScope.set(scope, client);
+        if (sql.includes("pg_sleep")) {
+          slowQueryStarted();
+          await new Promise<void>((resolve) => {
+            releaseSlowQuery = resolve;
+          });
+        }
+        return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+      }),
+      endOpenQueryTransaction: mock(async (scope: string) => {
+        const client = perScope.get(scope);
+        perScope.delete(scope);
+        if (client === undefined || !client.inTransaction) return "none" as const;
+        client.inTransaction = false;
+        return "rolled-back" as const;
+      }),
+      openTransactionCount: () => [...perScope.values()].filter((c) => c.inTransaction).length,
+    };
+    return { provider, slowQueryRunning, releaseSlowQuery: () => releaseSlowQuery() };
+  }
+
+  test("ends the transaction its own statement left open and says so", async () => {
+    const { provider } = sharedProviderKeyedByScope();
+    mockGetOrCreateProvider.mockResolvedValue(provider as never);
+
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "BEGIN" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.openTransaction).toBe("rolled-back");
+    // Nothing is left behind for the next user of this cached provider to walk into.
+    expect(provider.openTransactionCount()).toBe(0);
+  });
+
+  test("says nothing about a transaction when its statement opened none", async () => {
+    const { provider } = sharedProviderKeyedByScope();
+    mockGetOrCreateProvider.mockResolvedValue(provider as never);
+
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(provider.endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect("openTransaction" in data).toBe(false);
+  });
+
+  test("does not discard a transaction another caller of the shared provider opened", async () => {
+    const { provider, slowQueryRunning, releaseSlowQuery } = sharedProviderKeyedByScope();
+    mockGetOrCreateProvider.mockResolvedValue(provider as never);
+
+    // A: an ordinary slow read through this route. It opens nothing.
+    const slow = POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT pg_sleep(3)" },
+      }) as never,
+    );
+    await slowQueryRunning;
+
+    // B: another caller of the same cached provider opens a transaction while A runs,
+    // which is what a `/api/db/multi-query` script or the interactive session does. It
+    // runs under a scope of its own, as every other caller does.
+    await provider.query("BEGIN", undefined, undefined, "scope-of-another-caller");
+
+    releaseSlowQuery();
+    const res = await slow;
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    // B's transaction is still B's. A rolled nothing back, and A claimed nothing.
+    expect(provider.openTransactionCount()).toBe(1);
+    expect("openTransaction" in data).toBe(false);
+
+    // The control that makes the two assertions above non-vacuous: named by its OWN scope,
+    // the same ender reaches the very transaction A could not.
+    expect(await provider.endOpenQueryTransaction("scope-of-another-caller")).toBe("rolled-back");
+    expect(provider.openTransactionCount()).toBe(0);
+  });
+
+  test("ends the transaction a FAILING statement left open, which is where they come from", async () => {
+    // The finally is a finally for this: a statement that raised inside its own BEGIN is
+    // what releases a client in status `E`, and every later request that draws it answers
+    // 500 until somebody ends it.
+    const endOpenQueryTransaction = mock(async () => "rolled-back" as const);
+    const provider = { ...createMockProvider(), endOpenQueryTransaction };
+    (provider.query as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+      throw new QueryError(
+        "current transaction is aborted, commands ignored until end of transaction block",
+        "postgres",
+      );
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(400);
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    // The error response is the statement's own; the route invents no transaction verdict
+    // on a body it is not returning.
+    expect("openTransaction" in data).toBe(false);
+  });
+
+  test("leaves a provider that cannot name its own session exactly as it found it", async () => {
+    // `endOpenQueryTransaction` is optional for the reason its declaration gives, and a
+    // provider without it is not guessed at.
+    const provider = createMockProvider();
+    expect("endOpenQueryTransaction" in provider).toBe(false);
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "BEGIN" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect("openTransaction" in data).toBe(false);
   });
 });

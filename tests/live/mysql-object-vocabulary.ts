@@ -18,10 +18,10 @@
  *   - by hand, against a disposable server, with the command below;
  *   - in Task 27's live acceptance run (#789), which is where it belongs permanently.
  *
- * It is NOT in `bun run test` or `bun run test:ci`. `tests/run-core.sh` globs
- * `tests/unit tests/api tests/integration tests/hooks tests/security tests/evals`, so nothing
- * under `tests/live/` is collected, which is the same arrangement
- * `tests/live/schema-diff-dialects.ts` has.
+ * It is NOT in `bun run test`. The runner collects every `*.test.ts` / `*.test.tsx` file under
+ * `tests/`, and excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`), so this
+ * file is outside that set twice over: by its directory and by its name. That is the same
+ * arrangement `tests/live/schema-diff-dialects.ts` has.
  *
  * WHAT IT CAN AND CANNOT SEE, stated plainly because a guard nobody can calibrate is worse
  * than none. `SELECT DISTINCT` reports the spellings the server's DATA exhibits, not the

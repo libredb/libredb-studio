@@ -93,7 +93,7 @@ its `.loop/PROGRESS.md` entry and its commit; a trace line is not evidence that 
 
 1. **Mechanical** — `scripts/gate.sh`: the exact pre-commit verification from the root
    `CLAUDE.md` plus the required CI coverage check
-   (format · lint · typecheck · knip · test · test:coverage + coverage:check · build), per task,
+   (format · lint · typecheck · knip · test:coverage + coverage:check · build), per task,
    before every commit.
 2. **Functional** — `scripts/functional-smoke.sh`: boot the built app, create a real
    PostgreSQL connection through the UI, run a SQL query, assert the rows render. Mandatory

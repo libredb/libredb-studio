@@ -47,6 +47,31 @@ let definedThemes: string[] = [];
 /** Set by a single test, to drive the one branch where the modified model is not there yet. */
 let modelIsNull = false;
 
+/**
+ * What Monaco would have written to the console, and what happened to the two models, in order.
+ *
+ * X21 was MEASURED in Chromium and not here: every successful apply logged
+ * `TextModel got disposed before DiffEditorWidget model got reset`, once. This layer can still see
+ * it, because the whole of that error is an ORDER between four calls the double makes itself, and
+ * the three of them that belong to `@monaco-editor/react` are transcribed from its shipped
+ * `dist/index.mjs` rather than invented: its unmount runs
+ * `const m = editor.getModel(); keepOriginal || m?.original.dispose(); keepModified ||
+ * m?.modified.dispose(); editor.dispose();`, so the models go while the widget still holds them.
+ * `modelDouble` raises Monaco's sentence on exactly that condition, a model disposed while it is
+ * still attached to a widget that is still alive.
+ */
+let monacoErrors: string[] = [];
+let modelLog: string[] = [];
+/**
+ * Monaco's loader has not resolved, so `onMount` never fires and nothing hands the dialog a widget.
+ *
+ * The real `DiffEditor` renders its loading node and calls `onMount` only once `monaco` is there,
+ * so a dialog closed while the loader is still in flight unmounts with the ref never written. That
+ * is the only way `ReleasedDiffEditor`'s null guard is reached, and the double fires `onMount`
+ * synchronously in an effect, so without this switch no test can reach it.
+ */
+let monacoNeverResolves = false;
+
 class RangeDouble implements FakeRange {
   constructor(
     readonly startLineNumber: number,
@@ -67,10 +92,36 @@ function monacoDouble() {
   };
 }
 
+interface ModelDouble {
+  attached: boolean;
+  disposed: boolean;
+  getPositionAt: (offset: number) => { lineNumber: number; column: number };
+  dispose: () => void;
+}
+
 function diffEditorDouble() {
-  const model = {
-    getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+  let widgetDisposed = false;
+  const modelDouble = (name: string): ModelDouble => {
+    const model: ModelDouble = {
+      attached: true,
+      disposed: false,
+      getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+      dispose: () => {
+        // Monaco's own assertion: the widget subscribes to its models, so a model that is still
+        // attached to a LIVE widget writes this sentence to the console when it is disposed.
+        if (model.attached && !widgetDisposed) {
+          monacoErrors.push("TextModel got disposed before DiffEditorWidget model got reset");
+        }
+        model.disposed = true;
+        modelLog.push(`dispose:${name}`);
+      },
+    };
+    return model;
   };
+
+  const original = modelDouble("original");
+  const model = modelDouble("modified");
+  let models: { original: ModelDouble; modified: ModelDouble } | null = { original, modified: model };
   const collection = {
     set: (decorations: readonly { range: FakeRange }[]) => {
       painted = decorations;
@@ -86,7 +137,21 @@ function diffEditorDouble() {
       return collection;
     },
   };
-  return { getModifiedEditor: () => modified };
+  return {
+    getModifiedEditor: () => modified,
+    getModel: () => models,
+    setModel: (next: unknown) => {
+      if (next !== null) throw new Error("the double only models the release");
+      original.attached = false;
+      model.attached = false;
+      models = null;
+      modelLog.push("release");
+    },
+    dispose: () => {
+      widgetDisposed = true;
+      modelLog.push("dispose:widget");
+    },
+  };
 }
 
 mock.module("@monaco-editor/react", () => ({
@@ -98,12 +163,36 @@ mock.module("@monaco-editor/react", () => ({
   ) {
     diffProps = props;
     const mounted = React.useRef(false);
+    const editor = React.useRef<ReturnType<typeof diffEditorDouble> | null>(null);
+    const keep = React.useRef({ original: false, modified: false });
+    keep.current = {
+      original: props.keepCurrentOriginalModel === true,
+      modified: props.keepCurrentModifiedModel === true,
+    };
     React.useEffect(() => {
       if (mounted.current) return;
       mounted.current = true;
+      if (monacoNeverResolves) return;
+      editor.current = diffEditorDouble();
       props.beforeMount?.(monacoDouble());
-      props.onMount?.(diffEditorDouble(), monacoDouble());
+      props.onMount?.(editor.current, monacoDouble());
     });
+    /*
+     * The WRAPPER's unmount, transcribed from `@monaco-editor/react`'s shipped `dist/index.mjs`.
+     * It is the second half of X21: the models go first and the widget goes last, so anything that
+     * has to release the models has to have done it before this runs.
+     */
+    React.useEffect(
+      () => () => {
+        const live = editor.current;
+        if (live === null) return;
+        const models = live.getModel();
+        if (!keep.current.original) models?.original.dispose();
+        if (!keep.current.modified) models?.modified.dispose();
+        live.dispose();
+      },
+      [],
+    );
     return (
       <div>
         <textarea data-testid="diff-original" readOnly value={props.original ?? ""} />
@@ -366,6 +455,9 @@ describe("ApplyPreviewDialog", () => {
     paintCalls = 0;
     definedThemes = [];
     modelIsNull = false;
+    monacoErrors = [];
+    modelLog = [];
+    monacoNeverResolves = false;
     handlers.onApply.mockClear();
     handlers.onRebuild.mockClear();
     handlers.onGoToError.mockClear();
@@ -591,10 +683,10 @@ describe("ApplyPreviewDialog", () => {
     // The trust boundary this dialog sits on, and the bound is the EXISTING one rather than a
     // third number invented here: `EDIT_PLAN_EXECUTABLE_LIMIT` is what both apply routes enforce.
     // The population: the STANDALONE path is bounded at both routes, and the EMBEDDED path passes
-    // through no route at all. `isObjectEditPlanShape` bounds NO string (grep `length` in
-    // `src/lib/api/object-edit-wire.ts`: four shape predicates, no bound), so an embedded host's
-    // `objectEditor.build` can answer a well-formed plan whose step text is 50 MB, and the tab
-    // hangs building a diff model for bytes no apply could ever send.
+    // through no route at all. Since D80 `isObjectEditPlanShape` does bound the unit's executable
+    // text, but at `EDIT_BODY_BYTE_LIMIT` and deliberately looser than the routes, so an embedded
+    // host's `objectEditor.build` can still answer a well-formed plan whose step text is millions of
+    // characters above anything an apply could send, and the tab hangs building a diff model for it.
     const huge = "-".repeat(EDIT_PLAN_EXECUTABLE_LIMIT + 1);
     draw({
       kind: "preview",
@@ -923,7 +1015,7 @@ describe("ApplyPreviewDialog", () => {
       },
     });
     expect(text("-outcome")).toContain(
-      "The engine stopped this statement before it finished. Whether it was applied is unknown.",
+      "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
     );
     expect(query("-confirm")).toBeNull();
     cleanup();
@@ -941,6 +1033,108 @@ describe("ApplyPreviewDialog", () => {
     });
     expect(text("-outcome")).toContain("rolled it back, so nothing was applied");
     expect(query("-confirm")).toBeNull();
+  });
+
+  test("an apply whose ANSWER could not be read is not described in the words of a timeout", () => {
+    /*
+     * X20's population. `ObjectSourceView` synthesises `{ outcome: "interrupted", committed:
+     * "unknown" }` for an apply answer `isObjectEditOutcomeShape` refuses, because that arm's
+     * `committed: "unknown"` half is exactly right and the outcome type carries no better arm. The
+     * engine may have finished perfectly and the ANSWER is what could not be read, so a first line
+     * saying the engine stopped the statement is a claim nobody measured for it.
+     *
+     * The synthesised sentence is reproduced here VERBATIM from `ObjectSourceView`'s
+     * `UNREADABLE_OUTCOME`, so the assertion reads the two lines a real reader of this population
+     * gets and not a shape invented for the test.
+     */
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence:
+          "The apply was sent and its answer could not be read, so LibreDB cannot say whether this change landed. " +
+          "Re-read this definition before trying again.",
+        duration: 0,
+      }),
+    );
+    expect(text("-outcome")).not.toContain("The engine stopped");
+    expect(text("-outcome")).toContain(
+      "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
+    );
+    expect(text("-outcome")).toContain("Re-read this definition before trying again.");
+    cleanup();
+
+    // The control, and the reason this is a SPLIT and not a rewrite of the arm: `rolled-back` is
+    // claimable only by a provider that opened and closed the transaction itself, so there the
+    // engine did stop the statement and the measured clause stays exactly as it was.
+    draw(
+      refusal({ outcome: "interrupted", committed: "rolled-back", sentence: "statement timeout", duration: 30_000 }),
+    );
+    expect(text("-outcome")).toContain(
+      "The engine stopped this statement before it finished, and this apply rolled it back",
+    );
+  });
+
+  test("an interrupted apply whose sentence IS the answer LibreDB read does not claim it read none", () => {
+    /*
+     * The rest of X20's population, and the one the `unknown` first line must not talk past.
+     * `ObjectSourceView.landApplyError` turns EVERY rejection of `applier.apply` except
+     * `EDIT_PLAN_INVALID` into `{ outcome: "interrupted", committed: "unknown" }`, and
+     * `source-applier.postJson` rejects on every non-ok status carrying the route's own sentence,
+     * so a proxy's 502 arrives here WITH the answer it produced and that answer is printed on the
+     * very next line. Trino is the second member: `TRINO_APPLY_VERDICT` maps `timeout` and
+     * `cancelled` to `interrupted`, and `http-transport` mints those two from the coordinator's own
+     * `EXCEEDED_TIME_LIMIT` and `ADMINISTRATIVELY_KILLED` fault names, i.e. from an answer read in
+     * full. So the first line may claim nothing about the TRANSPORT, neither that the apply was
+     * sent nor that no answer came back; the one thing every member shares is the DISPOSITION.
+     *
+     * The two sentences are verbatim: `httpSourceApplier.apply`'s silent-status sentence
+     * (`source-applier.ts:155`) and Trino's kill message (`http-transport.ts` KILL_MESSAGE path).
+     */
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: "The apply failed: HTTP 502.",
+        duration: 0,
+      }),
+    );
+    expect(text("-outcome")).not.toContain("never read an answer");
+    expect(text("-outcome")).not.toContain("The apply was sent");
+    expect(text("-outcome")).toContain(
+      "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
+    );
+    expect(text("-outcome")).toContain("The apply failed: HTTP 502.");
+    cleanup();
+
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: "Query killed. Message: Terminated from LibreDB Studio",
+        duration: 1_200,
+      }),
+    );
+    expect(text("-outcome")).not.toContain("never read an answer");
+    expect(text("-outcome")).not.toContain("The apply was sent");
+    cleanup();
+
+    /*
+     * The control on the other half of the contradiction the transport clause created: the frame's
+     * own description for this arm says the transport is what is unknown, so a body line asserting
+     * the apply was sent contradicts the paragraph directly above it. Both come from this file.
+     */
+    draw(
+      refusal({
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: "The apply failed: HTTP 502.",
+        duration: 0,
+      }),
+    );
+    expect(document.querySelector("[data-slot='dialog-description']")?.textContent).toContain(
+      "Whether it reached the server is unknown.",
+    );
   });
 
   test("the concurrent refusal is its own variant with Try again, and it REBUILDS", () => {
@@ -1068,6 +1262,77 @@ describe("ApplyPreviewDialog", () => {
     expect(diffProps?.modifiedModelPath).toBe("libredb-apply-modified:conn/app.f(integer)/function/definition");
     expect(diffProps?.keepCurrentOriginalModel).toBeFalsy();
     expect(diffProps?.keepCurrentModifiedModel).toBeFalsy();
+  });
+
+  test("closing the dialog RELEASES the two models before anything disposes them", () => {
+    /*
+     * X21, MEASURED in Chromium on 2026-09-14: every successful apply driven through the UI wrote
+     * `TextModel got disposed before DiffEditorWidget model got reset` to the console. The
+     * disposal is deliberate, the ORDER was not: `@monaco-editor/react` disposes both models and
+     * only then the widget, so Monaco's own disposal path fires while the widget still holds them.
+     * The assertion is count-free on purpose, and X21's "one console error per apply" is not taken
+     * on trust: Monaco subscribes `onWillDispose` to BOTH models, so the sentence is raised once
+     * per model DISPOSAL. MEASURED here by deleting `setModel(null)` from the release and running
+     * this test: four, two from this component's own disposal and two more from the wrapper's,
+     * which without the release still reads both models back out of the live widget.
+     *
+     * Nothing is visible to the reader. It matters because it is noise on the channel Phase 3's
+     * CSP assertion reads, and it is what would stop an E2E spec asserting an empty console after
+     * an apply.
+     */
+    draw(PREVIEW);
+    expect(modelLog).toEqual([]);
+    cleanup();
+    expect(monacoErrors).toEqual([]);
+    // Released first, then disposed, then the widget: the models are still disposed, because the
+    // browser probe measured roughly 2 MB of retained text per preview when they were not.
+    expect(modelLog).toEqual(["release", "dispose:original", "dispose:modified", "dispose:widget"]);
+  });
+
+  test("the release also runs when the DIFF goes and the dialog stays open", () => {
+    // The other way this component unmounts a diff, and the one an unmount-only cleanup on the
+    // dialog would miss: the preview expires under an open dialog, `plan` goes away and the whole
+    // diff block with it while the shell stays mounted.
+    const view = draw(PREVIEW);
+    view.rerender(
+      <ApplyPreviewDialog
+        open
+        state={{ kind: "expired" }}
+        objectLabel="app.order_total(integer)"
+        partLabel="Definition"
+        address="conn/app.f(integer)/function"
+        partId="definition"
+        onApply={handlers.onApply}
+        onRebuild={handlers.onRebuild}
+        onGoToError={handlers.onGoToError}
+        onClose={handlers.onClose}
+      />,
+    );
+    expect(query("-diff")).toBeNull();
+    expect(monacoErrors).toEqual([]);
+    expect(modelLog).toEqual(["release", "dispose:original", "dispose:modified", "dispose:widget"]);
+  });
+
+  test("a diff unmounted before Monaco resolved has nothing to release and releases nothing", () => {
+    /*
+     * The null arm of the release, and it is REACHABLE in the product: `@monaco-editor/react` calls
+     * `onMount` only once its loader has resolved, so a reader who presses Escape, or a preview
+     * that expires, while Monaco is still loading unmounts a diff whose `editorRef` was never
+     * written. Without this the guard is only a line the coverage gate counts: it shares a physical
+     * line with its `return`, so a per-line report reads 100 percent with the branch never taken.
+     */
+    monacoNeverResolves = true;
+    draw(PREVIEW);
+    expect(query("-diff")).toBeTruthy();
+    expect(modelLog).toEqual([]);
+
+    cleanup();
+
+    // Not "no error": no CALL. Dereferencing the unwritten ref is what the guard exists to stop,
+    // and an unmount that released or disposed anything here would be acting on a widget that was
+    // never handed over.
+    expect(modelLog).toEqual([]);
+    expect(monacoErrors).toEqual([]);
   });
 
   test("the diff is not a keyboard trap, and is read-only on both sides", () => {
@@ -1253,8 +1518,11 @@ describe("ApplyPreviewDialog", () => {
     draw(
       refusal({ outcome: "interrupted", committed: "unknown", sentence: "connection terminated", duration: 30_000 }),
     );
+    // The TITLE splits with the disposition and for the same reason X20 gives: on `unknown` the
+    // statement may have run to completion and it is the ANSWER that is missing, so a title naming
+    // a stopped statement is the loudest copy of the claim nobody measured.
     expect(frame()).toEqual({
-      title: "This apply was stopped before it finished",
+      title: "This apply's outcome is unknown",
       description: `${LABEL}Whether it reached the server is unknown. Read the definition again before you edit it.`,
     });
   });

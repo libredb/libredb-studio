@@ -38,8 +38,8 @@ export interface AgentModelOptions {
   readonly config?: Partial<LLMConfig>;
   /**
    * The SDK providers document `fetch` as the interception point for tests and
-   * proxies; injecting it keeps the suite off a global stub, which `bun test`
-   * would leak across files sharing the process.
+   * proxies; injecting it keeps the suite off a global stub, which would leak
+   * into every other test in the same process and has to be restored by hand.
    */
   readonly fetch?: AgentFetch;
 }

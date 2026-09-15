@@ -35,6 +35,23 @@ import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 
+/**
+ * `Bun.Glob().scanSync()` yields HOST-separated paths, so on Windows a hit arrives as
+ * `src\app\api\agent\config\route.ts` (measured on windows-latest, where this file's own
+ * non-vacuity control failed along with the nine assertions it guards). Every use of a
+ * scanned path below is POSIX-spelled - the `src/app` prefix stripped off a route, the
+ * route path looked up in `docs/API_DOCS.md`, the comparison against
+ * `src/lib/agent/config.ts` - and so is the documentation being searched, which no
+ * platform rewrites. So the separator is normalised once where the paths are produced
+ * rather than in each comparison.
+ *
+ * Unconditional, not a win32 branch: a tracked path holding a backslash cannot be
+ * checked out on Windows at all, and this suite runs there, so no name under `src/` can
+ * carry one. That makes this a no-op on POSIX rather than a branch nothing here runs.
+ */
+const scan = (pattern: string): string[] =>
+  [...new Bun.Glob(pattern).scanSync(ROOT)].map((hit) => hit.replaceAll("\\", "/"));
+
 const AGENT_DOC_PATH = "docs/AGENT.md";
 const AGENT_DOC = read(AGENT_DOC_PATH);
 const ARCHITECTURE = read("docs/ARCHITECTURE.md");
@@ -90,7 +107,7 @@ describe("the agent's environment surface is documented where an operator looks"
       "src/hooks/use-agent-*.ts",
       "src/lib/api/agent-run-access.ts",
     ];
-    const files = roots.flatMap((pattern) => [...new Bun.Glob(pattern).scanSync(ROOT)]);
+    const files = roots.flatMap(scan);
     expect(files.length).toBeGreaterThan(20);
 
     const readers = files.filter((file) => read(file).includes("process.env"));
@@ -244,7 +261,7 @@ describe("the agent's HTTP surface is documented where a reader looks for a rout
    */
   const API_DOCS = read("docs/API_DOCS.md");
 
-  const routePaths = [...new Bun.Glob("src/app/api/agent/**/route.ts").scanSync(ROOT)]
+  const routePaths = scan("src/app/api/agent/**/route.ts")
     .map((file) =>
       file
         .replace(/^src\/app/, "")

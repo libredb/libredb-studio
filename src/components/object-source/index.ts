@@ -16,17 +16,19 @@
  * otherwise: knip named eighteen re-exported lines there as reaching nobody, and a barrel that
  * re-exports everything cannot be read as a statement about what the outside uses (#789).
  *
- * The apply seam's three names are here for the same test, and the test is passed by INTENT and
- * not yet by a consumer (#789 Phase 3). Both shells are to name them: the standalone one will
- * build its `onApply` from `httpSourceApplier`, the embedded one will build an
- * `ObjectSourceApplier` from its host's `objectEditor` exactly as it builds a reader from the
- * host's source method, and both will tell an expired plan apart from a failure by reading
- * `ObjectEditRequestError`'s `code`. MEASURED in fix round 1 at this commit:
- * `grep -rnE "httpSourceApplier|objectEditor|sourceApplier" src/` finds nothing outside this
- * directory, because both shells land in later waves of this phase, so the only consumer through
- * this file today is the barrel test in `tests/unit/components/object-source-applier.test.ts`,
- * which exists so that a dropped line here fails now rather than in a wave nobody is reading this
- * file. Nothing else from `source-applier.ts` is re-exported: `postJson` and the bound helpers are
+ * The apply seam's three names earn their place the same way (#789 Phase 3), and BOTH SHELLS NOW
+ * NAME THEM. The standalone one builds its `onApply` from `httpSourceApplier`
+ * (`src/components/Studio.tsx`), the embedded one builds an `ObjectSourceApplier` from its host's
+ * `objectEditor` exactly as it builds a reader from the host's source method
+ * (`src/workspace/hooks/use-connection-adapter.ts`, mounted at `src/workspace/StudioWorkspace.tsx`),
+ * and both tell an expired plan apart from a failure by reading `ObjectEditRequestError`'s `code`
+ * (`src/components/object-source/ObjectSourceView.tsx`). RE-MEASURED at this commit:
+ * `grep -rnE "httpSourceApplier|objectEditor|sourceApplier" src/` answers thirteen lines outside
+ * this directory. An earlier revision of this paragraph said it found nothing and that both shells
+ * landed in later waves, which was read off this same grep before they did; the barrel test in
+ * `tests/unit/components/object-source-applier.test.ts` is still worth its place, because it is
+ * what makes a dropped line here fail on the line itself rather than in whichever shell notices
+ * first. Nothing else from `source-applier.ts` is re-exported: `postJson` and the bound helpers are
  * this folder's own.
  */
 export { ObjectSourceView, type ObjectSourcePatch } from "./ObjectSourceView";

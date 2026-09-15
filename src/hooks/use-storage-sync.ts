@@ -176,6 +176,8 @@ export function useStorageSync(): StorageSyncState {
       if (data.masking_config) writeCollectionToLocal("masking_config", data.masking_config);
       if (data.threshold_config) writeCollectionToLocal("threshold_config", data.threshold_config);
       if (data.dismissed_seeds) writeCollectionToLocal("dismissed_seeds", data.dismissed_seeds);
+      if (data.favorite_connections) writeCollectionToLocal("favorite_connections", data.favorite_connections);
+      if (data.connection_order) writeCollectionToLocal("connection_order", data.connection_order);
 
       setLastSyncedAt(new Date());
       setSyncError(null);
@@ -331,6 +333,10 @@ function getCollectionData(collection: string): unknown {
       return storage.getThresholdConfig();
     case "dismissed_seeds":
       return storage.getDismissedSeeds();
+    case "favorite_connections":
+      return storage.getFavoriteConnectionIds();
+    case "connection_order":
+      return storage.getConnectionOrder();
     default:
       return null;
   }

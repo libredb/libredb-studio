@@ -38,9 +38,9 @@ mock.module("@/components/ui/dropdown-menu", () => ({
 }));
 
 // The real provider writes to <html> and localStorage; what matters here is only that a
-// provider EXISTS, since `ThemeToggle` renders nothing when `themes` is empty. Group 9 in
-// tests/run-components.sh holds no suite that reaches the real next-themes, so this
-// process-wide mock costs its neighbours nothing.
+// provider EXISTS, since `ThemeToggle` renders nothing when `themes` is empty. `mock.module`
+// is process-wide and this file is the whole of that process, so a suite that does need the
+// real next-themes is never reached by this.
 mock.module("next-themes", () => ({
   useTheme: () => ({ theme: "dark", themes: ["dark", "light"], setTheme: () => {} }),
 }));

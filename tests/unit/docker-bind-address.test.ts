@@ -36,7 +36,7 @@
  *    both the address it chose and the evidence it chose it on.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -516,13 +516,22 @@ describe("isDirectExecution - the module's own on/off switch", () => {
   test("invocation through a symlink matches - import.meta.url is already realpath'd", () => {
     const dir = mkdtempSync(join(tmpdir(), "libredb-guard-link-"));
     try {
-      const target = join(dir, "bind.mjs");
-      const link = join(dir, "link.mjs");
+      const real = join(dir, "real");
+      mkdirSync(real);
+      const target = join(real, "bind.mjs");
       writeFileSync(target, "");
-      symlinkSync(target, link);
+      const link = join(dir, "link");
+      /*
+        The link is a DIRECTORY link created as a junction, and argv[1] reaches the module through
+        it. A file symlink needs SeCreateSymbolicLinkPrivilege on Windows - Developer Mode is off on
+        a fresh machine - so symlinkSync throws EPERM there and the test errors instead of asserting
+        anything. A junction needs no privilege, node ignores the type argument on POSIX, and what is
+        under test is unchanged: argv[1] arriving through a link still matches.
+      */
+      symlinkSync(real, link, "junction");
       // Resolved for the same reason as above: what is under test is that argv[1] reaching
       // this through a SYMLINK still matches, not that the temp directory has none.
-      expect(isDirectExecution(link, pathToFileURL(realpathSync(target)).href)).toBe(true);
+      expect(isDirectExecution(join(link, "bind.mjs"), pathToFileURL(realpathSync(target)).href)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

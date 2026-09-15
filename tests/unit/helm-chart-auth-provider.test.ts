@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Auth-provider scoping in the chart's secret handling (issue #170).
  *

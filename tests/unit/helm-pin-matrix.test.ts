@@ -1,6 +1,6 @@
 /**
  * Unit tests for the Helm CLI version matrix pinned across the five workflows
- * that run `azure/setup-helm` (seven sites in total).
+ * that run `azure/setup-helm` (eight sites in total).
  *
  * This exists because of #434. Its NOTES.txt assertions used
  * `helm install --dry-run=client`, which is green on Helm 4 (the maintainer's
@@ -64,8 +64,14 @@ const HELM_3 = "v3.16.0";
  */
 const EXPECTED_PINS: Record<string, string> = {
   // Required "Unit & Integration Tests" check: spawns `helm template` from the
-  // ten helm-chart-*.test.ts files. Produces no published byte.
+  // helm-chart-*.test.ts files. Produces no published byte.
   "ci.yml:test": HELM_4,
+  // The same suite on windows-latest and macos-latest, not a required check.
+  // Same pin as ci.yml:test for the same reason the two suite sites below share
+  // one: the helm-chart tests assert on what `helm template` renders, so a
+  // platform leg on a different client would report a difference that is the
+  // client's, not the platform's.
+  "ci.yml:test-cross-platform": HELM_4,
   // Advisory chart lint + a conditional kind `ct install`. Raised on purpose so
   // chart-testing under Helm 4 is exercised somewhere non-blocking.
   "ci.yml:helm-lint": HELM_4,
@@ -84,8 +90,8 @@ const EXPECTED_PINS: Record<string, string> = {
 /** The site whose Helm 3 pin is load-bearing evidence, not an oversight. */
 const HELM3_PINNED_SITE = "helm-release.yml:lint-test";
 
-/** The two jobs that run the helm-touching test suite; #434 was their drift. */
-const SUITE_SITES = ["ci.yml:test", "npm-publish.yml:validate"];
+/** The jobs that run the helm-touching test suite; #434 was their drift. */
+const SUITE_SITES = ["ci.yml:test", "ci.yml:test-cross-platform", "npm-publish.yml:validate"];
 
 interface HelmPin {
   site: string;
@@ -230,9 +236,9 @@ describe("jobCommandLines", () => {
   });
 });
 
-describe("the seven setup-helm sites", () => {
-  test("there are exactly seven, and every one is classified", () => {
-    expect(ALL_PINS).toHaveLength(7);
+describe("the eight setup-helm sites", () => {
+  test("there are exactly eight, and every one is classified", () => {
+    expect(ALL_PINS).toHaveLength(8);
     expect([...BY_SITE.keys()].sort()).toEqual(Object.keys(EXPECTED_PINS).sort());
   });
 
@@ -258,12 +264,34 @@ describe("the seven setup-helm sites", () => {
   });
 });
 
-describe("#434 regression: the two suite-running jobs cannot drift apart", () => {
-  test("ci.yml:test and npm-publish.yml:validate pin the identical Helm version", () => {
+describe("#434 regression: the suite-running jobs cannot drift apart", () => {
+  test("every job that runs the helm-touching suite pins the identical Helm version", () => {
     // Asserted against each other, not against a literal: the defect in #434 was
     // one helm here and another there, whatever the versions happened to be.
-    const [ci, npm] = SUITE_SITES.map((site) => BY_SITE.get(site)?.version);
-    expect(ci).toBe(npm as string);
+    //
+    // Every site against the first, not the first two against each other. This used
+    // to destructure `const [ci, npm]`, which was right while there were exactly two
+    // sites and silently stopped comparing npm-publish.yml:validate the moment a third
+    // was inserted between them: ci.yml:test was then compared with its own
+    // cross-platform twin and the release validation job with nothing.
+    const pins = SUITE_SITES.map((site) => [site, BY_SITE.get(site)?.version] as const);
+    expect(pins.every(([, version]) => version !== undefined)).toBe(true);
+    const [, first] = pins[0]!;
+    expect(pins.filter(([, version]) => version !== first)).toEqual([]);
+  });
+
+  test("every job that runs the suite requires the chart tests, so none of them can quietly skip", () => {
+    // A test file marked `@requires helm` runs only where helm and the built chart dependency are
+    // there, and is listed as not run elsewhere (tests/runner/requirements.ts). That is the right
+    // answer on a contributor's machine and the wrong one in CI, where a lost setup-helm step would
+    // otherwise turn twelve chart test files into a line in a green log. LIBREDB_REQUIRE_HELM=1 makes
+    // the runner refuse instead, and this holds every suite-running job to setting it.
+    const unenforced = SUITE_SITES.filter((site) => {
+      const pin = BY_SITE.get(site);
+      if (pin === undefined) return true;
+      return !jobCommandLines(readWorkflow(pin.file), pin.job).some((line) => /LIBREDB_REQUIRE_HELM:\s*"1"/.test(line));
+    });
+    expect(unenforced).toEqual([]);
   });
 
   test("reintroducing `helm install --dry-run=client` requires a Helm 4 suite pin", () => {
@@ -357,7 +385,7 @@ describe("`helm registry login` targets a bare domain", () => {
 
 describe("the release runbook records the split", () => {
   test("cut-release SKILL.md points at this test as the matrix's enforcement", () => {
-    // SKILL.md is the single written inventory of the seven sites; without this
+    // SKILL.md is the single written inventory of the sites; without this
     // pointer the next reader re-unifies them from the runbook.
     const skill = readFileSync(join(REPO_ROOT, ".claude/skills/cut-release/SKILL.md"), "utf8");
     const mentions = skill.split("\n").filter((line) => line.includes("helm-pin-matrix.test.ts"));

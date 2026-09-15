@@ -42,7 +42,8 @@ import path from "node:path";
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_WORKSPACE_FEATURES } from "@/workspace/types";
 
-const ROOT = process.cwd();
+// Anchored to this file, not to process.cwd(): the test is then correct whoever launches it.
+const ROOT = path.resolve(import.meta.dir, "../..");
 const SRC = path.join(ROOT, "src");
 
 // ---------------------------------------------------------------------------
@@ -199,7 +200,12 @@ function reExportClosure(): Set<string> {
   return exported;
 }
 
-const relative = (file: string): string => path.relative(ROOT, file);
+// path.relative returns the platform separator, so on Windows this would be
+// "src\\exports\\components.ts". Every literal compared against it below is POSIX-shaped, and
+// isAgentModule() matches on "/" - a backslash path makes that regex match nothing, so the
+// boundary gate at "no agent module reaches the package surface" would pass vacuously while a
+// real violation went unreported. Normalise once here, at the only place a path becomes a string.
+const relative = (file: string): string => path.relative(ROOT, file).split(path.sep).join("/");
 
 /** What the bundler emits as code. */
 const emitted = walkFrom("only-values");

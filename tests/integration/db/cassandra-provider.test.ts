@@ -43,6 +43,9 @@ import { types } from "cassandra-driver";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
+import type { DatabaseProvider } from "@/lib/db/types";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import {
@@ -3510,5 +3513,39 @@ describe("the bulk column read", () => {
     // state for it. A batch has none: `{ details: [] }` is "this container holds no such
     // object", so a refusal handed back as an empty batch is the #414 absence exactly.
     await expect(provider.describeObjects!([KEYSPACE], "table")).rejects.toThrow(/no SELECT permission/);
+  });
+});
+
+// ============================================================================
+// endOpenQueryTransaction(): the absence is declared, not accidental (D75)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new CassandraProvider(makeConnection());
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/cassandra.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+
+    // The set that DOES implement the surface is read from the type, never enumerated
+    // here: a closed list repeated across the provider docs went stale the day a further
+    // provider implemented the surface, which is exactly what happened during D75.
+    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
+      "the engine has no transaction to leave open",
+    ]);
   });
 });

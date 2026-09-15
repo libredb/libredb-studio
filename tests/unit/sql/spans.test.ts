@@ -4,6 +4,31 @@ import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/**
+ * Run a bounded-time probe ten times and report its cheapest run, in milliseconds.
+ *
+ * The guards below are about algorithmic SHAPE, not about the machine: what they pin is that a
+ * character scanner cannot backtrack, and the linear scanner costs hundredths of a millisecond
+ * on these 20k inputs against a ceiling of 200. A single sample measures the machine as well,
+ * though, and one bun process per CPU makes a scheduler stall inside the measured region
+ * ordinary - so a stall reports a performance regression that did not happen, and it gets
+ * blamed on the scanner. Being preempted only ever ADDS time, so the cheapest of several runs
+ * is the sample least polluted by the other test processes, and it leaves the ceiling exactly
+ * where it was rather than widening it until it stops catching anything. Measured on this tree:
+ * the slowest of these inputs is 1.7ms idle and 5.5ms with forty bun processes on twenty cores.
+ */
+function bestOfTen<T>(probe: () => T): { readonly result: T; readonly elapsed: number } {
+  // The first run is outside the measurement on purpose: it is the cold one.
+  let result = probe();
+  let elapsed = Infinity;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const started = performance.now();
+    result = probe();
+    elapsed = Math.min(elapsed, performance.now() - started);
+  }
+  return { result, elapsed };
+}
+
 /** The span at index 0, as `kind|text` (or `null`), which is what most cases assert. */
 function spanOf(sql: string, index = 0, grammar?: SqlGrammar): string | null {
   const span = readSqlSpan(sql, index, grammar);
@@ -457,9 +482,7 @@ describe("readSqlSpan", () => {
     test("answers in bounded time on a long body that never closes", () => {
       const sql = `q'{${"a".repeat(20000)}`;
 
-      const started = performance.now();
-      const span = readSqlSpan(sql, 0, ORACLE);
-      const elapsed = performance.now() - started;
+      const { result: span, elapsed } = bestOfTen(() => readSqlSpan(sql, 0, ORACLE));
 
       expect(span).toEqual({ kind: "string", end: sql.length, terminated: false });
       expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
@@ -506,9 +529,7 @@ describe("readSqlSpan", () => {
     ];
 
     for (const [label, sql, expectSpan] of adversarial) {
-      const started = performance.now();
-      const span = readSqlSpan(sql, 0);
-      const elapsed = performance.now() - started;
+      const { result: span, elapsed } = bestOfTen(() => readSqlSpan(sql, 0));
 
       // A correct answer AND a bounded one: a fast wrong answer is not a pass.
       expect(span === null, label).toBe(!expectSpan);
@@ -688,9 +709,7 @@ describe("hasUnterminatedSpan", () => {
     // Unbalanced on purpose: the answer has to be reached by scanning to the end.
     const deep = `${"/*".repeat(20000)} SELECT 1`;
 
-    const started = performance.now();
-    const unresolved = hasUnterminatedSpan(deep, resolveSqlGrammar("postgres"));
-    const elapsed = performance.now() - started;
+    const { result: unresolved, elapsed } = bestOfTen(() => hasUnterminatedSpan(deep, resolveSqlGrammar("postgres")));
 
     expect(unresolved).toBe(true);
     expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
@@ -711,9 +730,7 @@ describe("hasUnterminatedSpan", () => {
     // time cannot backtrack - the property this asserts is kept, not assumed.
     const many = `SELECT ${"'lit' /* note */ -- line\n".repeat(20000)}1`;
 
-    const started = performance.now();
-    const unresolved = hasUnterminatedSpan(many);
-    const elapsed = performance.now() - started;
+    const { result: unresolved, elapsed } = bestOfTen(() => hasUnterminatedSpan(many));
 
     expect(unresolved).toBe(false);
     expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);

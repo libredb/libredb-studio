@@ -77,7 +77,13 @@ import {
   trinoSourceStatementFor,
 } from "@/lib/db/providers/sql/trino/objects";
 import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
-import type { ObjectEditBuild, ObjectEditOutcome, ObjectEditPlan, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  DatabaseProvider,
+  ObjectEditBuild,
+  ObjectEditOutcome,
+  ObjectEditPlan,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
@@ -4822,5 +4828,48 @@ describe("Trino object edit: the derivations, driven to their BOUND values", () 
     expect(trinoSentOffsetOf(text, 1.5, 1)).toBeNull();
     expect(trinoSentOffsetOf(text, 1, 0)).toBeNull();
     expect(trinoSentOffsetOf(text, 1, 1.5)).toBeNull();
+  });
+});
+
+// ============================================================================
+// endOpenQueryTransaction(): the absence is declared, not accidental (D75)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new TrinoProvider(makeConnection());
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/trino.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+
+    // The set that DOES implement the surface is read from the type, never enumerated
+    // here: a closed list repeated across the provider docs went stale the day a further
+    // provider implemented the surface, which is exactly what happened during D75.
+    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["nobody has measured it yet"]);
+  });
+
+  test("the transport neither sends nor reads a transaction header, which is what leaves the question open", () => {
+    // The code half of the doc's claim, pinned here so a future transport that DOES
+    // carry the header cannot leave the doc saying nobody measured it.
+    const transport = readFileSync(
+      join(import.meta.dir, "../../../src/lib/db/providers/sql/trino/http-transport.ts"),
+      "utf8",
+    );
+
+    expect(transport).not.toContain("Transaction-Id");
   });
 });

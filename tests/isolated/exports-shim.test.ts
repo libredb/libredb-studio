@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 // Load the shim the way a CJS consumer/bundler would: require(), not an ESM
 // import whose CJS interop would mask resolution differences. Coverage note:
-// this group runs with --nocov (see tests/run-components.sh) and the shim is
+// this file runs without --coverage (it is named in COVERAGE_EXEMPT_FILES in
+// tests/runner/discover.ts, which carries the measurement) and the shim is
 // excluded from Sonar coverage — this test guards the npm entry point
 // functionally, not for lcov.
 // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -21,6 +21,8 @@ const mockStorage = {
   })),
   getThresholdConfig: mock(() => []),
   getDismissedSeeds: mock(() => ["seed-1"]),
+  getFavoriteConnectionIds: mock(() => ["fav-1"]),
+  getConnectionOrder: mock(() => ["c1"]),
 };
 
 const ALL_COLLECTIONS = [
@@ -34,6 +36,8 @@ const ALL_COLLECTIONS = [
   "masking_config",
   "threshold_config",
   "dismissed_seeds",
+  "favorite_connections",
+  "connection_order",
 ];
 
 mock.module("@/lib/storage", () => ({
@@ -289,6 +293,8 @@ describe("useStorageSync", () => {
       expect(mockStorage.getMaskingConfig).toHaveBeenCalled();
       expect(mockStorage.getThresholdConfig).toHaveBeenCalled();
       expect(mockStorage.getDismissedSeeds).toHaveBeenCalled();
+      expect(mockStorage.getFavoriteConnectionIds).toHaveBeenCalled();
+      expect(mockStorage.getConnectionOrder).toHaveBeenCalled();
     });
   });
 
@@ -378,6 +384,40 @@ describe("useStorageSync", () => {
       });
 
       expect(localStorage.getItem("libredb_active_connection_id")).toBe("conn-1");
+    });
+
+    test("writes favorite_connections to localStorage on pull", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      setupServerMode({
+        "/api/storage": { ok: true, status: 200, json: { favorite_connections: ["fav-1", "fav-2"] } },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+
+      await waitFor(() => {
+        expect(result.current.lastSyncedAt).not.toBeNull();
+      });
+
+      const stored = localStorage.getItem("libredb_favorite_connections");
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored!)).toEqual(["fav-1", "fav-2"]);
+    });
+
+    test("writes connection_order to localStorage on pull", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      setupServerMode({
+        "/api/storage": { ok: true, status: 200, json: { connection_order: ["c2", "c1"] } },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+
+      await waitFor(() => {
+        expect(result.current.lastSyncedAt).not.toBeNull();
+      });
+
+      const stored = localStorage.getItem("libredb_connection_order");
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored!)).toEqual(["c2", "c1"]);
     });
 
     test("removes active_connection_id from localStorage when server returns null", async () => {
@@ -528,7 +568,7 @@ describe("useStorageSync", () => {
      * The retry timer and the debounce timer are different clocks.
      *
      * A push takes as long as the network does, and the user keeps working while
-     * it is in flight — so when a failure comes back, the debounce slot usually
+     * it is in flight, so when a failure comes back, the debounce slot usually
      * holds a fresh timer for an edit that has nothing to do with it. Sharing one
      * ref meant the retry replaced that timer with its own backoff, and a single
      * failed push held a later, healthy write off the server for as long as the
@@ -536,13 +576,42 @@ describe("useStorageSync", () => {
      *
      * The tell is WHEN that write lands. On its own debounce it goes out ~500ms
      * after the edit; hostage to the backoff it cannot go out before the first
-     * retry step, which is a full second after the failure. The threshold sits
-     * between the two with room on both sides.
+     * retry step, which is a full second after the failure.
+     *
+     * HOW THAT IS WATCHED, and it is not the wall clock. This used to read
+     * `historyAt - editedAt < 800`, two `Date.now()` samples and a budget, which
+     * says "the machine got from here to there in under 800ms" and not "the write
+     * kept its own debounce": a loaded box that spends 900ms of that window
+     * descheduled reports a hook defect that is not there. The reference is now a
+     * TIMER this test arms itself, due at 800ms, between the 500ms debounce and
+     * the 1000ms first retry step, and the question is only which of the two fired
+     * first. Timers fire in deadline order however slow the machine is, so a stall
+     * delays both and can never swap them, and the fetch double records the answer
+     * synchronously inside the flush the debounce fired, so nothing interleaves.
+     *
+     * The wait on the reference timer afterwards is the control. Without it,
+     * `false` would also be the reading when the timer never ran at all.
+     *
+     * MEASURED, AND ONE OBVIOUS REFERENCE IS THE WRONG ONE. Comparing the history
+     * write against the connections RETRY does not discriminate: the failed
+     * collection is requeued, so the debounce flush at +500ms carries connections
+     * too and IS connections attempt 2. Both landed at +500ms. Moving this
+     * deadline to 200ms makes the test fail with the edit landing at +501ms, which
+     * is what proves the 800ms reading is a measurement rather than a formality.
      */
     test("a failed push does not swallow a later edit's debounce", async () => {
       localStorage.setItem("libredb_server_migrated", "true");
       let connectionsAttempts = 0;
-      let historyAt: number | null = null;
+      /**
+       * True when the history write went out before the reference timer, null until it goes out.
+       *
+       * Held on an object rather than in a bare `let` so the reads below keep the union: the
+       * only assignment is inside the fetch double, and the compiler narrows a `let` that is
+       * never assigned in this flow back to `null`, which makes `toBe(true)` a type error
+       * rather than a question.
+       */
+      const race: { historyBeatReference: boolean | null } = { historyBeatReference: null };
+      let referencePassed = false;
 
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
@@ -555,7 +624,7 @@ describe("useStorageSync", () => {
           return { ok: false, status: 500, json: { error: "Write failed" } };
         },
         "/api/storage/history": () => {
-          historyAt = Date.now();
+          race.historyBeatReference = !referencePassed;
           return { ok: true, status: 200, json: { ok: true } };
         },
         "/api/storage": { ok: true, status: 200, json: {} },
@@ -574,21 +643,31 @@ describe("useStorageSync", () => {
       await waitFor(() => {
         expect(connectionsAttempts).toBe(1);
       });
-      const editedAt = Date.now();
+      // Armed with the edit, so the two deadlines start together.
+      const reference = setTimeout(() => {
+        referencePassed = true;
+      }, 800);
       act(() => {
         window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
       });
 
       await waitFor(
         () => {
-          expect(historyAt).not.toBeNull();
+          expect(race.historyBeatReference).not.toBeNull();
         },
         { timeout: 5000 },
       );
+      // The control: the reference timer really does fire, so `false` above can only
+      // mean the write lost the race and never "the timer was never scheduled".
+      await waitFor(
+        () => {
+          expect(referencePassed).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      clearTimeout(reference);
 
-      // ~500ms when the edit keeps its own debounce; no sooner than ~1100ms when
-      // the retry's backoff has replaced it.
-      expect(historyAt! - editedAt).toBeLessThan(800);
+      expect(race.historyBeatReference).toBe(true);
     });
 
     /**

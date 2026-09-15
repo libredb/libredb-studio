@@ -986,13 +986,19 @@ describe("DataCharts", () => {
 
   // -----------------------------------------------------------------------
   // Aggregation / date grouping hidden for certain chart types
+  //
+  // The four polls below compare with `=== null` instead of asserting `toBeNull()` on the node.
+  // A poll that FAILS hands bun a live happy-dom element to pretty-print, and bun walks the whole
+  // node's object graph for the diff: 301 ms for a 260-node subtree, measured. waitFor's 5 s
+  // budget is gone in a few polls, so a machine that is briefly busy reds a healthy test. The
+  // boolean costs 0 ms and asserts the same absence.
   // -----------------------------------------------------------------------
 
   test("aggregation hidden for scatter chart", async () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
     fireEvent.click(queryByText("Scatter")!);
     await waitFor(() => {
-      expect(queryByText("Agg")).toBeNull();
+      expect(queryByText("Agg") === null).toBe(true);
     });
   });
 
@@ -1000,7 +1006,7 @@ describe("DataCharts", () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
     fireEvent.click(queryByText("Histogram")!);
     await waitFor(() => {
-      expect(queryByText("Agg")).toBeNull();
+      expect(queryByText("Agg") === null).toBe(true);
     });
   });
 
@@ -1008,7 +1014,7 @@ describe("DataCharts", () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
     fireEvent.click(queryByText("Scatter")!);
     await waitFor(() => {
-      expect(queryByText("Group")).toBeNull();
+      expect(queryByText("Group") === null).toBe(true);
     });
   });
 
@@ -1016,7 +1022,7 @@ describe("DataCharts", () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
     fireEvent.click(queryByText("Histogram")!);
     await waitFor(() => {
-      expect(queryByText("Group")).toBeNull();
+      expect(queryByText("Group") === null).toBe(true);
     });
   });
 

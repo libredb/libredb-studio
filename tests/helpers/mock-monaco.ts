@@ -38,7 +38,7 @@ export function setupMonacoMock() {
       // `SyntaxError: Export named 'DiffEditor' not found` and fails the WHOLE FILE, so a suite that
       // never renders a diff still dies the moment one lands anywhere in its module graph. Measured
       // 2026-09-14: mounting ApplyPreviewDialog from ObjectSourceView put this import into the pane's
-      // graph and took Group 1 and Group 6 of run-components down without either suite touching it.
+      // graph and took two component suites down without either of them rendering a diff.
       DiffEditor: function MockDiffEditor(props: { original?: string; modified?: string; language?: string }) {
         return React.createElement("div", {
           "data-testid": "mock-monaco-diff-editor",

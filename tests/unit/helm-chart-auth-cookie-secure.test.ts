@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * config.authCookieSecure is three-state (backlog N2).
  *

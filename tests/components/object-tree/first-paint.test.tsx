@@ -2,7 +2,7 @@ import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
@@ -108,6 +108,26 @@ const schemaContainers: Container[] = [
   { path: ["public"], name: "public", level: 0 },
 ];
 
+/**
+ * Returns once first paint has actually SETTLED, which the Tables row alone does not say.
+ *
+ * Every assertion in this file counts the reads first paint issued, and the folder rows are
+ * not evidence that the last of them went out: a folder is drawn from the DECLARED kinds the
+ * moment the session-default container opens, so `Tables` is on screen while the counts
+ * request is still being issued from the effect after that paint. A test that stopped there
+ * read `calls` in the window between the two and reported a missing read as a product
+ * decision - `a two-level engine descends to the session default at each level` is the one
+ * that actually did it, red in 24-way concurrent runs.
+ *
+ * The badge is the counts ANSWER: `TreeRow` draws it only where `row.badge` is defined, so
+ * waiting on its text waits on the read this file is counting, and asserting the text rather
+ * than the node's presence keeps the wait tied to the fixture's own number.
+ */
+async function firstPaintSettled(badge: string): Promise<void> {
+  const tables = await screen.findByRole("treeitem", { name: /Tables/ });
+  expect((await within(tables).findByTestId("tree-row-badge")).textContent).toBe(badge);
+}
+
 afterEach(() => {
   cleanup();
   globalThis.fetch = realFetch;
@@ -122,7 +142,7 @@ describe("opening a connection", () => {
 
     render(<ObjectTree connection={connectionOf()} capabilities={oneLevel} />);
 
-    await waitFor(() => expect(screen.getByRole("treeitem", { name: /Tables/ })).toBeTruthy());
+    await firstPaintSettled("2");
 
     expect(catalogPaths(calls)).toEqual(["/api/db/objects/containers", "/api/db/objects/counts"]);
     // The counts are read for the container the ENGINE named, not for the first one
@@ -197,7 +217,7 @@ describe("opening a connection", () => {
 
     render(<ObjectTree connection={connectionOf({ type: "mssql" })} capabilities={twoLevels} />);
 
-    await waitFor(() => expect(screen.getByRole("treeitem", { name: /Tables/ })).toBeTruthy());
+    await firstPaintSettled("7");
 
     expect(catalogPaths(calls)).toEqual([
       "/api/db/objects/containers",
@@ -266,7 +286,7 @@ describe("the no-scan escape hatch", () => {
 
     render(<ObjectTree connection={connectionOf()} capabilities={oneLevel} />);
 
-    await waitFor(() => expect(screen.getByRole("treeitem", { name: /Tables/ })).toBeTruthy());
+    await firstPaintSettled("2");
     expect(catalogPaths(calls)).toEqual(["/api/db/objects/containers", "/api/db/objects/counts"]);
     expect(screen.queryByTestId("tree-deferred")).toBeNull();
   });
@@ -298,7 +318,7 @@ describe("the no-scan escape hatch", () => {
 
     // What the owner does with it, which is the state the reader then sees.
     rerender(<ObjectTree connection={connectionOf()} capabilities={oneLevel} onLoad={onLoad} />);
-    await waitFor(() => expect(screen.getByRole("treeitem", { name: /Tables/ })).toBeTruthy());
+    await firstPaintSettled("2");
     expect(catalogPaths(calls)).toEqual(["/api/db/objects/containers", "/api/db/objects/counts"]);
   });
 
@@ -329,7 +349,10 @@ describe("the no-scan escape hatch", () => {
     // loading state the assertion above denies.
     rerender({ deferred: false });
     expect(result.current.rootLoading).toBe(true);
-    await waitFor(() => expect(result.current.rows.length).toBeGreaterThan(1));
+    // The badge, for the reason `firstPaintSettled` gives above: `rows.length > 1` was already
+    // true with the two containers alone, before the counts read had been issued at all, so the
+    // read count below was asserted against a paint that was still one request short.
+    await waitFor(() => expect(result.current.rows.find((r) => r.kind === "folder")?.badge).toBe("2"));
     expect(catalogPaths(calls)).toEqual(["/api/db/objects/containers", "/api/db/objects/counts"]);
   });
 

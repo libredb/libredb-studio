@@ -144,28 +144,50 @@ describe("TablesTab", () => {
       />,
     );
 
-    const analyzeButton = container.querySelector('button[title="Analyze"]');
-    const vacuumButton = container.querySelector('button[title="Vacuum"]');
-    const reindexButton = container.querySelector('button[title="Reindex"]');
+    /*
+     * THE WAIT THAT MATTERS HERE IS NOT THE ONE ON THE CALL. `handleMaintenance` invokes
+     * `onRunMaintenance` before its first await, and `fireEvent` is act-wrapped, so the call
+     * has already happened when the line after the click reads it: a `waitFor` around that
+     * assertion was satisfied on its first synchronous check and waited for nothing.
+     *
+     * What the next click actually needs is the button being clickable, and it is not:
+     * `handleMaintenance` sets `actionLoading` first, and `disabled={!!actionLoading}` takes
+     * EVERY maintenance button on the panel with it. React delivers no click to a disabled
+     * button, so a click issued while the previous action is still in flight is dropped in
+     * silence and the assertion after it burns its whole timeout on a call that will never
+     * come. Measured with a probe on this tree: `analyze` called synchronously, `vacuum`
+     * disabled immediately after, so this suite only ever got through because `waitFor`
+     * happens to drain a macrotask on its way out - a coincidence, and a busy machine is
+     * under no obligation to repeat it.
+     *
+     * So each step asserts the call synchronously, asserts the NEXT button went disabled (the
+     * control, which is what stops the wait below from being vacuous), and waits for it to
+     * come back before clicking it.
+     */
+    const analyzeButton = container.querySelector<HTMLButtonElement>('button[title="Analyze"]');
+    const vacuumButton = container.querySelector<HTMLButtonElement>('button[title="Vacuum"]');
+    const reindexButton = container.querySelector<HTMLButtonElement>('button[title="Reindex"]');
 
     expect(analyzeButton).not.toBeNull();
     expect(vacuumButton).not.toBeNull();
     expect(reindexButton).not.toBeNull();
 
     fireEvent.click(analyzeButton!);
+    expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users");
+    expect(vacuumButton!.disabled).toBe(true);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users");
+      expect(vacuumButton!.disabled).toBe(false);
     });
 
     fireEvent.click(vacuumButton!);
+    expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
+    expect(reindexButton!.disabled).toBe(true);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
+      expect(reindexButton!.disabled).toBe(false);
     });
 
     fireEvent.click(reindexButton!);
-    await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
-    });
+    expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
   });
 
   test("shows non-admin placeholder for actions", () => {

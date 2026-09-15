@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * TOTP second-factor wiring in the chart.
  *

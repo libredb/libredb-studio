@@ -14,21 +14,54 @@
  * pipeline fixture stubs the agent command (loop.sh's generic-agent path) so no
  * real model runs.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
 
 const REPO_ROOT = join(import.meta.dir, "../..");
 const NEW_MILESTONE = join(REPO_ROOT, "loop/scripts/new-milestone.sh");
 const LOOP_SH = join(REPO_ROOT, "loop/scripts/loop.sh");
 const PIPELINE_SH = join(REPO_ROOT, "loop/scripts/pipeline.sh");
+/*
+  The maintainer loop is bash all the way down, and the pipeline fixture hands loop.sh a stub agent
+  it makes runnable with chmod 0755 and reaches through `eval "$AGENT_CMD"`. Windows has no exec
+  bit, cannot exec an extension-less #! file, and `Bun.spawnSync(["bash", ...])` THROWS there
+  ("Executable not found in $PATH", measured in this worktree) or resolves to WSL's Linux bash,
+  which cannot see the Win32 fixture root. These are maintainer scripts rather than product code, so
+  a Windows contributor loses nothing by the skip - as long as it says so.
+*/
+const SHELL = posixShell("bash");
+const CANNOT_RUN = missingPosixShell("bash") ?? MISSING_POSIX_FILE_MODES;
 
 const fixtureRoots: string[] = [];
+let emptyConfig: string | null = null;
 
 afterEach(() => {
   for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  emptyConfig = null;
 });
+
+/**
+ * A real, empty config file for GIT_CONFIG_GLOBAL/SYSTEM, in its own directory so it is never inside
+ * a fixture repository and never seen by `git add -A`.
+ *
+ * Without it the fixture repo inherits the contributor's own git config: `commit.gpgsign=true` (a
+ * common macOS setup) makes the fixture commit prompt or fail, and `core.hooksPath` pointing at a
+ * missing directory does the same, so makePipelineFixture throws "fixture git setup failed" for
+ * every pipeline test on a machine where nothing is wrong. tests/unit/sync-chart-version.test.ts
+ * already isolates git this way for the same reason.
+ */
+function emptyConfigPath(): string {
+  if (emptyConfig === null) {
+    const dir = mkdtempSync(join(tmpdir(), "loop-gitconfig-"));
+    fixtureRoots.push(dir);
+    emptyConfig = join(dir, "empty.gitconfig");
+    writeFileSync(emptyConfig, "");
+  }
+  return emptyConfig;
+}
 
 function write(root: string, rel: string, content: string): void {
   mkdirSync(dirname(join(root, rel)), { recursive: true });
@@ -42,8 +75,18 @@ function read(root: string, rel: string): string {
 function run(cmd: string[], cwd?: string) {
   // Fixtures must be hermetic. LOOP_ENV_FILE is a real input to loop.sh/pipeline.sh,
   // so an inherited one (a shell that ran a stage by hand) would point a fixture at
-  // the LIVE loop config instead of its stub agent.
-  const env = { ...process.env };
+  // the LIVE loop config instead of its stub agent. The git identity and the empty
+  // config go to every command, not just the fixture's own: pipeline.sh runs `git
+  // status` and `git branch` itself, so it must see the same isolated git.
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: emptyConfigPath(),
+    GIT_CONFIG_SYSTEM: emptyConfigPath(),
+    GIT_AUTHOR_NAME: "fixture",
+    GIT_AUTHOR_EMAIL: "fixture@test",
+    GIT_COMMITTER_NAME: "fixture",
+    GIT_COMMITTER_EMAIL: "fixture@test",
+  };
   delete env.LOOP_ENV_FILE;
   return Bun.spawnSync(cmd, { cwd, env, stdout: "pipe", stderr: "pipe" });
 }
@@ -198,10 +241,10 @@ function makeFreshFixture(): string {
   return root;
 }
 
-describe("loop/scripts/new-milestone.sh", () => {
+describeIf(CANNOT_RUN, "loop/scripts/new-milestone.sh", () => {
   test("archives the previous milestone and resets the working set into .loop/", () => {
     const root = makeMilestoneFixture();
-    const result = run(["bash", NEW_MILESTONE, "sweep-3", root]);
+    const result = run([SHELL!, NEW_MILESTONE, "sweep-3", root]);
     expect(result.exitCode).toBe(0);
 
     // Previous milestone name derived from the sentinel; whole set archived under .loop/.
@@ -241,7 +284,7 @@ describe("loop/scripts/new-milestone.sh", () => {
 
   test("seeds .loop/ from the templates on a fresh repo (no prior state, no archive)", () => {
     const root = makeFreshFixture();
-    const result = run(["bash", NEW_MILESTONE, "sweep-1", root]);
+    const result = run([SHELL!, NEW_MILESTONE, "sweep-1", root]);
     expect(result.exitCode).toBe(0);
 
     // Live working set created from templates.
@@ -262,14 +305,14 @@ describe("loop/scripts/new-milestone.sh", () => {
 
   test("rejects a non-kebab-case milestone name", () => {
     const root = makeMilestoneFixture();
-    const result = run(["bash", NEW_MILESTONE, "Sweep_3", root]);
+    const result = run([SHELL!, NEW_MILESTONE, "Sweep_3", root]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("kebab-case");
   });
 
   test("refuses to reopen the current milestone name", () => {
     const root = makeMilestoneFixture();
-    const result = run(["bash", NEW_MILESTONE, "sweep-2", root]);
+    const result = run([SHELL!, NEW_MILESTONE, "sweep-2", root]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("already the current one");
   });
@@ -277,7 +320,7 @@ describe("loop/scripts/new-milestone.sh", () => {
   test("refuses to overwrite an existing archive", () => {
     const root = makeMilestoneFixture();
     mkdirSync(join(root, ".loop/archive/sweep-2"), { recursive: true });
-    const result = run(["bash", NEW_MILESTONE, "sweep-3", root]);
+    const result = run([SHELL!, NEW_MILESTONE, "sweep-3", root]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("refusing to overwrite");
   });
@@ -341,10 +384,13 @@ function makePipelineFixture({ planningViolation = false } = {}): string {
   chmodSync(join(root, "loop/scripts/loop.sh"), 0o755);
   chmodSync(join(root, "loop/scripts/pipeline.sh"), 0o755);
 
+  // The identity comes from GIT_AUTHOR_*/GIT_COMMITTER_* in run(), alongside the empty
+  // GIT_CONFIG_GLOBAL/SYSTEM: `-c user.email` set an identity but left the rest of the
+  // contributor's config in force, which is the half that breaks the commit.
   for (const cmd of [
     ["git", "init", "--quiet", "--initial-branch=main"],
-    ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"],
-    ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--quiet", "-m", "fixture"],
+    ["git", "add", "-A"],
+    ["git", "commit", "--quiet", "-m", "fixture"],
     ["git", "checkout", "--quiet", "-b", "loop/fixture-run"],
   ]) {
     const r = run(cmd, root);
@@ -353,10 +399,10 @@ function makePipelineFixture({ planningViolation = false } = {}): string {
   return root;
 }
 
-describe("loop/scripts/pipeline.sh", () => {
+describeIf(CANNOT_RUN, "loop/scripts/pipeline.sh", () => {
   test("runs triage, planning and build in order and exits 0", () => {
     const root = makePipelineFixture();
-    const result = run(["bash", join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
+    const result = run([SHELL!, join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("pipeline COMPLETE");
 
@@ -374,7 +420,7 @@ describe("loop/scripts/pipeline.sh", () => {
     // agent - observed as a fixture case hanging for minutes inside the loop's own
     // gate, with a stray iteration running in the fixture repo.
     const root = makePipelineFixture();
-    const result = run(["bash", join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
+    const result = run([SHELL!, join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
     expect(result.exitCode).toBe(0);
 
     const seen = read(root, ".loop/stub-env.log").trim().split("\n");
@@ -384,7 +430,7 @@ describe("loop/scripts/pipeline.sh", () => {
 
   test("aborts when planning creates the completion marker (contract violation)", () => {
     const root = makePipelineFixture({ planningViolation: true });
-    const result = run(["bash", join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
+    const result = run([SHELL!, join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("planning must never complete");
     // Build never ran.
@@ -394,7 +440,7 @@ describe("loop/scripts/pipeline.sh", () => {
   test("refuses a dirty working tree", () => {
     const root = makePipelineFixture();
     write(root, "uncommitted.txt", "dirty");
-    const result = run(["bash", join(root, "loop/scripts/pipeline.sh")], root);
+    const result = run([SHELL!, join(root, "loop/scripts/pipeline.sh")], root);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("not clean");
   });
@@ -402,7 +448,7 @@ describe("loop/scripts/pipeline.sh", () => {
   test("refuses to run on main", () => {
     const root = makePipelineFixture();
     run(["git", "checkout", "--quiet", "main"], root);
-    const result = run(["bash", join(root, "loop/scripts/pipeline.sh")], root);
+    const result = run([SHELL!, join(root, "loop/scripts/pipeline.sh")], root);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("dedicated loop branch");
   });

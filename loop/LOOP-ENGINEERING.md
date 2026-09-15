@@ -157,7 +157,7 @@ Nothing commits unless every gate is green. Define one command in `loop/scripts/
 
 ```bash
 # This repo's concrete gate — see loop/scripts/gate.sh for the authoritative list
-format && lint && typecheck && knip && test && test:coverage + coverage:check && build
+format && lint && typecheck && knip && test:coverage + coverage:check && build
 ```
 
 Tests are the primary gate — derived from acceptance criteria, written before implementation.

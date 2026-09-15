@@ -8,6 +8,7 @@ import { cleanup, render, renderHook, fireEvent, waitFor, act, type RenderResult
 import { AgentRail } from "@/components/agent/AgentRail";
 import { useConnectionManager } from "@/hooks/use-connection-manager";
 import {
+  NO_SERVED_SEEDS,
   resolveAgentRunConnectionId,
   SEED_CONFIG_UNREADABLE_REASON,
   type ManagedConnectionPayload,
@@ -5106,8 +5107,12 @@ describe("AgentRail", () => {
         // The same answer every other classification failure reaches, and the rail is
         // idle again rather than stuck behind a request nobody will answer.
         expect(openRequests(fetchMock)[0]).toMatchObject({ workflowType: "investigation" });
+        // `=== null` rather than `toBeNull()` on the node: a FAILING poll would hand bun the live
+        // happy-dom element, and bun walks its whole object graph to build the diff, measured at
+        // 301 ms for a 260-node subtree. A few of those spend waitFor's 5 s budget and a briefly
+        // busy machine reds a healthy test. The boolean costs 0 ms and asserts the same absence.
         await waitFor(() => {
-          expect(view.queryByTestId("agent-classifying")).toBeNull();
+          expect(view.queryByTestId("agent-classifying") === null).toBe(true);
         });
       } finally {
         AbortSignal.timeout = realTimeout;
@@ -6627,8 +6632,22 @@ describe("a seed configuration the server could not read (B37)", () => {
       "/api/agent/config": { json: { enabled: true } },
     });
     const hook = renderHook(() => useConnectionManager(true));
+    // Wait for the answer to have been APPLIED, not for the field to exist. `servedSeeds`
+    // starts life holding `NO_SERVED_SEEDS`, so `toBeDefined()` was already true on the
+    // first render and this helper read the state the hook held before it had asked the
+    // server anything. That is green on an idle machine and a coin toss on a busy one:
+    // measured 2026-09-15 at 24 concurrent `bun test` processes on a 20-core box, the read
+    // landed on the untouched constant in 19 runs out of 24 (by identity, so nothing had
+    // written it), and the file itself failed 6 of those 24 runs on this test alone.
+    //
+    // The wait has to compare by identity, because the value cannot carry the difference:
+    // the control arm below settles on `{loaded: true, seeds: []}`, which is deep-equal to
+    // the constant it started from. "The server answered, with no seeds" and "nobody has
+    // answered yet" are the same value, so `!== NO_SERVED_SEEDS` is the only thing that
+    // separates them, and it is what makes the control arm a control at all rather than a
+    // test of the initial state. That conflation is B37's own, one level up: see B81.
     await waitFor(() => {
-      expect(hook.result.current.servedSeeds).toBeDefined();
+      expect(hook.result.current.servedSeeds).not.toBe(NO_SERVED_SEEDS);
     });
     const seeds = hook.result.current.servedSeeds;
     hook.unmount();

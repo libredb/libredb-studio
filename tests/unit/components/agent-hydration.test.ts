@@ -145,7 +145,8 @@ describe("hydrateAgentArtifact", () => {
  * rail fails here rather than shipping a second one to keep correct.
  */
 describe("the agent rail's module boundary", () => {
-  const AGENT_DIR = path.join(process.cwd(), "src/components/agent");
+  // Anchored to this file rather than to process.cwd(), so the scan is correct whoever launches it.
+  const AGENT_DIR = path.resolve(import.meta.dir, "../../..", "src/components/agent");
   const RAIL_MODULES = [
     "AgentRail.tsx",
     // The three the 2026-08-21 redesign split out of `AgentRail.tsx`, plus the module

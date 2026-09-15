@@ -1302,16 +1302,54 @@ describe("isDangerousQuery", () => {
    * The statement below leads with `SELECT` on purpose: a leading `UPDATE` is
    * answered by the vocabulary test without the probe ever running, so it would
    * guard nothing.
+   *
+   * WHAT IS ASSERTED IS THE SHAPE, NOT A CPU BUDGET, and the defect is what decides
+   * that. Quadratic is a statement about GROWTH, so the same predicate is timed at
+   * 35 KB and at ten times that, and the question is what the tenfold text costs:
+   * linear answers about ten, and the quadratic pattern this replaced answers about a
+   * hundred, which is what its own numbers above say (2.5x the text, 6.25x the time).
+   * The absolute `< 200ms` this replaces measured the machine as much as the code -
+   * it is one sample on a shared box, and a test process descheduled for 200ms of
+   * its own turn reports a performance regression that is not there.
+   *
+   * Best of nine, interleaved: preemption only ever ADDS time, so the minimum of a
+   * run is its least-polluted sample, and alternating the two sizes keeps a slow
+   * patch of the machine from landing on one of them alone. Measured here on 20 cores:
+   * 10.3x idle, worst of 40 concurrent processes 17.8x, worst of 64 25.1x, so the
+   * ceiling of 40 sits above every load this suite is run under and well below the
+   * defect.
+   *
+   * Both answers are asserted on every sample, so a predicate that returned early
+   * cannot pass this by being fast for a reason the ratio cannot see.
    */
-  test("answers in bounded time on a statement holding many UPDATE words and no SET", () => {
-    const query = `SELECT ${"UPDATE ".repeat(20000)}(`;
+  test("answers in time that grows with the statement, not with its square", () => {
+    const manyUpdates = (repeats: number) => `SELECT ${"UPDATE ".repeat(repeats)}(`;
+    const small = manyUpdates(5_000); // 35 KB
+    const large = manyUpdates(50_000); // 350 KB, ten times the text
 
-    const started = performance.now();
-    const dangerous = isDangerousQuery(query);
-    const elapsed = performance.now() - started;
+    const timeOne = (query: string) => {
+      const started = performance.now();
+      const dangerous = isDangerousQuery(query);
+      const elapsed = performance.now() - started;
+      expect(dangerous).toBe(false);
+      return elapsed;
+    };
 
-    expect(dangerous).toBe(false);
-    expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
+    let smallBest = Number.POSITIVE_INFINITY;
+    let largeBest = Number.POSITIVE_INFINITY;
+    for (let round = 0; round < 9; round += 1) {
+      smallBest = Math.min(smallBest, timeOne(small));
+      largeBest = Math.min(largeBest, timeOne(large));
+    }
+
+    const ratio = largeBest / smallBest;
+    const measured = `${smallBest.toFixed(1)}ms at 35KB, ${largeBest.toFixed(1)}ms at 350KB, ${ratio.toFixed(1)}x`;
+    expect(ratio, measured).toBeLessThan(40);
+    // And a ceiling the ratio cannot see: a rewrite that is uniformly slow keeps its
+    // shape while costing a second per execute. 17.4ms measured here, 6406ms for the
+    // pattern this replaced, so 2000ms separates the two without measuring the
+    // machine the way the old absolute budget did.
+    expect(largeBest, measured).toBeLessThan(2000);
   });
 
   // ── The gate reads what the RUNNER will run (S1) ─────────────────────────

@@ -9,18 +9,29 @@
  * systemd probe at a temp directory, so the outcome never depends on whether
  * the host running the tests is booted with systemd.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
 
 const SCRIPT = join(import.meta.dir, "../../packaging/linux/scripts/postinstall.sh");
+/*
+  A .deb/.rpm maintainer script, driven through a stub `systemctl` that is a `#!/bin/sh` file made
+  runnable with chmod 0755 and found through PATH. Neither the package format nor systemd nor the
+  POSIX exec bit exists on Windows, and `Bun.spawnSync(["sh", ...])` THROWS there ("Executable not
+  found in $PATH", measured in this worktree) rather than returning a non-zero exit code, so the
+  skip names the artifact. macOS runs it unchanged: the script is plain POSIX sh and systemd is
+  stubbed.
+*/
+const SHELL = posixShell("sh");
+const CANNOT_RUN = missingPosixShell("sh") ?? MISSING_POSIX_FILE_MODES;
 
 function stubSystemctl(exitCode: number, logPath: string): string {
   return `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(logPath)}\nexit ${exitCode}\n`;
 }
 
-describe("packaging/linux/scripts/postinstall.sh service restart", () => {
+describeIf(CANNOT_RUN, "packaging/linux/scripts/postinstall.sh service restart", () => {
   const fixtureRoots: string[] = [];
 
   afterEach(() => {
@@ -49,10 +60,10 @@ describe("packaging/linux/scripts/postinstall.sh service restart", () => {
     const runtimeDir = join(root, "run-systemd-system");
     if (systemd) mkdirSync(runtimeDir, { recursive: true });
 
-    const result = Bun.spawnSync(["sh", SCRIPT, arg], {
+    const result = Bun.spawnSync([SHELL!, SCRIPT, arg], {
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
         LIBREDB_SYSTEMD_RUNTIME_DIR: runtimeDir,
       },
       stdout: "pipe",

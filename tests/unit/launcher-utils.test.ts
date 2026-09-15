@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { pathToFileURL } from "url";
 import {
   artifactName,
   startupUrl,
@@ -23,8 +24,17 @@ import {
   resolveLedgerDir,
   sha256File,
 } from "../../bin/lib/launcher-utils.mjs";
+import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-utils-test-"));
+/*
+  Resolved rather than spawned by bare name: `Bun.spawnSync` THROWS ("Executable not found in
+  $PATH", measured in this worktree) when a name does not resolve, which would take the whole file
+  down instead of failing one assertion. tar is not POSIX-only here - Windows 11 ships bsdtar as
+  System32\tar.exe, which both writes the fixture .tar.gz and honours the --strip-components the
+  launcher passes - so the archive case runs everywhere a tar exists.
+*/
+const TAR = resolveUnixTool("tar");
 
 afterAll(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
@@ -388,7 +398,7 @@ describe("preservePayloadData", () => {
   });
 });
 
-describe("extractArchive", () => {
+describeIf(missingUnixTool("tar"), "extractArchive", () => {
   // Release tarballs are packed with a top-level libredb-studio-<version>/
   // root (issue #133, scripts/lib/pack-standalone-tarball.sh) instead of a
   // tarbomb; extractArchive must strip that one path component so the
@@ -404,7 +414,7 @@ describe("extractArchive", () => {
     fs.writeFileSync(path.join(versionedRoot, "nested", "file.txt"), "nested contents");
 
     const tarballPath = path.join(sourceDir, "fixture.tar.gz");
-    const result = Bun.spawnSync(["tar", "-czf", tarballPath, "-C", sourceDir, rootName], {
+    const result = Bun.spawnSync([TAR!, "-czf", tarballPath, "-C", sourceDir, rootName], {
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -622,12 +632,35 @@ describe("launcher startup URL", () => {
       'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
         `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
     );
-    const run = Bun.spawnSync([node!, "--import", preload, path.join(root, "bin/studio.js"), "--host", host], {
-      env: { PATH: process.env.PATH },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(run.exitCode).toBe(0);
+    /*
+      The environment is kept and only what would change the answer is removed. The launcher reads
+      PORT for the URL it prints and LIBREDB_STUDIO_ARCHIVE to skip the download, so a contributor
+      who exports either would see this fail for a reason that is not the test's.
+
+      It used to pass `{ PATH: process.env.PATH }`, which drops SystemRoot, windir, TEMP and TMP: a
+      node child started without SystemRoot can fail to initialise on Windows, and the failure
+      arrives as a bare non-zero exit code - exactly the opaque shape the assertion above tries to
+      avoid.
+    */
+    const env = { ...process.env };
+    delete env.PORT;
+    delete env.LIBREDB_STUDIO_ARCHIVE;
+    /*
+      The preload goes to `--import` as a file: URL, not as the path it is. `--import` resolves its
+      value by ESM rules, where an absolute Windows path is not a path at all: it parses as a URL
+      whose scheme is the drive letter. Measured with node 24.14.0, `--import 'C:\tmp\fixture.mjs'`
+      dies at startup with ERR_UNSUPPORTED_ESM_URL_SCHEME ("Received protocol 'c:'") before reading
+      a line of bin/studio.js, while the same argument on Linux fails to parse as a URL and falls
+      back to a path - which is why this spawned fine everywhere but Windows.
+    */
+    const run = Bun.spawnSync(
+      [node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js"), "--host", host],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    // The launcher's own stderr rides on the exit code: node reports a startup failure there and
+    // nowhere else, and "Received: 1" on its own sends the next reader back to a machine they may
+    // not have.
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
     const output = run.stdout.toString();
     expect(output).toContain(`Starting LibreDB Studio ${version} on ${url}\n`);
     expect(output).toContain(`BIND=${host}\n`);

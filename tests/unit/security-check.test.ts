@@ -16,10 +16,18 @@ const SCRIPT = path.resolve(import.meta.dir, "../../scripts/security-check.mjs")
  * cases exist so this one is not. Each violation family gets a case that PRODUCES it.
  */
 
-const COMPONENTS_RUNNER = `
-run_group "Group 0b: Factory singleton" \\
-  tests/isolated/factory-singleton.test.ts
-`;
+/**
+ * What `bun tests/run-tests.ts --list` would answer, as the gate asks it for real.
+ * One entry per layer the rule covers, including `tests/isolated/`, which used to be
+ * counted only because a bash runner happened to name the file.
+ */
+const DISCOVERED_TESTS = new Set([
+  ...PROGRAMME_CONTROL_IDS.map((id) => `tests/security/c-${id}.test.ts`),
+  "tests/security/headers.test.ts",
+  "tests/unit/a.test.tsx",
+  "tests/isolated/factory-singleton.test.ts",
+  "tests/evals/agent-loop.test.ts",
+]);
 const PLAYWRIGHT_CONFIG = `export default defineConfig({ testDir: "./e2e", projects: [] });`;
 
 const HEADER = "| ID | Control | Status | Enforced in | Verified by |";
@@ -45,7 +53,7 @@ const CLEAN_SECURITY_TESTS = PROGRAMME_CONTROL_IDS.map((id) => `tests/security/c
 function run(overrides: Record<string, unknown> = {}) {
   return checkPosture({
     posture: page(cleanRows()),
-    componentsRunner: COMPONENTS_RUNNER,
+    discoveredTests: DISCOVERED_TESTS,
     playwrightConfig: PLAYWRIGHT_CONFIG,
     exists: () => true,
     securityTestFiles: CLEAN_SECURITY_TESTS,
@@ -86,9 +94,9 @@ describe("linkTargets", () => {
 });
 
 describe("isExecuted", () => {
-  const context = { componentsRunner: COMPONENTS_RUNNER, playwrightConfig: PLAYWRIGHT_CONFIG };
+  const context = { discoveredTests: DISCOVERED_TESTS, playwrightConfig: PLAYWRIGHT_CONFIG };
 
-  test("a tests/security file is run by tests/run-core.sh", () => {
+  test("a tests/security file the runner collects is run", () => {
     expect(isExecuted("tests/security/headers.test.ts", context).executed).toBe(true);
   });
 
@@ -100,9 +108,15 @@ describe("isExecuted", () => {
     expect(isExecuted("tests/security/headers.test.ts.disabled", context).executed).toBe(false);
   });
 
-  test("a tests/isolated file is run only because run-components.sh names it", () => {
+  test("a tests/isolated file is run because the runner discovers it, and a file that is not there is not", () => {
     expect(isExecuted("tests/isolated/factory-singleton.test.ts", context).executed).toBe(true);
-    expect(isExecuted("tests/isolated/never-listed.test.ts", context).executed).toBe(false);
+    // The negative is what the rule is for: a path named by docs/SECURITY.md that no
+    // longer exists (renamed, deleted, or never created) is not a verified control.
+    expect(isExecuted("tests/isolated/never-written.test.ts", context).executed).toBe(false);
+  });
+
+  test("an eval test counts too, which the old hardcoded directory list missed", () => {
+    expect(isExecuted("tests/evals/agent-loop.test.ts", context).executed).toBe(true);
   });
 
   test("an e2e spec is run when playwright's testDir is the e2e directory", () => {
@@ -150,7 +164,7 @@ describe("checkPosture", () => {
 
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS.filter((f) => f !== "tests/security/c-0.1.test.ts"),
@@ -175,7 +189,7 @@ describe("checkPosture", () => {
 
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS,
@@ -190,7 +204,7 @@ describe("checkPosture", () => {
 
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS.filter((f) => f !== "tests/security/c-0.1.test.ts"),
@@ -205,7 +219,7 @@ describe("checkPosture", () => {
 
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS.filter((f) => f !== "tests/security/c-0.1.test.ts"),
@@ -217,7 +231,7 @@ describe("checkPosture", () => {
   test("names a programme control the page forgot", () => {
     const violations = checkPosture({
       posture: page(cleanRows().slice(1)),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS.filter((f) => f !== "tests/security/c-0.1.test.ts"),
@@ -230,7 +244,7 @@ describe("checkPosture", () => {
     const rows = [...cleanRows(), row("9.9", "Implemented", "[`t`](../tests/security/c-9.9.test.ts)")];
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: [...CLEAN_SECURITY_TESTS, "tests/security/c-9.9.test.ts"],
@@ -244,7 +258,7 @@ describe("checkPosture", () => {
     rows[0] = row("0.1", "Implemented", "[`policy`](../SECURITY.md)");
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS.filter((f) => f !== "tests/security/c-0.1.test.ts"),
@@ -265,7 +279,7 @@ describe("checkPosture", () => {
     expect(
       checkPosture({
         posture: page(rows),
-        componentsRunner: COMPONENTS_RUNNER,
+        discoveredTests: DISCOVERED_TESTS,
         playwrightConfig: PLAYWRIGHT_CONFIG,
         exists: () => true,
         securityTestFiles: CLEAN_SECURITY_TESTS,
@@ -277,7 +291,7 @@ describe("checkPosture", () => {
     const rows = [...cleanRows(), row("0.1", "Implemented", "[`t`](../tests/security/c-0.1-again.test.ts)")];
     const violations = checkPosture({
       posture: page(rows),
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: [...CLEAN_SECURITY_TESTS, "tests/security/c-0.1-again.test.ts"],
@@ -289,7 +303,7 @@ describe("checkPosture", () => {
   test("a page whose control table cannot be found fails loudly instead of passing vacuously", () => {
     const violations = checkPosture({
       posture: "# Security Posture\n\nno table here\n",
-      componentsRunner: COMPONENTS_RUNNER,
+      discoveredTests: DISCOVERED_TESTS,
       playwrightConfig: PLAYWRIGHT_CONFIG,
       exists: () => true,
       securityTestFiles: CLEAN_SECURITY_TESTS,

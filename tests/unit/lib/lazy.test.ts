@@ -37,8 +37,12 @@ describe("lazyRetry", () => {
       throw new Error(`attempt ${calls}`);
     });
 
-    expect(load()).rejects.toThrow("attempt 2");
-    await Bun.sleep(600);
+    // Awaited, and no sleep. `Bun.sleep(600)` was a bet that the loader's own 400ms retry delay
+    // had elapsed, with 200ms of margin that one bun process per CPU spends; and the assertion
+    // above was never awaited, so a rejection that arrived late or never was not asserted at all.
+    // The returned promise settles only after the SECOND attempt has failed, so awaiting it is
+    // both the wait and the fact.
+    await expect(load()).rejects.toThrow("attempt 2");
     expect(calls).toBe(2);
   });
 });

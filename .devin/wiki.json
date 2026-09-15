@@ -21,7 +21,7 @@
       "author": "Maintainer"
     },
     {
-      "content": "Testing is multi-layered: unit tests (tests/unit/), API route handler tests (tests/api/), integration tests with mocked database drivers (tests/integration/), React hook tests (tests/hooks/), component tests with happy-dom (tests/components/), and Playwright E2E tests (e2e/). Component tests use isolated execution groups via tests/run-components.sh to prevent mock.module() cross-contamination. CI pipeline runs lint, typecheck, test, and build.",
+      "content": "Testing is multi-layered: unit tests (tests/unit/), API route handler tests (tests/api/), integration tests with mocked database drivers (tests/integration/), React hook tests (tests/hooks/), component tests with happy-dom (tests/components/), and Playwright E2E tests (e2e/). Every test file runs in its own bun process (tests/run-tests.ts, which `bun run test` invokes) to prevent mock.module() cross-contamination. CI pipeline runs lint, typecheck, test, and build.",
       "author": "Maintainer"
     },
     {
@@ -158,7 +158,7 @@
     },
     {
       "title": "Testing Strategy",
-      "purpose": "Document the comprehensive multi-layer testing strategy. Cover: test setup files (tests/setup.ts for env/localStorage mocks, tests/setup-dom.ts for happy-dom), test helpers (tests/helpers/ with mock-monaco, mock-next, mock-navigation, mock-provider, mock-fetch, mock-sonner, render-with-providers), test fixtures (tests/fixtures/ with connections, schemas, query-results, masking-configs), and the component test isolation script (tests/run-components.sh). Explain why component tests need isolation (bun:test mock.module cross-contamination)."
+      "purpose": "Document the comprehensive multi-layer testing strategy. Cover: test setup files (tests/setup.ts for env/localStorage mocks, tests/setup-dom.ts for happy-dom), test helpers (tests/helpers/ with mock-monaco, mock-next, mock-navigation, mock-provider, mock-fetch, mock-sonner, render-with-providers), test fixtures (tests/fixtures/ with connections, schemas, query-results, masking-configs), and the cross-platform test runner (tests/run-tests.ts plus tests/runner/). Explain why every test file gets its own bun process (bun:test mock.module is process-wide, with no undo)."
     },
     {
       "title": "Unit & API Tests",

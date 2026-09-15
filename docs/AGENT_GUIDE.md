@@ -925,7 +925,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   implemented by the provider, and only three do: `queryReadOnly` exists on `postgres.ts:915`,
   `sqlite.ts:537` and `duckdb/index.ts:525`.
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
-  (`src/lib/db/factory.ts:649`), which the runtime reports as `engine-unsupported`
+  (`src/lib/db/factory.ts:695`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts:273`) — the rail says so in as many words
   (`src/components/agent/timeline.ts:341`). So on MySQL, Oracle, SQL Server, libSQL, MongoDB, Redis,
   ClickHouse, Druid, Trino and Couchbase an Agent-mode run cannot read anything. It also covers the bundled

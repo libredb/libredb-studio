@@ -13,8 +13,19 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { MISSING_POSIX_FILE_MODES, missingPosixShell, posixShell, testIf } from "../helpers/posix-tools";
 
 const AMI = path.join(__dirname, "../../deploy/aws/ami");
+/*
+  Everything in this file is text analysis except one case, which EXECUTES the Ubuntu MOTD hook
+  against a stub `curl` it makes runnable with mode 0755 and finds through PATH. That is a
+  /etc/update-motd.d artifact, run by pam_motd on a buyer's Ubuntu instance: Windows has neither the
+  shell on PATH (`Bun.spawnSync(["sh", ...])` throws "Executable not found in $PATH") nor a mode bit
+  for the stub, so that one case says why it is skipped instead of failing as if the hook were
+  broken. The shape checks around it keep running everywhere.
+*/
+const SHELL = posixShell("sh");
+const HOOK_CANNOT_RUN = missingPosixShell("sh") ?? MISSING_POSIX_FILE_MODES;
 const read = (relative: string): string => fs.readFileSync(path.join(AMI, relative), "utf8");
 
 const template = read("template.pkr.hcl");
@@ -258,7 +269,7 @@ describe("AWS AMI banner and MOTD", () => {
     expect(motd.trimEnd().endsWith("exit 0")).toBe(true);
   });
 
-  test("running the hook against a fixture never prints the password", () => {
+  testIf(HOOK_CANNOT_RUN, "running the hook against a fixture never prints the password", () => {
     // The assertions above are shape checks, and shape checks passed while the
     // hook could still be made to print the value (a capture group in the sed, or
     // a second grep after it). This runs the real hook.
@@ -284,8 +295,8 @@ describe("AWS AMI banner and MOTD", () => {
     fs.writeFileSync(path.join(dir, "curl"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
     try {
-      const run = Bun.spawnSync(["sh", hookPath], {
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+      const run = Bun.spawnSync([SHELL!, hookPath], {
+        env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
       });
       const stdout = new TextDecoder().decode(run.stdout);
       expect(run.exitCode).toBe(0);

@@ -12,7 +12,9 @@ import {
 } from "./types";
 import { DatabaseConfigError, ExecutionProfileError } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
+import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
+import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import * as path from "path";
 
@@ -193,6 +195,53 @@ export async function createDatabaseProvider(
 }
 
 // ============================================================================
+// SSH tunnel rewrite (#457, X23)
+// ============================================================================
+
+/**
+ * The connection a provider is built with when its traffic goes through an SSH tunnel: `host`
+ * and `port` point at the tunnel's LOCAL endpoint, which is where the driver must dial, and the
+ * address that endpoint FORWARDS TO, read back off the tunnel, travels with them under
+ * `TUNNEL_FAR_END`.
+ *
+ * The far end is carried because the rewrite alone made the whole tunnelled population unable to
+ * edit anything (X23). A provider seals every object edit plan with
+ * `connectionFingerprint(this.config)` and the edit routes recompute that digest from the record
+ * the request resolved, so a config that says `127.0.0.1:<ephemeral>` and a record that says
+ * `db.internal:5432` compared unequal on every attempt: the reader could open the object, could
+ * read it, and could never edit it.
+ *
+ * It is NOT on `ProviderOptions`, for the reason `ProviderExecutionContext`'s docblock already
+ * gives about a profile flag: options are caller-supplied and flow all the way into
+ * `getOrCreateProvider`, and a value the seal depends on must not be settable by whoever builds
+ * the options for a request. A symbol key is the same footing reached differently - see
+ * `TUNNEL_FAR_END` in `src/lib/types.ts` for what stops a stored connection carrying one.
+ *
+ * `base` is the connection as the caller already holds it - `acquireExecutionProfileProvider` has
+ * substituted the agent credential onto it by the time it gets here - and only `host` and `port`
+ * are replaced. The far end is not read off it at all, which is the point of the paragraph below.
+ *
+ * THE FAR END COMES OFF THE TUNNEL, never off the record, and that is why this helper takes no
+ * separate `farEnd` argument (D86). A pooled tunnel is not always the one this call opened, so
+ * the address the caller ASKED to forward to and the address the forward reaches are two
+ * different facts. MEASURED 2026-09-15 against the live bastion, no mocks: with the pool keyed
+ * on the connection id alone, a provider built on the id of a tunnel to `pg-p3fix:5432` with the
+ * record changed to `db-elsewhere.invalid:6543` dialled the existing forward, answered
+ * `libredb_dev` at `172.23.0.2`, and sealed `db-elsewhere.invalid:6543` - which is exactly what
+ * the edit routes recompute, so that plan verified against a machine the statement never reached.
+ * Two things closed it: `TunnelInfo` now carries `remoteHost`/`remotePort`, and the pool keys on
+ * them and on the bastion route, so a request for a forward nothing has opened opens its own.
+ */
+function tunnelledConnection(base: DatabaseConnection, tunnel: TunnelInfo): DatabaseConnection & WithTunnelFarEnd {
+  return {
+    ...base,
+    host: tunnel.localHost,
+    port: tunnel.localPort,
+    [TUNNEL_FAR_END]: { host: tunnel.remoteHost, port: tunnel.remotePort },
+  };
+}
+
+// ============================================================================
 // One-shot tunnel scope (#457)
 // ============================================================================
 
@@ -236,7 +285,7 @@ export async function withOneShotTunnel<T>(
   });
 
   try {
-    return await run({ ...connection, host: tunnel.localHost, port: tunnel.localPort });
+    return await run(tunnelledConnection(connection, tunnel));
   } finally {
     // Swallowed on purpose: a failing teardown must not replace the caller's error,
     // which is the one that says why the database connection did not work.
@@ -475,21 +524,20 @@ export async function getOrCreateProvider(
   }
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection.
-  // createSSHTunnel returns a pre-existing tunnel for the same connection id,
-  // so remember whether this call actually created it — only a fresh tunnel
-  // may be torn down on failure (a pre-existing one may still serve an
-  // execution-profile provider).
+  // createSSHTunnel returns a pre-existing tunnel for the same connection id, bastion route
+  // AND far end, so ask about exactly that forward — only a tunnel this call created may be
+  // torn down on failure (a pre-existing one may still serve an execution-profile provider).
   let effectiveConnection = connection;
-  const tunnelPreexisted = hasTunnel(connection.id);
-  let tunnel: Awaited<ReturnType<typeof createSSHTunnel>> | null = null;
+  let tunnelPreexisted = false;
+  let tunnel: TunnelInfo | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
+    tunnelPreexisted = hasTunnel(connection.id, {
+      ssh: connection.sshTunnel,
+      farEnd: { host: connection.host, port: connection.port },
+    });
     tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
-    // Rewrite connection to point to local tunnel endpoint
-    effectiveConnection = {
-      ...connection,
-      host: tunnel.localHost,
-      port: tunnel.localPort,
-    };
+    // Rewrite connection to point to local tunnel endpoint, keeping the far end for the seal
+    effectiveConnection = tunnelledConnection(connection, tunnel);
   }
 
   // Create new provider (async - dynamically loads the provider module)
@@ -679,14 +727,18 @@ export async function acquireExecutionProfileProvider(
     ? { ...connection, user: credential.user, password: credential.password }
     : connection;
 
-  // The SSH tunnel is keyed by connection id and shared with the writable
-  // provider (createSSHTunnel returns the existing one). Only a tunnel this
-  // acquisition freshly created may be torn down on failure.
-  const tunnelPreexisted = hasTunnel(connection.id);
-  let tunnel: Awaited<ReturnType<typeof createSSHTunnel>> | null = null;
+  // The SSH tunnel is keyed by connection id, bastion route and far end, and shared with the
+  // writable provider (createSSHTunnel returns the existing one for that forward). Only a
+  // tunnel this acquisition freshly created may be torn down on failure.
+  let tunnelPreexisted = false;
+  let tunnel: TunnelInfo | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
+    tunnelPreexisted = hasTunnel(connection.id, {
+      ssh: connection.sshTunnel,
+      farEnd: { host: connection.host, port: connection.port },
+    });
     tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
-    effectiveConnection = { ...effectiveConnection, host: tunnel.localHost, port: tunnel.localPort };
+    effectiveConnection = tunnelledConnection(effectiveConnection, tunnel);
   }
 
   const closeFreshTunnel = async () => {

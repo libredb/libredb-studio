@@ -9,9 +9,23 @@
 
 import { describe, test, expect, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
+
+/** The repository root, anchored to this file so nothing here depends on the launcher's cwd. */
+const REPO_ROOT = resolve(import.meta.dir, "../../..");
 import {
   SQLiteProvider,
   assertQueryOnlyEnabled,
@@ -143,13 +157,23 @@ describe("SQLiteProvider", () => {
 
   describe("getDatabasePath() via connect()", () => {
     let pathTmpDir: string;
+    let sameVolumeTmpDir: string;
 
     beforeAll(() => {
       pathTmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-path-"));
+      // A second fixture directory, deliberately on the same volume as the process cwd: the
+      // relative-path test below needs path.relative(cwd, target) to BE relative, and on Windows a
+      // clone on D: with %TEMP% on C: makes that impossible to express, so path.relative hands
+      // back the absolute target and the test fails on that machine only. node_modules/.cache is
+      // ignored by the VCS, so nothing here is visible to a working-tree drift guard.
+      const cache = join(REPO_ROOT, "node_modules", ".cache");
+      mkdirSync(cache, { recursive: true });
+      sameVolumeTmpDir = mkdtempSync(join(cache, "libredb-sqlite-path-"));
     });
 
     afterAll(() => {
-      rmSync(pathTmpDir, { recursive: true, force: true });
+      rmSync(pathTmpDir, { recursive: true });
+      rmSync(sameVolumeTmpDir, { recursive: true });
     });
 
     test("a path containing a NUL byte throws DatabaseConfigError without claiming traversal protection", async () => {
@@ -169,15 +193,24 @@ describe("SQLiteProvider", () => {
     test("a relative path with '..' segments is accepted and resolves to an absolute location", async () => {
       // Pins intended behavior: sqlite paths are trusted server-side paths, so
       // ".." segments are legal and simply resolve against the process cwd.
-      const relPath = relative(process.cwd(), join(pathTmpDir, "dotdot-ok.db"));
+      // The ".." is built explicitly, by leaving the working directory and coming straight back
+      // into it, rather than by pointing at a directory outside the tree and letting
+      // path.relative produce the hops. That used to be a path under the system temp directory:
+      // on Windows a clone on D: with %TEMP% on C: has no relative spelling at all, so
+      // path.relative returns the absolute target and the assertion below fails on that machine
+      // only. This form carries the same ".." segments on every platform.
+      const target = join(sameVolumeTmpDir, "dotdot-ok.db");
+      const cwd = process.cwd();
+      const relPath = join("..", basename(cwd), relative(cwd, target));
       expect(isAbsolute(relPath)).toBe(false);
       expect(relPath).toContain("..");
+      expect(resolve(relPath)).toBe(target);
 
       provider = new SQLiteProvider(makeSQLiteConfig({ database: relPath }));
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
       // The database file materializes at the resolved absolute location.
-      expect(existsSync(join(pathTmpDir, "dotdot-ok.db"))).toBe(true);
+      expect(existsSync(join(sameVolumeTmpDir, "dotdot-ok.db"))).toBe(true);
     });
 
     test("a connectionString with a file: prefix is accepted and the prefix is stripped", async () => {
@@ -848,7 +881,7 @@ describe("SQLiteProvider", () => {
     });
 
     afterAll(() => {
-      rmSync(fileTmpDir, { recursive: true, force: true });
+      rmSync(fileTmpDir, { recursive: true });
     });
 
     test("getHealth reports the on-disk file size and passes the integrity check", async () => {
@@ -895,6 +928,111 @@ describe("SQLiteProvider", () => {
       const wal = stats.find((s) => s.name === "WAL")!;
       expect(wal.location).toBe("storage.db-wal");
       expect(typeof wal.walSizeBytes).toBe("number");
+    });
+
+    // ── disconnect() has to RELEASE the file, not schedule its release ────────
+    //
+    // bun:sqlite's `close()` is `sqlite3_close_v2`: the connection becomes a zombie
+    // and the operating-system handle is released only once the last statement
+    // prepared from it is finalized or garbage collected. The provider prepares a
+    // statement per query and drops the reference, so on a collector's schedule that
+    // is "eventually", and `disconnect()` used to resolve with the database, its WAL
+    // and its shared-memory file still open (measured on Linux through
+    // /proc/self/fd: three descriptors survived a disconnect that reported
+    // isConnected() === false).
+    //
+    // Nothing on POSIX notices, because POSIX unlinks a file that is still open. On
+    // Windows it is the whole difference: every one of these directories failed its
+    // own teardown with `EBUSY: resource busy or locked` on windows-latest
+    // (2026-09), and a user could not delete or move a database Studio had
+    // disconnected from.
+    //
+    // Each platform is asked the strongest question it can answer. The WAL sidecars
+    // are NOT that question, though they look like it: measured on 2026-09-15 with
+    // the same probe on all three runners, `close(true)` removes `-wal` and `-shm`
+    // on Linux and on Windows, and leaves both in place on macOS, where bun:sqlite
+    // links Apple's system libsqlite3. That is the library keeping the WAL, not a
+    // handle keeping the file: opening the same database with node:sqlite and
+    // closing it removed both sidecars on that same macOS run, and removing a WAL
+    // takes the exclusive lock a surviving handle would have denied.
+    test("disconnect releases the file rather than scheduling it", async () => {
+      const dbPath = join(fileTmpDir, "release.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      await provider.query("CREATE TABLE r (id INTEGER PRIMARY KEY, v TEXT)");
+      await provider.query("INSERT INTO r VALUES (1, 'held')");
+      expect(existsSync(`${dbPath}-wal`)).toBe(true);
+
+      await provider.disconnect();
+
+      // Windows answers by refusing: a file with a live handle cannot be renamed,
+      // and renaming is exactly what a user does to a database they think they have
+      // closed. POSIX renames an open file, so this cannot fail there.
+      const moved = `${dbPath}.moved`;
+      renameSync(dbPath, moved);
+      renameSync(moved, dbPath);
+
+      // Linux answers precisely: this is the measurement the defect was found with.
+      // /proc/self/fd is the process's own open files, so a scheduled close shows up
+      // as a descriptor still pointing into this directory.
+      if (existsSync("/proc/self/fd")) {
+        const held = readdirSync("/proc/self/fd").flatMap((fd) => {
+          try {
+            return [readlinkSync(join("/proc/self/fd", fd))];
+          } catch {
+            // The descriptor closed between the listing and the read, which is this
+            // process's own bookkeeping rather than anything about the database.
+            return [];
+          }
+        });
+        expect(held.filter((target) => target.startsWith(fileTmpDir))).toEqual([]);
+      }
+
+      // And the data survived whatever the close had to checkpoint.
+      const reader = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await reader.connect();
+      try {
+        expect((await reader.query("SELECT v FROM r")).rows).toEqual([{ v: "held" }]);
+      } finally {
+        await reader.disconnect();
+      }
+    });
+
+    // The same claim on the path nobody plans for: the connection points at a file
+    // that is not a SQLite database, which is the ordinary "wrong file in the
+    // dialog" mistake. `connect()` opens the handle before it fails, so a catch that
+    // only records the error leaves the user's own file held open: on Windows they
+    // then cannot delete or move the file they just picked by accident. Measured
+    // 2026-09-15 through /proc/self/fd, before the fix: one descriptor on notes.txt
+    // survived a connect() that had already thrown and reported isConnected() false.
+    test("a connect that fails releases the file it had already opened", async () => {
+      const notADatabase = join(fileTmpDir, "notes.txt");
+      writeFileSync(notADatabase, "these are notes, not a database\n");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: notADatabase }));
+
+      await expect(provider.connect()).rejects.toThrow();
+      expect(provider.isConnected()).toBe(false);
+      // A retry has to ask the file again rather than answer from a handle that is
+      // not there: `connect()` returns early when it still holds one, so a catch that
+      // released the file but kept the reference would make this second call resolve,
+      // silently, on a provider that is not connected.
+      await expect(provider.connect()).rejects.toThrow();
+      expect(provider.isConnected()).toBe(false);
+
+      const moved = `${notADatabase}.moved`;
+      renameSync(notADatabase, moved);
+      renameSync(moved, notADatabase);
+
+      if (existsSync("/proc/self/fd")) {
+        const held = readdirSync("/proc/self/fd").flatMap((fd) => {
+          try {
+            return [readlinkSync(join("/proc/self/fd", fd))];
+          } catch {
+            return [];
+          }
+        });
+        expect(held.filter((target) => target === notADatabase)).toEqual([]);
+      }
     });
   });
 
@@ -1131,7 +1269,7 @@ function interceptReads(provider: SQLiteProvider, match: string, intercept: (sql
   const real = holder.db;
   holder.db = {
     exec: (sql: string) => real.exec(sql),
-    close: () => real.close(),
+    close: (throwOnError?: boolean) => real.close(throwOnError),
     get inTransaction() {
       return real.inTransaction;
     },
@@ -2220,7 +2358,7 @@ describe("SQLiteProvider bulk column read (#789)", () => {
     const seen: string[] = [];
     holder.db = {
       exec: (sql: string) => real.exec(sql),
-      close: () => real.close(),
+      close: (throwOnError?: boolean) => real.close(throwOnError),
       get inTransaction() {
         return real.inTransaction;
       },
@@ -2527,7 +2665,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
   });
 
   afterAll(() => {
-    rmSync(agentTmpDir, { recursive: true, force: true });
+    rmSync(agentTmpDir, { recursive: true });
   });
 
   afterEach(async () => {
@@ -2775,7 +2913,9 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
       live arm above — it proves the template still reads that way, not that a running
       engine produces it — and still red on a reword, which is the property that matters.
     */
-    const postgresSource = await Bun.file("src/lib/db/providers/sql/postgres.ts").text();
+    // Anchored to this file, like every other source read in the suite: a cwd-relative read
+    // would fail here naming a path rather than the rule it is checking.
+    const postgresSource = readFileSync(join(REPO_ROOT, "src/lib/db/providers/sql/postgres.ts"), "utf8");
     expect(postgresSource).toContain(
       "Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed",
     );
@@ -2941,7 +3081,7 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
   });
 
   afterAll(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true });
   });
 
   test("core CRUD, schema, maintenance, and error mapping work under Node", () => {
@@ -2955,6 +3095,13 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
       ["build", harnessEntry, "--target=node", "--format=esm", "--external", "bun:sqlite", "--outfile", bundlePath],
       { timeout: 60_000 },
     );
+    // `build.error` first: on a timeout spawnSync returns status null with error set, and
+    // `status !== 0` is true for null, so checking status alone raises "bun build failed:" with an
+    // empty stderr, a message that names nothing. Under a concurrent runner a timeout is the
+    // likely failure, so it has to say so.
+    if (build.error) {
+      throw new Error(`bun build could not run: ${build.error.message}`);
+    }
     if (build.status !== 0) {
       throw new Error(`bun build failed: ${build.stderr?.toString()}`);
     }
@@ -2964,6 +3111,9 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
       env: { ...process.env, LIBREDB_SQLITE_DRIVER: "node" },
       timeout: 60_000,
     });
+    if (run.error) {
+      throw new Error(`node harness could not run: ${run.error.message}`);
+    }
     if (run.status !== 0) {
       throw new Error(`node harness failed: ${run.stderr?.toString()}`);
     }
@@ -2975,6 +3125,9 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.driverEnv).toBe("node");
     expect(report.connected).toBe(true);
     expect(report.disconnected).toBe(true);
+    // And the disconnect released the file, as the bun adapter's does: no WAL sidecar
+    // survived it. See "disconnect releases the file rather than scheduling it" above.
+    expect(report.sidecarsAfterDisconnect).toEqual([]);
     expect(existsSync(dbPath)).toBe(true); // real file-backed database
 
     // CRUD (same results as the bun driver)

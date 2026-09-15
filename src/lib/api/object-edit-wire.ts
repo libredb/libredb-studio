@@ -1,3 +1,5 @@
+import { EDIT_BODY_BYTE_LIMIT, planExecutableLength } from "@/lib/db/object-edit";
+import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type {
   ObjectEditConsequenceClass,
   ObjectEditOutcome,
@@ -6,6 +8,7 @@ import type {
   ObjectEditRefusal,
   ObjectEditRefusalClass,
   ObjectEditStrategy,
+  ObjectEditUnit,
 } from "@/lib/db/types";
 
 /**
@@ -13,7 +16,13 @@ import type {
  *
  * NO SERVER IMPORT IN THIS FILE. The browser narrows a HOST's answer with the same predicates the
  * route narrows a provider's answer with, and a predicate that lived beside the plan token would
- * drag `jose` and `node:crypto` into the client bundle.
+ * drag `jose` and `node:crypto` into the client bundle. The two VALUE imports above are within
+ * that rule and are checked rather than assumed: `object-edit.ts` and `object-kinds.ts` reach
+ * `errors.ts` and `api/error-codes.ts` and nothing else, and both are already imported by the
+ * client components in `src/components/object-source/`. The rule used to hold BY CONSTRUCTION,
+ * when every import here was type-only, and now holds by a property of files that grow, so
+ * `tests/unit/lib/api/object-edit-wire.test.ts` walks the closure and fails on the first bare
+ * value import anywhere in it.
  *
  * Every predicate asserts EXACTLY the properties of the arm its discriminant names and refuses any
  * other own STRING-KEYED property, enumerable or not (see `hasExactKeys` for why the distinction is
@@ -83,8 +92,47 @@ function isFilledString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
 }
 
+/**
+ * EVERY STRING THIS MODULE ACCEPTS IS BOUNDED, and this pair of helpers is where (D80).
+ *
+ * The strings are not this application's prose. A refusal `sentence` is the ENGINE's own message,
+ * `libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds a consequence's `observed` from
+ * `FUNCTION LIST`, and a `revision.basis` or a `truncated.reason` is whatever the provider wrote.
+ * MEASURED 2026-09-14 and recorded in D80: every bound the two edit routes enforce is on what they
+ * RECEIVE, so without these helpers a producer's answer reaches the dialog's DOM at whatever
+ * length it was written at, on the standalone path as well as the embedded one.
+ *
+ * TWO NUMBERS AND BOTH ALREADY EXIST, which is deliberate: a third constant here would be a third
+ * place for the same question to be answered differently.
+ *
+ * - `SOURCE_CHARACTER_LIMIT` (1,000,000) bounds every PROSE and IDENTIFIER string, and it is the
+ *   number Phase 2's `isSourceDocumentShape` already bounds its four host-supplied rendered
+ *   strings with (`src/components/object-source/source-reader.ts`). A block of definition text,
+ *   `preimage` and a conflict's `current`, takes the same number for the reason `object-edit.ts`
+ *   gives for `EDIT_CHARACTER_LIMIT`: it is a part as a READ may answer it.
+ * - `EDIT_BODY_BYTE_LIMIT` (8,388,608) bounds the unit's EXECUTABLE text, measured with
+ *   `planExecutableLength` and applied to the WHOLE unit rather than to one step. Why the BODY
+ *   bound and not `EDIT_PLAN_EXECUTABLE_LIMIT`, which is the number that names this quantity, is
+ *   written out in `isWithinTheExecutableBound`: it is about which seam gets to say the sentence.
+ *
+ * A provider SEGMENT's text needs no bound of its own: `spansTheText` proves those bytes ARE the
+ * step's bytes at that offset, so the executable bound is already the segment's bound.
+ *
+ * AN OVERRUN IS A REFUSED SHAPE, never a silent truncation, which is `isSourceDocumentShape`'s own
+ * rule at the matching seam: this module cannot cut an engine's sentence honestly, so it says the
+ * producer answered a body it cannot read.
+ */
+function isBoundedString(value: unknown): value is string {
+  return isFilledString(value) && value.length <= SOURCE_CHARACTER_LIMIT;
+}
+
+/** A string that may be empty and still may not be unbounded: a text, a pinned setting's value. */
+function isBoundedText(value: unknown): value is string {
+  return typeof value === "string" && value.length <= SOURCE_CHARACTER_LIMIT;
+}
+
 function isStringArray(value: unknown): boolean {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+  return Array.isArray(value) && value.every(isBoundedText);
 }
 
 /** A 0-based UTF-16 offset into the user's part text: an integer, never negative, never a NaN. */
@@ -203,15 +251,70 @@ function spansTheText(text: string, segments: readonly unknown[]): boolean {
  * `segments` is required to be non-empty. A step whose map is empty cannot be rendered as a
  * preview at all, and it is the population a "every segment is valid" loop certifies nothing over
  * when it runs zero times.
+ *
+ * `text` IS BOUNDED, one level out: the unit sums it across every step and checks the total
+ * against `EDIT_BODY_BYTE_LIMIT` (see `isWithinTheExecutableBound`, which says why that constant
+ * and not the tighter one), because the quantity being bounded is the whole unit's executable
+ * text and not one step's.
  */
 function isStep(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (!hasExactKeys(value, ["text", "language", "segments"])) return false;
   if (typeof value.text !== "string") return false;
-  if (!isFilledString(value.language)) return false;
+  if (!isBoundedString(value.language)) return false;
   if (!Array.isArray(value.segments) || value.segments.length === 0) return false;
   if (!value.segments.every(isSegment)) return false;
   return spansTheText(value.text, value.segments);
+}
+
+/**
+ * The unit's executable text, bounded here as a BACKSTOP and deliberately looser than the routes
+ * (D80).
+ *
+ * `planExecutableLength` rather than a sum written out here, so the two cannot drift: the command
+ * arm counts the name and the argument tokens as well as the payload, and a second copy of that
+ * arithmetic would be a second answer to one question. The cast is safe at this call site and
+ * nowhere else: every field the function reads has just been proved a string or an array of them
+ * by the arm above it.
+ *
+ * WHY `EDIT_BODY_BYTE_LIMIT` AND NOT `EDIT_PLAN_EXECUTABLE_LIMIT`, which is the constant whose own
+ * docblock names this exact quantity. Both edit routes call this predicate FIRST and measure the
+ * executable length SECOND, and the second check is the one that can say what is wrong: "this
+ * apply would send N characters and this server sends at most 1,200,000", with the number in it.
+ * MEASURED: with this bound set to `EDIT_PLAN_EXECUTABLE_LIMIT`, a unit one character over it was
+ * refused here instead and both routes answered "the build answered a plan this server cannot read
+ * as a plan", which is a shape complaint about a size problem. A bound that takes a better
+ * sentence away is a regression whatever it protects, so the wire's ceiling sits strictly above
+ * the routes' and catches only what no route could have delivered at all.
+ *
+ * The number is honest at that job rather than borrowed for it: `EDIT_BODY_BYTE_LIMIT` is the
+ * whole request body in BYTES, one UTF-16 code unit is at least one UTF-8 byte, so an executable
+ * text longer than this many characters cannot have come through either route's body.
+ *
+ * WHAT IT IS AND IS NOT, because an earlier form of this docblock claimed a live uncounted seam and
+ * that claim is FALSE in this tree. Every one of the four call sites has a tighter count in front
+ * of it, so this predicate cannot answer `false` today:
+ * - `edit-apply/route.ts` reads the body through `readBoundedJson` at `EDIT_BODY_BYTE_LIMIT` BYTES
+ *   before the parse, and the unit is a fragment of that body;
+ * - `edit-plan/route.ts` narrows a plan a provider built from text already bounded at
+ *   `EDIT_CHARACTER_LIMIT`, and measures the same unit against `EDIT_PLAN_EXECUTABLE_LIMIT` on the
+ *   very next line;
+ * - the standalone `ObjectSourceView` narrows what those two routes answered;
+ * - the embedded shell counts the WHOLE host answer at `EDIT_PLAN_EXECUTABLE_LIMIT * 2 +
+ *   SOURCE_CHARACTER_LIMIT * 2` = 4,400,000 characters, as it snapshots it
+ *   (`src/workspace/hooks/use-connection-adapter.ts`), which is tighter than this for the answer
+ *   entire, let alone for the unit inside it.
+ * So this is a CEILING held above every bound in front of it and nothing else: it exists so that a
+ * fifth caller, or any of those four losing its own count, meets a number here rather than handing
+ * an unbounded executable text to the dialog. The `SOURCE_CHARACTER_LIMIT` bounds elsewhere in this
+ * module are NOT in that position and do bite today: a 2,000,000-character `refusal.sentence`
+ * passes the embedded answer bound and both routes' body bounds and is refused here.
+ *
+ * `EDIT_PLAN_EXECUTABLE_LIMIT` stays the product's answer and is enforced, with its sentence, at
+ * both routes and in `ApplyPreviewDialog`'s refusal to draw a diff above it.
+ */
+function isWithinTheExecutableBound(unit: Record<string, unknown>): boolean {
+  return planExecutableLength(unit as unknown as ObjectEditUnit) <= EDIT_BODY_BYTE_LIMIT;
 }
 
 /**
@@ -226,13 +329,15 @@ export function isObjectEditUnitShape(value: unknown): boolean {
   if (value.medium === "statement") {
     if (!hasExactKeys(value, ["medium", "steps"])) return false;
     if (!Array.isArray(value.steps) || value.steps.length === 0) return false;
-    return value.steps.every(isStep);
+    if (!value.steps.every(isStep)) return false;
+    return isWithinTheExecutableBound(value);
   }
   if (value.medium === "command") {
     if (!hasExactKeys(value, ["medium", "name", "arguments", "payload"])) return false;
-    if (!isFilledString(value.name)) return false;
+    if (!isBoundedString(value.name)) return false;
     if (!isStringArray(value.arguments)) return false;
-    return isStep(value.payload);
+    if (!isStep(value.payload)) return false;
+    return isWithinTheExecutableBound(value);
   }
   return false;
 }
@@ -247,11 +352,11 @@ function isRevision(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (value.check === "guarded" || value.check === "compared") {
     if (!hasExactKeys(value, ["check", "token", "basis", "scope"])) return false;
-    if (!isFilledString(value.token) || !isFilledString(value.basis)) return false;
+    if (!isBoundedString(value.token) || !isBoundedString(value.basis)) return false;
     return value.scope === "server" || value.scope === "connection";
   }
   if (value.check === "unavailable") {
-    return hasExactKeys(value, ["check", "reason"]) && isFilledString(value.reason);
+    return hasExactKeys(value, ["check", "reason"]) && isBoundedString(value.reason);
   }
   return false;
 }
@@ -261,7 +366,7 @@ function isSessionPin(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (value.mode !== "asserted" && value.mode !== "pinned") return false;
   if (!hasExactKeys(value, ["mode", "setting", "value"])) return false;
-  return isFilledString(value.setting) && typeof value.value === "string";
+  return isBoundedString(value.setting) && isBoundedText(value.value);
 }
 
 /**
@@ -279,7 +384,7 @@ function isConsequence(value: unknown): boolean {
   const fact = value.fact;
   if (!isRecord(fact)) return false;
   if (!hasExactKeys(fact, ["source", "observed"])) return false;
-  return isFilledString(fact.source) && isFilledString(fact.observed);
+  return isBoundedString(fact.source) && isBoundedString(fact.observed);
 }
 
 /**
@@ -319,9 +424,9 @@ function isObjectEditRefusalShape(value: unknown): value is ObjectEditRefusal {
   if (!isRecord(value)) return false;
   if (!hasExactKeys(value, ["refusal", "sentence", "at"], ["code", "hint"])) return false;
   if (!REFUSAL_CLASSES.includes(value.refusal as string)) return false;
-  if (!isFilledString(value.sentence)) return false;
-  if (Object.hasOwn(value, "code") && !isFilledString(value.code)) return false;
-  if (Object.hasOwn(value, "hint") && !isFilledString(value.hint)) return false;
+  if (!isBoundedString(value.sentence)) return false;
+  if (Object.hasOwn(value, "code") && !isBoundedString(value.code)) return false;
+  if (Object.hasOwn(value, "hint") && !isBoundedString(value.hint)) return false;
   return isPosition(value.at);
 }
 
@@ -329,7 +434,7 @@ function isObjectEditRefusalShape(value: unknown): value is ObjectEditRefusal {
 function isTruncation(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (!hasExactKeys(value, ["limit", "reason"])) return false;
-  return typeof value.limit === "number" && Number.isFinite(value.limit) && isFilledString(value.reason);
+  return typeof value.limit === "number" && Number.isFinite(value.limit) && isBoundedString(value.reason);
 }
 
 /**
@@ -340,8 +445,8 @@ function isTruncation(value: unknown): boolean {
 function isTextBlock(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (!hasExactKeys(value, ["text", "language"], ["truncated"])) return false;
-  if (typeof value.text !== "string") return false;
-  if (!isFilledString(value.language)) return false;
+  if (!isBoundedText(value.text)) return false;
+  if (!isBoundedString(value.language)) return false;
   if (Object.hasOwn(value, "truncated") && !isTruncation(value.truncated)) return false;
   return true;
 }
@@ -382,13 +487,13 @@ export function isObjectEditPlanShape(value: unknown): value is ObjectEditPlan {
   if (!isRecord(value)) return false;
   if (!hasExactKeys(value, PLAN_KEYS)) return false;
   if (value.planVersion !== 1) return false;
-  if (!isFilledString(value.planId)) return false;
-  if (!isFilledString(value.issuedAt)) return false;
-  if (!isFilledString(value.connectionFingerprint)) return false;
-  if (!isFilledString(value.type)) return false;
+  if (!isBoundedString(value.planId)) return false;
+  if (!isBoundedString(value.issuedAt)) return false;
+  if (!isBoundedString(value.connectionFingerprint)) return false;
+  if (!isBoundedString(value.type)) return false;
   if (!isStringArray(value.path) || (value.path as readonly string[]).length === 0) return false;
-  if (!isFilledString(value.kind)) return false;
-  if (!isFilledString(value.partId)) return false;
+  if (!isBoundedString(value.kind)) return false;
+  if (!isBoundedString(value.partId)) return false;
   if (!STRATEGIES.includes(value.strategy as string)) return false;
   if (!isObjectEditUnitShape(value.unit)) return false;
   if (!Array.isArray(value.session) || !value.session.every(isSessionPin)) return false;
@@ -420,7 +525,7 @@ export function isObjectEditOutcomeShape(value: unknown): value is ObjectEditOut
     case "applied-elsewhere":
       if (!hasExactKeys(value, ["outcome", "undone", "duration"], ["wrote"])) return false;
       if (typeof value.undone !== "boolean") return false;
-      return !Object.hasOwn(value, "wrote") || isFilledString(value.wrote);
+      return !Object.hasOwn(value, "wrote") || isBoundedString(value.wrote);
     case "conflict":
       // The SECOND discriminant, because the reader's next action differs between the two arms:
       // one is "look at the diff" and the other is "send the same plan again".
@@ -429,8 +534,8 @@ export function isObjectEditOutcomeShape(value: unknown): value is ObjectEditOut
       }
       if (value.conflict === "engine-refused-concurrent") {
         if (!hasExactKeys(value, ["outcome", "conflict", "sentence", "duration"], ["code"])) return false;
-        if (!isFilledString(value.sentence)) return false;
-        return !Object.hasOwn(value, "code") || isFilledString(value.code);
+        if (!isBoundedString(value.sentence)) return false;
+        return !Object.hasOwn(value, "code") || isBoundedString(value.code);
       }
       return false;
     case "refused":
@@ -440,7 +545,7 @@ export function isObjectEditOutcomeShape(value: unknown): value is ObjectEditOut
       // `rolled-back` may be claimed only by a strategy that opened the transaction itself, and
       // any other spelling is a claim about a rollback this design may not make.
       if (value.committed !== "unknown" && value.committed !== "rolled-back") return false;
-      return isFilledString(value.sentence);
+      return isBoundedString(value.sentence);
     default:
       return false;
   }
@@ -460,7 +565,7 @@ export function isObjectEditBuildResponseShape(value: unknown): value is ObjectE
     if (!hasExactKeys(value, ["built", "plan", "preimage"], ["planToken"])) return false;
     if (!isObjectEditPlanShape(value.plan)) return false;
     if (!isTextBlock(value.preimage)) return false;
-    return !Object.hasOwn(value, "planToken") || isFilledString(value.planToken);
+    return !Object.hasOwn(value, "planToken") || isBoundedString(value.planToken);
   }
   if (value.built === false) {
     return hasExactKeys(value, ["built", "refusal"]) && isObjectEditRefusalShape(value.refusal);

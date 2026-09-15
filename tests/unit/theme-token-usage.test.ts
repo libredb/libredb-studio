@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 /**
  * The token layer only holds if adding a literal is harder than adding a token.
@@ -35,8 +35,12 @@ function sourceFiles(dir: string): string[] {
     });
 }
 
+// `relative` hands back the platform separator, so on Windows this would be
+// "src\\components\\ui\\button.tsx". Every comparison below is written with forward slashes:
+// the `src/components/ui/` exclusion would silently stop excluding the vendored shadcn tree and
+// its literal Tailwind hues would trip the token assertions. Normalise once, here.
 const files = sourceFiles(SRC).map((path) => ({
-  path: relative(ROOT, path),
+  path: relative(ROOT, path).split(sep).join("/"),
   text: readFileSync(path, "utf8"),
 }));
 

@@ -34,9 +34,9 @@ describe("AdminDashboard", () => {
   afterEach(() => {
     cleanup();
     resetMockPathname();
-    // Restore via the shared helper: this file shares a process with the other
-    // admin tests (run-components.sh Group 4), and an un-restored global fetch
-    // leaks into whichever file runs next.
+    // Restore via the shared helper: every test in this file shares one process
+    // and one global `fetch`, so an un-restored stub decides the outcome of
+    // whichever test runs after it.
     restoreGlobalFetch();
   });
 

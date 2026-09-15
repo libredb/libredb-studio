@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -24,23 +24,32 @@ describe.skipIf(!nodeBetterSqliteTestable)(
   "credential encryption at rest against a real STORAGE_PROVIDER=sqlite file (posture control 3.1)",
   () => {
     let tmpDir: string;
+    let bundleDir: string;
 
     beforeAll(() => {
       tmpDir = mkdtempSync(join(tmpdir(), "libredb-storage-sqlite-enc-"));
       // The bundle is `--external better-sqlite3` (a native addon; a bundler cannot inline it),
       // so plain Node module resolution needs a node_modules it can find by walking up from the
-      // bundle's own directory. tmpDir sits outside the project tree, so nothing is found without
-      // this: a symlink is cheaper and more honest than moving the bundle output into the repo.
-      symlinkSync(resolve(import.meta.dir, "../../../node_modules"), join(tmpDir, "node_modules"), "dir");
+      // bundle's own directory. This used to be a symlink from tmpDir to the project's
+      // node_modules, which needs a privilege Windows does not grant a normal shell (EPERM in
+      // beforeAll, failing the describe rather than skipping it). Put the bundle where resolution
+      // already works instead: a directory under node_modules/.cache, from which node's upward
+      // walk reaches the real node_modules with nothing to link. NODE_PATH is not an option here,
+      // it does not apply to the ESM resolution this bundle uses. The database still lives in
+      // tmpDir, outside the repository.
+      const cache = resolve(import.meta.dir, "../../../node_modules/.cache");
+      mkdirSync(cache, { recursive: true });
+      bundleDir = mkdtempSync(join(cache, "libredb-storage-sqlite-enc-"));
     });
 
     afterAll(() => {
       rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(bundleDir, { recursive: true, force: true });
     });
 
     test("a canary password never reaches the file on disk, and a rotated key omits it on read instead of exposing it or crashing", () => {
       const harnessEntry = join(import.meta.dir, "sqlite-credential-encryption-node-harness.ts");
-      const bundlePath = join(tmpDir, "sqlite-credential-encryption-node-harness.mjs");
+      const bundlePath = join(bundleDir, "sqlite-credential-encryption-node-harness.mjs");
       const dbPath = join(tmpDir, "storage.db");
 
       const build = spawnSync(

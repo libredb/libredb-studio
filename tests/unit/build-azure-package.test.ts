@@ -26,9 +26,26 @@ import {
   pinnedRef,
   resolveImageDigest,
 } from "../../scripts/build-azure-package.mjs";
+import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 
 const SCRIPT = join(import.meta.dir, "../../scripts/build-azure-package.mjs");
 const REPO_ROOT = join(import.meta.dir, "../..");
+
+/*
+  The builder itself shells out to `zip` (scripts/build-azure-package.mjs:273), so every case that
+  actually builds a package needs that binary, and reading the result back needs `unzip`. A stock
+  Windows 11 has neither, and `execFileSync`/`Bun.spawnSync` answer a missing binary by THROWING
+  ("Executable not found in $PATH", measured in this worktree), so those cases now say what is
+  missing instead of dying at the first spawn. macOS and Linux both ship the pair and run them
+  unchanged.
+
+  Reading the archive in process would not widen that: the gate is `zip`, which the script needs
+  whatever the test does. What WOULD widen it is making the builder write the two-file archive
+  without an external tool - a change to the script, not to this file.
+*/
+const UNZIP = resolveUnixTool("unzip");
+const NO_ZIP = missingUnixTool("zip");
+const NO_ZIP_TOOLS = NO_ZIP ?? missingUnixTool("unzip");
 
 const APP_DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const CADDY_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -219,7 +236,7 @@ describe("checkApiVersionAges (the 540/700-day gate)", () => {
   });
 });
 
-describe("buildPackage (end to end against a fixture repo)", () => {
+describeIf(NO_ZIP_TOOLS, "buildPackage (end to end against a fixture repo)", () => {
   const NOW = Date.parse("2026-08-05T12:00:00Z");
 
   function makeFixtureRepo({ apiVersion = "2025-07-01" }: { apiVersion?: string } = {}): string {
@@ -257,7 +274,7 @@ describe("buildPackage (end to end against a fixture repo)", () => {
     expect(result.zipPath).toBe(join(root, "dist/azure/libredb-studio-azure-1.2.3.zip"));
     expect(existsSync(result.zipPath)).toBe(true);
 
-    const listing = execFileSync("unzip", ["-l", result.zipPath], { encoding: "utf8" });
+    const listing = execFileSync(UNZIP!, ["-l", result.zipPath], { encoding: "utf8" });
     const entries = listing
       .split("\n")
       .map((line) => line.trim().split(/\s+/).slice(3).join(" "))
@@ -331,7 +348,7 @@ describe("CLI", () => {
     expect(result.stderr).toContain("integer.integer.integer");
   });
 
-  test("the full success path works end to end against a local registry stub", async () => {
+  testIf(NO_ZIP, "the full success path works end to end against a local registry stub", async () => {
     const NOW = Date.parse("2026-08-05T12:00:00Z");
     const root = mkdtempSync(join(tmpdir(), "azure-package-cli-"));
     const src = join(root, "deploy/azure/src");

@@ -106,9 +106,23 @@ function row(name: string | RegExp): HTMLElement {
   return screen.getByRole("treeitem", { name });
 }
 
+/**
+ * Opens the `app` container and returns once its folders carry the engine's counts.
+ *
+ * WAITING ON THE FOLDER ROW IS NOT ENOUGH, and the difference is one network round trip. A
+ * folder is drawn from the DECLARED kinds, which the capabilities already carry, so `Tables`
+ * is on screen the moment the container opens and before the counts read has answered. Every
+ * caller then reads something the counts supply - a badge, a refusal sentence, an aria-busy
+ * flag - with a synchronous `getByTestId`, which on a machine that has not answered yet throws
+ * rather than retries. Returning on the badge makes the counts answer the postcondition.
+ *
+ * All fifteen callers install a `table` count, `{ count: 0 }` included, which still draws a
+ * badge reading "0", so this is a wait the caller always satisfies and never a new premise.
+ */
 async function expandApp(): Promise<void> {
   await userEvent.click(await screen.findByRole("treeitem", { name: /app/ }));
-  await waitFor(() => expect(screen.getByRole("treeitem", { name: /Tables/ })).toBeTruthy());
+  await screen.findByRole("treeitem", { name: /Tables/ });
+  await within(row(/Tables/)).findByTestId("tree-row-badge");
 }
 
 afterEach(() => {
@@ -476,7 +490,9 @@ describe("ObjectTree container shapes", () => {
 
     const tables = await screen.findByRole("treeitem", { name: /Tables/ });
     expect(tables.getAttribute("aria-level")).toBe("1");
-    expect(within(tables).getByTestId("tree-row-badge").textContent).toBe("3");
+    // `find`, not `get`: the folder row is drawn from the declared kinds, so it is on screen
+    // one round trip before the counts that badge it.
+    expect((await within(tables).findByTestId("tree-row-badge")).textContent).toBe("3");
     expect(calls.map((call) => call.route)).toEqual(["counts"]);
     expect(calls[0]?.body.container).toEqual([]);
   });
@@ -501,7 +517,7 @@ describe("ObjectTree container shapes", () => {
     await userEvent.click(app);
     const tables = await screen.findByRole("treeitem", { name: /Tables/ });
     expect(tables.getAttribute("aria-level")).toBe("3");
-    expect(within(tables).getByTestId("tree-row-badge").textContent).toBe("7");
+    expect((await within(tables).findByTestId("tree-row-badge")).textContent).toBe("7");
     expect(calls.map((call) => `${call.route}:${JSON.stringify(call.body.parent ?? call.body.container)}`)).toEqual([
       "containers:undefined",
       'containers:["prod"]',
@@ -526,7 +542,9 @@ describe("ObjectTree container shapes", () => {
     render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
 
     const tables = await screen.findByRole("treeitem", { name: /Tables/ });
-    expect(within(tables).getByTestId("tree-row-badge").textContent).toBe("5");
+    // The confirmed flake of this file, red in 4 of 24 concurrent runs: the folder row answers
+    // `findByRole` as soon as the container opens, and the badge only arrives with the counts.
+    expect((await within(tables).findByTestId("tree-row-badge")).textContent).toBe("5");
     expect(screen.getByRole("treeitem", { name: /a\/b/ }).getAttribute("aria-expanded")).toBe("true");
   });
 });
@@ -962,8 +980,14 @@ describe("useTreeNodes", () => {
 
     generation = 1;
     act(() => result.current.refresh());
-    await waitFor(() => expect(result.current.rows.map((r) => r.label)).toContain("t1"));
-    expect(result.current.rows.find((r) => r.kindId === "table" && r.kind === "folder")?.badge).toBe("1");
+    // The listing and the counts are two reads that settle independently, and neither implies
+    // the other. Waiting on the listing alone and asserting the badge on the line after left
+    // the badge read at whatever the counts read happened to have reached; both facts are
+    // asked for in one wait instead.
+    await waitFor(() => {
+      expect(result.current.rows.map((r) => r.label)).toContain("t1");
+      expect(result.current.rows.find((r) => r.kindId === "table" && r.kind === "folder")?.badge).toBe("1");
+    });
     expect(calls.filter((call) => call.route === "counts")).toHaveLength(2);
     expect(calls.filter((call) => call.route === "list")).toHaveLength(2);
     expect(calls.filter((call) => call.route === "containers")).toHaveLength(2);
@@ -1063,10 +1087,19 @@ describe("useTreeNodes", () => {
     act(() => result.current.toggle("app"));
     await waitFor(() => expect(result.current.failureFor(result.current.rows[0] as never)).toBeDefined());
 
+    // The premise that made the old wait below vacuous, pinned so it cannot go quiet: the
+    // folders come from the DECLARED kinds, so the tree is already three rows while the counts
+    // read is still refusing.
+    expect(result.current.rows).toHaveLength(3);
+
     failing = false;
     act(() => result.current.refresh());
-    await waitFor(() => expect(result.current.rows).toHaveLength(3));
-    expect(result.current.failureFor(result.current.rows[0] as never)).toBeUndefined();
+    // So `waitFor(rows).toHaveLength(3)` ended on its first check, before `refresh` had issued
+    // anything, and the assertion after it read the failure that was still there. The wait is
+    // on the failure clearing, which is the fact this test is about.
+    await waitFor(() => expect(result.current.failureFor(result.current.rows[0] as never)).toBeUndefined());
+    // And it was REPLACED by the engine's answer rather than merely forgotten.
+    expect(result.current.rows.find((r) => r.kindId === "table" && r.kind === "folder")?.badge).toBe("2");
   });
 
   test("changing the connection throws the whole cache away rather than showing the last one's tree", async () => {

@@ -28,19 +28,19 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D84, U17 · 42
+- [Drivers and connections](#drivers-and-connections) — D1–D97, U17 · 43
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X25, U2–U21 · 18
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3–DOC5 · 3
+- [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B80 · 24
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B81 · 25
 
 ---
 
@@ -876,41 +876,6 @@ collides with every one of them.
 **Done when:** one definition of each replaces the copies, with the sqlite and libsql source read
 sharing its statement.
 
-### D68. `bun run test` is red on a shared process, and only CI's per-file isolation hides it
-
-`bun run test` is the pre-commit command CLAUDE.md documents, and it runs
-`bun test tests/unit tests/api tests/integration` in ONE bun process. `mock.module()` is
-process-wide, so a mock one layer needs reaches every file in that process. CI runs
-`tests/run-core.sh` instead, one process per file, and is blind to the whole class by
-construction.
-
-Measured 2026-09-13, and the same numbers at `acf50738` and on the #789 branch, so it predates
-that epic: every file under `tests/api/` mocks `@/lib/auth` with stubbed `signJWT`, `verifyJWT`,
-`getSession`, `login` and `logout`, which is that layer's standard pattern. Run
-`tests/unit/lib/auth.test.ts`, `tests/unit/lib/auth-jwt-config.test.ts` and
-`tests/unit/seed/resolve-connection.test.ts` beside `tests/api/db-objects.test.ts` and the four
-files together are 31 fail; each of them alone is 0 fail.
-
-**It is not one module.** RE-MEASURED 2026-09-14 (#789 Phase 3): `tests/api/admin/audit.test.ts`
-mocks `@/lib/audit` the same way, and `tests/api/db/objects/edit-apply.test.ts` reads the audit ring
-to assert what an apply logs. Run those two files together and it is 20 pass 11 fail; each alone is
-0 fail, and `bun run test:ci` runs all 424 core files and exits 0. So the pattern is a LAYER mocking
-a module a sibling in the same layer legitimately needs, and `@/lib/auth` against three unit files is
-one instance of it rather than the whole of it. The full `bun run test` at that commit is 42 fail,
-all of them in these two groups.
-
-The cost is not a red gate, because no gate runs that shape. It is that a contributor following
-CLAUDE.md sees dozens of failures on a clean checkout and cannot tell them from their own.
-
-#789 removed its own three instances by moving the files with the unshareable assumption into
-`tests/isolated/`, where `tests/run-components.sh` gives each a process and
-`tests/unit/component-runner-coverage.test.ts` makes an unregistered one a red test. The same
-remedy does not fit here: it is not three files but a whole layer's mocking pattern against three
-unit files that legitimately want the real module. `docs/TOOLCHAIN.md` carries the diagnosis.
-
-**Done when:** `bun run test` on a clean checkout is green, either because the auth mocking pattern
-stops reaching `tests/unit`, or because the documented command runs the same isolation CI does.
-
 ### D69. Six type-ids still open `readObjectSource` with their own entry guard, and one of its sentences is less true
 
 `requireSourceKind` in `src/lib/db/object-kinds.ts` is the one entry guard for `readObjectSource`:
@@ -993,309 +958,396 @@ statement MEANS, and none of them is reset.
 **Done when:** either the pool resets a connection on release, or every route that mutates session state
 restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
 
-### D74. The single-statement query route leaks a transaction the way `/api/db/multi-query` did, and needs only ONE request
+### D88. A multi-statement text sent to the single-statement query route answers HTTP 500
 
-`src/app/api/db/query/route.ts` resolves a connection, takes a provider from `getOrCreateProvider`
-(`:72`) and executes. It has no `finally`, no transaction handling and nothing that asks whether a
-transaction is open.
-That is the same missing `finally` #823 added to `/api/db/multi-query`, over the same process-wide
-provider cache, reached by a single request rather than by a script.
+`POST /api/db/query` is the single-statement route and nothing stops a caller sending two. PostgreSQL
+runs both, `pg` answers an ARRAY of results for a multi-statement simple query, and
+`PostgresProvider.query()` reads `result.rows` off that array, which is `undefined`. The route then
+reads `result.rows.length` and throws, so the caller gets a 500 with no sentence about what was wrong
+with their request, after both statements have already run.
 
-READ, 2026-09-14, and stated as READ deliberately: the route's text was verified and the mechanism is
-identical, but NOBODY HAS RUN a lone `BEGIN` through this route.
-The reproduction behind #823 drove the SECOND request through `/api/db/query` and watched it fail on a
-client another route had poisoned, which establishes that this route shares the poisoned handle and not
-that it can create one.
+MEASURED 2026-09-15 on PostgreSQL 18.4 through `pg` 8.23: a simple query of two statements answers
+`[Result, Result]` with the engine's own command tags, and `Array.prototype.rows` does not exist.
+Read in the tree at the same commit: `src/lib/db/providers/sql/postgres.ts` returns `rows: result.rows`
+from `query()`, and `src/app/api/db/query/route.ts` reads `result.rows.length`.
 
-The reason it was recorded separately rather than folded into #823: that fix is scoped to the route its
-own entry named, and closing that route leaves this one with the same defect and one fewer statement
-needed to reach it.
+Found while probing D74. Not caused by it and not fixed by it.
 
-**Done when:** a lone `BEGIN` is sent through this route and what happens is recorded, and then either the
-route ends what it opened or the entry says with evidence why it cannot.
+**Done when:** the route either refuses a text carrying more than one statement with a sentence, or the
+provider names which result of an array it answers with. The first is the smaller change and is what
+the route's own name claims; D76's single-statement check on the object-edit path is the precedent for
+asking the engine rather than splitting the text.
 
-### D75. `endOpenQueryTransaction()` covers three type-ids, and the other fourteen still leak
+### D89. A count mismatch is reported on the `interrupted` arm, whose documented meaning says the engine never answered
 
-PR #823 added the provider-side surface that answers whether a transaction is open, and implemented it on
-`postgres`, `sqlite` and `duckdb`, which are the three engines the leak was measured on.
-The surface is optional and has no default, so the other fourteen type-ids answer nothing and the route
-cannot end what a script left open there.
+`applyObjectEdit` on `postgres` counts the results the round trip answered and reports
+`{ outcome: "interrupted", committed: "unknown" }` when that count is not the four statements the
+emitted unit is made of (D76).
 
-So with #823 merged, a script that opens a transaction and fails on MySQL, MariaDB, SQL Server, Oracle,
-ClickHouse, Trino, Cassandra, MongoDB, Redis, Couchbase, Elasticsearch, OpenSearch, libSQL or LibreDB
-still leaves it open on the cached provider, with whatever consequence that engine has.
+`src/lib/db/types.ts` documents that arm as "the statement was SENT and the engine's answer never
+arrived: a timeout, a cancellation, a dropped socket, or any throw out of `applyObjectEdit`". For a
+count mismatch the answer DID arrive and the engine DID speak, so the arm is used outside its own
+contract, and the UI copy is written against the contract rather than against the member:
+`src/components/object-source/ApplyPreviewDialog.tsx` renders "This apply's outcome is unknown" and
+"**Whether it reached the server is unknown.** Read the definition again before you edit it." above
+the provider's true sentence. The second line of `OutcomeRegion`, which X20 narrowed to "Whether it
+was applied is unknown: LibreDB has no answer that says whether it landed", IS true of this member.
 
-This is a declared boundary rather than a fallback: the shape check carries no default and the absence is
-visible in the type.
-It is recorded because a boundary nobody wrote down becomes a fallback the next reader trusts.
+The provider side was weighed and left as it is, with the reason written into
+`src/lib/db/providers/sql/postgres.ts` and `docs/providers/postgres.md`: no other arm in the union
+fits better, and an arm added on the provider side ALONE falls into `applyFrame`'s `applied` tail,
+which has no exhaustiveness check, so the reader would be shown "This apply is done. The new
+definition is on the server." That is strictly worse than today.
 
-**Done when:** each remaining type-id either implements the surface, or its provider doc says which
-absence it is: the engine has no transaction to leave open, the driver cannot be asked, or nobody has
-measured it yet.
+**Done when:** either a seventh outcome arm exists with its wire shape in `src/lib/db/types.ts`, its
+own arm in `ApplyPreviewDialog.applyFrame` and `OutcomeRegion`, and tests for both; or the
+`interrupted` docblock in `src/lib/db/types.ts` and the `applyFrame` disposition line are narrowed to
+what is true of every member, and a test pins that the dialog's first line makes no transport claim.
 
-### D76. A PostgreSQL object edit runs every statement the reader's text carries, and only the first one is accounted for
+### D90. Three type-ids declare a `endOpenQueryTransaction()` absence that is not final
 
-`readObjectSource`'s edit path on `postgres` splices the reader's text between a provider prefix and a
-provider suffix and sends the whole thing as one parameterless simple query, and PostgreSQL runs every
-statement in such a query. Nothing above the wire is a single-statement check: the build compares the
-rendered HEADER for identity, and the post-condition only asks whether the addressed row was rewritten,
-which a `CREATE OR REPLACE` followed by a rider answers yes to.
+D75 asked every type-id that does not implement the surface to say WHICH absence it is, and all
+fourteen now do. Three of those answers are explicitly provisional, and each provider doc says so
+where it bites. They are collected here because a doc that says "this is filed as its own change"
+needs the change to exist.
 
-MEASURED live on PostgreSQL 18.4 through `POST /api/db/objects/edit-plan` and
-`POST /api/db/objects/edit-apply` (#789 Phase 3, task 19 fix round 1): the definition of
-`app.order_total(integer)` followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with
-`consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and the victim routine's
-`count(*)` went 1 to 0. The bytes are in the sealed preview, so the seal is intact and the user was
-shown them, but the plan's consequence model says nothing was lost, no acknowledgement is asked for, and
-both `object_edit` audit events name only
-`target: "function:app/order_total(integer):definition"` with the dropped routine's name nowhere in
-either.
+**`mysql` and `mssql`: the DRIVER cannot be asked, and the SERVER can.** Both were measured live.
+On MySQL 8.0.46 through `mysql2` 3.24.4, with the question asked from outside the pool on the
+released session's `threadId`, `performance_schema.events_transactions_current` answers `ACTIVE`
+for a bare `BEGIN` and for a `BEGIN` followed by a failing statement, and `ROLLED BACK` for the
+control. On SQL Server 2022 through `mssql` 12.7.2, `sys.dm_exec_sessions.open_transaction_count`
+on the released session's `@@SPID` answers 1 and 1 against a control of 0. Both readings are taken
+AFTER the connection went back to the pool, so they also measure that the leak is real rather than
+inferred. `docs/providers/mysql.md` section 6.1 and `docs/providers/mssql.md` section 6.1 carry the
+full tables.
 
-This run measured PostgreSQL alone. THE OTHER TWO ENGINES ARE SOMEBODY ELSE'S MEASUREMENT: the review
-of #789 Phase 3 task 19 fix round 1, on 2026-09-14, reports the same shape refused by Trino at the
-coordinator (`mismatched input ';'`, `SYNTAX_ERROR`) and by Redis at load time. Neither was re-driven
-here, so a later reader who re-drives the rider on Trino or Redis is re-running that review's
-measurement and not this entry's, and a result that disagrees is a finding against the review rather
-than a regression of anything measured above. The Trino half has a second source inside this
-repository, which the Redis half does not: `docs/providers/trino.md`, section *A trailing semicolon is
-a syntax error*, records `SELECT 1;` answering `mismatched input ';'` as its own measurement.
+Neither was implemented on that ask, for one reason each and both written down. On `mysql` the
+provider also serves MariaDB, where `performance_schema` is OFF by default and its tables answer
+NULL rather than failing, so the same query would report no open transaction while one is open, and
+rolling nothing back is the one outcome worse than reporting nothing. That needs a per-server
+capability probe of the kind `objectKinds` and the EXPLAIN grammar already use on this provider.
+On `mssql` the state is readable on `tedious`'s `Connection`, which `mssql.Request` never hands out.
 
-**The audit half of the same fact, and it is the half a log reader meets.** An `object_edit` event says
-an edit was applied at one address, with one strategy, and with one outcome. It does NOT say the round
-trip carried nothing else, and it cannot. `docs/SECURITY.md`'s note on control 3.6 states that limit
-where a reader of the control meets it; this entry is the work.
+**`trino`: nobody has measured it yet.** The code side is settled and `docs/providers/trino.md`
+section 3.14 states it: the coordinator carries a transaction on `X-Trino-Transaction-Id`, the
+transport writes and reads neither, so this provider holds nothing between statements that the
+surface could name. What is unmeasured is the other end, what a live coordinator does with a
+transaction whose id was dropped, how long it survives the idle timeout, and whether it holds
+anything a later user of the same cluster notices.
 
-Three things narrow the residual and none of them closes it. They are readings of the shipped code, not
-separate measurements. First, the bytes are in the SEALED plan and the preview drew them, so a rider is
-something the user was given the chance to read rather than something the server added. Second, the
-decision event is emitted before the provider is called and outside any try/catch, so an apply that
-cannot be audited does not run: what is narrow is the event's CLAIM and not its coverage. Third, the
-address in the event is the address the plan was built for, so a rider cannot make the event name the
-wrong object; it makes the event name too few.
+**Done when:** each of the three either implements the surface or its doc records the measurement
+that closes the question. For `mysql` that is a per-server `performance_schema` capability probe
+plus the implementation behind it. For `mssql` it is whether a pinned `ConnectionPool.acquire()`
+connection can carry a statement at all. For `trino` it is one run against a live coordinator.
 
-Closing the audit half needs a PostgreSQL statement counter. This repository does not have one and has
-measured itself unable to fake one: a dollar-quoted routine body may contain any number of semicolons,
-and no reader in `src/lib/sql/` can tell a statement separator from a character of a definition. Splitting
-the unit into one statement per round trip is not available either, because ruling 3a of #789 Phase 3
-measured that a `SET LOCAL` sent as its own round trip answers a WARNING and pins nothing.
+### D91. The embedded shell's apply refusal cannot be placed, styled or suppressed by the host
 
-**Done when:** either the reader's text is refused when it carries more than one statement, or every
-statement it carries is named in the plan's consequences and in the audit target, so a success destroys
-nothing the plan did not show and the log's claim is as wide as the round trip. The provider doc says the
-same thing where it bites, in `docs/providers/postgres.md`'s measured acceptance run.
+`src/workspace/StudioWorkspace.tsx` renders the D82 refusal itself, as an `output` portaled to
+`document.body` at `fixed bottom-4 right-4 z-[60]`. That is the only viewport-fixed element the
+package's own shell paints, and it lands in the HOST's chrome: the adopter cannot move it, restyle
+it, route it into their own notification surface or turn it off. MEASURED and written into the
+docblock: a body child also falls outside `STUDIO_SCOPED_CSS`, so it renders in the host page's font
+at `letter-spacing: normal` while the workspace box renders at `-0.011em`. The colour tokens are on
+`:root` and survive. The portal itself is not the negotiable part, it is what makes the live region
+reachable at all (`hideOthers` marks the box and installs no observer).
 
-### D77. The PostgreSQL object fixture builds no producer for the post-condition, so `applied-elsewhere` has only a test double
+Second, smaller, and in the same surface: `onApplyInFlightChange` on
+`src/components/object-source/ObjectSourceView.tsx` is optional, and the `undefined` arm now has no
+shipped caller. The pane has exactly two mounts in `src` (`Studio.tsx:1127`,
+`StudioWorkspace.tsx:833`) and both pass it; `src/exports/` re-exports the pane from nowhere and
+`dist/*.d.ts` carries no `ObjectSourceView`, so no adopter can mount it without the prop. The arm
+exists for the 14 mounts in `tests/components/object-source/ObjectSourceView.test.tsx` and for
+nothing else.
 
-`docker/postgres-init/03-object-fixture.sql` builds the truncation population and the ownership
-population, and it builds nothing that can reach the emitted unit's post-condition on this engine. The
-build's identity check compares the rendered header up to the FIRST `)`, so a changed argument list only
-gets past it when a parameter `DEFAULT` holds a `)` inside a string literal, and no fixture routine has
-one. The #789 Phase 3 acceptance run had to create the object itself,
-`CREATE FUNCTION app.<name>(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$`,
-edited to `b bigint`, which answered `applied-elsewhere` with `undone: true` and left one row.
+**Done when:** the host has a documented way to receive or place this refusal instead of having it
+painted into their chrome, with a test for the default (still shown) and for the host-handled path;
+AND `onApplyInFlightChange` is either made required, with the pane's test mounts updated, or its
+optionality is justified in the props docblock by a caller that actually exists.
 
-Without it in the fixture, the only producer of `applied-elsewhere` on this engine that this repository
-builds is a driver mock, and the guard reads as one over a population nothing here creates.
+### D92. A multi-statement script is not guaranteed one pooled backend, so its BEGIN and its COMMIT can land apart
 
-**Done when:** the fixture carries a routine with a parameter `DEFAULT` holding a `)` in a string
-literal, and the integration suite's `applied-elsewhere` case is driven against it.
+`POST /api/db/multi-query` runs a script by calling `provider.query()` once per statement, and each
+call does its own `pool.connect()`. Nothing holds one backend for the script's lifetime. Under
+concurrent traffic on the same connection id, a script's `BEGIN` and its `COMMIT` can therefore be
+served by different backends, which commits nothing and leaves the first backend's transaction to
+D87's scope-bound ender.
 
-### D78. An object edit refuses on a pooled client somebody else left in a transaction, and nothing clears it
+NOT REPRODUCED, and said in that voice. `pg`'s idle list is LIFO and a script's statements run back
+to back, so the same client comes back nearly always: measured 2026-09-15 on PostgreSQL 18.4, six
+concurrent script runs answered identical backend pids throughout. What is missing is a construction
+that forces the interleave, not an argument that it cannot happen.
 
-MEASURED 2026-09-14 on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23, on a throwaway
-container, driving `PostgresProvider` itself rather than a hand-written statement.
+Found while reviewing D87. It is independent of D87 and was not introduced by it: D87 bound the
+ENDER to the caller's own scope, which is what makes the first backend's transaction reachable at
+all, and this entry is about the script's own statements being spread across backends in the first
+place.
 
-What was WRONG and is now fixed here: `applyObjectEdit` sent the plan on whatever pooled client it
-borrowed. A lone `BEGIN` through `query()` releases that client in status `T`, `pg`'s idle list is LIFO
-so the next `pool.connect()` hands the SAME client back, and the apply then ran inside the foreign
-transaction and answered `applied` with a `guarded` revision token. The write was uncommitted, so
-`endOpenQueryTransaction()` on the same connection rolled it away, `xmin` 856 back to 825 and the
-definition byte-identical to the pre-image; the revision handed back was whichever image the re-read's
-own borrowed client happened to see; and the `SET LOCAL search_path` pin survived into the rest of the
-foreign transaction, `SHOW search_path` reading `app, pg_catalog`. The same borrow in status `E`
-answered SQLSTATE `25P02` and, that code not being in `APPLY_VERDICT_BY_SQLSTATE`, was classified
-`refused` with class `definition`, telling the reader their definition was rejected. `applyObjectEdit`
-now reads the client's ReadyForQuery status before it sends anything and refuses with class `guard` when
-it is not `I`, which closes both.
+**Done when:** either a probe forces the interleave and the result is recorded, or the route holds
+one client for the script's scope. The second changes pool semantics for every caller of `query()`
+and is the larger change, which is why this is filed rather than folded into D87.
 
-What is STILL OPEN and is this entry: the refusal does not CLEAR the transaction, and neither does the
-route. Rolling it back would destroy work the refused user was never shown, so the apply must not; but
-`src/app/api/db/objects/edit-apply/route.ts` has no `finally` and calls nothing, so a client poisoned by
-another route stays poisoned and every object edit on that connection id keeps refusing until some other
-request happens to end it. Measured as the control in the same run: a plain `ROLLBACK` on that client,
-which is what `endOpenQueryTransaction()` issues, returns the status to `I` and the identical apply then
-succeeds.
+### D93. One connection id can hold unboundedly many live SSH forwards, and only whole-connection teardown reaps them
 
-The population is bounded by D74 rather than open: #823 gave `/api/db/multi-query` a `finally`, so the
-remaining producer of a poisoned client is the single-statement route, which D74 records as READ and not
-yet run.
+D86 was closed by KEYING the tunnel pool on the forward - `(connectionId, remoteHost, remotePort,
+tunnelRoute(sshConfig))` in `poolKey`, `src/lib/ssh/tunnel.ts` - rather than by refusing a mismatch.
+That was the trade D86 itself allowed, and refusing is still the wrong answer: nothing on the
+edit path closes a stale forward, so a refusal would leave the connection unusable, and every second
+provider on a live tunnel legitimately reuses it. The cost is that the pool now holds one live
+forward per distinct (route, far end) asked for under an id, where before it held exactly one.
 
-**Done when:** either D74 closes, which removes the producer, or the edit-apply route ends a transaction
-it did not open on the same terms `/api/db/multi-query` does, with the cross-user question that raises
-answered rather than assumed.
-
-### D79. The embedded shell learns about its own object apply and about no other DDL
-
-`StudioWorkspace` owns a catalog-change counter and moves it after an object apply the workspace itself
-issued (#789 Phase 3). It cannot see a DDL the HOST ran. Every statement in that shell leaves through
-`onQueryExecute`, and that callback answers a result set and never says what the statement changed, so a
-`CREATE OR REPLACE` a person runs in the query editor leaves every open Source tab showing the pre-apply
-text with no stale banner.
-
-MEASURED for the STANDALONE shell during the same phase, which is where the absence was found first: a
-new body applied to `p3probe.order_total` through `POST /api/db/query` while its Source tab was open left
-the tab unchanged and unmarked. The embedded shell inherits it, and this is a Phase 2 limitation rather
-than something the apply introduced: the counter was the constant `0` before, and saw nothing at all.
-
-The consequence is bounded where it bites, in the mount's own docblock: a stale banner in the embedded
-shell means "this workspace changed it", and the absence of one never means "nothing changed".
-
-**Done when:** a host can tell the workspace the catalog moved, either through a host-callable handle or
-through a field on the `onQueryExecute` answer. Both are NEW PUBLISHED SURFACES on `@libredb/studio`,
-which is why this is filed rather than folded into the apply.
-
-### D80. `object-edit-wire.ts` bounds no host-supplied string, so the standalone dialog is unbounded end to end
-
-The four shape predicates in `src/lib/api/object-edit-wire.ts` (`isObjectEditPlanShape`,
-`isObjectEditUnitShape`, `isObjectEditOutcomeShape`, `isObjectEditBuildResponseShape`) check shape and
-bound no string. So `refusal.sentence`, `refusal.hint`, `plan.revision.reason`,
-`preimage.truncated.reason` and each consequence's `fact.source` and `fact.observed` reach the DOM at
-whatever length their producer wrote them.
-
-MEASURED 2026-09-14: every bound the two edit routes enforce is on what they RECEIVE.
-`grep -rn ' > EDIT_' src/app/api/db/objects/` returns exactly 3 hits, `EDIT_CHARACTER_LIMIT` on the
-submitted text and `EDIT_PLAN_EXECUTABLE_LIMIT` on the plan's executable length at both routes, and the
-third inbound bound, `EDIT_BODY_BYTE_LIMIT`, is applied by `readBoundedJson` on the body. Nothing bounds
-what they ANSWER, and the answers are not this application's own prose:
-`libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds `observed` from `FUNCTION LIST`, and a
-refusal sentence is the engine's own message. `ApplyPreviewDialog` bounds exactly one string, the plan's
-executable text, which it refuses to draw a diff above.
-
-The EMBEDDED half is closed: `use-connection-adapter.ts` bounds the whole host answer and snapshots it as
-it counts, so the measured characters are the drawn characters. The standalone half is open, and so is
-the shape layer itself, which is where a reader looks for a bound and where a future third caller would
-inherit one.
-
-Phase 2's `isSourceDocumentShape` bounds all four of its host-supplied rendered strings with
-`SOURCE_CHARACTER_LIMIT` (`src/components/object-source/source-reader.ts`). That is the shape of the fix.
-
-**Done when:** every string those four predicates accept is bounded by an existing limit, with a test per
-predicate feeding it one character over the bound and a control exactly on it.
-
-### D81. A non-routine PostgreSQL kind declared editable would be refused in the words of an ownership problem
-
-`readObjectSource` in `src/lib/db/providers/sql/postgres.ts` calls `routineEditAffordance` whenever
-`kindAcceptsSourceEdits` is true, and that helper reads `may_replace` and `owner`, which only the ROUTINE
-statement selects. If a non-routine kind were ever declared editable, the pane would draw `offered: false`
-with the sentence "owned by another role", which is a misleading refusal rather than the declaration
-drift it actually is.
-
-Nothing can be applied in that state: the BUILD already refuses it by name
-(`declares an editable kind "view" but has no statement that reads it`, with a test). And no shipped
-declaration reaches it: only `function` and `procedure` declare `acceptsSourceEdits` and both are in
-`PROKIND_BY_KIND`. So this is a state nothing in this repository builds, which is why it is filed rather
-than folded in.
-
-**Done when:** the read raises the same sentence the build does when a kind declares an edit this file has
-no routine statement for, with its own test.
-
-### D82. A new-tab shortcut fires through the apply modal, unmounts the Source pane and loses the answer
-
-MEASURED 2026-09-14 in this repository's own component environment, with two probes rather than by
-reading, because the code comment at `src/components/Studio.tsx:255-268` says the opposite and this
-entry exists to correct it.
-
-That comment says "the strip cannot be moved while the dialog is open, because Radix's modal aria-hides
-it, and `setActiveTabId` has no caller outside the strip and the sidebar tree, both of which the modal
-covers". Both halves are wrong. Probe one rendered this repository's own `DialogContent` with a
-`document` keydown listener installed beside a `role="tablist"`: the strip stayed IN the tree
-(`document.body.contains(strip)` true, it is aria-hidden and covered, not removed) and a `keydown`
-dispatched from the focused control inside the dialog reached the document listener. That is exactly how
-`StudioTabBar` registers Ctrl/Cmd+Shift+T: on `document`, deliberately, "so it also works while Monaco
-owns focus" (#745). The handler calls `onAddTab`, `addTab` in `src/hooks/use-tab-manager.ts` ends with
-`setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover.
-
-The consequence is not a mis-addressed clear. `Studio.tsx` renders the Source pane only while the active
-tab is a Source tab, so the new Query tab UNMOUNTS `ObjectSourceView` and the dialog with it, mid apply.
-Probe two measured what that costs: with an apply in flight, unmounting the pane and then landing a
-`conflict` answer left `object-source-apply-conflict` null and the body text empty, no throw and no
-warning. The statement was already sent, and the reader is never told whether it was refused, conflicted
-or failed. A successful apply still reaches the toast through `onApplied`, so success is the one outcome
-that survives the unmount.
-
-Not fixable inside the pane, which is why it is filed rather than folded into #789 Phase 3's pane work:
-the fix belongs to the shell, either by refusing the shortcut while an object apply is in flight or by
-keeping the pane mounted for the tab that owns it. The pane's own state is already bound to its address
-(`boundTo`), so nothing there is drawn over the wrong object.
-
-**Done when:** an apply in flight cannot be unmounted by the new-tab shortcut, or its answer reaches the
-reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
-reachability paragraph in `Studio.tsx` is corrected in the same change.
-
-### D83. PostgreSQL is the only day-one apply that does not re-resolve the editable kind
-
-`applyObjectEdit` calls `requireEditableKind` on Trino (`src/lib/db/providers/sql/trino/index.ts:1562`)
-and on Redis (`src/lib/db/providers/keyvalue/redis.ts:1869`) and NOT on PostgreSQL
-(`src/lib/db/providers/sql/postgres.ts:3266`, which consults `plan.kind` nowhere at all). Trino needs the
-returned spec for its re-read; Redis DISCARDS the return value, so on that provider the call is a guard
-and nothing else, which is what makes PostgreSQL's absence an inconsistency rather than a shape
-difference.
-
-NOT A LIVE DEFECT THROUGH ANY SHIPPED PATH, said in that voice rather than left implied.
-`src/app/api/db/objects/edit-apply/route.ts:141` re-resolves editability on the CONNECTED provider for
-every apply, which is D57 closed on the write path, and the plan's statement was minted by a
-`buildObjectEdit` that called `requireEditableKind` itself (`postgres.ts:2968`). The population that
-reaches the provider without either check is a `@libredb/studio` library consumer calling
-`provider.applyObjectEdit` directly, and PostgreSQL's apply sends `plan.unit.steps[0].text` verbatim, so
-what it would execute is a statement its own build already minted.
-
-Found by the external review of PR #831 (#789, discussion #778) and verified by grep rather than
-adopted from the review.
-
-**Done when:** the three day-one applies agree, with a test that drives an apply plan carrying a kind the
-provider does not declare editable and asserts the refusal, or with a docblock on `postgres.ts` saying by
-name why the check is not there and what carries it instead.
-
-### D84. A one-function Redis library can lose its function on a SUCCESS with no consequence shown
-
-`libraryCollateral` (`src/lib/db/providers/keyvalue/redis.ts:620`) opens with `if (functions.length < 2)
-return [];`, so a library registering exactly ONE function builds a plan whose `consequences` are empty:
-no warning, no acknowledgement checkbox, nothing to tick. The apply's collateral arm
-(`redis.ts:1922-1928`) has no such floor: it reports `applied-with-collateral` for every function in
-`before.functions` that is absent from `after`, one included.
-
-The two therefore disagree over a population a reader reaches with an ordinary edit. `libraryCollateral`'s
-own docblock states the premise that closes the gap, "a library registering exactly one function IS that
-function, so a body that re-registers it loses nothing", and the premise is about the SUBMITTED text,
-which nothing on this path reads: the only identity check is the shebang library name (`redis.ts:1767`)
-and no Lua parser is involved anywhere. Renaming the registration inside the body leaves the shebang name
-untouched, so the edit is accepted and the old function is gone.
-
-MEASURED against the provider's own apply double on 2026-09-14, a library `libredb_probe` registering only
-`libredb_ping`, edited to register `libredb_other`:
+MEASURED at the unit level, real pool, `ssh2` and `net` faked so the handles are countable
+(`scratchpad/probes/d86-unbounded-route.test.ts`): 50 requests under ONE connection id, 25 far ends
+across two bastions, gave
 
 ```
-build.plan.consequences  []
-outcome                  {"outcome":"applied-with-collateral",
-                          "lost":[{"loses":"replaces-whole-container",
-                                   "fact":{"source":"FUNCTION LIST LIBRARYNAME libredb_probe",
-                                           "observed":"libredb_ping"}}], ...}
+distinct loopback listeners open under one connection id: 50
+live net servers: 50 live ssh clients: 50
+after closeSSHTunnel, live net servers: 0 live ssh clients: 0
 ```
 
-The probe was a temporary test in `tests/integration/db/redis-provider.test.ts` and was removed; the
-output above is the evidence. No container was started, so what a live 8.10.0 answers for that exact edit
-is a separate claim and is unmeasured here. The pane makes it silent rather than merely imprecise:
-`applied-with-collateral` is in `APPLIED_OUTCOMES`, so the dialog closes on a plain success, which is X24.
+Each entry is an open SSH client plus a listening loopback socket. Nothing in the map reaps a
+superseded one: the provider cache miss that opens the next forward disconnects the PROVIDER
+(`factory.ts`, the query-timeout arm) and leaves the forward pooled. What takes them is the
+connection's own teardown - `removeProvider` and the 30-minute idle sweep, both of which close BY
+CONNECTION ID and take every forward with them - so the count is what one id accumulates inside one
+idle window. It is caller-driven, on the same reachability D86 already established:
+`src/lib/seed/resolve-connection.ts:21-23` returns a posted inline connection verbatim, id included,
+so the host, the port and the bastion of each request are the caller's to vary.
 
-Ruling 1b's second axis, a success destroying nothing the user was not shown, is what this breaks.
+It is disclosed where a writer will read it (the `activeTunnels` docblock states the count, the
+measurement and what reaps it) and it is NOT disclosed to an operator anywhere: no metric, no log
+line counts forwards per connection, and `docs/SECURITY.md` says nothing about it.
 
-Found by the review of the review of PR #831 (#789, discussion #778).
+**Done when:** the number of simultaneously live forwards under one connection id is bounded, by a
+cap that refuses or by closing a forward once nothing can still be using it, and the choice is
+written down where the next writer of the pool will read it. A test drives N distinct forwards under
+one id and asserts the bound holds, with a control that the honest population is untouched: a second
+provider on the same id, route and far end still gets the one forward and opens no second one.
 
-**Done when:** the build and the apply agree about a one-function library. Either `libraryCollateral`
-names the single registered function as a consequence, which makes the warning honest and costs the
-reader one tick on every single-function edit, or the apply's arm stops reporting a loss the build
-promised could not happen, which is the answer only if some check proves the registration cannot move.
-The first is the safe direction and the second needs evidence this entry does not have.
+### D94. On a single-connection provider the transaction ender cannot tell whose transaction it is ending
+
+`endOpenQueryTransaction(scope)` takes the caller's call scope so that a POOLED provider can name the
+client its own statements ran on (D87). The three providers that hold ONE connection, `sqlite`,
+`duckdb` and `redis`, take no argument at all, and their docblocks said the parameter was irrelevant
+there because there is "no other client to name and no request whose transaction this could be". The
+first half is true. The second is false, and one shared connection is what makes another request's
+transaction REACHABLE rather than what puts it out of reach: `getOrCreateProvider` caches one
+provider per `connection.id` for the whole process, so every concurrent request on a stored
+connection shares the one handle. Wave 6 corrected all three docblocks and `docs/providers/redis.md`;
+the defect itself is this entry.
+
+**Redis is the measurable case and the worst one.** A `MULTI` is state of the CONNECTION. Measured
+2026-09-15 on redis 7.4.11 through ioredis 5.11.1 and recorded in `docs/providers/redis.md` section
+5.2a: after a bare `MULTI`, every later command on that connection answers the string `QUEUED` and
+does nothing, `SET`, `GET` and `CLIENT INFO` alike, while a second connection is untouched. Since
+D74, `POST /api/db/query` awaits the ender in its `finally` on every request, and the ender PINGs and
+then `DISCARD`s whatever `MULTI` that PING found. Neither command can say who opened it. So a plain
+`GET` typed by one user drops a `MULTI` another user had just queued commands into, and that user is
+told nothing: their next command answers `QUEUED` from no transaction, and their queue is gone. The
+`DISCARD` catch in `src/lib/db/providers/keyvalue/redis.ts` already reads the same collision from the
+other side, "another caller on this shared connection ended it in between".
+
+`sqlite` and `duckdb` carry the same shape and were checked rather than assumed. Both hold one handle
+for every concurrent request. `sqlite` reads `inTransaction`, which reports the handle's state and
+not who opened it; `duckdb` publishes no transaction reading at all on v1.5.5, so its act IS the ask,
+an unconditional `ROLLBACK` whose refusal is the answer, and a refusal cannot name an owner either.
+NOT SEPARATELY MEASURED on those two: the sharing is measured (2026-09-13, recorded in both
+docblocks, where the NEXT user's write joined an abandoned transaction), and the ender's reach over
+it is read off the code.
+
+The fix is not a parameter. It is transaction OWNERSHIP on a single connection: the provider would
+have to record which scope opened the transaction it later observes, and a transaction opened before
+any scope was recorded, by an interactive session or by a caller that passed no scope, still has no
+owner. Refusing to end an unowned transaction reinstates the leak D71 and D74 exist to close, so the
+two have to be weighed together rather than one at a time.
+
+**Done when:** each of the three either names the scope that opened the transaction it ends, with a
+test that a second scope's ender leaves it alone and a control that its own scope still reaches it,
+or its provider doc records why ending an unowned transaction is the right trade on that engine and a
+test pins the behaviour that was chosen.
+
+---
+
+# D94 (proposed): hand-copied source coordinates across this repository are stale by thousands of lines
+
+**Status:** proposed, wave 6 slot B fix round.
+
+Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
+moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
+`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
+Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
+`64ee0e3f^` was wrong before this round touched anything:
+
+| Citation | Cited in | Anchor actually at |
+|---|---|---|
+| `postgres.ts:915` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
+| `postgres.ts:889` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` | 2415 |
+| `postgres.ts:892` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
+| `postgres.ts:2095-2099` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
+| `postgres.ts:1239` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
+| `postgres.ts:1285` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
+| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
+| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
+| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
+
+Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
+follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
+agent that re-derives its own citations after an edit, which this epic has now asked for three
+times, is paying a per-commit tax on coordinates that were never right.
+
+Two halves, and the second is what stops it recurring:
+
+1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
+   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
+   a number is correct only until the next commit.
+2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
+   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
+   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
+   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
+
+**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
+and the citations present at that commit all resolve. The test needs one case per shape it must
+accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
+
+### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
+
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 36 hits, measured 2026-09-15. Five of
+them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
+the agent routes' pattern). Twenty-nine write out the same five-key object - `getSession`, `signJWT`,
+`verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token
+nothing reads, and one of those twenty-nine is `tests/helpers/object-edit-route-harness.ts`, a shared
+harness that could have been the factory and copied the stub instead. The remaining two write a
+shorter stub of their own, one with two keys and one with a single `getSession`.
+
+`src/lib/auth.ts` exports seven names. The two no hand-written stub carries are
+`shouldMarkCookieSecure` and `resetCookieSecurityWarning`:
+`grep -rn 'shouldMarkCookieSecure' tests/` returns exactly one hit, and it is a sentence in a comment
+rather than a stub key, while `resetCookieSecurityWarning` appears only in
+`tests/unit/lib/auth.test.ts`, which imports the real module.
+`src/app/api/auth/oidc/login/route.ts` imports `shouldMarkCookieSecure` and awaits it to decide the
+auth cookie's `secure` flag, so every one of those stubs is already an export short of the module it
+replaces. Nothing has hit that yet only because `tests/api/auth/oidc-login.test.ts` is one of the
+route tests that does NOT mock `@/lib/auth`.
+
+Nothing can catch it either. `mock.module` is declared `module(id: string, factory: () => any)` in
+`node_modules/bun-types/test.d.ts`, so a stub that has drifted from the module it stands in for is
+invisible to `bun run typecheck`, and the drift can only show up as a `TypeError` in whichever route
+reaches the missing export first.
+
+Per-file process isolation does nothing about this and was never meant to. The runner gives each
+file its own process, so a stub can no longer reach a sibling that wants the real module. What a
+process boundary cannot do is make the stub the right SHAPE.
+
+**Done when:** one factory in `tests/helpers/`, typed `(): typeof import("@/lib/auth")`, replaces the
+hand-written stubs, so adding an export to `src/lib/auth.ts` fails `typecheck` in every file that
+mocks it instead of at run time in one of them. The same shape then covers the other layer-wide
+mocks, `@/lib/db` in fifteen files and `@/lib/audit` in four.
+
+### D86. `bun test --isolate` has not been re-probed, and the runner pays a process per test file
+
+`tests/run-tests.ts` spawns one bun process per test file, 549 of them on 2026-09-15, because
+`mock.module()` is process-wide with no undo and whole-module mocks are a whole layer's standard
+pattern. That is what it costs, measured on Linux with 20 cores and bun 1.4.2 earlier the same day,
+over the 538 files the tree held then: 211 seconds one file at a time, 61 seconds 4 at a time, 36
+seconds 20 at a time, and about 60 seconds at 8 with coverage on. `README.md` carries the same three
+timings against the same 538 files.
+
+bun 1.4.2 has `--isolate`, which resets the module registry per file inside ONE process and does
+contain `mock.module`. If it were reliable here, the runner could start a handful of processes
+rather than one per file. It is not adopted because of oven-sh/bun#41655, a NAPI finalizer SIGSEGV
+that reproduces serially on 1.4.2, and this suite loads three NAPI addons: `better-sqlite3`,
+`oracledb` and `@duckdb/node-api`. `docs/TOOLCHAIN.md` records the same refusal, beside the one for
+`--parallel`.
+
+**Done when:** #41655 is closed and a probe has run the whole suite under `--isolate` twenty
+consecutive times on each of Linux, macOS and Windows with no crash, no leaked subprocess and the
+same per-file pass counts as the process-per-file runner, after which the runner may take it - or
+the probe reproduced a failure and this entry is replaced by what it reproduced. A mode that is
+flaky at this size is worse than a slow one, because its failures arrive wearing the tests' own
+clothes.
+
+### D87. Two packaging tests cannot run on Windows because the scripts they drive shell out
+
+Measured 2026-09-15, while making `bun run test` green on all three platforms. Two tests now declare
+a platform or tool requirement and say so in their own title, and in both cases the requirement comes
+from the script under test rather than from the test:
+
+- `scripts/build-azure-package.mjs:273` builds the marketplace archive with `execFileSync("zip", ...)`.
+  A stock Windows 11 machine has neither `zip` nor `unzip`, so `tests/unit/build-azure-package.test.ts`
+  gates its build cases on both binaries. Writing the two-file archive with a pure JavaScript zip
+  writer would make the Azure package reproducible everywhere and let the test read the archive back
+  in process, which is what it already does for the standalone zip since this change.
+- `scripts/ci-install.sh` is the bun install retry policy used by every workflow, and
+  `tests/unit/ci-install.test.ts` drives it with a fixture PATH holding two `chmod 0755` stubs.
+  Windows has no exec bit and no shebang dispatch, so the whole file is skipped there. The policy is
+  twenty lines of arithmetic and `bun install`; as `scripts/ci-install.mjs` it would run under the
+  same `shell: bash` steps and be testable on every platform.
+
+Neither is a correctness defect today: CI runs both on Linux, and the skips are declared rather than
+silent. What they cost is that a Windows contributor cannot verify a change to either script.
+
+**Done when:** the Azure package is written without an external archiver, `ci-install` is a script bun
+or node can run, and both test files run unconditionally on all three platforms.
+
+### D95. The runner's default concurrency reads the CPUs and never the memory limit
+
+Measured 2026-09-15 on Linux x64 with 20 cores and bun 1.4.2, while reviewing #837.
+`tests/run-tests.ts` passes `availableParallelism()` to `parseRunnerArgs`, which makes the default one job per available CPU.
+That much already behaves: `availableParallelism()` in bun 1.4.2 follows CPU affinity and a cgroup v2 CPU quota, measured as 2 under `taskset -c 0-1` and 2 under `systemd-run --property=CPUQuota=200%`, so a container with a CPU limit is sized by it.
+A container with a MEMORY limit and no CPU limit on a many-core host is not, and that is the case that fails: `docker run --memory=2g` on a 64-core host starts 64 jobs.
+
+What a job costs, measured over a 32-file sample run one at a time under `/usr/bin/time`, in peak RSS: minimum 58 MiB, median 100 MiB, p90 199 MiB, maximum 341 MiB.
+Under real concurrency the files do not peak together, so the marginal cost is lower: the runner over `tests/components` peaked at 599 MB with 4 jobs, 998 MB with 8 and 1599 MB with 16, a slope of about 80 to 90 MiB per extra job over a fixed 300 MB.
+The largest run actually made was 16 jobs, so 64 jobs is 5 to 6 GiB extrapolated from that slope rather than measured, and 12.4 GiB if every file peaked at the p90 bound at once, against a 2 GiB limit.
+Under Kubernetes or systemd the whole run is then killed rather than one file: measured before this branch handled SIGTERM, a run stopped by systemd's default `OOMPolicy` ended at exit 143 with no summary and its scratch directory left behind, and it now ends at the same 143 with `Interrupted (SIGTERM).`; under Kubernetes's `memory.oom.group` the kernel SIGKILLs the runner too, so nothing is printed at all (reasoned, not measured).
+Neither shape names the file that ran the container out of memory, which is what a memory-aware default would prevent rather than explain.
+
+Which API can carry the limit was measured too, and only one of the three can.
+`process.constrainedMemory()` follows a cgroup v2 `memory.max` (2147483648 under `MemoryMax=2G`) and equals `os.totalmem()` when there is no limit, which makes it usable with no fallback branch.
+`process.availableMemory()` does NOT: inside the same 2 GiB scope it returned the host's 34 GB, unlike node 24, which follows the cgroup there.
+`os.freemem()` is not a budget at all, since it moves with unrelated load and leaves out reclaimable page cache.
+Not measured: what `constrainedMemory()` returns on macOS and on Windows, where there is no cgroup for bun to read; reasoned, it should be total RAM, and that is what the entry rests on.
+
+A fixed cap is the wrong shape and was rejected: `Math.min(cpuCount, 16)` still needs 1.6 to 3.1 GiB inside a 1 GiB container, and it caps a workstation on a constant nobody measured against memory.
+What this PR did instead is make the failure readable: a file killed by SIGKILL from outside the runner now names the OOM killer and `--jobs=N` in its reason, `CONTRIBUTING.md` says when to pass it, and `docs/TOOLCHAIN.md` carries these numbers.
+
+The shape it would take: `parseRunnerArgs`'s injected context grows from `{ cpuCount }` to `{ cpuCount, memoryBytes }`, `tests/run-tests.ts` passes `process.constrainedMemory()`, and the default becomes
+`Math.max(1, Math.min(cpuCount, Math.floor(memoryBytes / JOB_MEMORY_BUDGET_BYTES)))`.
+A budget of 256 MiB is the one this measurement supports: above the p90 per-file peak of 199 MiB and about three times the concurrent slope.
+A 2 GiB limit would then give 8 jobs, where 8 measured 940 MiB of anonymous memory, and the measured host, whose `constrainedMemory()` is 67,118,133,248 bytes (64 GB, 62.5 GiB), would give 250, so the CPUs stay the binding constraint everywhere else.
+An explicit `--jobs=N` must still win over it, and the budget is a constant that drifts as the suite grows, so its docblock has to carry the basis above.
+
+**Done when:** `parseRunnerArgs` takes a memory budget beside the CPU count, `tests/unit/test-runner-options.test.ts` pins the four cases (64 CPUs with 2 GiB gives 8, 8 CPUs with 64 GiB gives 8, 4 CPUs with 100 MiB gives 1 and never 0, and an explicit `--jobs=32` wins over all of it), and a CI run on macos-latest and windows-latest has printed `process.constrainedMemory()` against `os.totalmem()` so the unmeasured half of the premise is measured rather than reasoned.
+
+### D96. bun 1.4.2 drops part of a child's own console output when the child exits under load
+
+Measured 2026-09-15 on Linux x64 with 20 cores and bun 1.4.2, while reviewing #837.
+A test file that prints a megabyte and then fails does not always get that megabyte to whoever is reading the run: the bytes are lost by the child `bun test` process at its own exit, before anything the runner can drain.
+A fixture printing 1024 lines of 1023 bytes, run 20 times with the machine deliberately loaded, lost output in 15 of the 20 runs and delivered as few as 182 of the 1024 lines; unloaded, 10 of 10 runs were whole.
+The loss is not the runner's pipe: with the runner's own stdout redirected to a FILE, 3 of 10 loaded runs still lost 15 to 40 per cent of the file's output, and with no runner in the picture at all, `bun test ./fixture.test.ts 2>/dev/null | cat > out` under load delivered 126 of 1024 lines in 1 of 10 runs.
+
+What the runner does guarantee is its own last lines: the summary, the `Failed files:` block and the re-run hint are written through a drain that waits for the bytes to leave the process, and those survived every one of those runs.
+So the cost is a contributor reading a red CI log from a busy machine and getting a truncated failure diff under an accurate verdict, not a wrong verdict.
+`tests/unit/test-runner-cli.test.ts` states this where it would otherwise be tempting to assert the whole output back: its megabyte case asserts the verdict, the summary and that the file's output reached stdout at all, and says in a comment why it cannot assert the line count.
+
+There is nothing to fix inside this repository: the queue that is dropped belongs to the child process.
+What can be done is to re-probe, and to stop the claim drifting back to "whole output" in the meantime.
+
+**Done when:** the focused repro has been run against a bun newer than 1.4.2 under the same load, and either it is whole 10 times out of 10 and this entry closes, or the entry names the newest version it still reproduces on and is reported upstream.
+
+### D97. A committed `.only` makes a file report PASS with the rest of its tests never run
+
+Measured 2026-09-15 on bun 1.4.2, while reviewing #837.
+bun honours `.only` by default, and nothing in the runner, the lint configuration or the required checks refuses one that reaches `main`.
+A fixture holding `it.only`, a failing `it`, a `describe.todo` and a `describe.concurrent` with two more tests wrote a junit report of `tests="1" failures="0"`, exited 0, and the runner printed `PASS 0.0s tests/unit/only.test.ts 1 pass`; the same file without the `.only` registers five tests.
+So four registered tests, one of them failing, are absent from the report, from the run's totals and from CI's verdict, and the run is green.
+
+The runner cannot close this from the report it reads, which is why `toOutcome`'s docblock now names `.only` as the shape the report cannot see.
+bun's report is honest about the one test it ran; the file that should have been refused is the one on disk.
+It has to be refused before the run, and there are two cheap shapes: an `eslint-plugin-no-only-tests` rule (or oxlint's `jest/no-focused-tests`) scoped to `tests/**` and `e2e/**`, or a grep over the same paths inside the required `Lint, Typecheck and Build` check, which costs one command and no new dependency.
+The coverage gate is not a reliable second line of defence either: whether it goes red depends on which lines the unrun tests were the only cover for, which is a property of the file rather than of the `.only` (reasoned, not measured).
+
+**Done when:** a file carrying `it.only`, `test.only` or `describe.only` under `tests/` or `e2e/` fails a required check, and a test pins that gate by driving it over a fixture that carries one, with a control fixture that does not and passes.
 
 
 ## Value interpolation
@@ -1635,154 +1687,6 @@ stated in `readDefaultBody`'s own docblock.
 **Done when:** a body above the framework's clone limit gets one answer that names the size, on every
 route, rather than an empty-body claim on five and a parser error on one.
 
-### X20. A malformed apply answer is reported to the reader in the words of a timeout
-
-The Source pane synthesises `{ outcome: "interrupted", committed: "unknown" }` for an apply answer that
-`isObjectEditOutcomeShape` refuses, because that is the closest arm the outcome type has and its
-`committed: "unknown"` half is exactly right. `FailureRegion` in
-`src/components/object-source/ApplyPreviewDialog.tsx` then prints "The engine stopped this statement
-before it finished." above our own sentence, and for this population that first clause is a claim nobody
-measured: the engine may have finished perfectly and the ANSWER is what could not be read.
-
-Our own sentence carries the truth ("The apply was sent and its answer could not be read ... Re-read this
-definition before trying again"), so the reader is not misled about what to do, only about why.
-
-**Done when:** the dialog has a seventh arm, or a per-outcome sentence override, so an unreadable answer
-is described as one.
-
-### X21. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
-
-MEASURED in Chromium on 2026-09-14, on every successful apply driven through the UI:
-`TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.
-
-`ApplyPreviewDialog` disposes the diff's original and modified models while the `DiffEditor` still holds
-them, so Monaco's own disposal path throws into the console. The disposal itself is deliberate and
-documented; the ORDER is what needs correcting.
-
-Nothing is visible to the reader and nothing is lost. It matters because it is noise on the exact channel
-#789 Phase 3's CSP assertion reads, and a page-error assertion added later would break on it.
-
-**Done when:** the widget releases the models before they are disposed, and the E2E spec can assert an
-empty console after an apply.
-
-### X22. The object-edit E2E's restored-tab test fails its first attempt on every CI run so far
-
-MEASURED on BOTH runs this spec has had in CI, #831's `Functional Smoke (PostgreSQL)` job (job
-104060110399 and job 104066966292, 2026-09-14): 6 tests, **1 flaky, 5 passed**, the same one each
-time. It is `e2e/object-edit.spec.ts:409`, `a RESTORED tab is read-only until the reader presses Edit
-again`, failing its first attempt at line 416,
-`expect(page.getByTestId("object-source-edit")).toBeVisible({ timeout: 30_000 })`, with
-`element(s) not found` after the full 30 seconds, and passing on the retry. Two runs out of two is
-not an intermittency: the first attempt fails every time and Playwright's retry is what makes the job
-green, so nothing turns red unless a person reads the log.
-
-The step under test is a `page.reload()` immediately after an edit that was not applied: the tab is
-restored from `localStorage`, the source is re-read, and the edit affordance appears once that read
-lands. WHY the affordance was absent for thirty seconds is NOT measured, and the log does not say.
-Two candidates, neither checked. First, the re-read was refused: every test in the file signs in as
-the same shared account and the spec's own `waitForTheObjectTree` documents that account hitting the
-120-requests-per-60-seconds `query` bucket on the fifth test of a run, and 60 seconds is longer than
-this assertion's 30. Second, the restored tab reached a state that withholds the affordance. They are
-different defects.
-
-One fact that bears on the first and is worth having before anyone re-drives this: the OBJECT TREE
-offers the reader a `tree-retry` button when its read is refused, and `waitForTheObjectTree` presses
-it, but the source pane's failure region (`object-source-failure` in `ObjectSourceView.tsx`) offers
-NO retry control at all. A reader whose source read is refused has no way back except reopening the
-tab, so if the first candidate is the cause then the test is meeting a real product gap and not just
-a slow runner.
-
-**Done when:** the failure is reproduced with the reason named, and the first attempt passes, so
-Playwright's retry is no longer what makes the job green. If the cause is the refused read, closing
-this also means deciding whether the source pane should offer the recovery the tree already does.
-
-### X23. An SSH-tunnelled connection can never build an object edit plan
-
-`getOrCreateProvider` (`src/lib/db/factory.ts:485-492`) rewrites `host` and `port` to the tunnel's
-LOCAL endpoint before the provider is constructed, and `src/lib/db/base-provider.ts:149` stores that
-rewritten object as `this.config`. Every provider seals the plan it issues with
-`connectionFingerprint(this.config)`, so the plan carries the digest of `127.0.0.1:<ephemeral>`. The
-routes fingerprint the record the request RESOLVED, which still carries the far-end address, so
-`src/app/api/db/objects/edit-plan/route.ts:155` compares two digests that cannot be equal and answers
-400 `EDIT_PLAN_INVALID`. The reader sees an object they can read and cannot edit, with no sentence
-saying why.
-
-EVIDENCE CLASS. The digest arithmetic is MEASURED and is pinned by the test "the tunnel-REWRITTEN
-twin of a connection is a different digest" in `tests/unit/lib/db/connection-fingerprint.test.ts`, so
-this entry is re-derivable without an SSH server. The wiring above is CODE READING of the three files
-named: no bastion was stood up and no tunnelled edit was driven end to end.
-
-It is filed rather than fixed because the fix belongs in the factory and not in the seal. The
-fingerprint cannot recover the far-end address from the rewritten record, and folding `host` and
-`port` out of the frame whenever a tunnel is enabled would make two different databases behind the
-same bastion collide, which is the failure the fingerprint exists to prevent. The shape that works is
-for `getOrCreateProvider` to carry the pre-rewrite endpoint on the effective connection so both sides
-fingerprint the same address.
-
-Found while closing the OTHER half of the same asymmetry: `sshTunnel` was absent from the frame
-entirely, so a caller could re-point an approved plan through a bastion they own. That half is fixed
-(#789, discussion #778); this half is the same blind spot seen from the honest side.
-
-**Done when:** a connection with an enabled SSH tunnel can build and apply an object edit plan, with a
-test that drives the two sides through the factory rather than asserting the digest alone.
-
-### X24. The apply dialog's collateral arm cannot be reached from its only mount
-
-`ApplyPreviewDialog.tsx:582` renders a dedicated region for the `applied-with-collateral` outcome, with
-the sentence "The engine applied this change and it destroyed something else, read back from the catalog
-after the apply" and one line per entry of the outcome's `lost` tuple. Nothing in the product can draw
-it. `ObjectSourceView.tsx:397` puts `applied-with-collateral` in `APPLIED_OUTCOMES`, deliberately and
-correctly, so `landOutcome` CLOSES the dialog on it; and `grep -rn '<ApplyPreviewDialog' src/` returns
-exactly one hit, the mount at `ObjectSourceView.tsx:1607`, with no export of the component from
-`src/exports/`. So the arm is live only in
-`tests/components/object-source/ApplyPreviewDialog.test.tsx:968`.
-
-The outcome itself is real and reached: `src/lib/db/providers/keyvalue/redis.ts:1925` answers it whenever
-the functions a library registered BEFORE the apply are not all registered after, which is the everyday
-result of editing a library of two or more functions.
-
-FOR A LIBRARY OF TWO OR MORE FUNCTIONS nothing is destroyed unshown, so ruling 1b's second axis holds
-there: `libraryCollateral` (`redis.ts:619`) names the library's whole registered set before the apply, the
-reader ticks the acknowledgement, and the outcome's `lost` is a strict SUBSET of what they were shown.
-What is lost is precision. The reader is told what MIGHT go and is never told what DID, and the audit ring
-records `object_edit_collateral_loss` where the reader's screen records a plain success.
-
-THAT SENTENCE IS NARROWED TO TWO OR MORE, and the round-1 spelling of this entry stated it over the whole
-population without qualification, which was wrong. `libraryCollateral` returns `[]` below two functions
-while the outcome arm reports a loss at one, so a ONE-function library is a success that destroys
-something the reader was never shown. Filed on its own as D84, measured, not the same defect as this one.
-
-Found by the external review of PR #831 (#789, discussion #778), and the over-broad verification sentence
-by the review of that review.
-
-**Done when:** either the outcome's `lost` facts reach the reader after a successful apply, or the arm is
-deleted and the dialog's outcome type stops admitting a state its only mount cannot produce. Deciding
-between those two is the work; both leave the file honest and today's file is not.
-
-### X25. The embedded shell leaves the pre-apply definition on screen, for a reason that refutes itself
-
-`StudioWorkspace.tsx`'s `handleApplied` moves `objectRefreshToken` and clears nothing, where
-`Studio.tsx`'s clears the tab's document so the pane re-reads at once. In `ObjectSourceView.tsx` a read is
-issued only when `needsRead` holds (`document === undefined && failure === undefined`), so a moved counter
-re-reads nothing: it makes `stale` true and draws the banner. After a successful apply in the embedded
-shell the reader is therefore looking at the text the object no longer holds, with an invitation to press
-"Read again". `tests/components/studio/embedded-source.test.tsx:1405` pins that behaviour.
-
-THE REASON WRITTEN FOR IT CONTRADICTS ITSELF IN ITS OWN PARAGRAPH. It says an automatic clear "would then
-leave a tab with no document, no failure and no reader, which is the one state that would send the
-viewer's default reader at a route this package does not ship", and then says "`sourceFailure` above
-closes that door in the same render". It does: `sourceFailure` answers a sentence exactly when
-`conn.sourceReader === undefined && sourceTab?.document === undefined`, which makes `needsRead` false, and
-the suite already drives clear-then-withdraw and asserts no request leaves the shell. So the hazard the
-paragraph gives as the reason for not clearing is the hazard the file already closes.
-
-Found by the external review of PR #831 (#789, discussion #778) and verified by reading the three files
-and running the pane's read effect against them, not by adopting the review.
-
-**Done when:** the two shells agree on what a successful apply leaves on screen, or the embedded shell's
-docblock gives a reason that is not already discharged three lines below it. The behaviour may still be
-the right one for a host-served read; what cannot stand is the argument currently written for it.
-
 
 ## Dependencies
 
@@ -1962,29 +1866,6 @@ guard, which is what makes the change stick - the guard bans the FORM, so a corr
 too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
 of those two were rewritten in round 17 and are the natural first pair; the round left them out because
 they were another lane's live files at the time, not because they are correct.
-
-### DOC5. `stripEdit`'s docblock still calls the write-path obligation undischarged, and it is discharged
-
-`src/lib/api/object-route.ts:667-674` says "MEASURED by grep at this commit, nothing on the write path
-enforces either fact", names an obligation on the edit-plan route to "REFUSE a plan whose part is
-truncated, and REFUSE a kind that fails `kindAcceptsSourceEdits` on the CONNECTED provider", and closes
-"Until it does, this function decides what the UI is OFFERED and never what the server ACCEPTS".
-
-Both halves have since landed, in this same phase. The kind:
-`src/app/api/db/objects/edit-plan/route.ts:89` calls `requireEditableKind` on the connected provider and
-its own comment cites this very docblock as the reason. The bound: that route refuses a submitted text
-over `EDIT_CHARACTER_LIMIT` at line 74, and all three day-one providers refuse a READ definition over the
-same constant inside `buildObjectEdit` (`postgres.ts:3012`, `redis.ts:1747`,
-`trino/index.ts` refusal 1), so a truncated prefix cannot become a plan.
-
-Not a live bug. It is a sentence that tells a reader a guard is missing when the guard is two files away,
-which is the failure mode this repository files its stale citations for.
-
-Found by the external review of PR #831 (#789, discussion #778).
-
-**Done when:** the paragraph says what enforces each half and where, and the "until it does" sentence is
-gone.
-
 
 ---
 
@@ -2970,3 +2851,43 @@ capability object cost nothing, and now the request SHAPE is derived from it.
 
 **Done when:** no read is issued for a connection whose declaration has not arrived, proven by a test
 that switches between two engines of different depth and asserts what was posted.
+
+### B81. A failure nobody attributed leaves the browser asserting that the server serves no seeds
+
+B37 landed and left this file; its id survives in the comments on `src/hooks/use-connection-payload.ts`
+and `src/hooks/use-connection-manager.ts`, which is where the reasoning below can be read against the
+code. It gave `ServedSeeds` a way to say "I do not have the seed list", and then gave the state an
+initial value of `{loaded: true, seeds: []}` under the name `NO_SERVED_SEEDS`, commented as
+"loaded, and genuinely empty". Before the first answer arrives nothing has been measured, so that
+value is a claim the browser is not entitled to, and it is the claim B37 was filed about.
+
+Measured on 2026-09-15 by driving the whole path with a gateway error page, the shape
+`tests/hooks/use-connection-manager.test.ts` already pins as intended:
+`GET /api/connections/managed` answers 502 with `text/html`, no `reason` is read from the body, so
+`setServedSeeds` is never called and the state is still the module constant by identity.
+`initializeConnections` then falls back to `storage.getConnections()`, the user's editable seed copy
+renders, and `resolveAgentRunConnectionId` answers `{id: null, reason: "browser-only"}`. The rail
+says, of a connection this application seeds itself:
+
+> Sample (Employees) cannot be rebuilt on the server: its settings live in this browser.
+
+That is B37's sentence, false in both halves, reached through a proxy instead of a malformed
+`seed-connections.yaml`. The hook's own comment says such a failure "says nothing" about the seed
+configuration; leaving the state at `{loaded: true, seeds: []}` is not saying nothing, it is saying
+the list is empty.
+
+The 404 arm is right by accident rather than by design: where the route does not exist at all, as in
+the platform embed, there is no seed service and no seeds, so "loaded, empty" is the true answer.
+Only a third state can hold both that and "asked, and the answer told me nothing".
+
+Two tests on the same subject cannot see this, and one of them is the reason it reads as deliberate.
+`tests/hooks/use-connection-manager.test.ts` waits on `connections` reaching `[]` and then asserts
+`servedSeeds` equals `{loaded: true, seeds: []}`, for the 404 arm and for the 502 arm. Both are the
+initial values, and with an empty `localStorage` neither moves on either path, so both tests pass
+against a hook that never issues the request. They pin the initial state under the name of a
+measured one. There is no honest barrier to wait on there while the settled value and the unasked
+value are the same object shape, which is the same defect one level up.
+
+**Done when:** an unasked seed list is distinguishable from a measured empty one, a non-OK the
+server did not attribute leaves the browser in the unasked state rather than the empty one, and the
+two tests above wait on a fact that a hook which never fetched cannot satisfy.

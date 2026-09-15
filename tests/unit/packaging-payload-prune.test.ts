@@ -8,12 +8,22 @@
  * subprocess against a fixture payload dir - no full `bun run build`
  * needed, since the helper only prunes an already-assembled payload.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { describeIfPosixShell, posixShell } from "../helpers/posix-tools";
 
 const SCRIPT = join(import.meta.dir, "../../scripts/lib/prune-standalone-payload.sh");
+/*
+  Resolved rather than spawned by bare name. `Bun.spawnSync(["bash", ...])` THROWS ("Executable not
+  found in $PATH", measured in this worktree) where there is no bash, and in a PowerShell session
+  with WSL installed the bare name resolves to C:\Windows\System32\bash.exe - a Linux shell that
+  cannot stat the Win32 fixture path this passes it, so the script would refuse with "not found" and
+  the test would read that as a prune failure. Nothing else here is platform-bound: the script is
+  the one the release-artifacts workflow already runs under Git Bash on windows-latest.
+*/
+const SHELL = posixShell("bash");
 
 /** Runtime files the prune must never remove (mirrors the build script's
  * payload assembly - including the hidden .next dir: see the snap 0.9.52
@@ -111,7 +121,7 @@ const EXTRA_FILES = [
   "local-cert.pem",
 ];
 
-describe("scripts/lib/prune-standalone-payload.sh (#124)", () => {
+describeIfPosixShell("bash", "scripts/lib/prune-standalone-payload.sh (#124)", () => {
   const fixtureRoots: string[] = [];
 
   afterEach(() => {
@@ -130,7 +140,7 @@ describe("scripts/lib/prune-standalone-payload.sh (#124)", () => {
   }
 
   function runPrune(...args: string[]) {
-    return Bun.spawnSync(["bash", SCRIPT, ...args], { stdout: "pipe", stderr: "pipe" });
+    return Bun.spawnSync([SHELL!, SCRIPT, ...args], { stdout: "pipe", stderr: "pipe" });
   }
 
   test("removes the repo-root extras from the payload root", () => {

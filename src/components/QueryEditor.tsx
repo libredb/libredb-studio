@@ -551,7 +551,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-surface border-b border-hairline overflow-x-auto no-scrollbar scroll-smooth">
           {hasSelection && (
             <Button
-              variant="ghost"
+              variant="default"
               size="sm"
               // `text-white` is the label ON a blue button, not the top of the
               // text ramp: it must stay white in the light theme too.

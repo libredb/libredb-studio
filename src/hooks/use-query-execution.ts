@@ -507,17 +507,43 @@ export function useQueryExecution({
           setHistoryKey((prev) => prev + 1);
         }
 
+        /**
+         * A statement that opened a transaction and did not finish it has had it rolled back by
+         * the server, because the connection handle is shared and an unfinished transaction would
+         * otherwise reach the next person to use it (D71, D87). The author is told either way:
+         * before this, the work simply vanished.
+         *
+         * ON BOTH PATHS, and it was on neither but the script one until D87. `/api/db/query`
+         * gained the same `openTransaction` field when the ender learned to name the caller's own
+         * call scope, and the route's own comment claimed the client rendered it "from the field's
+         * presence alone". MEASURED FALSE: the notice lived inside the `multiStatement` branch, and
+         * a single statement never sets that flag. So a reader who typed a lone `BEGIN` had it
+         * silently rolled back and their next statement autocommitted instead of joining the
+         * transaction they had asked for, which is exactly the harm this notice exists to prevent.
+         */
+        // THE KEYWORD IS THE ENGINE'S, not SQL's. This sentence said "Add COMMIT" while the only
+        // caller of the ender was a SQL script route. D74 gave the single-statement route the same
+        // `finally`, and `redis` implements the surface, so the notice now reaches a reader whose
+        // open transaction is a `MULTI` and whose keyword is `EXEC`. Naming the wrong one tells
+        // them to type a command their engine does not have.
+        const keepKeyword = activeConnection.type === "redis" ? "EXEC" : "COMMIT";
+        const transactionNotice =
+          resultData.openTransaction === "rolled-back"
+            ? ` This left a transaction open and it was rolled back, so its changes were discarded. Add ${keepKeyword} to keep them.`
+            : "";
+
+        // A lone statement gets no summary toast of its own, so the notice is the whole message:
+        // raised only when there IS something to say, never as a toast about an ordinary success.
+        if (!resultData.multiStatement && transactionNotice !== "") {
+          toast({
+            title: "Transaction rolled back",
+            description: transactionNotice.trim(),
+          });
+        }
+
         // Show multi-statement summary
         if (resultData.multiStatement) {
           const { executedCount, statementCount, hasError } = resultData;
-          // A script that opened a transaction and did not finish it has had it rolled
-          // back by the server, because the connection handle is shared and an unfinished
-          // transaction would otherwise reach the next person to use it (D71). The author
-          // is told either way: before this, the work simply vanished.
-          const transactionNotice =
-            resultData.openTransaction === "rolled-back"
-              ? " This script left a transaction open and it was rolled back, so its changes were discarded. Add COMMIT to keep them."
-              : "";
           if (hasError) {
             const errorStmt = resultData.statements?.find((s: { status: string }) => s.status === "error");
             toast({

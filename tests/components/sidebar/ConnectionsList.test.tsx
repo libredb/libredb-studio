@@ -63,7 +63,12 @@ import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
 import { ConnectionsList } from "@/components/sidebar/ConnectionsList";
-import { mockPostgresConnection, mockMySQLConnection } from "../../fixtures/connections";
+import {
+  mockPostgresConnection,
+  mockMySQLConnection,
+  mockSQLiteConnection,
+  mockMongoDBConnection,
+} from "../../fixtures/connections";
 
 // =============================================================================
 // ConnectionsList Tests
@@ -285,5 +290,441 @@ describe("ConnectionsList", () => {
     );
 
     expect(queryByText("No database connections established yet.")).toBeNull();
+  });
+
+  describe("favorites", () => {
+    const defaultOnToggleFavorite = mock(() => {});
+
+    beforeEach(() => {
+      defaultOnToggleFavorite.mockClear();
+    });
+
+    test("no Favorites section when favoriteConnectionIds is not passed", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+        />,
+      );
+
+      expect(queryByText("Favorites")).toBeNull();
+    });
+
+    test("no Favorites section when favoriteConnectionIds is empty", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set()}
+        />,
+      );
+
+      expect(queryByText("Favorites")).toBeNull();
+    });
+
+    test("renders a Favorites section above Connections when a connection is favorited", () => {
+      const { getByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      const favoritesHeader = getByText("Favorites");
+      const connectionsHeader = getByText("Connections");
+      // DOM order: Favorites section precedes the Connections section
+      expect(
+        favoritesHeader.compareDocumentPosition(connectionsHeader) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    test("a favorited connection renders once, under Favorites, not duplicated under Connections", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      const matches = Array.from(container.querySelectorAll("span")).filter((el) => el.textContent === "Test MySQL");
+      expect(matches.length).toBe(1);
+    });
+
+    test("non-favorited connections keep rendering under Connections", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      expect(queryByText("Test PostgreSQL")).not.toBeNull();
+    });
+
+    test("clicking the star toggle calls onToggleFavoriteConnection with the connection id", () => {
+      const { getByLabelText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set()}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      fireEvent.click(getByLabelText("Add to favorites"));
+
+      expect(defaultOnToggleFavorite).toHaveBeenCalledTimes(1);
+      expect(defaultOnToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+      // stopPropagation: the item itself must not be selected
+      expect(defaultOnSelect).not.toHaveBeenCalled();
+    });
+
+    test("a favorited connection's star toggle is labeled to remove it", () => {
+      const { getByLabelText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockPostgresConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      fireEvent.click(getByLabelText("Remove from favorites"));
+
+      expect(defaultOnToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
+    });
+
+    test("shows the Connections empty state only when there are truly no connections, not when all are favorited", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockPostgresConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      expect(queryByText("No database connections established yet.")).toBeNull();
+    });
+
+    test("hides the Connections section entirely when every connection is favorited", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockPostgresConnection.id, mockMySQLConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      // Both are under Favorites; the "Connections" header has nothing left to sit above.
+      expect(queryByText("Connections")).toBeNull();
+    });
+
+    test("keeps the Connections section when at least one connection is not favorited", () => {
+      const { queryByText } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          favoriteConnectionIds={new Set([mockPostgresConnection.id])}
+          onToggleFavoriteConnection={defaultOnToggleFavorite}
+        />,
+      );
+
+      expect(queryByText("Connections")).not.toBeNull();
+    });
+  });
+
+  describe("reordering (#748)", () => {
+    const defaultOnReorder = mock(() => {});
+
+    beforeEach(() => {
+      defaultOnReorder.mockClear();
+    });
+
+    function itemNames(container: HTMLElement): string[] {
+      return Array.from(container.querySelectorAll('[class*="cursor-pointer"]')).map((el) => el.textContent ?? "");
+    }
+
+    /**
+     * Re-queries by text on every call rather than returning a cached node: the
+     * mocked `motion.div` (above) allocates a new component type on each property
+     * access, so a state-driven re-render remounts the element and any reference
+     * held across it goes stale. Every drag step in this group must re-find its
+     * target immediately before firing, not reuse a node found before an earlier
+     * step's re-render.
+     */
+    function findItem(container: HTMLElement, text: string): HTMLElement {
+      return Array.from(container.querySelectorAll('[class*="cursor-pointer"]')).find((el) =>
+        el.textContent?.includes(text),
+      ) as HTMLElement;
+    }
+
+    test("renders connections in connectionOrder rather than array order", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          connectionOrder={[mockMySQLConnection.id, mockPostgresConnection.id]}
+        />,
+      );
+
+      const names = itemNames(container);
+      expect(names[0]).toContain("Test MySQL");
+      expect(names[1]).toContain("Test PostgreSQL");
+    });
+
+    test("a connection absent from connectionOrder sorts after the ones it knows about", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection, mockSQLiteConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          connectionOrder={[mockMySQLConnection.id, mockPostgresConnection.id]}
+        />,
+      );
+
+      const names = itemNames(container);
+      expect(names[2]).toContain(mockSQLiteConnection.name);
+    });
+
+    test("no drag handle when onReorderConnections is not passed", () => {
+      const { queryByTestId } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+        />,
+      );
+
+      expect(queryByTestId(`drag-handle-${mockPostgresConnection.id}`)).toBeNull();
+    });
+
+    test("no drag handle for exactly one connection", () => {
+      const { queryByTestId } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          onReorderConnections={defaultOnReorder}
+        />,
+      );
+
+      expect(queryByTestId(`drag-handle-${mockPostgresConnection.id}`)).toBeNull();
+    });
+
+    test("dragging one connection onto another persists the swapped order", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          onReorderConnections={defaultOnReorder}
+        />,
+      );
+
+      fireEvent.dragStart(findItem(container, "Test PostgreSQL"));
+      fireEvent.dragEnter(findItem(container, "Test MySQL"));
+      fireEvent.drop(findItem(container, "Test MySQL"));
+
+      expect(defaultOnReorder).toHaveBeenCalledTimes(1);
+      expect(defaultOnReorder).toHaveBeenCalledWith([mockMySQLConnection.id, mockPostgresConnection.id]);
+      // Reordering is a drag concern, not a selection one.
+      expect(defaultOnSelect).not.toHaveBeenCalled();
+    });
+
+    test("dragging a connection past a non-adjacent target inserts it there", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection, mockSQLiteConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          onReorderConnections={defaultOnReorder}
+        />,
+      );
+
+      fireEvent.dragStart(findItem(container, "Test PostgreSQL"));
+      fireEvent.dragEnter(findItem(container, mockSQLiteConnection.name));
+      fireEvent.drop(findItem(container, mockSQLiteConnection.name));
+
+      expect(defaultOnReorder).toHaveBeenCalledWith([
+        mockMySQLConnection.id,
+        mockSQLiteConnection.id,
+        mockPostgresConnection.id,
+      ]);
+    });
+
+    test("dragging over a connection highlights it as the drop target", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          onReorderConnections={defaultOnReorder}
+        />,
+      );
+
+      fireEvent.dragStart(findItem(container, "Test PostgreSQL"));
+      fireEvent.dragEnter(findItem(container, "Test MySQL"));
+
+      expect(findItem(container, "Test MySQL").className).toContain("ring-brand-solid");
+      expect(findItem(container, "Test PostgreSQL").className).toContain("opacity-40");
+
+      fireEvent.dragEnd(findItem(container, "Test PostgreSQL"));
+
+      expect(findItem(container, "Test MySQL").className).not.toContain("ring-brand-solid");
+      expect(findItem(container, "Test PostgreSQL").className).not.toContain("opacity-40");
+    });
+
+    test("dropping a connection onto itself is a no-op", () => {
+      const { container } = render(
+        <ConnectionsList
+          connections={[mockPostgresConnection, mockMySQLConnection]}
+          activeConnection={null}
+          onSelectConnection={defaultOnSelect}
+          onDeleteConnection={defaultOnDelete}
+          onAddConnection={defaultOnAdd}
+          onReorderConnections={defaultOnReorder}
+        />,
+      );
+
+      fireEvent.dragStart(findItem(container, "Test PostgreSQL"));
+      fireEvent.drop(findItem(container, "Test PostgreSQL"));
+
+      expect(defaultOnReorder).not.toHaveBeenCalled();
+    });
+
+    describe("with favorites", () => {
+      // Four connections, so a test can give both sections two rows: a row alone in its
+      // section is not draggable and carries no drop handlers at all.
+      function renderWithFavorites(favoriteIds: string[], connectionOrder?: string[]) {
+        return render(
+          <ConnectionsList
+            connections={[mockPostgresConnection, mockMySQLConnection, mockSQLiteConnection, mockMongoDBConnection]}
+            activeConnection={null}
+            onSelectConnection={defaultOnSelect}
+            onDeleteConnection={defaultOnDelete}
+            onAddConnection={defaultOnAdd}
+            favoriteConnectionIds={new Set(favoriteIds)}
+            onToggleFavoriteConnection={mock(() => {})}
+            connectionOrder={connectionOrder}
+            onReorderConnections={defaultOnReorder}
+          />,
+        );
+      }
+
+      test("each section follows connectionOrder within itself", () => {
+        const { container } = renderWithFavorites(
+          [mockPostgresConnection.id, mockSQLiteConnection.id],
+          [mockSQLiteConnection.id, mockMySQLConnection.id, mockPostgresConnection.id],
+        );
+
+        const names = itemNames(container);
+        expect(names[0]).toContain(mockSQLiteConnection.name);
+        expect(names[1]).toContain("Test PostgreSQL");
+        expect(names[2]).toContain("Test MySQL");
+      });
+
+      test("a drop inside the Favorites section persists the new order", () => {
+        const { container } = renderWithFavorites([mockPostgresConnection.id, mockSQLiteConnection.id]);
+
+        fireEvent.dragStart(findItem(container, mockSQLiteConnection.name));
+        fireEvent.dragEnter(findItem(container, "Test PostgreSQL"));
+        fireEvent.drop(findItem(container, "Test PostgreSQL"));
+
+        expect(defaultOnReorder).toHaveBeenCalledWith([
+          mockSQLiteConnection.id,
+          mockPostgresConnection.id,
+          mockMySQLConnection.id,
+          mockMongoDBConnection.id,
+        ]);
+      });
+
+      test("a drop onto a connection in the other section is ignored", () => {
+        // The dragged row would stay in its own section, so the only effect of accepting the
+        // drop would be a change to the saved order that nothing on screen shows.
+        const { container, queryByTestId } = renderWithFavorites([mockMySQLConnection.id, mockSQLiteConnection.id]);
+        // The target accepts drops: it shares its section with another row, so it is draggable.
+        expect(queryByTestId(`drag-handle-${mockPostgresConnection.id}`)).not.toBeNull();
+
+        fireEvent.dragStart(findItem(container, "Test MySQL"));
+        fireEvent.dragEnter(findItem(container, "Test PostgreSQL"));
+        fireEvent.drop(findItem(container, "Test PostgreSQL"));
+
+        expect(defaultOnReorder).not.toHaveBeenCalled();
+      });
+
+      test("only a connection in the same section is highlighted as a drop target", () => {
+        const { container } = renderWithFavorites([mockPostgresConnection.id, mockMongoDBConnection.id]);
+
+        fireEvent.dragStart(findItem(container, "Test MySQL"));
+        fireEvent.dragEnter(findItem(container, "Test PostgreSQL"));
+
+        expect(findItem(container, "Test PostgreSQL").className).not.toContain("ring-brand-solid");
+
+        fireEvent.dragEnter(findItem(container, mockSQLiteConnection.name));
+
+        expect(findItem(container, mockSQLiteConnection.name).className).toContain("ring-brand-solid");
+      });
+
+      test("no drag handle on a connection that is alone in its section", () => {
+        const { queryByTestId } = renderWithFavorites([mockPostgresConnection.id]);
+
+        expect(queryByTestId(`drag-handle-${mockPostgresConnection.id}`)).toBeNull();
+        expect(queryByTestId(`drag-handle-${mockMySQLConnection.id}`)).not.toBeNull();
+        expect(queryByTestId(`drag-handle-${mockSQLiteConnection.id}`)).not.toBeNull();
+      });
+    });
   });
 });

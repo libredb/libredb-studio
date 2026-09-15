@@ -72,3 +72,41 @@ $fixture$;
 -- refusal is about ownership rather than about the schema or the role.
 GRANT USAGE ON SCHEMA app TO src_probe;
 GRANT CREATE ON SCHEMA app TO src_probe;
+
+-- The object the identity header's PARENTHESIS SCAN bites, and the only live producer of
+-- `applied-elsewhere` this repository builds for PostgreSQL (#789 Phase 3, D77).
+--
+-- `routineIdentityHeader` in src/lib/db/providers/sql/postgres.ts returns the rendered text up to
+-- the parenthesis that closes the parameter list, tracking quoting so a `)` inside a string
+-- literal or a quoted identifier is not mistaken for it. Until this object existed, every routine
+-- this repository's docker/postgres-init/ builds had a header whose FIRST `)` was also its LAST,
+-- so a provider that had simply sliced to the first one answered the same header for every live
+-- object here and the whole scan was a guard over an EMPTY live population:
+-- `app.order_total(integer)` and `app.touch_order(order_id integer)` from 02-sample-data.sql, and
+-- `app.huge_fn(integer)` and `app.over_limit_fn(integer)` from this file, all pass either
+-- reading. The seven shapes
+-- the provider suite measures are declared in tests/integration/db/postgres-provider.test.ts as
+-- constants, and a constant is a transcription rather than an engine.
+--
+-- `a text DEFAULT ')'` is the shape, and it is ordinary PostgreSQL rather than a curiosity: any
+-- parameter default that is a string containing a closing parenthesis produces it, and
+-- `pg_get_functiondef` renders it back as `DEFAULT ')'::text` inside the header. Under the
+-- first-`)` reading the header of this routine ends at that literal, so an edit that changes the
+-- LATER parameter's type compares equal, the build mints a plan, and `CREATE OR REPLACE` with a
+-- different argument list writes a SECOND pg_proc row and leaves this one untouched. That is the
+-- fork, and it is what the emitted unit's post-condition raises LB003 for and the apply reports as
+-- `applied-elsewhere` with `undone: true`.
+--
+-- MEASURED against this fixture on 18.4 in container pg-p3fix on 2026-09-15: the build now refuses
+-- that edit as `identity`, naming both whole headers, and a plan built elsewhere and carrying the
+-- fork applies, raises LB003, is rolled back, and leaves ONE pg_proc row for `app.dl`. Without
+-- this object neither half is drivable here at all and both are only a driver double.
+--
+-- The rendering is pinned: `md5(pg_get_functiondef(oid))` answers
+-- 0c7937f7060d7bc0c2a583af49227203, which is the `revision` constant the provider suite carries
+-- for `app.dl`. The suite asserts the header, the return type, the language and the body of the
+-- statement below against that constant, one piece at a time on both sides, so neither file can
+-- drift from the other without a red. The md5 itself is an engine measurement and only a re-run
+-- against 18.4 re-checks it.
+CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1)
+RETURNS integer LANGUAGE sql AS $function$ SELECT 1 $function$;

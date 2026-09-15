@@ -244,7 +244,7 @@ npm i @libredb/studio
 ## <span dir="rtl">Tests اور quality</span>
 
 <ul dir="rtl" align="right">
-<li><span dir="rtl">Tests کی چھ layers: unit، API، integration، hooks، components اور end-to-end</span></li>
+<li><span dir="rtl">Tests کی سات layers: unit، API، integration، hooks، security، evals اور components، اس کے علاوہ end-to-end</span></li>
 <li><span dir="rtl"><strong>100% line coverage</strong>، اور CI میں یہ سخت شرط ہے۔ coverage کم ہوئی تو merge رک جاتا ہے</span></li>
 <li><span dir="rtl">SonarCloud quality gate</span></li>
 <li><span dir="rtl">ہر release میں Node 24 اور 26 پر smoke tests</span></li>

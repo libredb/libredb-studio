@@ -81,10 +81,25 @@ describe("flatpark.yml catalog descriptor (#241)", () => {
     // FlatPark runs this relative to the registry directory.
     expect(descriptor.update.command).toMatch(/^\.\/[A-Za-z0-9._-]+$/);
     const resolver = descriptor.update.command.replace(/^\.\//, "");
-    const stat = fs.statSync(path.join(DIR, resolver));
-    expect(stat.isFile()).toBe(true);
-    // Any execute bit: FlatPark invokes it directly, not through a shell.
-    expect(stat.mode & 0o111).toBeGreaterThan(0);
+    expect(fs.statSync(path.join(DIR, resolver)).isFile()).toBe(true);
+
+    // The exec bit as GIT records it, not as this working tree happens to hold it.
+    // FlatPark runs what is COMMITTED - it clones the registry - so the index is what
+    // has to say 100755, and it says so on every platform: a Windows checkout sets
+    // core.fileMode=false and keeps the recorded mode, while NTFS carries no POSIX mode
+    // bits for stat to read at all, which is why the mode check that used to stand here
+    // read 0 on windows-latest for a file that is executable everywhere it matters.
+    // FlatPark invokes the resolver directly rather than through a shell, so a 100644
+    // upstream is an update check that never runs.
+    const indexed = Bun.spawnSync(["git", "ls-files", "-s", "--", resolver], {
+      cwd: DIR,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(indexed.exitCode).toBe(0);
+    // An untracked resolver prints nothing, so this fails on that too rather than on a
+    // mode it never read.
+    expect(indexed.stdout.toString()).toStartWith("100755 ");
   });
 
   test("stays readable by a line scanner, not just by a YAML parser", () => {

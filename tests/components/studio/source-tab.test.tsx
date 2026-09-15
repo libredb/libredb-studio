@@ -228,6 +228,10 @@ mock.module("@/lib/storage", () => ({
     deleteConnection: () => {},
     saveQuery: () => {},
     getActiveConnectionId: () => null,
+    getFavoriteConnectionIds: () => [] as string[],
+    toggleFavoriteConnection: () => [] as string[],
+    getConnectionOrder: () => [] as string[],
+    setConnectionOrder: () => {},
   },
 }));
 
@@ -414,6 +418,17 @@ const APPLIED = { outcome: "applied", revision: PLAN.revision, duration: 3 };
 /** The two edit routes' request bodies, in the order the pane sent them. */
 let editRequests: Array<{ url: string; body: unknown }> = [];
 let applyAnswer: { status: number; body: unknown } = { status: 200, body: APPLIED };
+/**
+ * Whether the apply route HOLDS its answer, so a test can act with the statement already sent
+ * and nothing back yet (D82).
+ *
+ * That window is the whole of D82 and it cannot be reached with a route that answers at once:
+ * the pane leaves `applying` in the same promise continuation the answer arrives in, so there is
+ * no frame in between for a keystroke to land in. `releaseApply` hands the answer over when the
+ * test is ready.
+ */
+let applyHangs = false;
+let releaseApply: (() => void) | undefined;
 
 const realFetch = globalThis.fetch;
 
@@ -426,9 +441,14 @@ function installFetch(): void {
     }
     if (text.includes("/api/db/objects/edit-apply")) {
       editRequests.push({ url: text, body: JSON.parse(String(init?.body ?? "{}")) });
-      return new Response(JSON.stringify(applyAnswer.body), {
-        status: applyAnswer.status,
-        headers: { "Content-Type": "application/json" },
+      const answer = () =>
+        new Response(JSON.stringify(applyAnswer.body), {
+          status: applyAnswer.status,
+          headers: { "Content-Type": "application/json" },
+        });
+      if (!applyHangs) return answer();
+      return new Promise<Response>((resolve) => {
+        releaseApply = () => resolve(answer());
       });
     }
     if (text.includes("/api/db/objects/source")) {
@@ -478,6 +498,8 @@ beforeEach(() => {
   sourceStates = [];
   editRequests = [];
   applyAnswer = { status: 200, body: APPLIED };
+  applyHangs = false;
+  releaseApply = undefined;
   mockToast.mockClear();
   connectionManagerAnswer.activeConnection = pgConn;
   mockExecuteQuery.mockClear();
@@ -1076,14 +1098,22 @@ async function openFunctionTab(): Promise<void> {
   await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
 }
 
-/** Edit, Preview, confirm. Every step is the gesture a reader makes, in that order. */
+/**
+ * Edit, Preview, confirm. Every step is the gesture a reader makes, in that order.
+ *
+ * The last poll asks `=== null` instead of asserting `toBeNull()` on the node, and so does every
+ * other absence poll in this file. On a FAILING poll bun pretty-prints the received value, and
+ * for a happy-dom node that means walking its whole object graph: 301 ms for a 260-node subtree,
+ * measured. Four such polls and waitFor's 5 s budget is gone, so a briefly busy machine fails a
+ * test whose subject is fine. The boolean costs 0 ms and asserts the same removal.
+ */
 async function applySuccessfully(): Promise<void> {
   await click("object-source-edit");
   await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
   await click("object-source-preview");
   await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
   await click("object-source-apply-confirm");
-  await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+  await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog") === null).toBe(true));
 }
 
 describe("a successful apply in the standalone shell", () => {
@@ -1308,7 +1338,7 @@ describe("the tab strip's dirty mark survives a remount and still clears", () =>
     act(() => {
       screen.getAllByRole("tab")[0].click();
     });
-    await waitFor(() => expect(screen.queryByTestId("source-editor")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("source-editor") === null).toBe(true));
     act(() => {
       screen.getAllByRole("tab")[1].click();
     });
@@ -1320,6 +1350,194 @@ describe("the tab strip's dirty mark survives a remount and still clears", () =>
       editorProbe.change?.(DEFINITION);
       await Promise.resolve();
     });
-    await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("tab-dirty-dot") === null).toBe(true));
+  });
+});
+
+/**
+ * D82: the new-tab shortcut, pressed between Confirm and the answer.
+ *
+ * MEASURED before this suite existed, and the comment in `Studio.tsx` said the opposite. The
+ * strip is aria-hidden and covered while the dialog is open, not REMOVED, and `StudioTabBar`
+ * registers the new-tab shortcut on `document` on purpose (#745), so the keystroke reaches the
+ * handler from a control inside the dialog. `addTab` ends with `setActiveTabId(newId)`, the shell
+ * renders the Source pane only for an active Source tab, and the pane took the dialog down with
+ * it mid apply: the statement was already sent and the reader was never told what it answered.
+ *
+ * Each test drives the shortcut from the DIALOG's own element, which is the population the entry
+ * is about: an event dispatched from inside the modal, bubbling to the document listener.
+ *
+ * The shortcut is not the only document-level listener that reaches this window. `CommandPalette`
+ * registers a second one for Cmd/Ctrl+K, and its table items call this shell's `onTableClick`,
+ * which opens and activates a Query tab exactly as `addTab` does. The last two tests drive that
+ * second door through the captured palette prop; the palette itself is stubbed in this file, so
+ * the reachability of the keystroke was measured against the REAL palette outside the suite and
+ * is recorded in `Studio.tsx`.
+ */
+describe("the new-tab shortcut cannot unmount an apply that is in flight", () => {
+  const CONFLICT = {
+    outcome: "conflict",
+    conflict: "object-changed",
+    current: { text: `${DEFINITION}\n-- somebody else got there first`, language: "sql" },
+    duration: 5,
+  };
+
+  /** Edit, Preview, Confirm, and STOP with the apply in flight and the dialog on `applying`. */
+  async function confirmAndHold(): Promise<void> {
+    sourceAnswer = { status: 200, body: EDITABLE_DOCUMENT };
+    applyHangs = true;
+    render(<Studio />);
+    await openFunctionTab();
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() =>
+      expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Applying this definition"),
+    );
+  }
+
+  /**
+   * The tab strip read from the DOM, which is the only way to read it while the dialog is open.
+   *
+   * `getAllByRole` applies the accessibility filter, and Radix aria-hides everything outside the
+   * modal, so the role query answers NOTHING here. That is the entry's first measurement in one
+   * line: the strip is aria-hidden and covered, and it is still in the tree.
+   */
+  function tabNamesInDom(): string[] {
+    return [...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent ?? "");
+  }
+
+  /** The shortcut as a reader presses it, from the control the dialog has focus in. */
+  function pressNewTab(target: HTMLElement): void {
+    act(() => {
+      fireEvent.keyDown(target, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+    });
+  }
+
+  test("the shortcut is refused while the apply is in flight, and the answer still reaches the reader", async () => {
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+
+    // No tab was opened, so nothing moved the active tab off the Source tab that is applying.
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    // And the keystroke is ANSWERED rather than swallowed: the reader is told why.
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+
+    // The half the reader lost before: the conflict lands on a dialog that is still mounted.
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    expect(screen.getByTestId("mock-monaco-diff-editor").getAttribute("data-original")).toContain(
+      "somebody else got there first",
+    );
+  });
+
+  test("the refusal lasts exactly as long as the apply: the shortcut opens a tab once the answer is on screen", async () => {
+    /*
+     * The control for the test above. Without it the refusal could be "the shortcut never works
+     * over a Source tab", which would close D82 by breaking #745 instead of by guarding it.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+
+  test("the refusal does not outlive the pane that raised it", async () => {
+    /*
+     * The latch is the pane's state and the shell only mirrors it, so a pane that goes away with
+     * an apply still in flight has to take the refusal with it. Otherwise the shortcut would be
+     * dead for the rest of the session, which is a worse defect than the one D82 reports.
+     *
+     * The tab click is a DIRECT DOM click, which is how the strip is reachable under an aria-hidden
+     * modal at all. It is not a gesture a reader can make; it is the one path that can still
+     * unmount the pane mid apply, and it is here to prove the flag is released rather than held.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    act(() => {
+      (document.querySelectorAll('[role="tab"]')[0] as HTMLElement).click();
+    });
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    pressNewTab(document.body);
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+
+  /** A table opened from the palette, addressed the way the palette addresses it (#789). */
+  function openTableFromPalette(): void {
+    act(() => {
+      (capturedPaletteProps.onTableClick as (path: readonly string[]) => void)(["app", "orders"]);
+    });
+  }
+
+  test("the palette's table item is refused in the same window, and the answer still reaches the reader", async () => {
+    /*
+     * The second door into this window, and the reason the handler above cannot be the whole
+     * answer. Cmd/Ctrl+K is a document listener too, so it fires from inside the modal, the
+     * palette takes focus, and selecting a table runs `handleTableClick`, which ends with
+     * `setActiveTabId(newId)` and unmounts the pane the dialog lives in. Measured against the
+     * real palette before this test was written: the dialog went away and the conflict never
+     * rendered.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    openTableFromPalette();
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
+  test("the palette's table item works again once the answer is on screen", async () => {
+    /*
+     * The control for the test above, on the same argument: the refusal has to be the apply
+     * window and not "a table cannot be opened from a Source tab", which would break #789 to
+     * close D82.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    openTableFromPalette();
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
   });
 });

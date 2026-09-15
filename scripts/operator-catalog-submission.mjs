@@ -27,6 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Bare `x.y.z` only. Our operator versions are app versions, which carry no prerelease suffix. */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -403,7 +404,15 @@ async function decide(argv) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// CLI entry only when executed directly (the unit test imports this module).
+// Compared as PATHS, the way every other script here does it: `file://` glued
+// to argv[1] is a URL only by accident, and it stops matching as soon as the
+// path needs percent-encoding or is not separated by forward slashes. Both
+// happen in practice - a directory with a space, and every Windows invocation,
+// where argv[1] is `D:\a\...\scripts\operator-catalog-submission.mjs` and the
+// module URL is `file:///D:/a/...`. The mismatch is silent: the module loads,
+// nothing runs, the workflow step exits 0 with an empty GITHUB_OUTPUT.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((error) => {

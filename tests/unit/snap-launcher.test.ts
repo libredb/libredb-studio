@@ -11,9 +11,19 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
 
 const REPO_ROOT = join(import.meta.dir, "../..");
 const LAUNCHER = join(REPO_ROOT, "snap/local/launch.sh");
+/*
+  Only the second describe runs anything: it executes the snap's own launcher against a stub `node`
+  that is a `#!/bin/sh` file made runnable with chmod 0755. snapd is Linux-only, Windows has no exec
+  bit and cannot exec an extension-less #! file, and `Bun.spawnSync(["sh", ...])` THROWS there
+  ("Executable not found in $PATH", measured in this worktree). The manifest describe above it is
+  YAML parsing and keeps running everywhere.
+*/
+const SHELL = posixShell("sh");
+const CANNOT_RUN = missingPosixShell("sh") ?? MISSING_POSIX_FILE_MODES;
 
 /** Every key the launcher defaults, and so an operator must be able to override. */
 const DEFAULTED_KEYS = [
@@ -44,7 +54,7 @@ describe("snap/snapcraft.yaml app environment (#807)", () => {
   });
 });
 
-describe("snap/local/launch.sh defaults (#807)", () => {
+describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
   const fixtureRoots: string[] = [];
 
   afterEach(() => {
@@ -62,7 +72,7 @@ describe("snap/local/launch.sh defaults (#807)", () => {
     writeFileSync(join(snap, "server.js"), "");
 
     const cleared = Object.fromEntries([...DEFAULTED_KEYS, "INVOCATION_ID", "LIBREDB_BIND"].map((k) => [k, ""]));
-    const result = Bun.spawnSync(["sh", LAUNCHER], {
+    const result = Bun.spawnSync([SHELL!, LAUNCHER], {
       env: { ...process.env, ...cleared, SNAP: snap, SNAP_DATA: join(root, "data"), ...env },
       stdout: "pipe",
       stderr: "pipe",

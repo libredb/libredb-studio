@@ -360,10 +360,16 @@ describe("AuditTab", () => {
     await user.clear(searchInput);
     await user.type(searchInput, "VACUUM");
 
-    // VACUUM should still be visible, KILL should be filtered out
+    // VACUUM should still be visible, KILL should be filtered out.
+    // The filtered-out half is written `=== null` rather than `toBeNull()` on the node, here and
+    // in the two other filter tests below: a FAILING poll hands bun a live happy-dom element and
+    // bun walks its whole object graph to build the diff, 301 ms for a 260-node subtree measured.
+    // A few of those and waitFor's 5 s budget is spent, so a briefly busy machine reds a healthy
+    // test. The boolean costs 0 ms. The present half stays as it is: it fails on `null`, which is
+    // cheap to print.
     await waitFor(() => {
       expect(queryByText("VACUUM")).not.toBeNull();
-      expect(queryByText("KILL")).toBeNull();
+      expect(queryByText("KILL") === null).toBe(true);
     });
   });
 
@@ -420,7 +426,7 @@ describe("AuditTab", () => {
 
     await waitFor(() => {
       expect(queryByText("SELECT 1")).not.toBeNull();
-      expect(queryByText("DROP TABLE x")).toBeNull();
+      expect(queryByText("DROP TABLE x") === null).toBe(true);
     });
   });
 
@@ -460,7 +466,7 @@ describe("AuditTab", () => {
     // Only the error-status history item remains
     await waitFor(() => {
       expect(queryByText("DROP TABLE x")).not.toBeNull();
-      expect(queryByText("SELECT 1")).toBeNull();
+      expect(queryByText("SELECT 1") === null).toBe(true);
     });
   });
   test("changing the type filter refetches with the type param", async () => {

@@ -22,6 +22,18 @@ PAYLOAD_DIR=$1
 VERSION=$2
 OUT_TARBALL=$3
 
+# Resolve the output path before tar sees it, the way pack-standalone-zip.sh
+# resolves its own. GNU tar reads a -f argument whose first colon comes before
+# any slash as `host:file` and tries to reach that host: measured with tar 1.35,
+# `-f out:1.tar.gz` answers "Cannot connect to out: resolve failed" and exits 2
+# having written nothing. Every absolute path a Windows caller has is that shape
+# (`C:\...`), so a bash script driven from node, Bun or PowerShell there dials a
+# host called C instead of writing a file. An absolute path cannot be misread.
+# scripts/build-standalone-payload.sh, the one production caller, already passes
+# an absolute POSIX path, so this leaves the release build untouched.
+OUT_PARENT=$(cd "$(dirname "$OUT_TARBALL")" && pwd)
+OUT_TARBALL="$OUT_PARENT/$(basename "$OUT_TARBALL")"
+
 ROOT_NAME="libredb-studio-${VERSION}"
 PARENT_DIR=$(cd "$(dirname "$PAYLOAD_DIR")" && pwd)
 ROOT_DIR="$PARENT_DIR/$ROOT_NAME"

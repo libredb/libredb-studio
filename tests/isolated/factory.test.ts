@@ -29,11 +29,12 @@
  *   listed, measured by tracing the console output, so which file wins is not something the
  *   other file can arrange.
  *
- * `tests/isolated/exports-shim.test.ts`'s group comment in `tests/run-components.sh` already
- * named this hazard from the other side, and the fix there was to move the OTHER file out.
- * That stopped working when #789 added two `tests/unit` files that construct every provider
- * through the real factory: a fleet census cannot do its job without importing it. So the
- * isolation now sits on the file that needs it, and `bun test tests/unit` is clean again.
+ * The old component runner named this hazard from the other side and fixed it by moving the
+ * OTHER file out of the group. That stopped working when #789 added two `tests/unit` files that
+ * construct every provider through the real factory: a fleet census cannot do its job without
+ * importing it. So the requirement sits on the file that needs it, which is this paragraph, and
+ * the runner is what enforces it: one bun process per test file, no directory and no
+ * registration, and `bun test tests/unit` is clean again.
  */
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll } from "bun:test";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
@@ -53,6 +54,8 @@ import { basename, join, relative as relativePath } from "node:path";
 import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import type { SSHTunnelConfig } from "@/lib/types";
 
 /** Enforcement caps for the sqlite agent-profile assertions below. */
 const AGENT_BUDGET: ReadOnlyStatementBudget = {
@@ -60,6 +63,16 @@ const AGENT_BUDGET: ReadOnlyStatementBudget = {
   maxResultRows: 100,
   maxResultBytes: 64 * 1024,
 };
+
+/**
+ * The `database` the two construction censuses hand the libredb provider.
+ *
+ * It is a path that is never opened, so what matters about it is only that it is a legal one:
+ * the "/tmp/test.libredb" it replaces names a directory that does not exist on Windows, and a
+ * hardcoded absolute path shared by every process is a collision waiting for the day something
+ * does open it. `tmpdir()` answers the platform's own scratch directory on all three.
+ */
+const CENSUS_LIBREDB_FILE = join(tmpdir(), "factory-census.libredb");
 
 // ============================================================================
 // Helper: build a minimal DatabaseConnection for a given type
@@ -283,15 +296,32 @@ mock.module("ioredis", () => ({
   },
 }));
 
-const mockCreateSSHTunnel = mock(async () => ({
+/**
+ * The tunnel this mock stands in for now HAS a far end, and a test can make it a different
+ * one from the address the record names (D86).
+ *
+ * It used to answer a local endpoint and nothing else, so there was no far end to be wrong
+ * about and a test asserting what the factory sealed could only have pinned the defect. The
+ * default echoes the address it was asked to forward to, which is the honest case; the D86
+ * test overrides one call with a forward that reaches somewhere else, which is what a pooled
+ * tunnel opened for a previous record actually is.
+ */
+const mockCreateSSHTunnel = mock(async (_id: string, _sshConfig: unknown, remoteHost: string, remotePort: number) => ({
   localHost: "127.0.0.1",
   localPort: 54321,
+  remoteHost,
+  remotePort,
   close: mock(async () => {}),
 }));
 
 const mockCloseSSHTunnel = mock(async () => {});
 
-const mockHasTunnel = mock(() => false);
+/**
+ * Takes its arguments so the assertions on them are not vacuous: the factory must ask about ONE
+ * forward - this connection's route and far end - and the loose question would answer `true` for
+ * a forward this call is about to open, which is the FD-leak the `tunnelPreexisted` flag guards.
+ */
+const mockHasTunnel = mock((_connectionId: string, _forward?: unknown) => false);
 
 mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel: mockCreateSSHTunnel,
@@ -501,7 +531,11 @@ describe("createDatabaseProvider", () => {
   });
 
   test('creates provider for type "libredb"', async () => {
-    const conn = makeConnection("libredb", { database: "/tmp/test.libredb" });
+    // A path the platform owns rather than a hardcoded "/tmp/...", which is not a directory
+    // on Windows at all. Nothing opens this file: `createDatabaseProvider` constructs and
+    // validates without touching the disk, so this is the spelling of a path and not a
+    // fixture. It is named all the same, so a provider that ever did open it says where.
+    const conn = makeConnection("libredb", { database: CENSUS_LIBREDB_FILE });
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("libredb");
@@ -528,7 +562,7 @@ describe("createDatabaseProvider", () => {
       druid: { port: 8888 },
       trino: { port: 8080, database: "tpch" },
       cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
-      libredb: { database: "/tmp/test.libredb" },
+      libredb: { database: CENSUS_LIBREDB_FILE },
     };
 
     const declaringTypes: string[] = [];
@@ -602,6 +636,69 @@ describe("getOrCreateProvider", () => {
 
     await getOrCreateProvider(conn);
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+  });
+
+  test("asks the pool about THIS forward, route and far end, before opening one", async () => {
+    // D86. `tunnelPreexisted` decides whether a failed connect may close the tunnel, so the
+    // question has to be the specific one: a loose `hasTunnel(id)` answers `true` for any forward
+    // under the id, and the forward this call opened would then be left open on failure. Deleting
+    // the second argument in `getOrCreateProvider` fails here and nowhere else.
+    const conn = makeConnection("sqlite", {
+      id: "ssh-has-tunnel-args",
+      host: "remote-db.example.com",
+      port: 5432,
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    } as Partial<DatabaseConnection>);
+
+    await getOrCreateProvider(conn);
+
+    expect(mockHasTunnel).toHaveBeenLastCalledWith("ssh-has-tunnel-args", {
+      ssh: conn.sshTunnel,
+      farEnd: { host: "remote-db.example.com", port: 5432 },
+    });
+  });
+
+  test("seals the far end the tunnel forwards to, not the one the record names", async () => {
+    // D86. The factory used to build the far end from the RECORD it was handed, while the
+    // pooled tunnel could be forwarding somewhere else entirely, so a plan verified against
+    // a machine the statement never reached. The far end now comes off the tunnel.
+    const forwardedTo = { host: "forwarded-db.internal", port: 15432 };
+    const conn = makeConnection("sqlite", {
+      id: "ssh-seal-far-end",
+      host: "record-db.example.com",
+      port: 5432,
+      database: ":memory:",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    } as Partial<DatabaseConnection>);
+    // The forward reaches an address this record does not name: a tunnel opened before the
+    // record's host was edited. The factory is handed it and must seal what it reaches.
+    mockCreateSSHTunnel.mockImplementationOnce(async () => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost: forwardedTo.host,
+      remotePort: forwardedTo.port,
+      close: mock(async () => {}),
+    }));
+
+    const provider = await getOrCreateProvider(conn);
+
+    const sealed = await connectionFingerprint(provider.config);
+    expect(sealed).toBe(await connectionFingerprint({ ...conn, host: forwardedTo.host, port: forwardedTo.port }));
+    expect(sealed).not.toBe(await connectionFingerprint(conn));
   });
 
   test("closes SSH tunnel when provider connect fails", async () => {
@@ -1163,6 +1260,12 @@ describe("acquireExecutionProfileProvider", () => {
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     expect(agent.config.host).toBe("127.0.0.1");
     expect(agent.config.port).toBe(54321);
+    // The same specific question as the writable path, for the same reason (D86): this
+    // acquisition may only tear down a forward it opened itself.
+    expect(mockHasTunnel).toHaveBeenLastCalledWith("pg-tunnel-profile", {
+      ssh: conn.sshTunnel,
+      farEnd: { host: "remote-db.example.com", port: 5432 },
+    });
   });
 
   test("tears down a freshly created tunnel when the profile connection fails", async () => {
@@ -1311,7 +1414,16 @@ describe("acquireExecutionProfileProvider", () => {
       sqliteTmpDir = mkdtempSync(join(tmpdir(), "libredb-factory-sqlite-"));
     });
 
-    afterAll(() => {
+    afterAll(async () => {
+      /*
+       * The cache is emptied before the directory goes, and the await is the point.
+       * Nothing else clears it after the last test of this group, so a provider that
+       * connected here still holds an open handle on a file inside `sqliteTmpDir`. POSIX
+       * unlinks an open file and never complains, so the old spelling looked correct on
+       * Linux and macOS; Windows refuses to remove a file that is open and answers EBUSY,
+       * and `force: true` only swallows ENOENT.
+       */
+      await clearProviderCache();
       rmSync(sqliteTmpDir, { recursive: true, force: true });
     });
 
@@ -1385,7 +1497,16 @@ describe("single-writer file reuse", () => {
     dir = mkdtempSync(join(tmpdir(), "libredb-factory-single-writer-"));
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    /*
+     * The cache is emptied before the directory goes, and the await is the point.
+     * Nothing else clears it after the last test of this group, so a provider that connected
+     * here still holds an open handle on a file inside `dir`. POSIX unlinks an open file
+     * and never complains, so the old spelling looked correct on Linux and macOS; Windows
+     * refuses to remove a file that is open and answers EBUSY, and `force: true` only
+     * swallows ENOENT.
+     */
+    await clearProviderCache();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1441,10 +1562,16 @@ describe("single-writer file reuse", () => {
 
     // Deliberately not built with path.join, which would normalise it before the
     // factory ever saw it: the lock is per inode, so the lookup has to resolve.
+    // The file name comes from basename rather than from splitting on "/": on
+    // Windows `dir` is a backslash path, so the split returned the whole path and
+    // the spelling became `C:\...\dir/./C:\...\held.libredb`, which resolves to
+    // nothing and matched nothing. Measured on windows-latest, 2026-09-15. A
+    // forward slash inside the spelling is fine there: Win32 accepts it, and
+    // path.resolve, which is what the factory uses, normalises it away.
     const spelled: DatabaseConnection = {
       ...held,
       id: "spelled",
-      database: `${dir}/./${held.database!.split("/").pop()!}`,
+      database: `${dir}/./${basename(held.database!)}`,
     };
 
     expect(findOpenSingleWriterProvider(spelled)).toBe(writable);
@@ -1479,6 +1606,17 @@ describe("single-writer file reuse", () => {
       id: "duck-file-b",
       database: join(dir, "..", basename(dir), "borrowed.duckdb"),
     });
+    // Relative TO THE CWD, deliberately, and not to the file's own directory. `fileIdentity`
+    // normalises with `path.resolve` (src/lib/db/factory.ts:301), which resolves against
+    // `process.cwd()`, so a spelling relative to anything else would name a different file and
+    // this assertion would fail on every platform rather than exercise the borrow.
+    //
+    // ON WINDOWS THIS LINE CAN LOSE ITS POINT WITHOUT LOSING ITS TRUTH, which is why it is
+    // written down here. `path.relative` cannot express a path across volumes, so a machine
+    // whose TMP sits on a different drive from the checkout gets an ABSOLUTE spelling back and
+    // the case below repeats the `dotted` one instead of adding the relative one. That is a
+    // weaker test on that machine shape, never a false one, and no assertion is added to make
+    // the premise hard: a legitimate Windows layout should not be reported as a defect.
     const relative = makeConnection("duckdb", { id: "duck-file-c", database: relativePath(process.cwd(), file) });
 
     expect(findOpenSingleWriterProvider(dotted)).toBe(writable);
@@ -1633,9 +1771,11 @@ describe("withOneShotTunnel", () => {
   });
 
   test("propagates the callback failure even when closing the tunnel throws", async () => {
-    mockCreateSSHTunnel.mockImplementationOnce(async () => ({
+    mockCreateSSHTunnel.mockImplementationOnce(async (_id, _sshConfig, remoteHost, remotePort) => ({
       localHost: "127.0.0.1",
       localPort: 54321,
+      remoteHost,
+      remotePort,
       close: mock(async () => {
         throw new Error("close failed");
       }),
@@ -1701,7 +1841,16 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
     dir = mkdtempSync(join(tmpdir(), "libredb-factory-grounding-"));
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    /*
+     * The cache is emptied before the directory goes, and the await is the point.
+     * Nothing else clears it after the last test of this group, so a provider that connected
+     * here still holds an open handle on a file inside `dir`. POSIX unlinks an open file
+     * and never complains, so the old spelling looked correct on Linux and macOS; Windows
+     * refuses to remove a file that is open and answers EBUSY, and `force: true` only
+     * swallows ENOENT.
+     */
+    await clearProviderCache();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1813,4 +1962,119 @@ describe("cached connection query timeout", () => {
       expect((cleared as unknown as { queryTimeout: number }).queryTimeout).toBe(60000);
     },
   );
+});
+
+// ============================================================================
+// The tunnel's far end reaches the plan seal (X23)
+// ----------------------------------------------------------------------------
+// `getOrCreateProvider` rewrites `host` and `port` to the tunnel's LOCAL endpoint
+// before the provider is built, and every sealing provider digests `this.config`.
+// The routes digest the record the request RESOLVED, which still names the far end.
+// These assertions drive BOTH sides through the real factory: the left-hand digest
+// is the exact expression `postgres.ts`, `trino/index.ts` and `redis.ts` evaluate.
+// ============================================================================
+
+describe("a tunnelled provider fingerprints the far end (X23)", () => {
+  const BASTION: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.internal",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: "pw",
+  };
+
+  /** A distinct id per case: `getOrCreateProvider` caches on it. */
+  function record(id: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
+    return makeConnection("postgres", {
+      id,
+      host: "db.internal",
+      port: 5432,
+      database: "app",
+      sshTunnel: BASTION,
+      ...overrides,
+    });
+  }
+
+  /** The provider's side of the comparison, taken from the factory rather than hand-built. */
+  async function sealedBy(connection: DatabaseConnection): Promise<string> {
+    const provider = await getOrCreateProvider(connection);
+    // The rewrite really happened, so the equality below is not passing by never having moved.
+    expect(provider.config.host).toBe("127.0.0.1");
+    expect(provider.config.port).toBe(54321);
+    return await connectionFingerprint(provider.config);
+  }
+
+  test("the two sides of the edit-plan comparison agree", async () => {
+    const stored = record("x23-agree");
+    expect(await sealedBy(stored)).toBe(await connectionFingerprint(stored));
+  });
+
+  test("the property the digest exists for survives: same bastion, two databases", async () => {
+    // Two databases behind the SAME bastion reach the SAME local endpoint - both providers
+    // are handed `127.0.0.1:54321` - so this is the collision a fix that simply dropped
+    // `host` and `port` from the frame would produce.
+    const left = record("x23-same-bastion-a", { database: "app" });
+    const right = record("x23-same-bastion-b", { database: "billing" });
+    expect(await sealedBy(left)).not.toBe(await sealedBy(right));
+  });
+
+  test("the property the digest exists for survives: same far end, two bastions", async () => {
+    // Identical `db.internal:5432`, reached through two different machines. `tunnelRoute`
+    // is what separates them and this proves the far end did not displace it.
+    const ours = record("x23-bastion-ours");
+    const theirs = record("x23-bastion-theirs", { sshTunnel: { ...BASTION, host: "attacker.example" } });
+    expect(await sealedBy(ours)).not.toBe(await sealedBy(theirs));
+    expect(await sealedBy(theirs)).toBe(await connectionFingerprint(theirs));
+  });
+
+  test("the control: an untunnelled provider is untouched by any of this", async () => {
+    const plain = makeConnection("postgres", { id: "x23-plain", host: "db.internal", port: 5432, database: "app" });
+    const provider = await getOrCreateProvider(plain);
+    expect(provider.config.host).toBe("db.internal");
+    expect(await connectionFingerprint(provider.config)).toBe(await connectionFingerprint(plain));
+    // And it is NOT the tunnelled record's digest: a carrier that leaked into the untunnelled
+    // path, or a frame that dropped the tunnel, would make these two the same server.
+    expect(await connectionFingerprint(plain)).not.toBe(await connectionFingerprint(record("x23-plain-twin")));
+  });
+
+  test("the far end cannot be stored, because it does not survive JSON", async () => {
+    // Property 3 of the ruling, asserted rather than argued. Every connection this app
+    // resolves has been through `JSON.parse` on the way out of storage or off the wire, and a
+    // symbol-keyed property is dropped by `JSON.stringify` and unwritable by `JSON.parse`. So
+    // the digest-deciding value cannot be set by whoever stores or posts the connection.
+    const stored = record("x23-no-json");
+    const provider = await getOrCreateProvider(stored);
+    const roundTripped = JSON.parse(JSON.stringify(provider.config)) as DatabaseConnection;
+    expect(await connectionFingerprint(roundTripped)).not.toBe(await connectionFingerprint(stored));
+    // Fail closed: what a round trip leaves is the LOCAL endpoint, which is what the routes
+    // refuse. The seal never falls back to "equal if we cannot tell".
+    expect(await connectionFingerprint(roundTripped)).toBe(
+      await connectionFingerprint({ ...stored, host: "127.0.0.1", port: 54321 }),
+    );
+  });
+
+  test("the execution-profile path carries it too, credential substitution and all", async () => {
+    // The second rewrite site. It has no sealing caller today, and a fix that covered one
+    // site and not the other would be half a fix that nobody notices until it has one.
+    const stored = record("x23-profile", { agentUser: "agent_ro", agentPassword: "s3cret" });
+    const provider = await acquireExecutionProfileProvider(stored, "agent-read-only");
+    expect(provider.config.host).toBe("127.0.0.1");
+    // `user` IS in the frame and the acquisition substituted it, so the digest that must match
+    // is the record's with the agent's role on it - which is the connection this provider is.
+    expect(await connectionFingerprint(provider.config)).toBe(
+      await connectionFingerprint({ ...stored, user: "agent_ro" }),
+    );
+  });
+
+  test("the one-shot scope carries it too", async () => {
+    // The third rewrite site: `test-connection` and `schema-snapshot` build a provider
+    // outside both caches through here.
+    const stored = record("x23-one-shot");
+    const seen = await withOneShotTunnel(stored, async (effective) => {
+      expect(effective.host).toBe("127.0.0.1");
+      return await connectionFingerprint(effective);
+    });
+    expect(seen).toBe(await connectionFingerprint(stored));
+  });
 });

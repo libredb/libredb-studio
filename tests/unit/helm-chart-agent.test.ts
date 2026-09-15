@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * The chart's `agent` block (#331 T8).
  *

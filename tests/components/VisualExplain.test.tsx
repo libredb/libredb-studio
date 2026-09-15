@@ -1067,8 +1067,13 @@ describe("tree render model (sqlite-queryplan)", () => {
       rerender(<VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />);
 
       await waitFor(() => {
-        // the previous plan's response is gone and the tab is back to its initial state
-        expect(queryByText("Old Analysis")).toBeNull();
+        // the previous plan's response is gone and the tab is back to its initial state.
+        // `=== null` and not `toBeNull()` on the node, in this poll and in the one the next test
+        // runs: a FAILING poll would make bun pretty-print the element, which walks the whole
+        // happy-dom node's object graph. 301 ms for a 260-node subtree, measured, so a few polls
+        // eat waitFor's 5 s budget and a briefly busy machine reds a healthy test. The boolean is
+        // 0 ms and asserts the same absence.
+        expect(queryByText("Old Analysis") === null).toBe(true);
         expect(queryByText("AI Query Analysis")).not.toBeNull();
         // the previous request's controller was aborted
         expect(abortSpy).toHaveBeenCalled();
@@ -1099,7 +1104,7 @@ describe("tree render model (sqlite-queryplan)", () => {
     rerender(<VisualExplain plan={samplePlan} query="SELECT id FROM users" databaseType="postgres" />);
 
     await waitFor(() => {
-      expect(queryByText("Old Analysis")).toBeNull();
+      expect(queryByText("Old Analysis") === null).toBe(true);
       expect(queryByText("AI Query Analysis")).not.toBeNull();
     });
   });

@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * /app/data volume knobs from the Rancher E2E follow-ups (issue #170).
  *

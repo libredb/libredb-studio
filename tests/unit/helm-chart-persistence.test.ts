@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Regression test for issue #137: a default Helm install
  * (persistence.enabled=false) must render a writable mount at /app/data so

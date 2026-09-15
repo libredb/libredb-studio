@@ -32,7 +32,8 @@ bun run format           # Biome formatter check (format:fix to write); CSS/JSON
 bun run lint             # oxlint (fast, syntactic) then ESLint 9
 bun run lint:oxc         # oxlint only
 bun run typecheck        # TypeScript strict
-bun run test             # all layers: unit + api + integration + hooks + security + evals + components
+bun run test             # every test file under tests/ (except tests/live/), one bun process per file
+bun run test:unit        # one layer; also test:api, test:integration, test:hooks, test:security, test:evals, test:components
 bun run test:e2e         # Playwright (builds and starts its own servers; see playwright.config.ts)
 bun run test:coverage    # coverage report (merged lcov)
 bun run coverage:check   # enforce 100% line coverage on the merged lcov
@@ -49,9 +50,9 @@ bun run security:check           # security posture drift guard
 
 > **Run `build:lib` after changing anything reachable from `src/exports/`** (workspace, providers, components, security, …) — `bun run build` (Next.js) does NOT update the package dist.
 
-> **Tests — always `bun run test`, never bare `bun test`.** Component tests need isolated execution groups (`tests/run-components.sh`) to avoid `mock.module()` cross-contamination.
+> **Tests, always `bun run test`, never bare `bun test` over a directory.** The runner ([`tests/run-tests.ts`](tests/run-tests.ts)) discovers every test file and runs each one in its own bun process, several at a time (`--jobs=N`, `--list`). `bun test tests/api` puts all of them in one process instead, where one file's `mock.module()` becomes every file's, because bun's module mocks are process-wide with no undo. To run one file, name it: `bun tests/run-tests.ts tests/unit/x.test.ts`.
 
-> **Coverage isolation:** `bun`'s `mock.module()` is process-wide, so `test:coverage:core` runs each core test file in its own process (`tests/run-core.sh`) and `test:coverage` merges the per-file lcov. Do NOT collapse it into one `bun test` invocation. Rationale: [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).
+> **Coverage:** `bun run test:coverage` is the same runner with `--coverage --merge-into=coverage/lcov.info`: one lcov per test file, merged by `scripts/merge-lcov.mjs`. Two files run without coverage on purpose; they are `COVERAGE_EXEMPT_FILES` in [`tests/runner/discover.ts`](tests/runner/discover.ts), with the reason in its docblock. Rationale: [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).
 
 ## Pre-Commit Verification (MANDATORY)
 

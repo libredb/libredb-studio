@@ -1,3 +1,4 @@
+// @requires helm
 /**
  * Regression test for issue #136: the documented minimal Helm install
  * (only secrets.jwtSecret + secrets.adminPassword) must render cleanly -

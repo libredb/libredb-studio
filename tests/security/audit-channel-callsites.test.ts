@@ -1,7 +1,7 @@
 import { describe, expect, test, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 /**
  * Threat: a route that records an audit event in the ring buffer WITHOUT the authoritative
@@ -51,7 +51,10 @@ function listSources(rootDir: string): string[] {
       if (entry.isDirectory()) {
         walk(full);
       } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
-        files.push(relative(rootDir, full));
+        // Normalised here, at the one place a path becomes a lookup key: `relative` returns the
+        // platform separator, so on Windows the key would be "lib\\audit.ts" while every
+        // allowlist key and every Map lookup in this file is written with forward slashes.
+        files.push(relative(rootDir, full).split(sep).join("/"));
       }
     }
   }
@@ -143,7 +146,7 @@ describe("the authoritative audit channel has no unlisted bypass", () => {
   // pattern matches. Both are cheap to forbid outright, so they are.
   test("no file outside src/lib/audit.ts builds its own buffer or renames the accessor", () => {
     for (const file of listSources(SRC_DIR)) {
-      if (file === join("lib", "audit.ts")) continue;
+      if (file === "lib/audit.ts") continue;
       const source = readFileSync(join(SRC_DIR, file), "utf8");
       expect(source).not.toMatch(/new\s+AuditRingBuffer\s*\(/);
       expect(source).not.toMatch(/getServerAuditBuffer\s+as\s+/);

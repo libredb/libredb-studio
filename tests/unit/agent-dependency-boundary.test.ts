@@ -26,8 +26,12 @@ interface PackageManifest {
   peerDependencies?: Record<string, string>;
 }
 
+// Anchored to this file, not to process.cwd(): this read happens at module scope, so a runner
+// that launched the file from anywhere but the repository root would kill it before a test ran.
+const ROOT = path.resolve(import.meta.dir, "../..");
+
 const manifest: PackageManifest = JSON.parse(
-  fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+  fs.readFileSync(path.join(ROOT, "package.json"), "utf8"),
 ) as PackageManifest;
 
 /** Exact versions ratified by the owner when the runtime spike closed. */
@@ -145,7 +149,7 @@ describe("the knip ignore list stays bounded", () => {
 
   test("ignores no dependency beyond tailwindcss and the ratified runtime", () => {
     const knip: { ignoreDependencies?: string[] } = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "knip.json"), "utf8"),
+      fs.readFileSync(path.join(ROOT, "knip.json"), "utf8"),
     ) as { ignoreDependencies?: string[] };
     // A subset assertion, deliberately: removing an entry once the run loop
     // imports the package is the desired direction of travel, and an equality

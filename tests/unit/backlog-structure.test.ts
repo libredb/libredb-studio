@@ -23,7 +23,7 @@
  * as shapes and the assertions derive the real ones from the document.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -375,21 +375,72 @@ describe("a quoted grep command answers what the entry says it answers", () => {
     where: `${BACKLOG_PATH}:${lineAt(match.index)}`,
   }));
 
+  /**
+   * Every file `grep -r` would read under this path, relative to ROOT.
+   *
+   * A symlink met inside the tree is skipped, which is what `-r` does (only `-R` follows one), and
+   * the WORKING TREE is what is walked rather than the index: entries cite paths that are
+   * gitignored, so a tracked-files listing would answer a different question.
+   */
+  const filesUnder = (target: string): string[] => {
+    if (!statSync(path.join(ROOT, target)).isDirectory()) return [target];
+    return readdirSync(path.join(ROOT, target), { withFileTypes: true }).flatMap((child) => {
+      if (child.isDirectory()) return filesUnder(`${target}/${child.name}`);
+      return child.isFile() ? [`${target}/${child.name}`] : [];
+    });
+  };
+
+  /**
+   * The quoted pattern as a JS regex.
+   *
+   * grep reads a POSIX BASIC regular expression, where `+ ? | ( ) { }` are literal characters and
+   * JS reads every one of them as syntax - so handing the raw pattern to `new RegExp` would answer
+   * a different question than the sentence claims. Backslash escapes and bracket expressions are
+   * not translated at all: a command that uses one fails by name here rather than being run under
+   * the wrong dialect, which is the same discipline as the SHAPE above.
+   */
+  const toRegExp = (pattern: string): RegExp => {
+    if (/[\\[]/.test(pattern)) {
+      throw new Error(
+        `${BACKLOG_PATH} quotes a grep whose pattern this guard does not translate ` +
+          `(no backslash escapes, no bracket expressions): ${pattern}`,
+      );
+    }
+    // The backslash is in the escape class as well, although the refusal above means one
+    // never reaches this line: a translation that escapes some metacharacters and not the
+    // escape character itself is only correct while its caller is, and this one should be
+    // correct on its own terms. `. * ^ $` are deliberately NOT escaped: BRE and JS read
+    // those the same way, so escaping them would change the question the entry asks.
+    return new RegExp(pattern.replaceAll(/[\\+?|(){}]/g, "\\$&"));
+  };
+
+  /**
+   * The command, run in process.
+   *
+   * It used to be `Bun.spawnSync(["grep", ...])`, which made the whole guard depend on a binary a
+   * PowerShell session does not have - Git for Windows keeps grep.exe in usr\bin, which is not on
+   * that PATH - and `Bun.spawnSync` THROWS there ("Executable not found in $PATH", measured in this
+   * worktree) rather than returning a non-zero exit code, so every claim test died at the first
+   * command. Searching here also removes the GNU/BSD divergence for any flag a future entry uses.
+   */
   const run = (command: string): number => {
     const shape = SHAPE.exec(command);
     if (shape === null) throw new Error(`${BACKLOG_PATH} quotes a grep this guard cannot run: ${command}`);
-    const result = Bun.spawnSync({
-      cmd: ["grep", shape[1], "--", shape[2], ...shape[3].split(/ +/)],
-      cwd: ROOT,
-    });
-    // grep answers 1 for "no lines matched", which is an outcome here rather than a failure.
-    if (result.exitCode !== 0 && result.exitCode !== 1) {
-      throw new Error(`${command} failed with ${result.exitCode}: ${result.stderr.toString()}`);
+    // -n counts matched LINES and -l counts matched FILES; anything else (a -i, a non-recursive
+    // grep over a directory) would need its own modelling, so it is refused instead of guessed.
+    if (!/^-r[nl]$/.test(shape[1])) {
+      throw new Error(`${BACKLOG_PATH} quotes a grep with flags this guard does not model: ${command}`);
     }
-    return result.stdout
-      .toString()
-      .split("\n")
-      .filter((line) => line !== "").length;
+    const pattern = toRegExp(shape[2]);
+    let hits = 0;
+    for (const file of shape[3].split(/ +/).flatMap(filesUnder)) {
+      const lines = readFileSync(path.join(ROOT, file), "utf8").split("\n");
+      // A trailing newline ends the last line, it does not start an empty one.
+      if (lines.at(-1) === "") lines.pop();
+      const matched = lines.filter((line) => pattern.test(line)).length;
+      hits += shape[1].includes("l") ? Math.min(matched, 1) : matched;
+    }
+    return hits;
   };
 
   test("the extractor found every grep the file quotes", () => {

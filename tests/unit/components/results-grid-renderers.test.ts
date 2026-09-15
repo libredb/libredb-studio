@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { classifyValue } from "@/components/results-grid/renderers/classify";
 import { getRenderer } from "@/components/results-grid/renderers/registry";
 import { jsonRenderer } from "@/components/results-grid/renderers/json";
@@ -230,9 +230,11 @@ describe("renderDetail", () => {
 
 describe("rendering layer is provider-agnostic", () => {
   test("no connection-type identifiers in the renderer modules or the formatter", () => {
-    const renderersDir = join(process.cwd(), "src/components/results-grid/renderers");
+    // Anchored to this file rather than to process.cwd(), so the scan is correct whoever launches it.
+    const root = resolve(import.meta.dir, "../../..");
+    const renderersDir = join(root, "src/components/results-grid/renderers");
     const sources = readdirSync(renderersDir).map((f) => join(renderersDir, f));
-    sources.push(join(process.cwd(), "src/components/results-grid/utils.ts"));
+    sources.push(join(root, "src/components/results-grid/utils.ts"));
 
     const providerTypeIds = /\b(postgres|mysql|sqlite|oracle|mssql|mongodb|redis|libredb)\b/i;
     for (const file of sources) {

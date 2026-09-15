@@ -30,7 +30,26 @@ export type SQLiteStatement = {
 export type SQLiteDatabase = {
   exec(sql: string): void;
   prepare(sql: string): SQLiteStatement;
-  close(): void;
+  /**
+   * Close the handle. `throwOnError: true` means "release the file NOW", and the
+   * provider always asks for it.
+   *
+   * Measured 2026-09-15 on bun:sqlite (Bun 1.4.2), through /proc/self/fd: bare
+   * `close()` is `sqlite3_close_v2`, so a connection with any statement still
+   * unfinalized becomes a zombie and the database, its `-wal` and its `-shm` stay
+   * OPEN until the last statement is finalized or garbage collected. The provider
+   * prepares a statement per query and drops the reference, so that is whenever the
+   * collector gets to it. `close(true)` finalizes them and closes for real, and
+   * raises if SQLite cannot.
+   *
+   * POSIX hides the difference, because it unlinks a file that is still open;
+   * Windows does not, and a deferred close is a database the user cannot delete or
+   * move (and, on windows-latest, a test temp directory whose teardown fails with
+   * EBUSY). node:sqlite needs no flag - measured on Node 24.14.0, its `close()`
+   * finalizes the statements it tracks and releases every descriptor - so the node
+   * adapter below declares no parameter at all.
+   */
+  close(throwOnError?: boolean): void;
   /**
    * Whether this handle currently has a transaction open, as SQLite itself reports it
    * (`sqlite3_get_autocommit`), in the bun:sqlite spelling. Both drivers publish it and
@@ -115,6 +134,9 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  * - `inTransaction` is node:sqlite's `isTransaction` under bun:sqlite's name. The
  *   provider reads it to tell whether a statement left a transaction open on the handle
  *   (D71), and a handle whose answer never changed would report every script as clean.
+ * - `close(throwOnError)` is bun's spelling of "release the file now". node:sqlite has
+ *   no such flag and needs none, so this is the one delta with nothing to bridge; see
+ *   the measurement on `SQLiteDatabase.close` above.
  * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
@@ -146,6 +168,10 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
       };
     }
 
+    // Takes no `throwOnError`, and needs none: node:sqlite's own close already finalizes
+    // the statements it tracks and releases every descriptor (measured on Node 24.14.0),
+    // which is exactly what the flag asks bun:sqlite for. A method that declares fewer
+    // parameters still satisfies the surface, so `close(true)` reaches here unchanged.
     close(): void {
       this.db.close();
     }

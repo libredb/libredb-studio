@@ -101,3 +101,50 @@ describe("merge-lcov authority-universe rule", () => {
     expect(merged.get(5)).toBe(0);
   });
 });
+
+describe("merge-lcov on Windows", () => {
+  test("a backslash SF path is the same file as its forward-slash spelling", () => {
+    // bun writes SF: with the host separator, so a Windows contributor running
+    // `bun run test:coverage` produces `SF:src\virtual\win.tsx`. Without this
+    // normalisation the two spellings merge as two files, and the `src/` filter
+    // at the end of the script drops both, leaving an empty report that
+    // check-coverage rejects for a reason that names nothing real.
+    const windows = lcov("src\\virtual\\win.tsx", [
+      [1, 4],
+      [7, 0],
+    ]);
+    const posix = lcov("src/virtual/win.tsx", [[7, 2]]);
+
+    const merged = runMerge("separators", [windows, posix]);
+    expect([...merged.keys()]).toEqual(["src/virtual/win.tsx"]);
+    expect(merged.get("src/virtual/win.tsx")!.get(7)).toBe(2);
+  });
+});
+
+describe("merge-lcov input manifest", () => {
+  test("--inputs-from reads the input list from a file", () => {
+    // The test runner passes 500-odd reports, and Windows caps a command line at
+    // 32767 characters, so the list travels in a file instead of in argv.
+    const first = path.join(workDir, "manifest-in-0.info");
+    const second = path.join(workDir, "manifest-in-1.info");
+    writeFileSync(first, lcov("src/virtual/manifest.ts", [[1, 1]]));
+    writeFileSync(second, lcov("src/virtual/manifest.ts", [[2, 3]]));
+    const manifest = path.join(workDir, "manifest.txt");
+    writeFileSync(manifest, `${first}\n${second}\n`);
+    const outPath = path.join(workDir, "manifest-out.info");
+
+    const result = Bun.spawnSync(["node", SCRIPT, `--inputs-from=${manifest}`, outPath]);
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(outPath, "utf8")).toContain("SF:src/virtual/manifest.ts");
+    expect(result.stdout.toString()).toContain("Merged 2 LCOV file(s)");
+  });
+
+  test("an empty manifest is an error, not an empty report", () => {
+    const manifest = path.join(workDir, "empty-manifest.txt");
+    writeFileSync(manifest, "\n\n");
+
+    const result = Bun.spawnSync(["node", SCRIPT, `--inputs-from=${manifest}`, path.join(workDir, "empty-out.info")]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain(manifest);
+  });
+});

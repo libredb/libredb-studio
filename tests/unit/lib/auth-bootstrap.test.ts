@@ -57,11 +57,17 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(resolveBootstrapPath()).toBe(path.join(tmpDir, BOOTSTRAP_FILE_NAME));
   });
 
-  test("persists with owner-only file mode", () => {
-    if (process.platform === "win32") return; // chmod is a no-op on Windows
-    bootstrapAuth();
-    expect(fs.statSync(resolveBootstrapPath()).mode & 0o777).toBe(0o600);
-  });
+  // Named in the title rather than returned early from the body, the way
+  // tests/unit/instrumentation.test.ts does it: a bare `return` reports a pass on a
+  // machine that never ran the assertion, which is the same output a real pass gives,
+  // and the runner lists a skip by its title while it cannot see an early return at all.
+  test.skipIf(process.platform === "win32")(
+    "persists with owner-only file mode (POSIX only: NTFS has no mode bits)",
+    () => {
+      bootstrapAuth();
+      expect(fs.statSync(resolveBootstrapPath()).mode & 0o777).toBe(0o600);
+    },
+  );
 
   test("reuses persisted credentials across restarts instead of regenerating", () => {
     bootstrapAuth();
@@ -196,18 +202,20 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
   });
 
-  test("fails open when the data dir is not writable: no throw, no injection", () => {
-    if (process.platform === "win32" || process.getuid?.() === 0) return; // perms not enforceable
-    fs.mkdirSync(tmpDir, { recursive: true });
-    fs.chmodSync(tmpDir, 0o500);
-    try {
-      expect(() => bootstrapAuth()).not.toThrow();
-      expect(process.env.JWT_SECRET).toBeUndefined();
-      expect(process.env.ADMIN_PASSWORD).toBeUndefined();
-    } finally {
-      fs.chmodSync(tmpDir, 0o700);
-    }
-  });
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fails open when the data dir is not writable: no throw, no injection (POSIX non-root only: needs an unwritable directory)",
+    () => {
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.chmodSync(tmpDir, 0o500);
+      try {
+        expect(() => bootstrapAuth()).not.toThrow();
+        expect(process.env.JWT_SECRET).toBeUndefined();
+        expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+      } finally {
+        fs.chmodSync(tmpDir, 0o700);
+      }
+    },
+  );
 
   test("prints the password in a banner on generation, but not on reuse", () => {
     const log = spyOn(console, "log").mockImplementation(() => {});

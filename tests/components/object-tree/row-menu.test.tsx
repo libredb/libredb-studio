@@ -316,7 +316,13 @@ describe("the row menu is reachable without a pointer", () => {
     await userEvent.keyboard("{ContextMenu}");
 
     await userEvent.tab();
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    /*
+     * `=== null` rather than `toBeNull()` on the node, here and at the two other absence polls in
+     * this file. A poll that FAILS makes bun pretty-print the menu, which means walking the whole
+     * happy-dom node's object graph: 301 ms for a 260-node subtree, measured. waitFor's 5 s budget
+     * is then gone in a few polls and a busy machine reds a healthy test. The boolean costs 0 ms.
+     */
+    await waitFor(() => expect(screen.queryByRole("menu") === null).toBe(true));
   });
 
   test("a click outside the menu closes it", async () => {
@@ -327,7 +333,7 @@ describe("the row menu is reachable without a pointer", () => {
     expect(screen.queryByRole("menu")).not.toBeNull();
 
     await userEvent.click(document.body);
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("menu") === null).toBe(true));
   });
 });
 
@@ -490,7 +496,7 @@ describe("the row menu and the rows under it", () => {
     expect(screen.queryByRole("menu")).not.toBeNull();
 
     await userEvent.click(row(/Tables/));
-    await waitFor(() => expect(screen.queryByText("orders")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("orders") === null).toBe(true));
     expect(screen.queryByRole("menu")).toBeNull();
   });
 });

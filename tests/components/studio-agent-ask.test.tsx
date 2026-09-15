@@ -17,7 +17,7 @@ import React from "react";
  * stubs `@/components/CommandPalette`, and it overrides `use-tab-manager`. `mock.module`
  * is process-wide and those stubs are registered at module scope, so a test in that
  * file cannot see the real hook, the real palette item, or the real tab. Hence a second
- * file, in its own isolation group (tests/run-components.sh), which mocks LESS:
+ * file, which the runner gives a process of its own like every other, and which mocks LESS:
  *
  *   real: the command palette and its item, `use-tab-manager`, `use-agent-prefill`
  *         (so the id minting and the objective clamp actually run), and Studio's own
@@ -200,6 +200,10 @@ mock.module("@/lib/storage", () => ({
     // Read by the REAL command palette when it opens.
     getSavedQueries: mock(() => [] as unknown[]),
     getHistory: mock(() => [] as unknown[]),
+    getFavoriteConnectionIds: mock(() => [] as string[]),
+    toggleFavoriteConnection: mock(() => [] as string[]),
+    getConnectionOrder: mock(() => [] as string[]),
+    setConnectionOrder: mock(() => {}),
   },
 }));
 

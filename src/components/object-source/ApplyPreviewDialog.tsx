@@ -216,8 +216,15 @@ function applyFrame(state: ApplyPreviewState): {
     return { title: "The engine refused this change", disposition: unchanged, preimageIsCurrent: true };
   }
   if (outcome.outcome === "interrupted") {
+    // The TITLE splits on `committed` as well, and X20 is why. `rolled-back` is claimable only by
+    // a provider that opened and closed the transaction itself, so there the engine really did
+    // stop the statement. On `unknown` nothing observed the engine at all, and a title naming a
+    // stopped statement is the loudest copy of a claim nobody measured. See `OutcomeRegion`.
     return {
-      title: "This apply was stopped before it finished",
+      title:
+        outcome.committed === "rolled-back"
+          ? "This apply was stopped before it finished"
+          : "This apply's outcome is unknown",
       disposition:
         outcome.committed === "rolled-back"
           ? unchanged
@@ -246,6 +253,62 @@ function applyFrame(state: ApplyPreviewState): {
   // cannot exclude it, and a success wearing "Nothing runs until you press Apply." is the exact
   // defect this function exists to remove.
   return { title: "This apply is done", disposition: "The new definition is on the server.", preimageIsCurrent: false };
+}
+
+/**
+ * The widget lets go of its two models before anything disposes them (#789 Phase 3, X21).
+ *
+ * MEASURED in Chromium on 2026-09-14, on EVERY successful apply driven through the UI:
+ * `TextModel got disposed before DiffEditorWidget model got reset`. NO COUNT is claimed for it and
+ * X21's "one console error per apply" is not repeated: `diffEditorWidget.js:233-240` subscribes
+ * `onWillDispose` to BOTH models, so the sentence is raised once per model DISPOSAL rather than
+ * once per apply, and the browser reading was of the sentence's presence.
+ * `@monaco-editor/react`'s unmount reads `editor.getModel()`, disposes `original` and `modified`
+ * unless the two keep flags are set, and disposes the widget LAST, so both models go while the
+ * widget still holds them and Monaco's own disposal path writes that line. Nothing is visible to
+ * the reader and nothing is lost; it is noise on the exact channel this phase's CSP assertion
+ * reads, and a page-error assertion added later would break on it.
+ *
+ * So this releases them first and then disposes them itself. The keep flags stay FALSE, which
+ * keeps the wrapper the backstop: if this cleanup never ran, the wrapper would still dispose both
+ * models and the failure would be one console line rather than the roughly 2 MB of retained text
+ * per opened preview the browser probe measured when nothing disposed them.
+ *
+ * A COMPONENT and not an effect in `ApplyPreviewDialog`, and the reason is React's unmount order.
+ * React destroys a deleted subtree's effects from the top down, so a cleanup on the PARENT of
+ * `DiffEditor` always runs before the wrapper's own. An effect on the dialog has that order only
+ * when the whole dialog is deleted: when the diff alone goes, the preview expiring under an open
+ * dialog, the deleted child's effects are destroyed before the surviving parent's, which is the
+ * wrong way round for exactly the case this is correcting.
+ */
+function ReleasedDiffEditor({
+  editorRef,
+  decorationsRef,
+  children,
+}: {
+  readonly editorRef: React.RefObject<{
+    readonly diff: Monaco.editor.IStandaloneDiffEditor;
+    readonly monaco: typeof Monaco;
+  } | null>;
+  readonly decorationsRef: React.RefObject<Monaco.editor.IEditorDecorationsCollection | null>;
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  useEffect(
+    () => () => {
+      const mounted = editorRef.current;
+      if (mounted === null) return;
+      editorRef.current = null;
+      // The collection lives on the modified model, so it dies with it. Left set, a remount would
+      // paint through a collection whose model is gone.
+      decorationsRef.current = null;
+      const models = mounted.diff.getModel();
+      mounted.diff.setModel(null);
+      models?.original.dispose();
+      models?.modified.dispose();
+    },
+    [editorRef, decorationsRef],
+  );
+  return <>{children}</>;
 }
 
 /** The warning grammar the pane already uses for a truncated part (`ObjectSourceView.tsx:491-497`). */
@@ -397,10 +460,12 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
    * be sent and a diff of it would be a preview of an impossible apply. The population is the
    * EMBEDDED seam and not the standalone one: the standalone path is bounded at the build route
    * and again at the apply route, while an embedded host's `objectEditor.build` passes through no
-   * route at all, and `isObjectEditPlanShape` bounds NO string. A 50 MB `unit.steps[0].text` is a
-   * well-formed plan by that predicate, and handing it to a Monaco model hangs the host's tab
-   * before the reader ever sees a preview. The measured cost of getting this wrong is the tab, so
-   * the answer is a sentence rather than a model.
+   * route at all. Since D80 `isObjectEditPlanShape` does bound that text, but at
+   * `EDIT_BODY_BYTE_LIMIT` (8,388,608) and deliberately looser than the routes, so the band between
+   * that number and this one is still a well-formed plan no apply could ever send. A
+   * `unit.steps[0].text` of eight million characters is such a plan, and handing it to a Monaco
+   * model hangs the host's tab before the reader ever sees a preview. The measured cost of getting
+   * this wrong is the tab, so the answer is a sentence rather than a model.
    *
    * `planExecutableLength` is in the maximum as well as the two diff sides, because the command
    * arm's verb and arguments are also host-supplied and are also rendered.
@@ -583,30 +648,32 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
                 </span>
               </div>
               <div className="h-72">
-                <DiffEditor
-                  original={diffOriginal}
-                  modified={diffModified}
-                  language={diffLanguage}
-                  originalModelPath={`libredb-apply-original:${address}/${partId}`}
-                  modifiedModelPath={`libredb-apply-modified:${address}/${partId}`}
-                  theme={theme === "light" ? STUDIO_THEME_LIGHT : STUDIO_THEME_DARK}
-                  beforeMount={defineStudioThemes}
-                  onMount={(diff, monaco) => {
-                    editorRef.current = { diff, monaco };
-                    paintRanges();
-                  }}
-                  options={{
-                    // WCAG 2.1.2: without this the diff is a keyboard trap, because Tab inserts a
-                    // tab character instead of moving focus out of the control.
-                    tabFocusMode: true,
-                    readOnly: true,
-                    originalEditable: false,
-                    renderSideBySide: true,
-                    automaticLayout: true,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                  }}
-                />
+                <ReleasedDiffEditor editorRef={editorRef} decorationsRef={decorationsRef}>
+                  <DiffEditor
+                    original={diffOriginal}
+                    modified={diffModified}
+                    language={diffLanguage}
+                    originalModelPath={`libredb-apply-original:${address}/${partId}`}
+                    modifiedModelPath={`libredb-apply-modified:${address}/${partId}`}
+                    theme={theme === "light" ? STUDIO_THEME_LIGHT : STUDIO_THEME_DARK}
+                    beforeMount={defineStudioThemes}
+                    onMount={(diff, monaco) => {
+                      editorRef.current = { diff, monaco };
+                      paintRanges();
+                    }}
+                    options={{
+                      // WCAG 2.1.2: without this the diff is a keyboard trap, because Tab inserts a
+                      // tab character instead of moving focus out of the control.
+                      tabFocusMode: true,
+                      readOnly: true,
+                      originalEditable: false,
+                      renderSideBySide: true,
+                      automaticLayout: true,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                    }}
+                  />
+                </ReleasedDiffEditor>
               </div>
             </div>
           )}
@@ -769,13 +836,44 @@ function OutcomeRegion({
           : `A different object was created and LibreDB did not remove it: \`${outcome.wrote}\`.`,
     );
   } else if (outcome.outcome === "interrupted") {
-    // No retry on this arm at any status, and that is the point of the arm: MEASURED, a PostgreSQL
-    // DDL timeout answers HTTP 499 and a Trino one answers 408 with `retryable: true`, and a client
-    // that retries an apply whose disposition is unknown applies twice.
+    /*
+     * No retry on this arm at any status, and that is the point of the arm: MEASURED, a PostgreSQL
+     * DDL timeout answers HTTP 499 and a Trino one answers 408 with `retryable: true`, and a client
+     * that retries an apply whose disposition is unknown applies twice.
+     *
+     * The two `committed` values get DIFFERENT first lines, and X20 is why. `rolled-back` may be
+     * claimed only by a provider that opened and closed the transaction itself, so there something
+     * watched the engine stop the statement and roll it back. `unknown` is everything else, and
+     * "The engine stopped this statement before it finished" was a claim nobody measured for it.
+     *
+     * The replacement clause says the DISPOSITION and nothing about the transport, because the
+     * transport is the half this arm cannot know either way. `src/lib/db/types.ts` describes what a
+     * PROVIDER mints here, a timeout, a cancellation, a dropped socket or a throw out of
+     * `applyObjectEdit`, and it is not the whole population: `ObjectSourceView.landApplyError`
+     * turns EVERY rejection of `applier.apply` except `EDIT_PLAN_INVALID` into this arm, and
+     * `source-applier.postJson` rejects on every non-ok status carrying the route's own sentence,
+     * so a proxy's 502 arrives here WITH the answer it produced, printed on the very next line.
+     * Trino is the second such member: `TRINO_APPLY_VERDICT` maps `timeout` and `cancelled` to
+     * `interrupted` from the coordinator's own `EXCEEDED_TIME_LIMIT` and `ADMINISTRATIVELY_KILLED`
+     * fault names. Pointing the other way, "the apply was sent" is equally unmeasured: an
+     * `appFetch` rejection on a dead network reaches this arm too, and `applyFrame` above already
+     * tells the same reader "Whether it reached the server is unknown." So the one thing true of
+     * every member is that LibreDB holds no answer that settles whether the change landed.
+     *
+     * X20 offered a SEVENTH STATE or a PER-OUTCOME SENTENCE OVERRIDE and this file takes neither,
+     * because both put the fix in the caller. `ApplyPreviewState` is this component's type but the
+     * only mount that builds it is `ObjectSourceView`, so a seventh `kind` ships an arm nothing
+     * reaches and an override prop ships a parameter nothing passes, and in both the shipped
+     * product keeps printing the wrong clause. The defect is a sentence this file writes about a
+     * discriminant this file already reads, so it is fixed where it is written. The cost if that
+     * is wrong: every `unknown` member now reads alike on the first line and they are told apart
+     * only by `outcome.sentence` on the second, which is where each one's own answer, or the
+     * pane's wording for the answer it could not read, already is.
+     */
     lines.push(
       outcome.committed === "rolled-back"
         ? "The engine stopped this statement before it finished, and this apply rolled it back, so nothing was applied."
-        : "The engine stopped this statement before it finished. Whether it was applied is unknown.",
+        : "Whether it was applied is unknown: LibreDB has no answer that says whether it landed.",
     );
     lines.push(outcome.sentence);
   } else {

@@ -839,6 +839,20 @@ describe("CLI (subprocess against temp fixtures)", () => {
   });
 });
 
+/**
+ * A case that starts a node process and makes an HTTP round trip to a server in this
+ * process, which bun's 5000 ms per-test default is not sized for. Measured on
+ * windows-latest on 2026-09-15, with the suite running four files at once: "a reachable
+ * remote pin is compared like a local one" took 4480 ms end to end and failed, most of
+ * that spent inside a 3000 ms fetch budget the test itself had set.
+ *
+ * That fetch budget is gone rather than raised. No case here needs a fetch to time out:
+ * every failure it exercises answers at once, with a refused connection or a status
+ * code, so a short budget could only ever fail the SUCCESS path on a slow machine. The
+ * script's own default applies instead, which is also what a real run gets.
+ */
+const spawnTest = (name: string, body: () => Promise<void>) => test(name, body, 30_000);
+
 describe("CLI (remote pins against a local server)", () => {
   const fixtureRoots: string[] = [];
   const servers: Array<{ stop: () => void }> = [];
@@ -884,7 +898,7 @@ describe("CLI (remote pins against a local server)", () => {
   // in-process Bun.serve fixture, so the remote tests spawn asynchronously.
   async function runCheckAsync(root: string) {
     const proc = Bun.spawn(["node", SCRIPT, "--root", root], {
-      env: { ...process.env, GITHUB_STEP_SUMMARY: "", DISTRIBUTION_CHECK_TIMEOUT_MS: "3000" },
+      env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -896,7 +910,7 @@ describe("CLI (remote pins against a local server)", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test("a reachable remote pin is compared like a local one", async () => {
+  spawnTest("a reachable remote pin is compared like a local one", async () => {
     const url = serve(() => new Response("image: ghcr.io/libredb/libredb-studio:0.9.27\n"));
     const result = await runCheckAsync(remoteFixture(url));
     expect(result.exitCode).toBe(0);
@@ -904,14 +918,14 @@ describe("CLI (remote pins against a local server)", () => {
     expect(result.stdout).toContain("0.9.27");
   });
 
-  test("a failing remote fetch degrades to UNKNOWN and still exits 0", async () => {
+  spawnTest("a failing remote fetch degrades to UNKNOWN and still exits 0", async () => {
     const url = serve(() => new Response("boom", { status: 500 }));
     const result = await runCheckAsync(remoteFixture(url));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("UNKNOWN");
   });
 
-  test("an unreachable host degrades to UNKNOWN and still exits 0", async () => {
+  spawnTest("an unreachable host degrades to UNKNOWN and still exits 0", async () => {
     // Port 1 is reserved and closed: connection refused, no timeout wait.
     const result = await runCheckAsync(remoteFixture("http://127.0.0.1:1/pin.yml"));
     expect(result.exitCode).toBe(0);
@@ -946,7 +960,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
 
   async function runCheckAsync(root: string) {
     const proc = Bun.spawn(["node", SCRIPT, "--root", root], {
-      env: { ...process.env, GITHUB_STEP_SUMMARY: "", DISTRIBUTION_CHECK_TIMEOUT_MS: "3000" },
+      env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -995,7 +1009,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     });
   }
 
-  test("GHCR latest pointing at the released version is OK", async () => {
+  spawnTest("GHCR latest pointing at the released version is OK", async () => {
     const base = registry({ latest: "sha256:same", "0.9.53": "sha256:same" });
     const result = await runCheckAsync(probeFixture(ghcrRow(base)));
     expect(result.exitCode).toBe(0);
@@ -1003,7 +1017,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     expect(result.stdout).toContain("0.9.53");
   });
 
-  test("GHCR latest still pointing at the previous image is DRIFT with both digests", async () => {
+  spawnTest("GHCR latest still pointing at the previous image is DRIFT with both digests", async () => {
     const base = registry({ latest: "sha256:previous", "0.9.53": "sha256:current" });
     const result = await runCheckAsync(probeFixture(ghcrRow(base)));
     expect(result.stdout).toContain("| DRIFT | docker-ghcr |");
@@ -1011,20 +1025,20 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     expect(result.stdout).toContain("sha256:current");
   });
 
-  test("a GHCR token exchange that fails degrades to UNKNOWN", async () => {
+  spawnTest("a GHCR token exchange that fails degrades to UNKNOWN", async () => {
     const base = serveBase(() => new Response("no token for you", { status: 403 }));
     const result = await runCheckAsync(probeFixture(ghcrRow(base)));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("| UNKNOWN | docker-ghcr |");
   });
 
-  test("an unreachable registry degrades to UNKNOWN, never drift", async () => {
+  spawnTest("an unreachable registry degrades to UNKNOWN, never drift", async () => {
     const result = await runCheckAsync(probeFixture(ghcrRow("http://127.0.0.1:1")));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("| UNKNOWN | docker-ghcr |");
   });
 
-  test("a Docker Hub mirror missing the released tag is DRIFT - the silently skipped push", async () => {
+  spawnTest("a Docker Hub mirror missing the released tag is DRIFT - the silently skipped push", async () => {
     const base = serveBase((req) => {
       const ref = new URL(req.url).pathname.split("/").pop();
       return ref === "latest" ? Response.json({ digest: "sha256:stale" }) : new Response("not found", { status: 404 });
@@ -1076,24 +1090,27 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
 `;
   }
 
-  test("the Snap Store stable channel is measured per architecture and the device-series header is sent", async () => {
-    const seenHeaders: Array<string | null> = [];
-    const base = serveBase((req) => {
-      seenHeaders.push(req.headers.get("snap-device-series"));
-      return Response.json({
-        "channel-map": [
-          { channel: { track: "latest", risk: "stable", architecture: "amd64" }, version: "0.9.53" },
-          { channel: { track: "latest", risk: "stable", architecture: "arm64" }, version: "0.9.53" },
-          { channel: { track: "latest", risk: "edge", architecture: "amd64" }, version: "0.9.40" },
-        ],
+  spawnTest(
+    "the Snap Store stable channel is measured per architecture and the device-series header is sent",
+    async () => {
+      const seenHeaders: Array<string | null> = [];
+      const base = serveBase((req) => {
+        seenHeaders.push(req.headers.get("snap-device-series"));
+        return Response.json({
+          "channel-map": [
+            { channel: { track: "latest", risk: "stable", architecture: "amd64" }, version: "0.9.53" },
+            { channel: { track: "latest", risk: "stable", architecture: "arm64" }, version: "0.9.53" },
+            { channel: { track: "latest", risk: "edge", architecture: "amd64" }, version: "0.9.40" },
+          ],
+        });
       });
-    });
-    const result = await runCheckAsync(probeFixture(snapRow(base)));
-    expect(seenHeaders).toEqual(["16"]);
-    expect(result.stdout).toContain("| OK | snap |");
-  });
+      const result = await runCheckAsync(probeFixture(snapRow(base)));
+      expect(seenHeaders).toEqual(["16"]);
+      expect(result.stdout).toContain("| OK | snap |");
+    },
+  );
 
-  test("one lagging Snap architecture is DRIFT even though the other is current", async () => {
+  spawnTest("one lagging Snap architecture is DRIFT even though the other is current", async () => {
     const base = serveBase(() =>
       Response.json({
         "channel-map": [
@@ -1107,7 +1124,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     expect(result.stdout).toContain("arm64=0.9.40");
   });
 
-  test("a Snap Store error degrades to UNKNOWN", async () => {
+  spawnTest("a Snap Store error degrades to UNKNOWN", async () => {
     const base = serveBase(() => new Response("maintenance", { status: 503 }));
     const result = await runCheckAsync(probeFixture(snapRow(base)));
     expect(result.exitCode).toBe(0);
@@ -1162,33 +1179,33 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
 `;
   }
 
-  test("winget is measured by the highest version its catalog enumerates", async () => {
+  spawnTest("winget is measured by the highest version its catalog enumerates", async () => {
     const base = serveBase(() => Response.json([{ name: ".validation" }, { name: "0.9.40" }, { name: "0.9.53" }]));
     const result = await runCheckAsync(probeFixture(wingetRow(base)));
     expect(result.stdout).toContain("| OK | winget |");
   });
 
-  test("a winget catalog stuck on an older version is DRIFT", async () => {
+  spawnTest("a winget catalog stuck on an older version is DRIFT", async () => {
     const base = serveBase(() => Response.json([{ name: "0.9.40" }]));
     const result = await runCheckAsync(probeFixture(wingetRow(base)));
     expect(result.stdout).toContain("| DRIFT | winget |");
     expect(result.stdout).toContain("0.9.40");
   });
 
-  test("a winget catalog listing that cannot be read degrades to UNKNOWN", async () => {
+  spawnTest("a winget catalog listing that cannot be read degrades to UNKNOWN", async () => {
     const base = serveBase(() => new Response("rate limited", { status: 429 }));
     const result = await runCheckAsync(probeFixture(wingetRow(base)));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("| UNKNOWN | winget |");
   });
 
-  test("two catalog listings that agree are one OK row", async () => {
+  spawnTest("two catalog listings that agree are one OK row", async () => {
     const base = serveBase(() => Response.json([{ name: "ci.yaml" }, { name: "0.9.53" }]));
     const result = await runCheckAsync(probeFixture(twoCatalogRow(base)));
     expect(result.stdout).toContain("| OK | operatorhub-community |");
   });
 
-  test("one lagging catalog is DRIFT naming both listings", async () => {
+  spawnTest("one lagging catalog is DRIFT naming both listings", async () => {
     const base = serveBase((req) =>
       Response.json(new URL(req.url).pathname === "/hub" ? [{ name: "0.9.40" }] : [{ name: "0.9.53" }]),
     );
@@ -1198,7 +1215,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     expect(result.stdout).toContain("openshift-console=0.9.53");
   });
 
-  test("an unreadable listing names which catalog failed", async () => {
+  spawnTest("an unreadable listing names which catalog failed", async () => {
     const base = serveBase((req) =>
       new URL(req.url).pathname === "/hub"
         ? new Response("rate limited", { status: 429 })
@@ -1209,7 +1226,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     expect(result.stdout).toContain("operatorhub-io: catalog listing unavailable");
   });
 
-  test("a listing with no published version names which catalog is empty", async () => {
+  spawnTest("a listing with no published version names which catalog is empty", async () => {
     const base = serveBase((req) =>
       Response.json(new URL(req.url).pathname === "/hub" ? [{ name: "ci.yaml" }] : [{ name: "0.9.53" }]),
     );

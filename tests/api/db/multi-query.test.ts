@@ -467,7 +467,12 @@ describe("POST /api/db/multi-query", () => {
       expect(mockProvider.prepareQuery).toHaveBeenCalledWith(finalStatement, { limit: 50 });
       // The response echoes the original text, so the engine-visible bound is the
       // only honest assertion that the statement was actually limited.
-      expect(mockProvider.query).toHaveBeenCalledWith(`${finalStatement} LIMIT 50`);
+      expect(mockProvider.query).toHaveBeenCalledWith(
+        `${finalStatement} LIMIT 50`,
+        undefined,
+        undefined,
+        expect.any(String),
+      );
     });
 
     test("final statement that is not a SELECT is executed unprepared", async () => {
@@ -482,7 +487,12 @@ describe("POST /api/db/multi-query", () => {
       await POST(req as never);
 
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
-      expect(mockProvider.query).toHaveBeenCalledWith("-- annotated write\nUPDATE users SET name = 'b'");
+      expect(mockProvider.query).toHaveBeenCalledWith(
+        "-- annotated write\nUPDATE users SET name = 'b'",
+        undefined,
+        undefined,
+        expect.any(String),
+      );
     });
 
     test("non-final SELECT is executed unprepared", async () => {
@@ -497,7 +507,12 @@ describe("POST /api/db/multi-query", () => {
       await POST(req as never);
 
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
-      expect(mockProvider.query).toHaveBeenCalledWith("-- first read\nSELECT * FROM a");
+      expect(mockProvider.query).toHaveBeenCalledWith(
+        "-- first read\nSELECT * FROM a",
+        undefined,
+        undefined,
+        expect.any(String),
+      );
     });
 
     test("comment-led final read-only CTE is prepared", async () => {
@@ -513,7 +528,12 @@ describe("POST /api/db/multi-query", () => {
 
       await POST(req as never);
 
-      expect(mockProvider.query).toHaveBeenCalledWith(`${finalStatement} LIMIT 50`);
+      expect(mockProvider.query).toHaveBeenCalledWith(
+        `${finalStatement} LIMIT 50`,
+        undefined,
+        undefined,
+        expect.any(String),
+      );
     });
 
     test("comment-led final data-modifying CTE is executed unprepared", async () => {
@@ -533,7 +553,7 @@ describe("POST /api/db/multi-query", () => {
       await POST(req as never);
 
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
-      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement);
+      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement, undefined, undefined, expect.any(String));
     });
 
     // The route resolves its connection before it asks the classifier, so it asks
@@ -556,7 +576,7 @@ describe("POST /api/db/multi-query", () => {
       await POST(req as never);
 
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
-      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement);
+      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement, undefined, undefined, expect.any(String));
     });
   });
 
@@ -667,6 +687,43 @@ describe("POST /api/db/multi-query", () => {
 
     expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
     expect("openTransaction" in data).toBe(false);
+  });
+
+  test("every statement and the ender run under ONE scope, this request's own (D87)", async () => {
+    // The ender can only reach the clients the scope it is given ran on, so a script whose
+    // statements ran under one scope and whose ender named another would end nothing —
+    // and a script sharing a scope with another request would end that request's work.
+    // MEASURED 2026-09-15 on PostgreSQL 18.4: with one shared pointer instead of a scope,
+    // a plain read on /api/db/query rolled this route's script back mid-script while the
+    // script was told all four of its statements had succeeded.
+    const endOpenQueryTransaction = mock(async (_scope: string) => "rolled-back" as const);
+    mockGetOrCreateProvider.mockImplementation(async () => ({ ...mockProvider, endOpenQueryTransaction }) as never);
+
+    const first = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "BEGIN; INSERT INTO t VALUES (1); SELECT 1" },
+      }) as never,
+    );
+    expect(first.status).toBe(200);
+
+    const scopes = (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[3]);
+    expect(scopes).toHaveLength(3);
+    expect(new Set(scopes).size).toBe(1);
+    expect(typeof scopes[0]).toBe("string");
+    expect(endOpenQueryTransaction).toHaveBeenLastCalledWith(scopes[0]);
+
+    // And the next request is a different one: a scope is this request's own.
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1" },
+      }) as never,
+    );
+    const second = (mockProvider.query as ReturnType<typeof mock>).mock.calls[0][3];
+    expect(second).not.toBe(scopes[0]);
+    expect(endOpenQueryTransaction).toHaveBeenLastCalledWith(second);
   });
 
   test("a provider that cannot end one is asked nothing and answers as before", async () => {

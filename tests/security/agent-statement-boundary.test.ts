@@ -324,7 +324,7 @@ describe("agent statement boundary — layer (b): SQLite refuses the same statem
 
   afterAll(async () => {
     if (profile?.isConnected()) await profile.disconnect();
-    rmSync(SCRATCH, { recursive: true, force: true });
+    rmSync(SCRATCH, { recursive: true });
   });
 
   const sqliteAttacks = ATTACKS.filter((attack) => attack.sqlite !== undefined);

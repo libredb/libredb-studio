@@ -432,7 +432,11 @@ describe("resolveAgentAvailability under concurrency", () => {
     // re-pointing WORKFLOW_LOCAL_DATA_DIR while a probe is in flight — neither of
     // which the memo can de-duplicate.
     const alias = path.join(freshLedgerDir(), "alias");
-    fs.symlinkSync(dataDir, alias);
+    // "junction", not the default: fs.symlinkSync with no type creates a FILE symlink on Windows
+    // even when the target is a directory, and any symlink there needs a privilege a normal shell
+    // does not hold. A junction is a directory link that needs none and reaches the same inode,
+    // which is the whole point of the alias here. Ignored on POSIX, where the type is not used.
+    fs.symlinkSync(dataDir, alias, "junction");
 
     // Hold both probes at the point where each has written its file and neither has
     // removed it. A probe filename that is constant for the process lifetime cannot
@@ -740,7 +744,8 @@ describe("getAgentRuntimeConfig", () => {
 // ─── operator documentation ─────────────────────────────────────────────────
 
 describe(".env.example", () => {
-  const envExample = fs.readFileSync(path.join(process.cwd(), ".env.example"), "utf8");
+  // Anchored to this file rather than to process.cwd(), so the read is correct whoever launches it.
+  const envExample = fs.readFileSync(path.resolve(import.meta.dir, "../../../..", ".env.example"), "utf8");
 
   test.each([AGENT_ENABLED_ENV, AGENT_WORLD_TARGET_ENV])("documents %s", (key) => {
     expect(envExample).toContain(key);

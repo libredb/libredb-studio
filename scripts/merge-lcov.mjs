@@ -31,7 +31,13 @@ function parseLcov(content) {
 
     for (const line of lines) {
       if (line.startsWith("SF:")) {
-        record.sf = line.slice(3);
+        // bun writes the path with the host separator, so the same file is
+        // `src/lib/db/factory.ts` on Linux and macOS and `src\lib\db\factory.ts`
+        // on Windows. Normalising here is what lets a Windows contributor's
+        // `bun run test:coverage` produce the same report as CI's: unnormalised,
+        // the two spellings merge as two files and the `src/` filter below drops
+        // both, leaving an empty report.
+        record.sf = line.slice(3).replaceAll("\\", "/");
         continue;
       }
 
@@ -285,15 +291,46 @@ function serializeRecords(records) {
   return chunks.join("\n");
 }
 
-function main() {
-  const [, , ...args] = process.argv;
-  if (args.length < 3) {
-    console.error("Usage: node scripts/merge-lcov.mjs <input1> <input2> [moreInputs...] <output>");
+/**
+ * The inputs, either spelled out in argv or listed one per line in a manifest.
+ *
+ * The manifest exists because the test runner merges one report per test file:
+ * over 500 paths, which is most of the 32767-character command line Windows
+ * allows. An empty manifest raises rather than producing an empty report.
+ */
+function resolveInputs(args) {
+  const manifestArg = args.find((arg) => arg.startsWith("--inputs-from="));
+  if (!manifestArg) return { inputPaths: args.slice(0, -1), outputPath: args[args.length - 1] };
+
+  const manifestPath = manifestArg.slice("--inputs-from=".length);
+  const inputPaths = fs
+    .readFileSync(manifestPath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (inputPaths.length === 0) {
+    console.error(`No input reports listed in ${manifestPath}`);
     process.exit(1);
   }
 
-  const outputPath = args[args.length - 1];
-  const inputPaths = args.slice(0, -1);
+  const rest = args.filter((arg) => arg !== manifestArg);
+  if (rest.length !== 1) {
+    console.error("Usage: node scripts/merge-lcov.mjs --inputs-from=<manifest> <output>");
+    process.exit(1);
+  }
+  return { inputPaths, outputPath: rest[0] };
+}
+
+function main() {
+  const [, , ...args] = process.argv;
+  const usesManifest = args.some((arg) => arg.startsWith("--inputs-from="));
+  if (args.length < (usesManifest ? 2 : 3)) {
+    console.error("Usage: node scripts/merge-lcov.mjs <input1> <input2> [moreInputs...] <output>");
+    console.error("   or: node scripts/merge-lcov.mjs --inputs-from=<manifest> <output>");
+    process.exit(1);
+  }
+
+  const { inputPaths, outputPath } = resolveInputs(args);
   const allRecords = [];
 
   for (const inputPath of inputPaths) {

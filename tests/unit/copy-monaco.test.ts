@@ -70,7 +70,10 @@ describe("copy-monaco CLI", () => {
     const proc = Bun.spawnSync(["node", script], { cwd: root });
 
     expect(proc.exitCode).toBe(0);
-    expect(proc.stdout.toString()).toContain("public/monaco/vs");
+    // The script prints path.relative(cwd, target) (scripts/copy-monaco.mjs:54), and target is
+    // built with path.join, so the separator is the platform's: "public\\monaco\\vs" on Windows.
+    // Build the expected fragment the same way instead of hardcoding a POSIX spelling.
+    expect(proc.stdout.toString()).toContain(join("public", "monaco", "vs"));
   });
 
   test("exits 1 with an actionable message when the dependency is missing", () => {

@@ -253,6 +253,19 @@ facts was re-measured over Hrana rather than assumed:
 | `''` escapes a quote | **Yes** — `SELECT 'it''s'` answers `it's` |
 | `hex(X'0102deadbeef')` | `0102DEADBEEF`; `typeof(X'')` is `blob`, `length(X'')` is 0 |
 
+### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
+
+The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
+`sqlite.ts` is the closest relative here and it does implement it, which is exactly why the difference is worth writing down: **the engine has no transaction to leave open** on anything this provider holds.
+
+Hrana keeps a server-side stream alive between requests and hands back a `baton` to continue it.
+This transport appends `{ "type": "close" }` to the statements of every pipeline and ignores both `baton` and `base_url` ([`hrana-transport.ts`](../../src/lib/db/providers/sql/libsql/hrana-transport.ts)), so the stream a statement ran on is gone before the response is read.
+That is the same decision as `supportsTransactions: false` ([§3.5](#35-the-server-refuses-four-statements-so-four-controls-are-withheld) lists what else it costs) and as the interactive controls this provider withholds: the `baton` is the feature an interactive transaction would consume, and nothing here consumes it.
+So a `BEGIN` has no stream to outlive, and the next request opens a new one.
+
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+
+
 ---
 
 ## 4. Connection

@@ -66,6 +66,14 @@ describe("shared keyboard shortcuts", () => {
     expect(monacoKeybinding(SHORTCUTS.commandPalette, monaco)).toBe(2089);
   });
 
+  // Both refusals are transient and reader-visible, so the published description names both: the
+  // rename input (#745) and the object-apply window (D82). X27 shipped with only the first.
+  test("the new-tab description names both windows in which the shortcut is refused", () => {
+    expect(SHORTCUTS.newTab.description).toBe(
+      "open a new query tab (except while renaming a tab or while an object apply is in flight)",
+    );
+  });
+
   test("FEATURES shortcut list cannot drift from the registry", () => {
     const docs = readFileSync(new URL("../../docs/FEATURES.md", import.meta.url), "utf8");
     expect(docs).toContain(shortcutDocumentation());

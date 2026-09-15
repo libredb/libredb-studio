@@ -1012,6 +1012,20 @@ describe("QueryEditor", () => {
     expect(queryByText("Run Sel")).not.toBeNull();
   });
 
+  test("RUN SELECTION button does not use ghost variant hover styles", () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+
+    mockSelectionReturn = { isEmpty: () => false };
+    act(() => {
+      capturedSelectionCb?.();
+    });
+
+    const runSelectionButton = queryByText("Run Sel")?.closest("button");
+    expect(runSelectionButton).not.toBeNull();
+    expect(runSelectionButton?.className).not.toContain("hover:bg-accent");
+    expect(runSelectionButton?.className).not.toContain("hover:text-accent-foreground");
+  });
+
   test("COPY shows COPY SELECTION when text is selected", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 

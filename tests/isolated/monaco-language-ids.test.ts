@@ -47,17 +47,20 @@
  * Measured on monaco-editor 0.56.0, 2026-09-13: 89 basic ids, 4 rich ids, and exactly one of the
  * four rich ids (`json`) absent from the 89.
  *
- * WHY THIS FILE LIVES UNDER `tests/isolated/` (#789). It builds providers through the REAL
+ * WHAT THIS FILE CANNOT SHARE A PROCESS WITH (#789). It builds providers through the REAL
  * `createDatabaseProvider`, which is the whole point: a declaration census that read a double
  * would certify the double. Every file under `tests/api/` mocks `@/lib/db` with a
  * `createDatabaseProvider: mock()` answering undefined, and that mock reaches
  * `@/lib/db/factory` through the index re-export, so in a shared process this file reads
  * `provider.getCapabilities` off undefined. Measured 2026-09-13: alone it is green; beside
  * `tests/api/db-objects.test.ts` it is not. Nothing this file can do prevents it, because
- * mocking the factory is what the api layer is for, so the isolation sits here and
- * `tests/run-components.sh` gives it a group of its own.
+ * mocking the factory is what the api layer is for. The runner gives every test file a bun
+ * process of its own, so that isolation is already in force and this paragraph, rather than a
+ * directory or an entry in a runner script, is where the requirement is written down.
  */
 import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -65,9 +68,22 @@ import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 
-const MONACO_ROOT = "node_modules/monaco-editor";
-const BASIC_CONTRIBUTION = `${MONACO_ROOT}/min/vs/basic-languages/monaco.contribution.js`;
-const RICH_LANGUAGE_DIR = `${MONACO_ROOT}/min/vs/language`;
+/**
+ * The installed package, located through the resolver rather than by spelling out a path.
+ *
+ * `"node_modules/monaco-editor"` is relative to the cwd, and both reads below run at MODULE
+ * scope: a process that did not start in the repo root fails this file with ENOENT before a
+ * single test registers, which reads as a missing bundle rather than as a wrong cwd. Resolving
+ * from `import.meta.url` also follows a hoisted or nested install instead of assuming the flat
+ * one. `join` rather than string concatenation, so the separator is the platform's.
+ *
+ * monaco-editor's `exports` map has no `./package.json` entry, so this leans on bun's resolver
+ * answering it anyway (verified: it returns the installed package's own manifest). If that ever
+ * stops being true the failure is a named resolution error here, not a silent wrong path.
+ */
+const MONACO_ROOT = dirname(createRequire(import.meta.url).resolve("monaco-editor/package.json"));
+const BASIC_CONTRIBUTION = join(MONACO_ROOT, "min/vs/basic-languages/monaco.contribution.js");
+const RICH_LANGUAGE_DIR = join(MONACO_ROOT, "min/vs/language");
 
 /**
  * The version the two counts below are counts OF.
