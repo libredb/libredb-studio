@@ -61,6 +61,27 @@ export function useProviderMetadata(connection: DatabaseConnection | null): Prov
   /** Which read is wanted: one connection, one attempt. Null means there is nothing to read. */
   const readKey = connection === null ? null : `${attempt}:${connection.id}`;
 
+  /**
+   * Clear the previous answer for the render readKey changes ON, not the one after.
+   *
+   * An effect-based reset commits one render late: React runs this component's render
+   * with the NEW `connection` prop and the OLD `metadataState` in the same pass, because
+   * the reset only happens once the effect below fires after commit. A consumer that
+   * reads `metadata` alongside `connection` in that render (`Sidebar` passing both to
+   * `ObjectTree`) is handed the new connection's id paired with the previous one's
+   * capabilities, and `useTreeNodes` derives the shape of its first read from
+   * capabilities alone - so that one render is enough to send a read built for the
+   * wrong engine (#846). Calling `setState` here, during render, is React's own escape
+   * hatch for exactly this: it discards this render and re-runs the component
+   * immediately with the cleared state, so the mismatched pair is never committed.
+   */
+  const [clearedFor, setClearedFor] = useState(readKey);
+  if (clearedFor !== readKey) {
+    setClearedFor(readKey);
+    setMetadata(null);
+    setError(null);
+  }
+
   useEffect(() => {
     if (!connection || readKey === null) {
       lastReadKey.current = null;
@@ -77,7 +98,10 @@ export function useProviderMetadata(connection: DatabaseConnection | null): Prov
     // Callers gate controls on these capabilities (the inline-edit affordance, the
     // maintenance actions), so the previous connection's answer must not stand in
     // for this one while the new answer is in flight - that offers a control the
-    // engine rejects. Absent capabilities read as unsupported everywhere.
+    // engine rejects. Absent capabilities read as unsupported everywhere. The render
+    // above already cleared it for THIS readKey; this also covers a retry of the SAME
+    // connection (readKey changes via `attempt`, same connection id) with no extra
+    // render-time branch needed.
     setMetadata(null);
     setError(null);
     setIsLoading(true);
