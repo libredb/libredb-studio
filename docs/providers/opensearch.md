@@ -684,6 +684,29 @@ Consequences elsewhere in the product:
 Documents otherwise change through the document APIs (`_doc`, `_bulk`, `_delete_by_query`), which this
 seam does not expose.
 
+### 5.7 `endOpenQueryTransaction()` is absent, and which absence it is (D75)
+
+The optional provider surface that ends a transaction a statement left open on the session
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
+`duckdb`) is **not implemented here, because the engine has no transaction to leave open.**
+
+What was read, and measured verbatim on OpenSearch 3.8.0 through this provider:
+
+- The grammar has no transaction verb. `BEGIN`, `START TRANSACTION`, `COMMIT` and `ROLLBACK` are each
+  refused with "Query must start with SELECT, DELETE, SHOW or DESCRIBE: `<verb>`"
+  (`SQLFeatureNotSupportedException`, HTTP 400), and a `SELECT 1` on the same provider straight
+  afterwards still answers.
+- There is no session for one to live on either. The transport is one stateless
+  `POST /_plugins/_sql` per statement
+  ([`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)); the only
+  server-side state it ever holds is a paging cursor, which it closes on the way out.
+
+`DELETE` being in this grammar (§5.6) does not change the answer: the fork's `DELETE` is a
+`_delete_by_query` in SQL clothing, not a statement inside a transaction.
+
+So there is nothing for the route to end, and the absence is a declared boundary rather than a
+fallback: the caller shape-checks for the method and this provider does not answer it.
+
 ---
 
 ## 6. Schema introspection
