@@ -1,4 +1,5 @@
-import type { DatabaseConnection, SSHTunnelConfig } from "@/lib/types";
+import { TUNNEL_FAR_END } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
 
 /**
  * The bastion's ROUTE, length-framed inside its own field so a tunnel's four values cannot slide
@@ -80,6 +81,20 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * - `instanceName` is a MSSQL NAMED INSTANCE, `mssql.ts:1652-1655`, resolved by the SQL Server
  *   Browser to a different server process, typically on a port that is not the one in the record.
  *
+ * WHICH `host` AND `port`, AND WHY IT IS THE FAR END (X23). That same rewrite made the tunnelled
+ * population unable to edit anything at all: the provider framed `127.0.0.1:<ephemeral>` and the
+ * route framed the record's own address, so the compare at `edit-plan/route.ts` could never be
+ * equal and 100 percent of tunnelled connections were refused with no sentence saying why. So the
+ * factory attaches the pre-rewrite endpoint under {@link TUNNEL_FAR_END} and this walk frames THAT
+ * when it is there. The local endpoint is deliberately NOT in the frame: it is an ephemeral port
+ * on a loopback interface, which is a property of this process and not of the server.
+ *
+ * It does not widen the compare. Both sides still frame one concrete address, the bastion is still
+ * framed separately by `tunnelRoute`, and a provider built through a tunnel WITHOUT the marker
+ * still answers the local endpoint and is still refused - fail closed, never "equal if we cannot
+ * tell". What stops a caller deciding the digest with it is in {@link TUNNEL_FAR_END}'s docblock:
+ * the key is a symbol, so no stored or posted connection can carry one.
+ *
  * Every provider path in the five bullets above is relative to `src/lib/db/providers/`, and the
  * line numbers are a reading taken on 2026-09-14: they are a pointer to the branch, not a contract,
  * and the symbol named beside each is what a later reader should grep for when they drift.
@@ -93,11 +108,14 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * is this", a question that has nothing to do with which kinds an engine will take an edit for,
  * and a field added on the day an engine becomes editable is a field nobody remembers to add.
  */
-export async function connectionFingerprint(connection: DatabaseConnection): Promise<string> {
+export async function connectionFingerprint(connection: DatabaseConnection & WithTunnelFarEnd): Promise<string> {
+  // The address this connection actually reaches: the tunnel's far end when the factory
+  // rewrote the record, and the record's own otherwise. See the X23 paragraph above.
+  const farEnd = connection[TUNNEL_FAR_END];
   const framed = [
     connection.type,
-    connection.host ?? "",
-    String(connection.port ?? ""),
+    farEnd?.host ?? connection.host ?? "",
+    String(farEnd?.port ?? connection.port ?? ""),
     connection.database ?? "",
     connection.user ?? "",
     connection.connectionString ?? "",

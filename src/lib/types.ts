@@ -160,6 +160,47 @@ export interface SSHTunnelConfig {
   hostKeyFingerprint?: string;
 }
 
+/**
+ * Where an SSH tunnel's local endpoint actually forwards to: the address the record named
+ * before `src/lib/db/factory.ts` rewrote `host` and `port` (X23).
+ *
+ * SYMBOL-KEYED ON PURPOSE, and that is the whole of its access control. A plan's seal is
+ * `connectionFingerprint(provider.config)` and this value decides it, so it must not be
+ * settable by whoever stores or posts a connection. Every connection this app resolves has
+ * come through `JSON.parse` - out of `localStorage`, out of the storage provider, off a
+ * request body - and `JSON.parse` can produce no symbol key at all, while `JSON.stringify`
+ * drops one on the way back. So the only writer is server code holding this exported symbol,
+ * which is the footing `ProviderExecutionContext` was given for the same reason: a value the
+ * seal depends on cannot live somewhere a caller fills in.
+ *
+ * It is NOT the bastion. `SSHTunnelConfig` is still framed separately by `tunnelRoute`, so the
+ * same `db:5432` reached through two different machines stays two different digests.
+ */
+export const TUNNEL_FAR_END: unique symbol = Symbol("libredb.tunnelFarEnd");
+
+/** The far side of an SSH forward: the address the bastion opens on the reader's behalf. */
+export interface TunnelFarEnd {
+  readonly host: string;
+  readonly port: number;
+}
+
+/**
+ * Carries {@link TUNNEL_FAR_END} alongside a connection, and is deliberately NOT a field on
+ * `DatabaseConnection` itself.
+ *
+ * `keyof DatabaseConnection` is a WRITE LIST with three exhaustive readers -
+ * `connectionFields` in `src/hooks/use-connection-form.ts`, `CONNECTION_FIELD_RELEVANCE` in
+ * `src/hooks/use-connection-payload.ts` and `CONNECTION_FIELD_CLASSES` in
+ * `src/lib/storage/connection-secrets.ts` - and each of them answers a question about what a
+ * USER may fill in, send and have stored. This value is none of those things, so adding it
+ * there would have made all three classify something they never see. Intersecting instead keeps
+ * the optional property assignable in both directions: a plain `DatabaseConnection` satisfies
+ * it, and a carrier is still a `DatabaseConnection` everywhere one is asked for.
+ */
+export interface WithTunnelFarEnd {
+  readonly [TUNNEL_FAR_END]?: TunnelFarEnd;
+}
+
 export interface DatabaseConnection {
   id: string;
   name: string;

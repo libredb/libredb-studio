@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import type { DatabaseConnection, SSHTunnelConfig } from "@/lib/types";
+import { TUNNEL_FAR_END } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
 
 /**
  * The base connection every case below varies by exactly one field.
@@ -105,20 +106,52 @@ describe("connectionFingerprint", () => {
     );
   });
 
-  test("the tunnel-REWRITTEN twin of a connection is a different digest, which is a KNOWN GAP", async () => {
-    // Not a guard, a PIN on the arithmetic behind backlog X23, so the entry is re-derivable without
-    // an SSH server. `getOrCreateProvider` (`src/lib/db/factory.ts:485-492`) hands the provider a
-    // connection whose `host` and `port` are the tunnel's LOCAL endpoint, and `base-provider.ts:149`
-    // stores that object as `this.config`, which is what every provider fingerprints its plan with.
-    // The routes fingerprint the UNREWRITTEN record. So these two digests are the two sides of the
-    // comparison at `edit-plan/route.ts:155`, and they differ, which means an HONEST tunnelled
-    // connection can never build an object edit plan at all.
+  test("the tunnel's far end is what a rewritten connection frames (X23)", async () => {
+    // X23 WAS THE OTHER HALF OF THE SSH ASYMMETRY, and this test used to pin it as a known gap.
+    // `getOrCreateProvider` hands the provider a connection whose `host` and `port` are the
+    // tunnel's LOCAL endpoint, `base-provider.ts` stores that object as `this.config`, and every
+    // provider seals its plan with `connectionFingerprint(this.config)` - while the routes
+    // fingerprint the UNREWRITTEN record. The two could never be equal, so 100 percent of
+    // tunnelled connections were refused `EDIT_PLAN_INVALID` with no sentence saying why.
     //
-    // CODE READING and not a live drive: no bastion was stood up. What is RUN here is the digest
-    // arithmetic; the wiring above is read from the three files named.
+    // The factory now carries the pre-rewrite endpoint under `TUNNEL_FAR_END` and this walk frames
+    // it. Driven end to end through the factory in `tests/isolated/factory.test.ts` and against a
+    // real bastion in `tests/live/ssh-tunnel-edit-plan.ts`; what is RUN here is the arithmetic.
     const record = vary({ sshTunnel: BASTION });
-    const asTheProviderSeesIt = { ...record, host: "127.0.0.1", port: 54_321 };
-    expect(await connectionFingerprint(record)).not.toBe(await connectionFingerprint(asTheProviderSeesIt));
+    const asTheProviderSeesIt: DatabaseConnection & WithTunnelFarEnd = {
+      ...record,
+      host: "127.0.0.1",
+      port: 54_321,
+      [TUNNEL_FAR_END]: { host: "db.internal", port: 5432 },
+    };
+    expect(await connectionFingerprint(asTheProviderSeesIt)).toBe(await connectionFingerprint(record));
+    // FAIL CLOSED, and the control the equality above needs. Without the marker the same rewritten
+    // record still answers the local endpoint and is still refused: the compare was not widened,
+    // and nothing here falls back to "equal if we cannot tell".
+    expect(await connectionFingerprint({ ...record, host: "127.0.0.1", port: 54_321 })).not.toBe(
+      await connectionFingerprint(record),
+    );
+    // And the marker decides the ADDRESS rather than waving the check through: a far end pointing
+    // somewhere else is a different digest, so a plan sealed through one forward cannot be applied
+    // against another server.
+    expect(
+      await connectionFingerprint({ ...asTheProviderSeesIt, [TUNNEL_FAR_END]: { host: "evil.example", port: 5432 } }),
+    ).not.toBe(await connectionFingerprint(record));
+  });
+
+  test("the NON-TUNNELLED digest has not moved, byte for byte", async () => {
+    // Property 5 of the X23 ruling, and the regression that change could have caused: every plan
+    // sealed by the untunnelled population - which is nearly all of it - must keep verifying.
+    // These three literals were computed from the PRE-X23 framing, transcribed from the function
+    // as it stood at the commit before the fix, and they are hard-coded rather than recomputed so
+    // that a later edit to the walk cannot move them and stay green.
+    expect(await connectionFingerprint(BASE)).toBe("0a6ad0c796153f04028d037f3008e2192fc193c18225f1ff4bd3d82ecb754568");
+    expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).toBe(
+      "06912b0f35bc9a4af38d9589e85e8e70742acbdd208783827c9e8d8bd0aecd6d",
+    );
+    expect(await connectionFingerprint({ id: "conn-3", name: "Bare", type: "sqlite", createdAt: BASE.createdAt })).toBe(
+      "c1577a8f2f6b76941e22c93c70cbc5af78665bf543306685575dd1b7f7b4156f",
+    );
   });
 
   test("two connections differing ONLY in their URI are two different servers", async () => {
