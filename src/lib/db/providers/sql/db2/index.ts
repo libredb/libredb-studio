@@ -979,6 +979,16 @@ export class Db2Provider extends SQLBaseProvider {
    * through the CALL ADMIN_CMD interface, which is how Db2 exposes these command-line
    * utilities to SQL.
    */
+  /**
+   * A table name as it sits inside ADMIN_CMD's string argument. Two escapes, in order: the
+   * identifier's own `"` doubled for the delimited name, then every `'` doubled because the whole
+   * command is a SQL string literal. With only the first, a table called `O'Brien` ended the
+   * literal early and the rest of its name was read as SQL.
+   */
+  private adminCommandTable(target: string): string {
+    return this.escapeIdentifier(target).replaceAll("'", "''");
+  }
+
   public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
@@ -988,7 +998,7 @@ export class Db2Provider extends SQLBaseProvider {
         if (!target) {
           throw new DatabaseConfigError("A table name is required for RUNSTATS", "db2");
         }
-        const table = this.escapeIdentifier(target);
+        const table = this.adminCommandTable(target);
         await this.run(
           `CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE ${table} WITH DISTRIBUTION AND DETAILED INDEXES ALL')`,
         );
@@ -999,7 +1009,7 @@ export class Db2Provider extends SQLBaseProvider {
         if (!target) {
           throw new DatabaseConfigError("A table name is required for REORG", "db2");
         }
-        const table = this.escapeIdentifier(target);
+        const table = this.adminCommandTable(target);
         await this.run(`CALL SYSPROC.ADMIN_CMD('REORG TABLE ${table}')`);
         return { success: true, executionTime: Date.now() - start, message: `REORG completed on ${target}` };
       }

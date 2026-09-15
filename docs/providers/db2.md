@@ -488,6 +488,9 @@ The target is a bare table name, and Db2 resolves it against `CURRENT SCHEMA`.
 Measured: `RUNSTATS` on `ORDERS` from a `db2inst1` session answered `SQL2306N The table or index "DB2INST1.ORDERS" does not exist`, and succeeded once the connection string carried `CurrentSchema=APP`.
 That agrees with the Operations tab, whose table list is also read from `CURRENT SCHEMA`.
 
+The whole command is a SQL string literal, so the name is escaped twice: its `"` doubled for the delimited identifier, then every `'` doubled for the literal.
+Measured on a table named `O'Brien`: the single escape answered `SQL0010N` (an unterminated string), and the double escape ran both operations.
+
 ---
 
 ## 8. Known limitations

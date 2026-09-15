@@ -1476,6 +1476,18 @@ describe("Db2Provider readObjectSource", () => {
   });
 });
 
+describe("Db2Provider maintenance target quoting", () => {
+  test("a quote in the table name cannot end the ADMIN_CMD string literal", async () => {
+    const provider = await connectedProvider();
+    await provider.runMaintenance("analyze", "O'Brien");
+    const statement = capturedQueries.find((sql) => sql.includes("RUNSTATS")) ?? "";
+    expect(statement).toContain(`RUNSTATS ON TABLE "O''Brien"`);
+    await provider.runMaintenance("optimize", "O'Brien");
+    expect(capturedQueries.find((sql) => sql.includes("REORG"))).toContain(`REORG TABLE "O''Brien"`);
+    await provider.disconnect();
+  });
+});
+
 describe("Db2Provider object surface under a changed declaration", () => {
   // The provider reads its own declaration rather than assuming it, so each of these swaps a
   // declaration in and drives the arm only a DECLARATION can reach.
