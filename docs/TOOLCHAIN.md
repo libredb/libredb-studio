@@ -225,6 +225,69 @@ check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typ
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 
+### `bun run test` and the process-wide `mock.module()`, and where isolation has to sit
+
+`bun test` runs many files in ONE process and `mock.module()` is process-wide, which is why
+`tests/run-core.sh` gives every core file its own process and `tests/run-components.sh` groups the
+component files. CI runs both, so CI is structurally blind to a file that only passes when it loads
+a module first. `bun run test` is not: it is the command CLAUDE.md documents for pre-commit, it runs
+`bun test tests/unit tests/api tests/integration` in one process, and a contributor reads its
+failures as their own.
+
+That is not a reason to accept a red developer command. A test file that breaks it is a defect
+whether or not a gate notices, and the repair is to move the file whose assumption is unshareable
+rather than to bend the files around it.
+
+Two instances measured in #789, and the rule they establish.
+
+The first is a file that must load a module before anything else does:
+
+- `tests/isolated/factory.test.ts` mocks six native driver packages and `@/lib/ssh/tunnel`, then
+  imports `@/lib/db/factory` under a temporary `NODE_ENV=production` so the SIGTERM and SIGINT
+  handlers the module registers on load can be captured by diffing `process.listeners`. Both steps
+  happen once per process.
+- So it passes only while it is the FIRST file in its process to evaluate `@/lib/db/factory`. Any
+  earlier evaluation leaves it with an already-built module: no handler to capture, and unmocked
+  drivers behind `getOrCreateProvider`, whose cached entry throws inside the `clearProviderCache()`
+  in `beforeEach` and fails every remaining test in the file.
+- Measured 2026-09-13: the file alone is 99 pass 0 fail; adding a three-line probe under
+  `tests/unit/` whose only content is an import of `@/lib/db/factory` makes it 44 pass 56 fail. A
+  probe importing `@/lib/ssh/tunnel` or `@/lib/db/compatibility` instead reproduces nothing, and an
+  empty probe reproduces nothing. Both CLI orders give the same 56, because bun does not run test
+  files in the order they are listed.
+- It used to hold by accident: nothing else under `tests/unit` imported the factory.
+  `tests/isolated/exports-shim.test.ts` had already been moved out for the same reason, and its
+  group comment names this file by name. #789 added two `tests/unit` files that construct all
+  seventeen providers through the real factory, and a fleet census cannot do its job without
+  importing it, so the accident ran out.
+- The file therefore moved from `tests/unit/db/factory.test.ts` to `tests/isolated/factory.test.ts`
+  with its own group in `tests/run-components.sh`. `tests/unit/component-runner-coverage.test.ts`
+  makes an unregistered file in `tests/isolated/` a red test, so the isolation cannot be forgotten.
+
+The second is the mirror image: a file that must read a module the rest of a layer replaces.
+
+- `tests/isolated/object-source-declarations.test.ts` censuses what all seventeen providers
+  declare, and `tests/isolated/monaco-language-ids.test.ts` checks every declared source language
+  against the ids the installed Monaco registers. Both build providers through the REAL
+  `createDatabaseProvider`, which is the point: a census that read a double would certify the
+  double.
+- Every file under `tests/api/` mocks `@/lib/db` with a `createDatabaseProvider: mock()` that
+  answers undefined, which is that layer's standard pattern, and the mock reaches
+  `@/lib/db/factory` through the index re-export. Measured 2026-09-13: the census beside
+  `tests/api/db-objects.test.ts` is 3 fail, the language guard beside it is 1 fail, and each of
+  them alone is 0 fail.
+- Nothing either file can do prevents that, so both moved to `tests/isolated/` with a shared group.
+
+A pre-existing instance of the same class is NOT fixed and is filed as `docs/BACKLOG.md` D68: the
+same `tests/api/` mocks of `@/lib/auth` take `tests/unit/lib/auth.test.ts`,
+`tests/unit/lib/auth-jwt-config.test.ts` and `tests/unit/seed/resolve-connection.test.ts` from 0 to
+31 failures in a shared process. Measured identical at `acf50738` and on the #789 branch, so it
+predates the epic.
+
+The rule: when a test file can only pass while it is the first to load some module, it belongs in
+`tests/isolated/` with a group of its own and a docblock saying which module and what the failure
+looks like. Do not push the constraint outward onto every file that might legitimately import it.
+
 ### Dependency installation in CI
 
 Every workflow job installs dependencies through the local composite action

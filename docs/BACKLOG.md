@@ -28,19 +28,19 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 12
+- [Drivers and connections](#drivers-and-connections) — D1–D84, U17 · 42
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X12, U2–U21 · 6
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X25, U2–U21 · 18
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3, DOC4 · 2
+- [Documentation](#documentation) — DOC3–DOC5 · 3
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B75 · 21
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B80 · 24
 
 ---
 
@@ -232,9 +232,9 @@ role, not inferred from the code.
 
 Measured 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` (issue #424, Phase 0).
 Databend replies `Prepare is not support in Databend` to mysql2's prepared protocol, and that one
-answer takes `getTables()`, `getSchema()`, `getActiveSessions()`, `getTableStats()`,
-`getIndexStats()` and `getStorageStats()` - the whole object browser and every statistics panel -
-while the editor keeps working.
+answer takes the object reads, `getActiveSessions()`, `getTableStats()`, `getIndexStats()` and
+`getStorageStats()` - the whole object browser and every statistics panel - while the editor keeps
+working.
 
 **The catalogs are there.** Asked with literal SQL on the same connection,
 `information_schema.tables` returns the true 3 and 2000 rows with `data_length` 124 and 49000, and
@@ -533,6 +533,771 @@ FIELD inside a successful response is a different question and needs its own mea
 optional fields are absent rather than 0 on the refusal, each provider's doc and test move with it, and
 `maxConnections` keeps its 0 - for that field the type says 0 and absence are one fact.
 
+### D52. A Couchbase node behind a port mapping is unreachable
+
+`http-transport.ts` resolves the query service from the cluster's own node map, which is right for a
+plain deployment and wrong behind a port mapping. A node advertises its INTERNAL ports there, so a
+container published on other host ports hands back an address only the container can reach, and the
+`DEFAULT_QUERY_PORT = 8093` fallback at `http-transport.ts:484` is unreachable for the same reason.
+The connection's own port is read for management (`:367`) and never for the query service.
+
+Measured on Couchbase CE 8.0.2 during the object-model epic's live acceptance: a node published on
+38091/38093 failed while the same node on 8091/8093 worked.
+
+Reproduced on a second port pair on 2026-09-13, against Couchbase Server 8.0.2 Community published on
+host ports 18091/18093 (#789). `connect()` succeeds over the management port, and the first
+query-service call fails with `Couchbase request failed: Unable to connect. Is the computer able to
+access the url?`, because the node map advertises 8093 and nothing listens there on the host.
+Publishing 8091/8093 makes the same provider work unchanged, which is the control.
+
+Couchbase's own answer to this is `alternateAddresses.external`, which the transport already prefers
+when the cluster publishes it (`:473-477`), so an operator-configured cluster is fine today. What is
+not handled is the ordinary developer case of a stock image published on other ports, where nothing
+configures the external address and the user has already told us the port.
+
+Not fixed inside #789 because it is a transport defect with no object-model component, and that PR
+is a major already carrying seventeen providers.
+
+**Done when:** a Couchbase connection reaches the query service on a node published behind a port
+mapping, with the precedence between the node map, the external addresses and the user's own port
+stated where a reader meets it.
+
+### D54. The data profiler can only profile columns on PostgreSQL-family engines
+
+`src/app/api/db/profile/route.ts:115-116` casts every column with `${safeCol}::text` to take
+its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
+SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
+"Could not profile this column" while the row count and the column list beside it are correct.
+The failure is per column and the panel still renders, which is why it reads as a data problem
+rather than a dialect one.
+
+Measured in a browser during #789's review, on SQL Server 2022 against `shop.dbo.customers`:
+three columns, three refusals, two rows counted correctly.
+
+Pre-existing and not caused by #789: `git show main:src/app/api/db/profile/route.ts` carries the
+identical two lines. It became visible because the object tree's row menu now offers Profile on
+every relation of every engine, where the flat explorer offered it on the tables it listed.
+
+Closing it is a per-dialect text cast measured on each engine rather than a one-line change:
+Oracle has `TO_CHAR`, SQL Server `CAST(x AS NVARCHAR(MAX))`, MySQL `CAST(x AS CHAR)`, ClickHouse
+`toString`, and `MIN`/`MAX` over a cast do not order the same way everywhere, so what the two
+numbers MEAN needs stating per engine rather than assuming a lexicographic answer is wanted.
+
+**Done when:** a column profiles on every engine whose provider offers the action, or the action
+is not offered where it cannot answer, with the engine's own sentence rather than a generic one.
+
+### D55. The admin Operations table list does not print a row's schema
+
+Two tables with the same label in different schemas render as identical rows, so an operator
+choosing between them has only the deep link's own marking to tell them apart. Found while moving
+the maintenance deep link onto the object path in #789, which now carries the full address; the
+list it lands on still shows a bare name.
+
+**Done when:** a row in that list is identifiable without relying on what marked it.
+
+### D56. A Druid lookup's JSON definition is unreachable from the one URL a connection carries
+
+Fifteen of the seventeen shipped type-ids read object source under #789, measured by the census in
+`tests/isolated/object-source-declarations.test.ts`; druid and libredb are the two that read none.
+Two of Druid's three kinds have nothing to read: a datasource and a system table were never written
+down as a statement, measured from the parser's own refusal, which enumerates every statement it
+expected and includes no form of `CREATE`. The third is different. A `lookup` IS authored, as a JSON
+spec, and `GET /druid/coordinator/v1/lookups/config/{tier}/{id}` answers that spec back. Nothing in
+this product can ask for it.
+
+What SQL answers instead is the lookup's key and value PAIRS (`SELECT * FROM lookup.<name>`, columns
+`k` and `v`, measured on Apache Druid 37.0.0). Those are its content. The spec's type (`map` versus
+`cachedNamespace`), its polling period and the namespace it extracts from appear nowhere in SQL, so
+rendering the pairs under a caption that says "definition" would show a user something that is not
+the definition.
+
+Three things make this a transport change rather than a source read:
+
+- `src/lib/db/providers/sql/druid/transport.ts` publishes exactly two members, `query(sql, opts)`
+  and `close()`. `query` takes a SQL string, so no member can address any other path on the cluster.
+- `tests/unit/db/druid/seam-guard.test.ts` parses every file in the provider directory and fails the
+  build when a bare `fetch` or an endpoint path appears outside `http-transport.ts`, so provider
+  logic cannot reach around the seam either.
+- A connection carries ONE host and ONE port. A Broker-only deployment serves the SQL endpoint and no
+  Coordinator API at all, and a Router serves it only when `druid.router.managementProxy.enabled` is
+  set, which `database-compose.yml` sets for this repository's own cluster and a production
+  deployment need not. So the read has to be able to come back empty-handed for a reason about the
+  DEPLOYMENT rather than about the object, which needs a refusal sentence this provider does not
+  have.
+
+Two further things anyone taking this on has to settle before writing code, both open:
+
+- The endpoint above is DOCUMENTED against the Druid 37.0.0 API reference and was NOT measured
+  against a cluster here, so measuring it is step one.
+- Which tier to ask for. The path takes a tier, `__default` being the usual one, and a Router-only
+  deployment gives no list of tiers to a caller who has not already reached the Coordinator. Whether
+  to enumerate tiers first, or to ask `__default` and refuse by name, is the design question.
+- Writing back is not symmetrical with reading. Posting a lookup spec requires its `version` field to
+  be BUMPED, so #778's edit half cannot round-trip a read spec unchanged, and the version handling is
+  part of the work rather than a detail after it.
+
+**Done when:** a Druid lookup shows its own JSON spec, or the object surface says in the engine's own
+terms why this deployment cannot reach it.
+
+### D57. MariaDB's `package` and `sequence` folders are never drawn in the standalone tree
+
+`POST /api/db/provider-meta` reads `getCapabilities()` off a provider it never connects
+(`src/app/api/db/provider-meta/route.ts:44`, #457), and `MySQLProvider.objectKinds` is the one
+declaration in the fleet resolved from the server's own `VERSION()` string, so an unconnected
+provider answers the MySQL six and the client's copy of the declaration never gains MariaDB's two.
+The tree draws its folders from that copy (`src/components/object-tree/flatten.ts`), so the two kinds
+have no folder and their source cannot be reached from the tree.
+
+Both kinds are fully implemented behind the API: a connected provider counts, lists, describes and,
+since #789, reads the source of both. Only the client's copy is stale.
+
+The smallest correct fix reads the connected provider out of the factory cache and re-reads
+`provider-meta` once the connection is warm, about ten lines. A `peekConnectedProvider(connectionId)`
+on `factory.ts` that returns the already-connected instance opens no socket and keeps
+`tests/unit/db-tunnel-discipline.test.ts` green, measured. The design question inside it is WHEN to
+re-read: an unconditional re-read costs a round trip on all seventeen engines and changes the
+capabilities object identity, invalidating every memo keyed on it.
+
+Two limits measured while writing this. It is NOT fleet-wide: `ProviderCapabilities` has exactly
+three connection-resolved values, `objectKinds`, `supportsExplain` and `explainFormat`, so a correct
+fix also changes when the EXPLAIN affordance is offered on PostgreSQL and the four MySQL-wire
+relatives, and that is a behaviour change rather than a repair. And the embedded half cannot be
+closed the same way, because a host declares its own capabilities to `StudioWorkspace`, so closing it
+there is a published-surface change.
+
+Measured end to end 2026-09-13 against MariaDB `12.3.2-MariaDB-ubu2404` in a browser, while grounding
+#778 Phase 3: the tree drew Tables, Views, Stored Procedures, Functions, Triggers and Events and no
+Packages folder; `POST /api/db/provider-meta` answered those same six kinds; and at the same moment, for
+the same connection, `POST /api/db/objects/source` answered the package's specification and body in full.
+So the CONNECTED provider declares and serves `package`, and the declaration the CLIENT holds does not
+carry it. The object was reachable only by hand-writing a restored tab.
+
+This is load-bearing for the editing phase rather than cosmetic: any client-side predicate built on
+`provider-meta`'s answer is, on MariaDB, built on the wrong server's declaration.
+
+**Done when:** a MariaDB connection draws its Packages and Sequences folders in both shells, or the
+provider doc says which surface cannot have them and why.
+
+### D58. A ClickHouse function with a non-SQL origin has never been read live
+
+The source read's refusal arm for `ExecutableUserDefined` and `WasmUserDefined` is driven in the
+suite by a server answering an empty `create_query`, and killed by mutation, but no such function has
+ever existed on the fixture. Creating one needs a `*_function.xml` in the server configuration
+directory beside the script it runs, and `database-compose.yml` mounts neither directory.
+
+What is owed once the compose file is free to change: add a `*_function.xml` mount and a script
+directory to the clickhouse service, create one executable function in `docker/clickhouse-init/`, and
+read it back through the real provider to confirm the server answers an empty `create_query` and an
+`origin` of `ExecutableUserDefined`, which is what the refusal sentence claims.
+
+Cost if wrong: the sentence names an origin the server does not report that way, and a reader is told
+a body is an external program on a server that spells the absence differently. The Enum8 vocabulary
+is measured (`Enum8('System' = 0, 'SQLUserDefined' = 1, 'ExecutableUserDefined' = 2, 'WasmUserDefined'
+= 3)`), so only the empty-`create_query` half is unmeasured.
+
+**Done when:** one executable function exists in the fixture and its refusal is read back from a
+running server rather than from a double.
+
+### D59. A Trino materialized view has no fixture here, and the cheap route is measured shut
+
+`docker/trino-init/01-object-fixture.sql` seeds no materialized view, so the one object kind whose
+source read this repository cannot reproduce is `trino.materialized_view`. The read IS implemented
+and IS tested, against a payload captured from a live cluster, but the cluster that produced it is
+not one `database-compose.yml` can start.
+
+THE CHEAP ROUTE WAS PROBED AND REFUSED, and the measurement is the point of this entry, so the next
+attempt starts from a fact rather than from the same hope. Measured 2026-09-13 on trinodb/trino:476
+with an Iceberg JDBC catalog on PostgreSQL 18:
+
+- The JDBC catalog WORKS. `CREATE SCHEMA` answered `CREATE SCHEMA`, `CREATE TABLE
+  iceberg.warehouse.orders (id bigint, total double)` answered `CREATE TABLE`, and `INSERT INTO
+  iceberg.warehouse.orders VALUES (1, 10.0), (2, 20.0)` answered `INSERT: 2 rows`.
+- `CREATE MATERIALIZED VIEW iceberg.warehouse.order_totals AS SELECT id, total FROM
+  iceberg.warehouse.orders` answered `createMaterializedView is not supported for Iceberg JDBC
+  catalogs`.
+- Two traps on the way: Trino 476 never creates the JDBC catalog's own `iceberg_tables`, so every
+  statement fails `Cannot check and eventually update SQL schema` until the two Iceberg V1 tables are
+  created by hand; and a `file://` warehouse needs `fs.hadoop.enabled=true`, where
+  `fs.native-local.enabled` plus `local.location` refuses to START the coordinator with `Invalid
+  configuration property local.location: file does not exist: file:/data/warehouse` for a directory
+  that exists and is writable inside the container.
+- The materialized view WAS then created on an `apache/hive:4.0.1` standalone metastore, which is
+  what produced the measured `Create Materialized View` reply column.
+
+So the remaining price is a metastore service and a warehouse volume in `database-compose.yml`, and
+the decision to pay it is a compose-file decision rather than an object-surface one.
+`docs/providers/trino.md` carries the full command set meanwhile.
+
+**Done when:** `database-compose.yml` starts a cluster on which the shipped fixture creates a
+materialized view, or the provider doc is accepted as the permanent home of those commands.
+
+### D60. `countObjects` reports a MongoDB transport failure as the engine's own refusal
+
+`src/lib/db/providers/document/mongodb.ts` `countObjects` catches every `listCollections` rejection
+and answers `{ unavailable: <the error message> }` for every declared kind.
+
+Measured against mongodb 7.6.0 and MongoDB 8.2.12: only a `MongoServerError` is the server's own
+error reply. A `MongoServerSelectionError` ("connect ECONNREFUSED ...") or a `MongoNotConnectedError`
+("Client must be connected before running operations") is a transport failure the server never
+answered, and the tree then badges a folder with a socket message as though MongoDB had refused the
+read.
+
+#789 fixed this for `readObjectSource` only (`isServerErrorReply` in the same file), because
+`KindCount`'s `unavailable` arm is a contract shared by the whole fleet and one provider moving alone
+would make the fleet inconsistent.
+
+The decision to take is whether `KindCount.unavailable` means "the engine refused" fleet-wide, in
+which case every provider's count catch needs the same discrimination and a transport failure should
+raise.
+
+**Done when:** a test per provider drives a transport-shaped rejection through `countObjects` and
+asserts it raises rather than badging, and the same for `listObjects`.
+
+### D61. Elasticsearch and OpenSearch object source re-serialises the cluster's JSON, so three values are re-spelled
+
+`readObjectSource` renders a pipeline's or a template's definition with `JSON.parse` followed by
+`JSON.stringify`, because the definition is a sub-document of the endpoint's answer and there is no
+extended-JSON writer for a REST payload.
+
+Measured on Elasticsearch 9.1.4 and OpenSearch 3.8.0 on 2026-09-13 against `probe_json_edges` in
+`docker/search-init/01-object-fixture.sh`: the cluster answers `9223372036854775807` and the pane
+shows `9223372036854776000`, `1.0E30` becomes `1e+30`, and a map keyed `zz, 10, 2, aa` is rendered
+`2, 10, zz, aa`.
+
+Nothing is dropped, so `form: "complete"` is true, and both provider docs record all three under
+"Object source (#789)". A faithful rendering would need the sub-document sliced out of the response
+TEXT rather than re-serialised, which is a small JSON scanner nobody owns today.
+
+It matters for #778 Phase 3: a definition holding a long past 2^53 must not be edited and PUT back
+from the pane.
+
+**Done when:** either the pane shows the cluster's own bytes, or the edit half is refused on a
+definition whose re-serialisation is not byte-identical to what was read.
+
+### D62. Two PostgreSQL source refusals are unverified on CockroachDB and Materialize
+
+`PostgresProvider.readObjectSource` reports exactly two SQLSTATEs as a refusal part, 42883 (`pg_get_*`
+absent) and 42703 (`pg_proc.prokind` absent), and both arms exist because this type id also serves
+CockroachDB and Materialize.
+
+The sentences in `tests/integration/db/postgres-provider.test.ts` are the SHAPE PostgreSQL 18.4
+answers for a missing function and a missing column, measured; neither fork was brought up. The
+provider carries no string of its own, so a wording difference cannot break it, and what is
+unverified is only the claim that those two SQLSTATEs are what a fork answers there.
+
+**Done when:** each fork is brought up, a view's and a routine's source is asked for through the
+shipped statements, and the SQLSTATE and the sentence are recorded in `docs/providers/postgres.md`.
+If either answers a third code, that arm is a code change and not a doc change.
+
+### D63. `postgres.ts`'s `describeObject` still binds `[path[0], path[1]]`
+
+Standing ruling 5g's second spelling, in `describeObject` in
+`src/lib/db/providers/sql/postgres.ts`. It is behaviour-identical at depth 1 and silently wrong at
+depth 2, and the source read does not use it. The object-model epic assigned it to a final sweep
+rather than to the task that found it, so it is recorded here rather than left in a work file.
+
+**Done when:** the name is `path[path.length - 1]` and the container is
+`path.slice(0, containerDepth(capabilities))`, plus the two-level `spyOn` test driven all the way to
+the binds, the way `readObjectSource` is already pinned.
+
+### D64. The PostgreSQL trigger LISTING join is unpinned, so the tree could list no trigger at all
+
+`LIST_TRIGGERS_SQL` in `src/lib/db/providers/sql/postgres.ts` joins
+`pg_catalog.pg_class c ON c.oid = t.tgrelid`, which is what makes a trigger's row name its base table.
+Mutating that one column to `tgconstrrelid` leaves the whole suite green.
+
+Measured 2026-09-13: with the mutation applied, `bun test tests/integration/db/postgres-provider.test.ts`
+is 205 pass 0 fail, identical to the unmutated control. `tgconstrrelid` is 0 for every ordinary
+trigger, so a real server would join nothing and the Triggers folder would list nothing, while the
+count beside it kept counting. Nothing in the tree would say so.
+
+The SOURCE statement added by #789 IS pinned as text at
+`tests/integration/db/postgres-provider.test.ts:4393`; this is the Phase 1 LISTING statement beside
+it, which is not.
+
+**Done when:** the listing statement is pinned as text the way the source statement is, and the
+mutation above fails by name.
+
+### D65. A provider suite whose double dispatches on the statement the test builds cannot see the statement change
+
+Five mutants of one class survived the PostgreSQL suite until its first fix round: three predicate
+deletions, one relkind swap and one pretty flag. All of them are edits to statement TEXT that leave
+the binds untouched, and all are invisible to a double that routes by the `pg_get_*` function name
+the test itself constructed.
+
+#789 closed this for the SOURCE statements: each provider task pinned its own source statement as
+text and reported its mutation numbers. The Phase 1 listing and counting statements across the fleet
+were not swept the same way, and D64 is the one instance that has been measured.
+
+**Done when:** every provider's listing and counting statements are pinned as text, one assertion per
+statement, with the mutation numbers recorded rather than a sample of them.
+
+### D66. The SQLite kind-vocabulary guard scrapes source text, so a kind can be declared and unmapped
+
+The guard in `tests/unit/lib/agent/context-snapshot.test.ts` scrapes `SQLITE_OBJECT_KINDS` with a
+`{ id: "..."` regex that only matches a SINGLE-LINE entry, so a kind written across two lines drops
+out of the population the guard compares.
+
+Measured 2026-09-13, both directions. Exploding an EXISTING entry past 120 columns is a LOUD red: two
+declared ids against the agent side's four, 1 fail, "Expected - 0 / Received + 2", with `table` and
+`trigger` unmatched. So that half is safe. But adding a FIFTH kind as a multi-line entry drops it from
+the guard's population AND it is absent from `COMPOSED_KIND_WORDS`, both sides shrink together, and
+the guard passes at 1 pass 0 fail, while the same kind written on one line fails.
+
+So the defect is a kind that is declared and unmapped, not a formatter. The provider keeps its entries
+on one line so they stay scrapable and says so in a comment.
+
+**Done when:** the guard reads the declaration through
+`createDatabaseProvider("sqlite").getCapabilities()` instead of scraping source text, and a
+multi-line entry for an unmapped kind fails it.
+
+### D67. `assertObjectPathShape` is written out eight times, and four more shapes twice or three times
+
+Measured in the tree on 2026-09-13: `assertObjectPathShape` is DEFINED, not imported, in eight
+provider files (`postgres.ts`, `mysql.ts`, `oracle.ts`, `sqlite.ts`, `libsql/objects.ts`,
+`clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb.ts`). It belongs beside
+`containerDepth` in `src/lib/db/object-kinds.ts`, which is where `comparePaths` already went: that
+one was written four times, was hoisted to `src/lib/db/object-path.ts`, and is now imported by every
+caller, so the pattern is settled and only this helper is left behind.
+
+Four more shapes are duplicated verbatim by the source reads:
+
+- `OBJECT_SOURCE_SQL` and `SOURCE_CATALOG_TYPES`, twice, in `sqlite.ts` and `libsql/objects.ts`.
+- `blankDefinitionShape` and `blankDefinitionReason`, three times, in those two plus
+  `duckdb/objects.ts`. The last two carry three sentences each, so there are copies of six sentences
+  that must not drift, and only the duckdb pair is exported.
+
+libSQL IS SQLite and the two source reads are the same statement against two transports, which is why
+that pair is worth taking first.
+
+None was hoisted when it was found because concurrent implementers held the checkout and a hoist
+collides with every one of them.
+
+**Done when:** one definition of each replaces the copies, with the sqlite and libsql source read
+sharing its statement.
+
+### D68. `bun run test` is red on a shared process, and only CI's per-file isolation hides it
+
+`bun run test` is the pre-commit command CLAUDE.md documents, and it runs
+`bun test tests/unit tests/api tests/integration` in ONE bun process. `mock.module()` is
+process-wide, so a mock one layer needs reaches every file in that process. CI runs
+`tests/run-core.sh` instead, one process per file, and is blind to the whole class by
+construction.
+
+Measured 2026-09-13, and the same numbers at `acf50738` and on the #789 branch, so it predates
+that epic: every file under `tests/api/` mocks `@/lib/auth` with stubbed `signJWT`, `verifyJWT`,
+`getSession`, `login` and `logout`, which is that layer's standard pattern. Run
+`tests/unit/lib/auth.test.ts`, `tests/unit/lib/auth-jwt-config.test.ts` and
+`tests/unit/seed/resolve-connection.test.ts` beside `tests/api/db-objects.test.ts` and the four
+files together are 31 fail; each of them alone is 0 fail.
+
+**It is not one module.** RE-MEASURED 2026-09-14 (#789 Phase 3): `tests/api/admin/audit.test.ts`
+mocks `@/lib/audit` the same way, and `tests/api/db/objects/edit-apply.test.ts` reads the audit ring
+to assert what an apply logs. Run those two files together and it is 20 pass 11 fail; each alone is
+0 fail, and `bun run test:ci` runs all 424 core files and exits 0. So the pattern is a LAYER mocking
+a module a sibling in the same layer legitimately needs, and `@/lib/auth` against three unit files is
+one instance of it rather than the whole of it. The full `bun run test` at that commit is 42 fail,
+all of them in these two groups.
+
+The cost is not a red gate, because no gate runs that shape. It is that a contributor following
+CLAUDE.md sees dozens of failures on a clean checkout and cannot tell them from their own.
+
+#789 removed its own three instances by moving the files with the unshareable assumption into
+`tests/isolated/`, where `tests/run-components.sh` gives each a process and
+`tests/unit/component-runner-coverage.test.ts` makes an unregistered one a red test. The same
+remedy does not fit here: it is not three files but a whole layer's mocking pattern against three
+unit files that legitimately want the real module. `docs/TOOLCHAIN.md` carries the diagnosis.
+
+**Done when:** `bun run test` on a clean checkout is green, either because the auth mocking pattern
+stops reaching `tests/unit`, or because the documented command runs the same isolation CI does.
+
+### D69. Six type-ids still open `readObjectSource` with their own entry guard, and one of its sentences is less true
+
+`requireSourceKind` in `src/lib/db/object-kinds.ts` is the one entry guard for `readObjectSource`:
+it raises separately for a kind the engine never declared, for a declared kind that publishes no
+definition text, and for a source-bearing kind carrying no `sourceLanguage`. Measured on 2026-09-13,
+nine providers call it (sqlite, libsql, duckdb, clickhouse, cassandra, postgres, mssql, mysql,
+trino) and six type-ids do not: couchbase, mongodb, redis, elasticsearch and opensearch (one shared
+module) and oracle.
+
+All five of those modules COLLAPSE the first two facts into one throw. They test
+`spec?.hasSource !== true` and answer `<Engine> declares no readable source for the kind "X"`, so a
+kind the engine has never heard of and a declared kind with no definition text arrive as the same
+sentence. That sentence is not merely shorter, it is less true: it tells the caller the kind exists
+and has no source. Three of them (couchbase, mongodb, search) also spell the third arm differently,
+"declares source for the kind X and no sourceLanguage, so its text has no language to render in"
+rather than "declares readable source for the kind X and no sourceLanguage to render it with".
+
+A fourth spelling of the same refusal lives at the route layer: `src/lib/api/object-route.ts` raises
+`<type> declares no readable source for kind "X"` as an `ObjectRouteError` with a 400, before any
+provider is consulted. It guards a different fact and answers a different error type, so it is not
+simply a call site, but it is a fourth wording of one refusal.
+
+None of the six was converted when the guard was hoisted (#789), because converting them rewords
+between one and two throws each, five provider suites assert on the exact wording, and a reworded
+throw is a behaviour change that does not belong folded inside a refactor. The cost of leaving them
+is that the hoist's second-order gain, that a new provider cannot silently forget one of the three
+guards, holds for nine of seventeen type-ids only.
+
+**Done when:** the six call `requireSourceKind`, with the five provider suites' assertions moved onto
+the guard's three sentences in the same commit, and the route layer either reuses one of those
+sentences or its docblock says why a 400 raised before the provider is a different fact.
+
+### D70. The DuckDB multi-statement sentence is an inference in a measurement's voice, and the tail does run
+
+`docs/providers/duckdb.md` section 3.11 says a multi-statement string runs the first statement only, that the rest is
+silently discarded, and that there is no error and no second result.
+`src/lib/db/providers/sql/duckdb/index.ts:699-703` says `client.run()` executes only the FIRST statement and that the
+method guarantees the tail is never executed.
+
+Measured 2026-09-13 on DuckDB v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, while grounding #778 Phase 3.
+`CREATE TABLE probe_c(i INTEGER); CREATE TABLE probe_c(i INTEGER)` answers
+`Catalog Error: Table with name "probe_c" already exists!`, which is the SECOND statement's error, and `duckdb_tables()`
+then holds `probe_c`.
+`DROP VIEW probe_v; CREATE VIEW probe_v AS SELECT * FROM no_such_table_here` raises the second statement's error and
+leaves the view dropped.
+So the tail runs, the failure rolls nothing back, and the discard is neither silent nor a discard.
+
+The measurement quoted in section 3.11 is real and it is about the RESULT: `runAndReadAll` returns the first statement's
+rows and not the second's.
+The sentence built on it is about EXECUTION, which nobody ran, and the two are different claims.
+This is the same class as the entries this file already carries about inferences written in a measurement's voice.
+
+The security consequence is bounded rather than open, and the bound should be stated rather than assumed: the guard
+beside the docblock reads the whole string before the call, so a forbidden form hiding in the tail is still refused, and
+`access_mode` is fixed read-only on that path.
+What is wrong is the stated reason, which is the load-bearing half of a security docblock.
+
+**Done when:** the code docblock and all three places in the provider doc say what was measured, which is that the first
+statement's rows are returned and the tail still runs, or the claim is re-measured on a version where it holds and that
+version is named.
+
+### D73. Session state written by one HTTP request is read by every later request, across Studio users
+
+The provider cache is one entry per `connection.id` process-wide, so a `SET` that survives the statement
+survives the request and reaches the next borrower whoever they are.
+
+Measured 2026-09-13 on PostgreSQL 18.4 through the product: a `SET` issued by a `user`-role session was
+read back by an `admin` session on the same backend pid, was not visible on a different connection id,
+and was not visible to a fresh psql session.
+Concurrent requests were served by different backends, so the leak is the cached provider rather than any
+serialisation.
+
+The same class is already measured on two other engines by this epic's Phase 3 grounding: `resetOnRelease`
+is false on the MySQL pool, and a `USE` persists on the SQL Server pool through both of node-mssql's send
+paths.
+
+It is not only cosmetic state. `search_path`, `sql_mode`, `USE` and `SET ROLE` all change what a later
+statement MEANS, and none of them is reset.
+
+**Done when:** either the pool resets a connection on release, or every route that mutates session state
+restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
+
+### D74. The single-statement query route leaks a transaction the way `/api/db/multi-query` did, and needs only ONE request
+
+`src/app/api/db/query/route.ts` resolves a connection, takes a provider from `getOrCreateProvider`
+(`:72`) and executes. It has no `finally`, no transaction handling and nothing that asks whether a
+transaction is open.
+That is the same missing `finally` #823 added to `/api/db/multi-query`, over the same process-wide
+provider cache, reached by a single request rather than by a script.
+
+READ, 2026-09-14, and stated as READ deliberately: the route's text was verified and the mechanism is
+identical, but NOBODY HAS RUN a lone `BEGIN` through this route.
+The reproduction behind #823 drove the SECOND request through `/api/db/query` and watched it fail on a
+client another route had poisoned, which establishes that this route shares the poisoned handle and not
+that it can create one.
+
+The reason it was recorded separately rather than folded into #823: that fix is scoped to the route its
+own entry named, and closing that route leaves this one with the same defect and one fewer statement
+needed to reach it.
+
+**Done when:** a lone `BEGIN` is sent through this route and what happens is recorded, and then either the
+route ends what it opened or the entry says with evidence why it cannot.
+
+### D75. `endOpenQueryTransaction()` covers three type-ids, and the other fourteen still leak
+
+PR #823 added the provider-side surface that answers whether a transaction is open, and implemented it on
+`postgres`, `sqlite` and `duckdb`, which are the three engines the leak was measured on.
+The surface is optional and has no default, so the other fourteen type-ids answer nothing and the route
+cannot end what a script left open there.
+
+So with #823 merged, a script that opens a transaction and fails on MySQL, MariaDB, SQL Server, Oracle,
+ClickHouse, Trino, Cassandra, MongoDB, Redis, Couchbase, Elasticsearch, OpenSearch, libSQL or LibreDB
+still leaves it open on the cached provider, with whatever consequence that engine has.
+
+This is a declared boundary rather than a fallback: the shape check carries no default and the absence is
+visible in the type.
+It is recorded because a boundary nobody wrote down becomes a fallback the next reader trusts.
+
+**Done when:** each remaining type-id either implements the surface, or its provider doc says which
+absence it is: the engine has no transaction to leave open, the driver cannot be asked, or nobody has
+measured it yet.
+
+### D76. A PostgreSQL object edit runs every statement the reader's text carries, and only the first one is accounted for
+
+`readObjectSource`'s edit path on `postgres` splices the reader's text between a provider prefix and a
+provider suffix and sends the whole thing as one parameterless simple query, and PostgreSQL runs every
+statement in such a query. Nothing above the wire is a single-statement check: the build compares the
+rendered HEADER for identity, and the post-condition only asks whether the addressed row was rewritten,
+which a `CREATE OR REPLACE` followed by a rider answers yes to.
+
+MEASURED live on PostgreSQL 18.4 through `POST /api/db/objects/edit-plan` and
+`POST /api/db/objects/edit-apply` (#789 Phase 3, task 19 fix round 1): the definition of
+`app.order_total(integer)` followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with
+`consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and the victim routine's
+`count(*)` went 1 to 0. The bytes are in the sealed preview, so the seal is intact and the user was
+shown them, but the plan's consequence model says nothing was lost, no acknowledgement is asked for, and
+both `object_edit` audit events name only
+`target: "function:app/order_total(integer):definition"` with the dropped routine's name nowhere in
+either.
+
+This run measured PostgreSQL alone. THE OTHER TWO ENGINES ARE SOMEBODY ELSE'S MEASUREMENT: the review
+of #789 Phase 3 task 19 fix round 1, on 2026-09-14, reports the same shape refused by Trino at the
+coordinator (`mismatched input ';'`, `SYNTAX_ERROR`) and by Redis at load time. Neither was re-driven
+here, so a later reader who re-drives the rider on Trino or Redis is re-running that review's
+measurement and not this entry's, and a result that disagrees is a finding against the review rather
+than a regression of anything measured above. The Trino half has a second source inside this
+repository, which the Redis half does not: `docs/providers/trino.md`, section *A trailing semicolon is
+a syntax error*, records `SELECT 1;` answering `mismatched input ';'` as its own measurement.
+
+**The audit half of the same fact, and it is the half a log reader meets.** An `object_edit` event says
+an edit was applied at one address, with one strategy, and with one outcome. It does NOT say the round
+trip carried nothing else, and it cannot. `docs/SECURITY.md`'s note on control 3.6 states that limit
+where a reader of the control meets it; this entry is the work.
+
+Three things narrow the residual and none of them closes it. They are readings of the shipped code, not
+separate measurements. First, the bytes are in the SEALED plan and the preview drew them, so a rider is
+something the user was given the chance to read rather than something the server added. Second, the
+decision event is emitted before the provider is called and outside any try/catch, so an apply that
+cannot be audited does not run: what is narrow is the event's CLAIM and not its coverage. Third, the
+address in the event is the address the plan was built for, so a rider cannot make the event name the
+wrong object; it makes the event name too few.
+
+Closing the audit half needs a PostgreSQL statement counter. This repository does not have one and has
+measured itself unable to fake one: a dollar-quoted routine body may contain any number of semicolons,
+and no reader in `src/lib/sql/` can tell a statement separator from a character of a definition. Splitting
+the unit into one statement per round trip is not available either, because ruling 3a of #789 Phase 3
+measured that a `SET LOCAL` sent as its own round trip answers a WARNING and pins nothing.
+
+**Done when:** either the reader's text is refused when it carries more than one statement, or every
+statement it carries is named in the plan's consequences and in the audit target, so a success destroys
+nothing the plan did not show and the log's claim is as wide as the round trip. The provider doc says the
+same thing where it bites, in `docs/providers/postgres.md`'s measured acceptance run.
+
+### D77. The PostgreSQL object fixture builds no producer for the post-condition, so `applied-elsewhere` has only a test double
+
+`docker/postgres-init/03-object-fixture.sql` builds the truncation population and the ownership
+population, and it builds nothing that can reach the emitted unit's post-condition on this engine. The
+build's identity check compares the rendered header up to the FIRST `)`, so a changed argument list only
+gets past it when a parameter `DEFAULT` holds a `)` inside a string literal, and no fixture routine has
+one. The #789 Phase 3 acceptance run had to create the object itself,
+`CREATE FUNCTION app.<name>(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$`,
+edited to `b bigint`, which answered `applied-elsewhere` with `undone: true` and left one row.
+
+Without it in the fixture, the only producer of `applied-elsewhere` on this engine that this repository
+builds is a driver mock, and the guard reads as one over a population nothing here creates.
+
+**Done when:** the fixture carries a routine with a parameter `DEFAULT` holding a `)` in a string
+literal, and the integration suite's `applied-elsewhere` case is driven against it.
+
+### D78. An object edit refuses on a pooled client somebody else left in a transaction, and nothing clears it
+
+MEASURED 2026-09-14 on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23, on a throwaway
+container, driving `PostgresProvider` itself rather than a hand-written statement.
+
+What was WRONG and is now fixed here: `applyObjectEdit` sent the plan on whatever pooled client it
+borrowed. A lone `BEGIN` through `query()` releases that client in status `T`, `pg`'s idle list is LIFO
+so the next `pool.connect()` hands the SAME client back, and the apply then ran inside the foreign
+transaction and answered `applied` with a `guarded` revision token. The write was uncommitted, so
+`endOpenQueryTransaction()` on the same connection rolled it away, `xmin` 856 back to 825 and the
+definition byte-identical to the pre-image; the revision handed back was whichever image the re-read's
+own borrowed client happened to see; and the `SET LOCAL search_path` pin survived into the rest of the
+foreign transaction, `SHOW search_path` reading `app, pg_catalog`. The same borrow in status `E`
+answered SQLSTATE `25P02` and, that code not being in `APPLY_VERDICT_BY_SQLSTATE`, was classified
+`refused` with class `definition`, telling the reader their definition was rejected. `applyObjectEdit`
+now reads the client's ReadyForQuery status before it sends anything and refuses with class `guard` when
+it is not `I`, which closes both.
+
+What is STILL OPEN and is this entry: the refusal does not CLEAR the transaction, and neither does the
+route. Rolling it back would destroy work the refused user was never shown, so the apply must not; but
+`src/app/api/db/objects/edit-apply/route.ts` has no `finally` and calls nothing, so a client poisoned by
+another route stays poisoned and every object edit on that connection id keeps refusing until some other
+request happens to end it. Measured as the control in the same run: a plain `ROLLBACK` on that client,
+which is what `endOpenQueryTransaction()` issues, returns the status to `I` and the identical apply then
+succeeds.
+
+The population is bounded by D74 rather than open: #823 gave `/api/db/multi-query` a `finally`, so the
+remaining producer of a poisoned client is the single-statement route, which D74 records as READ and not
+yet run.
+
+**Done when:** either D74 closes, which removes the producer, or the edit-apply route ends a transaction
+it did not open on the same terms `/api/db/multi-query` does, with the cross-user question that raises
+answered rather than assumed.
+
+### D79. The embedded shell learns about its own object apply and about no other DDL
+
+`StudioWorkspace` owns a catalog-change counter and moves it after an object apply the workspace itself
+issued (#789 Phase 3). It cannot see a DDL the HOST ran. Every statement in that shell leaves through
+`onQueryExecute`, and that callback answers a result set and never says what the statement changed, so a
+`CREATE OR REPLACE` a person runs in the query editor leaves every open Source tab showing the pre-apply
+text with no stale banner.
+
+MEASURED for the STANDALONE shell during the same phase, which is where the absence was found first: a
+new body applied to `p3probe.order_total` through `POST /api/db/query` while its Source tab was open left
+the tab unchanged and unmarked. The embedded shell inherits it, and this is a Phase 2 limitation rather
+than something the apply introduced: the counter was the constant `0` before, and saw nothing at all.
+
+The consequence is bounded where it bites, in the mount's own docblock: a stale banner in the embedded
+shell means "this workspace changed it", and the absence of one never means "nothing changed".
+
+**Done when:** a host can tell the workspace the catalog moved, either through a host-callable handle or
+through a field on the `onQueryExecute` answer. Both are NEW PUBLISHED SURFACES on `@libredb/studio`,
+which is why this is filed rather than folded into the apply.
+
+### D80. `object-edit-wire.ts` bounds no host-supplied string, so the standalone dialog is unbounded end to end
+
+The four shape predicates in `src/lib/api/object-edit-wire.ts` (`isObjectEditPlanShape`,
+`isObjectEditUnitShape`, `isObjectEditOutcomeShape`, `isObjectEditBuildResponseShape`) check shape and
+bound no string. So `refusal.sentence`, `refusal.hint`, `plan.revision.reason`,
+`preimage.truncated.reason` and each consequence's `fact.source` and `fact.observed` reach the DOM at
+whatever length their producer wrote them.
+
+MEASURED 2026-09-14: every bound the two edit routes enforce is on what they RECEIVE.
+`grep -rn ' > EDIT_' src/app/api/db/objects/` returns exactly 3 hits, `EDIT_CHARACTER_LIMIT` on the
+submitted text and `EDIT_PLAN_EXECUTABLE_LIMIT` on the plan's executable length at both routes, and the
+third inbound bound, `EDIT_BODY_BYTE_LIMIT`, is applied by `readBoundedJson` on the body. Nothing bounds
+what they ANSWER, and the answers are not this application's own prose:
+`libraryFact` in `src/lib/db/providers/keyvalue/redis.ts` builds `observed` from `FUNCTION LIST`, and a
+refusal sentence is the engine's own message. `ApplyPreviewDialog` bounds exactly one string, the plan's
+executable text, which it refuses to draw a diff above.
+
+The EMBEDDED half is closed: `use-connection-adapter.ts` bounds the whole host answer and snapshots it as
+it counts, so the measured characters are the drawn characters. The standalone half is open, and so is
+the shape layer itself, which is where a reader looks for a bound and where a future third caller would
+inherit one.
+
+Phase 2's `isSourceDocumentShape` bounds all four of its host-supplied rendered strings with
+`SOURCE_CHARACTER_LIMIT` (`src/components/object-source/source-reader.ts`). That is the shape of the fix.
+
+**Done when:** every string those four predicates accept is bounded by an existing limit, with a test per
+predicate feeding it one character over the bound and a control exactly on it.
+
+### D81. A non-routine PostgreSQL kind declared editable would be refused in the words of an ownership problem
+
+`readObjectSource` in `src/lib/db/providers/sql/postgres.ts` calls `routineEditAffordance` whenever
+`kindAcceptsSourceEdits` is true, and that helper reads `may_replace` and `owner`, which only the ROUTINE
+statement selects. If a non-routine kind were ever declared editable, the pane would draw `offered: false`
+with the sentence "owned by another role", which is a misleading refusal rather than the declaration
+drift it actually is.
+
+Nothing can be applied in that state: the BUILD already refuses it by name
+(`declares an editable kind "view" but has no statement that reads it`, with a test). And no shipped
+declaration reaches it: only `function` and `procedure` declare `acceptsSourceEdits` and both are in
+`PROKIND_BY_KIND`. So this is a state nothing in this repository builds, which is why it is filed rather
+than folded in.
+
+**Done when:** the read raises the same sentence the build does when a kind declares an edit this file has
+no routine statement for, with its own test.
+
+### D82. A new-tab shortcut fires through the apply modal, unmounts the Source pane and loses the answer
+
+MEASURED 2026-09-14 in this repository's own component environment, with two probes rather than by
+reading, because the code comment at `src/components/Studio.tsx:255-268` says the opposite and this
+entry exists to correct it.
+
+That comment says "the strip cannot be moved while the dialog is open, because Radix's modal aria-hides
+it, and `setActiveTabId` has no caller outside the strip and the sidebar tree, both of which the modal
+covers". Both halves are wrong. Probe one rendered this repository's own `DialogContent` with a
+`document` keydown listener installed beside a `role="tablist"`: the strip stayed IN the tree
+(`document.body.contains(strip)` true, it is aria-hidden and covered, not removed) and a `keydown`
+dispatched from the focused control inside the dialog reached the document listener. That is exactly how
+`StudioTabBar` registers Ctrl/Cmd+Shift+T: on `document`, deliberately, "so it also works while Monaco
+owns focus" (#745). The handler calls `onAddTab`, `addTab` in `src/hooks/use-tab-manager.ts` ends with
+`setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover.
+
+The consequence is not a mis-addressed clear. `Studio.tsx` renders the Source pane only while the active
+tab is a Source tab, so the new Query tab UNMOUNTS `ObjectSourceView` and the dialog with it, mid apply.
+Probe two measured what that costs: with an apply in flight, unmounting the pane and then landing a
+`conflict` answer left `object-source-apply-conflict` null and the body text empty, no throw and no
+warning. The statement was already sent, and the reader is never told whether it was refused, conflicted
+or failed. A successful apply still reaches the toast through `onApplied`, so success is the one outcome
+that survives the unmount.
+
+Not fixable inside the pane, which is why it is filed rather than folded into #789 Phase 3's pane work:
+the fix belongs to the shell, either by refusing the shortcut while an object apply is in flight or by
+keeping the pane mounted for the tab that owns it. The pane's own state is already bound to its address
+(`boundTo`), so nothing there is drawn over the wrong object.
+
+**Done when:** an apply in flight cannot be unmounted by the new-tab shortcut, or its answer reaches the
+reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
+reachability paragraph in `Studio.tsx` is corrected in the same change.
+
+### D83. PostgreSQL is the only day-one apply that does not re-resolve the editable kind
+
+`applyObjectEdit` calls `requireEditableKind` on Trino (`src/lib/db/providers/sql/trino/index.ts:1562`)
+and on Redis (`src/lib/db/providers/keyvalue/redis.ts:1869`) and NOT on PostgreSQL
+(`src/lib/db/providers/sql/postgres.ts:3266`, which consults `plan.kind` nowhere at all). Trino needs the
+returned spec for its re-read; Redis DISCARDS the return value, so on that provider the call is a guard
+and nothing else, which is what makes PostgreSQL's absence an inconsistency rather than a shape
+difference.
+
+NOT A LIVE DEFECT THROUGH ANY SHIPPED PATH, said in that voice rather than left implied.
+`src/app/api/db/objects/edit-apply/route.ts:141` re-resolves editability on the CONNECTED provider for
+every apply, which is D57 closed on the write path, and the plan's statement was minted by a
+`buildObjectEdit` that called `requireEditableKind` itself (`postgres.ts:2968`). The population that
+reaches the provider without either check is a `@libredb/studio` library consumer calling
+`provider.applyObjectEdit` directly, and PostgreSQL's apply sends `plan.unit.steps[0].text` verbatim, so
+what it would execute is a statement its own build already minted.
+
+Found by the external review of PR #831 (#789, discussion #778) and verified by grep rather than
+adopted from the review.
+
+**Done when:** the three day-one applies agree, with a test that drives an apply plan carrying a kind the
+provider does not declare editable and asserts the refusal, or with a docblock on `postgres.ts` saying by
+name why the check is not there and what carries it instead.
+
+### D84. A one-function Redis library can lose its function on a SUCCESS with no consequence shown
+
+`libraryCollateral` (`src/lib/db/providers/keyvalue/redis.ts:620`) opens with `if (functions.length < 2)
+return [];`, so a library registering exactly ONE function builds a plan whose `consequences` are empty:
+no warning, no acknowledgement checkbox, nothing to tick. The apply's collateral arm
+(`redis.ts:1922-1928`) has no such floor: it reports `applied-with-collateral` for every function in
+`before.functions` that is absent from `after`, one included.
+
+The two therefore disagree over a population a reader reaches with an ordinary edit. `libraryCollateral`'s
+own docblock states the premise that closes the gap, "a library registering exactly one function IS that
+function, so a body that re-registers it loses nothing", and the premise is about the SUBMITTED text,
+which nothing on this path reads: the only identity check is the shebang library name (`redis.ts:1767`)
+and no Lua parser is involved anywhere. Renaming the registration inside the body leaves the shebang name
+untouched, so the edit is accepted and the old function is gone.
+
+MEASURED against the provider's own apply double on 2026-09-14, a library `libredb_probe` registering only
+`libredb_ping`, edited to register `libredb_other`:
+
+```
+build.plan.consequences  []
+outcome                  {"outcome":"applied-with-collateral",
+                          "lost":[{"loses":"replaces-whole-container",
+                                   "fact":{"source":"FUNCTION LIST LIBRARYNAME libredb_probe",
+                                           "observed":"libredb_ping"}}], ...}
+```
+
+The probe was a temporary test in `tests/integration/db/redis-provider.test.ts` and was removed; the
+output above is the evidence. No container was started, so what a live 8.10.0 answers for that exact edit
+is a separate claim and is unmeasured here. The pane makes it silent rather than merely imprecise:
+`applied-with-collateral` is in `APPLIED_OUTCOMES`, so the dialog closes on a plain success, which is X24.
+
+Ruling 1b's second axis, a success destroying nothing the user was not shown, is what this breaks.
+
+Found by the review of the review of PR #831 (#789, discussion #778).
+
+**Done when:** the build and the apply agree about a one-function library. Either `libraryCollateral`
+names the single registered function as a consequence, which makes the warning honest and costs the
+reader one tick on every single-function edit, or the apply's arm stops reporting a loss the build
+promised could not happen, which is the answer only if some check proves the registration cannot move.
+The first is the safe direction and the second needs evidence this entry does not have.
+
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -576,8 +1341,11 @@ goes away in a major, with this work.
 
 ## Studio UI and query execution
 
-`U2` came out of the #384 review. The `X` entries came out of the #422 export review — each was
-named, weighed and left out of that PR, so they are recorded rather than re-derived.
+`U2` came out of the #384 review. `X2` to `X13` came out of the #422 export review: each was
+named, weighed and left out of that PR, so they are recorded rather than re-derived. `X14` and `X15`
+came out of the #789 object-source design's own measurement passes: both are pre-existing, neither
+is in the seam that epic touches, and both were re-measured against the tree before being written
+here.
 
 ### X2. An export writes the page the grid holds, not the result the user asked for
 
@@ -651,6 +1419,134 @@ and calling that lossless would be a lie.
 reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
 Cassandra.
 
+### X13. Profile is withheld from two engines by an engine-wide flag, and LibreDB has named objects behind it
+
+`row-actions.ts:146` gates Profile on `capabilities.tablesAreDerivedGroupings !== true`, which is a
+PROVIDER fact, while every other gate beside it is a per-kind declaration. The flag says "the rows
+this engine shows are prefix groupings this server derived from a bounded scan", and on Redis that
+is true of every row it has. On LibreDB it is true of one kind out of three: `keyspace` is derived,
+while `table` and `collection` are entries the persisted catalog NAMES, created by `table()` and
+`doc()` and addressed by the name their author chose (#789, Task 23). Those two are refused Profile
+purely because the gate never got a per-kind half.
+
+Nothing regresses today and that is measured, not assumed: `POST /api/db/profile` branches on
+`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is sent
+as a MongoDB aggregate pipeline and the grammar answers
+`Unknown command ... Supported: get, put, delete, prefix, range`. Profile cannot work on ANY kind
+here, so withholding it from all three is the honest menu rather than a cost. That is pinned by a
+test in `tests/integration/db/libredb-provider.test.ts`.
+
+The condition that makes it bite is a separate fact changing: the day the profile route grows an arm
+for this engine's grammar, two named-object kinds stay silently refused with no declaration
+recording why, and the reason will read as a Redis decision rather than a LibreDB one. The same
+would happen to any future engine that sets the flag while holding cataloged objects.
+
+**Done when:** the per-kind half exists - a kind-level declaration saying whether a kind's rows are
+derived groupings, read beside the engine-wide flag the way `kindAcceptsRowWrites` is read beside
+`supportsInlineRowEdit` - or the engine-wide gate is deliberately kept with that decision written at
+`libredb.ts`'s `tablesAreDerivedGroupings` site and in `docs/providers/libredb.md`. Either way
+LibreDB's `table` and `collection` stop being refused by a flag that was never about them.
+
+### X14. The workspace write that persists every tab has no quota guard
+
+`src/hooks/use-tab-manager.ts:213` writes the whole workspace with
+`storage.setItem(workspaceKey, JSON.stringify(serialized))` inside a 500 ms `setTimeout`, with no
+`try`/`catch` anywhere between the timer callback and the call. Every other localStorage writer in
+this application already has one: `src/lib/storage/local-storage.ts:64` and `:82` both wrap their
+`setItem`, log `Failed to write to localStorage` and answer `false`, so the guard is a pattern this
+writer skipped rather than a pattern nobody has.
+
+The quota it writes against is shared. `STORAGE_COLLECTIONS` (`src/lib/storage/types.ts:28-38`) is
+ten collections, connections and history and the audit log among them, and all of them plus this
+record live inside one origin quota of about 5 MiB. The record itself is unbounded from the shell's
+point of view because `PersistedTabState.query` copies each tab's editor text verbatim.
+
+The symptom is not a lost tab. A `QuotaExceededError` thrown inside a timer callback is not caught
+by React and not caught here, so it reaches the window's error handler, tab persistence stops for
+the WHOLE workspace, and nothing tells the user; the next tab change schedules the same timer and
+throws again. Found while designing #789 and not fixed there, because Phase 2 touches this record
+only to add one address-only field: a Source tab persists its `path` and `kind` and never one
+character of the definition it read, for exactly this reason, which narrows the exposure and closes
+nothing. The reasoning is in the `PersistedTabState` docblock at `use-tab-manager.ts:40-60`.
+
+**Done when:** the write is guarded the way `local-storage.ts` guards its own, and the failure is
+observable rather than swallowed - a user whose workspace has stopped persisting is told, since a
+silent `false` here means the tabs on screen are no longer the tabs that will come back.
+
+### X15. The studio tab bar is half the WAI-ARIA tabs pattern
+
+`StudioTabBar.tsx` has the tab half and none of the panel half. Measured 2026-09-13: `:98` is
+`role="tablist"` with `aria-label="Editor tabs"`, `:150-153` gives every tab `role="tab"`,
+`aria-selected` and a roving `tabIndex`, and `:72-79` implements Arrow, Home and End activation. No
+tab carries `aria-controls`, and no element in either shell carries `role="tabpanel"`: the region
+the tabs actually govern is the bare `<main className="flex-1 overflow-hidden relative">` at
+`src/components/Studio.tsx:777` and at `src/workspace/StudioWorkspace.tsx:494`.
+
+So a screen reader announces the tab and its selected state and can never say which region the tab
+governs, and there is no way to move from a tab to its content.
+
+The basis for the "nowhere in `src/`" form of this claim has moved and the entry says so rather than
+repeating it: `grep -rn 'tabpanel' src/` now returns exactly one hit,
+`src/components/object-source/ObjectSourceView.tsx:347`, which is the Source view's own part
+switcher added by #789. The pattern is bare on purpose: that role is written as an object property,
+`{ role: "tabpanel", ... }`, and never as a JSX attribute, so grepping the attribute form matches
+nothing, which would read as an absence that is not there. The switcher is the complete pattern,
+including the rule the studio bar will need: only the SELECTED tab may carry `aria-controls`,
+because only the active panel is in the tree and a reference to an absent element is an
+`aria-valid-attr-value` violation of its own.
+
+It is not a one-line fix, which is why it is here. The panel is ONE element shared by every tab, so
+its `id` has to key on `activeTabId`, and the same element is the mount point for the schema diagram
+overlay, which is not the tab's content at all. Both shells render the bar, so the fix lands twice
+and is verified twice.
+
+**Done when:** the editor region carries `role="tabpanel"`, an id derived from `activeTabId` and
+`aria-labelledby` naming the selected tab, the selected tab alone carries the matching
+`aria-controls`, and both shells are checked, since a UI change verified in one is not verified in
+the other.
+
+### X16. Opened at `127.0.0.1`, the dev server serves a page that never becomes interactive
+
+MEASURED on 2026-09-13 against Next.js 16.3.4 with Turbopack, in two independent browsers
+(Playwright's Chromium and Chrome over CDP), while doing the browser QA for #789.
+
+`bun dev` prints `http://localhost:<port>`. Open the SAME server at `http://127.0.0.1:<port>`
+instead and the page renders its server HTML and then does nothing at all: no button responds, the
+login form submits natively to `/login?` and clears itself, and `POST /api/auth/login` is never
+made. `Object.keys(document.querySelector('#email'))` carries no `__react*` key, so React never
+hydrated. The only console output is one repeated
+`WebSocket connection to 'ws://127.0.0.1:<port>/_next/hmr' failed: Error during WebSocket
+handshake: net::ERR_INVALID_HTTP_RESPONSE`.
+
+THE CAUSE IS THE DEV SERVER'S OWN ORIGIN CHECK ON THAT SOCKET, isolated with a control rather than
+inferred. The same upgrade request, differing only in one header, run from the shell:
+
+| Request to `/_next/hmr` | Answer |
+| --- | --- |
+| no `Origin` header | `HTTP/1.1 101 Switching Protocols` |
+| `Origin: http://localhost:<port>` | `HTTP/1.1 101 Switching Protocols` |
+| `Origin: http://127.0.0.1:<port>` | the connection is closed with no HTTP response at all |
+| `Origin: http://192.168.1.66:<port>` | the connection is closed with no HTTP response at all |
+
+That empty answer is what the browser reports as `ERR_INVALID_HTTP_RESPONSE`, and the dev client's
+bootstrap does not survive it. The chain closes both ways: served by the same process at the same
+moment, `http://localhost:<port>/login` hydrates and `http://127.0.0.1:<port>/login` does not.
+
+Next 16 has a configuration key for exactly this and this repository sets none:
+`grep -rn 'allowedDevOrigins' src/ next.config.ts` returns nothing. The production path is
+unaffected, measured: `bun run build` plus `bun run start` hydrates at `127.0.0.1` and every part of
+#789's browser pass ran there.
+
+It is filed rather than fixed because the value is a decision rather than a typo. The key names the
+origins a developer's browser may drive the dev server from, so widening it widens a control Next
+added deliberately, and `127.0.0.1` and a LAN address are not the same call. The cost of leaving it
+is a developer who types the loopback address, or opens the LAN URL `bun dev` also prints, meeting a
+dead page with one obscure console line.
+
+**Done when:** `bun dev` opened at `127.0.0.1` and at the LAN address the banner prints is
+interactive, either by configuring `allowedDevOrigins` or by not printing a URL that does not work,
+and a note in `docs/TOOLCHAIN.md` records which and why.
+
 ---
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
@@ -695,6 +1591,198 @@ is not a free read.
 recorded reason it is withheld.
 
 ---
+
+### X18. The add-connection button has no accessible name
+
+MEASURED 2026-09-13 in a browser: the icon-only button beside `Show ERD Diagram` carries no `title`, no
+`aria-label` and no text content, while its neighbour carries one.
+
+`jsx-a11y` is a hard oxlint gate in this repo and this survived it, so the finding is two things: the
+button, and the fact that the rule in force does not cover an icon-only button with an SVG child. Fixing
+only the first leaves the next one to be found by hand.
+
+**Done when:** the button has an accessible name, and the lint rule that should have caught it either
+covers this shape or is recorded as not covering it.
+
+### X19. A body the framework truncated is reported as an empty body on five routes and as a parser error on a sixth
+
+Next 16.3.4 CLONES every request body for middleware, and this repository has middleware (`src/proxy.ts`),
+so `DEFAULT_BODY_CLONE_SIZE_LIMIT` in `node_modules/next/dist/server/body-streams.js` applies to every
+route. It TRUNCATES at exactly 10,485,760 bytes rather than refusing, and `next.config.ts` sets no
+`middlewareClientMaxBodySize`.
+
+MEASURED and bisected on 2026-09-14 against `POST /api/db/query`:
+
+```
+body 10485760 bytes -> HTTP 200, the statement ran
+body 10485761 bytes -> HTTP 500 {"error":"Expected ',' or '}' after property value in JSON at position 10485760 ...","code":"INTERNAL_ERROR"}
+body 10485900 bytes -> HTTP 500 {"error":"Unterminated string in JSON at position 10485760 ...","code":"INTERNAL_ERROR"}
+```
+
+The server log names it in Next's own words: `Request body exceeded 10MB for /api/db/query. Only the
+first 10MB will be available unless configured.`
+
+So one condition gets two wrong answers. The five existing object routes that go through
+`handleObjectRequest`'s body-parse arm answer HTTP 400 `{ "error": "Empty request body" }` for a body that
+was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
+Neither tells the caller their request was too large.
+
+The two routes added by #789 Phase 3 do NOT inherit this: `readBoundedJson` reads `content-length` and
+answers 413 above `EDIT_BODY_BYTE_LIMIT` (8,388,608), which sits below the framework's wall, so an
+oversized edit body meets a sentence that names the size. They do not fix it anywhere else, and that is
+stated in `readDefaultBody`'s own docblock.
+
+**Done when:** a body above the framework's clone limit gets one answer that names the size, on every
+route, rather than an empty-body claim on five and a parser error on one.
+
+### X20. A malformed apply answer is reported to the reader in the words of a timeout
+
+The Source pane synthesises `{ outcome: "interrupted", committed: "unknown" }` for an apply answer that
+`isObjectEditOutcomeShape` refuses, because that is the closest arm the outcome type has and its
+`committed: "unknown"` half is exactly right. `FailureRegion` in
+`src/components/object-source/ApplyPreviewDialog.tsx` then prints "The engine stopped this statement
+before it finished." above our own sentence, and for this population that first clause is a claim nobody
+measured: the engine may have finished perfectly and the ANSWER is what could not be read.
+
+Our own sentence carries the truth ("The apply was sent and its answer could not be read ... Re-read this
+definition before trying again"), so the reader is not misled about what to do, only about why.
+
+**Done when:** the dialog has a seventh arm, or a per-outcome sentence override, so an unreadable answer
+is described as one.
+
+### X21. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
+
+MEASURED in Chromium on 2026-09-14, on every successful apply driven through the UI:
+`TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.
+
+`ApplyPreviewDialog` disposes the diff's original and modified models while the `DiffEditor` still holds
+them, so Monaco's own disposal path throws into the console. The disposal itself is deliberate and
+documented; the ORDER is what needs correcting.
+
+Nothing is visible to the reader and nothing is lost. It matters because it is noise on the exact channel
+#789 Phase 3's CSP assertion reads, and a page-error assertion added later would break on it.
+
+**Done when:** the widget releases the models before they are disposed, and the E2E spec can assert an
+empty console after an apply.
+
+### X22. The object-edit E2E's restored-tab test fails its first attempt on every CI run so far
+
+MEASURED on BOTH runs this spec has had in CI, #831's `Functional Smoke (PostgreSQL)` job (job
+104060110399 and job 104066966292, 2026-09-14): 6 tests, **1 flaky, 5 passed**, the same one each
+time. It is `e2e/object-edit.spec.ts:409`, `a RESTORED tab is read-only until the reader presses Edit
+again`, failing its first attempt at line 416,
+`expect(page.getByTestId("object-source-edit")).toBeVisible({ timeout: 30_000 })`, with
+`element(s) not found` after the full 30 seconds, and passing on the retry. Two runs out of two is
+not an intermittency: the first attempt fails every time and Playwright's retry is what makes the job
+green, so nothing turns red unless a person reads the log.
+
+The step under test is a `page.reload()` immediately after an edit that was not applied: the tab is
+restored from `localStorage`, the source is re-read, and the edit affordance appears once that read
+lands. WHY the affordance was absent for thirty seconds is NOT measured, and the log does not say.
+Two candidates, neither checked. First, the re-read was refused: every test in the file signs in as
+the same shared account and the spec's own `waitForTheObjectTree` documents that account hitting the
+120-requests-per-60-seconds `query` bucket on the fifth test of a run, and 60 seconds is longer than
+this assertion's 30. Second, the restored tab reached a state that withholds the affordance. They are
+different defects.
+
+One fact that bears on the first and is worth having before anyone re-drives this: the OBJECT TREE
+offers the reader a `tree-retry` button when its read is refused, and `waitForTheObjectTree` presses
+it, but the source pane's failure region (`object-source-failure` in `ObjectSourceView.tsx`) offers
+NO retry control at all. A reader whose source read is refused has no way back except reopening the
+tab, so if the first candidate is the cause then the test is meeting a real product gap and not just
+a slow runner.
+
+**Done when:** the failure is reproduced with the reason named, and the first attempt passes, so
+Playwright's retry is no longer what makes the job green. If the cause is the refused read, closing
+this also means deciding whether the source pane should offer the recovery the tree already does.
+
+### X23. An SSH-tunnelled connection can never build an object edit plan
+
+`getOrCreateProvider` (`src/lib/db/factory.ts:485-492`) rewrites `host` and `port` to the tunnel's
+LOCAL endpoint before the provider is constructed, and `src/lib/db/base-provider.ts:149` stores that
+rewritten object as `this.config`. Every provider seals the plan it issues with
+`connectionFingerprint(this.config)`, so the plan carries the digest of `127.0.0.1:<ephemeral>`. The
+routes fingerprint the record the request RESOLVED, which still carries the far-end address, so
+`src/app/api/db/objects/edit-plan/route.ts:155` compares two digests that cannot be equal and answers
+400 `EDIT_PLAN_INVALID`. The reader sees an object they can read and cannot edit, with no sentence
+saying why.
+
+EVIDENCE CLASS. The digest arithmetic is MEASURED and is pinned by the test "the tunnel-REWRITTEN
+twin of a connection is a different digest" in `tests/unit/lib/db/connection-fingerprint.test.ts`, so
+this entry is re-derivable without an SSH server. The wiring above is CODE READING of the three files
+named: no bastion was stood up and no tunnelled edit was driven end to end.
+
+It is filed rather than fixed because the fix belongs in the factory and not in the seal. The
+fingerprint cannot recover the far-end address from the rewritten record, and folding `host` and
+`port` out of the frame whenever a tunnel is enabled would make two different databases behind the
+same bastion collide, which is the failure the fingerprint exists to prevent. The shape that works is
+for `getOrCreateProvider` to carry the pre-rewrite endpoint on the effective connection so both sides
+fingerprint the same address.
+
+Found while closing the OTHER half of the same asymmetry: `sshTunnel` was absent from the frame
+entirely, so a caller could re-point an approved plan through a bastion they own. That half is fixed
+(#789, discussion #778); this half is the same blind spot seen from the honest side.
+
+**Done when:** a connection with an enabled SSH tunnel can build and apply an object edit plan, with a
+test that drives the two sides through the factory rather than asserting the digest alone.
+
+### X24. The apply dialog's collateral arm cannot be reached from its only mount
+
+`ApplyPreviewDialog.tsx:582` renders a dedicated region for the `applied-with-collateral` outcome, with
+the sentence "The engine applied this change and it destroyed something else, read back from the catalog
+after the apply" and one line per entry of the outcome's `lost` tuple. Nothing in the product can draw
+it. `ObjectSourceView.tsx:397` puts `applied-with-collateral` in `APPLIED_OUTCOMES`, deliberately and
+correctly, so `landOutcome` CLOSES the dialog on it; and `grep -rn '<ApplyPreviewDialog' src/` returns
+exactly one hit, the mount at `ObjectSourceView.tsx:1607`, with no export of the component from
+`src/exports/`. So the arm is live only in
+`tests/components/object-source/ApplyPreviewDialog.test.tsx:968`.
+
+The outcome itself is real and reached: `src/lib/db/providers/keyvalue/redis.ts:1925` answers it whenever
+the functions a library registered BEFORE the apply are not all registered after, which is the everyday
+result of editing a library of two or more functions.
+
+FOR A LIBRARY OF TWO OR MORE FUNCTIONS nothing is destroyed unshown, so ruling 1b's second axis holds
+there: `libraryCollateral` (`redis.ts:619`) names the library's whole registered set before the apply, the
+reader ticks the acknowledgement, and the outcome's `lost` is a strict SUBSET of what they were shown.
+What is lost is precision. The reader is told what MIGHT go and is never told what DID, and the audit ring
+records `object_edit_collateral_loss` where the reader's screen records a plain success.
+
+THAT SENTENCE IS NARROWED TO TWO OR MORE, and the round-1 spelling of this entry stated it over the whole
+population without qualification, which was wrong. `libraryCollateral` returns `[]` below two functions
+while the outcome arm reports a loss at one, so a ONE-function library is a success that destroys
+something the reader was never shown. Filed on its own as D84, measured, not the same defect as this one.
+
+Found by the external review of PR #831 (#789, discussion #778), and the over-broad verification sentence
+by the review of that review.
+
+**Done when:** either the outcome's `lost` facts reach the reader after a successful apply, or the arm is
+deleted and the dialog's outcome type stops admitting a state its only mount cannot produce. Deciding
+between those two is the work; both leave the file honest and today's file is not.
+
+### X25. The embedded shell leaves the pre-apply definition on screen, for a reason that refutes itself
+
+`StudioWorkspace.tsx`'s `handleApplied` moves `objectRefreshToken` and clears nothing, where
+`Studio.tsx`'s clears the tab's document so the pane re-reads at once. In `ObjectSourceView.tsx` a read is
+issued only when `needsRead` holds (`document === undefined && failure === undefined`), so a moved counter
+re-reads nothing: it makes `stale` true and draws the banner. After a successful apply in the embedded
+shell the reader is therefore looking at the text the object no longer holds, with an invitation to press
+"Read again". `tests/components/studio/embedded-source.test.tsx:1405` pins that behaviour.
+
+THE REASON WRITTEN FOR IT CONTRADICTS ITSELF IN ITS OWN PARAGRAPH. It says an automatic clear "would then
+leave a tab with no document, no failure and no reader, which is the one state that would send the
+viewer's default reader at a route this package does not ship", and then says "`sourceFailure` above
+closes that door in the same render". It does: `sourceFailure` answers a sentence exactly when
+`conn.sourceReader === undefined && sourceTab?.document === undefined`, which makes `needsRead` false, and
+the suite already drives clear-then-withdraw and asserts no request leaves the shell. So the hazard the
+paragraph gives as the reason for not clearing is the hazard the file already closes.
+
+Found by the external review of PR #831 (#789, discussion #778) and verified by reading the three files
+and running the pane's read effect against them, not by adopting the review.
+
+**Done when:** the two shells agree on what a successful apply leaves on screen, or the embedded shell's
+docblock gives a reason that is not already discharged three lines below it. The behaviour may still be
+the right one for a host-served read; what cannot stand is the argument currently written for it.
+
 
 ## Dependencies
 
@@ -874,6 +1962,29 @@ guard, which is what makes the change stick - the guard bans the FORM, so a corr
 too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
 of those two were rewritten in round 17 and are the natural first pair; the round left them out because
 they were another lane's live files at the time, not because they are correct.
+
+### DOC5. `stripEdit`'s docblock still calls the write-path obligation undischarged, and it is discharged
+
+`src/lib/api/object-route.ts:667-674` says "MEASURED by grep at this commit, nothing on the write path
+enforces either fact", names an obligation on the edit-plan route to "REFUSE a plan whose part is
+truncated, and REFUSE a kind that fails `kindAcceptsSourceEdits` on the CONNECTED provider", and closes
+"Until it does, this function decides what the UI is OFFERED and never what the server ACCEPTS".
+
+Both halves have since landed, in this same phase. The kind:
+`src/app/api/db/objects/edit-plan/route.ts:89` calls `requireEditableKind` on the connected provider and
+its own comment cites this very docblock as the reason. The bound: that route refuses a submitted text
+over `EDIT_CHARACTER_LIMIT` at line 74, and all three day-one providers refuse a READ definition over the
+same constant inside `buildObjectEdit` (`postgres.ts:3012`, `redis.ts:1747`,
+`trino/index.ts` refusal 1), so a truncated prefix cannot become a plan.
+
+Not a live bug. It is a sentence that tells a reader a guard is missing when the guard is two files away,
+which is the failure mode this repository files its stale citations for.
+
+Found by the external review of PR #831 (#789, discussion #778).
+
+**Done when:** the paragraph says what enforces each half and where, and the "until it does" sentence is
+gone.
+
 
 ---
 
@@ -1802,3 +2913,60 @@ so), and none of them has been measured.
 
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
+
+### B78. Generated Redis and LibreDB command text carries em dashes
+
+House style forbids em and en dashes in anything that lands in the repo or in front of a user.
+`src/lib/query-generators.ts` emits five of them into text a user reads in the editor, reproduced in
+the browser on a live Redis 8 during task 28b by pressing Generate Command on a key-prefix row:
+
+    # Redis commands for "bulk:*" — select a line and Run Selected.
+    # List keys under this prefix — ONE scan iteration, not the whole set.
+    # Create or update it — this overwrites an existing value
+
+plus `:229` for the hash variant and `:411` for the LibreDB header. Eleven more sit in that file's
+doc comments. Pre-existing rather than #789's, and named here because task 27 found it and it would
+otherwise disappear: it is not one edit but a small sweep, and
+`tests/unit/lib/query-generators.test.ts` pins the exact strings.
+
+**Done when:** no emitted line in that file carries an em or en dash, and its tests assert the new
+wording.
+
+### B80. The inventory's two bounds do not reach the container enumeration
+
+`POST /api/db/objects/inventory` bounds the listings it issues (`INVENTORY_PAIR_LIMIT`) and the
+objects it returns (`INVENTORY_LIMIT`), and its own docblock says so. Neither reaches the walk that
+produces the containers in the first place. `enumerateContainers`
+(`src/lib/db/container-walk.ts`) calls `listContainers()` once at the top level and then once per
+parent at every level below, with no cap: a two-level engine holding 5,000 catalogs issues 5,001
+round trips before the first pair exists, and only then meets a limit. The pair limit truncates the
+SCAN, never the walk.
+
+Not invented here, because `container-walk.ts` has a second reader: the agent's grounding inventory
+(`src/lib/agent/tools.ts`) performs the same walk from its run context. A cap belongs to both or to
+neither, and it needs the `truncated` shape the route already publishes, so it is one decision
+rather than a number chosen at one call site. The route's docblock states the gap where it bites.
+
+**Done when:** the walk reports a bound the same way a saturated scan does, both readers carry it,
+and a test drives an engine whose top level exceeds the cap.
+
+### B79. A connection switch reads the new connection with the old engine's container depth
+
+Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
+(DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
+path is [database] or [database, schema], received []". The tree then re-reads correctly and the
+final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
+switch.
+
+The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
+with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a
+child's effects run before its parent's - so the tree's reconciler fires once with the new connection
+and the previous engine's `capabilities`. `Sidebar`'s own comment reasons about metadata being
+ABSENT ("Nothing is drawn while the declaration is missing") and not about it being STALE.
+
+Pre-existing in shape and newly consequential: while the sidebar only listed tables, a stale
+capability object cost nothing, and now the request SHAPE is derived from it.
+
+**Done when:** no read is issued for a connection whose declaration has not arrived, proven by a test
+that switches between two engines of different depth and asserts what was posted.

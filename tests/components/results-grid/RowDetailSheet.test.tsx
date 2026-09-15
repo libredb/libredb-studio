@@ -24,8 +24,10 @@ function refuseEveryWritePath(): void {
 mock.module("@/components/ui/sheet", () => ({
   Sheet: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? React.createElement("div", { "data-testid": "sheet" }, children) : null,
-  SheetContent: ({ children }: { children: React.ReactNode }) =>
-    React.createElement("div", { "data-testid": "sheet-content" }, children),
+  // The className is forwarded because the panel's own height cap is asserted below:
+  // a double that drops it makes the real element's sizing unobservable.
+  SheetContent: ({ children, className }: { children: React.ReactNode; className?: string }) =>
+    React.createElement("div", { "data-testid": "sheet-content", className }, children),
   SheetHeader: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
   SheetTitle: ({ children }: { children: React.ReactNode }) => React.createElement("h2", {}, children),
 }));
@@ -437,5 +439,62 @@ describe("results-grid/RowDetailSheet", () => {
     const copiedJson = String(writeText.mock.calls[0]?.[0]);
     const parsed = JSON.parse(copiedJson);
     expect(parsed).toEqual(row);
+  });
+
+  // ── Layout on a wide window (#800) ────────────────────────────────────────
+
+  describe("layout", () => {
+    function fieldList(container: HTMLElement): HTMLElement {
+      const label = Array.from(container.querySelectorAll("p")).find((el) => el.textContent === "col_01")!;
+      return label.parentElement!.parentElement!;
+    }
+
+    /**
+     * The list is read on a phone and on a 1440px window, and the single column that
+     * suits the first wastes the second: a 40 field row scrolled for no reason. The
+     * flow is asked for by column WIDTH, so the count follows the window with no
+     * breakpoint deciding it - measured 2026-09-15 in the browser on a 40 field row as
+     * 1 column at 390px and 768px, 2 at 834px and 1024px, 3 at 1280px and 1440px, 4 at
+     * 1920px and 8 at 3840px. A breakpoint here is what the reported defect was made
+     * of, so a class carrying one is a finding (#800).
+     */
+    test("the field list flows into as many columns as the window fits, without a breakpoint", () => {
+      const { container } = render(
+        <RowDetailSheet row={{ col_01: "a" }} fields={["col_01"]} isOpen onClose={mock(() => {})} rowIndex={0} />,
+      );
+      const classes = (fieldList(container).getAttribute("class") ?? "").split(/\s+/);
+      expect(classes).toContain("columns-sm");
+      expect(classes.filter((c) => /^(sm|md|lg|xl|2xl):/.test(c) || c === "hidden")).toEqual([]);
+
+      // A flowed column would otherwise break between a field's name and its value,
+      // leaving the two halves of one field in different columns.
+      const label = Array.from(container.querySelectorAll("p")).find((el) => el.textContent === "col_01")!;
+      expect((label.parentElement!.getAttribute("class") ?? "").split(/\s+/)).toContain("break-inside-avoid");
+    });
+
+    /**
+     * Capped, not fixed. A six field row took 85% of the screen to show six lines and
+     * hid the grid it came from behind it; a 200 field row still needs the whole cap.
+     * Measured 2026-09-15 at 900px tall: 180px for six fields, 763px for 202 (#800).
+     */
+    test("the panel is capped at a share of the window rather than always filling it", () => {
+      const { getByTestId } = render(
+        <RowDetailSheet row={{ id: 1 }} fields={["id"]} isOpen onClose={mock(() => {})} rowIndex={0} />,
+      );
+      const classes = (getByTestId("sheet-content").getAttribute("class") ?? "").split(/\s+/);
+      expect(classes).toContain("max-h-[85vh]");
+      expect(classes.filter((c) => /^h-\[/.test(c))).toEqual([]);
+    });
+
+    test("the field name sits beside its value rather than above it", () => {
+      const { container } = render(
+        <RowDetailSheet row={{ col_01: "a" }} fields={["col_01"]} isOpen onClose={mock(() => {})} rowIndex={0} />,
+      );
+      const label = Array.from(container.querySelectorAll("p")).find((el) => el.textContent === "col_01")!;
+      const value = Array.from(container.querySelectorAll("p")).find((el) => el.textContent === "a")!;
+      // Same parent, and that parent lays its children out in a row.
+      expect(value.parentElement).toBe(label.parentElement);
+      expect((label.parentElement!.getAttribute("class") ?? "").split(/\s+/)).toContain("flex");
+    });
   });
 });

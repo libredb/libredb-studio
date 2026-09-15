@@ -6,8 +6,10 @@ import {
   inferSqlType,
   escapeSQL,
   generateImportSQL,
+  type ImportTarget,
   type ParsedData,
 } from "@/components/DataImportModal";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // ---------------------------------------------------------------------------
 // parseCSV
@@ -269,6 +271,9 @@ describe("escapeSQL", () => {
 // ---------------------------------------------------------------------------
 
 describe("generateImportSQL", () => {
+  /** An existing object at a one-segment address, which is what these cases are about. */
+  const existing = (name: string): ImportTarget => ({ kind: "existing", path: [name] });
+
   const sampleData: ParsedData = {
     headers: ["name", "age", "active"],
     rows: [
@@ -282,6 +287,26 @@ describe("generateImportSQL", () => {
   // them, so a cell of an imported file is a value that becomes SQL. On a
   // backslash-escaping dialect a cell ending in `\` would escape the closing quote
   // and the rest of the row would be read as statement text (#290).
+  // The target is an ADDRESS and the statement qualifies it per segment for the connected
+  // dialect, which is what keeps an import off the namesake in another container (#789).
+  test("qualifies and quotes the target for the connected dialect", () => {
+    const mssql = { queryLanguage: "sql", defaultPort: 1433 } as unknown as ProviderCapabilities;
+    const target: ImportTarget = { kind: "existing", path: ["shop", "dbo", "order details"] };
+    const sql = generateImportSQL(sampleData, target, { name: "name" }, "mssql", mssql);
+    expect(sql).toContain("INSERT INTO shop.dbo.[order details]");
+  });
+
+  test("with no declaration yet the target is still the dotted address, never the label", () => {
+    const target: ImportTarget = { kind: "existing", path: ["shop", "dbo", "customers"] };
+    const sql = generateImportSQL(sampleData, target, { name: "name" });
+    expect(sql).toContain("INSERT INTO shop.dbo.customers");
+  });
+
+  test("a new table is named exactly as it was typed", () => {
+    const sql = generateImportSQL(sampleData, { kind: "new", name: "my table" }, { name: "name" });
+    expect(sql).toContain("CREATE TABLE my table");
+  });
+
   test("escapes an imported cell for the dialect it will run on", () => {
     const withBackslash: ParsedData = {
       headers: ["path"],
@@ -289,7 +314,7 @@ describe("generateImportSQL", () => {
       totalRows: 1,
     };
 
-    const sql = generateImportSQL(withBackslash, "files", false, "", {}, "mysql");
+    const sql = generateImportSQL(withBackslash, existing("files"), {}, "mysql");
 
     expect(sql).toContain("('C:\\\\Users\\\\''; DROP TABLE users; --')");
   });
@@ -303,7 +328,7 @@ describe("generateImportSQL", () => {
     rows.push(["0); DELETE FROM users; -- "]);
     const beyondTheSample: ParsedData = { headers: ["amount"], rows, totalRows: 101 };
 
-    const sql = generateImportSQL(beyondTheSample, "orders", false, "", {});
+    const sql = generateImportSQL(beyondTheSample, existing("orders"), {});
 
     expect(sql).toContain("('0); DELETE FROM users; -- ')");
     expect(sql).not.toContain("(0); DELETE FROM users; -- )");
@@ -316,7 +341,7 @@ describe("generateImportSQL", () => {
     rows.push(["maybe"]);
     const beyondTheSample: ParsedData = { headers: ["active"], rows, totalRows: 101 };
 
-    const sql = generateImportSQL(beyondTheSample, "flags", false, "", {});
+    const sql = generateImportSQL(beyondTheSample, existing("flags"), {});
 
     expect(sql).toContain("('maybe')");
   });
@@ -328,7 +353,7 @@ describe("generateImportSQL", () => {
       totalRows: 1,
     };
 
-    expect(generateImportSQL(numeric, "orders", false, "", {})).toContain("(42, 1.5, TRUE)");
+    expect(generateImportSQL(numeric, existing("orders"), {})).toContain("(42, 1.5, TRUE)");
   });
 
   test("emits the standard form when no dialect is known", () => {
@@ -338,38 +363,50 @@ describe("generateImportSQL", () => {
       totalRows: 1,
     };
 
-    expect(generateImportSQL(withBackslash, "files", false, "", {})).toContain("('C:\\Users')");
+    expect(generateImportSQL(withBackslash, existing("files"), {})).toContain("('C:\\Users')");
   });
 
   test("returns empty for null parsedData", () => {
-    expect(generateImportSQL(null, "users", false, "", {})).toBe("");
+    expect(generateImportSQL(null, existing("users"), {})).toBe("");
   });
 
-  test("returns empty when no table name (existing table mode, empty target)", () => {
-    expect(generateImportSQL(sampleData, "", false, "", {})).toBe("");
+  test("returns empty when nothing is selected", () => {
+    expect(generateImportSQL(sampleData, null, {})).toBe("");
   });
 
   test("generates INSERT into existing table", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(sampleData, existing("users"), { name: "name", age: "age", active: "active" });
     expect(sql).toContain("INSERT INTO users");
     expect(sql).toContain("name, age, active");
     expect(sql).not.toContain("CREATE TABLE");
   });
 
   test("generates CREATE TABLE + INSERT for new table", () => {
-    const sql = generateImportSQL(sampleData, "", true, "my_table", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "my_table" },
+      { name: "name", age: "age", active: "active" },
+    );
     expect(sql).toContain("CREATE TABLE my_table");
     expect(sql).toContain("INSERT INTO my_table");
   });
 
   test('uses "imported_data" as default new table name', () => {
-    const sql = generateImportSQL(sampleData, "", true, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "" },
+      { name: "name", age: "age", active: "active" },
+    );
     expect(sql).toContain("CREATE TABLE imported_data");
     expect(sql).toContain("INSERT INTO imported_data");
   });
 
   test("infers column types in CREATE TABLE", () => {
-    const sql = generateImportSQL(sampleData, "", true, "test", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "test" },
+      { name: "name", age: "age", active: "active" },
+    );
     // name is TEXT, age is INTEGER, active is BOOLEAN
     expect(sql).toContain("name TEXT");
     expect(sql).toContain("age INTEGER");
@@ -377,7 +414,7 @@ describe("generateImportSQL", () => {
   });
 
   test("uses column mapping for names", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", {
+    const sql = generateImportSQL(sampleData, existing("users"), {
       name: "full_name",
       age: "user_age",
       active: "is_active",
@@ -386,23 +423,27 @@ describe("generateImportSQL", () => {
   });
 
   test("uses column mapping in CREATE TABLE", () => {
-    const sql = generateImportSQL(sampleData, "", true, "test", {
-      name: "full_name",
-      age: "user_age",
-      active: "is_active",
-    });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "test" },
+      {
+        name: "full_name",
+        age: "user_age",
+        active: "is_active",
+      },
+    );
     expect(sql).toContain("full_name TEXT");
     expect(sql).toContain("user_age INTEGER");
   });
 
   test("formats boolean values as TRUE/FALSE", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(sampleData, existing("users"), { name: "name", age: "age", active: "active" });
     expect(sql).toContain("TRUE");
     expect(sql).toContain("FALSE");
   });
 
   test("outputs numeric values unquoted", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(sampleData, existing("users"), { name: "name", age: "age", active: "active" });
     // age values should be unquoted: 30, 25
     expect(sql).toMatch(/\b30\b/);
     expect(sql).toMatch(/\b25\b/);
@@ -414,7 +455,7 @@ describe("generateImportSQL", () => {
       rows: [["O'Brien"]],
       totalRows: 1,
     };
-    const sql = generateImportSQL(data, "users", false, "", { name: "name" });
+    const sql = generateImportSQL(data, existing("users"), { name: "name" });
     expect(sql).toContain("'O''Brien'");
   });
 
@@ -427,14 +468,14 @@ describe("generateImportSQL", () => {
       ],
       totalRows: 2,
     };
-    const sql = generateImportSQL(data, "users", false, "", { name: "name", bio: "bio" });
+    const sql = generateImportSQL(data, existing("users"), { name: "name", bio: "bio" });
     expect(sql).toContain("NULL");
   });
 
   test("batches rows in groups of 100", () => {
     const rows = Array.from({ length: 250 }, (_, i) => [String(i)]);
     const data: ParsedData = { headers: ["id"], rows, totalRows: 250 };
-    const sql = generateImportSQL(data, "items", false, "", { id: "id" });
+    const sql = generateImportSQL(data, existing("items"), { id: "id" });
 
     // Should have 3 INSERT statements (100 + 100 + 50)
     const insertCount = (sql.match(/INSERT INTO/g) || []).length;
@@ -442,7 +483,7 @@ describe("generateImportSQL", () => {
   });
 
   test("falls back to header name when mapping is empty", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", {});
+    const sql = generateImportSQL(sampleData, existing("users"), {});
     expect(sql).toContain("name, age, active");
   });
 });

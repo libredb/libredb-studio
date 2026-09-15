@@ -12,7 +12,8 @@
   <b>English</b> ·
   <a href="README_zh.md">简体中文</a> ·
   <a href="README_ja.md">日本語</a> ·
-  <a href="README_es.md">Español</a>
+  <a href="README_es.md">Español</a> ·
+  <a href="README_ur.md">اردو</a>
 </p>
 
 <p align="center">
@@ -29,9 +30,10 @@
   Also listed in official
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>
-  and
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>
+  and
+  <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>
   docs
 </p>
 
@@ -205,7 +207,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Inline Editing**: Double-click to update values directly in the grid, on engines whose SQL has a single-table row update (the control is hidden elsewhere).
 - **Column Filtering**: Per-column text filters on query results for instant data exploration.
 - **Interactive Pivot Table**: Client-side pivoting with 5 aggregation functions (COUNT, SUM, AVG, MIN, MAX) and SQL generation.
-- **Expert Exporter**: Instant CSV and JSON exports for reporting. CSV import and result export offer comma (default), semicolon and tab separators.
+- **Expert Exporter**: Instant CSV and JSON exports for reporting. CSV import and result export offer comma (default), semicolon and tab separators. Every format the Export menu writes to a file it also copies straight to the clipboard.
 
 ### Advanced Data Visualization
 - **8 Chart Types**: Bar, Line, Pie, Area, Scatter, Histogram, Stacked Bar, and Stacked Area charts powered by Recharts.
@@ -218,7 +220,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Column-Name Pattern Matching**: 10 built-in patterns (email, phone, credit card, SSN, password, IP, date, financial, and more) match **result column headers** by regex. Works when the output name matches (e.g., `SELECT salary`). Aliases (`salary AS x`) and aggregates (`SUM(salary)`) are not masked today.
 - **Configurable Rules**: Admin panel to add, edit, enable/disable masking patterns. Email, phone, credit card and SSN presets prefill the Add Pattern form so column patterns can be adapted before saving. Custom patterns support regex. Settings stored per-browser in localStorage.
 - **RBAC UI Controls**: User role cannot toggle or reveal masked cells in the UI. Admin role can toggle masking and temporarily reveal individual cells (10s auto-hide).
-- **Export & Clipboard**: CSV, JSON, and SQL INSERT exports use masked display values when masking is active in the UI. This does not prevent access to raw data via the API, browser DevTools, or admin reveal.
+- **Export & Clipboard**: CSV, JSON, and SQL INSERT exports, whether saved as a file or copied to the clipboard, use masked display values when masking is active in the UI. This does not prevent access to raw data via the API, browser DevTools, or admin reveal.
 - **UI Coverage**: Grid, mobile card/table views, row detail sheet, and clipboard copy respect the active display mask.
 
 ### Analyst & Developer Tools

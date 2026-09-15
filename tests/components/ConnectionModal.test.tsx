@@ -129,6 +129,7 @@ const mockHandlePasteConnectionString = mock(() => {});
 
 const mockSetLocalDataCenter = mock(() => {});
 const mockSetAuthSource = mock(() => {});
+const mockSetSkipObjectScan = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
 
@@ -140,6 +141,8 @@ function getDefaultForm() {
     setName: mockSetName,
     queryTimeout: "",
     setQueryTimeout: mockSetQueryTimeout,
+    skipObjectScan: false,
+    setSkipObjectScan: mockSetSkipObjectScan,
     host: "localhost",
     setHost: mockSetHost,
     port: "5432",
@@ -341,6 +344,25 @@ describe("ConnectionModal", () => {
     rerender(React.createElement(ConnectionModal, createDefaultProps()));
     fireEvent.change(input, { target: { value: "" } });
     expect(mockSetQueryTimeout).toHaveBeenCalledWith("");
+  });
+
+  // #765: the connection that holds tens of thousands of objects is the one that knows,
+  // so the choice is made here rather than in a global setting.
+  test("offers the no-scan choice with its consequence spelled out, and forwards it", () => {
+    const { getByLabelText, getByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const box = getByLabelText("Do not read the object list on connect") as HTMLInputElement;
+
+    expect(box.checked).toBe(false);
+    expect(getByText("The editor still works. The object panel offers a load action instead.")).toBeDefined();
+
+    fireEvent.click(box);
+    expect(mockSetSkipObjectScan).toHaveBeenCalledWith(true);
+  });
+
+  test("shows the saved no-scan choice when editing", () => {
+    mockFormOverrides = { isEditMode: true, skipObjectScan: true };
+    const { getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Do not read the object list on connect") as HTMLInputElement).checked).toBe(true);
   });
 
   test("shows the saved query timeout when editing", () => {

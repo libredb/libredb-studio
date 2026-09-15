@@ -30,7 +30,7 @@ Each model was asked one question per surface, the same wording for every model,
 | Analyze | "Which part of the company costs us the most in salary?" |
 | Plan | "What tables are in this database and how do they relate to each other?" |
 
-Thirty models, six surfaces, five runs: **900 runs, and all 900 passed.**
+Thirty-five models, six surfaces, five runs: **1050 runs, and all 1050 passed.**
 
 A run passes only when its goal verdict is `answered`. A run that ends `succeeded` having
 answered nothing is a failure here, and the ledger names which bar it missed.
@@ -105,10 +105,10 @@ one, and each page says what its model needed.
 
 ## Driven through the interface as well
 
-The 900 runs above were opened over HTTP. A separate sweep drove ten of the models through the
+The 1050 runs above were opened over HTTP. A separate sweep drove ten of the models through the
 product's own rail — log in, pick the sample connection, type the objective, press Start, wait
-for the run to finish on screen — one run per surface: **57 of 60 passed.** Ten, not thirty:
-that sweep was run when ten models were supported and has not been repeated, and the twelve added
+for the run to finish on screen — one run per surface: **57 of 60 passed.** Ten, not thirty-five:
+that sweep was run when ten models were supported and has not been repeated, and the twenty-five added
 since are measured over HTTP only. Saying "all of them" would have described a sweep nobody ran.
 
 The three that did not are the same shapes the ledger records anywhere else (`no-report`,

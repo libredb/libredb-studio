@@ -7,14 +7,23 @@
 export type {
   DatabaseType,
   DatabaseConnection,
-  TableSchema,
-  TableRelations,
   ColumnSchema,
+  // `ObjectDetail` below is defined over these two, so a provider implementing
+  // `describeObject` needs them from here rather than reaching past this module (#789).
+  IndexSchema,
+  ForeignKeySchema,
   QueryResult,
   QueryWarning,
 } from "../types";
 
-import type { DatabaseType, DatabaseConnection, TableSchema, TableRelations, QueryResult } from "../types";
+import type {
+  DatabaseType,
+  DatabaseConnection,
+  QueryResult,
+  ColumnSchema,
+  IndexSchema,
+  ForeignKeySchema,
+} from "../types";
 
 // ============================================================================
 // Pool Configuration
@@ -182,6 +191,22 @@ export type ExplainFormat =
   | "trino-json"
   | "duckdb-json";
 
+/**
+ * How deep an engine's container chain is, in the TYPE rather than only in a derivation.
+ *
+ * Phase 1's tree models zero, one or two levels and `containerDepth()` answers `0 | 1 | 2`, so a
+ * provider declaring a third level used to have it silently clamped away: the level would exist in
+ * the declaration, `ContainerLevelSpec.level` indices would still point at it, and nothing would
+ * read it. Spelling the ceiling as a tuple union makes that declaration a compile error at the
+ * provider that writes it, which is where the person who meant to add it is standing. No engine in
+ * this repository declares three; the first one that needs to is a Phase 2 question about the tree,
+ * not a number to widen here (#789).
+ */
+export type ContainerLevels =
+  | readonly []
+  | readonly [ContainerLevelSpec]
+  | readonly [ContainerLevelSpec, ContainerLevelSpec];
+
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";
   /**
@@ -246,7 +271,7 @@ export interface ProviderCapabilities {
    * Whether this engine has foreign keys to declare at all — not whether any
    * particular schema declares one, and not whether the current role can see them.
    *
-   * It exists because an empty `TableSchema.foreignKeys` means two different things
+   * It exists because an empty foreign-key list means two different things
    * and the reader cannot tell them apart. On PostgreSQL an empty list means this
    * schema declares none, or that the role this connection reads with cannot see the
    * ones it declares — an empty read cannot tell those two apart, which is why the
@@ -266,11 +291,11 @@ export interface ProviderCapabilities {
    */
   declaresForeignKeys?: boolean;
   /**
-   * Whether the rows of this provider's `getSchema()` are objects the engine holds,
-   * or groupings this server derived from a bounded scan of what it found.
+   * Whether this provider's relation-shaped rows are objects the engine holds, or
+   * groupings this server derived from a bounded scan of what it found.
    *
    * True on Redis and LibreDB and nowhere else. Neither engine has a schema to read:
-   * `getSchema()` scans a bounded slice of the keyspace — 1000 keys on Redis, 10000 on
+   * the walk scans a bounded slice of the keyspace — 1000 keys on Redis, 10000 on
    * LibreDB — and collapses the real key names it found into one row per common
    * prefix. So a row named `user:*` is not a key, was never named by anybody, and no
    * command can be given it; and the set of rows is what that one scan happened to
@@ -378,11 +403,69 @@ export interface ProviderCapabilities {
    * here keeps `query-generators.ts` from having to know which engine it is
    * generating for.
    *
+   * Oracle is the second product that declares it, and for a different reason worth
+   * keeping apart: `;` is a SQL*Plus convention rather than Oracle SQL, and node-oracledb
+   * sends one statement with no terminator in it. Measured on Oracle AI Database 26ai Free
+   * on 2026-09-12 by clicking a table in the object browser -
+   * `SELECT * FROM app_customers FETCH FIRST 50 ROWS ONLY;` answers ORA-00933 "SQL command
+   * not properly ended" and the same statement without the `;` returns the rows (#789).
+   *
    * This bounds the GENERATORS only. A user who types a `;` still has it stripped
    * by the editor's statement reader before the statement is sent, and the raw API
    * passes text through untouched - neither of those is this field's business.
    */
   statementTerminator?: "none";
+  /**
+   * The container levels this engine nests its objects in, outermost first (#789).
+   *
+   * Absent or empty means the engine has none, and that is a claim about the engine
+   * rather than a gap in the declaration: SQLite, libSQL, Elasticsearch, OpenSearch and
+   * LibreDB address every object by a bare name, so the tree draws objects directly
+   * under the connection. One level is a database, a keyspace or a bucket; two is a
+   * catalog plus a schema. The per-engine inventory each provider declares from is on
+   * the epic, issue #789.
+   *
+   * Read it through `containerDepth()` in `src/lib/db/object-kinds.ts` and never by
+   * length here, so the empty and the absent cases cannot be answered differently by
+   * two callers.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every external
+   * implementer compiling.
+   */
+  containerLevels?: ContainerLevels;
+  /**
+   * Every object kind this engine has, each declared in full by the provider that has
+   * it (#789).
+   *
+   * Absent means no object kind is declared, so the tree stays empty for this engine
+   * rather than falling back to a table-shaped default. The permissive default is wrong
+   * here for the reason the flat model was replaced: it would claim a concept on an
+   * engine nobody asked: Druid has no view, no materialized view, no routine and no
+   * trigger, Cassandra has no view, and MySQL has never had a materialized view. The
+   * per-engine inventory behind those absences is on issue #789.
+   *
+   * A kind that is absent from this list is a different fact from a kind that is
+   * declared and holds nothing, which is what `KindCount` carries. Read this through
+   * `declaredKinds()` in `src/lib/db/object-kinds.ts`.
+   *
+   * Optional for the same published-interface reason as `containerLevels` above.
+   *
+   * WHAT AN EMPTY DECLARATION COSTS, said here because the type is what an external
+   * implementer of this interface reads. Since the flat schema reading was deleted, this
+   * list is the ONLY thing that grounds a database: a provider declaring no kind draws no
+   * folder in the object browser, and its agent runs are ungrounded. That is refused
+   * LOUDLY rather than silently - `readObjectInventoryForGrounding()` answers
+   * `unsupported` before it spends a statement, and the run is told
+   * "the provider declares no object kinds, so there is nothing to list" as a
+   * `CATALOG_READ_REFUSED` capture - so a run is never handed an empty inventory as
+   * though it were an empty database. It is deliberately not a construction-time throw:
+   * every one of the seventeen shipped type ids declares kinds, so the shape is
+   * unreachable here, and refusing to CONNECT over it would take a connection away from
+   * an implementer whose query editor works perfectly well while their catalog reading is
+   * still being written (#789).
+   */
+  objectKinds?: readonly ObjectKindSpec[];
   schemaRefreshPattern: string;
 }
 
@@ -535,6 +618,18 @@ export interface QueryPrepareOptions {
 // Provider Interface (Strategy Pattern)
 // ============================================================================
 
+/**
+ * What `endOpenQueryTransaction()` found and did: `"none"` when the session carried no
+ * open transaction, `"rolled-back"` when it did and the transaction has been discarded.
+ *
+ * Discarded rather than committed, deliberately. A script that opened a transaction and
+ * never said COMMIT did not ask for its work to be kept, and committing on its behalf
+ * would write changes on an authority nobody gave. The caller is expected to tell the
+ * user which of the two happened; silence is what shipped, and silence is what let a
+ * script's unfinished transaction reach another user.
+ */
+export type OpenQueryTransactionOutcome = "none" | "rolled-back";
+
 export interface DatabaseProvider {
   /** Database type identifier */
   readonly type: DatabaseType;
@@ -576,28 +671,193 @@ export interface DatabaseProvider {
   queryReadOnly?(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult>;
 
   /**
-   * Get full database schema
-   * @returns Array of table schemas with columns, indexes, and foreign keys
+   * End a transaction that a statement run through `query()` left open on the session
+   * `query()` runs on, and say whether there was one (D71).
+   *
+   * WHY IT EXISTS. `getOrCreateProvider` caches one provider per `connection.id` for the
+   * whole process, so a transaction that outlives the request belongs to whoever borrows
+   * that handle next. Measured 2026-09-13 through the product's own routes:
+   * `POST /api/db/multi-query` with `BEGIN; CREATE TABLE ...; SELECT * FROM <missing>`
+   * stops on the third statement and leaves the first one's transaction open. On
+   * PostgreSQL 17 the next request — a DIFFERENT user, on `POST /api/db/query` — answered
+   * HTTP 500 "current transaction is aborted, commands ignored until end of transaction
+   * block", and so did `POST /api/db/maintenance` minutes later; on SQLite and DuckDB the
+   * next user's INSERT answered 200 and read its own row back while an independent reader
+   * saw nothing, and a later ROLLBACK destroyed it with no error anywhere.
+   *
+   * WHY IT IS ONE CALL AND NOT AN ASK FOLLOWED BY A ROLLBACK. Two engines cannot separate
+   * them. On PostgreSQL the answer lives on ONE pooled client (`pg`'s ReadyForQuery status)
+   * and a rollback issued through a second pool checkout is not guaranteed to reach the
+   * same one, so the ask and the act have to name the same client. On DuckDB v1.5.5 there
+   * is no ask at all: `current_transaction_id()` answers in both states,
+   * `transaction_timestamp()` is an alias of `get_current_timestamp()`, and the client
+   * context carries only a connection id, so the engine's own refusal of a ROLLBACK is the
+   * only reading available. The RESULT still answers the question, which is what the
+   * caller needs in order to tell the user what became of the transaction they opened.
+   *
+   * `"none"` is an ANSWER, never a failure: an unconditional ROLLBACK is not an option
+   * because a rollback with nothing to roll back raises — measured on bun:sqlite 1.4.2 and
+   * DuckDB v1.5.5, both "cannot rollback - no transaction is active".
+   *
+   * OPTIONAL, for the reason `queryReadOnly` is: only a provider that can name the session
+   * its own `query()` ran on can answer truthfully, and a provider that cannot must say
+   * nothing rather than guess. `postgres`, `sqlite` and `duckdb` implement it, which are
+   * the three engines D71 was measured on. A caller shape-checks for it; there is no
+   * default, because a default that answered `"none"` would certify an absence nobody read.
+   *
+   * It does NOT touch the interactive transaction session `POST /api/db/transaction`
+   * drives (`beginTransaction()` and friends). That session holds a connection of its own
+   * that `query()` never runs on, so it is never the session this method names.
    */
-  getSchema(): Promise<TableSchema[]>;
+  endOpenQueryTransaction?(): Promise<OpenQueryTransactionOutcome>;
 
   /**
-   * Fast structural schema (tables + columns + PKs), excluding the expensive
-   * foreign-key/index introspection. Optional: providers that don't implement
-   * it fall back to getSchema(). Pairs with getSchemaRelations().
+   * Containers at `parent`, or the top level when `parent` is absent (#789).
+   *
+   * REQUIRED, along with the four below. They were optional through the phase that landed
+   * them one provider at a time, and that phase is over: the flat reading they replaced
+   * (`getSchema`, `getSchemaList`, `getSchemaRelations`) no longer exists, so a provider
+   * that does not implement these answers nothing at all about what a database holds.
+   * Optionality also bought a 501 the object routes had to carry for a provider gap, and a
+   * gap that cannot occur is a guard nothing executes.
    */
-  getSchemaList?(): Promise<TableSchema[]>;
+  listContainers(parent?: readonly string[]): Promise<Container[]>;
+  /** Per-kind counts for one container. A refused read is `{ unavailable }`, never 0. */
+  countObjects(container: readonly string[]): Promise<Record<string, KindCount>>;
+  /** Objects of one kind in one container. Names only: columns come from describeObject. */
+  listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  /**
+   * Columns, indexes and foreign keys for one object.
+   *
+   * `kind` is required, not a convenience. Without it a provider has to work out what it
+   * is holding from what the path's last segment happens to match in a catalog, and
+   * "answers nothing because no relation is called that" is not the same as "this is a
+   * routine and routines have no columns" - the first is correct by accident and stops
+   * being correct the moment a name collides. The caller always has the kind, because an
+   * object is only ever reached through its kind's folder.
+   */
+  describeObject(path: readonly string[], kind: string): Promise<ObjectDetail>;
 
   /**
-   * Heavy relationship/index data (foreign keys + indexes) keyed by table
-   * display name, for async merge into getSchemaList() results. Optional.
+   * Columns, indexes and foreign keys for EVERY object of one kind in one container, in
+   * one round trip (#789).
+   *
+   * The fifth method, and it exists because a consumer none of the other four serves was
+   * measured rather than imagined: `src/lib/agent/tools.ts` read the agent's whole column,
+   * index and foreign-key grounding through the flat reading, and deleting that reading
+   * would otherwise have left the agent with no columns at all on fifteen engines. It is
+   * the object-model-shaped successor of that method, not a new invention, so each provider
+   * reshaped the old body rather than writing a new statement: those bodies carried which
+   * catalog answers which fact, which system schemas are excluded and how an
+   * extension-owned relation is hidden.
+   *
+   * ONE ROUND TRIP PER CONTAINER AND KIND, never one per object. `includeColumns` on the
+   * inventory route was built as one `describeObject` per object, up to 5000 sequential
+   * round trips, and removed as an N+1 this epic should not ship. A provider that loops
+   * `describeObject` here has re-introduced it.
+   *
+   * The arguments are a container and a kind, the same pair `listObjects` takes, and not
+   * a list of paths. Three reasons, in order of how much they cost. A caller's fan-out is
+   * then bounded by the SAME container-and-kind product it already bounds for listing
+   * (`INVENTORY_PAIR_LIMIT`), instead of by a second, differently shaped budget. A path
+   * list would have to reach the engine as an IN list, which on a two-level engine is an
+   * IN list over TUPLES and on a kind with mixed path depth (an Oracle schema-level
+   * trigger against a table-level one) is two of them, so the statement's shape would
+   * depend on the caller's selection rather than on the engine. And a caller holding 5000
+   * paths would have to chunk them itself, which is a fan-out no bound in this repo
+   * describes.
+   *
+   * `limit` bounds ONE read, which nothing else in the object surface does: the inventory
+   * route's own docblock records that it can bound the number of listings and the number
+   * of objects returned, and cannot bound a single listing from the outside. Absent means
+   * unbounded, and a provider must not invent a cap of its own and stay silent about it -
+   * it may cap, but then `truncated` says so.
+   *
+   * A kind that legitimately has no columns - a routine, a trigger, a sequence on some
+   * engines - answers an empty `details` array without a round trip, exactly as
+   * `describeObject` answers three empty arrays for one of them.
    */
-  getSchemaRelations?(): Promise<TableRelations[]>;
+  describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
 
   /**
-   * Get list of table names
+   * The definition text of ONE object, as a document of named parts (#789 Phase 2).
+   *
+   * OPTIONAL, unlike the five object methods above, and the asymmetry is argued rather than
+   * inherited. Those five are required because a provider that does not implement them
+   * answers nothing at all about what a database holds. A provider that does not implement
+   * this one answers everything about what the database holds and simply declares no
+   * source-bearing kind, which is the TRUE and measured state of `druid` and `libredb`:
+   * neither has a kind with a definition text anywhere, so a required method would put an
+   * unreachable throw in each, which is precisely the shape that got the 501 deleted.
+   *
+   * `kind` is required for the reason `describeObject`'s is: measured on MySQL, MariaDB and
+   * DuckDB, one name addresses more than one object of different kinds in one container, so a
+   * path alone reads the wrong object.
+   *
+   * `limit` bounds ONE PART's character count. Absent means unbounded. A provider may apply a
+   * bound of its own, and must then set `truncated` on the part it bounded and never on a part
+   * it read whole.
+   *
+   * The declaration and the method cannot disagree: `assertObjectSurface` asserts, in BOTH
+   * directions, that a provider declares a kind with `hasSource` exactly when it implements
+   * this method.
    */
-  getTables(): Promise<string[]>;
+  readObjectSource?(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument>;
+
+  /**
+   * Build the artifact an apply will send, or answer the engine fact that refuses one (#789
+   * Phase 3).
+   *
+   * OPTIONAL for exactly the reason `readObjectSource` is optional and undefaulted: a provider
+   * that omits it answers everything about what the database holds and simply declares no
+   * editable kind, which is the TRUE and measured state of fourteen of the seventeen type ids on
+   * day one. `BaseDatabaseProvider` declares no implementation, defaulted or otherwise, so a
+   * provider either writes the method or the property is `undefined`.
+   *
+   * ONE OPTIONS OBJECT and not four positional arguments, and the reason is measured in this
+   * repository rather than aesthetic: `requireSourceKind` takes its engine as
+   * `{ displayName, type }` because "both are strings, a positional pair of them can be swapped
+   * silently, and an object at the call site names each one". `(path, kind, partId, text)` is
+   * three adjacent strings, two of them swappable with no compile error and one of them the
+   * reader's entire definition.
+   *
+   * THE PROVIDER RE-READS THE OBJECT HERE, and that one read serves five purposes, none of which
+   * can be taken from the document the pane is showing: it produces the revision, it is the
+   * catalog fact a collateral consequence must be built from, it is the pre-image the preview's
+   * left side needs, it answers the ownership pre-flight, and it is what refuses a part carrying
+   * `truncated`. The editable predicate reads `truncated` and NEVER `form`: MEASURED on
+   * PostgreSQL 18.4, `form` stays `"complete"` on a truncated part.
+   *
+   * Both methods or neither. `tests/helpers/object-surface-conformance.ts` asserts the pairing in
+   * BOTH directions with both populations pinned: a build with no apply is a mandatory preview
+   * with nothing behind it, and an apply with no build is ruling 1a violated.
+   */
+  buildObjectEdit?(request: ObjectEditRequest): Promise<ObjectEditBuild>;
+
+  /**
+   * Send the plan. Never the text again (ruling 1a).
+   *
+   * What this method may NOT do, each carried from a measurement rather than from a preference:
+   *
+   * - It may NOT call `beginTransaction()`/`rollbackTransaction()` on itself. MEASURED through
+   *   the product: `txActive` is one flag per `connection.id`, a second Studio user's `begin` is
+   *   refused 400 "Transaction already active", and their `rollback` then destroyed the first
+   *   user's uncommitted write while answering HTTP 200.
+   * - It may NOT leave a transaction open on the shared handle, and if it emits `BEGIN` it owns
+   *   the matching GUARDED end in a `finally`. MEASURED on SQLite 3.53.2 that an unconditional
+   *   `ROLLBACK` throws `cannot rollback - no transaction is active`, and MEASURED through the
+   *   product on PostgreSQL that a dangling `BEGIN` poisons one pooled client for the whole
+   *   process: every later request that lands on it, from any user on any route, answers HTTP 500
+   *   "current transaction is aborted", until the 30-minute idle eviction.
+   * - It may NOT leave session state behind. MEASURED with three controls: a `SET` by one Studio
+   *   user was read back by another on the same backend. A plan's `pinned` session arm is issued
+   *   inside the apply's own implicit transaction and is gone when the round trip ends; a bare
+   *   `SET` is forbidden.
+   * - It may NOT route through `/api/db/multi-query` or `splitStatements`. MEASURED: the splitter
+   *   cuts a MySQL routine body into five fragments and a PostgreSQL `BEGIN ATOMIC` body into two,
+   *   and `BEGIN ATOMIC` bodies exist on 18.4.
+   */
+  applyObjectEdit?(plan: ObjectEditPlan): Promise<ObjectEditOutcome>;
 
   /**
    * Get health and performance metrics
@@ -966,4 +1226,853 @@ export interface MonitoringOptions {
   sessionLimit?: number;
   /** Schema filter (default: 'public' for PostgreSQL) */
   schemaFilter?: string;
+}
+
+// ============================================================================
+// Object Model
+// ============================================================================
+
+/**
+ * Behaviour the UI may derive from an object. CLOSED on purpose: a new engine adds
+ * kinds, never roles. The UI switches on this and never on `ObjectKindSpec.id`, which
+ * is what keeps `CLAUDE.md`'s "never branch on the type id" rule true one level up.
+ */
+export type ObjectRole =
+  | "relation" // has rows, is selected from
+  | "routine" // is called, has source
+  | "group" // holds routines: an Oracle package
+  | "attached" // belongs to another object: a trigger
+  | "config"; // defined by text or JSON: a dictionary, a lookup, a pipeline
+
+/**
+ * One object kind, declared in full by the provider that has it.
+ *
+ * `id` is an OPEN string, and that is the design rather than a shortcut. DBeaver's
+ * `DBSObjectType`, CloudBeaver's `nodeType`, Azure Data Studio's `nodeType` and
+ * pgAdmin's `node_type` are all open for the same reason, and JDBC's closed model is
+ * the counter-example: it cannot express a trigger, a sequence, a materialized view or
+ * a package at all. A ClickHouse dictionary, a Druid lookup and an Oracle package
+ * therefore reach the tree through a provider-local declaration and no core change.
+ */
+export interface ObjectKindSpec {
+  readonly id: string;
+  readonly role: ObjectRole;
+  /** The engine's own word, singular. Rendered as-is. */
+  readonly label: string;
+  readonly labelPlural: string;
+  /** Phase 2. Absent means this kind has no readable definition, so no Source tab. */
+  readonly hasSource?: boolean;
+  /** Phase 2. The Monaco language id the source renders in. */
+  readonly sourceLanguage?: string;
+  /**
+   * Phase 3. Whether an object of THIS KIND can have its definition text edited and applied
+   * back (#789, discussion #778).
+   *
+   * Absent and undeclared both read as FALSE, and the name states the scope, for the reason
+   * `acceptsRowWrites` states it: the permissive default is wrong when only the provider knows.
+   * It is NOT conjoined with anything. Read through `kindAcceptsSourceEdits()`.
+   *
+   * THIS FIELD IS NOT A CLIENT GATE AND NOTHING IN THE BROWSER READS IT. MEASURED end to end
+   * through two product routes against a live MariaDB 12.3.2: `POST /api/db/provider-meta`
+   * answered the MySQL six for a server whose connected provider serves `package` in full,
+   * because that route builds a provider it never connects while `objectKindsFor(version)`
+   * resolves from a version measured in `connect()`. A client predicate built on the client's
+   * capability copy therefore answers for the wrong server. The per-object affordance travels
+   * with the READ instead, on `ObjectSourcePart.edit`; this field is the conformance anchor and
+   * the census population.
+   */
+  readonly acceptsSourceEdits?: boolean;
+  /** Kinds nested under an object of this kind: a package holds procedures. */
+  readonly childKinds?: readonly string[];
+  /** This kind hangs off another object rather than off the container: a trigger. */
+  readonly attachedTo?: string;
+  /**
+   * Whether a row write against an object of this kind is meaningful.
+   *
+   * Absent reads as false, so a kind that declares nothing never appears as an import
+   * or inline-edit target. The permissive default is wrong here: writing rows into a
+   * view is meaningless on most engines and only sometimes possible on PostgreSQL, and
+   * only the provider knows which.
+   *
+   * The engine-wide `supportsInlineRowEdit` stays, and it is a SEPARATE fact rather than
+   * the other half of a conjunction. It has one reader, `src/components/Studio.tsx:144`,
+   * where it gates the results grid's inline row editor and nothing else. MongoDB,
+   * Couchbase and Cassandra declare it false, and #789 declares a kind that accepts row
+   * writes on each of those three, so requiring both would refuse an import all three
+   * engines do support.
+   * Read this field through `kindAcceptsRowWrites()` in `src/lib/db/object-kinds.ts`,
+   * whose name states that scope; a caller that needs the editor gate as well reads
+   * both.
+   */
+  readonly acceptsRowWrites?: boolean;
+}
+
+/** One container level. Zero, one or two of these; the engine says which. */
+export interface ContainerLevelSpec {
+  /** Structural role, used for ordering only. */
+  readonly id: "catalog" | "schema";
+  /** The engine's own word: Schema, Keyspace, Bucket, Scope, User, Database. */
+  readonly label: string;
+  readonly labelPlural: string;
+}
+
+export interface Container {
+  readonly path: readonly string[];
+  readonly name: string;
+  /** Index into `containerLevels`. */
+  readonly level: number;
+  /**
+   * Whether this container is the one the session is already in (#789).
+   *
+   * Absent means the engine does not publish the fact, which is most of them: on
+   * PostgreSQL a `search_path` names several schemas and none of them owns the session.
+   * Oracle is the case this exists for, and there it is not decoration: the connecting
+   * user IS a container, every other owner in `ALL_USERS` is a peer of it, and without
+   * this a user connecting as `SYSADM` gets an alphabetical list with no indication which
+   * entry is their own.
+   */
+  readonly isSessionDefault?: boolean;
+}
+
+/**
+ * One object. `path` ADDRESSES it and `name` LABELS it, and they are allowed to differ.
+ *
+ * `path` is never a joined string: the old flat model spelled a qualified name
+ * `"sales.orders"`, and `query-generators.ts` split it back on `.`, so a table literally
+ * named `a.b` in `public` generated `"a"."b"`. An array cannot be misread that way.
+ */
+export interface DatabaseObject {
+  /**
+   * The container path, then one segment per nesting level down to this object, each
+   * segment being the identifier that is UNIQUE WITHIN ITS PARENT.
+   *
+   * Two consequences, and both are engines this repo serves rather than hypotheticals.
+   * A kind that declares `attachedTo` nests under the object it is attached to, so a
+   * PostgreSQL trigger is `[schema, table, trigger]`: a trigger name is unique per table
+   * and not per schema, and `[schema, trigger]` gives two triggers on two tables one
+   * address. A routine's segment carries the engine's own disambiguated form, so an
+   * overloaded PostgreSQL function is `["app", "order_total(integer)"]`: PostgreSQL
+   * identifies a routine by name AND ARGUMENT TYPES, and a bare `proname` gives two
+   * overloads one address.
+   *
+   * That segment is the argument TYPES and never the parameter names. Overloads differ by
+   * types and never by names, so a name adds nothing to identity while making the identity
+   * change when somebody renames a parameter, and a segment carrying information
+   * irrelevant to identity is wrong even where it round-trips through DDL. PostgreSQL's
+   * `pg_get_function_identity_arguments()` is the obvious candidate and is the wrong one
+   * for exactly that reason: measured on postgres:18 it answers
+   * `order_total(order_id integer)`. See `src/lib/db/providers/sql/postgres.ts` for the
+   * expression that is used instead.
+   */
+  readonly path: readonly string[];
+  /**
+   * The display label, which is NOT required to equal the last path segment.
+   *
+   * A tree renders this and addresses with `path`, so the disambiguation the path needs
+   * never has to be read by a person: the overloaded function above shows as
+   * `order_total` while its path stays unique. Where the two would be the same string,
+   * they are, and every relation kind on every engine is in that case.
+   */
+  readonly name: string;
+  readonly kind: string;
+  /**
+   * The engine's own word for a state a reader should act on, and PRESENT ONLY THEN (#789).
+   *
+   * Absence means ordinary, not unknown. Oracle publishes `VALID` for nearly every row in
+   * a real schema and SQL Server calls almost every trigger `ENABLED`, so a provider that
+   * set this field on every object put a badge beside every name that carried no
+   * information, and a reader learns to skip a field that is always there. What survives
+   * is `INVALID` on an Oracle object and `DISABLED` on a SQL Server trigger: the cases
+   * somebody has something to do about.
+   *
+   * The decision belongs to the PROVIDER and cannot be moved to a reader. Only the
+   * provider knows which of its engine's words is the ordinary one, and a renderer that
+   * knew the strings `VALID` and `ENABLED` would be a branch on the database type moved up
+   * a layer, which this codebase refuses inside `src/lib/db` for the same reason. So a new
+   * provider sets this field where its engine reports something notable, in the engine's
+   * own vocabulary rather than a normalised one, and leaves it unset otherwise.
+   */
+  readonly status?: string;
+  /** Relations only, and only where the engine counts. */
+  readonly rowCount?: number;
+  readonly sizeBytes?: number;
+}
+
+/**
+ * Four facts, not two.
+ *
+ * A kind that is not declared draws no folder at all: the engine has no such concept.
+ * `{ count: 0 }` is the engine answering none. `{ unavailable }` is a read that was
+ * refused, carrying the engine's own sentence. All three collapsed into an empty array
+ * before this change, and `docs/providers/postgres.md` section 3.1.2 records what that
+ * costs a reader on the monitoring side.
+ *
+ * The fourth is `{ count, sampledFrom }`: a number that is REAL but BOUNDED, because the
+ * provider counted what a capped read saw rather than what the engine holds. It is a
+ * FLOOR, so the tree badges it `1,204+` and never `1,204`. Two engines answer this way
+ * and neither does so for all of its kinds, which is why the state is per KIND and not a
+ * provider-wide flag: Redis counts its key groupings from a 1000-key `SCAN` while
+ * `FUNCTION LIST` is complete, and LibreDB counts `table` and `collection` from a
+ * persisted catalog while `keyspace` comes from the bounded key walk. MongoDB is NOT one
+ * of them: its `countObjects` tallies a complete `listCollections` (#789).
+ *
+ * `sampledFrom` is the provider's own sentence for what bounded the read, phrased to
+ * follow "counted from": `"one 1,000-key SCAN walk"`. It is the same discipline
+ * `unavailable` carries, which is that the thing a person reads comes from whoever knows
+ * the fact, not from the renderer.
+ *
+ * ADDITIVE ON PURPOSE. This type is published through `src/exports/types.ts`, so the two
+ * existing spellings stay valid unchanged: a required field on `{ count }` would break
+ * every external implementer of the provider surface. A consumer that has not heard of
+ * the fourth state still reads `.count` off it and gets a number that is true, only
+ * imprecise, rather than failing to narrow.
+ */
+export type KindCount =
+  | { readonly count: number }
+  | { readonly count: number; readonly sampledFrom: string }
+  | { readonly unavailable: string };
+
+export interface ObjectDetail {
+  readonly path: readonly string[];
+  readonly columns: readonly ColumnSchema[];
+  readonly indexes: readonly IndexSchema[];
+  readonly foreignKeys: readonly ForeignKeySchema[];
+}
+
+/**
+ * What one bulk column read answered, and whether it was complete (#789).
+ *
+ * `details` is keyed by `ObjectDetail.path`, which is the only key this surface has: a
+ * joined name is what `query-generators.ts` used to split back on `.`, and every
+ * dot-splitting defect this epic fixed came from a name standing in for an address. A
+ * caller matches these against the objects `listObjects` named, path against path.
+ *
+ * `truncated` carries the bound the provider actually applied and its own sentence for
+ * why, the same two fields `POST /api/db/objects/inventory` answers with. It is present
+ * whenever the read stopped short and absent whenever it did not, because a bounded read
+ * handed over as a complete one is what makes its reader treat a missing table as an
+ * absent one - the #414 defect, measured against the agent. `details.length` never
+ * exceeds `truncated.limit`.
+ *
+ * `limit` is the bound where the bound IS an object count, which is every caller-bounded
+ * read. Where the bound is not one - redis and libredb stop a key walk after a fixed
+ * number of KEYS and derive their objects from what it saw - there is no object count to
+ * report, and those two answer `details.length`, the number the read actually produced. So
+ * read `limit` as an upper bound on `details.length` that a caller may not read back as a
+ * cap somebody set: `reason` is the field that says WHICH bound bit, and it is the one to
+ * show a person. Making the field optional was considered and refused: it is published
+ * through `src/exports/types.ts`, every consumer compares against it, and an absent number
+ * would buy accuracy on two engines by making the comparison conditional on all seventeen.
+ *
+ * `reason` is ONE SENTENCE for one event across every engine, and that is a rule rather
+ * than a convention: build the caller's half with `callerBoundTruncationReason()` in
+ * `src/lib/db/object-kinds.ts` and never spell it per provider. Eleven implementers wrote
+ * three unrelated phrasings for the same bound before this was written down, so the same
+ * event read three ways depending on which engine was open, and once the flat surface is
+ * gone this sentence is the only thing explaining a short answer. A provider that applies
+ * a SECOND bound of its own, a bounded key walk say, names that one in its own words and
+ * joins the two: they are two different bounds, not two phrasings of one. The shared
+ * conformance guard asks that a caller-bounded batch's reason CONTAIN the shared sentence,
+ * never that it equal it.
+ */
+export interface ObjectDetailBatch {
+  readonly details: readonly ObjectDetail[];
+  /** Absent when every object of that kind in that container was described. */
+  readonly truncated?: { readonly limit: number; readonly reason: string };
+}
+
+/**
+ * What this text IS, so a reader is never shown a fragment that looks like a statement (#789).
+ *
+ * CLOSED: two arms, both with producers in the shipped fleet. `complete` runs as given;
+ * `partial` is a body or a bare SELECT that does not. PostgreSQL's `pg_get_viewdef`, DuckDB's
+ * `macro_definition` and Couchbase's `definition.text` are the measured `partial` producers.
+ */
+export type ObjectSourceForm = "complete" | "partial";
+
+/**
+ * Where this text came from, so a reader is never shown a reconstruction as an original (#789).
+ *
+ * CLOSED: three arms, each with at least one producer. `stored` is the author's own bytes
+ * (SQL Server modules, SQLite's `sqlite_schema.sql`); `regenerated` is the engine rebuilding
+ * from its catalog, which PostgreSQL documents as "a decompiled reconstruction, not the
+ * original text of the command"; `rendered` is a structured definition this product prints as
+ * JSON (a MongoDB view, a search pipeline or template).
+ */
+export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
+
+/**
+ * One text belonging to one object, or the engine's own reason there is none (#789).
+ *
+ * A UNION and not one shape with an optional `text`, for the reason `KindCount` is a union: a
+ * refusal and an empty answer are different facts, and a shape carrying `text?: string` makes
+ * them the same value at every call site. The refused arm declares NO `text`, so a value
+ * narrowed to it cannot reach an editor buffer. That composition is what DBeaver gets wrong:
+ * measured in its source, an unreadable definition reaches a WRITABLE editor holding one
+ * comment line.
+ *
+ * The union closes that path in ONE DIRECTION ONLY, and saying so here is what stops the next
+ * implementer from trusting it for the other. MEASURED against tsc 6.0.3 with no cast
+ * anywhere: a literal carrying `unavailable` BESIDE `text`, `language`, `form` and `origin`
+ * COMPILES as an `ObjectSourcePart`, because TypeScript's excess-property check on a union
+ * admits any property declared on ANY member of it. Such a part narrows to the refusal arm, so
+ * a provider composing one (spreading a catalog row, or spreading a conditional
+ * `{unavailable}` onto a bounded text) would put a refusal sentence over a definition the
+ * engine really returned. `assertObjectSurface` refuses that part by name for our own
+ * providers, and that is the ONLY refusal standing today. A HOST's answer is unguarded: the
+ * embedded seam's runtime shape check, the one `isRenderableShape` in
+ * `src/components/object-tree/use-tree-nodes.ts` is the precedent for, is later work in #789
+ * Phase 2 and does not exist in this tree.
+ *
+ * `id` is provider-local. Core reads it as an identity WITHIN ONE DOCUMENT and for nothing
+ * else: the part switcher's selection key, and the Source tab's remembered selection. Core
+ * never compares it against a literal, never branches on it, and never carries it between two
+ * documents.
+ *
+ * `text` is never empty and never whitespace only. TypeScript cannot express that, so it is a
+ * runtime invariant, asserted in `assertObjectSurface` for our own providers and, for a host's
+ * answer, by the same shape check that does not exist yet. Where an engine answers empty, the
+ * provider emits a REFUSAL carrying the engine's own fact instead.
+ */
+export type ObjectSourcePart =
+  | {
+      readonly id: string;
+      /** The engine's own word: "Package body", "Specification". Rendered as-is. */
+      readonly label: string;
+      readonly text: string;
+      /** A Monaco language id the installed bundle registers. `plsql`, `tsql` and `cql` are not. */
+      readonly language: string;
+      readonly form: ObjectSourceForm;
+      readonly origin: ObjectSourceOrigin;
+      readonly truncated?: { readonly limit: number; readonly reason: string };
+      /**
+       * Whether THIS PART of THIS OBJECT can be submitted back, as the CONNECTED provider
+       * answered it (#789 Phase 3).
+       *
+       * It lives on the document and not on the client's declaration for the reason
+       * `language` does, and the reason is the same measurement: `provider-meta` never
+       * connects, so the client's own copy of a declaration can be a different server's.
+       *
+       * PER PART and not per object, because the fleet has parts of one object with different
+       * answers: MEASURED on MariaDB 12.3.2, a `package` SPEC replace destroys the BODY while
+       * the BODY replaces cleanly, and MEASURED on Oracle 21.3 the two parts are independently
+       * appliable.
+       *
+       * `offered: false` carries the PROVIDER'S OWN SENTENCE, unprefixed, the same grammar
+       * `unavailable` and `truncated.reason` already use. Its day-one producer is the
+       * PostgreSQL ownership pre-flight: MEASURED on 18.4, `CREATE OR REPLACE` on somebody
+       * else's function is an OWNERSHIP check and not a privilege check, it answers
+       * `must be owner of function order_total` with SQLSTATE 42501, and the shipped error
+       * mapper turns that into HTTP 500 because the message matches none of its substrings. A
+       * user who learns that before typing is the whole point of this field.
+       *
+       * ABSENT means this provider offers no edit for this part, and only a HOST or a provider
+       * that declares no editable kind produces absence, because the route deletes the field
+       * from any part whose kind fails `kindAcceptsSourceEdits` on the CONNECTED provider.
+       */
+      readonly edit?: ObjectPartEdit;
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      /** The engine's own sentence, unprefixed, never a rewrite of it. */
+      readonly unavailable: string;
+    };
+
+/**
+ * One object's definition, as its provider reads it (#789).
+ *
+ * `parts` is a NON-EMPTY tuple, which makes a zero-part document a compile error at every
+ * provider: there is no shape in which the renderer is handed a document and has nothing to
+ * draw. Two spellings satisfy it and no third is accepted: an array literal, and
+ * `const parts: [ObjectSourcePart, ...ObjectSourcePart[]] = [first]` plus a conditional push.
+ * `rows.map(...)` does not, and casting past it defeats the whole invariant.
+ *
+ * More than one part is not a special case for one engine: an Oracle package and a MariaDB
+ * package are each ONE node over two texts, and core branches on `parts.length` and on nothing
+ * else.
+ */
+export interface ObjectSourceDocument {
+  readonly path: readonly string[];
+  readonly kind: string;
+  readonly parts: readonly [ObjectSourcePart, ...ObjectSourcePart[]];
+}
+
+export type ObjectPartEdit = { readonly offered: true } | { readonly offered: false; readonly reason: string };
+
+/**
+ * The MECHANISM an apply uses, and never its consequence (#789 Phase 3).
+ *
+ * A CLOSED union of six, one member per shipping mechanism measured in wave 1a, and the two
+ * destructive members of that vocabulary are deliberately absent so that no plan can carry one:
+ * `capture-and-restore` CAN lose the object because the restore can fail, and `drop-then-create`
+ * loses it by construction. Ruling 1b's first clause is therefore a compile-time property of
+ * this union rather than a review checklist, and a later phase that wanted one would have to add
+ * a member, which is a deliberate act with a failing census attached.
+ *
+ * `replace-in-place-with-collateral-loss` is NOT a member, for a stronger reason than economy: a
+ * plan whose `consequences` is non-empty IS that class, so there is no innocent-looking label a
+ * provider could pair with a silent collateral.
+ *
+ * CLOSED rather than an open string, against this repository's own precedent for
+ * `ObjectKindSpec.id`, and the cost is that a host whose engine has a seventh mechanism has
+ * nothing to name. It is closed anyway because `src/lib/db/operations/execution.ts:21-26` states
+ * the audit's rule, that "the audited action is the registry-RESOLVED descriptor id, never the
+ * caller's raw operation string", and this value is what an apply's audit event carries in
+ * `action`.
+ *
+ * NOTHING IN `src/lib/db` OR IN CORE MAY SWITCH ON IT. Three things read it: the preview
+ * caption, the audit's `action`, and the census. A member with no producer is therefore not a
+ * line of code and costs nothing under the 100 percent line gate.
+ *
+ * Day-one producers: `guarded-atomic-batch` on PostgreSQL 18.4, `replace-in-place-statement` on
+ * Trino 476, `replace-in-place-command` on Redis 8.10.0. The other three are named with their
+ * first producer in the provider docs and in the census.
+ */
+export type ObjectEditStrategy =
+  | "guarded-atomic-batch"
+  | "transactional-replace"
+  | "replace-in-place-statement"
+  | "replace-in-place-command"
+  | "alter-in-place"
+  | "temp-name-test-create";
+
+/**
+ * Where one piece of the executed text came from (#789 Phase 3).
+ *
+ * `start` and `end` are 0-based UTF-16 code-unit offsets into the USER'S PART TEXT, the
+ * half-open range the string methods take.
+ *
+ * A MAP and not a scalar prefix length, and the requirement is measured three times: on
+ * PostgreSQL 18.4 the same body error is `position 23` bare and `position 63` assembled, prefix
+ * 40; Trino 476 splices ` OR REPLACE` INSIDE the first line, so the user's text is not a suffix
+ * of anything; and a temp-name test create REPLACES a range, which on Oracle 21.3 shifted
+ * `USER_ERRORS.POSITION` from 45 to 63 for the same error, a delta a prefix cannot express.
+ */
+export type ObjectEditSegment =
+  | { readonly from: "provider"; readonly text: string }
+  | { readonly from: "user"; readonly start: number; readonly end: number };
+
+/**
+ * ONE ROUND TRIP. A round trip may carry more than one statement, and that distinction is
+ * load-bearing rather than pedantic: MEASURED on PostgreSQL 18.4, a guard block and a
+ * `CREATE OR REPLACE` travelling in ONE parameterless `client.query()` run inside the engine's
+ * implicit transaction, so a failure anywhere aborts everything and the function keeps the same
+ * `oid` and the same `xmin`.
+ *
+ * The plan NEVER carries parameters, and binding one does not degrade the atomicity, it refuses
+ * it: MEASURED, `42601 cannot insert multiple commands into a prepared statement`. An identifier
+ * position takes no bind on any engine and a routine body is not a value, so nothing is lost.
+ *
+ * `text` is AUTHORITATIVE and is what executes, per ruling 1a. `segments` is the coordinate map
+ * and never a second source of the bytes, and `renderSegments` in `src/lib/db/object-edit.ts`
+ * pins them together.
+ */
+export interface ObjectEditStep {
+  readonly text: string;
+  /** A Monaco language id the installed bundle registers, so the preview highlights what runs. */
+  readonly language: string;
+  readonly segments: readonly [ObjectEditSegment, ...ObjectEditSegment[]];
+}
+
+/**
+ * The exact artifact ONE apply sends (#789 Phase 3).
+ *
+ * TWO ARMS AND NOT A STRING, needed on day one rather than deferred: Redis 8.10.0 is in the
+ * day-one set and its apply is `FUNCTION LOAD REPLACE <library code>`, a COMMAND and not a
+ * statement, whose reply is the library name the server read out of the shebang. Rendering that
+ * as pseudo-SQL would be a lie about what runs, and `medium` is what stops the preview pane
+ * having to guess.
+ */
+export type ObjectEditUnit =
+  | { readonly medium: "statement"; readonly steps: readonly [ObjectEditStep, ...ObjectEditStep[]] }
+  | {
+      readonly medium: "command";
+      /** The command verb as the engine names it: "FUNCTION". */
+      readonly name: string;
+      /** The literal tokens before the payload: ["LOAD", "REPLACE"]. */
+      readonly arguments: readonly string[];
+      /** The one argument carrying the user's text. */
+      readonly payload: ObjectEditStep;
+    };
+
+/**
+ * A session setting this plan depends on, and what the apply does about it (#789 Phase 3,
+ * ruling 2e).
+ *
+ * Every field is the engine's own spelling: `setting` is the name the engine uses and `value` is
+ * the value that was read, or the value that will be set.
+ *
+ * TWO ARMS, and the axis is WHAT THE APPLY DOES, because the two have different safety
+ * properties and the preview has to say which one a reader is looking at.
+ *
+ * `asserted` is READ AT BUILD AND COMPARED AT APPLY, and it never writes. Day-one producer:
+ * PostgreSQL's `check_function_bodies`, a GUC any borrower of the pooled connection can turn
+ * off, and with it off the engine accepts a body it would otherwise reject, which would be a
+ * successful apply storing a definition that cannot run.
+ *
+ * `pinned` is SET FOR THE DURATION OF THE APPLY'S OWN ROUND TRIP and is gone when it ends. Day-one
+ * producer: PostgreSQL's `search_path`, and it exists because MEASURED on 18.4 a `LANGUAGE sql`
+ * body and a `BEGIN ATOMIC` body are name-resolved at CREATE time against the session path,
+ * while a `LANGUAGE plpgsql` body is not, and MEASURED through the product a `SET` issued by one
+ * Studio user's request is read back by every later request on the same `connection.id`,
+ * including another user's. So the same edit would succeed or fail depending on who used the
+ * connection last. A deterministic refusal the user can act on beats a non-deterministic success.
+ *
+ * A `pinned` arm may NEVER be implemented with a bare `SET`. The pin is issued inside the same
+ * implicit transaction as the write, which is what makes it invisible to the next borrower, and
+ * `tests/integration/db/postgres-provider.test.ts` proves that by reading the setting back on the
+ * SAME cached provider after the apply. `pg_proc.proconfig` is NULL for a function that does not
+ * declare its own `SET search_path`, so there is no catalog fact to restore and nothing to
+ * restore it to: the pin is the answer, not a workaround for a missing restore.
+ *
+ * The limit, stated because a reader will otherwise over-read the `asserted` arm: comparing
+ * equality catches a session that MOVED between the build and the apply. It does not catch one
+ * that was already polluted when the build read it.
+ */
+export type ObjectEditSessionPin =
+  | { readonly mode: "asserted"; readonly setting: string; readonly value: string }
+  | { readonly mode: "pinned"; readonly setting: string; readonly value: string };
+
+/**
+ * How this apply detects that the object moved between the read and the write (H3, #789 Phase 3).
+ *
+ * THREE STATES, and the axis is WHAT THE APPLY WILL DO rather than whether a token exists,
+ * because that is the thing the user acts on and because two engines with a token have different
+ * safety properties. `guarded` closes the window: the comparison and the write are one atomic
+ * unit and a mismatch aborts before anything is written. `compared` narrows it: the apply
+ * re-reads and compares in its own round trip, and another session can still get in between.
+ * `unavailable` is said OUT LOUD and is never collapsed into absence, because `revision?: string`
+ * cannot express "this provider cannot produce one" in either of its spellings.
+ *
+ * `basis` is the engine expression the comparison is over, so a reader of a plan can see what was
+ * hashed and two tokens from two engines can never be compared by accident. Core never compares
+ * two tokens, never parses one, and never carries one between two plans.
+ *
+ * `scope` exists because DuckDB v1.5.5's candidate token is `view_oid`/`function_oid` plus the
+ * text and is valid only inside one connection, since the oid is reassigned at catalog load.
+ * `connection` has NO day-one producer, and a later phase may not trust it without an identity
+ * for the PROVIDER INSTANCE, which `getOrCreateProvider` does not mint: it caches one instance
+ * per `connection.id` and a reconnect replaces it silently.
+ *
+ * Recorded plainly, as H3 requires: a token NARROWS the window and does not close it, only a
+ * transaction or a lock closes it, and of the day-one three only PostgreSQL has one across the
+ * read and the write. The `conflict` outcome exists because even a closed window is not enough:
+ * MEASURED on 18.4, `tuple concurrently updated` refuses a well-formed, UP-TO-DATE apply purely
+ * on timing.
+ */
+export type ObjectEditRevision =
+  | {
+      readonly check: "guarded";
+      readonly token: string;
+      readonly basis: string;
+      readonly scope: "server" | "connection";
+    }
+  | {
+      readonly check: "compared";
+      readonly token: string;
+      readonly basis: string;
+      readonly scope: "server" | "connection";
+    }
+  | { readonly check: "unavailable"; readonly reason: string };
+
+/** A catalog surface and the value it answered, both as the engine spells them. */
+export interface ObjectEditCatalogFact {
+  readonly source: string;
+  /** Never empty. The route refuses an empty one: a NULL comment means NO consequence, not an empty one. */
+  readonly observed: string;
+}
+
+/**
+ * What a SUCCESSFUL apply of this shape destroys (ruling 1b amended, #789 Phase 3).
+ *
+ * Eight members, one per measured path, and the engine and version for each is in the comment
+ * beside it so a reader never has to take the class name on trust.
+ */
+export type ObjectEditConsequenceClass =
+  /** Redis 8.10.0: the unit is the LIBRARY, and a body registering fewer functions deletes the others and reports success. */
+  | "replaces-whole-container"
+  /** MariaDB 12.3.2: CREATE OR REPLACE PACKAGE on the SPEC destroys the BODY, on byte-identical spec text. */
+  | "destroys-sibling-part"
+  /** DuckDB v1.5.5: CREATE OR REPLACE MACRO replaces the NAME and deletes every other overload. */
+  | "destroys-overloads"
+  /** SQL Server 16.0.4265.3: an indexed view loses its clustered index on a byte-identical body. */
+  | "destroys-index"
+  /** DuckDB v1.5.5: a byte-identical view replace discards the view's COMMENT. */
+  | "destroys-comment"
+  /** PostgreSQL 18.4 and Trino 476: an ARGUMENT TYPE change creates a second object and every call site fails 42725. */
+  | "forks-object"
+  /** MySQL 26.7.0 and MariaDB 12.3.2: a stripped DEFINER moves the object to the pooled Studio credential, silently. */
+  | "transfers-security-principal"
+  /** SQL Server: an ANSI_NULLS OFF module applies cleanly and `equal` becomes `not-equal`, with no error. */
+  | "changes-module-semantics";
+
+/**
+ * NO SENTENCE FIELD, on purpose, and this inverts the repository's usual grammar deliberately.
+ *
+ * Where a refusal carries the ENGINE'S own words (`KindCount.unavailable`,
+ * `ObjectSourcePart.unavailable`), an engine produced the sentence. Here no engine produces one:
+ * the warning is OUR inference from a catalog VALUE, and letting a provider write prose is
+ * letting a provider write an inference in a measurement's voice. That exact defect is shipped in
+ * this tree, in a security docblock, beside a real measurement about a different thing, and it is
+ * MEASURED FALSE. So core renders the sentence, from the class and the fact, in
+ * `describeConsequence()`.
+ */
+export interface ObjectEditConsequence {
+  readonly loses: ObjectEditConsequenceClass;
+  readonly fact: ObjectEditCatalogFact;
+}
+
+/**
+ * What a preview IS, as a value: the exact artifact an apply will send, issued by the provider
+ * that will send it (ruling 1a, #789 Phase 3).
+ *
+ * The preview is not a copy of this plan, it is a FIELD of it: the dialog renders `unit` and the
+ * apply sends `unit`, so byte-identity between what the reader approved and what executed is
+ * structural rather than asserted. Nothing here is re-derived at apply time, and that is not a
+ * preference: MEASURED, a rebuild depends on the server version, on the object's current
+ * definition and on session state another borrower of the same pooled connection can change
+ * between the two calls, all of which move with no attacker and no bug.
+ *
+ * The plan is READABLE and UNFORGEABLE, which are different properties. "Opaque" in ruling 1a is
+ * read as "the client may not MINT or ALTER a plan" rather than "the client may not READ one".
+ * The integrity envelope is the ROUTE's (`planToken`) and not a field here, because an embedded
+ * host returns this same type and has no key.
+ *
+ * `planVersion` is bumped whenever the digest walk changes, so a plan minted by one process and
+ * applied against another inside the TTL is REFUSED rather than mis-verified.
+ */
+export interface ObjectEditPlan {
+  readonly planVersion: 1;
+  /** Server-minted, opaque, and the audit's correlationId. Identifies one edit and never a session or a user. */
+  readonly planId: string;
+  readonly issuedAt: string;
+  /**
+   * A digest of the SERVER this plan was built against, not of the connection's id.
+   *
+   * MEASURED, `src/lib/seed/resolve-connection.ts:21-23` returns an inline connection object
+   * verbatim, `id` included, and the browser drove it: a made-up id with different credentials
+   * connected as them. So `connection.id` is a string the caller typed on the majority path, and
+   * binding to it would be vacuous for exactly the case the binding exists for. The fingerprint
+   * is a hash over a length-framed walk of the RESOLVED connection's `type`, `host`, `port`,
+   * `database` and `user`, which are the fields that decide which server and which principal.
+   * Stated as a limit rather than left to be discovered: it does not catch a different server
+   * that answers on the same host and port.
+   */
+  readonly connectionFingerprint: string;
+  readonly type: DatabaseType;
+  readonly path: readonly string[];
+  readonly kind: string;
+  /**
+   * WHICH part. Required by the ENGINE and not by tidiness: MEASURED on Oracle 21.3 a package's
+   * two parts are independently appliable and MEASURED on MariaDB 12.3.2 they are not, and both
+   * facts are unstateable by a method that does not know which text it was handed.
+   */
+  readonly partId: string;
+  readonly strategy: ObjectEditStrategy;
+  readonly unit: ObjectEditUnit;
+  readonly session: readonly ObjectEditSessionPin[];
+  readonly revision: ObjectEditRevision;
+  readonly consequences: readonly ObjectEditConsequence[];
+}
+
+/**
+ * The definition the BUILD read, for the preview's LEFT side (#789 Phase 3).
+ *
+ * It is NOT a field of the plan and that placement is arithmetic rather than taste. The apply
+ * request carries the plan, and MEASURED, Next 16.3.4 clones every request body for middleware at
+ * exactly 10,485,760 bytes and TRUNCATES above it. One maximal part is 1,000,000 UTF-16 code
+ * units, up to 4 MB as UTF-8 and up to 6 MB once JSON-escaped, so a plan carrying the unit AND the
+ * pre-image would be about 12 MB inbound and would be silently cut. The build RESPONSE is outbound
+ * and subject to no such clone, so the pre-image rides beside the plan in the response and never
+ * inside it.
+ *
+ * Why it exists at all: the dialog's left side must be the definition the BUILD read and never the
+ * text the tab has been showing. A left side taken from the tab hides a change somebody else made
+ * while the tab sat open, which is the whole shape of the failure this phase exists to prevent.
+ */
+export interface ObjectEditPreimage {
+  readonly text: string;
+  readonly language: string;
+  readonly truncated?: { readonly limit: number; readonly reason: string };
+}
+
+/** Why a build would not issue a plan. */
+export type ObjectEditRefusalClass =
+  /** The submitted text does not name the object the plan is addressed to. Day-one producer: all three engines. */
+  | "identity"
+  /** The caller may not write this object. Day-one producer: PostgreSQL ownership, MEASURED `must be owner of function order_total`, 42501. */
+  | "privilege"
+  /** The text is wrong, or would fork. Day-one producers: PostgreSQL 42601 and 42P13, Trino argument-type fork. */
+  | "definition"
+  /** A precondition this design placed failed: the revision moved inside the guard, or a session pin did not hold. */
+  | "guard"
+  /** The engine or the connector will not do this at all. MEASURED on Trino 476: NOT_SUPPORTED, errorCode 13, on `memory`. */
+  | "unsupported";
+
+/**
+ * Where a refusal points, in the coordinates of the text the USER submitted (#789 Phase 3).
+ *
+ * THREE ARMS AND NOT AN OPTIONAL PAIR, and the third is the one that matters. MEASURED with a
+ * control in a real browser: an UNCORRECTED coordinate handed to `setModelMarkers` did not throw,
+ * did not warn and did not look wrong, because Monaco silently CLAMPED it to the end of the model,
+ * and the marker sat at line 10 column 1 while the real error was at line 7 column 3. Nothing in
+ * the platform catches that. So a coordinate the provider cannot place inside the user's own text
+ * is `outside`, which the dialog renders as a sentence, and never a number the client will clamp.
+ *
+ * 1-based on both axes, which is what `IMarkerData.startLineNumber` and `startColumn` take. TWO
+ * conversions sit between the engine and this value and BOTH are the provider's:
+ * `model.getPositionAt()` is 0-based and PostgreSQL's `position` is a 1-based CHARACTER offset
+ * that arrives as a STRING although `QueryError.position` is typed `number`.
+ */
+export type ObjectEditPosition =
+  | { readonly within: "user"; readonly line: number; readonly column: number }
+  | { readonly within: "outside" }
+  | { readonly within: "none" };
+
+export interface ObjectEditRefusal {
+  readonly refusal: ObjectEditRefusalClass;
+  /** The engine's own sentence where an engine spoke, unprefixed. The provider's where the provider refused. */
+  readonly sentence: string;
+  /** The engine's own identifier AS DATA: SQLSTATE "42P13", a Trino errorName, a MySQL errno. Absent where the engine publishes none. */
+  readonly code?: string;
+  /** The engine's own hint, kept because the shipped mapper destroys it: PostgreSQL's "Use DROP FUNCTION app.f_demo(integer) first." */
+  readonly hint?: string;
+  readonly at: ObjectEditPosition;
+}
+
+/**
+ * What a build answered (#789 Phase 3).
+ *
+ * `refuse` is a first-class member of the strategy vocabulary and not the absence of one, so it is
+ * an ARM and not a throw. The union narrows on a LITERAL discriminant rather than on property
+ * presence, so a hybrid carrying both narrows to the arm it declares rather than to whichever
+ * property a predicate tested first, and the route refuses the hybrid outright.
+ */
+export type ObjectEditBuild =
+  | { readonly built: true; readonly plan: ObjectEditPlan; readonly preimage: ObjectEditPreimage }
+  | { readonly built: false; readonly refusal: ObjectEditRefusal };
+
+/** The server's text for that part as the conflict check read it, for the diff H3 requires. */
+export interface ObjectEditCurrentText {
+  readonly text: string;
+  readonly language: string;
+  readonly truncated?: { readonly limit: number; readonly reason: string };
+}
+
+/**
+ * What an apply DID, as the engine answered it (#789 Phase 3).
+ *
+ * Seven arms and none of them is a boolean, because a boolean records the wrong fact three
+ * different ways: a log saying `success` for an apply that also destroyed something the reader was
+ * not shown is false; `tuple concurrently updated` refuses a well-formed, up-to-date apply purely
+ * on timing; and an apply whose answer never arrived has no truth value at all.
+ *
+ * A PROVIDER DOES NOT THROW FOR A VERDICT ITS ENGINE REACHED. It RETURNS one of these, which is
+ * what makes "a deliberate engine refusal is never a 500" a property of this type rather than of a
+ * mapping table. MEASURED against the mapper this repository already has: `42501` becomes HTTP 401
+ * "Authentication failed: permission denied for schema app" for a credential that is connected and
+ * correct, `42P13` becomes HTTP 500, and SQLSTATE, `hint`, `severity`, `detail` and `where` are all
+ * destroyed. Exceptions stay for what they are for, a programming error or an unexpected driver
+ * fault.
+ */
+export type ObjectEditOutcome =
+  /** The engine replaced the addressed object and destroyed nothing else. */
+  | { readonly outcome: "applied"; readonly revision: ObjectEditRevision; readonly duration: number }
+  /**
+   * The engine replaced the addressed object AND destroyed something else, and the plan warned
+   * about it and the caller acknowledged it.
+   *
+   * `lost` is a catalog fact READ AFTER the apply, never a restatement of the warning: the plan
+   * said what WOULD be lost, this says what WAS. NON-EMPTY TUPLE, so an outcome that claims a
+   * collateral and names none is a compile error at every provider.
+   *
+   * Day-one producer: Redis 8.10.0, where the provider reads `FUNCTION LIST LIBRARYNAME <n>`
+   * before the load and after it and the difference is the set of functions that disappeared.
+   * MEASURED: a body carrying only the edited function DELETED the sibling function and reported
+   * success. No Lua parser is involved anywhere.
+   */
+  | {
+      readonly outcome: "applied-with-collateral";
+      readonly lost: readonly [ObjectEditConsequence, ...ObjectEditConsequence[]];
+      readonly revision: ObjectEditRevision;
+      readonly duration: number;
+    }
+  /**
+   * The engine accepted the text and the ADDRESSED object is not what changed.
+   *
+   * MEASURED on Redis 8.10.0: a CONSISTENT rename of a library and its functions succeeds, the
+   * reply is the NEW library name, and the original library is still there and still answering.
+   * MEASURED on PostgreSQL 18.4: `CREATE OR REPLACE FUNCTION` with a changed argument type
+   * produces a SECOND `pg_proc` row and leaves the original untouched, and every call site then
+   * fails `42725 is not unique`. Without this arm the reader sees a success, the pane re-reads the
+   * ORIGINAL address and shows the ORIGINAL text, their edit has vanished from the screen, and the
+   * audit carries one row saying the addressed object was edited.
+   *
+   * `undone` says whether the engine let this design take it back. PostgreSQL's post-condition
+   * raises inside the same implicit transaction, so the fork is rolled back and `undone` is true.
+   * Trino has no transaction, so `undone` is false and the second object is there.
+   */
+  | {
+      readonly outcome: "applied-elsewhere";
+      readonly undone: boolean;
+      /** The engine's own name for what it did write, where the engine says: Redis's reply is the library name it read from the shebang. */
+      readonly wrote?: string;
+      readonly duration: number;
+    }
+  /**
+   * The object moved between the read and the write. NOTHING was executed.
+   * `current` is REQUIRED: a detector that cannot show what it found asks the reader for trust,
+   * and H3 asks for a diff.
+   */
+  | {
+      readonly outcome: "conflict";
+      readonly conflict: "object-changed";
+      readonly current: ObjectEditCurrentText;
+      readonly duration: number;
+    }
+  /**
+   * The engine refused a well-formed, UP-TO-DATE apply on CONCURRENCY, not on content. Nothing
+   * changed and the SAME plan may be sent again.
+   *
+   * A separate arm from `object-changed` because the reader's next action differs: this one is
+   * "do it again" and that one is "look at the diff". MEASURED through the product: two
+   * overlapping applies of one object answered `tuple concurrently updated`, HTTP 500
+   * `DATABASE_ERROR`, after blocking for 2.8 seconds.
+   */
+  | {
+      readonly outcome: "conflict";
+      readonly conflict: "engine-refused-concurrent";
+      readonly sentence: string;
+      readonly code?: string;
+      readonly duration: number;
+    }
+  /** The engine refused the write. Nothing changed. */
+  | { readonly outcome: "refused"; readonly refusal: ObjectEditRefusal; readonly duration: number }
+  /**
+   * The statement was SENT and the engine's answer never arrived: a timeout, a cancellation, a
+   * dropped socket, or any throw out of `applyObjectEdit`.
+   *
+   * `committed: "unknown"` is the day-one answer on all three engines, because no day-one strategy
+   * wraps its own transaction. `"rolled-back"` may be claimed ONLY by a provider that opened and
+   * closed the transaction itself, which is `transactional-replace`.
+   *
+   * There is NO `retryable` field on this type and no retry advice in it. MEASURED: a PostgreSQL
+   * DDL timeout answers HTTP 499 `QUERY_CANCELLED` "Query was cancelled", and Trino mints a
+   * `TimeoutError` directly (`trino/index.ts:680`) which the generic mapper answers 408
+   * `retryable: true`. A client that retries an apply whose disposition is unknown applies twice.
+   */
+  | {
+      readonly outcome: "interrupted";
+      readonly committed: "unknown" | "rolled-back";
+      readonly sentence: string;
+      readonly duration: number;
+    };
+
+export interface ObjectEditRequest {
+  readonly path: readonly string[];
+  readonly kind: string;
+  readonly partId: string;
+  /** The reader's edited text for THAT part. Never assembled, never split, never escaped. */
+  readonly text: string;
 }

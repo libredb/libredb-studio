@@ -4,11 +4,27 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import {
+  callerBoundTruncationReason,
+  isSourcePartUnavailable,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
-import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  ExecutionProfileError,
+  QueryError,
+} from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -25,8 +41,24 @@ let mockQueryFn: (
   rowCount?: number;
 }>;
 
+/**
+ * The ReadyForQuery transaction-status byte the server sends after every statement:
+ * "I" idle, "T" in a transaction, "E" in a failed one. `pg` 8.23 records the last one
+ * per client and publishes it as `getTransactionStatus()`, which is how the provider
+ * can tell that a statement left a transaction open on the client it borrowed (D71).
+ * Tests set it to say what the server would have said.
+ */
+let mockTxStatus: "I" | "T" | "E" | null = "I";
+
 const mockClient = {
-  query: (sql: string, params?: unknown[]) => mockQueryFn(sql, params),
+  query: (sql: string, params?: unknown[]) => {
+    // The two statements that end a transaction on the wire also end it here, so a
+    // test can observe the provider's rollback rather than only the call to it.
+    const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql);
+    if (ended) mockTxStatus = "I";
+    return mockQueryFn(sql, params);
+  },
+  getTransactionStatus: () => mockTxStatus,
   // Real pg signature: release(err?) — an error argument destroys the client
   // instead of returning it to the pool, which queryReadOnly relies on.
   release: (_destroy?: Error) => {},
@@ -468,13 +500,29 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
-  // getPerformanceMetrics: pg_stat_bgwriter (checkpoint stats)
+  // getPerformanceMetrics: which view carries the checkpoint timings. The default
+  // server is a PostgreSQL 17+ one, where pg_stat_checkpointer exists.
+  if (normalized.includes("to_regclass('pg_catalog.pg_stat_checkpointer')")) {
+    return Promise.resolve({ rows: [{ has_checkpointer: true }], fields: [], rowCount: 1 });
+  }
+
+  // getPerformanceMetrics: pg_stat_checkpointer (checkpoint stats, PostgreSQL 17+)
+  if (normalized.includes("from pg_catalog.pg_stat_checkpointer")) {
+    return Promise.resolve({
+      rows: [{ write_time: "9000", sync_time: "1500" }],
+      fields: [],
+      rowCount: 1,
+    });
+  }
+
+  // getPerformanceMetrics: pg_stat_bgwriter (checkpoint stats before PostgreSQL 17)
   if (normalized.includes("pg_stat_bgwriter")) {
     return Promise.resolve({
       rows: [
+        // The statement aliases the pre-17 column names to the pg_stat_checkpointer ones.
         {
-          checkpoint_write_time: "12500",
-          checkpoint_sync_time: "3200",
+          write_time: "12500",
+          sync_time: "3200",
         },
       ],
       fields: [],
@@ -964,160 +1012,87 @@ describe("PostgresProvider", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Schema
+  // A transaction left open on a pooled client (D71)
   // --------------------------------------------------------------------------
 
-  describe("getSchema()", () => {
-    test("returns TableSchema array with columns, indexes, foreignKeys", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const schema = await provider.getSchema();
-
-      expect(schema.length).toBe(2);
-
-      for (const table of schema) {
-        expect(typeof table.name).toBe("string");
-        expect(Array.isArray(table.columns)).toBe(true);
-        expect(table.columns.length).toBeGreaterThan(0);
-        expect(Array.isArray(table.indexes)).toBe(true);
-        expect(Array.isArray(table.foreignKeys)).toBe(true);
-      }
+  describe("endOpenQueryTransaction()", () => {
+    beforeEach(() => {
+      mockTxStatus = "I";
     });
 
-    test("primary key columns are detected via isPrimary flag", async () => {
+    test("rolls back on the client the last statement ran on when the server says T", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const schema = await provider.getSchema();
 
-      const usersTable = schema.find((t) => t.name === "users");
-      expect(usersTable).toBeDefined();
+      const issued: string[] = [];
+      mockQueryFn = (sql: string) => {
+        issued.push(sql);
+        return defaultMockQuery(sql);
+      };
 
-      const idCol = usersTable!.columns.find((c) => c.name === "id");
-      expect(idCol).toBeDefined();
-      expect(idCol!.isPrimary).toBe(true);
+      await provider.query("BEGIN");
+      mockTxStatus = "T";
 
-      const nameCol = usersTable!.columns.find((c) => c.name === "name");
-      expect(nameCol).toBeDefined();
-      expect(nameCol!.isPrimary).toBe(false);
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+      expect(issued.at(-1)).toBe("ROLLBACK");
+      // The rollback really reached the wire: the mock client moves its own status to "I"
+      // when it sees a COMMIT or a ROLLBACK, exactly as the server's ReadyForQuery does.
+      expect(String(mockTxStatus)).toBe("I");
     });
 
-    test("non-public schema tables get schema prefix in name", async () => {
+    test("rolls back an ABORTED transaction, which is the shape that poisons the pool", async () => {
+      // Measured on PostgreSQL 17 through the product's own routes: a script whose
+      // statement failed inside its own BEGIN released a client in state E, and every
+      // later request that drew that client answered HTTP 500 "current transaction is
+      // aborted, commands ignored until end of transaction block" — a different user,
+      // a different route, twelve retries over 60 seconds and eight minutes later.
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const schema = await provider.getSchema();
 
-      const eventsTable = schema.find((t) => t.name === "analytics.events");
-      expect(eventsTable).toBeDefined();
-      expect(eventsTable!.name).toBe("analytics.events");
+      const issued: string[] = [];
+      mockQueryFn = (sql: string) => {
+        issued.push(sql);
+        return defaultMockQuery(sql);
+      };
 
-      // Foreign key from analytics.events.user_id -> public.users.id should have no prefix
-      expect(eventsTable!.foreignKeys!.length).toBe(1);
-      expect(eventsTable!.foreignKeys![0].referencedTable).toBe("users");
+      await provider.query("SELECT 1");
+      mockTxStatus = "E";
+
+      expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+      expect(issued.at(-1)).toBe("ROLLBACK");
+    });
+
+    test("answers none when the server says the client is idle", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const issued: string[] = [];
+      mockQueryFn = (sql: string) => {
+        issued.push(sql);
+        return defaultMockQuery(sql);
+      };
+
+      await provider.query("SELECT 1");
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
+      expect(issued).not.toContain("ROLLBACK");
+    });
+
+    test("answers none when no statement has run on this provider yet", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      expect(await provider.endOpenQueryTransaction()).toBe("none");
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Schema
+  // --------------------------------------------------------------------------
 
   // --------------------------------------------------------------------------
   // getSchemaList() — fast structural path (tables + columns + PKs only)
   // --------------------------------------------------------------------------
-
-  describe("getSchemaList()", () => {
-    // The fast path shares the tables/columns/pk CTE shape with getSchema(), so
-    // the default mock (information_schema + table_type in ('base table') applies.
-    // What it must NOT do is populate indexes/foreignKeys — those are deferred
-    // to getSchemaRelations() so a slow stats query can't block the table list.
-    test("returns tables with columns and PKs but empty indexes/foreignKeys", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const schema = await provider.getSchemaList();
-
-      expect(schema.length).toBe(2);
-      for (const table of schema) {
-        expect(typeof table.name).toBe("string");
-        expect(table.columns.length).toBeGreaterThan(0);
-        // The whole point of the split: relations are intentionally absent here.
-        expect(table.indexes).toEqual([]);
-        expect(table.foreignKeys).toEqual([]);
-      }
-    });
-
-    test("primary key columns are detected via isPrimary flag", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const schema = await provider.getSchemaList();
-
-      const usersTable = schema.find((t) => t.name === "users");
-      expect(usersTable).toBeDefined();
-      expect(usersTable!.columns.find((c) => c.name === "id")!.isPrimary).toBe(true);
-      expect(usersTable!.columns.find((c) => c.name === "name")!.isPrimary).toBe(false);
-    });
-
-    test("non-public schema tables get schema prefix in name", async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const schema = await provider.getSchemaList();
-
-      expect(schema.find((t) => t.name === "analytics.events")).toBeDefined();
-      expect(schema.find((t) => t.name === "users")).toBeDefined();
-    });
-
-    test("negative reltuples row_count is reported as absent, not as zero", async () => {
-      // Never-analysed tables report reltuples = -1 and the UI must never show -1 - but
-      // clamping it to 0 traded one wrong number for another, and 0 is the more
-      // convincing lie because it looks like a reading. Absence draws no badge at all.
-      mockQueryFn = (sql: string) => {
-        if (sql.toLowerCase().includes("table_type in ('base table'")) {
-          return Promise.resolve({
-            rows: [
-              {
-                table_schema: "public",
-                table_name: "fresh",
-                row_count: "-1",
-                total_size: "0",
-                columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
-                pk_columns: ["id"],
-              },
-            ],
-            fields: [],
-            rowCount: 1,
-          });
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const schema = await provider.getSchemaList();
-
-      expect(schema[0].rowCount).toBeUndefined();
-    });
-
-    test("table with no columns yields an empty columns array (not a crash)", async () => {
-      mockQueryFn = (sql: string) => {
-        if (sql.toLowerCase().includes("table_type in ('base table'")) {
-          return Promise.resolve({
-            rows: [
-              {
-                table_schema: "public",
-                table_name: "empty_table",
-                row_count: "0",
-                total_size: "0",
-                columns: null,
-                pk_columns: null,
-              },
-            ],
-            fields: [],
-            rowCount: 1,
-          });
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const schema = await provider.getSchemaList();
-
-      expect(schema[0].name).toBe("empty_table");
-      expect(schema[0].columns).toEqual([]);
-    });
-  });
 
   // --------------------------------------------------------------------------
   // getSchemaRelations() — heavy FK/index path, keyed by table display name
@@ -1135,250 +1110,111 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
     }
-
-    test("returns foreignKeys and indexes keyed by table display name", async () => {
-      withRelationRows([
-        {
-          table_schema: "public",
-          table_name: "orders",
-          foreign_keys: [
-            {
-              columnName: "user_id",
-              referencedSchema: "public",
-              referencedTable: "users",
-              referencedColumn: "id",
-            },
-          ],
-          indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
-        },
-      ]);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const relations = await provider.getSchemaRelations();
-
-      expect(relations.length).toBe(1);
-      const orders = relations.find((r) => r.name === "orders");
-      expect(orders).toBeDefined();
-      expect(orders!.foreignKeys.length).toBe(1);
-      expect(orders!.foreignKeys[0].columnName).toBe("user_id");
-      expect(orders!.foreignKeys[0].referencedColumn).toBe("id");
-      expect(orders!.indexes.length).toBe(1);
-      expect(orders!.indexes[0].unique).toBe(true);
-    });
-
-    test("non-public schema is prefixed on both table name and referenced table", async () => {
-      withRelationRows([
-        {
-          table_schema: "analytics",
-          table_name: "events",
-          foreign_keys: [
-            {
-              columnName: "account_id",
-              referencedSchema: "billing",
-              referencedTable: "accounts",
-              referencedColumn: "id",
-            },
-          ],
-          indexes: [],
-        },
-      ]);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const relations = await provider.getSchemaRelations();
-
-      const events = relations.find((r) => r.name === "analytics.events");
-      expect(events).toBeDefined();
-      expect(events!.foreignKeys[0].referencedTable).toBe("billing.accounts");
-    });
-
-    test("public referenced table keeps its bare name (no prefix)", async () => {
-      withRelationRows([
-        {
-          table_schema: "analytics",
-          table_name: "events",
-          foreign_keys: [
-            {
-              columnName: "user_id",
-              referencedSchema: "public",
-              referencedTable: "users",
-              referencedColumn: "id",
-            },
-          ],
-          indexes: [],
-        },
-      ]);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const relations = await provider.getSchemaRelations();
-
-      expect(relations[0].foreignKeys[0].referencedTable).toBe("users");
-    });
-
-    test("empty fk/index arrays are tolerated (index-only or fk-only tables)", async () => {
-      withRelationRows([
-        { table_schema: "public", table_name: "logs", foreign_keys: [], indexes: [] },
-        {
-          table_schema: "public",
-          table_name: "metrics",
-          foreign_keys: null,
-          indexes: [{ name: "metrics_ts_idx", columns: ["ts"], unique: false }],
-        },
-      ]);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const relations = await provider.getSchemaRelations();
-
-      const logs = relations.find((r) => r.name === "logs")!;
-      expect(logs.foreignKeys).toEqual([]);
-      expect(logs.indexes).toEqual([]);
-
-      const metrics = relations.find((r) => r.name === "metrics")!;
-      expect(metrics.foreignKeys).toEqual([]);
-      expect(metrics.indexes[0].columns).toEqual(["ts"]);
-      expect(metrics.indexes[0].unique).toBe(false);
-    });
-
-    test("null index columns coerce to an empty array", async () => {
-      withRelationRows([
-        {
-          table_schema: "public",
-          table_name: "weird",
-          foreign_keys: [],
-          indexes: [{ name: "broken_idx", columns: null, unique: false }],
-        },
-      ]);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      const relations = await provider.getSchemaRelations();
-
-      expect(relations[0].indexes[0].columns).toEqual([]);
-    });
-
-    // Regression guard: constraint_column_usage reports the *referenced* table's
-    // schema in ccu.table_schema, so joining it to tc.table_schema drops every
-    // cross-schema foreign key. The join must be on the constraint's own schema.
-    // The query result is mocked, so this asserts the SQL itself.
-    test("FK introspection joins constraint_column_usage on constraint_schema", async () => {
-      let capturedSql = "";
-      mockQueryFn = (sql: string) => {
-        capturedSql = sql;
-        return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchemaRelations();
-
-      expect(capturedSql).toContain("ccu.constraint_schema = tc.constraint_schema");
-      expect(capturedSql).not.toContain("ccu.table_schema = tc.table_schema");
-    });
   });
 
   // --------------------------------------------------------------------------
   // MATERIALIZED-keyword fallback (Materialize/RisingWave compatibility, #38680)
   // --------------------------------------------------------------------------
 
-  describe("MATERIALIZED-keyword schema fallback", () => {
-    // Materialize/RisingWave reserve MATERIALIZED as a keyword and reject the
-    // CTE modifier with a syntax error, even though the underlying
-    // information_schema views are otherwise queryable there.
-    function rejectMaterializedHintOnce(onRetry: (sql: string) => ReturnType<typeof defaultMockQuery>) {
+  describe("the repair chain around an engine that rejects part of a catalog statement (#38680)", () => {
+    /*
+      Every object read goes through `queryWithMaterializedFallback()`, which recovers real
+      catalog data on four independent gaps rather than failing outright. The chain used to be
+      driven here through the flat schema reading; that reading is deleted (#789), so it is
+      driven through `describeObjects()`, which composes the same `json_agg` /
+      `json_build_object` CTEs.
+
+      Each repair is used AT MOST ONCE per statement, and a message no remaining repair
+      recognises is mapped and rethrown rather than retried forever. That is the property
+      under test, and it is what keeps a permanently failing engine from looping here.
+    */
+    const describeTables = async (): Promise<unknown> => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      return provider.describeObjects(["public"], "table");
+    };
+
+    /** Reject the first attempt with `message`, then answer; the statements sent are returned. */
+    function rejectFirst(message: string): string[] {
+      const sent: string[] = [];
       mockQueryFn = (sql: string) => {
-        if (sql.includes("AS MATERIALIZED (")) {
-          return Promise.reject(new Error('syntax error at or near "MATERIALIZED"'));
+        sent.push(sql);
+        if (
+          sent.filter((entry) => entry.includes("described_columns")).length === 1 &&
+          sql.includes("described_columns")
+        ) {
+          return Promise.reject(new Error(message));
         }
-        return onRetry(sql);
+        return defaultMockQuery(sql);
       };
+      return sent;
     }
 
-    test("getSchema() retries without the hint and returns real data", async () => {
-      rejectMaterializedHintOnce(defaultMockQuery);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    const detailStatements = (sent: readonly string[]): string[] =>
+      sent.filter((sql) => sql.includes("described_columns"));
 
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
+    test("json_agg is swapped for jsonb_agg, which returns the same shape over the wire", async () => {
+      // Materialize has only the jsonb_ equivalents, and node-postgres parses both the json
+      // and the jsonb OID into the same plain JS value, so the swap is enough.
+      const sent = rejectFirst('function "json_agg" does not exist');
+
+      await describeTables();
+
+      const attempts = detailStatements(sent);
+      expect(attempts.length).toBe(2);
+      expect(attempts[0]).toContain("json_agg(");
+      expect(attempts[1]).toContain("jsonb_agg(");
+      expect(attempts[1]).toContain("jsonb_build_object(");
+      expect(attempts[1]).not.toContain(" json_agg(");
     });
 
-    test("getSchemaList() and getSchemaRelations() also recover via the same fallback", async () => {
-      rejectMaterializedHintOnce(defaultMockQuery);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    test("a missing pg_total_relation_size() is recognised and the statement retried", async () => {
+      // CockroachDB's first gap, and it has no MATERIALIZED collision at all. The repair is a
+      // no-op on THIS statement, which names no size call, and that is the honest behaviour of
+      // a shared chain: a repair that does not apply costs one retry and never a wrong reading.
+      const sent = rejectFirst("unknown function: pg_total_relation_size()");
 
-      const list = await provider.getSchemaList();
-      expect(list.length).toBe(2);
+      await describeTables();
 
-      const relations = await provider.getSchemaRelations();
-      expect(Array.isArray(relations)).toBe(true);
+      expect(detailStatements(sent).length).toBe(2);
     });
 
-    test("getSchema() maps and rethrows when the retry without the hint also fails", async () => {
-      mockQueryFn = () => Promise.reject(new Error('syntax error at or near "MATERIALIZED"'));
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
+    test("a missing to_regclass is recognised and the statement retried", async () => {
+      const sent = rejectFirst('function "to_regclass" does not exist');
 
-      await expect(provider.getSchema()).rejects.toThrow(QueryError);
-      await expect(provider.getSchema()).rejects.toThrow(/materialized/i);
+      await describeTables();
+
+      expect(detailStatements(sent).length).toBe(2);
     });
 
-    test("getSchema() maps and rethrows an unrelated error without retrying", async () => {
-      mockQueryFn = () => Promise.reject(new Error('relation "tables_info" does not exist'));
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      await expect(provider.getSchema()).rejects.toThrow(QueryError);
-      await expect(provider.getSchema()).rejects.toThrow(/does not exist/);
-    });
-
-    // CockroachDB accepts the MATERIALIZED hint fine (its own compatibility.ts entry
-    // says so) but has no pg_total_relation_size() builtin - hitting the second
-    // fallback as the FIRST error, with the MATERIALIZED collision never in play.
-    test("getSchema() retries around a missing pg_total_relation_size(), independent of the MATERIALIZED collision", async () => {
+    test("an error no repair recognises is mapped and rethrown rather than retried", async () => {
+      const sent: string[] = [];
       mockQueryFn = (sql: string) => {
-        if (sql.includes("pg_total_relation_size(c.oid)")) {
-          return Promise.reject(new Error("unknown function: pg_total_relation_size()"));
-        }
+        sent.push(sql);
+        if (sql.includes("described_columns")) return Promise.reject(new Error("column lists are not readable here"));
         return defaultMockQuery(sql);
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
+      await expect(provider.describeObjects(["public"], "table")).rejects.toThrow(QueryError);
+      // One attempt, not two: nothing recognised it, so nothing was rewritten.
+      expect(detailStatements(sent).length).toBe(1);
     });
 
-    // Materialize hits all three gaps in sequence: MATERIALIZED is rejected first,
-    // then (once stripped) pg_total_relation_size, then (once replaced) json_agg.
-    test("getSchema() chains through all three fallbacks when an engine hits every gap", async () => {
+    test("a repair is used ONCE: the same message twice is rethrown rather than looping", async () => {
+      const sent: string[] = [];
       mockQueryFn = (sql: string) => {
-        if (sql.includes("AS MATERIALIZED (")) {
-          return Promise.reject(new Error("Expected left parenthesis, found MATERIALIZED"));
-        }
-        if (sql.includes("pg_total_relation_size(c.oid)")) {
-          return Promise.reject(new Error('function "pg_total_relation_size" does not exist'));
-        }
-        if (sql.includes("json_agg(")) {
-          return Promise.reject(new Error('function "json_agg" does not exist'));
-        }
+        sent.push(sql);
+        if (sql.includes("described_columns")) return Promise.reject(new Error('function "json_agg" does not exist'));
         return defaultMockQuery(sql);
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
-    });
-
-    test("getSchema() maps and rethrows when the MATERIALIZED retry fails for an unrelated reason", async () => {
-      // Every attempt gets this same message: the first is consumed by the
-      // MATERIALIZED fallback (it mentions "MATERIALIZED"), but once that fallback is
-      // used up, no remaining fallback recognizes it, so the second attempt's
-      // rejection is mapped and rethrown rather than retried forever.
-      mockQueryFn = () =>
-        Promise.reject(new Error("syntax error: Expected left parenthesis, found MATERIALIZED; unrelated cause"));
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      await expect(provider.getSchema()).rejects.toThrow(QueryError);
+      await expect(provider.describeObjects(["public"], "table")).rejects.toThrow(DatabaseError);
+      // Exactly two: the repair consumed the first, and the second found no repair left.
+      expect(detailStatements(sent).length).toBe(2);
     });
   });
 
@@ -1427,9 +1263,10 @@ describe("PostgresProvider", () => {
       };
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      await provider.getSchema();
-      await provider.getSchemaList();
-      await provider.getSchemaRelations();
+      await provider.listContainers();
+      await provider.countObjects(["public"]);
+      await provider.listObjects(["public"], "table");
+      await provider.describeObjects(["public"], "table");
       await provider.getOverview();
       await provider.getTableStats();
       await provider.getIndexStats();
@@ -1449,68 +1286,6 @@ describe("PostgresProvider", () => {
           expect(sql).toContain(`'${schema}'`);
         }
       }
-    });
-
-    test("every CTE in the schema queries filters by schema, not just some of them", async () => {
-      // tables_info/columns_info/index_info carried the exclusion while pk_info and
-      // fk_info did not, so getSchemaRelations() still listed _timescaledb_catalog
-      // and google_ml relations through the FK side of its FULL OUTER JOIN even
-      // after the object browser stopped showing them. Every CTE here reads
-      // per-table metadata, so every one of them needs the filter.
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-      await provider.getSchemaRelations();
-
-      const schemaQueries = seen.filter((sql) => sql.includes("_info AS MATERIALIZED ("));
-      expect(schemaQueries.length).toBeGreaterThan(0);
-
-      // Split each query into its CTE bodies and require the filter in every one.
-      // The count comes off the split, so a CTE added later is covered automatically.
-      const unfiltered: string[] = [];
-      for (const sql of schemaQueries) {
-        // Splitting on the CTE header yields [prefix, name, body, name, body, ...],
-        // so each body runs exactly to the next CTE and cannot borrow its filter.
-        const parts = sql.split(/(\w+) AS MATERIALIZED \(/);
-        expect(parts.length).toBeGreaterThan(1);
-        for (let i = 1; i < parts.length; i += 2) {
-          if (!parts[i + 1].includes("NOT IN ('pg_catalog'")) unfiltered.push(parts[i]);
-        }
-      }
-      expect(unfiltered).toEqual([]);
-    });
-
-    test("extension-created schemas are excluded by ownership, not by name", async () => {
-      // A hardcoded "google_ml" would hide a real schema from anyone who happened to
-      // name one that - it is the only entry on the list a user could plausibly pick.
-      // pg_depend answers the question the name was standing in for, and answers it
-      // better: on a live AlloyDB Omni it returns google_ml AND ai, which the name
-      // list had missed. Measured working on all seven engines, PostgreSQL included,
-      // where it correctly returns nothing.
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-      await provider.getOverview();
-      await provider.getTableStats();
-      await provider.getIndexStats();
-
-      const filtered = seen.filter((sql) => sql.includes("NOT IN ('pg_catalog'"));
-      expect(filtered.length).toBeGreaterThan(0);
-      for (const sql of filtered) {
-        expect(sql).toContain("pg_depend");
-      }
-      // And the name it replaces is gone, so a user's own google_ml stays visible.
-      expect(seen.some((sql) => sql.includes("'google_ml'"))).toBe(false);
     });
 
     test("an engine without pg_depend still gets a real count, not a zero", async () => {
@@ -1536,32 +1311,6 @@ describe("PostgresProvider", () => {
       expect(attempts).toBe(2);
       expect(overview.tableCount).toBe(42);
       expect(overview.indexCount).toBe(7);
-    });
-
-    test("the overview counts a table the same way the object browser does", async () => {
-      // These are the two readers that disagreed on CockroachDB, and adding
-      // materialized views to the browser split them again on Materialize: the browser
-      // said 4 and the overview 3, because pg_tables has no materialized views in it.
-      // One definition of "a table" or the panels drift apart again on the next engine.
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-      await provider.getOverview();
-
-      const browserQuery = seen.find((sql) => sql.includes("tables_info AS MATERIALIZED ("));
-      const countsQuery = seen.find((sql) => sql.includes("as table_count"));
-      expect(browserQuery).toBeDefined();
-      expect(countsQuery).toBeDefined();
-
-      // Same source and same type list, not merely both filtered somehow.
-      expect(countsQuery).toContain("information_schema.tables");
-      expect(countsQuery).toContain("'MATERIALIZED VIEW'");
-      expect(countsQuery).toContain("'BASE TABLE'");
     });
 
     test("getOverview() counts exclude CockroachDB's crdb_internal and pg_extension", async () => {
@@ -1612,231 +1361,11 @@ describe("PostgresProvider", () => {
         };
       };
     }
-
-    test("getSchema() returns tables with no foreign keys instead of failing", async () => {
-      rejectConstraintColumnUsage(defaultMockQuery);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
-      // Absent, not invented: the retry drops the FK join rather than guessing.
-      for (const table of schema) {
-        expect(table.foreignKeys).toEqual([]);
-      }
-    });
-
-    test("getSchemaRelations() still returns index data once the FK join is dropped", async () => {
-      rejectConstraintColumnUsage(defaultMockQuery);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const relations = await provider.getSchemaRelations();
-      expect(Array.isArray(relations)).toBe(true);
-    });
-
-    test("the retried statement no longer reads constraint_column_usage", async () => {
-      const attempts: string[] = [];
-      mockQueryFn = (sql: string) => {
-        attempts.push(sql);
-        if (sql.includes("constraint_column_usage")) {
-          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
-      // attempts; what this counts is what getSchema() sent.
-      attempts.length = 0;
-      await provider.getSchema();
-
-      // Two attempts: the original, then one that has dropped the FK catalog.
-      expect(attempts.length).toBe(2);
-      expect(attempts[0]).toContain("constraint_column_usage");
-      expect(attempts[1]).not.toContain("constraint_column_usage");
-      // The CTE itself must survive - the outer query joins it by name.
-      expect(attempts[1]).toContain("fk_info");
-      // A rewrite that ate a bracket would still satisfy the assertions above.
-      expect(countParens(attempts[1])).toEqual({ balanced: true });
-    });
-
-    test("a parenthesis inside a string literal does not move the CTE boundary", async () => {
-      // replaceCteBody() counts brackets to find where the CTE ends. Today fk_info's
-      // literals contain none, so the count is right by luck rather than by rule. This
-      // pins the rule: the engine sees an unbalanced ")" inside a quoted string, and a
-      // scanner that counted it would cut the CTE short and corrupt everything after.
-      const attempts: string[] = [];
-      mockQueryFn = (sql: string) => {
-        attempts.push(sql);
-        if (sql.includes("constraint_column_usage")) {
-          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
-      // attempts; what this counts is what getSchema() sent.
-      attempts.length = 0;
-      await provider.getSchema();
-
-      const rewritten = attempts[attempts.length - 1];
-      // Everything the outer query needs must survive the cut, in order.
-      expect(rewritten).toContain("fk_info");
-      expect(rewritten).toContain("index_info AS MATERIALIZED (");
-      expect(rewritten).toContain("LEFT JOIN fk_info fk");
-      expect(rewritten).toContain("ORDER BY ti.table_schema");
-      expect(countParens(rewritten)).toEqual({ balanced: true });
-    });
-
-    test("the ownership subquery stays strippable, which means bracket-free", async () => {
-      // withoutExtensionOwnershipTest() finds the clause with a regex that stops at the
-      // first ")", so a bracket anywhere inside the subquery would leave half of it
-      // behind and produce SQL no engine will parse - silently, on exactly the engines
-      // nobody here can test. The subquery is written bracket-free on purpose; this
-      // fails the moment someone forgets why.
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-
-      const query = seen.find((sql) => sql.includes("pg_depend"));
-      expect(query).toBeDefined();
-      const clause = /NOT IN \(SELECT n\.nspname FROM pg_namespace n JOIN pg_depend[^)]*\)/.exec(query as string);
-      expect(clause).not.toBeNull();
-      // The match must end at the clause's own closing bracket, so what it captured
-      // has to contain the whole subquery - pg_extension is its last table.
-      expect((clause as RegExpExecArray)[0]).toContain("pg_extension");
-    });
-
-    test("an engine without pg_depend falls back to the fixed schema list", async () => {
-      // Every engine probed accepts the ownership test, but the driver serves engines
-      // nobody has run. One that has no pg_depend must keep working on the fixed list
-      // rather than losing its object browser to a filter it cannot evaluate.
-      const attempts: string[] = [];
-      mockQueryFn = (sql: string) => {
-        attempts.push(sql);
-        if (sql.includes("pg_depend")) {
-          return Promise.reject(new Error('relation "pg_depend" does not exist'));
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
-      // attempts; what this counts is what getSchema() sent.
-      attempts.length = 0;
-
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
-      expect(attempts.length).toBe(2);
-      // The ownership clause is gone and the fixed list is still doing its job.
-      expect(attempts[1]).not.toContain("pg_depend");
-      expect(attempts[1]).toContain("NOT IN ('pg_catalog'");
-      expect(countParens(attempts[1])).toEqual({ balanced: true });
-    });
-
-    test("the rethrown error carries the statement that actually failed", async () => {
-      // The chain rewrites the SQL as it goes, so reporting the original text sends a
-      // reader looking at a statement the server never saw. Here the MATERIALIZED hint
-      // is stripped, the retry fails for an unrelated reason, and the error should
-      // quote the stripped statement - the one that produced it.
-      mockQueryFn = (sql: string) => {
-        if (sql.includes("AS MATERIALIZED (")) {
-          return Promise.reject(new Error("Expected left parenthesis, found MATERIALIZED"));
-        }
-        return Promise.reject(new Error('relation "tables_info" is not visible to this role'));
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const error = (await provider.getSchema().catch((e: unknown) => e)) as QueryError;
-      expect(error).toBeInstanceOf(QueryError);
-      expect(error.query).toBeDefined();
-      expect(error.query).not.toContain("AS MATERIALIZED (");
-    });
-
-    test("getSchemaList(), which never joins the FK catalog, rethrows instead of retrying blind", async () => {
-      // SCHEMA_LIST_SQL has no fk_info CTE to drop, so there is nothing this
-      // fallback can rewrite. It must surface the error rather than loop or
-      // quietly hand back a query it did not actually repair.
-      mockQueryFn = () =>
-        Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      await expect(provider.getSchemaList()).rejects.toThrow(QueryError);
-    });
-
-    test("Materialize's full sequence: keyword, size builtin, json_agg, then the FK catalog", async () => {
-      const attempts: string[] = [];
-      mockQueryFn = (sql: string) => {
-        attempts.push(sql);
-        if (sql.includes("AS MATERIALIZED (")) {
-          return Promise.reject(new Error("Expected left parenthesis, found MATERIALIZED"));
-        }
-        if (sql.includes("pg_total_relation_size(c.oid)")) {
-          return Promise.reject(new Error('function "pg_total_relation_size" does not exist'));
-        }
-        if (sql.includes("json_agg(")) {
-          return Promise.reject(new Error('function "json_agg" does not exist'));
-        }
-        if (sql.includes("constraint_column_usage")) {
-          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
-      // attempts; what this counts is what getSchema() sent.
-      attempts.length = 0;
-
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
-      expect(attempts.length).toBe(5);
-      expect(countParens(attempts[4])).toEqual({ balanced: true });
-    });
   });
 
   // --------------------------------------------------------------------------
   // Materialized views, and statistics panels on an engine that has no sizes
   // --------------------------------------------------------------------------
-
-  describe("materialized views in the object browser", () => {
-    test("the schema query asks for materialized views as well as base tables", async () => {
-      // Materialize reports its materialized views through information_schema.tables
-      // with table_type = 'MATERIALIZED VIEW', and they are the object its users
-      // actually work with - a browser that lists only BASE TABLE hides the product.
-      // Measured no-op elsewhere: PostgreSQL 18.4, TimescaleDB, YugabyteDB, Cloudberry,
-      // AlloyDB Omni and CockroachDB never emit that table_type at all (PostgreSQL
-      // leaves materialized views out of information_schema.tables entirely).
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-      await provider.getSchemaList();
-
-      const tableQueries = seen.filter((sql) => sql.includes("tables_info AS MATERIALIZED ("));
-      expect(tableQueries.length).toBeGreaterThan(0);
-      for (const sql of tableQueries) {
-        expect(sql).toContain("'MATERIALIZED VIEW'");
-        // Still a positive list, not "everything that is not a view": a FOREIGN or
-        // SYSTEM VIEW row is not a table and must stay out.
-        expect(sql).toContain("'BASE TABLE'");
-        expect(sql).not.toContain("'SYSTEM VIEW'");
-      }
-    });
-  });
 
   describe("statistics panels on an engine with no size functions", () => {
     // Measured on Materialize v26.37.0: getTableStats() dies on pg_table_size,
@@ -1900,47 +1429,6 @@ describe("PostgresProvider", () => {
     //
     // to_regclass() answers NULL instead of raising, so the row survives with no
     // pg_class match and its count reads as absent - which it genuinely is.
-
-    test("the schema query resolves names without raising", async () => {
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-
-      const query = seen.find((sql) => sql.includes("tables_info AS MATERIALIZED ("));
-      expect(query).toBeDefined();
-      expect(query).toContain("to_regclass(");
-    });
-
-    test("an engine without to_regclass falls back to the cast and still reads", async () => {
-      // Measured: Materialize has no to_regclass, while PostgreSQL, TimescaleDB,
-      // YugabyteDB, Cloudberry, AlloyDB Omni and CockroachDB all do. The engine this
-      // whole fallback chain exists for must not lose its object browser to the fix.
-      const attempts: string[] = [];
-      mockQueryFn = (sql: string) => {
-        attempts.push(sql);
-        if (sql.includes("to_regclass(")) {
-          return Promise.reject(new Error('function "to_regclass" does not exist'));
-        }
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      // Connect's own EXPLAIN grammar probe (#597) is not one of the schema read's
-      // attempts; what this counts is what getSchema() sent.
-      attempts.length = 0;
-
-      const schema = await provider.getSchema();
-      expect(schema.length).toBe(2);
-      expect(attempts.length).toBe(2);
-      expect(attempts[1]).not.toContain("to_regclass(");
-      expect(attempts[1]).toContain("::regclass");
-      expect(countParens(attempts[1])).toEqual({ balanced: true });
-    });
   });
 
   // --------------------------------------------------------------------------
@@ -1980,61 +1468,6 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
     }
-
-    test("getSchema() leaves the count absent when the engine has not counted", async () => {
-      schemaWithRowCount("-1");
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const [table] = await provider.getSchema();
-      expect(table.rowCount).toBeUndefined();
-    });
-
-    test("getSchemaList() leaves it absent too", async () => {
-      schemaWithRowCount("-1");
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const [table] = await provider.getSchemaList();
-      expect(table.rowCount).toBeUndefined();
-    });
-
-    test("a table with no pg_class row is absent, not zero", async () => {
-      // The CTE used to COALESCE a missing join to 0, which is the same fabrication
-      // wearing a different hat: "no row here" is not "this table has no rows".
-      schemaWithRowCount(null);
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const [table] = await provider.getSchema();
-      expect(table.rowCount).toBeUndefined();
-    });
-
-    test("a real zero survives, because an empty table is a measurement", async () => {
-      // The control. If absence swallowed 0 as well, this fix would trade one wrong
-      // answer for another and the badge would vanish from every genuinely empty table.
-      schemaWithRowCount("0");
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-
-      const [table] = await provider.getSchema();
-      expect(table.rowCount).toBe(0);
-    });
-
-    test("the query no longer asks the database to invent a zero", async () => {
-      const seen: string[] = [];
-      mockQueryFn = (sql: string) => {
-        seen.push(sql);
-        return defaultMockQuery(sql);
-      };
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await provider.getSchema();
-
-      const schemaQuery = seen.find((sql) => sql.includes("tables_info AS MATERIALIZED ("));
-      expect(schemaQuery).toBeDefined();
-      expect(schemaQuery).not.toContain("COALESCE(c.reltuples");
-    });
   });
 
   // --------------------------------------------------------------------------
@@ -2469,8 +1902,71 @@ describe("PostgresProvider", () => {
       expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
       expect(metrics.deadlocks).toBe(3);
-      expect(typeof metrics.checkpointWriteTime).toBe("string");
-      expect(metrics.checkpointWriteTime).not.toBe("N/A");
+      expect(metrics.checkpointWriteTime).toBe("10.5s");
+    });
+
+    test("reads the checkpoint timings from pg_stat_checkpointer on PostgreSQL 17 and later", async () => {
+      // PostgreSQL 17 moved both columns out of pg_stat_bgwriter and renamed them.
+      // Asking the old view for them there failed, and the server logged
+      // `column "checkpoint_write_time" does not exist` on every monitoring refresh (#825).
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const seen: string[] = [];
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        seen.push(sql.trim().toLowerCase());
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.checkpointWriteTime).toBe("10.5s");
+      expect(seen.some((sql) => sql.includes("from pg_catalog.pg_stat_checkpointer"))).toBe(true);
+      expect(seen.some((sql) => sql.includes("checkpoint_write_time"))).toBe(false);
+    });
+
+    test("reads the checkpoint timings from pg_stat_bgwriter before PostgreSQL 17", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const seen: string[] = [];
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        seen.push(normalized);
+        if (normalized.includes("to_regclass('pg_catalog.pg_stat_checkpointer')")) {
+          return { rows: [{ has_checkpointer: false }], fields: [], rowCount: 1 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      // 12500 ms written plus 3200 ms synced, the pre-17 fixture.
+      expect(metrics.checkpointWriteTime).toBe("15.7s");
+      expect(seen.some((sql) => sql.includes("from pg_catalog.pg_stat_checkpointer"))).toBe(false);
+    });
+
+    test("answers N/A and reads no view when the server cannot say which view it has", async () => {
+      // A wire-compatible engine with no to_regclass() (Materialize) refuses the probe.
+      // Guessing a view there would send a statement that has to fail.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const seen: string[] = [];
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        seen.push(normalized);
+        if (normalized.includes("to_regclass('pg_catalog.pg_stat_checkpointer')")) {
+          throw new Error('function "to_regclass" does not exist');
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.checkpointWriteTime).toBe("N/A");
+      expect(seen.some((sql) => sql.includes("pg_stat_bgwriter"))).toBe(false);
+      expect(seen.some((sql) => sql.includes("from pg_catalog.pg_stat_checkpointer"))).toBe(false);
     });
 
     test("handles checkpoint fallback gracefully", async () => {
@@ -2480,8 +1976,8 @@ describe("PostgresProvider", () => {
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes("pg_stat_bgwriter")) {
-          throw new Error("permission denied for pg_stat_bgwriter");
+        if (normalized.includes("from pg_catalog.pg_stat_checkpointer")) {
+          throw new Error("permission denied for pg_stat_checkpointer");
         }
         return originalMock(sql, params);
       };
@@ -2550,19 +2046,17 @@ describe("PostgresProvider", () => {
     });
 
     test("reports an absent checkpoint reading as N/A rather than as zero seconds", async () => {
-      // pg_stat_bgwriter still exists on PostgreSQL 17+ but the two checkpoint
-      // columns moved to pg_stat_checkpointer, so the query throws there and the
-      // catch already answers "N/A". This is the other shape: the view answers,
-      // and both columns are NULL.
+      // A view that is unreadable already answers "N/A" through the catch. This is
+      // the other shape: the view answers, and both columns are NULL.
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes("pg_stat_bgwriter")) {
+        if (normalized.includes("from pg_catalog.pg_stat_checkpointer")) {
           return {
-            rows: [{ checkpoint_write_time: null, checkpoint_sync_time: null }],
+            rows: [{ write_time: null, sync_time: null }],
             fields: [],
             rowCount: 1,
           };
@@ -3991,5 +3485,3179 @@ describe("PostgresProvider EXPLAIN grammar probe", () => {
 
     expect(provider.getCapabilities().explainFormat).toBe("postgres-text");
     await provider.disconnect();
+  });
+});
+
+/**
+ * The object surface (#789), and the bug it closes (#710).
+ *
+ * `makeProvider()` is local rather than shared with the block above: these tests each
+ * install their own `mockQueryFn` before connecting, so they need a provider built
+ * after that assignment and no `afterEach` that reaches for a shared handle.
+ */
+describe("object surface", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  test("declares the kinds PostgreSQL actually has", () => {
+    const provider = makeProvider();
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    expect(kinds.map((k) => k.id).sort()).toEqual([
+      "function",
+      "materialized_view",
+      "procedure",
+      "sequence",
+      "table",
+      "trigger",
+      "view",
+    ]);
+    expect(kinds.find((k) => k.id === "view")?.role).toBe("relation");
+    expect(kinds.find((k) => k.id === "procedure")?.role).toBe("routine");
+    expect(kinds.find((k) => k.id === "trigger")?.attachedTo).toBe("table");
+    // A view is not an import target even where PostgreSQL would allow the write.
+    expect(kinds.find((k) => k.id === "view")?.acceptsRowWrites).toBeUndefined();
+    expect(kinds.find((k) => k.id === "table")?.acceptsRowWrites).toBe(true);
+  });
+
+  /**
+   * The source declaration, both directions (#789 Phase 2).
+   *
+   * The second assertion is the one that matters over time: a kind added to `objectKinds`
+   * later cannot quietly gain a Source tab, and a kind losing its declaration cannot quietly
+   * lose one. `table` and `sequence` are in the second list as a RESULT and not as a gap:
+   * PostgreSQL publishes no `pg_get_tabledef` and no `pg_get_sequencedef`, and
+   * `pg_catalog.pg_sequences` publishes a sequence's properties rather than any text.
+   */
+  test("declares source on exactly the kinds that have a definition text", () => {
+    const provider = makeProvider();
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    const declared = kinds
+      .filter((kind) => kind.hasSource === true)
+      .map((kind) => [kind.id, kind.sourceLanguage] as const)
+      .sort();
+    expect(declared).toEqual([
+      ["function", "pgsql"],
+      ["materialized_view", "pgsql"],
+      ["procedure", "pgsql"],
+      ["trigger", "pgsql"],
+      ["view", "pgsql"],
+    ]);
+    // The other direction, so a kind added later cannot quietly gain a Source tab.
+    expect(
+      kinds
+        .filter((kind) => kind.hasSource !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["sequence", "table"]);
+  });
+
+  /**
+   * The edit declaration, both directions (#789 Phase 3).
+   *
+   * The second assertion is the one that matters over time, exactly as it is for the source
+   * declaration above it: a kind added to `objectKinds` later cannot quietly gain an edit
+   * affordance, and the three REFUSED kinds are refused with an engine fact each rather than
+   * left unbuilt. `docs/providers/postgres.md` carries all three.
+   */
+  test("declares acceptsSourceEdits on exactly the two routine kinds", () => {
+    const provider = makeProvider();
+    const kinds = provider.getCapabilities().objectKinds ?? [];
+    expect(
+      kinds
+        .filter((kind) => kind.acceptsSourceEdits === true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["function", "procedure"]);
+    // The other direction, so a kind added later cannot quietly gain an edit affordance. `view` and
+    // `materialized_view` are REFUSED rather than unbuilt, and the provider doc carries why:
+    // `pg_get_viewdef` returns neither the column alias list nor WITH CHECK OPTION nor
+    // security_barrier, so a header assembled from it silently removes a write constraint and a
+    // row-security control, and `CREATE OR REPLACE MATERIALIZED VIEW` is a syntax error.
+    expect(
+      kinds
+        .filter((kind) => kind.acceptsSourceEdits !== true)
+        .map((kind) => kind.id)
+        .sort(),
+    ).toEqual(["materialized_view", "sequence", "table", "trigger", "view"]);
+  });
+
+  test("satisfies the shared object surface contract", async () => {
+    // The relations each kind holds, one place, because the helper now reads the listing
+    // and the bulk column read against each other: two lists that had to be kept in step
+    // by hand would make a mismatch look like a provider defect.
+    const relations: Record<string, string[]> = {
+      "'v'": ["order_summary", "daily_sales"],
+      "'m'": ["revenue_by_month"],
+      "'r','p'": ["orders", "products"],
+    };
+    // `public` holds ONE table and it is called `orders`, the same last segment as
+    // `app.orders`. That is `docker/postgres-init/03-object-fixture.sql`, and it is the case
+    // the address rule and its preferred-container tie-breaker exist for: with one schema in
+    // play a bare name is a valid suffix of every address, so the join could not be told
+    // apart from a suffix match. Measured on a postgres:18 seeded with `docker/postgres-init`:
+    // `current_schema()` is `public`, so the bare `orders` the flat reading spells for it
+    // must land HERE and the qualified `app.orders` on the other.
+    const publicRelations: Record<string, string[]> = { "'v'": [], "'m'": [], "'r','p'": ["orders"] };
+    // The three kinds that are not relations, listed by their own catalogs. A routine's last
+    // segment is the IDENTITY the listing writes, and a trigger's path carries its table,
+    // which is what makes the source binds below more than one segment (#789).
+    const routines: Record<string, { name: string; identity: string }[]> = {
+      f: [
+        { name: "order_total", identity: "order_total(integer)" },
+        { name: "stamp_updated_at", identity: "stamp_updated_at()" },
+      ],
+      p: [{ name: "touch_order", identity: "touch_order(integer)" }],
+    };
+    // Keyed by the LAST bind, which is the object's own segment on all five statements, so an
+    // absence is the same lookup missing rather than an arm written for the absent case.
+    const definitions: Record<string, string> = {
+      order_summary: MEASURED_VIEW_DEFINITION,
+      daily_sales: MEASURED_DAILY_SALES_DEFINITION,
+      revenue_by_month: MEASURED_MATERIALIZED_VIEW_DEFINITION,
+      "order_total(integer)": MEASURED_FUNCTION_DEFINITION,
+      "stamp_updated_at()": MEASURED_FUNCTION_DEFINITION,
+      "touch_order(integer)": MEASURED_FUNCTION_DEFINITION,
+      orders_stamp_updated_at: MEASURED_TRIGGER_DEFINITION,
+    };
+    const relkindOf = (sql: string) => Object.keys(relations).find((relkinds) => sql.includes(`IN (${relkinds})`))!;
+    const listedIn = (schema: string | undefined, relkinds: string) =>
+      (schema === "public" ? publicRelations : relations)[relkinds];
+    mockQueryFn = async (sql, params) => {
+      // The source statements FIRST: the view one also names `relkind` and the routine one
+      // also names `prokind`, so a looser arm below would answer a definition read with a
+      // listing row. Keyed on the `pg_get_*` function name, which is the token that tells the
+      // five apart and the one a rewritten statement cannot keep by accident.
+      if (sql.includes("pg_get_viewdef") || sql.includes("pg_get_functiondef") || sql.includes("pg_get_triggerdef")) {
+        const bound = params as string[];
+        const definition = definitions[bound[bound.length - 1]];
+        return { rows: definition === undefined ? [] : [{ definition }] };
+      }
+      // The FLAT reading, over the same relations the object reading lists (#789).
+      //
+      // The guard inside `assertObjectSurface` joins `getSchema()`'s names to the object
+      // paths with the app's own rule, and it cannot do that against a double that never
+      // answers `SCHEMA_FULL_SQL`: this fake used to fall through to the container arm,
+      // which returned `[{ name: "app" }]`, and one row with no `table_schema` and no
+      // `table_name` reached the reader as the single flat entry `undefined.undefined`.
+      // That is a shape mismatch and not a join, so the guard was measuring nothing.
+      //
+      // It is checked FIRST because `SCHEMA_FULL_SQL` also carries an `ORDER BY`.
+      //
+      // The rows are the DRIVER'S rows and the naming is left to `postgres.ts`, which is
+      // the whole point: the provider spells a name schema-qualified except in `public`
+      // (`postgres.ts:2047`), so a fixture that returned finished names would assert the
+      // fixture's spelling rather than the engine's. `public.audit_log` is the spelling
+      // PostgreSQL NEVER produces, and this epic has already taken a Critical for writing
+      // it, so the `public` row is here to be stripped: it reaches the reading as a bare
+      // `audit_log`. It sits outside the listed container deliberately, because the flat
+      // reading spans every schema the connection can see while the object listing is
+      // scoped to one, which is exactly the asymmetry the join has to survive.
+      if (sql.includes("FROM tables_info ti")) {
+        const flat = [
+          ...Object.values(relations).flatMap((names) => names.map((name) => ["app", name] as const)),
+          ["public", "orders"] as const,
+        ];
+        return {
+          rows: flat.map(([schema, name]) => ({
+            table_schema: schema,
+            table_name: name,
+            row_count: "0",
+            total_size: "8192",
+            columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+            pk_columns: ["id"],
+            foreign_keys: [],
+            indexes: [],
+          })),
+        };
+      }
+      // Checked FIRST: the bulk statement also joins pg_namespace and also carries an
+      // ORDER BY, so a looser arm below would answer it with a container row.
+      if (sql.includes("described_columns")) {
+        const names = relations[relkindOf(sql)];
+        const bound = params?.[1] as number | undefined;
+        return {
+          rows: (bound === undefined ? names : names.slice(0, bound)).map((name) => ({
+            name,
+            pk_columns: null,
+            columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+            indexes: null,
+            foreign_keys: null,
+          })),
+        };
+      }
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) {
+        return {
+          rows: [
+            { name: "app", is_session_default: 0 },
+            { name: "public", is_session_default: 1 },
+          ],
+        };
+      }
+      if (sql.includes("GROUP BY kind")) {
+        return {
+          rows: [
+            { kind: "table", n: 3 },
+            { kind: "view", n: 4 },
+            { kind: "materialized_view", n: 1 },
+            { kind: "function", n: 2 },
+            { kind: "procedure", n: 1 },
+            { kind: "trigger", n: 1 },
+          ],
+        };
+      }
+      if (sql.includes("prokind")) {
+        return { rows: routines[params?.[1] as string] };
+      }
+      if (sql.includes("tgisinternal")) {
+        return { rows: [{ name: "orders_stamp_updated_at", parent: "orders" }] };
+      }
+      if (sql.includes("relkind")) {
+        // One row per relkind, and they must be DISTINCT rows. The shared helper lists
+        // every counted kind and requires paths unique across all of them, so one row
+        // reused for three kinds is three objects at one address.
+        return {
+          rows: listedIn(params?.[0] as string | undefined, relkindOf(sql)).map((name) => ({
+            name,
+            row_count: null,
+            size_bytes: null,
+          })),
+        };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    await assertObjectSurface(provider, {
+      containers: [["app"], ["public"]],
+      kinds: { table: 3, view: 4, materialized_view: 1, function: 2, procedure: 1, trigger: 1 },
+      sampleObject: { path: ["app", "order_summary"], kind: "view" },
+      // Authored, because no listing produces an absence. `no_such_view` is a name the
+      // fixture holds under no kind, and the catalog join answers no row for it, which is
+      // the raise design guarantee 6 requires rather than a refusal part (#789).
+      absentSource: { path: ["app", "no_such_view"], kind: "view" },
+    });
+    await provider.disconnect();
+  });
+
+  test("a refused count is reported as unavailable, never as zero", async () => {
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "sales" }] };
+      throw Object.assign(new Error("permission denied for schema sales"), { code: "42501" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const counts = await provider.countObjects(["sales"]);
+    expect(counts.table).toEqual({ unavailable: "permission denied for schema sales" });
+    await provider.disconnect();
+  });
+
+  test("falls back when the server has no pg_proc.prokind", async () => {
+    // CockroachDB, YugabyteDB and older forks can answer 42703 here. The tree must lose
+    // the routine folders rather than the whole container.
+    let attempts = 0;
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) return { rows: [{ name: "app" }] };
+      attempts += 1;
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "prokind" does not exist'), { code: "42703" });
+      }
+      return { rows: [{ kind: "table", n: 2 }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const counts = await provider.countObjects(["app"]);
+    expect(attempts).toBeGreaterThan(1);
+    expect(counts.table).toEqual({ count: 2 });
+    expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The rest of the object surface: the three listing catalogs, the detail row, and the
+ * refusals. Kept out of the block above so `-t "object surface"` still runs exactly the
+ * conformance and declaration tests the task briefs name. The count was four and is five
+ * since the source declaration joined them (#789 Phase 2); what the sentence is about is
+ * which tests that filter selects, not the numeral.
+ */
+describe("PostgreSQL object listing and detail", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  test("a container path that is not one schema is refused, rather than read as empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Not [] and not a zero count: binding undefined to $1 would answer a schema holding
+    // nothing, which is indistinguishable from a real empty schema.
+    await expect(provider.countObjects([])).rejects.toThrow(QueryError);
+    await expect(provider.listObjects(["catalog", "schema"], "table")).rejects.toThrow(
+      /A PostgreSQL container path is \[schema\], received \["catalog","schema"\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("the containers are the schemas, with the session's own marked", async () => {
+    // Standing ruling 5a2: a provider with container levels marks `isSessionDefault` at
+    // every level, or first paint stops short and opens nothing. This one marked none, and
+    // that also left the flat join with no tie-breaker: measured on a postgres:18 seeded
+    // with `docker/postgres-init/`, a bare `orders` from the flat reading answers to both
+    // `app.orders` and `public.orders` and nothing said which container the session was in.
+    //
+    // `current_schema()` is what the server answers, not `public` written down: measured on
+    // the seeded fixture, a fresh connection reports search_path `"$user", public` and
+    // current_schema `public`, and a connection that sets search_path moves it.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      asked.push(sql);
+      return {
+        rows: [
+          { name: "app", is_session_default: 0 },
+          { name: "public", is_session_default: 1 },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listContainers()).toEqual([
+      { path: ["app"], name: "app", level: 0, isSessionDefault: false },
+      { path: ["public"], name: "public", level: 0, isSessionDefault: true },
+    ]);
+    expect(asked.at(-1)).toContain("current_schema()");
+    await provider.disconnect();
+  });
+
+  test("nothing nests under a schema", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listContainers(["app"])).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.listObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await expect(provider.describeObject(["app", "x"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await provider.disconnect();
+  });
+
+  test("each kind is answered by its own catalog, in one order", async () => {
+    mockQueryFn = async (sql, params) => {
+      if (sql.includes("prokind")) {
+        expect(params).toEqual(["app", "p"]);
+        // Overloads differ by argument TYPES and never by parameter names, so a name in
+        // the segment adds nothing to identity and would change it when somebody renames
+        // a parameter. `pg_get_function_identity_arguments()` carries those names, which
+        // is why it is not used.
+        expect(sql).not.toContain("pg_get_function_identity_arguments");
+        expect(sql).toContain("proargtypes");
+        return { rows: [{ name: "touch_order", identity: "touch_order(integer)" }] };
+      }
+      if (sql.includes("tgisinternal")) {
+        return { rows: [{ name: "orders_stamp_updated_at", parent: "orders" }] };
+      }
+      if (sql.includes("relkind")) {
+        return {
+          rows: [
+            { name: "products", row_count: "1200", size_bytes: "8192" },
+            // reltuples -1 is "nothing has analysed this", and a NULL size is a size the
+            // fallback chain replaced. Both are absences, neither is a zero.
+            { name: "audit_log", row_count: "-1", size_bytes: null },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    // The path carries the engine's own identity form; the label stays readable.
+    expect(await provider.listObjects(["app"], "procedure")).toEqual([
+      {
+        path: ["app", "touch_order(integer)"],
+        name: "touch_order",
+        kind: "procedure",
+        rowCount: undefined,
+        sizeBytes: undefined,
+      },
+    ]);
+    // attachedTo: "table", so the table is a path segment. A trigger name is unique per
+    // table, not per schema.
+    expect(await provider.listObjects(["app"], "trigger")).toEqual([
+      {
+        path: ["app", "orders", "orders_stamp_updated_at"],
+        name: "orders_stamp_updated_at",
+        kind: "trigger",
+        rowCount: undefined,
+        sizeBytes: undefined,
+      },
+    ]);
+    // Sorted here, not by the server: the catalog answered products first.
+    expect(await provider.listObjects(["app"], "table")).toEqual([
+      { path: ["app", "audit_log"], name: "audit_log", kind: "table", rowCount: undefined, sizeBytes: undefined },
+      { path: ["app", "products"], name: "products", kind: "table", rowCount: 1200, sizeBytes: 8192 },
+    ]);
+    await provider.disconnect();
+  });
+
+  /**
+   * Standing ruling 5g's other named sweep item, on this file (#789, Task 28a).
+   *
+   * `listObjects` sorted by `JSON.stringify(path)`, and JSON ESCAPING reorders exotic names
+   * by rewriting the characters being compared. A quoted identifier may hold a double quote
+   * on this engine (`CREATE TABLE "a""b"` is valid), and the escape turns its first byte
+   * into a backslash: raw, `"` (0x22) is below `Z` (0x5A), and escaped, `\` (0x5C) is above
+   * it. So the two orders are the REVERSE of each other over this pair, and the address
+   * order is the one every caller joins on.
+   */
+  test("the listing is ordered by the ADDRESS, which a name JSON would escape reverses", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      return { rows: [{ name: "aZb" }, { name: 'a"b' }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect((await provider.listObjects(["app"], "table")).map((object) => object.name)).toEqual(['a"b', "aZb"]);
+    await provider.disconnect();
+  });
+
+  test("a server without pg_total_relation_size loses the size, not the folder", async () => {
+    // CockroachDB and Materialize are both reached under the `postgres` type id and have
+    // no such builtin. The shared withoutTotalRelationSizeFn() is deliberately NOT used:
+    // its literal 0 would claim every relation there is empty.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      asked.push(sql);
+      if (sql.includes("pg_total_relation_size")) {
+        throw new Error("unknown function: pg_total_relation_size()");
+      }
+      return { rows: [{ name: "orders", row_count: "42" }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listObjects(["app"], "table")).toEqual([
+      // A size nobody could read is absent, never 0.
+      { path: ["app", "orders"], name: "orders", kind: "table", rowCount: 42, sizeBytes: undefined },
+    ]);
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).not.toContain("pg_total_relation_size");
+    await provider.disconnect();
+  });
+
+  test("the size retry's own failure leaves by the same door, quoting what the server received", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      if (sql.includes("pg_total_relation_size")) throw new Error("unknown function: pg_total_relation_size()");
+      throw new Error('relation "pg_class" does not exist');
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const failure = await provider.listObjects(["app"], "table").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DatabaseError);
+    expect((failure as DatabaseError).message).toContain('relation "pg_class" does not exist');
+    // The retry is what the server actually ran, so it is what the error quotes. Quoting
+    // the original would point a reader at text that never left this process.
+    expect((failure as DatabaseError).query).not.toContain("pg_total_relation_size");
+    expect((failure as DatabaseError).query).toContain("relkind");
+    await provider.disconnect();
+  });
+
+  test("a kind that is declared but has no listing statement says so, not that it is undeclared", async () => {
+    // Two questions, and only the declaration answers the first. Deciding "declared" from
+    // whether a statement exists would report "declares no object kind" about a kind
+    // `objectKinds` does declare.
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      objectKinds: [
+        ...(real.objectKinds ?? []),
+        { id: "package", role: "routine", label: "Package", labelPlural: "Packages" },
+      ],
+    });
+
+    await expect(provider.listObjects(["app"], "package")).rejects.toThrow(
+      /declares the kind "package" but has no statement that lists it/,
+    );
+    await provider.disconnect();
+  });
+
+  /**
+   * Ruling 5g, on this file's container reader (#789 bulk-read review, Minor 6).
+   *
+   * `containerSchema()` was `container.length !== 1` plus `container[0]`, which is the
+   * exact spelling the pattern tells every other implementer not to copy, and the bulk
+   * read routed through it. Both halves are behaviour-identical on a one-level engine, so
+   * no fixture of PostgreSQL can tell the two spellings apart: this test hands THIS
+   * provider a two-level declaration and drives it to the BOUND VALUE, which is the only
+   * place the difference shows. The hardcoded depth refuses a valid two-segment path; a
+   * positional `container[0]` binds the catalog where the schema belongs.
+   */
+  test("the container depth and the schema bind are DERIVED, which a two-level declaration shows", async () => {
+    const bound: unknown[][] = [];
+    mockQueryFn = async (sql, params) => {
+      bound.push(params ?? []);
+      // One described row, so the ADDRESS assertion below is over an object that exists.
+      // An empty batch asserts nothing about what `objectPath()` builds.
+      return { rows: sql.includes("relkind") ? [{ name: "orders", columns: [] }] : [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+    const real = provider.getCapabilities();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...real,
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+
+    const batch = await provider.describeObjects(["shop", "app"], "table");
+
+    // The ADDRESS carries the WHOLE container, not its last segment. `objectPath()` used to
+    // build `[schema, name]` from the schema segment alone, so at depth 2 both this reading
+    // and `listObjects` lost the catalog together and still agreed with each other, which is
+    // what the shared-rule assertion elsewhere in this file cannot see (Task 28a, minor 6).
+    expect(batch.details.map((detail) => detail.path)).toEqual([["shop", "app", "orders"]]);
+    // The SCHEMA segment, which is the second one under this declaration. `container[0]`
+    // would bind "shop" and narrow every read to a schema that does not exist. Every
+    // statement that binds anything is asserted, rather than a count of them: the number of
+    // round trips is this method's business and not this rule's.
+    expect(bound.filter((params) => params.length > 0)).toEqual([["app"]]);
+    await provider.disconnect();
+  });
+
+  test("a path whose depth is not the declared one is refused, naming the declaration", async () => {
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["shop", "app"], "table")).rejects.toThrow(
+      /A PostgreSQL container path is \[schema\], received \["shop","app"\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a listing refusal the size retry cannot repair is raised, mapped", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("tgisinternal")) return { rows: [] };
+      throw new Error("permission denied for table pg_trigger");
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.listObjects(["app"], "trigger")).rejects.toThrow(/permission denied for table pg_trigger/);
+    await provider.disconnect();
+  });
+
+  test("an object's detail carries its columns, indexes and foreign keys", async () => {
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      expect(params).toEqual(["app", "orders"]);
+      return {
+        rows: [
+          {
+            pk_columns: ["id"],
+            columns: [
+              { name: "id", type: "integer", nullable: false, defaultValue: "nextval('app.orders_id_seq'::regclass)" },
+              { name: "notes", type: "text", nullable: true, defaultValue: null },
+            ],
+            indexes: [
+              { name: "orders_pkey", columns: ["id"], unique: true },
+              // An index over an expression alone has no attnums, so the subselect
+              // answers NULL rather than an array.
+              { name: "idx_orders_lower_number", columns: null, unique: false },
+            ],
+            foreign_keys: [
+              {
+                columnName: "customer_id",
+                referencedSchema: "app",
+                referencedTable: "customers",
+                referencedColumn: "id",
+              },
+              { columnName: "owner_id", referencedSchema: "public", referencedTable: "users", referencedColumn: "id" },
+            ],
+          },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const detail = await provider.describeObject(["app", "orders"], "table");
+    expect(detail.path).toEqual(["app", "orders"]);
+    expect(detail.columns).toEqual([
+      {
+        name: "id",
+        type: "integer",
+        nullable: false,
+        isPrimary: true,
+        defaultValue: "nextval('app.orders_id_seq'::regclass)",
+      },
+      { name: "notes", type: "text", nullable: true, isPrimary: false, defaultValue: undefined },
+    ]);
+    expect(detail.indexes).toEqual([
+      { name: "orders_pkey", columns: ["id"], unique: true },
+      { name: "idx_orders_lower_number", columns: [], unique: false },
+    ]);
+    // Same spelling getSchema() uses: public is implicit, anything else is qualified.
+    expect(detail.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
+      { columnName: "owner_id", referencedTable: "users", referencedColumn: "id" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a kind with no columns describes as three empty lists, not as a failure", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      return { rows: [{ pk_columns: null, columns: null, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    // A sequence, a routine and a trigger all land here. Having no columns is a true fact
+    // about those kinds, so it is an answer rather than an error.
+    const detail = await provider.describeObject(["app", "invoice_number_seq"], "sequence");
+    expect(detail).toEqual({
+      path: ["app", "invoice_number_seq"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    await provider.disconnect();
+  });
+
+  test("a kind with no relation behind it describes as empty without asking the server", async () => {
+    // Not an optimisation, and not a name test. The detail statement keys the LAST segment
+    // against pg_class.relname, so a trigger named `orders` on table `customers` would
+    // have been handed app.orders's columns as if they were its own. The KIND says there
+    // is no relation to read; the name only ever happened not to match one.
+    let asked = 0;
+    mockQueryFn = async (sql) => {
+      if (sql.includes("object_columns")) asked += 1;
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.describeObject(["app", "customers", "orders"], "trigger")).toEqual({
+      path: ["app", "customers", "orders"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    // A routine is the case the KIND settles and a name cannot: `order_total(integer)`
+    // answered no columns before this only because no relation is called that.
+    expect(await provider.describeObject(["app", "order_total(integer)"], "function")).toEqual({
+      path: ["app", "order_total(integer)"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("a detail statement that returns no row at all is a failure, not an empty object", async () => {
+    // OBJECT_DETAIL_SQL's aggregate has no GROUP BY, so any server that ran it answers
+    // exactly one row. Zero means the statement that ran was not the one we wrote.
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObject(["app", "orders"], "table")).rejects.toThrow(/No detail row for app\.orders/);
+    await provider.disconnect();
+  });
+
+  test("an object path that is not [schema, name] is refused", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObject(["app"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    await expect(provider.describeObject(["a", "b", "c"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    await expect(provider.describeObject(["app", "t"], "trigger")).rejects.toThrow(
+      /"trigger" path is \[schema, table, name\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("when the routine-free retry fails too, each folder carries the sentence that stopped it", async () => {
+    mockQueryFn = async (sql) => {
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "prokind" does not exist'), { code: "42703" });
+      }
+      if (sql.includes("GROUP BY kind")) throw new Error('relation "pg_trigger" does not exist');
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    // Two different reads failed for two different reasons, and neither reason is
+    // overwritten by the other.
+    expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "prokind" does not exist' });
+    expect(counts.table).toEqual({ unavailable: 'relation "pg_trigger" does not exist' });
+    expect(counts.trigger).toEqual({ unavailable: 'relation "pg_trigger" does not exist' });
+    await provider.disconnect();
+  });
+
+  test("a 42703 that does not name prokind takes the whole container down", async () => {
+    // The retry repairs nothing when the missing column was in an arm it keeps, so
+    // reporting the routine folders as merely unavailable would be a guess.
+    mockQueryFn = async (sql) => {
+      if (sql.includes("GROUP BY kind")) {
+        throw Object.assign(new Error("column c.relkind does not exist"), { code: "42703" });
+      }
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
+      expect(counts[kind]).toEqual({ unavailable: "column c.relkind does not exist" });
+    }
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The fifth provider method (#789): every relation of one kind in one schema, described in
+ * ONE round trip.
+ *
+ * This mock dispatches on the statement the provider built, which ruling 5b names as a
+ * blind spot: a rewrite it cannot see stays green here. So every behaviour these tests
+ * reason about is either asserted against the statement TEXT or measured against a live
+ * postgres:18 in the task report, and the two catalog choices that matter - pg_attribute
+ * rather than information_schema.columns, and no 100-column cap - are pinned by text below.
+ */
+describe("PostgreSQL bulk column read", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  /** The rows the bulk statement answers for the two-table fixture, in catalog order. */
+  function bulkRows() {
+    return [
+      {
+        name: "orders",
+        pk_columns: ["id"],
+        columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+        indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
+        foreign_keys: [
+          { columnName: "customer_id", referencedSchema: "app", referencedTable: "customers", referencedColumn: "id" },
+        ],
+      },
+      {
+        name: "audit_log",
+        pk_columns: null,
+        columns: [{ name: "payload", type: "jsonb", nullable: true, defaultValue: null }],
+        indexes: null,
+        foreign_keys: null,
+      },
+    ];
+  }
+
+  test("describes every relation of one kind in one round trip", async () => {
+    const asked: { sql: string; params?: unknown[] }[] = [];
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      asked.push({ sql, params });
+      return { rows: bulkRows() };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["app"], "table");
+    // ONE statement for the whole folder. A loop over describeObject is the N+1 the
+    // inventory route already refused once.
+    expect(asked).toHaveLength(1);
+    expect(asked[0].params).toEqual(["app"]);
+    // The columns come from pg_attribute, not from information_schema.columns, and that is
+    // measured rather than stylistic: information_schema.columns is defined over relkinds
+    // r, v, f and p only, so it has no row at all for a materialized view or a sequence.
+    expect(asked[0].sql).toContain("pg_catalog.pg_attribute");
+    expect(asked[0].sql).not.toContain("information_schema.columns");
+    // No 100-column cap. getSchema() carries one, unreported, and an unreported bound is
+    // the defect this method's `truncated` exists to avoid.
+    expect(asked[0].sql).not.toContain("ordinal_position <= 100");
+    // Unbounded, so no LIMIT reaches the server and nothing claims truncation.
+    expect(asked[0].sql).not.toContain("LIMIT");
+    expect(batch.truncated).toBeUndefined();
+
+    // Keyed by PATH, built by the same rule listObjects uses, and sorted by it.
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["app", "audit_log"],
+      ["app", "orders"],
+    ]);
+    const orders = batch.details[1];
+    expect(orders.columns).toEqual([
+      { name: "id", type: "integer", nullable: false, isPrimary: true, defaultValue: undefined },
+    ]);
+    expect(orders.indexes).toEqual([{ name: "orders_pkey", columns: ["id"], unique: true }]);
+    expect(orders.foreignKeys).toEqual([
+      { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
+    ]);
+    // An object the catalog answered nothing for still describes as three empty lists.
+    expect(batch.details[0]).toEqual({
+      path: ["app", "audit_log"],
+      columns: [{ name: "payload", type: "jsonb", nullable: true, isPrimary: false, defaultValue: undefined }],
+      indexes: [],
+      foreignKeys: [],
+    });
+    await provider.disconnect();
+  });
+
+  test("a bounded read reports its own truncation", async () => {
+    let bound: unknown;
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      expect(sql).toContain("LIMIT");
+      bound = params?.[1];
+      // The provider asks for one row more than the bound, which is how it can tell a
+      // saturated read from an exact one without a second count.
+      return { rows: bulkRows().slice(0, Number(bound)) };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["app"], "table", 1);
+    expect(bound).toBe(2);
+    expect(batch.details).toHaveLength(1);
+    expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
+    await provider.disconnect();
+  });
+
+  test("a bounded read that fits reports nothing", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      return { rows: bulkRows() };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Two rows against a bound of two: the read reached the end, so marking it would
+    // teach a reader to discount every badge.
+    const batch = await provider.describeObjects(["app"], "table", 2);
+    expect(batch.details).toHaveLength(2);
+    expect(batch.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a kind with no relation behind it answers empty without asking the server", async () => {
+    let asked = 0;
+    mockQueryFn = async (sql) => {
+      if (sql.includes("described_columns")) asked += 1;
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    for (const kind of ["function", "procedure", "trigger"]) {
+      expect(await provider.describeObjects(["app"], kind)).toEqual({ details: [] });
+    }
+    expect(asked).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("a kind this engine does not declare is refused, not answered empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await provider.disconnect();
+  });
+
+  test("a container path that is not one schema is refused, rather than read as empty", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects([], "table")).rejects.toThrow(
+      /A PostgreSQL container path is \[schema\], received \[\]/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a limit that cannot bound anything is refused, rather than silently ignored", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+
+    // 0 would answer nothing while reporting a truncation nobody asked for, and a
+    // fractional bound reaches the server as a bind it cannot use.
+    await expect(provider.describeObjects(["app"], "table", 0)).rejects.toThrow(/limit must be a positive whole/);
+    await expect(provider.describeObjects(["app"], "table", 1.5)).rejects.toThrow(/limit must be a positive whole/);
+    await provider.disconnect();
+  });
+
+  test("a refusal the fallback chain cannot repair is raised, mapped", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      throw new Error("permission denied for schema app");
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["app"], "table")).rejects.toThrow(/permission denied for schema app/);
+    await provider.disconnect();
+  });
+
+  test("a fork with no constraint_column_usage loses the foreign keys, not the columns", async () => {
+    // Materialize. The bulk read goes through the same fallback chain getSchema() does,
+    // which is the point of reshaping that body rather than writing a new statement.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      asked.push(sql);
+      if (sql.includes("constraint_column_usage")) {
+        throw new Error('relation "information_schema.constraint_column_usage" does not exist');
+      }
+      return { rows: [bulkRows()[0]] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["app"], "table");
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).not.toContain("constraint_column_usage");
+    expect(batch.details[0].columns).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("the paths it answers are the paths listObjects answers", async () => {
+    // The two surfaces are joined on path by every caller, so they are built by one rule
+    // rather than by two that happen to agree.
+    mockQueryFn = async (sql) => {
+      if (sql.includes("described_columns")) {
+        return { rows: [{ name: "orders", pk_columns: null, columns: null, indexes: null, foreign_keys: null }] };
+      }
+      if (sql.includes("relkind")) return { rows: [{ name: "orders", row_count: null, size_bytes: null }] };
+      return { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const listed = await provider.listObjects(["app"], "table");
+    const batch = await provider.describeObjects(["app"], "table");
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The source read (#789 Phase 2).
+ *
+ * Every definition text below is what PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) answered for
+ * the objects `docker/postgres-init/02-sample-data.sql` creates, read back through the exact
+ * statements this provider sends, as the privilege-less `src_probe` role
+ * `docker/postgres-init/03-object-fixture.sql` creates. The fixture is the evidence: a reader
+ * can bring the container up on that init directory and get these bytes again.
+ *
+ * VERBATIM AND NOT ABRIDGED, and that is the correction a review made on 2026-09-12. The view
+ * constant used to be a hand-shortened four-column reading of `app.order_summary` while this
+ * same docblock claimed it was measured, and `docs/providers/postgres.md`'s own verification
+ * block said 606 characters for the same object. Re-measured on a `postgres:18` brought up on
+ * `docker/postgres-init`: 606 characters and twelve select-list columns. A length assertion
+ * now pins each one, so an abridgement cannot creep back in while the claim stays.
+ */
+const MEASURED_VIEW_DEFINITION = ` SELECT o.id,
+    o.order_number,
+    (((c.first_name)::text || ' '::text) || (c.last_name)::text) AS customer_name,
+    c.email AS customer_email,
+    c.tier AS customer_tier,
+    o.status,
+    o.payment_status,
+    o.total_amount,
+    count(oi.id) AS item_count,
+    sum(oi.quantity) AS total_items,
+    o.created_at AS order_date
+   FROM ((app.orders o
+     JOIN app.customers c ON ((o.customer_id = c.id)))
+     LEFT JOIN app.order_items oi ON ((o.id = oi.order_id)))
+  GROUP BY o.id, o.order_number, c.first_name, c.last_name, c.email, c.tier, o.status, o.payment_status, o.total_amount, o.created_at;`;
+
+/** `app.daily_sales`, the suite's second view, measured the same way: 408 characters. */
+const MEASURED_DAILY_SALES_DEFINITION = ` SELECT date(created_at) AS sale_date,
+    count(DISTINCT id) AS order_count,
+    sum(total_amount) AS total_sales,
+    avg(total_amount) AS avg_order_value,
+    count(DISTINCT customer_id) AS unique_customers
+   FROM app.orders o
+  WHERE ((status)::text <> ALL ((ARRAY['cancelled'::character varying, 'pending'::character varying])::text[]))
+  GROUP BY (date(created_at))
+  ORDER BY (date(created_at)) DESC;`;
+
+/**
+ * `app.revenue_by_month`, the materialized view, 161 characters.
+ *
+ * Read through the `c.relkind = 'm'` statement and not the view one. It is a separate constant
+ * because the materialized view has its own read test, and that test exists because building
+ * `SOURCE_VIEW_SQL.materialized_view` from `RELKIND_BY_KIND.view` survived the whole suite
+ * until it was written.
+ */
+const MEASURED_MATERIALIZED_VIEW_DEFINITION = ` SELECT date_trunc('month'::text, created_at) AS month,
+    sum(total_amount) AS revenue
+   FROM app.orders o
+  GROUP BY (date_trunc('month'::text, created_at));`;
+
+/** `app.order_total(integer)`, measured the same way: 228 characters, trailing newline included. */
+const MEASURED_FUNCTION_DEFINITION = `CREATE OR REPLACE FUNCTION app.order_total(order_id integer)
+ RETURNS numeric
+ LANGUAGE sql
+ STABLE
+AS $function$
+  SELECT coalesce(sum(quantity * unit_price), 0) FROM app.order_items WHERE order_items.order_id = $1;
+$function$
+`;
+
+/** `app.orders.orders_stamp_updated_at`, measured the same way: 119 characters. */
+const MEASURED_TRIGGER_DEFINITION =
+  "CREATE TRIGGER orders_stamp_updated_at BEFORE UPDATE ON app.orders " +
+  "FOR EACH ROW EXECUTE FUNCTION app.stamp_updated_at()";
+
+/**
+ * THE WHOLE STATEMENT, one per kind, squashed to a single line, and why it is the whole one.
+ *
+ * Round 1 pinned each statement's WHERE clause and its pretty flag as text, which killed the
+ * four mutants that lived in a predicate. It left the SELECT expression and the JOINs
+ * unpinned, and three mutants measured on 2026-09-12 then survived the whole suite at
+ * 205 pass 0 fail:
+ *
+ * - `pg_get_functiondef(p.oid)` rewritten to
+ *   `pg_get_functiondef((n.nspname || '.' || p.proname)::regprocedure)`, which is the one rule
+ *   this provider's own docblock says nobody would have written from the documentation. The
+ *   cast resolves a NAME, name resolution needs USAGE on the schema, and it manufactures a
+ *   42501 "permission denied for schema app" the engine never made, on an object the tree has
+ *   already listed. Measured for `src_probe` on PostgreSQL 18.4.
+ * - `pg_get_functiondef(p.oid)` rewritten to `pg_get_functiondef(p.prorettype)`, which asks
+ *   for the definition of some other catalog entry entirely.
+ * - the trigger's `JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid` rewritten to
+ *   `ON c.oid = t.tgconstrrelid`, which is 0 for every trigger that is not a constraint
+ *   trigger, so every ordinary trigger's Source tab would raise the absence sentence.
+ *
+ * The double does not execute SQL, so no assertion on `params` and none on the returned
+ * document can see any of the three. Enumerating tokens is what let them through: the view
+ * test's `not.toContain("regclass")` only ever sees the VIEW statement, exactly the way
+ * `not.toContain("c.oid, true")` could never see the trigger's own flag. One equality per kind
+ * closes the class instead of the members of it somebody has thought of.
+ *
+ * Whitespace is squashed because indentation is not behaviour. Every other byte is pinned: the
+ * function called, its arguments, the pretty flag, every FROM, every JOIN and every predicate.
+ */
+function squashSql(sql: string): string {
+  return sql.trim().replace(/\s+/g, " ");
+}
+
+const EXPECTED_VIEW_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_viewdef(c.oid, false) AS definition " +
+  "FROM pg_catalog.pg_class c " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'";
+
+/** Spelled out in full rather than derived from the view's, because the one token that differs is the defect. */
+const EXPECTED_MATERIALIZED_VIEW_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_viewdef(c.oid, false) AS definition " +
+  "FROM pg_catalog.pg_class c " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'm'";
+
+/** One statement for both routine kinds: a function and a procedure differ only by the bound `prokind`. */
+const EXPECTED_ROUTINE_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_functiondef(p.oid) AS definition, " +
+  // The five columns the EDIT reads (#789 Phase 3). They are pinned by this same equality and
+  // for the same reason the definition expression is: the double does not execute SQL, so a
+  // column silently dropped from the projection is invisible to every assertion on the document
+  // the read returns, and `may_replace` dropped would make the ownership pre-flight offer an
+  // edit of somebody else's routine.
+  "md5(pg_catalog.pg_get_functiondef(p.oid)) AS revision, " +
+  "pg_catalog.pg_get_userbyid(p.proowner) AS owner, " +
+  "pg_catalog.pg_has_role(current_user, p.proowner, 'USAGE') AS may_replace, " +
+  "current_setting('search_path') AS search_path, " +
+  "current_setting('check_function_bodies') AS check_function_bodies " +
+  "FROM pg_catalog.pg_proc p " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace " +
+  "WHERE n.nspname = $1 AND p.prokind = $2 AND p.proname || '(' || " +
+  "COALESCE(pg_catalog.array_to_string(ARRAY( " +
+  "SELECT pg_catalog.format_type(t, NULL) FROM unnest(p.proargtypes) AS t), ','), '') || ')' = $3";
+
+const EXPECTED_TRIGGER_SOURCE_SQL =
+  "SELECT pg_catalog.pg_get_triggerdef(t.oid, false) AS definition " +
+  "FROM pg_catalog.pg_trigger t " +
+  "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid " +
+  "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal";
+
+describe("PostgreSQL object source", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  /**
+   * The double dispatches on the `pg_get_*` function NAME, which is the one token that tells
+   * the five statements apart and the one a mutation to the statement cannot preserve by
+   * accident: a read rewritten to `pg_get_function_identity_arguments` or to a `regclass`
+   * cast falls through to `{ rows: [] }` and every assertion below goes red. The binds are
+   * captured rather than matched, so a statement that reaches the server with the wrong
+   * values is a failure here and not a silent miss.
+   */
+  function sourceDouble(definition: string | null) {
+    const sent: { sql: string; params: unknown[] }[] = [];
+    mockQueryFn = async (sql, params) => {
+      if (sql.includes("pg_get_viewdef") || sql.includes("pg_get_functiondef") || sql.includes("pg_get_triggerdef")) {
+        // Recorded only for the source statements, so `connect()`'s own EXPLAIN capability
+        // probe cannot occupy sent[0] and make an index assertion read the wrong statement.
+        sent.push({ sql, params: (params ?? []) as unknown[] });
+        return { rows: definition === null ? [] : [{ definition }] };
+      }
+      return { rows: [] };
+    };
+    return sent;
+  }
+
+  test("reads a view's definition and says what the text is", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "order_summary"], "view");
+    expect(document.path).toEqual(["app", "order_summary"]);
+    expect(document.kind).toBe("view");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(false);
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.id).toBe("definition");
+    expect(part.label).toBe("Definition");
+    expect(part.text).toContain("JOIN app.customers c ON ((o.customer_id = c.id))");
+    expect(part.language).toBe("pgsql");
+    // `pg_get_viewdef` answers the bare SELECT and no CREATE, measured: the caption exists to
+    // say exactly that, so claiming `complete` here would be a claim about text that does not
+    // run as given.
+    expect(part.form).toBe("partial");
+    // PostgreSQL's own words for this output: "a decompiled reconstruction, not the original
+    // text of the command".
+    expect(part.origin).toBe("regenerated");
+    expect(part.truncated).toBeUndefined();
+
+    // THE WHOLE STATEMENT AS TEXT, and not a chosen set of tokens. The OID and never a
+    // `::regclass` or `::regprocedure` cast, which resolves a NAME, needs USAGE on the schema
+    // and raises 42501 for a schema the caller cannot see, on an object the tree has already
+    // listed; `false` for the pretty flag, which PostgreSQL documents as the format a future
+    // version is likelier to read back the same way; and both predicates, because this fixture
+    // holds `orders` in BOTH `app` and `public`. A double that does not execute SQL sees none
+    // of them leave the statement: the binds still arrive and every assertion on `params` and
+    // on the document stays green. The three mutants a token-by-token pin let through are on
+    // `EXPECTED_VIEW_SOURCE_SQL`.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_VIEW_SOURCE_SQL);
+    expect(sent[0].params).toEqual(["app", "order_summary"]);
+    // The bytes, not a substring. This constant is the fixture's evidence under standing
+    // ruling 5i, so its LENGTH is asserted: an abridged text would still contain every
+    // substring above.
+    expect(part.text).toHaveLength(606);
+    await provider.disconnect();
+  });
+
+  test("reads a materialized view under its own relkind, never the view's", async () => {
+    const sent = sourceDouble(MEASURED_MATERIALIZED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "revenue_by_month"], "materialized_view");
+    expect(document.kind).toBe("materialized_view");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture materialized view is readable");
+    expect(part.text).toBe(MEASURED_MATERIALIZED_VIEW_DEFINITION);
+    expect(part.text).toHaveLength(161);
+    // `pg_get_viewdef` answers the bare SELECT for a materialized view too, measured on 18.4.
+    expect(part.form).toBe("partial");
+    expect(part.origin).toBe("regenerated");
+    // 'm' AND NOT 'v', and every other byte of the statement with it. `SOURCE_VIEW_SQL`
+    // builds both entries from one relkind map, so building the materialized-view entry from
+    // `RELKIND_BY_KIND.view` is a one-token edit that binds the same two values and survived
+    // the whole suite until this kind got a read test: every materialized view's Source tab
+    // would then raise the absence sentence.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_MATERIALIZED_VIEW_SOURCE_SQL);
+    expect(sent[0].params).toEqual(["app", "revenue_by_month"]);
+    await provider.disconnect();
+  });
+
+  test("reads a routine by the identity its own listing wrote, not by its name", async () => {
+    const sent = sourceDouble(MEASURED_FUNCTION_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "order_total(integer)"], "function");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture function is readable");
+    expect(part.text).toContain("CREATE OR REPLACE FUNCTION app.order_total(order_id integer)");
+    // The engine wraps it in a runnable CREATE OR REPLACE, so this one runs as given.
+    expect(part.form).toBe("complete");
+    expect(part.origin).toBe("regenerated");
+    // The overload's TYPE list is the address, so the bind is the whole segment and the
+    // comparison is the same expression the listing built the segment with. A read keyed on
+    // `proname` alone would answer whichever overload the catalog happened to return first.
+    expect(sent[0].params).toEqual(["app", "f", "order_total(integer)"]);
+    // The WHOLE statement, which is where this suite's blind spot was widest. The READ
+    // EXPRESSION had no pin at all, so `pg_get_functiondef(p.oid)` rewritten to a
+    // `::regprocedure` name cast, the single defect this provider's docblock exists to forbid,
+    // survived the whole suite at 205 pass 0 fail, and so did rewriting it to
+    // `pg_get_functiondef(p.prorettype)`. The identity expression is pinned by the same
+    // equality: it is the address the LISTING wrote, so a read keyed on `proname` alone would
+    // answer whichever overload the catalog returned first, and
+    // `pg_get_function_identity_arguments` would include parameter names the segment has not.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_ROUTINE_SOURCE_SQL);
+
+    const procedure = await provider.readObjectSource(["app", "touch_order(integer)"], "procedure");
+    expect(procedure.kind).toBe("procedure");
+    // The SAME statement with the prokind BOUND, never two statements: a procedure and a
+    // function differ by one character on the wire.
+    expect(sent[1].params).toEqual(["app", "p", "touch_order(integer)"]);
+    expect(sent[1].sql).toBe(sent[0].sql);
+    await provider.disconnect();
+  });
+
+  test("reads a trigger by its table as well as by its name", async () => {
+    const sent = sourceDouble(MEASURED_TRIGGER_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "orders", "orders_stamp_updated_at"], "trigger");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture trigger is readable");
+    expect(part.text).toBe(MEASURED_TRIGGER_DEFINITION);
+    expect(part.form).toBe("complete");
+    // A trigger name is unique per TABLE, so the table segment is a bind and not decoration:
+    // two tables in one schema may each carry `stamp_updated_at`.
+    expect(sent[0].params).toEqual(["app", "orders", "orders_stamp_updated_at"]);
+    // THE WHOLE STATEMENT, JOINs included, and the JOIN is the half a WHERE-clause pin
+    // cannot reach. `ON c.oid = t.tgrelid` is what makes the table segment address anything:
+    // rewritten to `ON c.oid = t.tgconstrrelid` it is 0 for every trigger that is not a
+    // constraint trigger, all three binds still arrive, every assertion on `params` stays
+    // green, and every ordinary trigger's Source tab would raise the absence sentence. That
+    // mutant survived the whole suite while the WHERE clause and the pretty flag were pinned
+    // and the JOIN was not. The flag is pinned here and not only on the view, because the view
+    // test's `not.toContain("c.oid, true")` names the view statement's own alias and can never
+    // see `t.oid, true`; dropping `c.relname = $2` is pinned by the same equality.
+    expect(squashSql(sent[0].sql)).toBe(EXPECTED_TRIGGER_SOURCE_SQL);
+    await provider.disconnect();
+  });
+
+  /**
+   * Standing ruling 5g, driven all the way to the BINDS (#789).
+   *
+   * PostgreSQL declares ONE container level, so its own fixture cannot tell a hardcoded depth
+   * from a derived one: `path[0]` and `path.slice(0, containerDepth())[0]` are the same
+   * segment at depth 1. A two-level declaration is swapped in so they are not, and the
+   * assertion is on the VALUES that reached the server rather than on a refusal, because a
+   * two-level test that stops at the refusal never reaches the bind the defect lives in.
+   */
+  test("derives the schema and the object name from the DECLARATION, not from a position", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+    try {
+      await provider.readObjectSource(["cat", "sch", "obj"], "view");
+      // `sch` and not `cat`: the schema is the segment the DECLARATION calls the schema, which
+      // is the second one here and the first one on the shipped declaration.
+      expect(sent[0].params).toEqual(["sch", "obj"]);
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("a fork without the pg_get_* function refuses in its own words, and does not raise", async () => {
+    // CockroachDB and Materialize are both reached under this type id. Measured shape, from
+    // asking PostgreSQL 18.4 for a function that does not exist.
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("pg_get_viewdef")) return { rows: [] };
+      throw Object.assign(new Error("function pg_catalog.pg_get_viewdef(oid, boolean) does not exist"), {
+        code: "42883",
+      });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const document = await provider.readObjectSource(["app", "order_summary"], "view");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a fork without the function is a refusal");
+    // The server's own sentence, UNPREFIXED. Routing it through mapDatabaseError would put
+    // this product's words in front of the server's, which is what `unavailableCounts`
+    // already refuses to do one surface up.
+    expect(part.unavailable).toBe("function pg_catalog.pg_get_viewdef(oid, boolean) does not exist");
+    expect(part.label).toBe("Definition");
+    expect("text" in part).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a fork without pg_proc.prokind refuses the routine read in its own words", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("pg_get_functiondef")) return { rows: [] };
+      throw Object.assign(new Error("column p.prokind does not exist"), { code: "42703" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const [part] = (await provider.readObjectSource(["app", "order_total(integer)"], "function")).parts;
+    if (!isSourcePartUnavailable(part)) throw new Error("a fork without prokind is a refusal");
+    expect(part.unavailable).toBe("column p.prokind does not exist");
+    await provider.disconnect();
+  });
+
+  test("a transport failure raises, because nobody answered at all", async () => {
+    // The narrowness of the refusal set is the point. "Connection terminated unexpectedly"
+    // rendered in the Source pane as this object's own refusal is a symptom presented as a
+    // fact about the object, with no raise and nothing telling it apart from a real one.
+    mockQueryFn = async () => {
+      throw Object.assign(new Error("Connection terminated unexpectedly"), { code: "ECONNRESET" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
+      /Connection terminated unexpectedly/,
+    );
+    await provider.disconnect();
+  });
+
+  test("an object the catalog does not hold RAISES, naming it, and never answers a refusal", async () => {
+    sourceDouble(null);
+    const provider = makeProvider();
+    await provider.connect();
+
+    // Absence is a raise and not an `unavailable` part: the engine said nothing rather than
+    // saying no, and a refusal sentence we wrote would be our silence dressed as its answer.
+    await expect(provider.readObjectSource(["app", "no_such_view"], "view")).rejects.toThrow(QueryError);
+    await expect(provider.readObjectSource(["app", "no_such_view"], "view")).rejects.toThrow(/no_such_view/);
+    await provider.disconnect();
+  });
+
+  test("a NULL and a whitespace-only definition are the same absence as no row at all", async () => {
+    // Measured on 18.4: `pg_get_viewdef` answers NULL for an oid that is not a view, and a
+    // driver hands that back as a row carrying null. An empty editor over a definition that
+    // was never read is the one failure this whole surface exists to prevent.
+    const provider = makeProvider();
+    for (const definition of [null, "   \n\t "]) {
+      mockQueryFn = async (sql) => (sql.includes("pg_get_viewdef") ? { rows: [{ definition }] } : { rows: [] });
+      await provider.connect();
+      await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(/order_summary/);
+      await provider.disconnect();
+    }
+  });
+
+  test("a caller's bound cuts the text and says so, and an exact read is never marked", async () => {
+    sourceDouble(MEASURED_FUNCTION_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const bounded = await provider.readObjectSource(["app", "order_total(integer)"], "function", 20);
+    const [part] = bounded.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("the fixture function is readable");
+    expect(part.text).toBe(MEASURED_FUNCTION_DEFINITION.slice(0, 20));
+    expect(part.truncated).toEqual({ limit: 20, reason: sourceBoundTruncationReason(20) });
+
+    const exact = await provider.readObjectSource(
+      ["app", "order_total(integer)"],
+      "function",
+      MEASURED_FUNCTION_DEFINITION.length,
+    );
+    const [whole] = exact.parts;
+    if (isSourcePartUnavailable(whole)) throw new Error("the fixture function is readable");
+    // Marking an exact answer teaches a reader to discount every mark, which is the rule
+    // `sampledFrom` already follows one surface up.
+    expect(whole.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("a kind that publishes no definition text is refused by name, not answered empty", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    // `sequence` IS declared and has no source; `package` is not declared at all. Two
+    // different facts and two different sentences, and neither is an empty document.
+    // The ENGINE's own name is part of each sentence, and pinning it is what the entry guard
+    // being shared owes: since #789's hoist the display name reaches `requireSourceKind` as an
+    // argument, so a provider passing the wrong literal would otherwise attribute PostgreSQL's
+    // refusal to another engine with nothing here noticing.
+    await expect(provider.readObjectSource(["app", "invoice_number_seq"], "sequence")).rejects.toThrow(
+      /PostgreSQL publishes no definition text for the kind "sequence"/,
+    );
+    await expect(provider.readObjectSource(["app", "x"], "package")).rejects.toThrow(
+      /PostgreSQL declares no object kind "package"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("a path of the wrong depth is refused, rather than read from the wrong segment", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+
+    // A trigger is [schema, table, trigger] because the declaration says it is attached; a
+    // view is [schema, view]. Reading the last segment of a path of another shape would send
+    // a table name where a view name belongs and answer an absence for an object that exists.
+    await expect(provider.readObjectSource(["app", "orders_stamp_updated_at"], "trigger")).rejects.toThrow(
+      /A PostgreSQL "trigger" path is \[schema, table, name\], received \["app","orders_stamp_updated_at"\]/,
+    );
+    await expect(provider.readObjectSource(["app", "orders", "order_summary"], "view")).rejects.toThrow(
+      /A PostgreSQL "view" path is \[schema, name\]/,
+    );
+    await provider.disconnect();
+  });
+
+  /**
+   * The path-shape check counts the levels `containerDepth()` reports, not the array's length.
+   *
+   * `ContainerLevels` is a tuple union of nought, one or two levels, so a third level is a
+   * compile error where a provider would write it, and `containerDepth()` still carries a
+   * `>= 2` arm for exactly the cast this test performs. The two readings are behaviour
+   * identical at every depth the type admits, which is why this is the only fixture that can
+   * tell them apart: `assertObjectPathShape` used to count `containerLevels.length`, so at
+   * three declared levels it demanded four segments while `readObjectSource` sliced the
+   * container at two and handed `containerSchema` a two-segment path. The file's own
+   * `declaredLevels` docblock already said `containerDepth()` is what decides.
+   */
+  test("counts the path's segments at the DEPTH the derivation reports, not at the array's length", async () => {
+    const sent = sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        { id: "extra", label: "Extra", labelPlural: "Extras" },
+      ] as unknown as ContainerLevels,
+    });
+    try {
+      // Three segments, because the depth is two and a view adds its own name. A shape check
+      // reading the raw array would refuse this path by name before any bind was built.
+      await provider.readObjectSource(["cat", "sch", "obj"], "view");
+      expect(sent[0].params).toEqual(["sch", "obj"]);
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("a kind declaring source with no language raises, rather than rendering as plain text", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "view" ? { ...kind, sourceLanguage: undefined } : kind,
+      ),
+    });
+    try {
+      // An unregistered or absent Monaco id degrades to plain text with no throw and nothing
+      // observable, so a declaration that forgot the language would ship a Source tab that
+      // silently stopped highlighting. The declaration is the single source of the language
+      // and there is no literal here to fall back to.
+      await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
+        /declares readable source for the kind "view" and no sourceLanguage/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("a declared readable kind with no statement behind it is refused by name", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "sequence" ? { ...kind, hasSource: true, sourceLanguage: "pgsql" } : kind,
+      ),
+    });
+    try {
+      // The declaration and the reader are two lists and a kind can be added to one and not
+      // the other. It fails by name here rather than answering a document with nothing in it.
+      await expect(provider.readObjectSource(["app", "invoice_number_seq"], "sequence")).rejects.toThrow(
+        /declares readable source for the kind "sequence" but has no statement that reads it/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// Object edit (#789 Phase 3)
+// ============================================================================
+
+/**
+ * The row `SOURCE_ROUTINE_SQL` answers for `app.order_total(integer)` once the edit's five
+ * columns joined it, as PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) answered it on the container
+ * `docker/postgres-init/` builds.
+ *
+ * `definition` is `MEASURED_FUNCTION_DEFINITION` verbatim, so the identity rule and the
+ * byte-identical refusal below are asked of the engine's own rendering and never of a
+ * hand-written approximation of it. `revision` is the md5 of exactly those bytes: it was read
+ * back with `SELECT md5(pg_get_functiondef('app.order_total(integer)'::regprocedure))` on
+ * PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) and it is recomputable from the constant above it.
+ *
+ * FINDING 3, wave 5 review: the value that stood here first was `9d7b0d59cbc2bd88b0d55a7845da1b2a`
+ * and it was NOT the md5 of the constant, so the docblock made a recomputability claim the engine
+ * refuted. The value below is what the live server answered for exactly these 228 bytes and what
+ * `md5()` in node answers for them, and the test right after this constant is what keeps the claim
+ * true rather than merely written.
+ */
+const ROUTINE_ROW = {
+  definition: MEASURED_FUNCTION_DEFINITION,
+  revision: "0254cc4b95d136b16c693d64a43b1080",
+  owner: "postgres",
+  may_replace: true,
+  search_path: '"$user", public',
+  check_function_bodies: "on",
+};
+
+/**
+ * THE FIXTURE'S OWN CLAIM, ASSERTED (#789 Phase 3, finding 3 of the wave 5 review).
+ *
+ * A docblock that says a token is recomputable and is wrong about it costs the next reader the
+ * time to work out which of the two measurements lied. This is the claim as a test: MEASURED on
+ * PostgreSQL 18.4, `SELECT md5(pg_get_functiondef('app.order_total(integer)'::regprocedure))`
+ * answered `0254cc4b95d136b16c693d64a43b1080` and `length()` answered 228 for the same rendering.
+ */
+test("the fixture's revision IS the md5 of the fixture's definition", () => {
+  expect(MEASURED_FUNCTION_DEFINITION.length).toBe(228);
+  expect(createHash("md5").update(MEASURED_FUNCTION_DEFINITION).digest("hex")).toBe(ROUTINE_ROW.revision);
+});
+
+/** The reader's edit: one word of the body changed, and the identity untouched. */
+const EDITED = MEASURED_FUNCTION_DEFINITION.replace("coalesce(sum(", "COALESCE(sum(");
+
+/**
+ * The same edit, ending in a `--` line comment with NO trailing newline, which is how a person
+ * ends one (#789 Phase 3, task 22).
+ *
+ * MEASURED live through this provider against PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on
+ * 2026-09-14, before the repair: the build composed the terminator as the first character after
+ * the reader's last one, on the same line, so the comment swallowed it, the post-condition `DO`
+ * became part of the CREATE, and the apply answered
+ * `refused` with the refusal class `definition`, the sentence `syntax error at or near "DO"`, the
+ * code `42601`, and `at` reading `{"within":"outside"}`.
+ * `at.within` is `outside`, so the pane places NO marker and tells the reader the error is in text
+ * they cannot see. Every fixture in this phase built its edit the way a machine builds one, and
+ * that is why eleven waves of tests passed over it.
+ */
+const EDITED_TRAILING_COMMENT = `${EDITED.replace(/\n$/, "")} -- edited by task 22`;
+
+describe("PostgreSQL object edit (#789 Phase 3)", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  /**
+   * A connected provider whose `mockQueryFn` is installed AFTER `connect()`, because `connect()`
+   * sends its own EXPLAIN-format probe and a recorder installed before it would make `seen[0]`
+   * that probe rather than the build's read.
+   */
+  async function connected() {
+    const provider = makeProvider();
+    await provider.connect();
+    return provider;
+  }
+
+  describe("the edit affordance on the read", () => {
+    test("a readable routine part carries the edit affordance the OWNER gets", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({
+        rows: [
+          {
+            definition: "CREATE OR REPLACE FUNCTION app.order_total(order_id integer)\n RETURNS numeric\n...",
+            may_replace: true,
+            owner: "postgres",
+          },
+        ],
+      });
+      const document = await provider.readObjectSource(["app", "order_total(integer)"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.edit).toEqual({ offered: true });
+      await provider.disconnect();
+    });
+
+    test("a routine the connection does not own carries the engine's own ownership sentence", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({
+        rows: [
+          {
+            definition: "CREATE OR REPLACE FUNCTION app.order_total(order_id integer) ...",
+            may_replace: false,
+            owner: "app_owner",
+          },
+        ],
+      });
+      const document = await provider.readObjectSource(["app", "order_total(integer)"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      // The PROVIDER's sentence, naming the owner, because the reader's next action is to use a
+      // different connection and nothing else on the screen can tell them that.
+      expect(part.edit).toEqual({
+        offered: false,
+        reason:
+          'this connection\'s database account does not own "app.order_total(integer)", which is owned by "app_owner", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE',
+      });
+      await provider.disconnect();
+    });
+
+    test("a NULL may_replace reads as FALSE, and never as an offer to write", async () => {
+      // FINDING 4 and FINDING 9, wave 5 review: the "a NULL or absent value reads as false"
+      // sentence in `routineEditAffordance`'s docblock had NO test, and the reviewer's mutation
+      // `row.may_replace === true` -> `row.may_replace !== false` SURVIVED at 242 pass 0 fail.
+      //
+      // THE LIVE POPULATION, and it is D62's: this type id also serves CockroachDB and
+      // Materialize, and a fork whose `pg_has_role` answers NULL rather than a boolean turns "we
+      // could not find out whether you may write this" into "you may write this", after which the
+      // pane offers an edit the engine will refuse.
+      const provider = await connected();
+      mockQueryFn = async () => ({
+        rows: [{ definition: MEASURED_FUNCTION_DEFINITION, may_replace: null, owner: "app_owner" }],
+      });
+      const document = await provider.readObjectSource(["app", "order_total(integer)"], "function");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(part.edit).toEqual({
+        offered: false,
+        reason:
+          'this connection\'s database account does not own "app.order_total(integer)", which is owned by ' +
+          '"app_owner", and PostgreSQL checks ownership rather than privilege for CREATE OR REPLACE',
+      });
+      await provider.disconnect();
+    });
+
+    test("a kind that declares no edit carries NO affordance at all", async () => {
+      // Absent and not `{ offered: false }`: a decorative false is forbidden, and absence is what the
+      // client predicate reads as "this database offers no way to replace this definition in place".
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [{ definition: "SELECT 1" }] });
+      const document = await provider.readObjectSource(["app", "order_summary"], "view");
+      const [part] = document.parts;
+      if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+      expect(Object.hasOwn(part, "edit")).toBe(false);
+      await provider.disconnect();
+    });
+  });
+
+  describe("buildObjectEdit", () => {
+    test("the build re-reads the object with the identity expression the LISTING wrote", async () => {
+      const provider = await connected();
+      const seen: { sql: string; params: unknown[] }[] = [];
+      mockQueryFn = async (sql, params) => {
+        seen.push({ sql, params: (params ?? []) as unknown[] });
+        return { rows: [ROUTINE_ROW] };
+      };
+      await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      expect(seen[0].sql).toContain("pg_catalog.pg_has_role(current_user, p.proowner, 'USAGE')");
+      expect(seen[0].sql).toContain("md5(pg_catalog.pg_get_functiondef(p.oid))");
+      expect(seen[0].params).toEqual(["app", "f", "order_total(integer)"]);
+      await provider.disconnect();
+    });
+
+    test("a plan pins TWO session settings, one of each mode", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      expect(build.plan.session).toEqual([
+        // PINNED, and the value is exactly what the statement sets, so the preview shows what runs.
+        { mode: "pinned", setting: "search_path", value: '"app", pg_catalog' },
+        // ASSERTED, and never set: the plan compares it and refuses if it moved.
+        { mode: "asserted", setting: "check_function_bodies", value: "on" },
+      ]);
+      await provider.disconnect();
+    });
+
+    test("the unit is ONE step, three segments, and the segments reconstruct the text", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+      expect(build.plan.unit.steps).toHaveLength(1);
+      expect(step.segments).toHaveLength(3);
+      // THE RENDER INVARIANT. `text` is authoritative and `segments` is the coordinate map, and this
+      // is what stops the two drifting.
+      expect(renderSegments(EDITED, step.segments)).toBe(step.text);
+      expect(step.text).toContain('SET LOCAL search_path = "app", pg_catalog;');
+      expect(step.text).toContain("RAISE EXCEPTION 'libredb: this definition changed since it was read'");
+      expect(step.text).toContain(
+        "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
+      );
+      expect(step.language).toBe("pgsql");
+      await provider.disconnect();
+    });
+
+    test("a reader's edit ending in a `--` line comment still terminates the CREATE", async () => {
+      // THE DEFECT, MEASURED LIVE, and the reason no test in eleven waves saw it: every fixture in
+      // this phase composed its edit the way a machine does, and none of them ended in a line
+      // comment. PostgreSQL discards a `--` comment to the end of the LINE, so a terminator placed
+      // as the first character after the reader's last one is inside the comment when that comment
+      // is the last thing the reader wrote.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED_TRAILING_COMMENT,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+      // THE ENGINE'S OWN RULE, APPLIED TO THE EMITTED BYTES rather than asserted about them: strike
+      // out everything from the comment marker to the end of its line, which is exactly what the
+      // parser does with it, and what is left must STILL separate the CREATE from the
+      // post-condition `DO` with a semicolon. Before the repair this stripped view read
+      // `$function$ \nDO $lb...` with no terminator at all, which is the `syntax error at or near
+      // "DO"` the live run answered.
+      const commentStart = step.text.lastIndexOf("-- edited by task 22");
+      const lineEnd = step.text.indexOf("\n", commentStart);
+      expect(commentStart).toBeGreaterThan(-1);
+      expect(lineEnd).toBeGreaterThan(commentStart);
+      const asTheParserSeesIt = step.text.slice(0, commentStart) + step.text.slice(lineEnd);
+      expect(asTheParserSeesIt).toContain("$function$ \n;\nDO $lb");
+      await provider.disconnect();
+    });
+
+    test("the terminator ends the reader's LINE before it ends the statement, for four endings", async () => {
+      // The four endings the repair has to hold for, and each is an ordinary thing to type: a line
+      // comment, a text that already ends in a newline, a text ending in the body's `$$` delimiter,
+      // and a text carrying a terminator of the reader's own. The last one relies on a measurement
+      // recorded above this composition: `SELECT 1;;SELECT 2;` in one parameterless query is
+      // ACCEPTED on 18.4, so a doubled semicolon costs nothing and the terminator stays
+      // unconditional rather than becoming a decision about the reader's last character.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const withoutNewline = EDITED.replace(/\n$/, "");
+      const endings: readonly { readonly what: string; readonly text: string }[] = [
+        { what: "a line comment", text: EDITED_TRAILING_COMMENT },
+        { what: "a newline already", text: EDITED },
+        { what: "the body delimiter", text: withoutNewline },
+        { what: "a semicolon of the reader's own", text: `${withoutNewline};` },
+      ];
+      // BOTH DAY-ONE ROUTINE KINDS, and the two length pins are what stop this loop certifying
+      // nothing by running fewer times than it reads as (fix round 1, findings 2 and 3 of the
+      // task 22 review). Both arrays are literals today, so neither can empty by accident, but the
+      // four endings are the population this test carries the load for, and a future edit that
+      // trimmed either array would leave every assertion below passing over a smaller one.
+      // `procedure` composes its suffix on the SAME line as `function`, so it cannot diverge, and
+      // it is here because the two are the day-one routine kinds and the cost of covering both is
+      // one loop.
+      const kinds: readonly string[] = ["function", "procedure"];
+      expect(endings.length).toBe(4);
+      expect(kinds).toEqual(["function", "procedure"]);
+      for (const ending of endings) {
+        for (const kind of kinds) {
+          const build = await provider.buildObjectEdit({
+            path: ["app", "order_total(integer)"],
+            kind,
+            partId: "definition",
+            text: ending.text,
+          });
+          if (!build.built) throw new Error(`${ending.what}: ${build.refusal.sentence}`);
+          if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+          const [step] = build.plan.unit.steps;
+          const [prefix, user, suffix] = step.segments;
+          if (prefix.from !== "provider" || user.from !== "user" || suffix.from !== "provider") {
+            throw new Error("narrowing");
+          }
+          // THE COORDINATES DO NOT MOVE. The suffix is the only thing the repair touches, and the
+          // marker arithmetic reads the user segment, so this is the assertion that says the repair
+          // cost the reader's line and column nothing.
+          expect(user.start).toBe(0);
+          expect(user.end).toBe(ending.text.length);
+          expect(step.text.slice(prefix.text.length, prefix.text.length + ending.text.length)).toBe(ending.text);
+          // The character that follows the reader's last one is a LINE BREAK, so no `--` comment of
+          // theirs can reach the terminator, whatever they ended with.
+          expect(step.text.slice(prefix.text.length + ending.text.length)).toStartWith("\n;\n");
+          expect(renderSegments(ending.text, step.segments)).toBe(step.text);
+        }
+      }
+      await provider.disconnect();
+    });
+
+    test("a known line and column in the reader's text survives the composition", async () => {
+      // The number this pins is the one the pane draws a marker at, and it is asserted as a
+      // LITERAL line and column rather than recomputed from the segments, because recomputing it
+      // from the same map the code uses would agree with any map. `COALESCE` is at offset 123 of
+      // the 228-character edit, which is line 6, column 10 of what the reader sees.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [step] = build.plan.unit.steps;
+      const [prefix] = step.segments;
+      if (prefix.from !== "provider") throw new Error("narrowing");
+      expect(EDITED.indexOf("COALESCE")).toBe(123);
+      expect(userPositionOf(step, prefix.text.length + 123)).toEqual({ within: "user", line: 6, column: 10 });
+      // The CONTROL, so the assertion above is not satisfied by a function that answers `user` for
+      // everything: the first character of the post-condition block is not in the reader's text.
+      expect(userPositionOf(step, prefix.text.length + EDITED.length + 3)).toEqual({ within: "outside" });
+      await provider.disconnect();
+    });
+
+    test("the post-condition asks whether the addressed ROW was rewritten, never whether its rendering moved", async () => {
+      // FINDING 1, wave 5 review, SEVERITY 1 and CONFIRMED END TO END. The post-condition used to
+      // compare `md5(pg_get_functiondef(oid))` against the plan's revision and raise LB003 when it
+      // had not moved, on the premise that the build's byte-identical refusal emptied the
+      // false-positive population. IT DID NOT. `pg_get_functiondef` is a CANONICAL rendering, so an
+      // edit that differs from the server's bytes and re-renders to the same bytes passes the build
+      // and then trips the post-condition.
+      //
+      // MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through the SHIPPED provider, before
+      // the repair: `app.order_total(integer)` re-indented (`\n RETURNS numeric\n LANGUAGE sql`
+      // typed back as `\nRETURNS numeric\nLANGUAGE SQL`) built, applied, and answered
+      // `{"outcome":"applied-elsewhere","undone":true}` for a legitimate edit of the user's own
+      // object. Server md5 before and after an identical CREATE issued directly was
+      // `d9a63a78c5f93adf2aa325d3e0139be3` both times while `pg_proc.xmin` moved 776 -> 778.
+      //
+      // xmin is the right POST-CONDITION for the same reason it is the wrong TOKEN: it moves on
+      // every rewrite of the row including a byte-identical one, which is exactly the question
+      // "was the row I addressed the row that got written". It is captured in the PRE block and
+      // compared in the POST block, both inside the apply's own round trip, so the comparison is
+      // against the value the guard itself read and not against anything a build could have
+      // remembered. MEASURED after the repair, same engine, same unit: the canonicalized edit
+      // answers `SET | DO | CREATE FUNCTION | DO` with no raise, and a unit whose text creates a
+      // DIFFERENT routine answers `ERROR: libredb: this apply did not change the object it was
+      // addressed to` and leaves `count(*) = 0` for the forked name, so the round trip rolled back.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [prefix, , suffix] = build.plan.unit.steps[0].segments;
+      if (prefix.from !== "provider" || suffix.from !== "provider") throw new Error("narrowing");
+      // The PRE block captures the addressed row's xmin, transaction-locally, so it is gone when
+      // the round trip ends: MEASURED, a new session answers
+      // `ERROR: unrecognized configuration parameter "libredb.row_version"`.
+      expect(prefix.text).toContain("PERFORM set_config('libredb.row_version'");
+      expect(prefix.text).toContain("p.xmin::text");
+      // The POST block compares THAT, and nothing about the rendering. The negative is the half
+      // that pins the repair: a revision comparison here is what reported the legitimate edit as
+      // `applied-elsewhere`.
+      expect(suffix.text).toContain("IS NOT DISTINCT FROM current_setting('libredb.row_version')");
+      expect(suffix.text).not.toContain("md5");
+      expect(suffix.text).not.toContain(ROUTINE_ROW.revision);
+      // The CONTROL that stops the two assertions above passing over an empty suffix: the LB003
+      // raise is still in it, and the PRE block still guards the revision with LB001.
+      expect(suffix.text).toContain(
+        "RAISE EXCEPTION 'libredb: this apply did not change the object it was addressed to'",
+      );
+      expect(prefix.text).toContain(`IS DISTINCT FROM $lb`);
+      await provider.disconnect();
+    });
+
+    test("the revision is the md5 of the engine's own rendering, computed SERVER SIDE", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      expect(build.plan.revision).toEqual({
+        check: "guarded",
+        token: ROUTINE_ROW.revision,
+        basis: "md5(pg_get_functiondef(oid))",
+        scope: "server",
+      });
+      // MEASURED why that expression and not the obvious ones: `xmin` moves on a byte-identical
+      // replace and on a GRANT EXECUTE, so it produces FALSE conflicts; `ctid` moves on a plain
+      // VACUUM FULL while `xmin` survives; a frozen catalog row reports `xmin` of 1. The md5 of
+      // `pg_get_functiondef` did not move on COMMENT ON or on GRANT EXECUTE and did move on a real
+      // body change, on all five measured rows.
+      expect(build.plan.consequences).toEqual([]);
+      expect(build.plan.strategy).toBe("guarded-atomic-batch");
+      await provider.disconnect();
+    });
+
+    test("the pre-image is the definition the BUILD read, and never the text the tab was showing", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      expect(build.preimage).toEqual({ text: ROUTINE_ROW.definition, language: "pgsql" });
+      await provider.disconnect();
+    });
+
+    describe("the five build refusals, in order", () => {
+      test("a truncated read is a GUARD refusal and carries core's own bound sentence", async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, definition: "x".repeat(1_000_001) }] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("guard");
+        expect(build.refusal.sentence).toContain("bounded at 1,000,000 characters");
+        expect(build.refusal.at).toEqual({ within: "none" });
+        await provider.disconnect();
+      });
+
+      test("a routine this connection does not own is a PRIVILEGE refusal, before the reader types", async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, may_replace: false, owner: "app_owner" }] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("privilege");
+        expect(build.refusal.sentence).toContain("app_owner");
+        await provider.disconnect();
+      });
+
+      test("check_function_bodies off is a GUARD refusal naming the GUC", async () => {
+        // With it off the engine accepts a body it would otherwise reject, so an apply would succeed
+        // and store a definition that cannot run.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, check_function_bodies: "off" }] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("guard");
+        expect(build.refusal.sentence).toContain("check_function_bodies");
+        await provider.disconnect();
+      });
+
+      test("a GUC this server answered NOTHING for is the same GUARD refusal, saying so", async () => {
+        // FINDING 10, wave 5 review: the reviewer mutated `row.check_function_bodies !== "on"` to
+        // `=== "off"` and it SURVIVED at 242 pass 0 fail, because the only population the suite
+        // built was the literal string "off". The `?? "an unreadable value"` arm of the sentence
+        // was prose nothing could reach.
+        //
+        // WHAT THIS POPULATION IS, named rather than implied: on PostgreSQL 18.4
+        // `current_setting('check_function_bodies')` always answers a string, and a server with no
+        // such GUC raises 42704 out of the build rather than answering null, so this row is NOT
+        // reachable on this engine. It is D62's: a wire-compatible fork answering NULL for a
+        // `current_setting` this provider selects. The arm ships because the alternative is to
+        // read "no answer" as "on", which is the one reading that lets a broken body through.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, check_function_bodies: null }] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("guard");
+        expect(build.refusal.sentence).toContain("check_function_bodies = an unreadable value");
+        await provider.disconnect();
+      });
+
+      test("text byte-identical to the server's is a DEFINITION refusal and never a no-op apply", async () => {
+        // A refusal rather than a no-op because an apply that cannot change anything spends a write
+        // path, an audit row and a lock on nothing.
+        //
+        // It was documented as removing the post-condition's entire false-positive population, and
+        // the wave 5 review MEASURED that claim false: `pg_get_functiondef` is canonical, so a
+        // reformatted edit passes this refusal and re-renders to the same bytes. The post-condition
+        // asks a different question now, and the test above is where that is pinned.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: ROUTINE_ROW.definition,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("definition");
+        expect(build.refusal.sentence).toBe("this text is identical to the definition on the server");
+        await provider.disconnect();
+      });
+
+      test("an edited IDENTITY is refused with BOTH headers shown", async () => {
+        // The rule is exact and needs no parser, because `pg_get_functiondef` is the engine's own
+        // rendering and so is the text the reader started from: everything up to and including the
+        // first `)` that closes the parameter list is compared byte for byte.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const renamed = ROUTINE_ROW.definition.replace("order_total", "order_total_v2");
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: renamed,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(build.refusal.sentence).toContain("order_total_v2");
+        expect(build.refusal.sentence).toContain("order_total(order_id integer)");
+        await provider.disconnect();
+      });
+
+      test("a changed parameter DEFAULT is refused too, and the sentence does NOT claim a fork", async () => {
+        // FINDING 2, wave 5 review. `pg_get_functiondef` renders parameter defaults INSIDE the
+        // header, so a changed DEFAULT lands in this same refusal. MEASURED on PostgreSQL 18.4
+        // (Debian 18.4-1.pgdg13+1): `CREATE OR REPLACE FUNCTION app.f_def(a integer DEFAULT 1)`
+        // re-created as `DEFAULT 2` left `count(*) = 1` and `oid = 16787` with `xmin` moving
+        // 857 -> 858, an ordinary in-place replace, and `pg_get_functiondef` then rendered
+        // `DEFAULT 2`. So the old sentence, which said PostgreSQL "would not replace it" and that
+        // "every call site fails 42725 is not unique", stated an engine fact that is FALSE for
+        // this population, on one of the most ordinary edits a function has.
+        //
+        // The refusal STAYS, because separating a changed DEFAULT from a changed argument list
+        // inside the rendered header needs a parser for the header and this design has none: the
+        // two are the same bytes to a byte comparison. What changes is that the sentence now says
+        // which of the two it cannot tell apart, and names the repair.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const defaulted = ROUTINE_ROW.definition.replace("(order_id integer)", "(order_id integer DEFAULT 0)");
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: defaulted,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(build.refusal.sentence).toContain("changed parameter DEFAULT is rendered inside this same header");
+        expect(build.refusal.sentence).toContain("PostgreSQL replaces that one in place");
+        // The claim the engine refutes must not be in there as an unconditional one.
+        expect(build.refusal.sentence).not.toContain("PostgreSQL would not replace it");
+        await provider.disconnect();
+      });
+
+      test("an ADDED PARAMETER is refused too, which is the silent fork", async () => {
+        // MEASURED on 18.4: a changed argument type or an added parameter is a SILENT SUCCESS that
+        // creates a SECOND `pg_proc` row (`TWO rows (16854 integer, 16855 bigint)`) and leaves the
+        // original untouched, after which every call site fails `42725 is not unique`.
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const forked = ROUTINE_ROW.definition.replace("(order_id integer)", "(order_id bigint)");
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: forked,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        await provider.disconnect();
+      });
+    });
+
+    /**
+     * THE HEADER'S REAL CLOSING PARENTHESIS, and the population that has one anywhere but at the
+     * first `)` (#789 Phase 3, task 31, the second external review of PR #831).
+     *
+     * The identity check compares the rendered HEADER of the submitted text against the rendered
+     * header of the server's current definition, and it took the FIRST `)` as the end of that
+     * header. Everything after that `)` was then not compared at all, so a change to a LATER
+     * parameter passed the check that exists to stop exactly that change.
+     *
+     * WHY IT MATTERS, MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through this provider
+     * on 2026-09-14 against `app.dc` below: the build ACCEPTED
+     * `b integer DEFAULT 2` -> `b bigint DEFAULT 2` and sealed a plan for it, and the apply then
+     * answered `{"outcome":"applied-elsewhere","undone":true}` because the post-condition found
+     * the addressed row unrewritten and rolled the whole unit back. So the second line held and
+     * nothing was lost, and what the reader got instead of the actionable identity sentence was a
+     * write round trip and a sentence about an object changing elsewhere, which is not what
+     * happened. The same edit outside the guarded unit is the measured silent fork: run bare
+     * against 18.4 it left TWO `pg_proc` rows, oid 16385 `amount numeric, factor integer` and oid
+     * 16386 `amount numeric, factor bigint`.
+     *
+     * THE POPULATION IS MEASURED AND NOT ASSUMED, and the brief's headline case is NOT in it.
+     * A parameter TYPE MODIFIER never reaches this header: `pg_get_functiondef` renders parameter
+     * types through `format_type(t, NULL)`, so
+     * `app.tm(a numeric(10,2), b varchar(9), c char(5), d time(3), e timestamp(3), f decimal(8,4),
+     * g interval hour to second(2), h bit(4))` was rendered
+     * `app.tm(a numeric, b character varying, c character, d time without time zone,
+     * e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
+     * What DOES carry a parenthesis before the parameter list closes, every one of them measured on
+     * 18.4 by creating the object and reading `pg_get_functiondef` back, in the order the array
+     * below holds them, and the array below is the population, so its length is the count. That
+     * count is a literal in exactly two places in these two files, and each of them is bound to
+     * this array: the population guard under this block, whose literal an added fixture turns red,
+     * and one sentence in `docs/providers/postgres.md` that a test under this block reads out of
+     * that file and asserts against this array's length. An earlier revision of this line claimed
+     * the guard was the only place in the REPOSITORY that stated a count, which that doc sentence
+     * already falsified. No PROSE sentence in either file states the count, here or there, and a
+     * second test under this block is what keeps that true:
+     *
+     *     CREATE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 2) ...
+     *     CREATE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1) ...
+     *     CREATE FUNCTION app.dp(a text DEFAULT '(', b integer DEFAULT 1) ...
+     *     CREATE FUNCTION app."we)ird"(a integer, b integer) ...
+     *     CREATE FUNCTION app.mix("a')b" integer, c integer) ...
+     *     CREATE FUNCTION app.mix2(a text DEFAULT '")', b integer DEFAULT 1) ...
+     *     CREATE FUNCTION app.pn("a)b" integer, c integer) ...
+     *
+     * A DEFAULT holding a call, a DEFAULT holding either parenthesis inside a string literal, a
+     * quoted function NAME holding one, a quoted PARAMETER name holding one, and the two
+     * MIXED-QUOTE shapes that are why the scan tracks both quote kinds and has each ignore the
+     * other: a `'` inside a quoted identifier, and a `"` inside a string literal. All of them are
+     * ordinary PostgreSQL and none of them is hypothetical: the renderings below are the bytes the
+     * server answered, and each `revision` is the `md5(pg_get_functiondef(oid))` it answered for
+     * exactly those bytes, asserted rather than described by the first test under this block.
+     *
+     * RE-MEASURED on 2026-09-15 by #789 task 34, on its own `postgres:18` container answering
+     * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`: every `CREATE FUNCTION` statement above plus
+     * `app.np()` were applied to a fresh database and `md5(pg_get_functiondef(oid))` answered the
+     * `revision` constants below, every one of them byte for byte, so the population is
+     * re-runnable and not a transcription. The typmod rendering above was re-measured in the same
+     * session and answered the same eight-parameter line, with every parenthesis gone.
+     *
+     * `app.np()`, a function with no parameters at all, is the case where the first `)` IS the
+     * right one, and it is here so that the fix is measured to leave it alone.
+     */
+    const PAREN_HEADER_FIXTURES = [
+      {
+        object: "app.dc(integer,integer)",
+        path: ["app", "dc(integer,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs('-1'::integer), b integer DEFAULT 2)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "550d4047cff301bdfc3d052679226420",
+        forked: ["b integer DEFAULT 2", "b bigint DEFAULT 2"],
+        hidesTheChange: true,
+        carries: "a DEFAULT holding a function call",
+      },
+      {
+        object: "app.dl(text,integer)",
+        path: ["app", "dl(text,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')'::text, b integer DEFAULT 1)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "0c7937f7060d7bc0c2a583af49227203",
+        forked: ["b integer DEFAULT 1", "b bigint DEFAULT 1"],
+        hidesTheChange: true,
+        carries: "a closing parenthesis inside a DEFAULT string literal",
+      },
+      {
+        object: "app.dp(text,integer)",
+        path: ["app", "dp(text,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.dp(a text DEFAULT '('::text, b integer DEFAULT 1)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "78a2abb082795267b2cff7738d6cbd6c",
+        forked: ["b integer DEFAULT 1", "b bigint DEFAULT 1"],
+        hidesTheChange: false,
+        carries: "an OPENING parenthesis inside a DEFAULT string literal",
+      },
+      {
+        object: 'app."we)ird"(integer,integer)',
+        path: ["app", "we)ird(integer,integer)"],
+        definition:
+          'CREATE OR REPLACE FUNCTION app."we)ird"(a integer, b integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n',
+        revision: "ca7bc8f5489f6819f4e9b3c656b3e5d8",
+        forked: ["b integer", "b bigint"],
+        hidesTheChange: true,
+        carries: "a closing parenthesis inside the QUOTED FUNCTION NAME",
+      },
+      {
+        object: "app.mix(integer,integer)",
+        path: ["app", "mix(integer,integer)"],
+        definition:
+          'CREATE OR REPLACE FUNCTION app.mix("a\')b" integer, c integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n',
+        revision: "ecb1f5d2562bd96a4f4ad967338bed9d",
+        forked: ["c integer", "c bigint"],
+        hidesTheChange: true,
+        carries: "a single quote AND a closing parenthesis inside a quoted parameter name",
+      },
+      {
+        object: "app.mix2(text,integer)",
+        path: ["app", "mix2(text,integer)"],
+        definition:
+          "CREATE OR REPLACE FUNCTION app.mix2(a text DEFAULT '\")'::text, b integer DEFAULT 1)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+        revision: "e68f2d00e27138bb28835dda6b02a7f0",
+        forked: ["b integer DEFAULT 1", "b bigint DEFAULT 1"],
+        hidesTheChange: true,
+        carries: "a double quote AND a closing parenthesis inside a DEFAULT string literal",
+      },
+      {
+        object: "app.pn(integer,integer)",
+        path: ["app", "pn(integer,integer)"],
+        definition:
+          'CREATE OR REPLACE FUNCTION app.pn("a)b" integer, c integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n',
+        revision: "30876101726d9d0bd1bbbf8cf8b04fba",
+        forked: ["c integer", "c bigint"],
+        hidesTheChange: true,
+        carries: "a closing parenthesis inside a QUOTED PARAMETER NAME",
+      },
+    ] as const;
+
+    /** `app.np()`, the control: the first `)` is the header's own, and nothing may change for it. */
+    const NO_PARAMETER_FIXTURE = {
+      path: ["app", "np()"],
+      definition:
+        "CREATE OR REPLACE FUNCTION app.np()\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT 1 $function$\n",
+      revision: "a5526222ec78b46798cc940a1176ecc5",
+    } as const;
+
+    describe("the identity header's real closing parenthesis", () => {
+      function rowFor(definition: string, revision: string) {
+        return { ...ROUTINE_ROW, definition, revision };
+      }
+
+      async function buildAgainst(
+        fixture: { path: readonly string[]; definition: string; revision: string },
+        text: string,
+      ) {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [rowFor(fixture.definition, fixture.revision)] });
+        const build = await provider.buildObjectEdit({
+          path: [...fixture.path],
+          kind: "function",
+          partId: "definition",
+          text,
+        });
+        await provider.disconnect();
+        return build;
+      }
+
+      test("every fixture's revision IS the md5 of its definition, and the population is the one this file measured", () => {
+        // The population is asserted BEFORE it is looped over, because a loop over an empty or a
+        // shortened list certifies nothing and this epic has shipped that defect six times.
+        expect(PAREN_HEADER_FIXTURES.length).toBe(7);
+        for (const fixture of PAREN_HEADER_FIXTURES) {
+          expect(createHash("md5").update(fixture.definition).digest("hex")).toBe(fixture.revision);
+        }
+        expect(createHash("md5").update(NO_PARAMETER_FIXTURE.definition).digest("hex")).toBe(
+          NO_PARAMETER_FIXTURE.revision,
+        );
+      });
+
+      /**
+       * THE DOC LEG OF THE COUNT, which until this test nothing in this repository bound (#789
+       * Phase 3, fix round 1 of task 34).
+       *
+       * `docs/providers/postgres.md` states the size of this population in prose, and the review
+       * of the first commit found that the count had been stated in six prose places in this file
+       * and three in that one while exactly ONE place asserted it. Prose numerals that no check
+       * reads are how this section drifted in the first place: an eighth shape makes the
+       * population guard above red, the implementer corrects the array and that guard, and the
+       * doc's numeral silently becomes the wrong record again.
+       *
+       * So the doc now states the count exactly once, in the word this test reads back, and every
+       * other sentence there says "every one of those" or "all of them". If the sentence itself is
+       * reworded the regex finds nothing and this test fails loudly rather than passing vacuously,
+       * which is the point: a guard whose population can go empty certifies nothing.
+       */
+      test("the provider doc's numeral for this population is the array's length", () => {
+        const doc = readFileSync(path.join(import.meta.dir, "../../..", "docs/providers/postgres.md"), "utf8");
+        const words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
+        const matches = [...doc.matchAll(/^([A-Z]+) such shapes were measured on 18\.4\b/gm)];
+        // The sentence must exist and must be the only one of its shape, or the assertion below
+        // would be reading a numeral that is not the one the doc's reader sees.
+        expect(matches.length).toBe(1);
+        const stated = words.indexOf(matches[0][1]);
+        expect(stated).toBeGreaterThanOrEqual(0);
+        expect(stated).toBe(PAREN_HEADER_FIXTURES.length);
+      });
+
+      /**
+       * THE OTHER HALF OF THAT BINDING, and a defect this task's own fix round 1 introduced.
+       *
+       * The test above binds ONE sentence in the provider doc to this array's length. The commit
+       * that wrote it also wrote two OTHER sentences that state the count in prose, one in the
+       * doc's paragraph on the in-place replace of `app.dc` and one in the docblock of the
+       * DEFAULT-change test below, and nothing bound either of them. An eighth fixture would then
+       * have been caught once, at the bound sentence, and left the two prose counts wrong with the
+       * suite green: the drift the test above exists to remove, over a population that excluded
+       * two live cases. Found by this task's round 2 reviewer.
+       *
+       * The repair is that no prose sentence states the count at all: the array is the count, and
+       * a sentence that needs to point at the population writes `the shapes above`. This guard
+       * keeps it that way. MEASURED by running it on 2026-09-15 before the prose was corrected:
+       * exactly those two sentences matched, one per file, the doc leg and this file's leg each
+       * measured on its own, and `grep -nEi` over the two files found the same two and nothing
+       * else.
+       *
+       * WHAT IT DOES NOT SEE, said here rather than left to be found: it sees a spelled numeral or
+       * a digit written DIRECTLY in front of `shapes` or `fixtures`, which is the shape both
+       * drifted sentences had and the shape the next one is likeliest to have. A count written any
+       * other way passes it, and no cheap check over English prose does better. The doc's own
+       * `such shapes` sentence is not matched, because `such` sits between its numeral and the
+       * noun, and it does not need to be: the test above is what binds that one.
+       */
+      test("no prose sentence in either file states this population's count", () => {
+        // Built so the pattern cannot match its own source: in the alternation each word is
+        // followed by `|`, never by the whitespace the pattern requires.
+        const counted = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)[ \t]+(?:shapes|fixtures)\b/gi;
+        for (const file of ["docs/providers/postgres.md", "tests/integration/db/postgres-provider.test.ts"]) {
+          const text = readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
+          const stated = [...text.matchAll(counted)].map((match) => match[0]);
+          // Paired with the file name so a failure names WHICH file and the exact words to remove.
+          expect([file, stated]).toEqual([file, []]);
+        }
+      });
+
+      for (const fixture of PAREN_HEADER_FIXTURES) {
+        test(`a LATER argument type change is refused when the header carries ${fixture.carries}`, async () => {
+          const [from, to] = fixture.forked;
+          const forked = fixture.definition.replace(from, to);
+          expect(forked).not.toBe(fixture.definition);
+          // WHICH of these the first-`)` reading actually false-accepted, asserted per fixture
+          // rather than assumed for the population as a whole: the change is hidden from it only when it falls
+          // after the first `)`, and `app.dp` carries an OPENING parenthesis in its literal, so
+          // its first `)` is still the header's own and the old reading refused it correctly.
+          // That fixture is here for the depth counter instead: count the `(` inside the literal
+          // and the scan runs past the header's own `)`, which its body-edit test below catches.
+          expect(forked.indexOf(to) > fixture.definition.indexOf(")")).toBe(fixture.hidesTheChange);
+          const build = await buildAgainst(fixture, forked);
+          if (build.built) throw new Error(`expected a refusal for ${fixture.object}`);
+          expect(build.refusal.refusal).toBe("identity");
+          // BOTH headers are in the sentence, and both are the WHOLE header rather than a prefix
+          // of it, so the reader can see which argument list is which.
+          expect(build.refusal.sentence).toContain(forked.split("\n")[0]);
+          expect(build.refusal.sentence).toContain(fixture.definition.split("\n")[0]);
+        });
+
+        test(`an ordinary BODY edit is still built when the header carries ${fixture.carries}`, async () => {
+          // The other half of the defect: a fix that refused a header it could not parse would
+          // refuse every reader whose function has a DEFAULT, which is ordinary SQL.
+          const build = await buildAgainst(fixture, fixture.definition.replace("SELECT 1", "SELECT 2"));
+          if (!build.built) throw new Error(`expected a plan for ${fixture.object}: ${build.refusal.sentence}`);
+          expect(build.plan.path).toEqual([...fixture.path]);
+        });
+      }
+
+      /**
+       * THE EDIT THIS FIX NEWLY REFUSES, which is a deliberate narrowing and not an oversight
+       * (#789 Phase 3, task 34, from the review of task 31's fix).
+       *
+       * Changing a LATER parameter's DEFAULT is an ordinary in-place replace on PostgreSQL, and
+       * until `c2437ec1` this build ACCEPTED it whenever an earlier `)` cut the header short. It
+       * is now refused as `identity`, because inside the rendered header a changed DEFAULT and a
+       * changed argument list are the same bytes to a byte comparison and this design has no
+       * parser for the header. The refusal's own sentence names the way out, the SQL editor.
+       *
+       * MEASURED on 2026-09-15 by #789 task 34 against its own `postgres:18` container answering
+       * `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)`, on `app.dc`, the fixture this test selects by
+       * `object` below and not by array position:
+       * `CREATE OR REPLACE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 3)` over
+       * the `DEFAULT 2` form left ONE `pg_proc` row with its `oid` unmoved at 16392 and `xmin`
+       * moving 763 to 771, and `pg_get_functiondef` then rendered `b integer DEFAULT 3`. The
+       * numerals come from ONE database on ONE container in which the fixtures above were
+       * created in this array's order, then `app.np()`, then this edit; an `oid` counter is global
+       * to the cluster and an `xmin` to the database, so neither reproduces on a differently
+       * populated cluster and neither is the claim. The claim is one row, the `oid` unmoved and
+       * the `xmin` moved, and the earlier revision of this docblock quoted 16385 and 754 for this
+       * edit AND for a typmod edit in a different database, which is two rows claiming one oid in
+       * one cluster and cannot happen. So the engine
+       * performs this edit in place, and the apply's post-condition would have seen the addressed
+       * row rewritten and answered `applied`. The cost of the fix is therefore a REFUSAL on a
+       * population the product used to serve, and it is written down here rather than discovered.
+       *
+       * THE CONTROL, which is what stops this test asserting a refusal that has nothing to do with
+       * the header's end: `firstParenthesisHeader` below is the reading `c2437ec1` replaced, quoted
+       * from that commit's own diff (`const close = text.indexOf(")")`). It cuts BOTH texts to the
+       * same bytes, so the old build had nothing to compare and accepted. Without that assertion
+       * this test would pass just as happily for an edit no reading ever accepted.
+       */
+      test("a LATER parameter's DEFAULT change is refused, which the first-`)` reading used to let through", async () => {
+        const firstParenthesisHeader = (text: string) => {
+          const close = text.indexOf(")");
+          return close < 0 ? text : text.slice(0, close + 1);
+        };
+        // Selected by IDENTITY and not by index: `app.dc` is the fixture whose later parameter
+        // carries the literal `b integer DEFAULT 2` this test replaces, and a reorder of the array
+        // must not silently re-point the test at a different object.
+        const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dc(integer,integer)");
+        if (!fixture) throw new Error("app.dc(integer,integer) is not in PAREN_HEADER_FIXTURES");
+        const submitted = fixture.definition.replace("b integer DEFAULT 2", "b integer DEFAULT 3");
+        expect(submitted).not.toBe(fixture.definition);
+        expect(firstParenthesisHeader(submitted)).toBe(firstParenthesisHeader(fixture.definition));
+
+        const build = await buildAgainst(fixture, submitted);
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        expect(build.refusal.sentence).toContain("b integer DEFAULT 3)");
+        expect(build.refusal.sentence).toContain("b integer DEFAULT 2)");
+        expect(build.refusal.sentence).toContain("make it with a CREATE OR REPLACE of your own in the SQL editor");
+      });
+
+      test("a function with NO parameters compares its whole header, and its body edit still builds", async () => {
+        const built = await buildAgainst(
+          NO_PARAMETER_FIXTURE,
+          NO_PARAMETER_FIXTURE.definition.replace("SELECT 1", "SELECT 2"),
+        );
+        if (!built.built) throw new Error(`expected a plan: ${built.refusal.sentence}`);
+        const renamed = await buildAgainst(
+          NO_PARAMETER_FIXTURE,
+          NO_PARAMETER_FIXTURE.definition.replace("app.np()", "app.np_v2()"),
+        );
+        if (renamed.built) throw new Error("expected a refusal");
+        expect(renamed.refusal.refusal).toBe("identity");
+        expect(renamed.refusal.sentence).toContain("app.np_v2()");
+      });
+
+      test("a submitted text whose parameter list never closes is refused, not compared as a prefix", async () => {
+        // The scan's no-answer arm. A reader who deletes the closing parenthesis has written SQL
+        // no engine will take, and the whole text is then the header: it differs from the server's
+        // header, so it is refused here rather than sent.
+        const fixture = PAREN_HEADER_FIXTURES[0];
+        const truncated = fixture.definition.replaceAll(")", "");
+        const build = await buildAgainst(fixture, truncated);
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("identity");
+        // The WHOLE text is what the sentence then shows the reader, which is the answer the
+        // `indexOf` reading gave for the same case and the only one that tells them what the
+        // server received. Mutating the no-answer arm to an empty string leaves the refusal in
+        // place and empties the sentence, so this assertion is what makes that arm measured.
+        expect(build.refusal.sentence).toContain(truncated);
+      });
+    });
+  });
+
+  describe("applyObjectEdit", () => {
+    /**
+     * Builds a plan against `ROUTINE_ROW`, then re-points `mockQueryFn` so that the apply's FIRST
+     * query rejects with the given error and any later query resolves with `ROUTINE_ROW`, which is
+     * what lets the conflict arm's re-read answer the server's current text.
+     */
+    async function applyWithEngineError(error: unknown) {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      let first = true;
+      mockQueryFn = async () => {
+        if (first) {
+          first = false;
+          throw error instanceof Error
+            ? error
+            : Object.assign(new Error(String((error as { message?: string }).message)), error);
+        }
+        return { rows: [ROUTINE_ROW] };
+      };
+      const outcome = await provider.applyObjectEdit(build.plan);
+      await provider.disconnect();
+      return outcome;
+    }
+
+    test("sends EXACTLY the bytes the plan carries, with no parameters", async () => {
+      const provider = await connected();
+      const sent: { sql: string; params: unknown[] }[] = [];
+      mockQueryFn = async (sql, params) => {
+        sent.push({ sql, params: (params ?? []) as unknown[] });
+        return { rows: [ROUTINE_ROW] };
+      };
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error("expected a plan");
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      sent.length = 0;
+      await provider.applyObjectEdit(build.plan);
+      expect(sent[0].sql).toBe(build.plan.unit.steps[0].text);
+      // Binding a parameter does not degrade the atomicity, it REFUSES it: MEASURED, `42601 cannot
+      // insert multiple commands into a prepared statement`.
+      expect(sent[0].params).toEqual([]);
+      await provider.disconnect();
+    });
+
+    test("THE PREVIEW IS THE APPLY, proven against a provider whose state MOVED between the two calls", async () => {
+      // The naive version of this test builds a plan, applies it, and asserts the executed text
+      // equals `plan.unit.steps[0].text`. That test PASSES against a design that rebuilds at apply
+      // time, because nothing changed between the two calls, so it certifies nothing.
+      //
+      // THE LIVE POPULATION THAT CONTAINS THE CASE: `objectKindsFor(version)` in
+      // `src/lib/db/providers/sql/mysql.ts` resolves from `measuredServerVersion`, set in
+      // `connect()`, and `POST /api/db/provider-meta` reads capabilities off a provider it never
+      // connects. That is the shipped mechanism by which two reads of one provider legitimately
+      // answer differently, and it is measured end to end on a live MariaDB 12.3.2.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error("expected a plan");
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const promised = build.plan.unit.steps[0].text;
+
+      // MOVE the provider's resolved state between the build and the apply: a different definition
+      // on the server and a different capability answer.
+      const moved = {
+        ...ROUTINE_ROW,
+        definition: `${ROUTINE_ROW.definition} -- somebody else`,
+        revision: "0123456789abcdef0123456789abcdef",
+      };
+      const capabilities = spyOn(provider, "getCapabilities").mockReturnValue({
+        ...provider.getCapabilities(),
+        objectKinds: (provider.getCapabilities().objectKinds ?? []).map((kind) =>
+          kind.id === "function" ? { ...kind, sourceLanguage: "sql" } : kind,
+        ),
+      });
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [moved] };
+      };
+      try {
+        await provider.applyObjectEdit(build.plan);
+      } finally {
+        capabilities.mockRestore();
+      }
+      // Byte for byte. A design that rebuilt would send different bytes here and this assertion
+      // would fail; without the mutation above it could not tell the two apart.
+      expect(sent[0]).toBe(promised);
+      await provider.disconnect();
+    });
+
+    test("a successful apply answers `applied` with the NEW revision", async () => {
+      const provider = await connected();
+      let call = 0;
+      mockQueryFn = async () => {
+        call += 1;
+        return { rows: [call === 1 ? ROUTINE_ROW : { ...ROUTINE_ROW, revision: "f".repeat(32) }] };
+      };
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error("expected a plan");
+      const outcome = await provider.applyObjectEdit(build.plan);
+      expect(outcome.outcome).toBe("applied");
+      if (outcome.outcome !== "applied") throw new Error("narrowing");
+      expect(outcome.revision).toEqual({
+        check: "guarded",
+        token: "f".repeat(32),
+        basis: "md5(pg_get_functiondef(oid))",
+        scope: "server",
+      });
+      expect(outcome.duration).toBeGreaterThanOrEqual(0);
+      await provider.disconnect();
+    });
+
+    test("the classifier maps SQLSTATE as DATA, one test per measured code", async () => {
+      // The third member is typed `ObjectEditRefusalClass | undefined` and not `string | undefined`,
+      // which is what this repository's own tsc under strict requires at the `toBe` below: the
+      // matcher is typed by the value it is called on, so a bare `string` is rejected there rather
+      // than silently widened. The VALUES are unchanged.
+      const cases: readonly (readonly [string, string, ObjectEditRefusalClass | undefined])[] = [
+        ["LB001", "conflict", undefined],
+        ["LB002", "refused", "guard"],
+        ["LB003", "applied-elsewhere", undefined],
+        ["42501", "refused", "privilege"],
+        ["42601", "refused", "definition"],
+        ["42P13", "refused", "definition"],
+        ["42809", "refused", "definition"],
+        ["42P16", "refused", "definition"],
+        // Risk 5, carried: this type id also serves CockroachDB and Materialize, neither of which
+        // was probed, so an UNRECOGNISED code is `definition` with the engine's own sentence rather
+        // than a guess.
+        ["XX999", "refused", "definition"],
+      ];
+      for (const [code, outcome, refusalClass] of cases) {
+        const answer = await applyWithEngineError(Object.assign(new Error(`engine says ${code}`), { code }));
+        expect([code, answer.outcome]).toEqual([code, outcome]);
+        if (answer.outcome === "refused") {
+          // A `refused` row whose case carries no class means a code this table expected to answer
+          // some other arm came back as a refusal, which is the mapping changing under the test.
+          if (refusalClass === undefined) throw new Error(`${code} answered refused with no expected class`);
+          // The CODE is paired into both assertions, and that is the difference between a failure a
+          // reader can act on and one they cannot: the loop stops at the first bad case, and a bare
+          // `toBe("definition")` receiving `"privilege"` does not say WHICH of the nine codes moved.
+          // Measured: mutating the `42P13` arm to `privilege` produced exactly that message before
+          // this pairing, so the test went red without naming the arm it was red about.
+          expect([code, answer.refusal.refusal]).toEqual([code, refusalClass]);
+        }
+      }
+    });
+
+    test("42P13 carries the server's own HINT, which the shipped mapper destroys", async () => {
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("cannot change return type of existing function"), {
+          code: "42P13",
+          hint: "Use DROP FUNCTION app.f_demo(integer) first.",
+        }),
+      );
+      if (answer.outcome !== "refused") throw new Error("narrowing");
+      expect(answer.refusal.sentence).toBe("cannot change return type of existing function");
+      expect(answer.refusal.code).toBe("42P13");
+      expect(answer.refusal.hint).toBe("Use DROP FUNCTION app.f_demo(integer) first.");
+    });
+
+    test("a refusal with a position lands in the READER's coordinates", async () => {
+      // MEASURED: the same body error is `position 23` bare and `position 63` assembled, prefix 40,
+      // and an uncorrected coordinate is CLAMPED by Monaco rather than rejected, so nothing in the
+      // platform catches this being wrong.
+      //
+      // THE POSITION IS DERIVED FROM THE EMITTED UNIT AND IS NEVER A LITERAL: the provider segment
+      // that precedes the reader's text is `step.segments[0]`, so the engine's 1-based position of
+      // the reader's FIRST character is that segment's length plus one, and `position` arrives from
+      // `pg` as a STRING although `QueryError.position` is typed `number`, which is the other half
+      // of the conversion this test pins.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error("expected a plan");
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const [prefix] = build.plan.unit.steps[0].segments;
+      if (prefix.from !== "provider") throw new Error("the first segment is the provider's guard block");
+      const firstUserCharacter = String(prefix.text.length + 1);
+      await provider.disconnect();
+
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("syntax error at end of input"), { code: "42601", position: firstUserCharacter }),
+      );
+      if (answer.outcome !== "refused") throw new Error("narrowing");
+      expect(answer.refusal.at).toEqual({ within: "user", line: 1, column: 1 });
+    });
+
+    test("a position inside the guard block is OUTSIDE and places no marker", async () => {
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("syntax error"), { code: "42601", position: "10" }),
+      );
+      if (answer.outcome !== "refused") throw new Error("narrowing");
+      expect(answer.refusal.at).toEqual({ within: "outside" });
+    });
+
+    test("`tuple concurrently updated` is its own conflict arm and never a driver failure", async () => {
+      // MEASURED through the product: two overlapping applies of one object answered this after
+      // blocking for 2.8 seconds, at HTTP 500 DATABASE_ERROR, with a sentence no user can act on.
+      // This is the ONE place a message is read rather than a code, because the engine reports it
+      // as XX000 and there is nothing else to read.
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("tuple concurrently updated"), { code: "XX000" }),
+      );
+      expect(answer.outcome).toBe("conflict");
+      if (answer.outcome !== "conflict") throw new Error("narrowing");
+      expect(answer.conflict).toBe("engine-refused-concurrent");
+    });
+
+    test("a SQLSTATE this design recognises WINS over the message, and that is the ordering pinned", async () => {
+      // FINDING 11, wave 5 review: the reviewer dropped `verdict === undefined &&` from the
+      // `tuple concurrently updated` arm and it SURVIVED at 242 pass 0 fail, so the docblock's
+      // claim that the message is "only ever consulted for a code that is not data" was certified
+      // by prose alone.
+      //
+      // THE POPULATION, stated with its evidence class: this error is SYNTHETIC. A code in
+      // `APPLY_VERDICT_BY_SQLSTATE` carrying that message was not observed on PostgreSQL 18.4, and
+      // the arm's live population is the XX000 case the test above covers. What is asserted here
+      // is the ORDERING between two readers of one error, which is a property of this file and not
+      // of the engine, and it is the only way to assert it.
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("cannot change return type of existing function, tuple concurrently updated"), {
+          code: "42P13",
+        }),
+      );
+      // Without the `verdict === undefined` half this answers `conflict` / `engine-refused-concurrent`,
+      // which would tell the reader to retry an edit the engine will refuse every time.
+      if (answer.outcome !== "refused") throw new Error("narrowing");
+      expect(answer.refusal.refusal).toBe("definition");
+    });
+
+    test("a conflict re-reads and carries the server's CURRENT text for the diff", async () => {
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("libredb: this definition changed since it was read"), { code: "LB001" }),
+      );
+      if (answer.outcome !== "conflict" || answer.conflict !== "object-changed") throw new Error("narrowing");
+      expect(answer.current.text).toBe(ROUTINE_ROW.definition);
+      expect(answer.current.language).toBe("pgsql");
+    });
+
+    test("a fork detected by the post-condition is `applied-elsewhere` and UNDONE", async () => {
+      const answer = await applyWithEngineError(
+        Object.assign(new Error("libredb: this apply did not change the object it was addressed to"), {
+          code: "LB003",
+        }),
+      );
+      if (answer.outcome !== "applied-elsewhere") throw new Error("narrowing");
+      // PostgreSQL's post-condition raises inside the same implicit transaction, so the whole round
+      // trip rolls back and the second object is gone.
+      expect(answer.undone).toBe(true);
+    });
+
+    test("the failed client is RELEASED before the conflict arm takes a second one", async () => {
+      // FINDING 7, wave 5 review. `classifyApplyFailure` used to run inside the `catch`, which is
+      // BEFORE the `finally { client.release() }`, so the conflict arm's re-read asked the pool
+      // for a SECOND client while the failed one was still checked out. Harmless at the default
+      // pool size and a deadlock on a pool of one, which `POSTGRES_POOL_MAX=1` and a single-slot
+      // PgBouncer both produce.
+      //
+      // The order is asserted rather than the count, because two clients held at once and two
+      // clients taken in sequence are the same count.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      const order: string[] = [];
+      const connectSpy = spyOn(lastPool!, "connect").mockImplementation(async () => {
+        order.push("connect");
+        return mockClient;
+      });
+      const releaseSpy = spyOn(mockClient, "release").mockImplementation(() => {
+        order.push("release");
+      });
+      let first = true;
+      mockQueryFn = async () => {
+        if (first) {
+          first = false;
+          throw Object.assign(new Error("libredb: this definition changed since it was read"), { code: "LB001" });
+        }
+        return { rows: [ROUTINE_ROW] };
+      };
+      try {
+        const answer = await provider.applyObjectEdit(build.plan);
+        expect(answer.outcome).toBe("conflict");
+      } finally {
+        connectSpy.mockRestore();
+        releaseSpy.mockRestore();
+      }
+      expect(order).toEqual(["connect", "release", "connect", "release"]);
+      await provider.disconnect();
+    });
+
+    test("a driver failure with no SQLSTATE is INTERRUPTED and never a false success", async () => {
+      const answer = await applyWithEngineError(new Error("Connection terminated unexpectedly"));
+      if (answer.outcome !== "interrupted") throw new Error("narrowing");
+      // `committed: "unknown"` is the day-one answer on all three engines, because no day-one
+      // strategy wraps its own transaction. A client that retried here would apply twice.
+      expect(answer.committed).toBe("unknown");
+    });
+
+    // ------------------------------------------------------------------------
+    // The borrowed client is somebody else's open transaction (#789 Phase 3, D78)
+    // ------------------------------------------------------------------------
+
+    /**
+     * MEASURED on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23 on 2026-09-14, on a
+     * throwaway container, driving THIS provider and not a hand-written statement: a lone `BEGIN`
+     * through `query()` leaves its pooled client in status `T` and releases it, `pg`'s idle list is
+     * LIFO so the next `pool.connect()` hands the SAME client back (`apply borrowed the SAME client
+     * as the leaker: true`), and before this guard the apply then ran INSIDE that foreign
+     * transaction and answered `outcome: "applied"` with a `guarded` revision token. Three
+     * consequences, all measured in the same run:
+     *
+     * 1. The write is not committed and `endOpenQueryTransaction()` names that very client, so the
+     *    next `POST /api/db/multi-query` on the connection ROLLED THE APPLY AWAY: `xmin` 856 back
+     *    to 825 and the definition byte-identical to the pre-image. Ruling 1a says the bytes the
+     *    user approved are the bytes the database ends up with, and they were not.
+     * 2. The revision handed back is whatever the re-read's own borrowed client happened to see:
+     *    the same client answers the POST-image, a DIFFERENT one cannot see the uncommitted row and
+     *    answers the PRE-image as if it were the new server state.
+     * 3. The `SET LOCAL search_path` pin SURVIVED into the rest of the foreign transaction:
+     *    `SHOW search_path` read `app, pg_catalog` afterwards, against ruling 2e.
+     *
+     * So the apply REFUSES a client that is not idle. It does not roll the foreign transaction back
+     * and it does not retry on another client: rolling one back destroys work this user was never
+     * shown, and a pool of one has no other client to move to.
+     */
+    for (const status of ["T", "E"] as const) {
+      test(`refuses without sending anything when the borrowed client is in status ${status}`, async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (!build.built) throw new Error(build.refusal.sentence);
+        const sent: string[] = [];
+        mockQueryFn = async (sql) => {
+          sent.push(sql);
+          return { rows: [ROUTINE_ROW] };
+        };
+        mockTxStatus = status;
+        try {
+          const outcome = await provider.applyObjectEdit(build.plan);
+          if (outcome.outcome !== "refused") throw new Error(`expected a refusal, received ${outcome.outcome}`);
+          expect(outcome.refusal.refusal).toBe("guard");
+          expect(outcome.refusal.sentence).toBe(
+            "this connection's pooled session is inside a transaction somebody else opened, so an apply " +
+              "sent on it would not be committed by this request and could be rolled back with theirs",
+          );
+          // A refusal reports an engine fact and the engine reported none here, so there is no
+          // SQLSTATE to carry and no position to convert.
+          expect(outcome.refusal.code).toBeUndefined();
+          expect(outcome.refusal.at).toEqual({ within: "none" });
+          // NOTHING WAS SENT. This is the half that matters: the guard exists so that the plan's
+          // bytes never reach a transaction this request does not control.
+          expect(sent).toEqual([]);
+        } finally {
+          mockTxStatus = "I";
+          await provider.disconnect();
+        }
+      });
+    }
+
+    test("an idle borrowed client is the control: the same plan is sent and applied", async () => {
+      // The population this guard rejects is real (the two tests above) and so is the population it
+      // waves through, which is what stops the guard from being a refusal of everything.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [ROUTINE_ROW] };
+      };
+      mockTxStatus = "I";
+      const outcome = await provider.applyObjectEdit(build.plan);
+      expect(outcome.outcome).toBe("applied");
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      expect(sent[0]).toBe(build.plan.unit.steps[0].text);
+      await provider.disconnect();
+    });
+  });
+
+  test("THE SESSION IS UNCHANGED, and the apply is what makes the assertion non-vacuous", async () => {
+    // Asserting "the apply left the session alone" against a provider that never touches the
+    // session is an assertion nothing can fail. This provider DOES touch it: the plan pins
+    // `search_path`. The pin is `SET LOCAL` inside the apply's own implicit transaction, so it is
+    // gone when the round trip ends, and this is what proves it.
+    //
+    // THE LIVE POPULATION: MEASURED through the product with three controls, a `SET` issued by one
+    // Studio user's request was read back by seven later requests including an ADMIN session on the
+    // same `connection.id`, and a fresh session on the same server answered null.
+    const provider = await connected();
+    const sent: string[] = [];
+    mockQueryFn = async (sql) => {
+      sent.push(sql);
+      return { rows: [ROUTINE_ROW] };
+    };
+    const build = await provider.buildObjectEdit({
+      path: ["app", "order_total(integer)"],
+      kind: "function",
+      partId: "definition",
+      text: EDITED,
+    });
+    if (!build.built) throw new Error("expected a plan");
+    await provider.applyObjectEdit(build.plan);
+    // Every SET this apply emits is a SET LOCAL, and there is no bare SET anywhere in the round trip.
+    const sets = sent.flatMap((sql) => sql.split("\n").filter((line) => /^\s*SET\b/i.test(line)));
+    expect(sets).toEqual(['SET LOCAL search_path = "app", pg_catalog;']);
+    await provider.disconnect();
+  });
+
+  /**
+   * Standing ruling 5g, for BOTH new methods, driven all the way to the BOUND VALUES (#789).
+   *
+   * PostgreSQL declares ONE container level, so its own fixture cannot tell a hardcoded index from
+   * a derived one: `path[0]` and `path.slice(0, containerDepth())[0]` are the same segment at
+   * depth 1. A two-level declaration is swapped in so they are not, and every assertion below is
+   * on a value that REACHED the server or on the emitted unit, never on a refusal, because a
+   * two-level test that stops at the refusal never reaches the bind the defect lives in.
+   */
+  test("derives the schema and the routine name from the DECLARATION in both new methods", async () => {
+    const provider = await connected();
+    const seen: { sql: string; params: unknown[] }[] = [];
+    mockQueryFn = async (sql, params) => {
+      seen.push({ sql, params: (params ?? []) as unknown[] });
+      return { rows: [ROUTINE_ROW] };
+    };
+    const capabilities = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+    });
+    try {
+      const build = await provider.buildObjectEdit({
+        path: ["cat", "sch", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      // `sch` and not `cat`: the schema is the segment the DECLARATION calls the schema, which is
+      // the second one here and the first one on the shipped declaration. The name is the LAST
+      // segment and not `path[1]`.
+      expect(seen[0].params).toEqual(["sch", "f", "order_total(integer)"]);
+      // The same derivation reached the EMITTED UNIT, which is the half a bind assertion cannot
+      // see: the pin and the guard block address the object too, and a positional index there
+      // would pin `search_path` to the catalog and compare the wrong routine.
+      const [step] = build.plan.unit.steps;
+      expect(step.text).toContain('SET LOCAL search_path = "sch", pg_catalog;');
+      expect(step.text).toContain("$sch$");
+      expect(build.plan.session[0]).toEqual({ mode: "pinned", setting: "search_path", value: '"sch", pg_catalog' });
+
+      // And the APPLY's own re-read, which derives from the PLAN's path rather than the request's.
+      seen.length = 0;
+      await provider.applyObjectEdit(build.plan);
+      expect(seen[1].params).toEqual(["sch", "f", "order_total(integer)"]);
+    } finally {
+      capabilities.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  describe("the guards on a plan or a request this provider never produced", () => {
+    /** Reaches the private helper by name, which is where the collision arm can be executed. */
+    function quoter(provider: object) {
+      return (provider as unknown as { dollarQuote(value: string, tagSource?: () => string): string }).dollarQuote.bind(
+        provider,
+      );
+    }
+
+    test("dollarQuote wraps a value in a tag that is not in it", () => {
+      const quote = quoter(makeProvider());
+      // No escaping of any kind, which is the point: a dollar-quoted string ignores every escape,
+      // so the result does not depend on `standard_conforming_strings`, a GUC a previous borrower
+      // of the pooled connection can change.
+      expect(quote("it's a $$ body\\n", () => "abc123")).toBe("$lbabc123$it's a $$ body\\n$lbabc123$");
+    });
+
+    test("dollarQuote refuses rather than emitting a tag the value already contains", () => {
+      const quote = quoter(makeProvider());
+      // The arm is executable BECAUSE the random source is an argument. With `randomBytes` inlined
+      // this line could not be reached by any test and would be a dead branch under the coverage
+      // gate, which is the shape this epic has shipped before.
+      expect(() => quote("body holding $lbdeadbeef$ verbatim", () => "deadbeef")).toThrow(
+        /the generated quote tag occurs inside the definition/,
+      );
+    });
+
+    test("a request naming a part this provider never produced is refused by name", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      await expect(
+        provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "body",
+          text: EDITED,
+        }),
+      ).rejects.toThrow(/has one source part, "definition", received "body"/);
+      await provider.disconnect();
+    });
+
+    test("an editable kind with no routine statement fails by name rather than binding undefined", async () => {
+      // The declaration and the statement map are two lists and a kind can be added to one and not
+      // the other, which is the same trap the source read's own sequence test drives one method up.
+      const provider = await connected();
+      const capabilities = provider.getCapabilities();
+      const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+        ...capabilities,
+        objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+          kind.id === "view" ? { ...kind, acceptsSourceEdits: true } : kind,
+        ),
+      });
+      try {
+        await expect(
+          provider.buildObjectEdit({
+            path: ["app", "order_summary"],
+            kind: "view",
+            partId: "definition",
+            text: "SELECT 1",
+          }),
+        ).rejects.toThrow(/declares an editable kind "view" but has no statement that reads it/);
+      } finally {
+        spy.mockRestore();
+      }
+      await provider.disconnect();
+    });
+
+    test("an absent routine raises the source read's own sentence rather than refusing", async () => {
+      // PostgreSQL utters no sentence for an object that is not there, so a refusal here would
+      // carry our silence dressed as the server's answer, which is the rule `readObjectSource`
+      // already follows for the same fact.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [] });
+      await expect(
+        provider.buildObjectEdit({
+          path: ["app", "gone(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        }),
+      ).rejects.toThrow(/holds no function called "gone\(integer\)" in schema "app"/);
+      await provider.disconnect();
+    });
+
+    test("a server that answers no md5 refuses UNSUPPORTED rather than applying unguarded", async () => {
+      // D62's population: this type id also serves CockroachDB and Materialize, neither of which
+      // was probed. A guarded batch with no token to guard on is not this strategy.
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [{ ...ROUTINE_ROW, revision: null }] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (build.built) throw new Error("expected a refusal");
+      expect(build.refusal.refusal).toBe("unsupported");
+      expect(build.refusal.sentence).toContain("md5 of pg_get_functiondef");
+      await provider.disconnect();
+    });
+
+    test("a command unit is not a plan this provider issued and raises", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      if (build.plan.unit.medium !== "statement") throw new Error("narrowing");
+      const command = {
+        ...build.plan,
+        unit: {
+          medium: "command" as const,
+          name: "FUNCTION",
+          arguments: ["LOAD", "REPLACE"],
+          payload: build.plan.unit.steps[0],
+        },
+      };
+      await expect(provider.applyObjectEdit(command)).rejects.toThrow(/carries a statement unit, received a command/);
+      await provider.disconnect();
+    });
+
+    test("a successful apply whose re-read answers nothing says the revision is UNAVAILABLE", async () => {
+      // Never the OLD token: a client would compare it on its next apply and be told the object
+      // had not moved, which is H3's two-state collapse arriving through the back door.
+      const provider = await connected();
+      let call = 0;
+      mockQueryFn = async () => {
+        call += 1;
+        return { rows: call === 1 ? [ROUTINE_ROW] : [] };
+      };
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      const outcome = await provider.applyObjectEdit(build.plan);
+      if (outcome.outcome !== "applied") throw new Error("narrowing");
+      expect(outcome.revision).toEqual({
+        check: "unavailable",
+        reason: "the apply succeeded and the re-read that produces the new revision answered no row for this routine",
+      });
+      await provider.disconnect();
+    });
+
+    test("a conflict whose re-read answers nothing carries an empty current text and never the plan's", async () => {
+      const provider = await connected();
+      mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+      const build = await provider.buildObjectEdit({
+        path: ["app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error(build.refusal.sentence);
+      let first = true;
+      mockQueryFn = async () => {
+        if (first) {
+          first = false;
+          throw Object.assign(new Error("libredb: this definition changed since it was read"), { code: "LB001" });
+        }
+        return { rows: [] };
+      };
+      const outcome = await provider.applyObjectEdit(build.plan);
+      if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
+      expect(outcome.current.text).toBe("");
+      await provider.disconnect();
+    });
   });
 });

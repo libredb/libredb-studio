@@ -1191,6 +1191,107 @@ describe("useQueryExecution", () => {
     expect(mockToastError).toHaveBeenCalled();
   });
 
+  // ── the script's unfinished transaction is reported, not swallowed (D71) ──
+
+  test("says the script's unfinished transaction was rolled back, after a failure", async () => {
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: {
+          multiStatement: true,
+          executedCount: 3,
+          statementCount: 3,
+          hasError: true,
+          openTransaction: "rolled-back",
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 30,
+          statements: [
+            { index: 0, status: "success", rowCount: 0 },
+            { index: 1, status: "success", rowCount: 0 },
+            { index: 2, status: "error", error: 'relation "bad" does not exist' },
+          ],
+        },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("BEGIN; CREATE TABLE t(id int); SELECT * FROM bad;");
+    });
+
+    const description = (mockToastError.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("rolled back");
+  });
+
+  test("says so after a script that ran clean and never committed", async () => {
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: {
+          multiStatement: true,
+          executedCount: 2,
+          statementCount: 2,
+          hasError: false,
+          openTransaction: "rolled-back",
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 12,
+          statements: [
+            { index: 0, status: "success", rowCount: 0 },
+            { index: 1, status: "success", rowCount: 1 },
+          ],
+        },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("BEGIN; INSERT INTO t VALUES (1);");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).toContain("rolled back");
+  });
+
+  test("says nothing about transactions when the script left none open", async () => {
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: {
+          multiStatement: true,
+          executedCount: 2,
+          statementCount: 2,
+          hasError: false,
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 12,
+          statements: [
+            { index: 0, status: "success", rowCount: 0 },
+            { index: 1, status: "success", rowCount: 1 },
+          ],
+        },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; SELECT 2;");
+    });
+
+    const description = (mockToastSuccess.mock.calls.at(-1) as unknown[])[1] as { description?: string };
+    expect(description.description).not.toContain("rolled back");
+  });
+
   // ── executeQuery refreshes schema after DDL ────────────────────────────
 
   test("executeQuery calls fetchSchema after DDL query", async () => {
@@ -1225,6 +1326,63 @@ describe("useQueryExecution", () => {
     });
 
     expect(fetchSchemaMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * MAJOR 1, #789. `fetchSchema` re-reads the inventory the diagram and the modals draw from;
+   * the object TREE keeps its own cache and was not one of the things a DDL statement
+   * refreshed, so after `CREATE TABLE` the sidebar showed the old folder contents until the
+   * connection was re-selected.
+   */
+  test("executeQuery asks the object tree to re-read after DDL", async () => {
+    const onObjectsChanged = mock(() => {});
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, rows: [], rowCount: 0 } },
+    });
+    const params = createDefaultParams({ onObjectsChanged });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE test_table (id INT)", undefined, false, { skipSafety: true });
+    });
+
+    expect(onObjectsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  test("executeQuery does not ask the object tree to re-read for a SELECT", async () => {
+    const onObjectsChanged = mock(() => {});
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ onObjectsChanged });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    expect(onObjectsChanged).not.toHaveBeenCalled();
+  });
+
+  // A playground run is rolled back, so nothing it created survives to be listed. The tree
+  // must not be re-read for it, exactly as the inventory is not.
+  test("a playground DDL run asks for no re-read, because it was rolled back", async () => {
+    const onObjectsChanged = mock(() => {});
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: { ...mockQueryResult, rows: [], rowCount: 0 } },
+      "/api/db/transaction": { ok: true, json: { success: true } },
+    });
+    const params = createDefaultParams({ onObjectsChanged, playgroundMode: true, transactionActive: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE test_table (id INT)", undefined, false, { skipSafety: true });
+    });
+
+    expect(onObjectsChanged).not.toHaveBeenCalled();
   });
 
   // ── handleLoadMore does nothing when no more data ──────────────────────

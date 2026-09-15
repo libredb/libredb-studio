@@ -45,6 +45,7 @@ Two consequences worth stating before the table:
 | 3.3 | This page is checked against the repository on every build | Implemented | [`scripts/security-check.mjs`](../scripts/security-check.mjs) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
 | 3.4 | A statement submitted on the agent execution path cannot write, change schema, reach another database, load code, or run the executing form of EXPLAIN | Partial | [`src/lib/db/operations/policy.ts`](../src/lib/db/operations/policy.ts), [`src/lib/db/operations/statement-guard.ts`](../src/lib/db/operations/statement-guard.ts), [`src/lib/agent/composed-sql.ts`](../src/lib/agent/composed-sql.ts), [`src/lib/agent/tools.ts`](../src/lib/agent/tools.ts), [`src/lib/db/providers/sql/postgres.ts`](../src/lib/db/providers/sql/postgres.ts), [`src/lib/db/providers/sql/sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts), [`src/app/api/agent/runs/route.ts`](../src/app/api/agent/runs/route.ts), [`src/app/api/agent/runs/[runId]/handover/route.ts`](../src/app/api/agent/runs/[runId]/handover/route.ts), [`src/lib/agent/runtime.ts`](../src/lib/agent/runtime.ts) | [`tests/api/agent/handover.test.ts`](../tests/api/agent/handover.test.ts), [`tests/security/agent-statement-boundary.test.ts`](../tests/security/agent-statement-boundary.test.ts), [`tests/unit/lib/agent/composed-sql.test.ts`](../tests/unit/lib/agent/composed-sql.test.ts), [`tests/unit/lib/agent/tools.test.ts`](../tests/unit/lib/agent/tools.test.ts), [`tests/api/agent/runs.test.ts`](../tests/api/agent/runs.test.ts), [`tests/integration/db/postgres-provider.test.ts`](../tests/integration/db/postgres-provider.test.ts), [`tests/integration/db/sqlite-provider.test.ts`](../tests/integration/db/sqlite-provider.test.ts) |
 | 3.5 | Every agent-path operation — allowed, denied, or held for approval — is audited under one correlation id, and its result is released with the run | Partial | [`src/lib/db/operations/execution.ts`](../src/lib/db/operations/execution.ts), [`src/lib/db/operations/artifacts.ts`](../src/lib/db/operations/artifacts.ts), [`src/lib/agent/tools.ts`](../src/lib/agent/tools.ts), [`src/lib/audit.ts`](../src/lib/audit.ts), [`src/lib/api/agent-run-access.ts`](../src/lib/api/agent-run-access.ts), [`src/app/api/agent/drive/route.ts`](../src/app/api/agent/drive/route.ts), [`src/app/api/agent/runs/[runId]/artifacts/[correlationId]/route.ts`](../src/app/api/agent/runs/[runId]/artifacts/[correlationId]/route.ts) | [`tests/security/agent-execution-audit.test.ts`](../tests/security/agent-execution-audit.test.ts), [`tests/security/agent-tool-layer-audit.test.ts`](../tests/security/agent-tool-layer-audit.test.ts), [`tests/unit/db/operations/execution.test.ts`](../tests/unit/db/operations/execution.test.ts), [`tests/unit/db/operations/artifacts.test.ts`](../tests/unit/db/operations/artifacts.test.ts), [`tests/api/agent/drive.test.ts`](../tests/api/agent/drive.test.ts), [`tests/api/agent/artifacts.test.ts`](../tests/api/agent/artifacts.test.ts), [`tests/api/db/query.test.ts`](../tests/api/db/query.test.ts) |
+| 3.6 | Every application of an edited object definition is authorised by a server-issued plan, and both the decision and the engine's verdict are audited under one correlation id | Implemented | [`src/app/api/db/objects/edit-plan/route.ts`](../src/app/api/db/objects/edit-plan/route.ts), [`src/app/api/db/objects/edit-apply/route.ts`](../src/app/api/db/objects/edit-apply/route.ts), [`src/lib/api/object-edit-plan-token.ts`](../src/lib/api/object-edit-plan-token.ts), [`src/lib/db/object-edit.ts`](../src/lib/db/object-edit.ts), [`src/lib/db/connection-fingerprint.ts`](../src/lib/db/connection-fingerprint.ts) | [`tests/security/object-edit-audit.test.ts`](../tests/security/object-edit-audit.test.ts), [`tests/api/db/objects/edit-plan.test.ts`](../tests/api/db/objects/edit-plan.test.ts), [`tests/api/db/objects/edit-apply.test.ts`](../tests/api/db/objects/edit-apply.test.ts), [`tests/unit/lib/db/connection-fingerprint.test.ts`](../tests/unit/lib/db/connection-fingerprint.test.ts) |
 
 ## Notes on individual rows
 
@@ -226,6 +227,41 @@ caller of the moment, so a drive that continues a run minutes later cannot widen
 read (that resume path exists and authenticates, but nothing calls it yet — see
 [`docs/BACKLOG.md`](./BACKLOG.md) B9). Still **Partial**, for the one reason that survives: the in-app
 ring buffer is per-process — the stdout line remains the authoritative record.
+
+**3.6.** This is the first row that covers a database WRITE, and the claim it makes is the narrow
+one. Each apply emits a decision event before the provider is called and an outcome event after it,
+both under one correlation id, both naming the object address (kind, path, part), the resolved
+strategy and the outcome; and neither carries the statement, the command payload, the reader's
+text, the pre-image, the engine's message, the engine's code, the revision token or the plan token.
+The decision event is emitted outside any try/catch, so an apply that cannot be audited does not
+run; the outcome event is wrapped, because the engine has already acted and a broken log sink must
+not turn a completed apply into a 500 that invites a retry that would be a second write.
+Authorisation is a server-issued plan: the preview and the apply are bound by a sealed plan whose
+bytes the server minted, so what the user approved is what the engine receives, and a plan whose
+seal does not verify is refused with one audited event and no provider call.
+
+**The seal binds the SERVER as well as the bytes, and the field list is what makes that true.**
+`connectionFingerprint` is the part of the seal that answers "is this the machine the plan was built
+against", so it is named in the row above rather than left as an implementation detail of the token:
+a change to the frame is a change to this control. Ten fields are hashed and each one, changed alone,
+sends the same approved statement somewhere else: `type`, `host`, `port`, `database`, `user`, the
+`connectionString` that overrides all of those when a record carries one, Trino's session `schema`,
+Oracle's `serviceName`, a MSSQL `instanceName`, and the SSH tunnel's route, which the provider
+factory rewrites `host` and `port` to before the driver ever opens. The connection's `id` and `name`
+are deliberately OUT, because a caller supplies them, and so is the password, because rotating a
+credential must not invalidate a plan built five minutes earlier. Both of the last two additions came
+from external review of the change that introduced the control, each with a colliding pair measured
+against the real module, so this list is a measured floor rather than a design intention.
+
+**What 3.6 does NOT claim: that the round trip carried nothing but the addressed object.** The
+day-one PostgreSQL unit is a multi-statement simple query, and this repository has measured itself
+unable to count the statements in a routine body: a dollar-quoted body may contain any number of
+semicolons, and no parser here can tell a statement separator from a character of the definition.
+So the event says an edit was applied at this address, with this strategy, and with this outcome.
+It does not say that one statement, and only one, reached the engine, and a reader of the log must
+not take it that way. This paragraph is where a reader of the control meets the limit, and
+`docs/BACKLOG.md` D76 is the work: it records the same fact from the destruction side, measured live,
+with what closing it would take.
 
 ## Known limits
 

@@ -1,6 +1,6 @@
 # LibreDB Studio API Documentation
 
-> **Version:** 0.14.1
+> **Version:** 0.16.0
 > **Base URL:** `https://your-domain.com` or `http://localhost:3000`
 > **Content-Type:** `application/json`
 
@@ -544,7 +544,7 @@ carries a plain statement. Four things differ from the other SQL providers:
   pins one catalog exactly as a PostgreSQL connection pins one database. Schemas inside it are the
   schema level, and every table is named `schema.table`. A statement may still name any other
   catalog in full: `SELECT * FROM other_catalog.some_schema.t` runs unchanged. A connection with no
-  catalog runs fully qualified statements fine, but `GET /api/db/schema` refuses with the reason.
+  catalog runs fully qualified statements fine, but the object reads refuse with the reason.
 - **There is no `connectionString`.** `jdbc:trino://host:port/catalog/schema` exists, but the shared
   parser does not accept it, so a connection is `host` + `port` (+ optional `database` catalog,
   `schema`, and `username`).
@@ -626,7 +626,7 @@ statement. Five things differ from the other SQL providers:
 ```
 
 **Notes:**
-- **No row count and no size are reported anywhere** - not in `GET /api/db/schema`, not in the
+- **No row count and no size are reported anywhere** - not on a listed object, not in the
   overview, and the table, index and storage panels answer `[]`. Cassandra publishes partition
   estimates (measured at 143 for a 500-row clustered table) and whole mebibytes (`1 MiB` for 19,476
   bytes), and neither is a number this API will pass on. See
@@ -691,90 +691,9 @@ Redis is a key-value store, so the `sql` field carries a Redis command instead o
 | `INFO` | `section` + `key` + `value` columns |
 
 **Notes:**
-- Schema introspection (`/api/db/schema`) uses a non-blocking `SCAN` and groups keys by prefix, presenting each prefix (e.g. `user:*`) as a "table".
+- Schema introspection (`/api/db/objects/*`) uses a non-blocking `SCAN` and groups keys by prefix, presenting each prefix (e.g. `user:*`) as a "table".
 - Monitoring/health endpoints derive their data from `INFO`, `SLOWLOG GET`, and `CLIENT LIST`.
 - Invalid JSON, a missing `command` field, or an unknown/failed Redis command returns `400 Bad Request` with code `QUERY_ERROR`.
-
----
-
-#### POST /api/db/schema
-
-Get database schema including tables, columns, indexes, and foreign keys.
-
-**Authentication:** Required
-
-**Request:**
-```json
-{
-  "id": "conn-123",
-  "name": "My Database",
-  "type": "postgres",
-  "host": "localhost",
-  "port": 5432,
-  "database": "mydb",
-  "user": "admin",
-  "password": "secret"
-}
-```
-
-**Response (200 OK):**
-```json
-[
-  {
-    "name": "users",
-    "rowCount": 1500,
-    "size": "2.4 MB",
-    "columns": [
-      {
-        "name": "id",
-        "type": "integer",
-        "nullable": false,
-        "isPrimary": true,
-        "defaultValue": "nextval('users_id_seq')"
-      },
-      {
-        "name": "email",
-        "type": "varchar(255)",
-        "nullable": false,
-        "isPrimary": false
-      },
-      {
-        "name": "created_at",
-        "type": "timestamp",
-        "nullable": true,
-        "isPrimary": false,
-        "defaultValue": "CURRENT_TIMESTAMP"
-      }
-    ],
-    "indexes": [
-      {
-        "name": "users_pkey",
-        "columns": ["id"],
-        "unique": true
-      },
-      {
-        "name": "users_email_idx",
-        "columns": ["email"],
-        "unique": true
-      }
-    ],
-    "foreignKeys": [
-      {
-        "columnName": "org_id",
-        "referencedTable": "organizations",
-        "referencedColumn": "id"
-      }
-    ]
-  }
-]
-```
-
-**Response (503 Service Unavailable):**
-```json
-{
-  "error": "Connection failed: ECONNREFUSED"
-}
-```
 
 ---
 
@@ -869,6 +788,134 @@ is not refused: its target is a session or query id that neither half describes 
 A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 
 A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
+
+#### POST /api/db/objects/edit-plan
+
+Build a plan for an edited object definition, and answer what an apply would send.
+It executes nothing and writes nothing.
+
+These two routes are the first object routes documented in this file at all.
+Their seven Phase 2 siblings under `/api/db/objects/` are not documented here yet.
+
+**Authentication:** Required.
+There is NO admin gate on either route, and the reason is measured rather than preferred: a
+`user`-role session already creates and drops routines through `POST /api/db/query`, so the role
+decides which connection may be OPENED and nothing about what may be done with it.
+A seed connection that the caller's role is not admitted to still answers `403`, unchanged, because
+both routes resolve the connection through the same seed filter every other database route uses.
+
+**Request:**
+```json
+{
+  "connection": { "id": "conn-123", "type": "postgres", "host": "localhost", "port": 5432, "database": "mydb", "user": "app" },
+  "path": ["app", "order_total(integer)"],
+  "kind": "function",
+  "partId": "definition",
+  "text": "FUNCTION app.order_total(integer) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `connection` or `connectionId` | object or string | Yes | The same connection selector every database route takes |
+| `path` | string[] | Yes | The object's path, container segments first. An empty array is refused |
+| `kind` | string | Yes | The object kind id, as the CONNECTED provider declares it |
+| `partId` | string | Yes | Which part of the definition this text is. A package has more than one |
+| `text` | string | Yes | The reader's edited text for THAT part, at most 1,000,000 characters |
+
+**Response (200 OK), a build that planned:**
+```json
+{
+  "built": true,
+  "plan": { "planVersion": 1, "planId": "...", "issuedAt": "...", "connectionFingerprint": "...", "type": "postgres", "path": ["app", "order_total(integer)"], "kind": "function", "partId": "definition", "strategy": "guarded-atomic-batch", "unit": { "medium": "statement", "steps": [{ "text": "...", "language": "pgsql", "segments": [] }] }, "session": [], "revision": { "check": "guarded", "token": "...", "basis": "pg_proc.xmin", "scope": "server" }, "consequences": [] },
+  "preimage": { "text": "...", "language": "pgsql" },
+  "planToken": "<JWS>"
+}
+```
+
+`plan.unit` is the exact artifact the apply will send, byte for byte.
+`preimage` is the definition the build READ, for the preview's left side, and it rides in the
+response rather than inside the plan: a plan carrying both would be about 12 MB inbound on the
+apply and would be silently truncated by the framework at 10,485,760 bytes.
+`planToken` seals the plan; the apply refuses a plan whose bytes do not match the token it arrives
+with.
+The plan is readable and unforgeable, which are different properties: a client may read every field
+and may not change one.
+
+**Response (200 OK), a build that REFUSED:**
+```json
+{
+  "built": false,
+  "refusal": { "refusal": "privilege", "sentence": "must be owner of function order_total", "code": "42501", "at": { "within": "none" } }
+}
+```
+
+A deliberate engine refusal is a `200` carrying a typed verdict and never a `4xx` or a `5xx`.
+The request was well formed and was carried out; what the engine said is the payload.
+
+#### POST /api/db/objects/edit-apply
+
+Send a plan issued by `edit-plan`, and answer what the engine did.
+This is the only route in this product that writes a user's database object, and it is the first
+one whose action is recorded in the audit log.
+
+**Authentication:** Required. No admin gate, for the reason stated above.
+
+**Request:**
+```json
+{
+  "connection": { "id": "conn-123", "type": "postgres" },
+  "plan": { "planVersion": 1, "planId": "..." },
+  "planToken": "<JWS>",
+  "acknowledged": ["replaces-whole-container"]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `connection` or `connectionId` | object or string | Yes | Must resolve to the SAME server the plan was built against |
+| `plan` | object | Yes | The plan `edit-plan` answered, unchanged |
+| `planToken` | string | Yes | The token `edit-plan` answered beside it |
+| `acknowledged` | string[] | Only when the plan names consequences | One entry per `plan.consequences[].loses`. The check is enforced by the SERVER |
+
+**Response (200 OK):** one arm of the outcome union, always with a `duration` in milliseconds.
+
+| `outcome` | Meaning | Also carries |
+|-----------|---------|--------------|
+| `applied` | The addressed object was replaced and nothing else was destroyed | `revision` |
+| `applied-with-collateral` | Replaced, AND something the plan warned about was destroyed | `lost`, `revision` |
+| `applied-elsewhere` | The engine accepted the text and the addressed object is not what changed | `undone`, optional `wrote` |
+| `conflict` with `conflict: "object-changed"` | The object moved between the read and the write. Nothing was executed | `current`, for the diff |
+| `conflict` with `conflict: "engine-refused-concurrent"` | Refused on concurrency, not content. Nothing changed and the same plan may be sent again | `sentence`, optional `code` |
+| `refused` | The engine refused the write. Nothing changed | `refusal` |
+| `interrupted` | The statement was sent and no readable answer came back | `committed`, `sentence` |
+
+There is NO `retryable` field on this route at any status.
+A client that retries an apply whose disposition is unknown applies twice.
+Once the provider has been called, no error escapes as an HTTP error: a throw and an unreadable
+answer both become `interrupted` with `committed: "unknown"` at `200`.
+
+**Statuses, both routes:**
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| Any DECIDED provider answer: a build that planned, a build that refused, and all seven apply outcomes | `200` | the typed union above |
+| Caller mistakes decided from the DECLARATION: undeclared kind, kind not editable, `path` not a path, missing `partId`, malformed plan, a build answering both a plan and a refusal, an unacknowledged required consequence | `400` | `{ "error": "..." }` |
+| Plan token invalid, expired, digest mismatch, wrong connection fingerprint, unknown `planVersion` | `400` | `{ "error": "...", "code": "EDIT_PLAN_INVALID" }` |
+| Body above 8,388,608 bytes, or `text` above 1,000,000 characters | `413` | `{ "error": "..." }` |
+| No session | `401` | `{ "error": "Authentication required" }` |
+| Seed connection not available for the caller's role | `403` | the existing `SeedConnectionError` body |
+| Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
+| A throw BEFORE the provider call | as `createErrorResponse` maps it | inherited |
+| Anything undeclared | `500` | `createErrorResponse`'s body |
+
+**Audit.**
+One apply emits exactly two `object_edit` events under one `correlationId`, which is `plan.planId`:
+a DECISION event with `action: "PLAN"` before the provider is called, and an OUTCOME event with
+`action` set to the plan's strategy after it.
+Neither event ever carries the statement, the command payload, the reader's text, the pre-image, the
+engine's message, the engine's code, the revision token or the plan token.
+A plan the seal refuses emits ONE event, with `reason: "object_edit_plan_invalid"`.
 
 ---
 
@@ -1258,7 +1305,7 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 ---
 
-> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `schema/list`, `schema/relations`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, `schema-snapshot`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
+> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
 
 ---
 
@@ -1296,6 +1343,7 @@ interface DatabaseConnection {
   instanceName?: string;   // MSSQL: named instance (e.g. SQLEXPRESS)
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
+  skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
   managed?: boolean;       // true = admin-controlled, read-only in UI
   seedId?: string;         // stable reference to seed config ID
   agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
@@ -1311,16 +1359,21 @@ The connection form exposes **Query Timeout (ms)** as an optional positive whole
 saved timeout refreshes its cached provider on the next request. Explicit provider options take
 precedence; the connectivity check still uses its own 10000 ms timeout.
 
-### TableSchema
+### DatabaseObject
+
+The identity half of the object surface, as `POST /api/db/objects/list` and
+`POST /api/db/objects/inventory` answer it.
 
 ```typescript
-interface TableSchema {
-  name: string;            // Table name
-  columns: ColumnSchema[]; // Column definitions
-  indexes: IndexSchema[];  // Index definitions
-  foreignKeys?: ForeignKeySchema[];
-  rowCount?: number;       // Approximate row count
-  size?: string;           // Table size (e.g., "2.4 MB")
+interface DatabaseObject {
+  path: readonly string[]; // Container segments, then the object's own identifier
+  name: string;            // Display label, NOT required to equal the last path segment
+  kind: string;            // The declared kind id this object was listed under
+  status?: string;         // Present only where the engine reports something worth acting on,
+                           // in the engine's own word: Oracle's INVALID, SQL Server's DISABLED.
+                           // Absent means ordinary, not unknown.
+  rowCount?: number;       // Relations only, and only where the engine counts
+  sizeBytes?: number;
 }
 
 interface ColumnSchema {
@@ -1420,6 +1473,7 @@ interface ActiveSession {
 | `401` | Unauthorized - Missing or invalid authentication |
 | `403` | Forbidden - Insufficient permissions, or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
 | `408` | Request Timeout - Query exceeded time limit |
+| `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound |
 | `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |
@@ -1459,6 +1513,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `INTERNAL_ERROR` | Unhandled server error (500) |
 | `NETWORK_ERROR` | Network failure |
 | `RATE_LIMITED` | Application-level rate limit exceeded (429) - see "Rate Limiting" below |
+| `EDIT_PLAN_INVALID` | An object edit plan did not verify: forged, expired, digest mismatch, wrong connection fingerprint, or an unknown `planVersion` (400). Returned by the two `/api/db/objects/edit-*` routes directly rather than through `createErrorResponse`. It is a machine-readable code and not a sentence, so a client can tell a plan that no longer verifies apart from an apply that failed and offer to rebuild the preview; no shipped UI branches on it yet |
 
 The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned
 directly by the request middleware (`src/proxy.ts`), before a request ever reaches
@@ -1588,20 +1643,15 @@ curl -X POST http://localhost:3000/api/db/query \
   }'
 ```
 
-#### Get Schema
+#### Read the objects, with their columns
 ```bash
-curl -X POST http://localhost:3000/api/db/schema \
+curl -X POST http://localhost:3000/api/db/objects/inventory \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
-    "id": "1",
-    "name": "Local PG",
-    "type": "postgres",
-    "host": "localhost",
-    "port": 5432,
-    "database": "mydb",
-    "user": "postgres",
-    "password": "postgres"
+    "connection": { "id": "1", "name": "Local PG", "type": "postgres" },
+    "kinds": ["table"],
+    "includeColumns": true
   }'
 ```
 

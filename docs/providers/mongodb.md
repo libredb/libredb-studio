@@ -36,7 +36,7 @@ accepting queries as JSON rather than SQL.
 
 | `DatabaseProvider` slot | MongoDB realisation |
 |-------------------------|---------------------|
-| "Table" (`TableSchema`) | A **collection** |
+| "Table" (the relation kind) | A **collection** |
 | "Row" | A **document** |
 | Columns | **Inferred** field types from a 100-document sample |
 | `query(sql)` | A JSON **MQL** command (`{collection, operation, …}`) |
@@ -117,7 +117,7 @@ may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
-MongoDB has no fixed schema, so `getSchema()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+MongoDB has no fixed schema, so the object surface ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
 first **100 documents** to derive field types ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)).
 Caveats baked into this approach:
@@ -285,7 +285,7 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 
 ## 6. Schema introspection
 
-`getSchema()` returns one `TableSchema` per collection:
+the object surface answers one object per collection:
 
 | Data | Source |
 |------|--------|
@@ -311,7 +311,403 @@ left **absent** rather than defaulted: no `rowCount` (a view holds no documents 
 would read as "empty") and no `size`, with `indexes: []` because the indexes its query uses belong to
 the collection underneath it.
 
+### The object surface (#789)
+
+The deleted flat reading answered one flat collection list, for the connected database only. The object
+surface answers a lazy, per-kind tree across **every** database the connection can see, through four
+methods: `listContainers`, `countObjects`, `listObjects` and `describeObject(path, kind)`.
+
+MongoDB is the **first non-SQL engine** in #789 to get one. The four methods and the model are the
+shared ones; what is different is that the catalog is a **command** rather than a query, which moves
+the seam the contract's hardest rule guards — see [below](#where-the-count-and-the-listing-could-drift).
+
+Everything in this section was measured on 2026-09-11 against a live **MongoDB 8.3.9** holding the
+committed fixture, [`docker/mongodb-init/01-object-fixture.js`](../../docker/mongodb-init/01-object-fixture.js).
+The recipe that applies it is in [§11](#11-testing), so every claim below can be re-measured rather
+than trusted.
+
+#### The declaration
+
+One container level, the database, and two kinds:
+
+| Kind | Role | Read from | Path | Declares `hasSource` |
+|---|---|---|---|---|
+| `collection` | relation, `acceptsRowWrites` | `listCollections`, every `type` that is not `view` | `[database, collection]` | No |
+| `view` | relation | `listCollections`, `type: "view"` | `[database, view]` | Yes, `json` |
+
+The `hasSource` column is [§6 Object source](#object-source-789).
+
+`acceptsRowWrites` on `collection` is the **per-kind** half and is deliberately not conjoined with
+this provider's engine-wide `supportsInlineRowEdit: false` ([§9](#9-capabilities--labels)). That flag
+is about the results grid's `UPDATE … SET`, which has no MongoDB spelling; an import into a
+collection is an ordinary `insertMany`. A view carries no such declaration: the server reports
+`info.readOnly: true` on every one, on the same call that classifies it.
+
+#### What is not declared, and why each absence is a measurement
+
+- **No `index` kind.** An index name is unique **per collection**, not per database: creating
+  `by_thing` on `app.customers` and again on `app.orders` both succeed, and creating it twice on one
+  collection is refused with *An existing index has the same name as the requested index*. So the
+  catalog does not model an index as a first-class container-level object, which is the test
+  standing ruling 4 sets. An index appears in `describeObject`'s output, where it is. The fixture
+  creates that duplicate name on purpose, so the reading stays refutable. (sqlite, Cassandra and
+  Couchbase are the three engines that do declare the kind, and each earns it the same way.)
+- **No routine kind of any shape.** `$function`, `$accumulator`, `$where` and `system.js` are all
+  deprecated as of MongoDB 8.0, `mapReduce` since 5.0, and `db.eval` was removed in 4.2. Atlas
+  Triggers and Atlas Functions are an **Atlas control-plane** feature, not a server one: the wire
+  protocol this provider speaks cannot reach them at all.
+- **No kind for an on-demand materialized view.** `$merge` and `$out` write an **ordinary
+  collection** carrying no server-side marker of where it came from, so there is nothing to list and
+  nothing that could be listed consistently.
+- **No separate `timeseries` kind**, and that one is a decision rather than an absence in the engine.
+  See the next subsection.
+
+A kind an engine does not have is simply absent, never declared and counted zero: a declared kind
+draws a folder, and a folder for something the engine cannot have is a lie the zero badge makes look
+like a fact.
+
+#### A time series collection is a collection, and the classifier says so the careful way
+
+`listCollections` answers a **third** value for `type`: beside `collection` and `view` there is
+`timeseries`, reported for a collection created with a `timeseries` option. Measured; the fixture
+creates `app.readings` precisely so it is in the data.
+
+The classifier is therefore written **"view versus everything else"** and never `type ===
+"collection"`. The wrong spelling loses such an object from the **count and the listing at once**, so
+the count would still equal the listing while an object a person created was invisible in the tree —
+the absence that passes every gate. A test names that case, and the fixture is what makes the test
+non-vacuous.
+
+It is counted and listed as a `collection` rather than under a folder of its own because everything
+the tree does with a collection it does with this one: it holds documents, `find` reads them,
+`listIndexes` answers real indexes (`sensor_1_ts_1` on the fixture's) and `collStats` answers a size
+— all measured. MongoDB's own `show collections` lists it beside the others. A third folder would
+divide a person's collections by a storage detail.
+
+#### Which databases and which namespaces are excluded
+
+The server's own three databases — `admin`, `config` and `local` — are excluded **by exact name**,
+never by prefix. Measured: databases named `configstore`, `localx` and `adminx` are all created
+without complaint, so a prefix rule would hide a database a person made. The fixture creates
+`configstore` so that spelling stays refuted rather than merely unattractive.
+
+Inside a database, the reserved namespace prefix is **`system.` with the dot**. Measured:
+`createCollection("system.mine")` is refused with *not authorized on app to execute command*, while
+`systemetrics` is created without complaint. The fixture holds `systemetrics`, so a rule written on
+the letters `system` without the dot fails a test by name. The two internal namespaces the fixture's
+own listing contains are `system.views` (created the moment a view is) and
+`system.buckets.readings` (the bucket collection behind the time series one).
+
+`listDatabases` is sent as `{ listDatabases: 1, nameOnly: true, authorizedDatabases: true }`. The
+flag is load-bearing rather than tidy: the server's default for it depends on whether the connecting
+role holds the cluster-wide `listDatabases` action, so a role granted only `read` on one database
+would otherwise be at the mercy of a default this provider never stated. Measured both ways — with
+the flag a root role still sees every database and a `read`-on-one role sees exactly its own.
+
+#### Where the count and the listing could drift
+
+The rule is that the **listing must contain exactly what the count counted**, and four SQL providers
+in this epic failed it on a first pass by letting a second `WHERE` clause drift from the first.
+
+There is no `WHERE` clause here, so the seam moves to the **classifier**. `countObjects` tallies
+`listCollections` rows by kind and `listObjects` filters the same rows by kind; written twice, those
+two decisions would be free to disagree. `mongoObjectKind()` is the one place the decision is made
+and the only reader of both the `type` field and the internal-namespace rule, and all of
+`countObjects`, `listObjects` and `describeObject` route through it over rows from one shared
+`listCollections` read. There is nothing left for the two answers to differ in.
+
+`countObjects` seeds every declared kind at `{ count: 0 }` before reading rows, so a database holding
+no views still draws a Views folder with a 0 badge instead of losing it. A refused read is a third
+state, not a zero: a role with `read` on one database answers `listCollections` on any other with
+*not authorized on `<db>` to execute command { listCollections: 1 … }*, and that sentence is carried
+to the tree verbatim as `{ unavailable }` rather than reported as an empty database. Because both
+kinds come from **one** command, a refusal is one fact about the whole database rather than the
+per-kind privilege it is on an engine with one catalog table per kind.
+
+#### What `describeObject` answers
+
+The **kind** decides, and nothing reads the name to work out what it is holding: the lookup requires
+the catalog row to classify as the kind that was asked for, so `describeObject(["app",
+"active_customers"], "collection")` is a miss rather than a view described as a collection.
+
+- **Columns** are inferred from a 100-document sample, exactly as the deleted flat reading inferred them and with
+  the same bound ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)), because
+  MongoDB stores no schema to read. This works on a view exactly as it works on a collection, which
+  is why a view is worth listing at all.
+- **Indexes** come from `listIndexes` for a collection and are **always `[]` for a view**. That is
+  measured, not defensive: `listIndexes` on a view is refused with `CommandNotSupportedOnView` (code
+  166), and the indexes its pipeline actually uses belong to the collection underneath it, so
+  claiming them here would misattribute them — the same reading [§6](#views-are-listed-and-are-asked-less)
+  already applies to the object surface.
+- **`foreignKeys`** is always `[]`, because MongoDB has no foreign key constraint at all. The same
+  measurement is behind `declaresForeignKeys: false`.
+
+A listed object carries **no `rowCount` and no `sizeBytes`**, and that is a bound rather than a gap:
+either would need `collStats` or `estimatedDocumentCount` **per collection**, one round trip each,
+and this folder is the one a person opens to see what is there. `describeObject` is where a single
+object's detail is paid for.
+
+A view's `options` arrives on the same `listCollections` call that classified it, so the Source tab
+below needs no second read. `describeObject` itself renders none of it.
+
+#### What `describeObjects` answers, and the one half this engine cannot bulk-read
+
+`describeObjects(container, kind, limit?)` is the bulk column read (#789): columns and indexes for
+every object of one kind in one database. **The two halves of an `ObjectDetail` do not have the
+same answer here**, and both answers are measurements, re-measured for this section on a
+container this task created and removed, `mongo:latest`, which reports version 8.2.12.
+
+**The columns can be bulk-read, in one aggregate per chunk.** There is no catalog of fields to
+read, so the single read samples documents; `$unionWith` samples every collection in ONE pipeline,
+one arm each, each arm bounded by the same 100-document limit the single read uses and tagging its
+rows with the collection they came from (the chain answers one flat stream, so an untagged arm
+would be unattributable). It works on a **view** and on a **time series collection** as readily as
+on an ordinary one, measured against the committed fixture.
+
+The chain is **chunked at 100 collections**, because one arm is one pipeline stage and MongoDB
+bounds a pipeline's stage count (`internalPipelineLengthLimit`, 1,000 by default): a 5,000-
+collection folder would be refused outright as one chain. Round trips grow as the folder divided by
+the chunk. The number is measured rather than picked - over a 200-collection database, one 200-arm
+aggregate took 81 ms, two 100-arm ones 67 ms and four 50-arm ones 55 ms - and 100 keeps a tenfold
+margin under the server's own ceiling.
+
+**The indexes cannot be bulk-read at all, and three separate measurements say so.**
+
+1. `$listCatalog` is the only server-side bulk index listing, and its collectionless form must run
+   against `admin` with `{aggregate: 1}`. A role holding `read` on one database - which
+   `listCollections`, `listIndexes` and every other read in this surface accept - is refused it:
+   `not authorized on admin to execute command { aggregate: 1, pipeline: [ { $listCatalog: {} } ... ] }`.
+   Using it would make this one method need a cluster privilege the other four do not.
+2. `$listCatalog` also answers the **wrong** indexes for a time series collection. It reports two
+   entries for `readings`: `app.readings`, the namespace a person addresses, carrying **no indexes
+   at all**, and `app.system.buckets.readings`, carrying `sensor_1_ts_1` under the bucket
+   collection's rewritten keys (`meta`, `control.min.ts`, `control.max.ts`). `listIndexes` on the
+   collection itself answers the index a person created, `sensor_1_ts_1` over `sensor` and `ts`.
+   The single read answers that one, so the bulk read must too.
+3. `$indexStats` needs a privilege this surface does not have. It CAN be folded into a `$unionWith`
+   sub-pipeline - measured, the server accepts it and answers the arm's index rows, which refutes
+   the `$indexStats is only valid as the first stage in a pipeline` reading of it - but a role
+   holding `read` on one database is refused it both directly and inside the chain: `not authorized
+   on app to execute command { aggregate: "customers", pipeline: [ { $indexStats: {} } ] }`. The
+   same role runs `listIndexes` on the same collection without complaint.
+
+So the index reads are **one per described object**, issued in parallel and bounded by the caller's
+`limit`. This is the one place in the seventeen providers where a per-object read survives, and it
+is still not the N+1 the inventory route removed: that was up to 5,000 **sequential** round trips
+over a whole listing. Measured over 200 collections:
+
+| Shape | Round trips | Time |
+| --- | --- | --- |
+| Sequential fan-out (a loop over `describeObject`) | 400 | 171 ms |
+| Parallel fan-out | 400 | 67 ms |
+| `$unionWith` samples plus parallel `listIndexes` (this) | 202 | 63 ms |
+
+Through the provider itself against a `bench` database of 200 collections holding 120 documents
+each: **108 ms for one `describeObjects` against 422 ms for the 200 `describeObject` calls it
+replaces.**
+
+A **view** folder pays none of the index half: a view has no indexes of its own, `listIndexes` on
+one is refused with code 166, and nothing is sent. So a view folder's bulk read really is constant
+per folder.
+
+**No kind here answers an empty batch for want of columns.** The reference implementation's fourth
+guard covers a routine, a trigger or a sequence, and MongoDB declares none. An empty folder still
+sends nothing, and no guard is written for it: with no names there are no chunks and no index
+reads, so an early return would be a branch no data can reach - a mutation deleting it failed
+nothing, which is what dead means.
+
+**One mapper, shared with the single read.** `objectDetailFrom()` builds both. Verified live: for
+every object of every kind in `app`, `oddnames` and `configstore`, the bulk read's detail is
+byte-identical to `describeObject()` for the same path.
+
+**The bound is the caller's, and there is no `limit + 1`.** That extra row exists to tell a
+saturated read from an exact one without a second count, and it is unnecessary here:
+`listCollections` answers the whole catalog in one command, so the target set is COMPLETE before
+anything is cut and the comparison is exact. The driver's cursor could not be bounded anyway -
+`listCollections` takes no limit - so the cut is applied in code after the shared sort, which makes
+a bounded read's membership `comparePaths`' rather than the server's. The bound reaches the
+expensive half: only the objects that will be returned are sampled and only their indexes are read.
+
+the object surface's silent `.slice(0, 200)` is **not** carried here. That is the reference's first "do
+not copy": an unreported bound is the defect `truncated` exists to prevent.
+
+#### Paths are derived, never indexed positionally
+
+The database segment comes from the declared `ContainerLevelSpec` whose id is `schema`, the object's
+own name is the last segment, and the expected depth comes from `containerDepth()`. MongoDB declares
+one level, so `path[0]` and `container.length !== 1` are behaviour-identical here and silently wrong
+on the two-level engines. The suite pins it anyway, by swapping a two-level declaration in through
+`getCapabilities` and driving it all the way to the database name the driver was **bound** with,
+rather than to a refusal.
+
+The one place a path is constructed rather than read is `listContainers`, which builds `[name]`.
+
+Both listings are **sorted by the path's segments**, never by `JSON.stringify(path)`. That spelling
+sorts by the escape sequence rather than by the name, and a MongoDB collection name may hold both a
+quote and a backslash: only the null byte and `$` are refused, measured. The fixture's `oddnames`
+database holds `x"a`, `x-a` and `x\a` for exactly that reason - by code point they sort `x"a` (0x22),
+`x-a` (0x2D), `x\a` (0x5C), and by `JSON.stringify` they sort `x-a`, `x"a`, `x\a`. The server's own
+order for them is the JSON one, so a provider sorting the wrong way would pass by inheriting it.
+
+`listDatabases` came back alphabetical in both live measurements and `listCollections` came back in
+two **different** orders across two fresh containers holding the same fixture, so ordering is the
+provider's own guarantee either way rather than something inherited from the server.
+
+### Object source (#789)
+
+`readObjectSource(path, kind, limit?)` answers one object's definition text.
+Everything here was measured on 2026-09-13 against a live **MongoDB 8.2.12** holding the committed
+fixture, [`docker/mongodb-init/01-object-fixture.js`](../../docker/mongodb-init/01-object-fixture.js),
+applied through the mount by the recipe in [§11](#11-testing).
+
+#### Per kind
+
+| Kind | `hasSource` | Statement | What the text IS | Monaco language |
+|---|---|---|---|---|
+| `view` | Yes | the `listCollections` call this provider already makes, reading the row's `options` | `form: complete`, `origin: rendered`: the whole definition, printed as JSON **by this product** | `json` |
+| `collection` | No | not read | see [the absence](#why-collection-declares-nothing) | not applicable |
+
+There is no second statement and no second round trip: `listCollections` answers the definition on
+the same row that classifies the object, so the source read looks at exactly the set `countObjects`
+and `listObjects` look at. The driver takes the name as a **value**, so there is no identifier
+escaper here and nothing to quote.
+
+`origin` is `rendered` and not `stored`, and that is the honest arm rather than a modest one.
+MongoDB stores no statement for a view: `options` is a BSON document, and the JSON a reader sees is
+printed by this product. Calling it `stored` would show a reconstruction as an original.
+
+#### The whole `options` document, not two fields of it
+
+The first design of this read rendered `viewOn` and `pipeline` alone. **Measured, that is
+incomplete.** A view created with a collation answers `options` carrying `collation` beside the
+other two, expanded by the server from the two fields the fixture asked for to ten:
+
+```
+db.createCollection("dark_settings", { viewOn: "settings", pipeline: [...], collation: { locale: "tr", strength: 2 } })
+```
+
+so the row comes back with `locale`, `caseLevel`, `caseFirst`, `strength`, `numericOrdering`,
+`alternate`, `maxVariable`, `normalization`, `backwards` and `version`. Rendering two fields would
+drop all of it while still calling the text `complete`. The whole `options` document is rendered
+instead, which is also exactly what `createCollection` was given. For an ordinary view `options`
+holds `viewOn` and `pipeline` and nothing else, so the common case is unchanged.
+`configstore.dark_settings` in the fixture is the view that carries the collation.
+
+#### Extended JSON, because `JSON.stringify` loses a value in silence
+
+A pipeline may hold BSON values, and `JSON.stringify` renders a regular expression as `{}`.
+Measured on the fixture's `configstore.dark_settings`, whose pipeline holds `/^th/i` and a date:
+
+| Value | `JSON.stringify` | `BSON.EJSON.stringify`, relaxed |
+|---|---|---|
+| `/^th/i` | `{}`, the pattern gone with no error anywhere | `{ "$regularExpression": { "pattern": "^th", "options": "i" } }` |
+| `new Date("2026-01-01T00:00:00Z")` | `"2026-01-01T00:00:00.000Z"` | `{ "$date": "2026-01-01T00:00:00Z" }` |
+
+So the read uses `BSON.EJSON.stringify` in **relaxed** mode. Relaxed rather than canonical because
+canonical prints every integer as `$numberInt`, which would make an ordinary pipeline unreadable to
+buy type fidelity a view definition does not turn on. For a pipeline holding no BSON value the two
+renderings are byte-identical, which is why `app.active_customers` alone cannot tell them apart and
+`configstore.dark_settings` exists.
+
+#### The refusal is per DATABASE, not per object
+
+This is unusual in this fleet and it follows from the read: both kinds come from **one**
+`listCollections`, so a caller who cannot run it cannot read any object in that database rather
+than this one. Measured with a role holding `read` on `configstore` only, asking `app`:
+
+```
+not authorized on app to execute command { listCollections: 1, filter: {}, cursor: {},
+nameOnly: false, authorizedCollections: false, lsid: { ... }, $db: "app" }
+```
+
+That sentence is carried **unprefixed** into the part's `unavailable`, exactly as `countObjects`
+carries it into `{ unavailable }`. The fixture creates the principal, so this is re-runnable rather
+than a number in a report:
+
+```bash
+# The refusal, and then the control that makes it a fact about privilege rather than the connection
+mongosh -u libredb_nolist -p libredb_nolist --authenticationDatabase admin \
+  --eval 'db.getSiblingDB("app").getCollectionInfos()'          # not authorized on app
+mongosh -u libredb_nolist -p libredb_nolist --authenticationDatabase admin \
+  --eval 'db.getSiblingDB("configstore").getCollectionInfos()'  # reads normally
+```
+
+The `lsid` in the sentence is the session id and differs per connection, which is why the suite pins
+a representative sentence and asserts the provider passes the server's own words through untouched
+rather than pinning the UUID. It is not routed through this provider's error mapping, which
+would put this product's words in front of the server's.
+
+There is a **second refusal and its sentence is OURS rather than the server's**, declared here
+rather than left for a reader to discover. When the read succeeds and the row it answered carries no
+`viewOn` and `pipeline`, MongoDB has said nothing there is anything to carry, so the part reads:
+
+```
+The listCollections row MongoDB answered for <name> in <database> carries no "viewOn" and
+"pipeline", so this <kind> has no definition to show
+```
+
+The reduced row that would produce it is real: measured, `listCollections` answers name and type
+alone for `{ nameOnly: true, authorizedCollections: true }`, which is how a caller holding
+collection-level privileges rather than a database-level `read` sees anything at all. This provider
+sends **neither flag**, so on a MongoDB server that arm is unreachable and the integration suite is
+what drives it. It exists because a catalog row is a DOCUMENT: a misspelt field name reads as
+`undefined` rather than failing to compile, and an unguarded render would put `{}` in a reader's
+editor as though it were the definition.
+
+#### A transport failure raises, and is never printed as the engine's refusal
+
+A refusal carries the sentence **the server said**. When nobody answered at all there is no such
+sentence, so the read raises a `ConnectionError` naming the object and the database rather than
+answering a document. Measured against **mongodb 7.6.0** and MongoDB 8.2.12, from a container
+created for the measurement:
+
+| What happened | `error.name` | Prototype chain | Message | Treated as |
+|---|---|---|---|---|
+| the server refused the command | `MongoServerError` | `MongoServerError < MongoError < Error` | `not authorized on app to execute command { listCollections: 1, ... }` (`code: 13`, `codeName: Unauthorized`) | a refusal part |
+| nothing listening on the port | `MongoServerSelectionError` | `MongoServerSelectionError < MongoSystemError < MongoError < Error` | `connect ECONNREFUSED 127.0.0.1:27999` | raises |
+| unroutable host | `MongoServerSelectionError` | as above | `Socket 'connect' timed out after 1502ms (connectTimeoutMS: 1500)` | raises |
+| client closed underneath the read | `MongoNotConnectedError` | `MongoNotConnectedError < MongoAPIError < MongoDriverError < MongoError < Error` | `Client must be connected before running operations` | raises |
+
+The test is the **name** rather than `instanceof`, because the integration suite replaces the whole
+driver module and an `instanceof` against its export would be `instanceof undefined` there. The same
+rule is written on the Redis read, which keys on `ReplyError`.
+
+This is scoped to the source read. `countObjects` still reports **any** failed `listCollections` as
+`{ unavailable }` on every kind, which is the Phase 1 behaviour of the whole fleet rather than
+something measured here; a badge is a weaker surface than an editor pane, and changing it is a
+fleet-wide decision rather than one provider's.
+
+#### The language comes from the declaration, and a declaration missing it raises
+
+The part's `language` is `view`'s declared `sourceLanguage` and is never defaulted. A kind that
+declared `hasSource` and no `sourceLanguage` would raise here rather than be answered `json`, so a
+Source tab can never open in a Monaco mode no declaration asked for.
+
+#### Absence raises
+
+A view simply **not being in the listing** is absence on this engine. There is no error to carry, so
+`readObjectSource(["app", "no_such_view"], "view")` raises a `QueryError` naming the segment rather
+than answering a refusal part, which would invent an engine sentence that was never said. The kind
+decides the match exactly as it does in `describeObject`, so asking for a view by the name of a
+collection is a miss rather than a collection rendered as a view.
+
+#### Why `collection` declares nothing
+
+Of the three absences, this is the second: MongoDB publishes something, and this product judges it
+is not a definition. A collection's `options` is a **property sheet**, a validator, a capped size or a
+time series spec, rather than a definition anybody authored, and measured on 8.2.12 an **ordinary
+collection's `options` is `{}`**, so a Source tab on that kind would open on nothing for the common
+case. A tab that can never fill is worse than no tab. What a collection's options do carry is
+reachable through `describeObject`, which is where an object's properties belong.
+
 ---
+
+### Object edit (#789)
+
+This engine is a REFUSAL because it was NOT PROBED, and this section says so rather than implying a measurement.
+The one question an editable `view` turns on, whether `collMod` preserves a view's collation when it rewrites the pipeline, was not run in either wave of #789.
+This phase declares a kind editable only where a failure cannot lose the object and a success destroys nothing the user was not shown, and an unprobed engine cannot be shown to satisfy either half, so the declaration is withheld rather than guessed.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
 
 ## 7. Monitoring & health
 
@@ -529,6 +925,8 @@ request here.
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `27017` |
 | `schemaRefreshPattern` | `"operation"\s*:\s*"(insert\|delete\|update)` |
+| `containerLevels` | one level, `{ id: 'schema', label: 'Database' }` — the object surface's container ([§6](#the-object-surface-789)) |
+| `objectKinds` | `collection` (relation, `acceptsRowWrites`) and `view` (relation). No `index`, no routine kind, no `timeseries` kind; each absence is measured in [§6](#what-is-not-declared-and-why-each-absence-is-a-measurement) |
 
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections
 after inserts/updates/deletes.
@@ -589,10 +987,42 @@ serialization, schema inference, monitoring, and maintenance.
 ### Coverage
 
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, every `query` operation
-(find/aggregate/count/distinct/insert/update/delete), `getSchema` inference, health, maintenance,
+(find/aggregate/count/distinct/insert/update/delete), column inference, health, maintenance,
 overview, performance, slow queries, active sessions, table/index/storage stats, **BSON
 serialization** (ObjectId/Binary/Decimal128/Date/nested), `getMonitoringData`, and **every `ssl.mode`
 branch** asserted against the options object the `MongoClient` constructor received.
+
+### The object-surface fixture
+
+[`docker/mongodb-init/01-object-fixture.js`](../../docker/mongodb-init/01-object-fixture.js) is the
+database the object-surface tests reason about, and it is a **committed deliverable** rather than
+scaffolding: a live measurement nobody can re-run is not evidence. It is mounted in
+[`database-compose.yml`](../../database-compose.yml) at `/docker-entrypoint-initdb.d`, which the
+`mongo` image runs through `mongosh` **once, on a fresh data directory only** — an already
+initialized container has to be recreated before an edit takes effect.
+
+```bash
+# Fresh container with the fixture applied through the mount
+docker compose -f database-compose.yml up -d mongodb
+docker logs libredb-mongodb 2>&1 | grep 'libredb object fixture applied'
+
+# Or against a container that is already initialized, without recreating it
+docker cp docker/mongodb-init/01-object-fixture.js <container>:/tmp/01-object-fixture.js
+docker exec <container> mongosh -u <user> -p <password> --quiet --file /tmp/01-object-fixture.js
+
+# What it builds: databases `app`, `configstore` and `oddnames`
+#   app.customers, app.orders, app.systemetrics   collections
+#   app.readings                                  a TIME SERIES collection (type: "timeseries")
+#   app.active_customers                          a view on app.customers
+#   by_thing                                      the SAME index name on two collections
+#   configstore.settings                          a database whose name starts with "config"
+#   configstore.dark_settings                     a view with a collation and BSON in its pipeline
+#   libredb_nolist                                a user with `read` on configstore and nothing else
+#   oddnames.{x"a, x-a, x\a}                      names that sort differently under JSON escaping
+```
+
+Connect the provider against the `app` database. Every object above exists to make one claim about
+the engine re-measurable; [§6](#the-object-surface-789) says which claim each one carries.
 
 ```bash
 bun test tests/integration/db/mongodb-provider.test.ts   # just this file
@@ -619,7 +1049,8 @@ await provider.connect();
 const res = await provider.query(JSON.stringify({
   collection: 'users', operation: 'find', filter: { active: true }, options: { limit: 50 },
 }));
-const schema = await provider.getSchema();   // collections + inferred fields
+const objects = await provider.listObjects(container, 'table');
+const { details } = await provider.describeObjects(container, 'table');
 await provider.disconnect();
 ```
 
@@ -677,10 +1108,12 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **The `unlimited` query option is ignored.** `prepareQuery()` always returns `limit:
   options.limit || 100`; combined with the route's `hasMore = rows.length === prepared.limit`, an
   "unlimited" request can report an incorrect `hasMore`.
-- **`getSchema()` issues serial round-trips** — up to ~4 calls (count + `collStats` + 100-doc sample
-  + `indexes()`) per collection, across up to 200 collections, with no batching/timeout; the schema
-  panel can be slow on a large or remote/loaded cluster. A view costs one call (the sample), since
-  the other three are the ones MongoDB refuses on a view ([§6](#6-schema-introspection)).
+- **A folder's columns are SAMPLED, and the sample is bounded per collection.** `describeObjects`
+  reads a whole container-and-kind folder in one `$unionWith` chain rather than one call per
+  collection, chunked at `SAMPLE_CHUNK_SIZE = 100` collections per pipeline so a wide folder cannot
+  outgrow MongoDB's own pipeline-length ceiling. So the round trips grow as the folder divided by
+  100, not with it. What the read still cannot tell you is a field no sampled document carried
+  ([§6](#6-schema-introspection)).
 
 ---
 

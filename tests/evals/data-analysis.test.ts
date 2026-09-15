@@ -162,35 +162,54 @@ describe("a run whose present_answer was REFUSED is still asked to present", () 
   });
 });
 
-describe("a run that reports having read nothing is left alone", () => {
+describe("a run that reports having read nothing is told to read", () => {
   /*
-    The empty arm of the present-before-report check, and the measurement that closed it.
+    The empty arm of the present-before-report check, and the second measurement of it.
 
-    Sweeping this cell across ten models turned up three that lost `no-answer` without ever
-    reading the data, each arriving differently: one drafted three statements and had all three
-    refused by the database, one read only the catalog, one called nothing at all. A sentence was
-    written for them — "you have read none" —
-    and measured on all three. Not one recovered: their runs lose either way, relabelled
-    `no-report` instead of `no-answer`.
+    The FIRST measurement deleted a sentence. Sweeping this cell across ten models turned up three
+    that lost `no-answer` without ever reading the data, each arriving differently: one drafted
+    three statements and had all three refused by the database, one read only the catalog, one
+    called nothing at all. A sentence was written for them - "you have read none" - and measured on
+    all three. Not one recovered: their runs lost either way, relabelled `no-report` instead of
+    `no-answer`. So the sentence went, on the rule that an unearned behaviour is what
+    `models/profile.ts` exists to refuse.
 
-    So the sentence and its switch are gone rather than kept switched off. An unearned behaviour
-    is the thing `models/profile.ts` exists to refuse, and this test is what keeps it from
-    quietly coming back: a run that read nothing is not held, and its report lands.
+    The second measurement found what the first could not see. The sentence names `run_read_query`,
+    and by the time a run hears it that tool is GONE: `remindToReport` narrows, and the narrowed set
+    for this workflow was `compose_report` plus `present_answer`. So the sentence was telling every
+    one of those three runs to call a tool it no longer held - the #350/#356 defect, arriving from
+    the drive itself - and of course none of them recovered.
+
+    Measured on `mistral-small3.2:24b`, whose analyze cell read 0/5 across nine rolls. With the
+    sentence alone it stayed 0/5, relabelled exactly as the first measurement said it would be. With
+    the narrowing corrected so a run that holds nothing presentable keeps the tool that would read,
+    the same cell reads 3/5 and the ledger shows why: three catalog reads, the hold, and then
+    `run_read_query` - the call the model had been saying it wanted to make.
+
+    So the sentence is back, and this test is what keeps the pair honest: the hold happens, and the
+    tool it names is in the run's hands when it lands.
   */
-  test("the report is not held, because no measurement earned a hold there", async () => {
+  test("the report is held, and the tool the notice names is still in the run's hands", async () => {
     const run = await open({ autoExecute: true });
 
     const drive = await run.drive([
       // The schema is the catalog, not the data: the shape two of the three models hit.
       callsTool("inspect_schema", {}, "call_schema"),
       reportOn("The north region brought in the most revenue."),
+      // What the hold buys, and what it could not buy before: the run goes and reads.
+      READS,
+      presents({ kind: "table" }),
+      // Padded past what the assertions need: every notice this arc delivers buys the run a turn,
+      // and a script that runs out is reported as the drive dying rather than as the run ending.
+      reportOn("The north region brought in the most revenue."),
+      reportOn("The north region brought in the most revenue."),
+      reportOn("The north region brought in the most revenue."),
+      reportOn("The north region brought in the most revenue."),
     ]);
 
-    expect(drive.kinds).not.toContain("call-held");
-    expect(drive.kinds).toContain("report-composed");
-    // And it scores nothing, which is the honest outcome: an analysis that read no data has no
-    // answer to present, and no sentence this server writes changed that on any of the three.
-    expect(drive.verdict.outcome).toBe("unanswered");
+    expect(drive.kinds).toContain("call-held");
+    expect(drive.kinds).toContain("statement-drafted");
+    expect(drive.kinds.indexOf("call-held")).toBeLessThan(drive.kinds.indexOf("statement-drafted"));
   });
 });
 

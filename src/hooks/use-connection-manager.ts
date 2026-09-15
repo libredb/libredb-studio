@@ -2,7 +2,11 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import type { DatabaseConnection, TableSchema, TableRelations } from "@/lib/types";
+import type { DatabaseConnection } from "@/lib/types";
+import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { relationKindIds } from "@/lib/db/object-kinds";
+import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import { useReadGeneration } from "@/hooks/use-read-generation";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
@@ -30,7 +34,7 @@ export function useConnectionManager(storageReady = false) {
    * question a run has to answer before it may persist a bare `seed:<id>`.
    */
   const [servedSeeds, setServedSeeds] = useState<ServedSeeds>(NO_SERVED_SEEDS);
-  const [schema, setSchema] = useState<TableSchema[]>([]);
+  const [schema, setSchema] = useState<readonly DetailedObject[]>([]);
   /**
    * Why the object browser is empty, in the engine's own words, or null when it is
    * empty because the database really has nothing in it.
@@ -44,71 +48,204 @@ export function useConnectionManager(storageReady = false) {
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [pulseState, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
+  /**
+   * The connection whose deferred catalog read the reader has explicitly asked for, by
+   * id. Null means nobody has asked for any, which is where a session starts.
+   */
+  const [scanRequested, setScanRequested] = useState<string | null>(null);
 
   const { toast } = useToast();
 
-  // Fetch schema for a connection — two phases so a slow/failing stats query
-  // never blocks the table list:
-  //   1. /api/db/schema/list      → tables + columns + PKs (fast)  → render tree
-  //   2. /api/db/schema/relations → foreign keys + indexes (heavy) → async merge
-  const fetchSchema = useCallback(
+  /**
+   * Which catalog read is the CURRENT one (#789 review, Minor 8).
+   *
+   * Stated once in `useReadGeneration` and used by both shells: the embedded adapter had the
+   * same race and shipped without the guard, because the rule lived inside this hook rather
+   * than beside both of its readers. What it costs, and why a counter rather than an abort
+   * signal, is written there.
+   */
+  const reads = useReadGeneration();
+
+  /*
+    One read of the object surface, and it is the only catalog reading this hook does (#789).
+
+    It was three requests until the flat schema reading was deleted: `/api/db/schema/list` for
+    names and columns, `/api/db/objects/inventory` for the kind and the address, and
+    `/api/db/schema/relations` for foreign keys and indexes, with a join on the display NAME
+    holding the first two together. That join is gone with the reading it existed for, and so is
+    every defect it carried: a name containing a dot lost its columns, a bare `orders` answered to
+    every `orders` on the server, and an object the flat read never named could not be tagged at
+    all.
+
+    `/api/db/provider-meta` still comes first, and it is the cheapest read in the app: it
+    constructs the provider and reads its capabilities WITHOUT opening a connection, so the extra
+    request costs no socket, no pool client and no catalog statement. Its answer decides which
+    kinds are asked for.
+
+    ONLY THE RELATION KINDS ARE ASKED FOR. Measured against dvdrental on PostgreSQL 18 while the
+    join still existed: 7 listings returning 59 objects for every kind against 3 listings
+    returning 22 for the relation kinds, per container, on every connection select and every
+    DDL-triggered refresh (`use-query-execution.ts`). The consumers of this list draw rows,
+    columns and foreign keys, which is what `role: "relation"` declares; a routine or a trigger in
+    it would be a row the diagram and the import target cannot use. The kinds come from the
+    provider`s own declaration and never from a list written here.
+
+    Unguarded on purpose: `fetchSchema` below is the guarded entry point every caller uses, and
+    `loadObjects` is the one call that is allowed past the guard.
+  */
+  const readSchema = useCallback(
     async (conn: DatabaseConnection) => {
+      /** Whether this read is still the one on screen. Every write below asks first. */
+      const isCurrent = reads.begin();
       setIsLoadingSchema(true);
 
-      const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : conn; // bare conn for backward compat with schema route
-      const init = (path: string): [string, RequestInit] => [
+      const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
+      const init = (path: string, body: unknown = payload): [string, RequestInit] => [
         path,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ];
 
-      // Phase 1 — structural list (blocks; this is what the explorer needs)
       try {
-        const response = await appFetch(...init("/api/db/schema/list"));
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to fetch schema");
+        const metaRes = await appFetch(...init("/api/db/provider-meta"));
+        if (!metaRes.ok) {
+          const body = await metaRes.json().catch(() => ({}));
+          throw new Error(body.error || `The provider metadata could not be read (${metaRes.status})`);
         }
-        const list: TableSchema[] = await response.json();
-        setSchema(list);
+        const { capabilities } = (await metaRes.json()) as { capabilities: ProviderCapabilities };
+        const kinds = relationKindIds(capabilities);
+        // A true statement about the engine rather than a failure: nothing declared a kind whose
+        // rows this list renders, so there is nothing to ask for and nothing to show. It is not
+        // reported as an error, because no reading failed.
+        if (kinds.length === 0) {
+          if (isCurrent()) {
+            setSchema([]);
+            setSchemaError(null);
+          }
+          return;
+        }
+
+        const objectsRes = await appFetch(
+          ...init("/api/db/objects/inventory", { ...payload, kinds, includeColumns: true }),
+        );
+        if (!objectsRes.ok) {
+          const body = await objectsRes.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to read the database objects");
+        }
+        const { objects, details, truncated } = (await objectsRes.json()) as {
+          objects?: DatabaseObject[];
+          details?: ObjectDetail[];
+          truncated?: { limit: number; reason: string };
+        };
+        if (!Array.isArray(objects)) throw new Error("The object inventory answered a body this list cannot render");
+        if (!isCurrent()) return;
+        // A saturated inventory leaves its tail out of the list entirely, and an object nobody
+        // was shown reads as an object the database does not hold. Stating it in the log is the
+        // weaker half of the answer: a surface a READER can see is still owed and is tracked on
+        // issue #789, which is what this cites now. The path it used to cite is git-ignored, so
+        // the citation reached every clone and the published package pointing at nothing.
+        if (truncated !== undefined) {
+          logger.warn("Object inventory truncated; objects beyond the limit are not listed", {
+            route: "use-connection-manager",
+            limit: truncated.limit,
+            reason: truncated.reason,
+          });
+        }
+        setSchema(detailedObjects(objects, details ?? []));
         setSchemaError(null);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        // A read the reader has moved on from reports nothing at all, toast included: the
+        // failure belongs to a connection that is no longer on screen, and clearing the
+        // list or naming an error here would blame the CURRENT connection for a read that
+        // was never issued against it.
+        if (!isCurrent()) return;
         // Nothing read for THIS connection, so nothing may stay on screen as its
-        // tables — the previous connection's list is not evidence about this one.
+        // objects - the previous connection's list is not evidence about this one.
         setSchema([]);
         setSchemaError(errorMessage);
         toast({ title: "Schema Error", description: errorMessage, variant: "destructive" });
-        return; // finally still clears the loading flag; skip relations
       } finally {
-        setIsLoadingSchema(false);
-      }
-
-      // Phase 2 — relationships + indexes (best-effort; never breaks the list)
-      try {
-        const relRes = await appFetch(...init("/api/db/schema/relations"));
-        if (!relRes.ok) {
-          const errorData = await relRes.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to fetch schema relations");
-        }
-        const relations: TableRelations[] = await relRes.json();
-        const byName = new Map(relations.map((r) => [r.name, r]));
-        setSchema((prev) =>
-          prev.map((t) => {
-            const r = byName.get(t.name);
-            return r ? { ...t, foreignKeys: r.foreignKeys, indexes: r.indexes } : t;
-          }),
-        );
-      } catch (error) {
-        // Foreign keys / indexes are non-essential for browsing — log and move on.
-        logger.error("Failed to load schema relations (FK/indexes); table list unaffected", error, {
-          route: "use-connection-manager",
-        });
+        // Only the current read owns the flag; a superseded one clearing it would report
+        // the newer read as finished while it is still in flight.
+        if (isCurrent()) setIsLoadingSchema(false);
       }
     },
-    [toast],
+    [reads, toast],
   );
 
-  // Memoized derived values
+  /**
+   * Whether THIS connection's catalog reads are deferred right now (#765).
+   *
+   * One rule with one reader, deliberately: the two shells and the statement-refresh
+   * path all reach the catalog through `fetchSchema`, and a guard written at each call
+   * site is three copies of a rule that only has to be wrong in one of them to make the
+   * escape hatch read the catalog anyway.
+   *
+   * The reader's request is held as the connection's ID rather than as a boolean, and
+   * the answer is DERIVED from it. A boolean would leave the NEXT deferred connection
+   * already loaded, and clearing it in an effect is both a frame late and an error under
+   * `react/set-state-in-effect`.
+   */
+  const scanDeferred = useCallback(
+    (conn: DatabaseConnection) => conn.skipObjectScan === true && scanRequested !== conn.id,
+    [scanRequested],
+  );
+
+  const fetchSchema = useCallback(
+    async (conn: DatabaseConnection) => {
+      if (scanDeferred(conn)) {
+        // This supersedes any read in flight, exactly as a read does (Minor 8): the reader
+        // has moved to a connection that reads NOTHING, so an answer still on its way for the
+        // previous one must not land under this connection's name.
+        reads.supersede();
+        // Nothing was read for THIS connection, so nothing may stay on screen or in the AI
+        // prompt as its objects. `readSchema` is the only writer of these two, so returning
+        // without clearing them leaves the PREVIOUS connection's tables under this
+        // connection's name - D31 again (see `readSchema`'s own catch), and the grounding
+        // failure #414 measured, since `schemaContext` is what the AI panels and the agent
+        // rail are handed.
+        setSchema([]);
+        setSchemaError(null);
+        // The superseded read will not clear this: its own `finally` asks whether it is still
+        // current and it is not. Nothing is being read here, so a spinner would report a read
+        // that is never going to answer.
+        setIsLoadingSchema(false);
+        return;
+      }
+      await readSchema(conn);
+    },
+    [readSchema, reads, scanDeferred],
+  );
+
+  /**
+   * Read what opening this connection would have read, because the reader asked.
+   *
+   * It records the request against the connection's id before reading, so the tree's own
+   * root read is released by the same press: the panel that offers this action is
+   * rendered from `objectScanDeferred`.
+   */
+  const loadObjects = useCallback(() => {
+    const conn = activeConnection;
+    if (conn === null) return;
+    setScanRequested(conn.id);
+    void readSchema(conn);
+  }, [activeConnection, readSchema]);
+
+  /**
+   * The schema as the AI panels and the agent rail are handed it.
+   *
+   * MEASURED after the object surface was joined in, because the review asked what the two
+   * new fields cost the prompt (#789). Against the live PostgreSQL 18 `dvdrental` database,
+   * 15 objects with their columns, indexes and foreign keys: 13,179 bytes before, 13,825
+   * after. That is 646 bytes, +4.9 percent, roughly 160 tokens, and it is a per-OBJECT
+   * constant of about 43 bytes rather than anything that scales with columns, so a 500-object
+   * schema pays about 21 KB on a serialisation already over 400 KB. Both fields stay: `path`
+   * is the only thing in here that ADDRESSES an object, which is what a model otherwise
+   * guesses at when it qualifies a name (#414), and `kind` is what stops it drafting an
+   * INSERT against a view or a routine. A prompt that is 5 percent larger and says what its
+   * objects are is the better trade, and the number is recorded so the next reader does not
+   * have to measure it again.
+   */
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
   // Initialize connections once storage sync is ready
@@ -327,6 +464,12 @@ export function useConnectionManager(storageReady = false) {
     // there is nothing to report on, and the render already knows that.
     connectionPulse: activeConnection === null ? null : pulseState,
     fetchSchema,
+    /**
+     * Whether the active connection is holding its catalog reads back. False with no
+     * active connection: there is nothing to defer, not a deferral.
+     */
+    objectScanDeferred: activeConnection !== null && scanDeferred(activeConnection),
+    loadObjects,
     schemaContext,
   };
 }

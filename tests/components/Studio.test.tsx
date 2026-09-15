@@ -15,6 +15,7 @@ setupFramerMotionMock();
 
 // ---- Module-level prop capture for child components ----
 let capturedSidebarProps: Record<string, unknown> = {};
+let capturedQueryExecParams: Record<string, unknown> = {};
 let capturedBottomPanelProps: Record<string, unknown> = {};
 let capturedQueryToolbarProps: Record<string, unknown> = {};
 let capturedConnectionModalProps: Record<string, unknown> = {};
@@ -27,6 +28,11 @@ let capturedConnectionsListProps: Record<string, unknown> = {};
 let capturedQueryEditorProps: Record<string, unknown> = {};
 let capturedMobileNavProps: Record<string, unknown> = {};
 let capturedAgentRailProps: Record<string, unknown> = {};
+// The three modals the row menu opens. What they were HANDED is the whole of Task 35: the
+// shell used to hand them a label and resolve it with a find-by-name (#789).
+let capturedProfilerProps: Record<string, unknown> = {};
+let capturedCodeGenProps: Record<string, unknown> = {};
+let capturedTestDataProps: Record<string, unknown> = {};
 let originalFetch: typeof globalThis.fetch;
 let originalMatchMedia: typeof window.matchMedia;
 
@@ -39,6 +45,7 @@ const mockSetConnections = mock(() => {});
 const mockSetActiveConnection = mock(() => {});
 const mockSetSchema = mock(() => {});
 const mockFetchSchema = mock(() => {});
+const mockLoadObjects = mock(() => {});
 // Tab Manager
 const mockSetTabs = mock(() => {});
 const mockUpdateCurrentTab = mock(() => {});
@@ -63,7 +70,11 @@ const mockHandleCellChange = mock(() => {});
 const mockHandleApplyChanges = mock(() => {});
 const mockHandleDiscardChanges = mock(() => {});
 // Toast
-const mockToast = mock(() => {});
+const mockToast = mock((_params?: unknown) => {});
+// Named rather than inline in the module mock below, because one test turns masking ON
+// for the length of that test: an inline `mock(() => false)` has no handle to do it.
+const mockShouldMask = mock(() => false);
+const mockApplyMaskingToRows = mock((rows: unknown) => rows);
 // Storage
 const mockStorageSaveConnection = mock(() => {});
 const mockStorageGetConnections = mock(() => [] as unknown[]);
@@ -108,6 +119,8 @@ mock.module("@/hooks/use-connection-manager", () => ({
     setActiveConnection: mockSetActiveConnection,
     setSchema: mockSetSchema,
     fetchSchema: mockFetchSchema,
+    objectScanDeferred: false,
+    loadObjects: mockLoadObjects,
     ...connMgrOverride,
   })),
 }));
@@ -171,7 +184,7 @@ mock.module("@/hooks/use-transaction-control", () => ({
 }));
 
 mock.module("@/hooks/use-query-execution", () => ({
-  useQueryExecution: mock(() => ({
+  useQueryExecution: mock((params: Record<string, unknown>) => ({
     bottomPanelMode: "results",
     setBottomPanelMode: mockSetBottomPanelMode,
     historyKey: 0,
@@ -185,7 +198,7 @@ mock.module("@/hooks/use-query-execution", () => ({
     setUnlimitedWarningOpen: mock(() => {}),
     handleUnlimitedQuery: mockHandleUnlimitedQuery,
     handleLoadMore: mockHandleLoadMore,
-    ...queryExecOverride,
+    ...((capturedQueryExecParams = params), queryExecOverride),
   })),
 }));
 
@@ -239,10 +252,10 @@ mock.module("@/lib/data-masking", () => ({
     },
   })),
   saveMaskingConfig: mockSaveMaskingConfig,
-  shouldMask: mock(() => false),
+  shouldMask: mockShouldMask,
   canToggleMasking: mock(() => true),
   detectSensitiveColumnsFromConfig: mock(() => new Set()),
-  applyMaskingToRows: mock((rows: unknown) => rows),
+  applyMaskingToRows: mockApplyMaskingToRows,
 }));
 
 // ---- Mock child components ----
@@ -365,6 +378,7 @@ mock.module("@/components/DataProfiler", () => ({
   DataProfiler: (props: { isOpen?: boolean }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedProfilerProps = props;
     return props.isOpen ? React.createElement("div", { "data-testid": "dataprofiler" }, "DataProfiler") : null;
   },
 }));
@@ -373,6 +387,7 @@ mock.module("@/components/CodeGenerator", () => ({
   CodeGenerator: (props: { isOpen?: boolean }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedCodeGenProps = props;
     return props.isOpen ? React.createElement("div", { "data-testid": "codegenerator" }, "CodeGenerator") : null;
   },
 }));
@@ -381,6 +396,7 @@ mock.module("@/components/TestDataGenerator", () => ({
   TestDataGenerator: (props: { isOpen?: boolean }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedTestDataProps = props;
     return props.isOpen
       ? React.createElement("div", { "data-testid": "testdatagenerator" }, "TestDataGenerator")
       : null;
@@ -467,6 +483,8 @@ mock.module("@/components/ui/resizable", () => {
 
 const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseObject } from "@/lib/db/types";
+import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 
 // =============================================================================
 // Test data
@@ -513,6 +531,9 @@ describe("Studio", () => {
     capturedQueryEditorProps = {};
     capturedMobileNavProps = {};
     capturedAgentRailProps = {};
+    capturedProfilerProps = {};
+    capturedCodeGenProps = {};
+    capturedTestDataProps = {};
 
     // Reset overrides
     connMgrOverride = {};
@@ -556,6 +577,10 @@ describe("Studio", () => {
     mockStorageDeleteConnection.mockClear();
     mockStorageSaveQuery.mockClear();
     mockSaveMaskingConfig.mockClear();
+    // Set rather than restored: one test turns masking on, and `mockRestore` in bun
+    // drops the implementation entirely instead of returning it to this default.
+    mockShouldMask.mockImplementation(() => false);
+    mockApplyMaskingToRows.mockImplementation((rows: unknown) => rows);
     mockCreateObjectURL.mockClear();
     mockRevokeObjectURL.mockClear();
     mockRouterPush.mockClear();
@@ -703,26 +728,41 @@ describe("Studio", () => {
   // =========================================================================
 
   // --- openMaintenance ---
+  //
+  // Reached here through the mobile schema tab, which still renders the flat explorer
+  // (#789). The desktop sidebar reaches the same handler through the object tree's row
+  // menu, which is asserted further down under `objectActions` (U22).
+  function openSchemaTab(): void {
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+  }
+
   test("openMaintenance navigates to admin operations when admin", () => {
+    connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
-    const fn = capturedSidebarProps.onOpenMaintenance as () => void;
+    openSchemaTab();
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as () => void;
     act(() => fn());
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
 
-  // The Explorer's row items call this with the row's name; it rides the admin
-  // route's query string so the Operations tab lands on that row (#459).
-  test("openMaintenance carries the named row to the operations tab", () => {
+  // The Explorer's row items call this with the row's ADDRESS; it rides the admin route's
+  // query string, one `path` parameter per segment, so the Operations tab lands on that row
+  // (#459) and a segment with a space, a dot or a slash survives the trip (#789).
+  test("openMaintenance carries the named row's address to the operations tab", () => {
+    connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
-    const fn = capturedSidebarProps.onOpenMaintenance as (tab?: string, table?: string) => void;
-    act(() => fn("tables", "order items"));
-    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order%20items");
+    openSchemaTab();
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as (tab?: string, path?: readonly string[]) => void;
+    act(() => fn("tables", ["sales.2026", "order items"]));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=sales.2026&path=order+items");
   });
 
   test("openMaintenance navigates to monitoring when not admin", () => {
     authOverride = { isAdmin: false };
+    connMgrOverride = { activeConnection: pgConn };
     render(<Studio />);
-    const fn = capturedSidebarProps.onOpenMaintenance as () => void;
+    openSchemaTab();
+    const fn = capturedSchemaExplorerProps.onOpenMaintenance as () => void;
     act(() => fn());
     expect(mockRouterPush).toHaveBeenCalledWith("/monitoring");
   });
@@ -745,6 +785,24 @@ describe("Studio", () => {
     const onSave = capturedSaveQueryModalProps.onSave as (name: string, desc: string, tags: string[]) => void;
     act(() => onSave("Noop", "", []));
     expect(mockStorageSaveQuery).not.toHaveBeenCalled();
+  });
+
+  /**
+   * MAJOR 1, #789. The wire between the two halves that are pinned separately: the DDL
+   * detection in `use-query-execution` calls `onObjectsChanged`, and the object tree acts on a
+   * token it has not seen before. Studio is the only thing that joins them.
+   */
+  test("a catalog-changing statement bumps the token the sidebar hands the tree", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+
+    const before = capturedSidebarProps.objectRefreshToken as number;
+    expect(typeof before).toBe("number");
+
+    const objectsChanged = capturedQueryExecParams.onObjectsChanged as () => void;
+    act(() => objectsChanged());
+
+    expect(capturedSidebarProps.objectRefreshToken).toBe(before + 1);
   });
 
   // --- handleDeleteConnection ---
@@ -802,12 +860,186 @@ describe("Studio", () => {
     expect(dialog.queryByText("Delete connection?")).toBeNull();
   });
 
-  // --- onTableClick ---
-  test("onTableClick delegates to handleTableClick with executeQuery", () => {
+  // --- onObjectClick ---
+  test("a relation activated in the object tree opens and runs its tab", () => {
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      ],
+    };
     render(<Studio />);
-    const fn = capturedSidebarProps.onTableClick as (name: string) => void;
-    act(() => fn("users"));
-    expect(mockHandleTableClick).toHaveBeenCalledWith("users", mockExecuteQuery);
+    const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+    act(() => fn({ path: ["app", "users"], name: "users", kind: "table" }));
+    // The PATH and not the name: the generator qualifies from it, so an object outside
+    // the session default container generates a statement the server can resolve (#789).
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "users"], mockExecuteQuery);
+  });
+
+  /**
+   * The tree lists every declared kind, and the click EXECUTES what it generates, so a
+   * routine reaching `handleTableClick` would run `SELECT * FROM order_total(integer)`
+   * against the database. The gate reads the kind's declared ROLE, never its id.
+   */
+  // The gate reads `role`, not the kind id: a view is a relation on every engine that
+  // declares one, and `kind === "table"` would refuse it while passing the two tests
+  // either side of this one.
+  test("a view activated in the object tree opens and runs its tab", () => {
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+    act(() => fn({ path: ["app", "order_summary"], name: "order_summary", kind: "view" }));
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "order_summary"], mockExecuteQuery);
+  });
+
+  test("a routine activated in the object tree runs nothing", () => {
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+    act(() => fn({ path: ["app", "order_total(integer)"], name: "order_total", kind: "function" }));
+    expect(mockHandleTableClick).not.toHaveBeenCalled();
+  });
+
+  // --- objectActions: the row menu's six, restored (U22, #789) ---
+  //
+  // WHICH of them a row is offered is the provider's declaration and is asserted against
+  // the real tree in `tests/components/object-tree/row-menu.test.tsx`. What is asserted
+  // here is the other half: that this shell can actually perform each one, since that is
+  // what was lost when the sidebar stopped rendering the explorer.
+  const usersObject: DatabaseObject = { path: ["app", "users"], name: "users", kind: "table" };
+
+  function sidebarActions(): TreeRowActionHandlers {
+    return capturedSidebarProps.objectActions as TreeRowActionHandlers;
+  }
+
+  test("every row-menu action reaches this shell's own destination", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    const { queryByTestId } = render(<Studio />);
+    const actions = sidebarActions();
+
+    act(() => actions.onGenerateSelect?.(usersObject));
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith(["app", "users"]);
+
+    act(() => actions.onProfileObject?.(usersObject));
+    expect(queryByTestId("dataprofiler")).not.toBeNull();
+
+    act(() => actions.onGenerateCode?.(usersObject));
+    expect(queryByTestId("codegenerator")).not.toBeNull();
+
+    act(() => actions.onGenerateTestData?.(usersObject));
+    expect(queryByTestId("testdatagenerator")).not.toBeNull();
+
+    act(() => actions.onOpenMaintenance?.(usersObject));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=app&path=users");
+
+    act(() => actions.onCreateObject?.());
+    expect(queryByTestId("createtablemodal")).not.toBeNull();
+  });
+
+  test("a non-admin is handed no maintenance action, because the page it opens is the admin one", () => {
+    authOverride = { isAdmin: false };
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    expect(sidebarActions().onOpenMaintenance).toBeUndefined();
+    // The control: the other five are still handed over, so this is the role gate and not
+    // an empty object.
+    expect(sidebarActions().onProfileObject).toBeDefined();
+  });
+
+  /**
+   * The collision, which is the defect (#789, Task 35).
+   *
+   * Two objects share the label `customers` in two different containers - measured live on
+   * SQL Server, where `libredb_objects.app.customers` and `shop.dbo.customers` both exist -
+   * and the action is taken on the SECOND. The shell used to hand each modal `object.name`
+   * and resolve it with `schema.find((t) => t.name === label)`, which answers the FIRST: the
+   * operator profiled a table they did not click, with no error. A fixture holding ONE
+   * object cannot see this, which is why it shipped.
+   */
+  const firstCustomers = {
+    name: "customers",
+    kind: "table",
+    path: ["libredb_objects", "app", "customers"],
+    columns: [{ name: "customer_id", type: "int", nullable: false }],
+    indexes: [],
+  };
+  const secondCustomers = {
+    name: "customers",
+    kind: "table",
+    path: ["shop", "dbo", "customers"],
+    columns: [{ name: "shop_customer_id", type: "int", nullable: false }],
+    indexes: [],
+  };
+  const collisionSchema = [firstCustomers, secondCustomers];
+
+  test("each modal opens on the object that was CLICKED, where two containers share one label", () => {
+    connMgrOverride = { activeConnection: pgConn, schema: collisionSchema };
+    render(<Studio />);
+    const actions = sidebarActions();
+    const clicked: DatabaseObject = { path: ["shop", "dbo", "customers"], name: "customers", kind: "table" };
+
+    act(() => actions.onProfileObject?.(clicked));
+    expect(capturedProfilerProps.tablePath).toEqual(["shop", "dbo", "customers"]);
+    expect(capturedProfilerProps.tableSchema).toBe(secondCustomers);
+    expect(capturedProfilerProps.tableSchema).not.toBe(firstCustomers);
+
+    act(() => actions.onGenerateCode?.(clicked));
+    expect(capturedCodeGenProps.tablePath).toEqual(["shop", "dbo", "customers"]);
+    expect(capturedCodeGenProps.tableSchema).toBe(secondCustomers);
+
+    act(() => actions.onGenerateTestData?.(clicked));
+    expect(capturedTestDataProps.tablePath).toEqual(["shop", "dbo", "customers"]);
+    expect(capturedTestDataProps.tableSchema).toBe(secondCustomers);
+
+    act(() => actions.onOpenMaintenance?.(clicked));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=shop&path=dbo&path=customers");
+  });
+
+  test("the other object in the collision is still reachable, so the address is what decides", () => {
+    connMgrOverride = { activeConnection: pgConn, schema: collisionSchema };
+    render(<Studio />);
+    act(() =>
+      sidebarActions().onProfileObject?.({
+        path: ["libredb_objects", "app", "customers"],
+        name: "customers",
+        kind: "table",
+      }),
+    );
+    expect(capturedProfilerProps.tableSchema).toBe(firstCustomers);
+  });
+
+  test("a modal is handed the ADDRESS, which is not the label wherever an engine disambiguates", () => {
+    // A PostgreSQL routine is addressed `order_total(integer)` and labelled `order_total`
+    // (standing ruling 2), so the two are different strings even without a collision.
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    act(() =>
+      sidebarActions().onOpenMaintenance?.({
+        path: ["app", "order_total(integer)"],
+        name: "order_total",
+        kind: "table",
+      }),
+    );
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=app&path=order_total%28integer%29");
+  });
+
+  // #765: the connection owns the answer, so both halves reach the tree from the hook
+  // that holds it rather than from anything the sidebar decides.
+  test("the deferred scan and its load action reach the object tree", () => {
+    connMgrOverride = { activeConnection: pgConn, objectScanDeferred: true, loadObjects: mockLoadObjects };
+    render(<Studio />);
+    expect(capturedSidebarProps.objectScanDeferred).toBe(true);
+    expect(capturedSidebarProps.onLoadObjects).toBe(mockLoadObjects);
   });
 
   // --- onEditConnection ---
@@ -1094,6 +1326,183 @@ describe("Studio", () => {
     const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
     act(() => exportFn("csv"));
     expect(mockCreateObjectURL).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Copying the result instead of saving it (#701).
+   *
+   * The same writers and the same rows; only the destination differs. What differs
+   * with it is the ending: a clipboard write can be refused — no secure context, no
+   * permission, an unfocused document — so nothing here announces a copy it has not
+   * been told happened.
+   */
+  describe("copyResults", () => {
+    const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+    const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+    function setClipboard(clipboard: { writeText: (text: string) => Promise<void> } | undefined): void {
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+    }
+
+    afterEach(() => {
+      if (originalClipboard === undefined) setClipboard(undefined);
+      else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+      if (originalExecCommand === undefined) {
+        Object.defineProperty(globalThis.document, "execCommand", { value: undefined, configurable: true });
+      } else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
+    });
+
+    function withResult() {
+      tabMgrOverride = {
+        currentTab: {
+          id: "tab-1",
+          name: "Users",
+          query: "SELECT 1",
+          result: testResult,
+          isExecuting: false,
+          type: "sql" as const,
+        },
+      };
+    }
+
+    test("copyResults writes the serialized rows to the clipboard", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(writeText.mock.calls[0][0]).toContain('"name": "Alice"');
+    });
+
+    // The byte-order mark belongs to the FILE, not to the text: `downloadText` adds it
+    // for a spreadsheet reading bytes off disk, and a paste that carried it would
+    // start with an invisible character in whatever the user pasted into.
+    test("a copied CSV starts at the header row, with no byte-order mark", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("csv"));
+
+      expect(writeText.mock.calls[0][0].startsWith("id,name,salary,active")).toBe(true);
+    });
+
+    test("copyResults forwards the chosen CSV delimiter", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (
+        format: string,
+        artifact: null,
+        delimiter: string,
+      ) => void;
+      await act(async () => copyFn("csv", null, ";"));
+
+      expect(writeText.mock.calls[0][0].split("\n")[0]).toBe("id;name;salary;active");
+    });
+
+    test("a successful copy is announced once the write has reported one", async () => {
+      withResult();
+      setClipboard({ writeText: mock((_text: string) => Promise.resolve()) });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      expect(mockToast).toHaveBeenCalledTimes(1);
+      const params = mockToast.mock.calls[0][0] as { title: string; variant?: string };
+      expect(params.variant).toBeUndefined();
+      expect(params.title).toContain("Copied");
+    });
+
+    // Both routes gone: no async clipboard, and no editing command either. There is
+    // nothing left for the product to do but say so, because the alternative is the
+    // user discovering an empty clipboard at the far end of a paste.
+    test("a refused copy is reported rather than announced as a success", async () => {
+      withResult();
+      setClipboard(undefined);
+      Object.defineProperty(globalThis.document, "execCommand", { value: () => false, configurable: true });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      const params = mockToast.mock.calls[0][0] as { title: string; variant?: string };
+      expect(params.variant).toBe("destructive");
+    });
+
+    test("copyResults with no result copies nothing and says nothing", async () => {
+      tabMgrOverride = {
+        currentTab: {
+          id: "tab-1",
+          name: "Users",
+          query: "SELECT 1",
+          result: null,
+          isExecuting: false,
+          type: "sql" as const,
+        },
+      };
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      expect(writeText).not.toHaveBeenCalled();
+      expect(mockToast).not.toHaveBeenCalled();
+    });
+
+    // B34: a run's rows are not the tab's rows, and the clipboard has no file name to
+    // carry the difference — so the one thing that must hold is that the rows copied
+    // are the ones on screen.
+    test("copyResults writes the run's rows, not the tab's, when it is given the artifact", async () => {
+      withResult();
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string, artifact: unknown) => void;
+      await act(async () =>
+        copyFn("json", {
+          runId: "arun_1",
+          correlationId: "corr_9",
+          operationId: "sql.query.read",
+          surface: "results",
+          result: { rows: [{ id: 7 }], fields: ["id"], rowCount: 1, executionTime: 1 },
+          explainPlan: null,
+        }),
+      );
+
+      const text = writeText.mock.calls[0][0];
+      expect(text).toContain('"id": 7');
+      expect(text).not.toContain("Alice");
+    });
+
+    // The file export masks; the clipboard is not a way around that.
+    test("a copy of a masked result carries the masked values", async () => {
+      withResult();
+      mockShouldMask.mockImplementation(() => true);
+      mockApplyMaskingToRows.mockImplementation(() => [{ id: 1, name: "***", salary: "***", active: null }]);
+      const writeText = mock((_text: string) => Promise.resolve());
+      setClipboard({ writeText });
+      render(<Studio />);
+
+      const copyFn = capturedBottomPanelProps.onCopyResults as (format: string) => void;
+      await act(async () => copyFn("json"));
+
+      const text = writeText.mock.calls[0][0];
+      expect(text).toContain('"name": "***"');
+      expect(text).not.toContain("Alice");
+    });
   });
 
   // --- exportResults over an agent run's rows (B34) ---
@@ -1429,35 +1838,47 @@ describe("Studio", () => {
     expect(mockSetSchema).toHaveBeenCalledWith([]);
   });
 
-  // --- Sidebar profiler/codegen/testdata callbacks ---
-  test("Sidebar onProfileTable opens profiler", () => {
+  // --- profiler/codegen/testdata callbacks ---
+  //
+  // On the mobile schema tab since the sidebar became the object tree: these four are
+  // what `docs/superpowers/works/task-07-report.md` records as reachable from one surface
+  // only until something re-homes them.
+  test("onProfileTable opens profiler", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("dataprofiler")).toBeNull();
-    const fn = capturedSidebarProps.onProfileTable as (name: string) => void;
-    act(() => fn("users"));
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onProfileTable as (path: readonly string[]) => void;
+    act(() => fn(["app", "users"]));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
   });
 
-  test("Sidebar onGenerateCode opens code generator", () => {
+  test("onGenerateCode opens code generator", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("codegenerator")).toBeNull();
-    const fn = capturedSidebarProps.onGenerateCode as (name: string) => void;
-    act(() => fn("users"));
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onGenerateCode as (path: readonly string[]) => void;
+    act(() => fn(["app", "users"]));
     expect(queryByTestId("codegenerator")).not.toBeNull();
   });
 
-  test("Sidebar onGenerateTestData opens test data generator", () => {
+  test("onGenerateTestData opens test data generator", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("testdatagenerator")).toBeNull();
-    const fn = capturedSidebarProps.onGenerateTestData as (name: string) => void;
-    act(() => fn("users"));
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onGenerateTestData as (path: readonly string[]) => void;
+    act(() => fn(["app", "users"]));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
   });
 
-  test("Sidebar onCreateTableClick opens create table modal", () => {
+  test("onCreateTableClick opens create table modal", () => {
+    connMgrOverride = { activeConnection: pgConn };
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("createtablemodal")).toBeNull();
-    const fn = capturedSidebarProps.onCreateTableClick as () => void;
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const fn = capturedSchemaExplorerProps.onCreateTableClick as () => void;
     act(() => fn());
     expect(queryByTestId("createtablemodal")).not.toBeNull();
   });
@@ -1669,11 +2090,11 @@ describe("Studio", () => {
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
     act(() => (capturedSchemaExplorerProps.onCreateTableClick as () => void)());
     expect(queryByTestId("createtablemodal")).not.toBeNull();
-    act(() => (capturedSchemaExplorerProps.onProfileTable as (n: string) => void)("users"));
+    act(() => (capturedSchemaExplorerProps.onProfileTable as (p: readonly string[]) => void)(["app", "users"]));
     expect(queryByTestId("dataprofiler")).not.toBeNull();
-    act(() => (capturedSchemaExplorerProps.onGenerateCode as (n: string) => void)("users"));
+    act(() => (capturedSchemaExplorerProps.onGenerateCode as (p: readonly string[]) => void)(["app", "users"]));
     expect(queryByTestId("codegenerator")).not.toBeNull();
-    act(() => (capturedSchemaExplorerProps.onGenerateTestData as (n: string) => void)("users"));
+    act(() => (capturedSchemaExplorerProps.onGenerateTestData as (p: readonly string[]) => void)(["app", "users"]));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
     act(() => (capturedSchemaExplorerProps.onOpenMaintenance as () => void)());
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");

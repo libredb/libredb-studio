@@ -82,7 +82,11 @@ classDiagram
         +connect()
         +disconnect()
         +executeQuery()
-        +getSchema()
+        +listContainers()
+        +countObjects()
+        +listObjects()
+        +describeObject()
+        +describeObjects()
         +getHealth()
         +getCapabilities() ProviderCapabilities
         +getLabels() ProviderLabels
@@ -225,7 +229,7 @@ src/
 │   ├── api/
 │   │   ├── auth/           # Login/logout/me + OIDC (PKCE, callback)
 │   │   ├── ai/             # explain, query-safety, describe-schema
-│   │   ├── db/             # Query, schema, health, maintenance, transactions
+│   │   ├── db/             # Query, objects/ (the object surface), health, maintenance, transactions
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   ├── connections/    # managed/ — built-in (seeded) connections listing
 │   │   ├── agent/          # Agent runs, stream, artifacts, drive (404 unless enabled — §4.9)
@@ -276,7 +280,7 @@ src/
     ├── sql/                 # Statement splitter, alias extractor
     ├── seed/                # Seed connections (config, filter, credential resolver) + libredb-sample seeding
     ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)
-    ├── api/                 # API error codes + schema-route helpers
+    ├── api/                 # API error codes + object-route helpers
     ├── ssh/                 # SSH tunnel support
     ├── auth.ts              # JWT utilities
     ├── auth-bootstrap.ts    # Zero-config first-run auth bootstrap (runs in instrumentation)

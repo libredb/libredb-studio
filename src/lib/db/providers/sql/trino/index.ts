@@ -45,6 +45,7 @@
  *   message. That is the one maintenance operation this engine has.
  */
 
+import { randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
@@ -55,13 +56,37 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import {
+  applySourceBound,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+  requireEditableKind,
+  requireSourceKind,
+} from "@/lib/db/object-kinds";
+import { EDIT_CHARACTER_LIMIT, userPositionOf } from "@/lib/db/object-edit";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import {
   type ActiveSessionDetails,
+  type Container,
   type DatabaseConnection,
+  type DatabaseObject,
   type DatabaseOverview,
   type HealthInfo,
   type IndexStats,
+  type KindCount,
   type MaintenanceResult,
   type MaintenanceType,
+  type ObjectDetail,
+  type ObjectDetailBatch,
+  type ObjectEditBuild,
+  type ObjectEditOutcome,
+  type ObjectEditPlan,
+  type ObjectEditRefusalClass,
+  type ObjectEditRequest,
+  type ObjectEditStep,
+  type ObjectKindSpec,
+  type ObjectSourceDocument,
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
@@ -72,27 +97,66 @@ import {
   type QueryWarning,
   type SlowQueryStats,
   type StorageStats,
-  type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
 import { TrinoHttpTransport } from "./http-transport";
 import {
+  TRINO_CATALOG_LIST_SQL,
   getActiveSessions as readActiveSessions,
   getHealth as readHealth,
   getIndexStats as readIndexStats,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
-  getSchema as readSchema,
   getSlowQueries as readSlowQueries,
   getStorageStats as readStorageStats,
   getTableStats as readTableStats,
   trinoKillQuerySql,
 } from "./introspect";
 import {
+  TRINO_FUNCTION_COLUMNS,
+  TRINO_FUNCTION_KIND,
+  TRINO_MATERIALIZED_VIEW_KIND,
+  type KindCountRow,
+  type TrinoContainer,
+  type TrinoObjectRead,
+  applyKindCounts,
+  objectDetailFromRows,
+  objectKey,
+  trinoBulkColumnsSql,
+  trinoObjectTargetSql,
+  containerRead,
+  functionSegment,
+  trinoCreateFunctionIdentity,
+  listedObject,
+  objectRead,
+  readIdentifier as readObjectIdentifier,
+  seedZeroCounts,
+  trinoFunctionListSql,
+  trinoMaterializedViewListSql,
+  trinoObjectColumnsSql,
+  trinoObjectCountsSql,
+  TRINO_REPLACE_CLAUSE,
+  TRINO_SOURCE_PART_ID,
+  sha256Hex,
+  trinoArgumentSignature,
+  trinoCreateSignature,
+  trinoFunctionSegmentParts,
+  trinoObjectSourceSql,
+  trinoSentOffsetOf,
+  trinoSpliceAt,
+  trinoRelationListSql,
+  trinoSchemaListSql,
+  trinoSourceStatementFor,
+  trinoTranslationRefusal,
+  trinoUnreadableSourceReason,
+} from "./objects";
+import { comparePaths } from "@/lib/db/object-path";
+import {
   TRINO_DIALECTS,
   type TrinoDialect,
   type TrinoDialectId,
   type TrinoQueryResult,
+  type TrinoRow,
   type TrinoTransport,
   TrinoTransportError,
 } from "./transport";
@@ -112,6 +176,35 @@ import {
  * than a reason to refuse the connection.
  */
 const CONNECT_PROBE_SQL = "SELECT 1";
+
+/**
+ * A transport failure CATEGORY -> the apply outcome it is (#789 Phase 3).
+ *
+ * DATA and never a chain of message tests, which is the rule the design states for every
+ * classifier in this phase. The category is a measured seam: `http-transport.ts` maps the
+ * coordinator's own fault NAME to it from a table whose every row was probed on 476, so this
+ * table is one hop from the wire rather than an inference about wording.
+ *
+ * `interrupted` is not a refusal class and is spelled out as its own member, because the three
+ * categories that produce it are the three where the write's disposition is UNKNOWN: the
+ * exchange timed out, it was cancelled, or the coordinator could not be reached with the
+ * statement already sent.
+ *
+ * `resources` is deliberately ABSENT and falls through to `definition` with the coordinator's own
+ * sentence, which is the design's rule for a code the classifier does not recognise. A cluster
+ * that ran out of memory refused this write and changed nothing, and inventing a sixth refusal
+ * class for it would publish a member with no measured producer.
+ */
+const TRINO_APPLY_VERDICT: Readonly<Record<string, ObjectEditRefusalClass | "interrupted">> = Object.freeze({
+  unsupported: "unsupported",
+  auth: "privilege",
+  syntax: "definition",
+  "unknown-object": "definition",
+  engine: "definition",
+  timeout: "interrupted",
+  cancelled: "interrupted",
+  unreachable: "interrupted",
+});
 
 /** What `kill_query` records against the statement it terminates. */
 const KILL_MESSAGE = "Terminated from LibreDB Studio";
@@ -301,6 +394,97 @@ export class TrinoProvider extends SQLBaseProvider {
       // grammar, so the generators must not emit one.
       statementTerminator: "none",
       schemaRefreshPattern: SCHEMA_REFRESH_PATTERN,
+      // TWO levels, and the outer one is not a database (#789). A Trino CATALOG is a
+      // named CONNECTOR CONFIGURATION: `iceberg.properties` makes the catalog `iceberg`,
+      // and the same cluster reaches an Iceberg lake, a PostgreSQL server and a generated
+      // `tpch` dataset side by side, each holding schemas holding objects. The engine's own
+      // word for the outer level is "catalog" and for the inner one "schema", which is what
+      // the labels say. `information_schema` is PER CATALOG here, so a read against one
+      // catalog's copy says nothing whatsoever about another's.
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      // Four kinds (`objects.ts`), and the two connector-gated ones are declared because
+      // the ENGINE has them rather than because every catalog does.
+      //
+      // NO trigger, NO stored procedure and NO index, because Trino has none of the three
+      // anywhere in its model: `information_schema` holds eight views and neither
+      // `table_constraints` nor `key_column_usage` is among them, and there is no index
+      // catalog at all (#414). A declared kind draws a folder, and a folder for something
+      // the engine cannot have is a lie its zero badge makes look like a fact.
+      objectKinds: [
+        // A row write reaches whatever the CONNECTOR allows - measured on 476, an INSERT
+        // into `memory.app.customers` succeeds while `tpch` answers that its connector does
+        // not support modifying table rows. The declaration is about the engine's model, and
+        // the connector's own refusal is the better message for the case it cannot.
+        {
+          id: "table",
+          role: "relation",
+          label: "Table",
+          labelPlural: "Tables",
+          acceptsRowWrites: true,
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+        // No `acceptsRowWrites` on either view kind, measured on 476: an INSERT answers
+        // "Inserting into views is not supported" and "Inserting into materialized views is
+        // not supported" respectively, on every connector.
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", hasSource: true, sourceLanguage: "sql" },
+        // Supported by SOME connectors only, Iceberg among them, and declared anyway: the
+        // kind exists in the engine's model and `system.metadata.materialized_views` is an
+        // engine-level catalog, so a catalog holding none answers an honest 0 rather than a
+        // folder for something that cannot exist. The two facts are different and #789's
+        // `KindCount` keeps them apart.
+        {
+          id: "materialized_view",
+          role: "relation",
+          label: "Materialized View",
+          labelPlural: "Materialized Views",
+          hasSource: true,
+          sourceLanguage: "sql",
+        },
+        // Catalog-stored SQL functions, from release 431 and on the Hive and Memory
+        // connectors only. Declared because it was CONFIRMED on the build
+        // `database-compose.yml` runs: measured on 476, `CREATE FUNCTION
+        // memory.app.plus_one(x bigint) RETURNS bigint RETURN x + 1` succeeds and
+        // `SHOW FUNCTIONS FROM memory.app` lists it. Leaving the kind out would make a
+        // function somebody wrote invisible in the tree, which is a worse absence than an
+        // empty folder.
+        {
+          id: "function",
+          role: "routine",
+          label: "Function",
+          labelPlural: "Functions",
+          hasSource: true,
+          sourceLanguage: "sql",
+          // THE ONE EDITABLE KIND ON THIS ENGINE (#789 Phase 3). Measured on 476: a
+          // `CREATE OR REPLACE FUNCTION` with the identity unchanged replaces the addressed
+          // overload in place, a FAILED one leaves the previous object byte-identical with no
+          // transaction, and the round trip is byte-stable across a spliced apply.
+          //
+          // `view` is DEFERRED and NOT refused, and the distinction is measured rather than
+          // cautious: `CREATE OR REPLACE VIEW` works on 476 and a failed apply leaves the
+          // previous view byte-identical too. It is held back because `SECURITY DEFINER` is in
+          // the read text although the author never typed it, so an edit round-trips a security
+          // principal the reader never chose, and this phase has no test for that consequence
+          // class on this engine.
+          //
+          // UN-DEFERRING `view` IS NOT A ONE-LINE CHANGE, and the second half of the reason is
+          // recorded here rather than found later: the build and the post-apply control both read
+          // an edited text through `trinoCreateFunctionIdentity`, which takes the first top-level
+          // parenthesis pair in the statement as a PARAMETER LIST. A view has none, so that reader
+          // answers nonsense or nothing for every view text, and its own docblock spells out both
+          // shapes. Whoever flips this flag has to give the identity a view-shaped reading in the
+          // same change.
+          //
+          // `table` and `materialized_view` are REFUSED BY THE ENGINE, measured on the memory
+          // connector: `CREATE OR REPLACE TABLE` answers "This connector does not support
+          // replacing tables" and `CREATE OR REPLACE MATERIALIZED VIEW` answers "This connector
+          // does not support creating materialized views", both `NOT_SUPPORTED` errorCode 13.
+          acceptsSourceEdits: true,
+        },
+      ],
     };
   }
 
@@ -387,8 +571,9 @@ export class TrinoProvider extends SQLBaseProvider {
    * The catalog is NOT required, deliberately. A connection with no catalog still
    * runs every fully qualified statement - `SELECT * FROM tpch.sf1.nation` needs no
    * session catalog at all - and the whole of `system.runtime`, so refusing to
-   * connect without one would refuse a connection that works. What it cannot do is
-   * show a schema tree, and `getSchema()` says exactly that when asked.
+   * connect without one would refuse a connection that works. It also still shows a
+   * tree: `listContainers()` lists every catalog and the pin only decides which one is
+   * marked `isSessionDefault`, so with none pinned the tree opens nothing (#789).
    */
   public override validate(): void {
     super.validate();
@@ -587,19 +772,1122 @@ export class TrinoProvider extends SQLBaseProvider {
   // Schema
   // ==========================================================================
 
+  // ==========================================================================
+  // The object surface (#789)
+  // ==========================================================================
+
+  /** One catalog read, with Trino's own refusal mapped and the statement carried with it. */
+  private async runObjectRows(sql: string): Promise<TrinoRow[]> {
+    try {
+      const result = await this.requireTransport().query(sql);
+      return result.rows;
+    } catch (error) {
+      throw this.mapTrinoError(error, sql);
+    }
+  }
+
   /**
-   * The tables of the pinned catalog, from `information_schema` alone.
+   * Why a function count or listing cannot be answered for a whole catalog.
    *
-   * `getSchemaList` and `getSchemaRelations` are deliberately NOT implemented. The
-   * split exists so a slow relationship read cannot block the table list, and Trino
-   * has no relationship read at all: there are no indexes and no foreign keys in the
-   * model, so a list would be byte-identical to this and a relations read would spend
-   * a round trip to answer two empty arrays per table.
+   * Carried as one sentence because both methods owe the same explanation, and because it
+   * is a fact about the ENGINE rather than about this connection: `SHOW FUNCTIONS` takes a
+   * schema, and measured on 476 it cannot be wrapped in a subquery, so there is nothing to
+   * aggregate over a catalog without one full exchange per schema in it.
    */
-  public async getSchema(): Promise<TableSchema[]> {
-    const transport = this.requireTransport();
-    const catalog = this.requireCatalog();
-    return this.guarded(() => readSchema(transport, catalog));
+  private functionScopeRefusal(): string {
+    return `${this.dialect.displayName} lists catalog functions only with SHOW FUNCTIONS FROM <catalog>.<schema>, which takes one schema and cannot be aggregated, so a whole catalog has no function count. Open a schema to see its functions.`;
+  }
+
+  /**
+   * The containers at `parent`: every catalog the coordinator can reach, or one catalog's
+   * schemas.
+   *
+   * The top level is the CLUSTER's catalog list and not the connection's pinned catalog,
+   * which is the whole point of the level here: a Trino catalog is a named connector
+   * configuration, so one session addresses an Iceberg lake, a PostgreSQL server and a
+   * generated dataset side by side. `requireCatalog()` deliberately does not guard this -
+   * a connection that pins no catalog still has a tree, it just has no marked row in it.
+   *
+   * `system` and `jmx` are listed rather than filtered. Trino publishes no flag that would
+   * separate a plumbing catalog from a data one, both are genuinely queryable, and a name
+   * denylist is a boundary this repo has already found unmaintainable (#424).
+   *
+   * Below the last declared level the answer is `[]` rather than a refusal, because
+   * "nothing nests under a schema" is a true statement about Trino and not a caller
+   * mistake. The depth is `containerDepth()` for the reason standing ruling 5g gives.
+   */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    const capabilities = this.getCapabilities();
+    const parentPath = parent ?? [];
+    // `Container.level` is the index into `containerLevels`, so a container listed under a
+    // parent of depth d sits at level d. Derived from the parent rather than written twice
+    // as a literal 0 and 1.
+    const level = parentPath.length;
+
+    if (level === 0) {
+      const rows = await this.runObjectRows(TRINO_CATALOG_LIST_SQL);
+      return rows.flatMap((row) => {
+        const name = readObjectIdentifier(row.catalogName);
+        if (name === null) return [];
+        return [{ path: [name], name, level, isSessionDefault: name === this.config.database }];
+      });
+    }
+    if (level >= containerDepth(capabilities)) return [];
+
+    const { catalog } = containerRead(capabilities, parentPath);
+    const rows = await this.runObjectRows(trinoSchemaListSql(catalog));
+    return rows.flatMap((row) => {
+      const name = readObjectIdentifier(row.schemaName);
+      if (name === null) return [];
+      return [
+        {
+          path: [...parentPath, name],
+          name,
+          level,
+          // Marked at THIS level too, not only at the catalog. Standing ruling 5a2 (#789):
+          // first paint walks the chain to the session default at the DEEPEST declared
+          // level, so a two-level engine that marked only its catalogs would open a catalog
+          // and stop, having read no counts at all.
+          //
+          // BOTH halves of the predicate are load-bearing. The connection's schema names a
+          // schema in the connection's catalog, so comparing the schema alone would mark a
+          // same-named schema in every catalog on the cluster - and on Trino `default` is a
+          // schema name several connectors create, so that is the ordinary case rather than
+          // an exotic one.
+          isSessionDefault: catalog === this.config.database && name === this.config.schema,
+        },
+      ];
+    });
+  }
+
+  /**
+   * How many objects of each declared kind one container holds.
+   *
+   * Two reads rather than one, and they are caught SEPARATELY. The relation kinds come from
+   * a `UNION ALL` over `information_schema.tables` and `system.metadata.materialized_views`;
+   * the functions come from `SHOW FUNCTIONS`, which is a statement rather than a relation
+   * and cannot join the union. Their failure modes are independent - one is the
+   * coordinator's own metadata, the other is a per-connector feature - so a refusal of one
+   * must not erase the other's honest answer.
+   *
+   * Three outcomes, and `KindCount` keeps all three apart. A kind the statement answered for
+   * carries its count; a kind it did not carries `{ count: 0 }`, because every declared kind
+   * is seeded before the read; a kind whose read was refused carries the engine's own
+   * sentence, so the object browser can say why a folder has no number instead of showing a
+   * zero nobody measured.
+   *
+   * A FOURTH outcome is not a `KindCount` at all: this method RAISES when a row names a kind
+   * the declaration does not hold. That is a defect in this provider rather than an answer
+   * about a container, and the three states above have no spelling for it.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    const capabilities = this.getCapabilities();
+    const read = containerRead(capabilities, container);
+    const declared = declaredKinds(capabilities);
+    const counts = seedZeroCounts(declared);
+
+    const relationKinds = declared.filter((kind) => kind.id !== TRINO_FUNCTION_KIND);
+    if (relationKinds.length > 0) {
+      const sql = trinoObjectCountsSql(read, findKind(capabilities, TRINO_MATERIALIZED_VIEW_KIND) !== undefined);
+      // The catch wraps the READ and nothing else. `applyKindCounts` is deliberately outside
+      // it, because its raise is the guard behind TRINO_TABLE_TYPE_KINDS and it must reach
+      // the caller as itself: a spelling this provider has no kind for is a DECLARATION
+      // defect, and rewriting it as `{ unavailable }` filed that defect in a folder badge
+      // and told the reader the engine had refused a read it answered perfectly.
+      //
+      // It also erased more than it touched. Every relation kind was blanked, so one
+      // unmodelled `table_type` from `information_schema` also wiped the materialized-view
+      // count, which comes from `system.metadata.materialized_views` on the other arm of the
+      // `UNION ALL`. Only the statement failing genuinely loses every relation kind, and
+      // that is the one case still caught here.
+      let rows: KindCountRow[] | undefined;
+      try {
+        rows = (await this.runObjectRows(sql)) as unknown as KindCountRow[];
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const kind of relationKinds) counts[kind.id] = { unavailable: reason };
+      }
+      if (rows !== undefined) applyKindCounts(counts, rows);
+    }
+
+    if (findKind(capabilities, TRINO_FUNCTION_KIND) !== undefined) {
+      counts[TRINO_FUNCTION_KIND] = await this.countFunctions(read);
+    }
+    return counts;
+  }
+
+  /** One schema's function count, or the engine's reason there is no catalog-wide one. */
+  private async countFunctions(read: TrinoContainer): Promise<KindCount> {
+    if (read.schema === undefined) return { unavailable: this.functionScopeRefusal() };
+    try {
+      return { count: (await this.runObjectRows(trinoFunctionListSql(read.catalog, read.schema))).length };
+    } catch (error) {
+      return { unavailable: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * The objects of one kind in one container, names only.
+   *
+   * Ordering is done here rather than with an `ORDER BY`, so one rule covers four kinds read
+   * from three different sources: `information_schema.tables`, `system.metadata` and a
+   * `SHOW` statement cannot be given one comparable sort clause, and a code-point sort over
+   * the produced PATH is what keeps a catalog-level listing grouped by schema.
+   */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    const capabilities = this.getCapabilities();
+    const read = containerRead(capabilities, container);
+    // Two questions, asked in order, and only the DECLARATION answers the first. Deciding
+    // "is this kind declared" from whether a statement exists would make the two methods
+    // disagree, and would report "declares no object kind" about a kind `objectKinds` does
+    // declare.
+    if (findKind(capabilities, kind) === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+
+    const objects =
+      kind === TRINO_FUNCTION_KIND
+        ? await this.listFunctions(capabilities, read)
+        : await this.listRelations(capabilities, read, kind);
+
+    return objects.sort((left, right) => comparePaths(left.path, right.path));
+  }
+
+  /** Every relation of one kind, from whichever catalog publishes that kind. */
+  private async listRelations(
+    capabilities: ProviderCapabilities,
+    read: TrinoContainer,
+    kind: string,
+  ): Promise<DatabaseObject[]> {
+    const sql =
+      kind === TRINO_MATERIALIZED_VIEW_KIND ? trinoMaterializedViewListSql(read) : trinoRelationListSql(read, kind);
+    const rows = await this.runObjectRows(sql);
+    return rows.flatMap((row) => {
+      const schema = readObjectIdentifier(row.schemaName);
+      const name = readObjectIdentifier(row.objectName);
+      if (schema === null || name === null) return [];
+      return [listedObject(capabilities, read.catalog, kind, schema, name, name)];
+    });
+  }
+
+  /**
+   * One schema's catalog-stored functions, each addressed by name AND argument types.
+   *
+   * A catalog-level call is REFUSED rather than fanned out over the catalog's schemas: the
+   * fan-out is one full HTTP exchange per schema, unbounded on a Hive or Iceberg catalog,
+   * and `SHOW FUNCTIONS` is the only surface there is - `information_schema` holds no
+   * routine catalog on this engine and `system.jdbc.procedures` is EMPTY, whole table,
+   * `SELECT count(*)` answering 0 while `SHOW FUNCTIONS FROM memory.app` answers a row for
+   * every function this repository's fixture creates (re-measured on 476, 2026-09-13). The
+   * emptiness of the whole table is stated rather than a row count for one schema so that
+   * the sentence counts nothing and cannot go stale when the fixture grows (#789).
+   */
+  private async listFunctions(capabilities: ProviderCapabilities, read: TrinoContainer): Promise<DatabaseObject[]> {
+    if (read.schema === undefined) throw new QueryError(this.functionScopeRefusal(), this.type);
+
+    const schema = read.schema;
+    const rows = await this.runObjectRows(trinoFunctionListSql(read.catalog, schema));
+    return rows.flatMap((row) => {
+      const name = readObjectIdentifier(row[TRINO_FUNCTION_COLUMNS.name]);
+      const argumentTypes = row[TRINO_FUNCTION_COLUMNS.argumentTypes];
+      if (name === null || typeof argumentTypes !== "string") return [];
+      // `path` addresses and `name` labels, and here they differ: the segment carries the
+      // overload's argument types and the label stays the bare name a person reads.
+      return [
+        listedObject(
+          capabilities,
+          read.catalog,
+          TRINO_FUNCTION_KIND,
+          schema,
+          functionSegment(name, argumentTypes),
+          name,
+        ),
+      ];
+    });
+  }
+
+  /**
+   * Columns for one object of one KIND, and two empty arrays that are facts rather than
+   * failed reads.
+   *
+   * There are NO indexes and NO foreign keys to read, in any catalog of any connector:
+   * Trino's `information_schema` holds eight views and neither `table_constraints` nor
+   * `key_column_usage` is among them, which is the same measurement `declaresForeignKeys:
+   * false` rests on (#414).
+   *
+   * The kind decides everything and nothing here reads the name to work out what it is
+   * holding. A function answers three empty arrays without a round trip, which is true of
+   * the kind rather than of the object: a routine legitimately has no columns.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+
+    const read = objectRead(capabilities, spec, path);
+    if (spec.role !== "relation") return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+
+    const sql = trinoObjectColumnsSql(read.catalog, read.schema, read.name);
+    const rows = await this.runObjectRows(sql);
+    if (rows.length === 0) {
+      // Measured: `CREATE TABLE t ()` is a parser error on this engine, so a relation with
+      // no column row is a relation that is not there. Answering `{ columns: [] }` would
+      // render a dropped table as a table with no columns.
+      throw new QueryError(`No column row for ${path.join(".")}`, this.type, sql);
+    }
+
+    return objectDetailFromRows(path, rows);
+  }
+
+  /**
+   * Columns for EVERY object of one kind in one container (#789).
+   *
+   * TWO round trips for a whole folder, constant in the number of objects: the target read
+   * plus the column read, which is `describeObject()`'s own statement with the
+   * schema-and-name equality replaced by a join against the target. The caller's alternative
+   * was one `describeObject` per object, which is one statement each.
+   *
+   * The four guards are asked in the same order the reference implementation asks them:
+   *   1. a kind Trino does not declare RAISES, naming the engine and the kind. An empty
+   *      batch would be a claim about the container; an undeclared kind is a fact about the
+   *      engine.
+   *   2. the container path goes through `containerRead`, the same reader `listObjects`
+   *      uses, so the depth and the segment-to-level mapping come from the declaration and
+   *      never from a position (standing ruling 5g).
+   *   3. a `limit` that is not a positive whole number raises rather than clamping. Here that
+   *      guard also protects the STATEMENT: the value is interpolated into a `LIMIT` clause,
+   *      because this transport sends text and has no parameter channel at all.
+   *   4. a kind with no columns answers `{ details: [] }` with NO round trip. On this engine
+   *      that is `function` alone, the one non-relation kind, and it answers so at EITHER
+   *      container depth - `listObjects` refuses a catalog-level function read because
+   *      `SHOW FUNCTIONS` would have to be fanned out per schema, and there is no fan-out
+   *      here because a routine has no columns to read.
+   *
+   * The bound is the CALLER's. `limit + 1` reaches the target's `LIMIT`, the extra object is
+   * dropped and `truncated` carries the caller's own limit; an unbounded call can never
+   * report truncation, and nothing here caps the columns of an object.
+   *
+   * MEMBERSHIP comes from the target read and never from the column read, which is what lets
+   * an object the column read answered nothing for come back with an empty list rather than
+   * missing. It is also why this read does not repeat the single read's zero-column throw:
+   * there an empty answer means the object is not there under that name, here the listing
+   * has just said it is.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`${this.dialect.displayName} declares no object kind "${kind}"`, this.type);
+    }
+    const read = containerRead(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      throw new QueryError(
+        `A Trino bulk column read limit must be a positive whole number, received ${limit}`,
+        this.type,
+      );
+    }
+    if (spec.role !== "relation") return { details: [] };
+
+    // One row more than the bound, so the read itself says whether it stopped short.
+    const bound = limit === undefined ? undefined : limit + 1;
+    const targetRows = await this.runObjectRows(trinoObjectTargetSql(read, kind, bound));
+    const targets = targetRows.flatMap((row) => {
+      const schema = readObjectIdentifier(row.schemaName);
+      const name = readObjectIdentifier(row.objectName);
+      return schema === null || name === null ? [] : [{ schema, name }];
+    });
+    // From the READ and never from `targets`, which is what survived `readObjectIdentifier`.
+    // A row this cluster answered that cannot be read back would otherwise both drop the
+    // object and suppress the flag: the caller would get `limit` details and a claim of
+    // completeness while `limit + 1` objects exist.
+    const truncated = limit !== undefined && targetRows.length > limit;
+    // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
+    // the grouping below are simply never read.
+    const described = truncated ? targets.slice(0, limit) : targets;
+
+    const columnRows = await this.runObjectRows(trinoBulkColumnsSql(read, kind, bound));
+    const grouped = new Map<string, TrinoRow[]>();
+    for (const row of columnRows) {
+      // A column row with no usable address is not guarded away, it is keyed away: the empty
+      // string is a key no TARGET can produce, because a target is only kept when both its
+      // segments read as non-empty identifiers. So such a row lands in a group nothing asks
+      // for, and the alternative - an explicit `continue` - would be a line no data can
+      // reach while raw lcov reports it as covered (standing ruling 5b).
+      const key = objectKey(readObjectIdentifier(row.schemaName) ?? "", readObjectIdentifier(row.objectName) ?? "");
+      const existing = grouped.get(key);
+      if (existing === undefined) grouped.set(key, [row]);
+      else existing.push(row);
+    }
+
+    const details = described
+      .map((target) =>
+        objectDetailFromRows(
+          listedObject(capabilities, read.catalog, kind, target.schema, target.name, target.name).path,
+          grouped.get(objectKey(target.schema, target.name)) ?? [],
+        ),
+      )
+      // Sorted by PATH, which is what every caller joins the two answers on, and not by the
+      // name the statement ordered by: that order is the cluster's and decides only which
+      // objects a bound keeps.
+      .sort((left, right) => comparePaths(left.path, right.path));
+
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  // ==========================================================================
+  // The source read (#789)
+  // ==========================================================================
+
+  /**
+   * One object's definition text, as `SHOW CREATE <form>` regenerates it.
+   *
+   * FOUR KINDS, ONE PART EACH, and all four are `regenerated` rather than `stored`. Trino
+   * keeps no copy of the statement anybody typed: measured on 476, a view created as
+   * `CREATE VIEW memory.app.customer_names AS SELECT id, name FROM memory.app.customers`
+   * reads back as `CREATE VIEW memory.app.customer_names SECURITY DEFINER AS\nSELECT\n  id\n,
+   * name\nFROM\n  memory.app.customers`, with a security clause the author never wrote and
+   * the projection reformatted. Each is `complete`, because each is a statement that runs as
+   * given rather than a body or a bare SELECT.
+   *
+   * THE VIEW KIND CARRIES A LIMIT THIS METHOD CANNOT SEE, and the provider doc states it
+   * rather than the wire. A Hive-NATIVE view reached through a `hive` connector is not a
+   * Trino view at all: what comes back is a MACHINE TRANSLATION of a statement nobody wrote
+   * in Trino SQL, and nothing in the reply distinguishes it from a view Trino itself created.
+   * That is exactly why `origin` does not claim `stored` for any view here, and why the
+   * translation FAILURE - the case where the machine cannot do it - is carried as a REFUSAL
+   * with the engine's own sentence instead of being raised.
+   *
+   * A ROUTINE IS RESOLVED IN TWO STEPS and a relation in one, and the branch is on the
+   * declared `role` rather than on the kind id, the rule `CLAUDE.md` states for everything
+   * under `src/lib/db`. The reason is a property of a routine rather than of Trino's spelling
+   * of one: overloads share a name, so the path's last segment is the disambiguated
+   * `plus_one(bigint)` form {@link functionSegment} minted, and `SHOW CREATE FUNCTION` takes
+   * the BARE name and answers one row per overload.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    const capabilities = this.getCapabilities();
+    const spec = requireSourceKind(capabilities, kind, { displayName: this.dialect.displayName, type: this.type });
+
+    const read = objectRead(capabilities, spec, path);
+    const statement = trinoSourceStatementFor(kind);
+    // The bare name and the signature to match, for a routine; the segment itself and no
+    // signature for a relation, whose reply is one row.
+    const resolved: { name: string; signature?: string } =
+      spec.role === "routine" ? await this.resolveOverload(read) : { name: read.name };
+
+    const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, resolved.name);
+    let rows: TrinoRow[];
+    try {
+      // NOT `runObjectRows`, and that is the whole reason this one read is spelled out here.
+      // `mapTrinoError` turns everything in the `engine` category into a bare `QueryError`
+      // carrying the message alone, which throws away the `errorName` the coordinator sent
+      // and leaves an English sentence as the only thing left to branch on. The fault name is
+      // what the branch below keys on, so the failure has to reach it unmapped.
+      rows = (await this.requireTransport().query(sql)).rows;
+    } catch (error) {
+      // ONLY the translation failure becomes a refusal. Every other failure is rethrown, so
+      // an object that is not there RAISES rather than telling a user its definition cannot
+      // be read (design guarantee 6, #789). Measured on 476, the absence sentences are
+      // `Table 'memory.app.no_such_table' does not exist` and
+      // `Relation 'memory.app.customer_names' is a view, not a table`, both of which name the
+      // object and neither of which is a statement about readability.
+      const refusal = trinoTranslationRefusal(error);
+      // Mapped HERE and not before the check, so a raise still reaches a caller as the
+      // provider error every other read answers, with the statement attached.
+      if (refusal === undefined) throw this.mapTrinoError(error, sql);
+      return {
+        path: [...path],
+        kind,
+        parts: [{ id: TRINO_SOURCE_PART_ID, label: statement.column, unavailable: refusal }],
+      };
+    }
+
+    const row =
+      resolved.signature === undefined
+        ? rows[0]
+        : rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === resolved.signature);
+    if (row === undefined) {
+      throw new QueryError(`No Trino ${kind} named ${read.name} in ${read.catalog}.${read.schema}`, this.type, sql);
+    }
+
+    const definition = row[statement.column];
+    if (typeof definition !== "string" || definition.trim() === "") {
+      return {
+        path: [...path],
+        kind,
+        parts: [
+          {
+            id: TRINO_SOURCE_PART_ID,
+            label: statement.column,
+            unavailable: trinoUnreadableSourceReason(statement, read.name, definition),
+          },
+        ],
+      };
+    }
+
+    const bounded = applySourceBound(definition, limit);
+    return {
+      path: [...path],
+      kind,
+      parts: [
+        {
+          id: TRINO_SOURCE_PART_ID,
+          label: statement.column,
+          text: bounded.text,
+          language: spec.sourceLanguage,
+          // Both are per-kind facts that happen to agree across all four kinds here, and
+          // both are written once rather than per branch: every `SHOW CREATE` form answers a
+          // statement that runs as given, and none of them is the author's own bytes.
+          form: "complete",
+          origin: "regenerated",
+          ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
+          // THE AFFORDANCE, and it is `{ offered: true }` for every readable function with no
+          // pre-flight behind it (#789 Phase 3). That absence is MEASURED and not an oversight:
+          // whether an apply is possible here is a per-CATALOG fact, measured on 476 with one of
+          // five catalogs taking a function and one taking a view, and the only surface that
+          // answers it is trying. So the refusal arrives at APPLY time as `unsupported` carrying
+          // the connector's own `NOT_SUPPORTED`, errorCode 13, rather than as a guess at build
+          // time that would be wrong in both directions on different catalogs of one cluster.
+          //
+          // Read off the DECLARATION and never off the kind id, which is the rule for everything
+          // under `src/lib/db`: `table` and both view kinds answer no `edit` field at all, which
+          // is a different fact from an `offered: false` and is what the pane's predicate reads.
+          ...(spec.acceptsSourceEdits === true ? { edit: { offered: true as const } } : {}),
+        },
+      ],
+    };
+  }
+
+  /**
+   * One routine path segment resolved back into the bare name and the signature to match.
+   *
+   * Through `SHOW FUNCTIONS`, which is the statement that MINTED the segment: the match is
+   * `functionSegment(name, argumentTypes) === segment`, reconstructed with the same function
+   * `listObjects` builds the path with, so nothing here parses the segment. That matters,
+   * because the segment is NOT unambiguously parseable: the fixture holds a function called
+   * `we(ird`, whose segment `we(ird(bigint)` has its first parenthesis inside the name.
+   *
+   * A segment no row reconstructs is ABSENCE and it raises naming the segment. The engine's
+   * own sentence for it would not do: measured on 476, `SHOW CREATE FUNCTION` answers
+   * `Function not found` for a name that is not there, which names neither the function nor
+   * the schema.
+   */
+  private async resolveOverload(read: TrinoObjectRead): Promise<{ name: string; signature: string }> {
+    const sql = trinoFunctionListSql(read.catalog, read.schema);
+    const rows = await this.runObjectRows(sql);
+    for (const row of rows) {
+      const name = readObjectIdentifier(row[TRINO_FUNCTION_COLUMNS.name]);
+      const argumentTypes = row[TRINO_FUNCTION_COLUMNS.argumentTypes];
+      if (name === null || typeof argumentTypes !== "string") continue;
+      if (functionSegment(name, argumentTypes) === read.name) {
+        return { name, signature: trinoArgumentSignature(argumentTypes) };
+      }
+    }
+    throw new QueryError(`No Trino function ${read.name} in ${read.catalog}.${read.schema}`, this.type, sql);
+  }
+
+  // ==========================================================================
+  // The object edit (#789 Phase 3)
+  // ==========================================================================
+
+  /**
+   * The `SHOW CREATE FUNCTION` reply for ONE NAME, reduced to the ONE overload the path segment
+   * addresses: the statement that read it, the bare name, the signature the row was FOUND by,
+   * and that row's own text.
+   *
+   * ONE WRITER FOR TWO READERS, AND THE TWO READERS ARE BOTH INSIDE THE APPLY: the re-read that
+   * `compared` is compared against, and the post-apply verification. THE BUILD IS NOT ONE OF
+   * THEM and this docblock said it was until the external review of PR #831 asked (#789, item
+   * 6). {@link buildObjectEdit} resolves the overload through {@link resolveOverload} instead,
+   * deliberately, and the comment at that call says why: the build resolves the overload the way
+   * the pane's own read does, so the object a plan is addressed to is the object the reader was
+   * shown.
+   *
+   * SO THE TWO ROUTES HAVE TO AGREE, and what makes them agree is that
+   * {@link trinoFunctionSegmentParts} is the exact inverse of the {@link functionSegment} this
+   * provider minted: `resolveOverload` answers the split a live `SHOW FUNCTIONS` row MINTED, and
+   * this one answers the split the scan recovers, so they are the same split for any name and
+   * any parenthesis-balanced and quote-balanced type list. THAT IS AN ARGUMENT AND NOT A
+   * MEASUREMENT, so the suite measures it three ways: the inverse round trip over every function
+   * in the fixture, the same round trip over nine shapes the fixture does not hold, and a
+   * comparison of the `SHOW CREATE FUNCTION` statement the BUILD sends against the one the APPLY
+   * sends, over the whole fixture.
+   *
+   * WHAT A DRIFT WOULD ACTUALLY COST, measured rather than assumed, because the review called it
+   * a silently wrong overload comparison: with the scan mutated to run left to right, a build
+   * and an apply that were both correct before answer `conflict` with an EMPTY current text and
+   * send NO write at all, against a control on the same drive that answers `applied`. A drift
+   * cannot reach a wrong object, because the object it would reach cannot hash to the token the
+   * plan carries. It is a false conflict and never a false apply.
+   *
+   * The overload is addressed from the PATH SEGMENT rather than from a `SHOW FUNCTIONS` round
+   * trip, and that is what lets an apply make its re-read its FIRST round trip, which is what
+   * `compared` means. The fixture's `we(ird`, `rowparen` and `hard` are what make the round trip
+   * non-vacuous.
+   *
+   * `signature` IS RETURNED RATHER THAN RECOMPUTED BY THE CALLER, because the apply's post-apply
+   * verification compares the parameter list the SENT statement declares against the one the
+   * addressed row was FOUND by, and two computations of "the addressed signature" that could
+   * drift apart would make that comparison answer about nothing.
+   *
+   * The `SHOW CREATE FUNCTION <name>` reply carries one row per overload of the name, MEASURED
+   * on trinodb/trino:476 on 2026-09-14 (container `libredb-trino-t08fix`, host port 18509):
+   * `memory.app.plus_one` answers two, and the order is not stable, so the row is found by its
+   * parameter list and never by its position.
+   */
+  private async readOverload(
+    path: readonly string[],
+    kind: string,
+    spec: ObjectKindSpec,
+  ): Promise<{ sql: string; name: string; signature: string; definition: string | undefined; overloads: number }> {
+    const read = objectRead(this.getCapabilities(), spec, path);
+    const parts = trinoFunctionSegmentParts(read.name);
+    if (parts === null) {
+      // The path segment is not one this provider ever minted. It RAISES rather than refusing,
+      // because a refusal reports an engine fact the reader can act on and this is a caller
+      // addressing something that cannot exist: every function segment is `name(argumentTypes)`.
+      throw new QueryError(
+        `A Trino function path segment is name(argumentTypes), received ${JSON.stringify(read.name)}`,
+        this.type,
+      );
+    }
+    const statement = trinoSourceStatementFor(kind);
+    const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, parts.name);
+    const rows = await this.runObjectRows(sql);
+    const signature = trinoArgumentSignature(parts.argumentTypes);
+    const row = rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === signature);
+    const definition = row?.[statement.column];
+    return {
+      sql,
+      name: parts.name,
+      signature,
+      definition: typeof definition === "string" ? definition : undefined,
+      // HOW MANY OVERLOADS OF THIS NAME THE REPLY CARRIED, which is a count and not a reading:
+      // `SHOW CREATE FUNCTION <name>` answers one row per overload, so this is the engine's own
+      // answer to "how many objects wear this name", untouched by any normalisation this file
+      // performs. The apply's post-apply control is the only reader (#789 Phase 3): it is the one
+      // question about a write that cannot inherit a blind spot from the identity reader, because
+      // it never reads an identity.
+      overloads: rows.length,
+    };
+  }
+
+  /**
+   * Build the ONE statement that replaces a catalog function's definition (#789 Phase 3).
+   *
+   * THE STRATEGY IS `replace-in-place-statement` AND IT NARROWS THE LOST-UPDATE WINDOW RATHER
+   * THAN CLOSING IT, which is stated here because only a transaction closes one and Trino has
+   * none across a read and a later write. MEASURED on trinodb/trino:476 on 2026-09-14: a failed
+   * `CREATE OR REPLACE FUNCTION` leaves the previous object byte-identical, with no transaction,
+   * confirmed on `function` and on `view`; and the round trip is byte-STABLE, so applying the
+   * read text back verbatim leaves `SHOW CREATE FUNCTION` answering the same bytes.
+   *
+   * THE HEADER IS SPLICED AND NEVER ASSEMBLED, and that is a safety property rather than an
+   * economy. MEASURED on 476, a view's read text carries `SECURITY DEFINER` although the fixture
+   * never typed it, so a header this provider assembled from a catalog row would silently change
+   * who the object runs as. Splicing sends the reader's own bytes plus exactly the eleven
+   * characters of {@link TRINO_REPLACE_CLAUSE}, and the segment map says which eleven.
+   *
+   * THE SPLICE IS ANCHORED TO THE FIRST TOKEN AND IS NEVER A GLOBAL REPLACE. A body may hold the
+   * word `CREATE`, which `docker/trino-init/01-object-fixture.sql` proves with
+   * `mentions_create`, and a `replaceAll` would rewrite the body as well.
+   *
+   * THERE IS NO PRIVILEGE PRE-FLIGHT AND THAT ABSENCE IS MEASURED. Whether an apply is possible
+   * is a per-CATALOG fact on this engine, measured on 476 with one of five catalogs taking a
+   * function and one taking a view, so a build-time guess would be wrong in both directions on
+   * one cluster. The refusal arrives at apply time as `unsupported`, carrying the connector's own
+   * `NOT_SUPPORTED`, errorCode 13.
+   *
+   * FOUR REFUSALS, IN THIS ORDER, and each one answers before anything is sent.
+   */
+  public async buildObjectEdit(request: ObjectEditRequest): Promise<ObjectEditBuild> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = requireEditableKind(capabilities, request.kind, {
+      displayName: this.dialect.displayName,
+      type: this.type,
+    });
+    if (request.partId !== TRINO_SOURCE_PART_ID) {
+      throw new QueryError(
+        `A Trino ${spec.label.toLowerCase()} has one source part, "${TRINO_SOURCE_PART_ID}", received "${request.partId}"`,
+        this.type,
+      );
+    }
+
+    const read = objectRead(capabilities, spec, request.path);
+    // NOT `readOverload`: the BUILD resolves the overload the way the pane's own read does, so
+    // the object a plan is addressed to is the object the reader was shown. `SHOW FUNCTIONS` is
+    // the statement that MINTED the segment, and matching against it parses nothing.
+    const resolved = await this.resolveOverload(read);
+    const statement = trinoSourceStatementFor(request.kind);
+    const sql = trinoObjectSourceSql(statement, read.catalog, read.schema, resolved.name);
+    const rows = await this.runObjectRows(sql);
+    const row = rows.find((candidate) => trinoCreateSignature(candidate[statement.column]) === resolved.signature);
+    const definition = row?.[statement.column];
+    if (typeof definition !== "string" || definition.trim() === "") {
+      // The same fact and the same sentence the source read answers for an absent overload.
+      throw new QueryError(
+        `No Trino ${request.kind} named ${read.name} in ${read.catalog}.${read.schema}`,
+        this.type,
+        sql,
+      );
+    }
+
+    const refuse = (refusal: ObjectEditRefusalClass, sentence: string): ObjectEditBuild => ({
+      built: false,
+      // `at: { within: "none" }` on every one of them, and it is a fact rather than a default:
+      // nothing has been sent, so no engine has reported a position and there is no coordinate to
+      // convert. An `outside` here would claim a position was reported and could not be placed.
+      refusal: { refusal, sentence, at: { within: "none" } },
+    });
+
+    // 1. The read bound. A part the pane could only show TRUNCATED is never editable: submitting
+    //    the bounded text back is a truncation dressed as an edit, and it would delete everything
+    //    past the bound. The number is core's `EDIT_CHARACTER_LIMIT`, so this refusal and the
+    //    pane's bound can never drift apart, and the fixture's `over_limit_fn` is the population:
+    //    measured on 476, `SHOW CREATE FUNCTION` answers 1,001,094 characters for it.
+    if (definition.length > EDIT_CHARACTER_LIMIT) {
+      return refuse(
+        "guard",
+        `this definition is ${definition.length.toLocaleString("en-US")} characters and the Source pane is ` +
+          `bounded at ${EDIT_CHARACTER_LIMIT.toLocaleString("en-US")} characters, so the text you edited is a ` +
+          "truncation of it and submitting it back would delete everything past the bound",
+      );
+    }
+
+    // 2. Byte-identical text. A refusal and never a no-op apply, because sending an apply that
+    //    cannot change anything spends a write path, an audit row and a round trip on nothing.
+    if (request.text === definition) {
+      return refuse("definition", "this text is identical to the definition on the server");
+    }
+
+    // 3. The FIRST TOKEN, which is also where the clause goes. Checked before the first line so
+    //    the reader who pasted an `ALTER` gets told that rather than a diff of two headers.
+    //    STATED PLAINLY: check 4 below would refuse the same texts with the same class, because
+    //    the read text is `SHOW CREATE` output and always opens with CREATE, so this check buys
+    //    a SENTENCE and not a second safety net, and the suite pins it by that sentence.
+    const at = trinoSpliceAt(request.text);
+    if (at === null) {
+      const firstToken = request.text.trim().split(/\s/)[0];
+      return refuse(
+        "identity",
+        `this text does not begin with CREATE, it begins with "${firstToken}", and LibreDB applies a ` +
+          "definition by sending the CREATE statement the server itself printed with OR REPLACE spliced " +
+          "into it. Run the statement you want in the SQL editor instead",
+      );
+    }
+
+    // 4. The identity, which is the QUALIFIED NAME and the ARGUMENT TYPE LIST, read wherever in
+    //    the text they are. It compared the FIRST LINE of each side until this was measured, and
+    //    a first line is not the identity: MEASURED on trinodb/trino:476 in container
+    //    `trino-t32` on host port 18532 on 2026-09-15, the formatter renders an identifier
+    //    verbatim, so `CREATE FUNCTION memory.app.nlrow(r ROW("a<newline>b" bigint), y bigint)` is
+    //    the server's own text for an object whose parameter list it split across two lines.
+    //    Driven end to end through this provider against that container, the first-line check
+    //    ACCEPTED `y bigint` edited to `y varchar` below line one, the apply SUCCEEDED, the
+    //    outcome was `applied-elsewhere` with `undone: false`, and the schema was left holding a
+    //    SECOND `nlrow` that nothing in this product removes.
+    //
+    //    THE WRAP THE OLD COMMENT NAMED AS UNMEASURED IS NOW MEASURED AND IT DOES NOT HAPPEN: a
+    //    function with 200 parameters and deliberately long names answers 11,845 characters on
+    //    ONE line on the same container. The formatter has no width. It was the identifier and
+    //    not the width that split the header, so the old comment's "fails safe either way" was
+    //    true of the population it imagined and false of the one that exists.
+    //
+    //    {@link trinoCreateFunctionIdentity} is the reader, and it is the same parameter-list scan
+    //    the overload resolution and the post-apply verification use, so a build and an apply
+    //    cannot disagree about which object a text names.
+    //
+    //    WHAT THE COMPARISON ACTUALLY IS, written out because the sentences here were wrong about
+    //    it until the PR #831 review measured them (item 3). BOTH SIDES ARE `CREATE` TEXTS: the
+    //    submitted side is the reader's own bytes and the current side is the identity read out of
+    //    `definition`, which is the SERVER'S OWN `SHOW CREATE FUNCTION` output. The path segment is
+    //    not one of the two sides; it is only what `address` prints, so the sentence names the
+    //    object the way the tree does. Because neither side is a `SHOW FUNCTIONS` cell, the
+    //    comparison is NOT the case-folded, whitespace-free and quote-free form that the overload
+    //    resolution has to use: it is the form Trino's OWN identifier rules make equal, folding an
+    //    undelimited identifier to lower case and keeping a delimited one, and it applies to the
+    //    NAME half exactly as it does to the types. That is what makes
+    //    `memory.app.PLUS_ONE(x bigint)` and `memory.app."Plus_One"(x bigint)` BUILD against
+    //    `memory.app.plus_one`, all three measured in place on 476, where the byte-exact name
+    //    comparison this check carried before refused them.
+    //
+    //    Both identities are shown, because the reader's next action is to put the original one
+    //    back or to create the new function deliberately, and neither is possible from a sentence
+    //    that only says no. Each side spells its type list the way its own source spelled it,
+    //    which is why the refusal can show `ROW("ab" bigint)` beside `row("a b" bigint)`: those
+    //    two really are two objects on this engine, and a sentence printing the comparison form
+    //    would print one string twice.
+    const address = `${read.catalog}.${read.schema}.${read.name}`;
+    const submitted = trinoCreateFunctionIdentity(request.text, ["CREATE", statement.object]);
+    if (submitted === null) {
+      return refuse(
+        "identity",
+        `LibreDB could not read a CREATE ${statement.object} header out of this text, so it cannot tell ` +
+          `whether the text still names ${address}. A definition this product applies opens with ` +
+          `CREATE ${statement.object}, the qualified name and the parameter list in parentheses, exactly ` +
+          "as the server printed it, and LibreDB adds the OR REPLACE itself. Run the statement you want " +
+          "in the SQL editor instead",
+      );
+    }
+    const current = trinoCreateFunctionIdentity(definition, ["CREATE", statement.object]);
+    if (submitted.key !== current?.key) {
+      return refuse(
+        "identity",
+        `this text names "${functionSegment(submitted.name, submitted.argumentTypes.join(", "))}" and the ` +
+          `object being edited is "${address}", and LibreDB refuses an edited identity rather than sending ` +
+          "it. MEASURED on Trino 476, a changed ARGUMENT TYPE LIST or a changed NAME creates a SECOND " +
+          "function and leaves this one untouched, while a changed return type and a renamed parameter " +
+          "are replaced in place: make the change you want with a CREATE OR REPLACE FUNCTION of your own " +
+          "in the SQL editor",
+      );
+    }
+
+    const prefix = request.text.slice(0, at);
+    const step: ObjectEditStep = {
+      text: `${prefix}${TRINO_REPLACE_CLAUSE}${request.text.slice(at)}`,
+      language: spec.sourceLanguage,
+      // THREE segments and never a scalar prefix length: the reader's text is not a suffix of
+      // the sent text, because the eleven characters go INSIDE the first line.
+      segments: [
+        { from: "user", start: 0, end: at },
+        { from: "provider", text: TRINO_REPLACE_CLAUSE },
+        { from: "user", start: at, end: request.text.length },
+      ],
+    };
+
+    return {
+      built: true,
+      plan: {
+        planVersion: 1,
+        planId: randomUUID(),
+        issuedAt: new Date().toISOString(),
+        connectionFingerprint: await connectionFingerprint(this.config),
+        type: this.type,
+        path: [...request.path],
+        kind: request.kind,
+        partId: request.partId,
+        strategy: "replace-in-place-statement",
+        unit: { medium: "statement", steps: [step] },
+        // NONE. The statement is fully qualified by the catalog and schema segments of its own
+        // path, so nothing it does depends on a session another borrower of this connection can
+        // move.
+        session: [],
+        // MEASURED on 476: Trino publishes NO readable revision token in any surface this
+        // provider can reach, so H3's third state applies and the check is a RE-READ inside the
+        // apply, compared byte for byte against this digest. That NARROWS the window and does not
+        // close it, because the re-read and the write are two round trips.
+        revision: {
+          check: "compared",
+          token: await sha256Hex(definition),
+          basis: "SHOW CREATE FUNCTION",
+          scope: "server",
+        },
+        // NOTHING. A `CREATE OR REPLACE FUNCTION` that keeps the identity replaces the addressed
+        // overload and nothing else, measured on 476: the other overloads of the name are
+        // untouched and the reply carries them unchanged. The one way to lose something here is a
+        // changed ARGUMENT TYPE LIST, which forks, and that is refused by check 4 above and
+        // caught again by the post-apply verification rather than warned about.
+        consequences: [],
+      },
+      preimage: { text: definition, language: spec.sourceLanguage },
+    };
+  }
+
+  /**
+   * Send the plan, and NEVER the text again (#789 Phase 3, ruling 1a).
+   *
+   * THREE ROUND TRIPS AT MOST, IN THIS ORDER, and the order is the whole safety argument:
+   *
+   * 1. the RE-READ, which is what `compared` means. It is the FIRST thing this method sends, so
+   *    nothing else can sit between the comparison and the write. A definition that moved is a
+   *    `conflict` and NOTHING is executed.
+   * 2. `plan.unit.steps[0].text`, verbatim, with no parameters and no re-derivation. Nothing here
+   *    re-reads the object to re-assemble a statement and nothing consults `getCapabilities()`
+   *    for anything the plan carries.
+   * 3. the POST-APPLY RE-READ, which supplies the NEW revision token, and the verification that
+   *    goes with it: whether the object the statement WROTE is the object the plan was
+   *    addressed to, asked of the parameter list the sent statement declares and never of
+   *    whether the addressed row's RENDERING moved. MEASURED on 476 why that arm is reachable
+   *    at all: only the ARGUMENT TYPE LIST forks, a changed return type and a renamed parameter
+   *    are replaced in place, so a fork needs an argument-type edit and the build's first-line
+   *    check already refuses one. This is the CONTROL that catches a first-line rule this
+   *    design got wrong, and `undone` is FALSE because Trino has no transaction to take it back
+   *    and this design will not issue a DROP.
+   *
+   * THIS METHOD OPENS NO TRANSACTION, which on this engine is a statement of fact rather than a
+   * prohibition: a Trino catalog function is created outside any transaction the client can hold.
+   *
+   * A VERDICT THE ENGINE REACHED IS RETURNED AND NEVER THROWN, which is what keeps a deliberate
+   * refusal off the 500 path the shipped error mapper would otherwise put it on. That mapper is
+   * also why a timeout is `interrupted` here: `mapTrinoError` mints a `TimeoutError` for the
+   * `timeout` category and `src/lib/api/errors.ts` answers that 408 `retryable: true`, and a
+   * client that retries an apply whose disposition is unknown applies twice.
+   */
+  public async applyObjectEdit(plan: ObjectEditPlan): Promise<ObjectEditOutcome> {
+    this.ensureConnected();
+    if (plan.unit.medium !== "statement") {
+      // A command unit is not a shape this provider ever issues. It raises rather than refusing,
+      // because a refusal reports an engine fact and this is a plan from somewhere else.
+      throw new QueryError("A Trino object edit plan carries a statement unit, received a command", this.type);
+    }
+    const [step] = plan.unit.steps;
+    const spec = requireEditableKind(this.getCapabilities(), plan.kind, {
+      displayName: this.dialect.displayName,
+      type: this.type,
+    });
+    const started = Date.now();
+
+    const before = await this.readOverload(plan.path, plan.kind, spec);
+    const token = plan.revision.check === "unavailable" ? undefined : plan.revision.token;
+    const current = before.definition ?? "";
+    if (token === undefined || (await sha256Hex(current)) !== token) {
+      // H3's diff: the server's own text as the comparison read it, so the reader is shown what
+      // is there rather than asked to trust a detector. An absent overload answers the empty
+      // string, which is what is there.
+      return {
+        outcome: "conflict",
+        conflict: "object-changed",
+        current: { text: current, language: step.language },
+        duration: Date.now() - started,
+      };
+    }
+
+    try {
+      await this.requireTransport().query(step.text);
+    } catch (error) {
+      return this.classifyApplyFailure(step, error, Date.now() - started);
+    }
+
+    // THE POST-APPLY VERIFICATION ASKS WHETHER THE ADDRESSED ROW WAS REWRITTEN, NOT WHETHER ITS
+    // RENDERING MOVED. It compared the two renderings until this was measured, and that
+    // comparison is the SAME SEVERITY 1 DEFECT `6fdcc8bb` repaired on PostgreSQL: the read text
+    // is the FORMATTER's canonical output, this file's own build docblock says so, and an edit
+    // that differs from the server's bytes and canonicalizes back to them passes the build's
+    // byte-identical refusal and then trips a rendering comparison.
+    //
+    // MEASURED on trinodb/trino:476 on 2026-09-14, container `libredb-trino-t08fix`, host port
+    // 18509: with `memory.app.plus_one(x bigint)` in place, `CREATE OR REPLACE FUNCTION
+    // memory.app.plus_one(x bigint) RETURNS bigint RETURN ((x  +  1)) -- I reformatted this and
+    // added a comment` SUCCEEDED and `SHOW CREATE FUNCTION` came back byte-identical to the
+    // pre-image, two rows before and two after. Under the rendering comparison that legitimate
+    // in-place apply answered `applied-elsewhere`, which prints "this text does not name
+    // plus_one(bigint), so that object was not changed" over a change that landed.
+    //
+    // WHAT IT ASKS INSTEAD, AND WHY IT IS NOT THE ROW-SET COMPARISON THE REVIEW PROPOSED. The
+    // question is "is the object this statement wrote the object the plan was addressed to", and
+    // on this engine the only SOUND evidence for it is the parameter list the SENT statement
+    // itself declares, read with the same {@link trinoCreateSignature} that FOUND the addressed
+    // row. MEASURED on 476: only the ARGUMENT TYPE LIST forks, a changed return type and a
+    // renamed parameter are replaced in place, so a statement whose parameter list is the
+    // addressed one replaced the addressed one, and a statement whose parameter list is a
+    // different one did not.
+    //
+    // THE CATALOG'S OWN ROW SET WAS TRIED AS THE RULE AND MEASURED UNSOUND IN BOTH DIRECTIONS,
+    // which is recorded here because it is the obvious repair and the next reader will propose it
+    // again. It is not unused: the control at the end of this method asks it, over the one
+    // population where the two readings of the sent text disagree, and the comment there says why
+    // that narrowing is what keeps it honest. A fork does ADD a row, MEASURED in this container:
+    // two rows for
+    // `memory.app.plus_one` before, three after a `CREATE OR REPLACE FUNCTION
+    // memory.app.plus_one(x varchar)`, the addressed `(x bigint)` row byte-identical, and the
+    // new row FIRST in the reply. But:
+    //
+    //   * FALSE NEGATIVE, MEASURED through this provider with a hand-built plan on the same
+    //     container: with `plus_one(varchar)` ALREADY present, a plan whose statement declares
+    //     `(x varchar)` gains NO row, so the row-set question answered `applied` while
+    //     `plus_one(bigint)`, the object the plan was addressed to, was never touched and the
+    //     reader would have been told their edit landed.
+    //   * FALSE POSITIVE, by construction rather than measured: the re-read happens AFTER the
+    //     write, so any other session creating another overload of the same NAME in that window
+    //     gains a row, and a legitimate in-place apply would be reported as somebody else's
+    //     object. That is the same shape of false alarm this whole repair is removing.
+    //
+    // WHAT THE SENT-STATEMENT QUESTION IS AND IS NOT A CONTROL ON, stated exactly because this
+    // comment claimed more than it had (#831 review, item 2). It reads the same bytes the build
+    // checked, with the same reader, so it is a control on the PLAN: a plan this provider did not
+    // build, or built before somebody else changed the object, is caught here. It is NOT a control
+    // on the identity reading itself, and cannot be, because a second reading of the same text by
+    // the same code answers the same thing. The question that IS a control on that reading is the
+    // engine's row count, asked at the end of this method.
+    //
+    // `undone` is FALSE because Trino has no transaction to take it back and this design will
+    // not issue a DROP. Through the product this arm is a CONTROL and not an everyday outcome:
+    // the build's own identity check already refuses an edited identity, so the suite reaches it
+    // with a plan built by hand, which is the only way to reach a control on a rule.
+    const after = await this.readOverload(plan.path, plan.kind, spec);
+    // THE IDENTITY AND NOT THE SIGNATURE ALONE, and the difference is a hole this control had.
+    // A signature is the ARGUMENT TYPES, so a statement declaring `plus_two(x bigint)` over a plan
+    // addressed to `plus_one(bigint)` compared EQUAL: the addressed row came back unchanged, this
+    // method answered `applied`, and the revision token it handed back was the digest of a text
+    // the reader's edit never reached. MEASURED on trinodb/trino:476 in container `trino-t32` on
+    // host port 18532 on 2026-09-15 that a changed NAME forks exactly as a changed argument type
+    // does: `rename_probe2` beside `rename_probe`, two rows where there was one.
+    //
+    // The comparison is the SENT bytes against the PRE-IMAGE the digest check just accepted, read
+    // by the same {@link trinoCreateFunctionIdentity} the build compares with. That is what stops
+    // the two from disagreeing about what an identity IS, and it is also exactly why this
+    // comparison alone is not a control on the build's rule: the arm below it is.
+    const sentStatement = trinoSourceStatementFor(plan.kind);
+    // The SENT bytes carry the clause this provider spliced, so their keyword prefix is the one
+    // this provider wrote, and the constant is where it comes from: three things already have to
+    // agree about those eleven characters and a literal here would be a fourth.
+    const wrote = trinoCreateFunctionIdentity(step.text, ["CREATE", TRINO_REPLACE_CLAUSE.trim(), sentStatement.object]);
+    const addressed = trinoCreateFunctionIdentity(current, ["CREATE", sentStatement.object]);
+    if (wrote === null) {
+      // A plan whose statement no header can be read out of at all. It cannot say the addressed
+      // object was written and it cannot name what was, so it says the first and omits the second,
+      // which is the arm the dialog already renders without a name.
+      return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
+    }
+    if (addressed === null || wrote.key !== addressed.key) {
+      return {
+        outcome: "applied-elsewhere",
+        undone: false,
+        // WHAT THE SENT STATEMENT DECLARED, minted in the same shape as the path segment that
+        // addresses an overload, so the reader can go to the object that is now there instead of
+        // being told only that one is.
+        //
+        // IT IS THE RENDERING AND NOT THE COMPARISON SIGNATURE, and that distinction is the whole
+        // reason {@link TrinoCreateFunctionIdentity} carries both. The signature is lower-cased and has
+        // its whitespace and its quotes removed, which is what makes the engine's two renderings
+        // of one list comparable and what makes it unreadable: measured with the shipped helper
+        // on the fixture's own `hard` shape, a `wrote` built from the signature prints
+        // `plus_one(decimal(10,2),array(varchar),row(abigint,bvarchar))`, in which `abigint`
+        // names no type Trino will parse, and this prints
+        // `plus_one(decimal(10, 2), array(varchar), ROW(a bigint, b varchar))`. The suite pins
+        // both halves of that, and pins that the result is an ADDRESS rather than a label:
+        // {@link trinoFunctionSegmentParts} takes it apart and the signature it yields is the one
+        // the written row would be FOUND by.
+        //
+        // It is the SENT statement's own rendering, so on the population this arm exists for it
+        // is the reader's own bytes rather than the coordinator's. That is the honest thing to
+        // show, because those bytes are what created the object being named.
+        //
+        // THE NAME IS THE DECLARED ONE AND NOT THE ADDRESSED ONE, which the arm above this one is
+        // the reason for: on a NAME fork the addressed name is precisely the object that was not
+        // written, and printing it here would name the wrong object in the one sentence whose job
+        // is to name the right one. It is therefore QUALIFIED, as the statement wrote it, rather
+        // than the bare segment the path carries.
+        wrote: functionSegment(wrote.name, wrote.argumentTypes.join(", ")),
+        duration: Date.now() - started,
+      };
+    }
+    // THE CONTROL ON THE READING ABOVE, and it is a DIFFERENT QUESTION rather than the same one
+    // asked twice (#789 Phase 3, PR #831 review item 2). The arm above asks
+    // {@link trinoCreateFunctionIdentity}, which is the reader the BUILD refuses with. A control
+    // that shares its rule's reading is guaranteed to be blind to exactly the population the rule
+    // is blind to, and that is not a theory: MEASURED on trinodb/trino:476 in container
+    // `trino-t32r1` on host port 18633 on 2026-09-15, an edit that deleted one space inside a
+    // quoted ROW field name forked the catalog, and BOTH the build's check and this one called it
+    // an in-place edit, so the reader was told `applied` twice over.
+    //
+    // So this asks the ENGINE. `SHOW CREATE FUNCTION <name>` answers ONE ROW PER OVERLOAD, both
+    // reads above already made that round trip, and a count is the one question about a write that
+    // cannot inherit a blind spot from an identity reader: it never reads an identity. If the
+    // write ADDED an overload of the addressed name, the statement created an object instead of
+    // replacing one, whatever any reading of its text says.
+    //
+    // IT IS ASKED ONLY WHERE THE TWO READINGS OF THE SENT TEXT DISAGREE, and that condition is
+    // what keeps it from lying. The trigger is the BYTE-EXACT identity: the name and the argument
+    // types as the statement WRITES them, against the same two read out of the pre-image the
+    // digest check just accepted. When they are byte-identical the reader did not touch the header
+    // at all, and a row gained in that window is another session's sibling overload, which is an
+    // ordinary event this provider must report as `applied` - the test named for it pins that, and
+    // it is why the row count is NOT the rule. When they differ the reader DID edit the header and
+    // the folding reading called the edit identity-preserving, which on 476 is a parameter rename,
+    // a re-quoting or a case change, all measured in place; a gained row there says that reading
+    // was wrong about this text.
+    //
+    // WHAT IT STILL CANNOT TELL APART, said plainly: inside that narrow population a sibling
+    // overload created by another session in the window between the two reads is reported as a
+    // fork. That is a conjunction of two rare events rather than the everyday false alarm the
+    // count-alone rule would be, and the trade is deliberate: the alternative is a control that
+    // cannot catch its own rule being wrong, which is the state this repair is removing.
+    const exact =
+      wrote.name === addressed.name &&
+      wrote.argumentTypes.length === addressed.argumentTypes.length &&
+      wrote.argumentTypes.every((type, index) => type === addressed.argumentTypes[index]);
+    if (!exact && after.overloads > before.overloads) {
+      // NOTHING IS NAMED. The sent statement declares the identity the plan addresses, so the only
+      // name this arm holds is the addressed object's, and that is precisely the object that was
+      // not written: printing it would name the wrong object in the one sentence whose job is to
+      // name the right one. The dialog already renders this shape, without a name.
+      return { outcome: "applied-elsewhere", undone: false, duration: Date.now() - started };
+    }
+    // The addressed row's text after the write. It is the EMPTY STRING only when the reply no
+    // longer carries the addressed overload at all, which is an out-of-band DROP between the
+    // write and this re-read: unmeasured on 476, reported as `applied` because the engine did
+    // accept the statement, and the digest of the empty string is then what a later apply
+    // compares against and answers `conflict` with an empty current text, which is what is
+    // there.
+    const written = after.definition ?? "";
+    return {
+      outcome: "applied",
+      // The NEW token, because the one the plan carried is by definition the OLD one and a client
+      // that re-applied with it would be told the object had not moved.
+      revision: {
+        check: "compared",
+        token: await sha256Hex(written),
+        basis: "SHOW CREATE FUNCTION",
+        scope: "server",
+      },
+      duration: Date.now() - started,
+    };
+  }
+
+  /**
+   * One coordinator failure, turned into the outcome arm it IS (#789 Phase 3).
+   *
+   * The CATEGORY decides, from {@link TRINO_APPLY_VERDICT}, and a category not in the table is
+   * `definition` with the engine's own sentence rather than a guess. The category and not the
+   * integer errorCode, because the transport drops the integer deliberately (its own docblock
+   * says it is the less stable of the two) and keeps the stable fault NAME, which is what
+   * `refusal.code` carries as DATA.
+   *
+   * A failure that is not a transport failure at all is not a verdict the engine reached: the
+   * statement was sent and its answer never arrived, so it is `interrupted` with
+   * `committed: "unknown"`, and a client that retried on it would apply twice.
+   */
+  private classifyApplyFailure(step: ObjectEditStep, error: unknown, duration: number): ObjectEditOutcome {
+    if (!(error instanceof TrinoTransportError)) {
+      return {
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence: error instanceof Error ? error.message : String(error),
+        duration,
+      };
+    }
+    const verdict = TRINO_APPLY_VERDICT[error.category];
+    if (verdict === "interrupted") {
+      return { outcome: "interrupted", committed: "unknown", sentence: error.message, duration };
+    }
+    return {
+      outcome: "refused",
+      refusal: {
+        refusal: verdict ?? "definition",
+        sentence: error.message,
+        ...(error.code === null ? {} : { code: error.code }),
+        // THE WHOLE CONVERSION AND NOT A SUBTRACTION OF ELEVEN. `errorLocation` is 1-based on both
+        // axes and points into the text that was SENT, and the splice is on LINE 1 only: measured
+        // on 476, a `RETURN nope` body error answers `line 3:8` BOTH bare and spliced. Resolving
+        // to an offset and handing that to `userPositionOf` subtracts the splice exactly where the
+        // splice is, and answers `outside` for a coordinate that lands inside the clause this
+        // product wrote. An uncorrected coordinate is silently CLAMPED by Monaco rather than
+        // rejected, so nothing downstream catches this being wrong.
+        at: this.refusalPosition(step, error.location),
+      },
+      duration,
+    };
+  }
+
+  /** Where a coordinator location lands in the reader's own text, or that it lands nowhere. */
+  private refusalPosition(step: ObjectEditStep, location: { line: number; column: number } | null) {
+    if (location === null) return { within: "none" } as const;
+    const offset = trinoSentOffsetOf(step.text, location.line, location.column);
+    return offset === null ? ({ within: "outside" } as const) : userPositionOf(step, offset);
   }
 
   // ==========================================================================

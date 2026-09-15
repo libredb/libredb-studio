@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { parseCSV, parseJSON, inferSqlType, escapeSQL, generateImportSQL } from "@/components/DataImportModal";
-import type { ParsedData } from "@/components/DataImportModal";
+import type { ImportTarget, ParsedData } from "@/components/DataImportModal";
 
 // =============================================================================
 // parseCSV
@@ -252,6 +252,9 @@ describe("escapeSQL", () => {
 // =============================================================================
 
 describe("generateImportSQL", () => {
+  /** An existing object at a one-segment address, which is what these cases are about. */
+  const existing = (name: string): ImportTarget => ({ kind: "existing", path: [name] });
+
   const sampleData: ParsedData = {
     headers: ["name", "age", "active"],
     rows: [
@@ -262,15 +265,15 @@ describe("generateImportSQL", () => {
   };
 
   test("returns empty string for null parsedData", () => {
-    expect(generateImportSQL(null, "users", false, "", {})).toBe("");
+    expect(generateImportSQL(null, existing("users"), {})).toBe("");
   });
 
   test("returns empty string when no target table selected", () => {
-    expect(generateImportSQL(sampleData, "", false, "", {})).toBe("");
+    expect(generateImportSQL(sampleData, null, {})).toBe("");
   });
 
   test("generates INSERT for existing table", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(sampleData, existing("users"), { name: "name", age: "age", active: "active" });
     expect(sql).toContain("INSERT INTO users");
     expect(sql).toContain("name, age, active");
     expect(sql).toContain("'Alice'");
@@ -279,19 +282,31 @@ describe("generateImportSQL", () => {
   });
 
   test("generates CREATE TABLE + INSERT for new table", () => {
-    const sql = generateImportSQL(sampleData, "", true, "my_table", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "my_table" },
+      { name: "name", age: "age", active: "active" },
+    );
     expect(sql).toContain("CREATE TABLE my_table");
     expect(sql).toContain("INSERT INTO my_table");
   });
 
   test('uses "imported_data" as default new table name', () => {
-    const sql = generateImportSQL(sampleData, "", true, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "" },
+      { name: "name", age: "age", active: "active" },
+    );
     expect(sql).toContain("CREATE TABLE imported_data");
     expect(sql).toContain("INSERT INTO imported_data");
   });
 
   test("infers column types in CREATE TABLE", () => {
-    const sql = generateImportSQL(sampleData, "", true, "test", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(
+      sampleData,
+      { kind: "new", name: "test" },
+      { name: "name", age: "age", active: "active" },
+    );
     expect(sql).toContain("name TEXT");
     expect(sql).toContain("age INTEGER");
     expect(sql).toContain("active BOOLEAN");
@@ -299,20 +314,20 @@ describe("generateImportSQL", () => {
 
   test("uses column mapping for renamed columns", () => {
     const mapping = { name: "full_name", age: "user_age", active: "is_active" };
-    const sql = generateImportSQL(sampleData, "users", false, "", mapping);
+    const sql = generateImportSQL(sampleData, existing("users"), mapping);
     expect(sql).toContain("full_name, user_age, is_active");
   });
 
   test("uses column mapping in CREATE TABLE column definitions", () => {
     const mapping = { name: "full_name", age: "user_age", active: "is_active" };
-    const sql = generateImportSQL(sampleData, "", true, "test", mapping);
+    const sql = generateImportSQL(sampleData, { kind: "new", name: "test" }, mapping);
     expect(sql).toContain("full_name TEXT");
     expect(sql).toContain("user_age INTEGER");
     expect(sql).toContain("is_active BOOLEAN");
   });
 
   test("generates TRUE/FALSE for boolean values", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", { name: "name", age: "age", active: "active" });
+    const sql = generateImportSQL(sampleData, existing("users"), { name: "name", age: "age", active: "active" });
     expect(sql).toContain("TRUE");
     expect(sql).toContain("FALSE");
   });
@@ -326,7 +341,7 @@ describe("generateImportSQL", () => {
       ],
       totalRows: 2,
     };
-    const sql = generateImportSQL(dataWithNulls, "users", false, "", { name: "name", bio: "bio" });
+    const sql = generateImportSQL(dataWithNulls, existing("users"), { name: "name", bio: "bio" });
     expect(sql).toContain("NULL");
   });
 
@@ -339,7 +354,7 @@ describe("generateImportSQL", () => {
       ],
       totalRows: 2,
     };
-    const sql = generateImportSQL(numericData, "products", false, "", { id: "id", price: "price" });
+    const sql = generateImportSQL(numericData, existing("products"), { id: "id", price: "price" });
     expect(sql).toContain("(1, 9.99)");
     expect(sql).toContain("(2, 19.99)");
   });
@@ -350,7 +365,7 @@ describe("generateImportSQL", () => {
       rows: [["O'Brien"]],
       totalRows: 1,
     };
-    const sql = generateImportSQL(dataWithQuotes, "users", false, "", { name: "name" });
+    const sql = generateImportSQL(dataWithQuotes, existing("users"), { name: "name" });
     expect(sql).toContain("'O''Brien'");
   });
 
@@ -361,13 +376,13 @@ describe("generateImportSQL", () => {
       rows: manyRows,
       totalRows: 150,
     };
-    const sql = generateImportSQL(bigData, "users", false, "", { name: "name" });
+    const sql = generateImportSQL(bigData, existing("users"), { name: "name" });
     const insertCount = (sql.match(/INSERT INTO/g) || []).length;
     expect(insertCount).toBe(2); // 100 + 50
   });
 
   test("falls back to original header when mapping is empty", () => {
-    const sql = generateImportSQL(sampleData, "users", false, "", {});
+    const sql = generateImportSQL(sampleData, existing("users"), {});
     expect(sql).toContain("name, age, active");
   });
 
@@ -377,7 +392,7 @@ describe("generateImportSQL", () => {
       rows: [["null"]],
       totalRows: 1,
     };
-    const sql = generateImportSQL(data, "t", false, "", { val: "val" });
+    const sql = generateImportSQL(data, existing("t"), { val: "val" });
     expect(sql).toContain("NULL");
   });
 
@@ -387,7 +402,7 @@ describe("generateImportSQL", () => {
       rows: [["true"], ["false"], ["True"], ["FALSE"]],
       totalRows: 4,
     };
-    const sql = generateImportSQL(data, "t", false, "", { flag: "flag" });
+    const sql = generateImportSQL(data, existing("t"), { flag: "flag" });
     expect(sql).toContain("TRUE");
     expect(sql).toContain("FALSE");
   });
@@ -398,7 +413,7 @@ describe("generateImportSQL", () => {
       rows: [["1.5"], ["2.3"], ["0.99"]],
       totalRows: 3,
     };
-    const sql = generateImportSQL(data, "t", false, "", { amount: "amount" });
+    const sql = generateImportSQL(data, existing("t"), { amount: "amount" });
     expect(sql).toContain("1.5");
     expect(sql).not.toContain("'1.5'");
   });
@@ -409,7 +424,7 @@ describe("generateImportSQL", () => {
       rows: [["10"], ["20"]],
       totalRows: 2,
     };
-    const sql = generateImportSQL(data, "t", false, "", { count: "count" });
+    const sql = generateImportSQL(data, existing("t"), { count: "count" });
     expect(sql).toContain("(10)");
     expect(sql).not.toContain("'10'");
   });
@@ -420,7 +435,7 @@ describe("generateImportSQL", () => {
       rows: [["1"], [""]],
       totalRows: 2,
     };
-    const sql = generateImportSQL(data, "t", false, "", { id: "id" });
+    const sql = generateImportSQL(data, existing("t"), { id: "id" });
     expect(sql).toContain("NULL");
   });
 
@@ -430,7 +445,7 @@ describe("generateImportSQL", () => {
       rows: [["a"]],
       totalRows: 1,
     };
-    const sql = generateImportSQL(data, "tbl", false, "", { x: "x" });
+    const sql = generateImportSQL(data, existing("tbl"), { x: "x" });
     expect(sql).toContain("INSERT INTO tbl (x)\nVALUES\n");
   });
 
@@ -440,7 +455,7 @@ describe("generateImportSQL", () => {
       rows: [["1", "x"]],
       totalRows: 1,
     };
-    const sql = generateImportSQL(data, "", true, "new_tbl", { a: "a", b: "b" });
+    const sql = generateImportSQL(data, { kind: "new", name: "new_tbl" }, { a: "a", b: "b" });
     expect(sql).toContain("CREATE TABLE new_tbl (\n");
     expect(sql).toContain("\n);");
   });

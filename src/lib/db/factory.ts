@@ -190,7 +190,7 @@ export async function createDatabaseProvider(
       throw new DatabaseConfigError(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
-        // tests/unit/db/factory.test.ts pins individual names in it by regex.
+        // tests/isolated/factory.test.ts pins individual names in it by regex.
         `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, db2, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );

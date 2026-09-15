@@ -52,7 +52,13 @@ mock.module("@/components/results-grid/ResultCard", () => ({
 
 mock.module("@/components/results-grid/RowDetailSheet", () => ({
   RowDetailSheet: (props: Record<string, unknown>) =>
-    props.isOpen ? React.createElement("div", { "data-testid": "row-detail-sheet" }, "Row Detail") : null,
+    props.isOpen
+      ? React.createElement(
+          "div",
+          { "data-testid": "row-detail-sheet", "data-row-index": String(props.rowIndex) },
+          "Row Detail",
+        )
+      : null,
 }));
 
 mock.module("@/components/results-grid/StatsBar", () => ({
@@ -85,6 +91,13 @@ mock.module("@/components/results-grid/StatsBar", () => ({
             `${(props.pendingChanges as unknown[]).length} changes`,
           )
         : null,
+      props.onToggleWrapText
+        ? React.createElement(
+            "button",
+            { "data-testid": "wrap-toggle", onClick: props.onToggleWrapText as () => void },
+            "WRAP",
+          )
+        : null,
       (props.activeFilterCount as number) > 0
         ? React.createElement(
             "button",
@@ -108,6 +121,7 @@ mock.module("@/components/results-grid/StatsBar", () => ({
 }));
 
 // ── Mock @tanstack/react-virtual ────────────────────────────────────────────
+const mockVirtualizerMeasure = mock(() => {});
 mock.module("@tanstack/react-virtual", () => ({
   useVirtualizer: (opts: { count: number }) => ({
     getVirtualItems: () =>
@@ -118,6 +132,8 @@ mock.module("@tanstack/react-virtual", () => ({
         key: i,
       })),
     getTotalSize: () => opts.count * 36,
+    measureElement: () => {},
+    measure: mockVirtualizerMeasure,
   }),
 }));
 
@@ -1010,8 +1026,9 @@ describe("ResultsGrid", () => {
       const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
 
       expect(getAllByRole("button", { name: "name" })[0].textContent).toBe("name");
-      // No header gains a tooltip it did not have before ("Filter column" is pre-existing).
-      expect(container.querySelectorAll('[title]:not([title="Filter column"])').length).toBe(0);
+      // No header gains a tooltip it did not have before ("Filter column" is pre-existing,
+      // and the row detail control is a row control rather than a header).
+      expect(container.querySelectorAll('[title]:not([title="Filter column"]):not([data-row-detail])').length).toBe(0);
     });
   });
 
@@ -1061,11 +1078,13 @@ describe("ResultsGrid", () => {
   test("sorting reorders the rendered rows, not just the header indicator", () => {
     const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
 
-    // `:not([data-testid])` excludes the mocked ResultCard above, which also
-    // carries data-index; only the desktop table's rows come off the table
-    // instance, and they are the ones the row model orders.
+    // `:not([data-testid])` excludes the mocked ResultCard above and `:not(button)`
+    // the mobile table's rows, which both carry data-index too; only the desktop
+    // table's rows come off the table instance, and they are the ones the row model orders.
     const renderedRows = () =>
-      Array.from(container.querySelectorAll("[data-index]:not([data-testid])")).map((row) => row.textContent ?? "");
+      Array.from(container.querySelectorAll("[data-index]:not([data-testid]):not(button)")).map(
+        (row) => row.textContent ?? "",
+      );
 
     expect(renderedRows()).toHaveLength(3);
     expect(renderedRows()[0]).toContain("Alice");
@@ -1113,6 +1132,207 @@ describe("ResultsGrid", () => {
       for (const handle of handles) {
         expect(handle.getAttribute("aria-hidden")).toBe("true");
       }
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Text Wrapping Tests
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Text wrapping", () => {
+    // Walks from every element showing `text` up to its virtual row (desktop and
+    // mobile both render in the DOM), collecting what could hold the value to one line.
+    function lineConstraints(container: HTMLElement, text: string) {
+      const found = Array.from(container.querySelectorAll("span")).filter((el) => el.textContent === text);
+      expect(found.length).toBeGreaterThan(0);
+      return found.map((el) => {
+        const classes: string[] = [];
+        let node: HTMLElement | null = el;
+        while (node && !node.style.transform) {
+          classes.push(...Array.from(node.classList));
+          node = node.parentElement;
+        }
+        expect(node).not.toBeNull();
+        // measureElement files a row's height under this attribute; a row without it
+        // grows on screen while the rows below it stay where the old height put them.
+        expect(node!.dataset.index).toBeDefined();
+        return { classes, rowHeight: node!.style.height, mobile: node!.tagName === "BUTTON" };
+      });
+    }
+
+    function expectSingleLine(container: HTMLElement, text: string) {
+      for (const { classes, rowHeight, mobile } of lineConstraints(container, text)) {
+        expect(classes).toContain("whitespace-nowrap");
+        // The desktop grid's ellipsis is part of the unchanged behaviour; the mobile table never had one.
+        if (!mobile) expect(classes).toContain("truncate");
+        expect(rowHeight).toBe("36px");
+      }
+    }
+
+    function expectWrapped(container: HTMLElement, text: string) {
+      for (const { classes, rowHeight } of lineConstraints(container, text)) {
+        expect(classes).not.toContain("truncate");
+        expect(classes).not.toContain("whitespace-nowrap");
+        expect(classes).not.toContain("h-full");
+        expect(rowHeight).toBe("");
+      }
+    }
+
+    test("a plain cell wraps and its row sheds the fixed height, and turning it off restores both", () => {
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      expectSingleLine(container, "alice@example.com");
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectWrapped(container, "alice@example.com");
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectSingleLine(container, "alice@example.com");
+    });
+
+    test("every toggle drops the measured row heights, so turning wrap off shrinks rows back", () => {
+      // The virtualizer caches each measured row; without a reset, rows grown while
+      // wrapping keep that height after the toggle is off again.
+      const { getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      mockVirtualizerMeasure.mockClear();
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(2);
+
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expect(mockVirtualizerMeasure).toHaveBeenCalledTimes(4);
+    });
+
+    test("an editable cell wraps too", () => {
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: mockResult,
+          editingEnabled: true,
+          onCellChange: mock(() => {}),
+          pendingChanges: [],
+        }),
+      );
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectWrapped(container, "alice@example.com");
+    });
+
+    test("masked and revealed cells wrap too", () => {
+      mockShouldMask.mockReturnValue(true);
+      mockCanReveal.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(
+        new Map([
+          ["email", { name: "email", maskType: "email" as const, columnPatterns: ["email"], enabled: true, id: "e1" }],
+        ]),
+      );
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: mockResult,
+          maskingEnabled: true,
+          maskingConfig: {
+            enabled: true,
+            patterns: [],
+            roleSettings: { admin: { canToggle: true, canReveal: true }, user: { canToggle: false, canReveal: false } },
+          },
+        }),
+      );
+      fireEvent.click(getByTestId("wrap-toggle"));
+      expectWrapped(container, "***");
+
+      fireEvent.click(container.querySelector('button[title="Reveal value (10s)"]')!);
+      expectWrapped(container, "alice@example.com");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Row detail on the desktop grid (#800)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Row detail on the desktop grid", () => {
+    // The desktop table is the only place that renders through TanStack columns, so a
+    // control that came from the column list is on the desktop row and nowhere else.
+    function detailControls(container: HTMLElement): HTMLButtonElement[] {
+      return Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-row-detail]"));
+    }
+
+    test("every desktop row carries a control that opens the row detail sheet", () => {
+      const { container, queryByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const controls = detailControls(container);
+      expect(controls.length).toBe(mockResult.rows.length);
+
+      expect(queryByTestId("row-detail-sheet")).toBeNull();
+      fireEvent.click(controls[1]);
+      expect(queryByTestId("row-detail-sheet")).not.toBeNull();
+      expect(queryByTestId("row-detail-sheet")!.getAttribute("data-row-index")).toBe("1");
+    });
+
+    test("the control names the row it opens, so its accessible name is not bare", () => {
+      const { getByRole } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      expect(getByRole("button", { name: "Show row 3 field by field" })).not.toBeNull();
+    });
+
+    test("the control opens the row the reader sees after sorting, not the unsorted one", () => {
+      const { container, getAllByRole, queryByTestId } = render(
+        React.createElement(ResultsGrid, { result: mockResult }),
+      );
+      // Descending on `name` puts Charlie first, so the first control must open row 2.
+      fireEvent.click(getAllByRole("button", { name: "name" })[0]);
+      fireEvent.click(getAllByRole("button", { name: "name, sorted ascending" })[0]);
+      fireEvent.click(detailControls(container)[0]);
+      expect(queryByTestId("row-detail-sheet")!.getAttribute("data-row-index")).toBe("2");
+    });
+
+    /**
+     * The reason this issue existed at all: the vertical view shipped behind `md:hidden`,
+     * so it was absent on exactly the screens that meet a wide table (#800). A breakpoint
+     * class on the control or on the cell holding it would put it back there, and a
+     * narrowed desktop window or a tablet would lose it in silence.
+     */
+    test("no breakpoint hides the control or the cell holding it", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      // Without this the loop below asserts nothing when no control was rendered at all.
+      expect(detailControls(container).length).toBeGreaterThan(0);
+      for (const control of detailControls(container)) {
+        for (let el: HTMLElement | null = control; el !== null; el = el.parentElement) {
+          // The desktop grid's own `hidden md:block` is the boundary, not a finding: below
+          // that width the card and mobile table render, and both already open the sheet.
+          if (el.hasAttribute("data-desktop-grid")) break;
+          const classes = (el.getAttribute("class") ?? "").split(/\s+/);
+          expect(classes.filter((c) => /^(sm|md|lg|xl|2xl):/.test(c) || c === "hidden")).toEqual([]);
+        }
+      }
+    });
+
+    test("the control column cannot be resized, so it keeps its width", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const headers = Array.from(container.querySelectorAll("[data-row-detail-header]"));
+      expect(headers.length).toBe(1);
+      expect(headers[0].querySelector(".cursor-col-resize")).toBeNull();
+      // The field columns keep theirs: the guard is per column, not a removal.
+      expect(container.querySelectorAll(".cursor-col-resize").length).toBe(mockResult.fields.length);
+    });
+
+    /**
+     * `SELECT 1 AS "__libredb_row_detail__"` is legal, and a result set carrying that
+     * column name must still render both it and the control, not one column swallowing
+     * the other.
+     */
+    test("a field named like the control column still gets its own column", () => {
+      const collidingResult: QueryResult = {
+        rows: [{ __libredb_row_detail__: "value", id: 1 }],
+        fields: ["__libredb_row_detail__", "id"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container, getAllByRole } = render(React.createElement(ResultsGrid, { result: collidingResult }));
+      expect(detailControls(container).length).toBe(1);
+      expect(getAllByRole("button", { name: "__libredb_row_detail__" }).length).toBeGreaterThan(0);
+
+      // Two columns under one id is what breaks: the grid keys header and body cells by
+      // the column id, and every cell answering to it is then styled as the control -
+      // the field's own value would be pinned to the left edge in the control's place.
+      const desktop = container.querySelector("[data-desktop-grid]")!;
+      const valueCell = Array.from(desktop.querySelectorAll("span")).find((el) => el.textContent === "value");
+      expect(valueCell).toBeDefined();
+      expect(valueCell!.closest("[style*='width']")!.getAttribute("class")).not.toContain("sticky");
     });
   });
 });

@@ -33,6 +33,20 @@ export function setupMonacoMock() {
           onChange: (e: { target: { value: string } }) => props.onChange?.(e.target.value),
         });
       },
+      // `DiffEditor` is the apply preview's surface (#789 Phase 3). It is here because a double that
+      // omits an export the real module HAS does not degrade, it throws: bun answers
+      // `SyntaxError: Export named 'DiffEditor' not found` and fails the WHOLE FILE, so a suite that
+      // never renders a diff still dies the moment one lands anywhere in its module graph. Measured
+      // 2026-09-14: mounting ApplyPreviewDialog from ObjectSourceView put this import into the pane's
+      // graph and took Group 1 and Group 6 of run-components down without either suite touching it.
+      DiffEditor: function MockDiffEditor(props: { original?: string; modified?: string; language?: string }) {
+        return React.createElement("div", {
+          "data-testid": "mock-monaco-diff-editor",
+          "data-language": props.language,
+          "data-original": props.original ?? "",
+          "data-modified": props.modified ?? "",
+        });
+      },
       loader: {
         init: mock(() => Promise.resolve()),
         config: mock(() => {}),

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from "react";
+import { SHORTCUTS, shortcutLabel, monacoKeybinding } from "@/lib/keyboard-shortcuts";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
@@ -13,6 +14,7 @@ import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completi
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
+import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { useMonacoInstance } from "@/hooks/use-monaco-instance";
 import { logger } from "@/lib/logger";
@@ -44,6 +46,20 @@ export interface QueryEditorRef {
 interface QueryEditorProps {
   /** Initial value for the editor. Changes to this prop will update the editor content. */
   value: string;
+  /**
+   * Which document `value` belongs to, so that switching documents is an event and not a
+   * string comparison. The tab id in both hosts.
+   *
+   * Without it the editor cannot see a switch to a tab whose text happens to equal the
+   * string it was already holding, and a new tab therefore opens showing the previous
+   * tab's text (#808): the parent mirrors typing one render behind, so at the moment a
+   * new empty tab arrives `value` can still be the empty string it started as, and a
+   * prop that never changed cannot announce anything.
+   *
+   * Optional: a host that renders a single document never switches, and omitting it
+   * leaves the text-only reconciliation below in charge.
+   */
+  documentId?: string;
   /** Optional callback for value changes. Only called on blur, execute, or explicit sync - NOT on every keystroke. */
   onChange?: (val: string) => void;
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
@@ -109,16 +125,27 @@ const getEditorOptions = (showLineNumbers: boolean) => ({
 
 export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
   (
-    { value, onChange, onContentChange, onExplain, language = "sql", databaseType, schemaContext, capabilities },
+    {
+      value,
+      documentId,
+      onChange,
+      onContentChange,
+      onExplain,
+      language = "sql",
+      databaseType,
+      schemaContext,
+      capabilities,
+    },
     ref,
   ) => {
     const monaco = useMonacoInstance();
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
 
-    // Both themes are defined in `beforeMount`; this only picks which is applied.
+    // Both themes are defined in `beforeMount`, from `@/lib/editor/monaco-theme`; this only picks
+    // which is applied.
     // Monaco re-reads the `theme` prop on change, so the switch needs no remount.
-    const editorTheme = useEffectiveTheme() === "light" ? "db-light" : "db-dark";
+    const editorTheme = useEffectiveTheme() === "light" ? STUDIO_THEME_LIGHT : STUDIO_THEME_DARK;
 
     // Explain capability gate, shared by the toolbar button and the context-menu action.
     const canExplain = Boolean(onExplain) && Boolean(capabilities?.supportsExplain);
@@ -139,24 +166,62 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     // value at hydration, so there is no local default left that could overwrite it.
     const showLineNumbers = useLineNumbersPreference();
 
-    // Track last synced value to detect external changes
-    const lastSyncedValueRef = useRef<string>(value);
-    const isInternalChangeRef = useRef<boolean>(false);
+    /*
+      Every text this editor has handed up through `onContentChange` and has not yet seen
+      come back down as `value`, oldest first, plus the document they belong to.
 
-    // Sync editor content when value prop changes externally (e.g., tab switch)
+      The parent mirrors the buffer: it writes each change into the tab's query and feeds
+      that straight back in as `value`, one render behind. An incoming `value` is
+      therefore one of two completely different things, and only one of them may touch
+      the model:
+
+        - OUR OWN text, arriving late. Writing it back rewrites the buffer with an older
+          string and moves the caret, which is the "typing scrambles, cursor jumps to
+          line 1" bug (#808).
+        - Somebody ELSE's text: another tab, a query loaded from history or the saved
+          list, a generated statement. That has to land.
+
+      An outstanding text is ours by construction, so this tells them apart by identity.
+      Asking instead whether the buffer has moved since the last sync can only infer it,
+      and an external write that arrives while the user is typing looks exactly like a
+      late echo under that reading.
+
+      Two equal strings need no tie-break: if an external write happens to carry text this
+      editor just sent up, applying it or skipping it leaves the same buffer.
+    */
+    const echoesRef = useRef<{ documentId?: string; values: string[] }>({ documentId, values: [] });
+
+    // The ONE path that pushes an external value change into the model, now that
+    // <Editor> is uncontrolled (defaultValue) and the library's own controlled-value
+    // effect stays at its early return.
     useEffect(() => {
-      if (editorRef.current && value !== lastSyncedValueRef.current) {
-        const currentEditorValue = editorRef.current.getValue();
-        // Only update if the new value is different from current editor content
-        // This prevents unnecessary updates when we're the source of the change
-        if (value !== currentEditorValue) {
-          isInternalChangeRef.current = true;
-          editorRef.current.setValue(value);
-          lastSyncedValueRef.current = value;
-          isInternalChangeRef.current = false;
-        }
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      const echoes = echoesRef.current;
+
+      // A different document is in front of the user now: its text is authoritative
+      // whatever the buffer holds, and nothing the editor sent up belongs to it.
+      if (documentId !== echoes.documentId) {
+        echoesRef.current = { documentId, values: [] };
+        if (value !== editor.getValue()) editor.setValue(value);
+        return;
       }
-    }, [value]);
+
+      const echoIndex = echoes.values.indexOf(value);
+      if (echoIndex !== -1) {
+        // Ours, arriving late. Drop it and everything older with it: the parent moves
+        // through our texts in order, so a render carrying one of those cannot follow.
+        echoes.values.splice(0, echoIndex + 1);
+        return;
+      }
+
+      // Nobody here wrote this, so it came from outside: a query loaded from history or
+      // the saved list, a generated statement. It replaces the buffer, which makes every
+      // outstanding echo a description of text that no longer exists.
+      echoes.values = [];
+      editor.setValue(value);
+    }, [value, documentId]);
 
     // Update editor options when line numbers toggle changes
     useEffect(() => {
@@ -241,7 +306,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           return;
         }
         editorRef.current.setValue(formatted);
-        lastSyncedValueRef.current = formatted;
         onChange?.(formatted);
       } catch (e) {
         logger.warn("Statement formatting failed; the editor text is left as written", {
@@ -370,7 +434,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       setValue: (newValue: string) => {
         if (editorRef.current) {
           editorRef.current.setValue(newValue);
-          lastSyncedValueRef.current = newValue;
         }
       },
       focus: () => editorRef.current?.focus(),
@@ -392,7 +455,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     const handleClear = () => {
       if (editorRef.current) {
         editorRef.current.setValue("");
-        lastSyncedValueRef.current = "";
         onChange?.("");
       }
     };
@@ -429,74 +491,18 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         };
       }
 
-      monacoInstance.editor.defineTheme("db-dark", {
-        base: "vs-dark",
-        inherit: true,
-        rules: [
-          { token: "keyword", foreground: "569cd6", fontStyle: "bold" },
-          { token: "function", foreground: "dcdcaa" },
-          { token: "string", foreground: "ce9178" },
-          { token: "number", foreground: "b5cea8" },
-          { token: "comment", foreground: "6a9955" },
-          { token: "operator", foreground: "d4d4d4" },
-          { token: "identifier", foreground: "9cdcfe" },
-        ],
-        colors: {
-          "editor.background": "#050505",
-          "editor.foreground": "#d4d4d4",
-          "editorCursor.foreground": "#569cd6",
-          "editor.lineHighlightBackground": "#111111",
-          "editorLineNumber.foreground": "#333333",
-          "editorLineNumber.activeForeground": "#666666",
-          "editor.selectionBackground": "#264f78",
-          "editor.inactiveSelectionBackground": "#3a3d41",
-          "editorIndentGuide.background": "#1a1a1a",
-          "editorIndentGuide.activeBackground": "#333333",
-        },
-      });
-
-      /*
-       * Monaco paints its own canvas and knows nothing about the CSS token layer,
-       * so the editor is the one surface that needs the palette written twice.
-       * Same syntax hues either side — they are chosen for contrast against the
-       * CODE, not against the chrome — with only the ground and the guides moved.
-       * `editor.background` mirrors `--studio-canvas` in both themes so the pane
-       * sits flush with the shell it lives in.
-       */
-      monacoInstance.editor.defineTheme("db-light", {
-        base: "vs",
-        inherit: true,
-        rules: [
-          { token: "keyword", foreground: "0000ff", fontStyle: "bold" },
-          { token: "function", foreground: "795e26" },
-          { token: "string", foreground: "a31515" },
-          { token: "number", foreground: "098658" },
-          { token: "comment", foreground: "008000" },
-          { token: "operator", foreground: "3f3f46" },
-          { token: "identifier", foreground: "001080" },
-        ],
-        colors: {
-          "editor.background": "#f4f4f5",
-          "editor.foreground": "#27272a",
-          "editorCursor.foreground": "#0000ff",
-          "editor.lineHighlightBackground": "#e4e4e7",
-          "editorLineNumber.foreground": "#a1a1aa",
-          "editorLineNumber.activeForeground": "#52525b",
-          "editor.selectionBackground": "#add6ff",
-          "editor.inactiveSelectionBackground": "#e5ebf1",
-          "editorIndentGuide.background": "#e4e4e7",
-          "editorIndentGuide.activeBackground": "#a1a1aa",
-        },
-      });
+      // Both themes come from one owner so this mount and the read-only source viewer
+      // paint identically (#789).
+      defineStudioThemes(monacoInstance);
     };
 
     // SQL completion provider
     useEffect(() => {
       if (monaco && language === "sql") {
-        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache);
+        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache, databaseType);
         return () => disposable.dispose();
       }
-    }, [monaco, language, schemaCompletionCache]);
+    }, [monaco, language, schemaCompletionCache, databaseType]);
 
     // MongoDB JSON completion provider
     useEffect(() => {
@@ -506,18 +512,22 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       }
     }, [monaco, language, schemaCompletionCache]);
 
+    // Every model change reaches here: a keystroke, and equally the writes Format, Clear
+    // and the imperative setValue make, since Monaco reports those through the same
+    // change event. All of them are this editor's own text, so all of them are recorded
+    // before they go up, and none of them may come back down into the buffer.
     const handleEditorChange = (val: string | undefined) => {
       const newValue = val || "";
-      // Only call onContentChange if provided (for real-time sync scenarios)
-      // This avoids the performance hit of updating parent state on every keystroke
-      onContentChange?.(newValue);
+      if (onContentChange) {
+        echoesRef.current.values.push(newValue);
+        onContentChange(newValue);
+      }
     };
 
     // Sync to parent on blur (when user leaves the editor)
     const handleEditorBlur = () => {
       if (editorRef.current) {
         const currentValue = editorRef.current.getValue();
-        lastSyncedValueRef.current = currentValue;
         onChange?.(currentValue);
       }
     };
@@ -526,7 +536,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       // Sync current content to parent before executing
       if (editorRef.current) {
         const currentValue = editorRef.current.getValue();
-        lastSyncedValueRef.current = currentValue;
         onChange?.(currentValue);
       }
 
@@ -559,7 +568,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               size="sm"
               className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
               onClick={handleFormat}
-              title={language === "json" ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
+              title={`Format ${language === "json" ? "JSON" : "SQL"} (${shortcutLabel(SHORTCUTS.formatQuery)})`}
             >
               <TextAlignStart strokeWidth={1.5} className="w-3 h-3" /> Format
             </Button>
@@ -615,7 +624,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               </Button>
             )}
             <kbd className="px-1.5 py-0.5 rounded bg-raised border border-hairline text-[0.5625rem] text-fg-subtle font-mono">
-              ⌘+Enter
+              {shortcutLabel(SHORTCUTS.executeQuery)}
             </kbd>
           </div>
         </div>
@@ -626,7 +635,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
             height="100%"
             language={language}
             theme={editorTheme}
-            value={value}
+            // `defaultValue`, not `value`: this editor owns its buffer, and the model is
+            // never driven by a prop. `@monaco-editor/react`'s controlled-`value` effect
+            // runs an `executeEdits` over the FULL model range whenever the prop differs
+            // from the buffer, and the prop is the parent's mirror of our own text, one
+            // render behind. A keystroke landing inside that window therefore made the
+            // library rewrite the whole buffer with older text and snap the caret to
+            // (1,1): the "typing scrambles / cursor jumps" bug (#808), easiest to hit
+            // where a render is slow. Passing `defaultValue` leaves that effect at its
+            // `t === void 0` early return, which makes the effect above the single place
+            // an outside change can reach the model.
+            defaultValue={value}
             beforeMount={handleBeforeMount}
             onChange={handleEditorChange}
             loading={
@@ -648,12 +667,12 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               });
 
               // Add custom keyboard shortcut
-              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+              editor.addCommand(monacoKeybinding(SHORTCUTS.executeQuery, monaco), () => {
                 handleExecute();
               });
 
               // Add format shortcut
-              editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
+              editor.addCommand(monacoKeybinding(SHORTCUTS.formatQuery, monaco), () => {
                 handleFormat();
               });
 
@@ -661,7 +680,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               editor.addAction({
                 id: "run-query",
                 label: "Run Query",
-                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+                keybindings: [monacoKeybinding(SHORTCUTS.executeQuery, monaco)],
                 contextMenuGroupId: "navigation",
                 contextMenuOrder: 1,
                 run: () => handleExecute(),
@@ -683,7 +702,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               editor.addAction({
                 id: "format-sql",
                 label: "Format SQL",
-                keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+                keybindings: [monacoKeybinding(SHORTCUTS.formatQuery, monaco)],
                 contextMenuGroupId: "modification",
                 contextMenuOrder: 1,
                 run: () => handleFormat(),

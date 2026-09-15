@@ -26,7 +26,7 @@ starting with the first release that includes the release-artifacts workflow —
 have Docker images only.
 
 > **Runtime note:** every channel here runs the production server under Node (`node server.js`),
-> including the Docker image — its runner stage is `node:26.8.1-trixie-slim` and `CMD` execs
+> including the Docker image — its runner stage is `node:26.8.2-trixie-slim` and `CMD` execs
 > `node server.js`; Bun is only used to install dependencies during the Docker build and for local
 > development (`bun dev`). The SQLite DB provider adapts to whichever runtime it finds
 > (`bun:sqlite` under Bun, `node:sqlite` under Node) — see
@@ -76,9 +76,10 @@ sharing a user's machine, and it has not changed. (The Docker image and the Helm
 exception - a container binds all of its own addresses and is isolated by container networking
 instead. Since chart 0.1.42 and the image that ships with it, that set is not hardcoded: the container's
 entrypoint resolves a bind address at startup and prefers `::`, all addresses of both families.)
-`HOSTNAME` is the bind address wherever the server is started directly - Docker, Helm, npx, the
-systemd units and Snap; the `.deb`/`.rpm` and Homebrew wrappers and the Windows launcher take
-`LIBREDB_BIND` instead and discard an inherited `HOSTNAME`. The note below the table covers the
+`HOSTNAME` is the bind address wherever the server is started directly - Docker, Helm, npx and the
+systemd units, the Snap daemon included; the `.deb`/`.rpm` and Homebrew wrappers, a direct
+`snap run` and the Windows launcher take `LIBREDB_BIND` instead and discard an inherited
+`HOSTNAME`. The note below the table covers the
 address family either one selects.
 
 | Channel | Default bind | How to expose |
@@ -93,11 +94,12 @@ address family either one selects.
 For anything reachable from a network, prefer a reverse proxy with TLS in front and strict mode
 (`AUTH_BOOTSTRAP=off`) with explicit credentials.
 
-A direct run of the `.deb`/`.rpm` wrapper or the Homebrew binary ignores any inherited `HOSTNAME`
-(empty, or - under Docker - the container ID Next.js would otherwise bind to) and defaults to
-loopback; `LIBREDB_BIND` is the explicit opt-in for that case. Under systemd, `HOSTNAME` in
-`/etc/libredb-studio/env` is still the override, since the unit resolves it before the wrapper
-runs (detected via the systemd-set `INVOCATION_ID`, so the wrapper leaves it untouched there). The
+A direct run of the `.deb`/`.rpm` wrapper, the Homebrew binary or the snap launcher ignores any
+inherited `HOSTNAME` (empty, or - under Docker - the container ID Next.js would otherwise bind to)
+and defaults to loopback; `LIBREDB_BIND` is the explicit opt-in for that case. Under systemd,
+`HOSTNAME` in `/etc/libredb-studio/env` or the snap unit's drop-in is still the override, since the
+unit resolves it before the wrapper runs (detected via the systemd-set `INVOCATION_ID`, so the
+wrapper leaves it untouched there). The
 Windows launcher rebuilds `HOSTNAME` from `LIBREDB_BIND` on every run, with no systemd exception.
 
 **Address family (IPv4, IPv6, dual-stack).** The bind address accepts an IPv6 literal in every
@@ -784,9 +786,11 @@ sudo systemctl restart snap.libredb-studio.libredb-studio.service
 
 The drop-in is written to
 `/etc/systemd/system/snap.libredb-studio.libredb-studio.service.d/override.conf`
-(root-owned). Explicit values override the defaults baked into
-[`snap/snapcraft.yaml`](../snap/snapcraft.yaml) and take precedence over
-[zero-config first run](#zero-config-first-run) generation. Note that `systemctl edit`
+(root-owned). Explicit values override the defaults in
+[`snap/local/launch.sh`](../snap/local/launch.sh) and take precedence over
+[zero-config first run](#zero-config-first-run) generation. The snap manifest deliberately sets
+no environment: snap-exec applies a manifest `environment:` over the unit's, so a key set there
+would silently ignore the drop-in (#807). Note that `systemctl edit`
 creates the drop-in world-readable (mode 0644, like any systemd override), so after adding
 secrets tighten it — systemd reads drop-ins as root, so this does not affect the service:
 

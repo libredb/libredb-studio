@@ -10,7 +10,9 @@ import { useConnectionManager } from "@/hooks/use-connection-manager";
 import type { ManagedConnectionPayload } from "@/hooks/use-connection-payload";
 import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
-import type { DatabaseConnection, TableSchema } from "@/lib/types";
+import type { DatabaseConnection } from "@/lib/types";
+import { rowWritableObjects } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -27,26 +29,111 @@ const makeConnection = (overrides: Partial<DatabaseConnection> = {}): DatabaseCo
   ...overrides,
 });
 
-const makeSchema = (): TableSchema[] => [
+/**
+ * What PostgreSQL 18 really declares, copied from `provider.getCapabilities().objectKinds`
+ * on the live container (libredb-postgres, measured 2026-09-12). Seven kinds, of which
+ * three carry `role: "relation"` - the ratio the cost finding is about.
+ */
+const PG_OBJECT_KINDS = [
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+  { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+  { id: "materialized_view", role: "relation", label: "Materialized View", labelPlural: "Materialized Views" },
+  { id: "sequence", role: "config", label: "Sequence", labelPlural: "Sequences" },
+  { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+  { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+];
+
+const PG_RELATION_KINDS = ["table", "view", "materialized_view"];
+
+/** MySQL 26.7.0, same source. Six kinds, two of them relations. */
+const MYSQL_OBJECT_KINDS = [
+  { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+  { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+  { id: "procedure", role: "routine", label: "Procedure", labelPlural: "Procedures" },
+  { id: "function", role: "routine", label: "Function", labelPlural: "Functions" },
+  { id: "trigger", role: "attached", label: "Trigger", labelPlural: "Triggers", attachedTo: "table" },
+  { id: "event", role: "config", label: "Event", labelPlural: "Events" },
+];
+
+const providerMeta = (objectKinds: unknown = PG_OBJECT_KINDS) => ({
+  ok: true,
+  json: { capabilities: { queryLanguage: "sql", containerLevels: [{ id: "schema" }], objectKinds }, labels: {} },
+});
+
+type InventoryObject = { name: string; kind: string; path: string[]; rowCount?: number };
+
+/** The two tables every schema test below reads, as the object surface answers them. */
+const OBJECTS: InventoryObject[] = [
+  { name: "users", kind: "table", path: ["public", "users"], rowCount: 100 },
+  { name: "orders", kind: "table", path: ["public", "orders"], rowCount: 500 },
+];
+
+const DETAILS = [
   {
-    name: "users",
+    path: ["public", "users"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "email", type: "varchar", nullable: false, isPrimary: false },
     ],
     indexes: [{ name: "users_pkey", columns: ["id"], unique: true }],
-    rowCount: 100,
+    foreignKeys: [],
   },
   {
-    name: "orders",
+    path: ["public", "orders"],
     columns: [
       { name: "id", type: "integer", nullable: false, isPrimary: true },
       { name: "user_id", type: "integer", nullable: false, isPrimary: false },
     ],
     indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
-    rowCount: 500,
+    foreignKeys: [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
   },
 ];
+
+/** The same objects as the hook holds them once the two halves are joined on the path. */
+const joined = (objects: InventoryObject[] = OBJECTS, details = DETAILS) =>
+  objects.map((object) => {
+    const detail = details.find((entry) => entry.path.join("/") === object.path.join("/"));
+    return {
+      name: object.name,
+      kind: object.kind,
+      path: object.path,
+      columns: detail?.columns ?? [],
+      indexes: detail?.indexes ?? [],
+      foreignKeys: detail?.foreignKeys ?? [],
+      ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
+    };
+  });
+
+/**
+ * The inventory route's own kind resolution, in four lines: an absent `kinds` means every
+ * declared kind, and a named one is answered exactly. Bodies are recorded so a test can
+ * assert WHAT was asked for as well as what came back.
+ */
+const inventoryRoute =
+  (
+    objects: InventoryObject[],
+    bodies: { kinds?: string[]; includeColumns?: boolean }[] = [],
+    extra: Record<string, unknown> = {},
+    declared: { id: string }[] = PG_OBJECT_KINDS,
+    details: unknown[] = DETAILS,
+  ) =>
+  async (req: Request) => {
+    const body = (await req.json()) as { kinds?: string[]; includeColumns?: boolean };
+    bodies.push(body);
+    const kinds = body.kinds ?? declared.map((kind) => kind.id);
+    const answered = objects.filter((object) => kinds.includes(object.kind));
+    return {
+      ok: true,
+      json: { objects: answered, ...(body.includeColumns === true ? { details } : {}), ...extra },
+    };
+  };
+
+/** The two requests a catalog read makes, answered so the join produces `joined()`. */
+const catalogRoutes = (objects: InventoryObject[] = OBJECTS) => ({
+  "/api/db/provider-meta": providerMeta(),
+  "/api/db/objects/inventory": inventoryRoute(objects),
+});
 
 // =============================================================================
 // useConnectionManager Tests
@@ -143,43 +230,74 @@ describe("useConnectionManager", () => {
 
   // ── fetchSchema success ───────────────────────────────────────────────────
 
-  test("fetchSchema calls /api/db/schema POST and sets schema", async () => {
-    const schemaData = makeSchema();
+  /*
+    ONE catalog read, not three (#789).
 
+    It was `/api/db/schema/list` for names and columns, `/api/db/objects/inventory` for the
+    kind and the address, and `/api/db/schema/relations` for foreign keys and indexes, held
+    together by a join on the display NAME. The flat reading is deleted, so the inventory
+    answers both halves and they are joined on the PATH inside the hook.
+  */
+
+  test("fetchSchema reads the object inventory with its columns, and holds the joined objects", async () => {
+    const bodies: { kinds?: string[]; includeColumns?: boolean }[] = [];
     const fetchMock = mockGlobalFetch({
-      "/api/db/schema": { ok: true, json: schemaData },
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, bodies),
     });
 
     const { result } = renderHook(() => useConnectionManager(true));
 
-    const conn = makeConnection();
     await act(async () => {
-      await result.current.fetchSchema(conn);
+      await result.current.fetchSchema(makeConnection());
     });
 
-    expect(result.current.schema).toEqual(schemaData);
+    expect(result.current.schema).toEqual(joined());
     expect(result.current.isLoadingSchema).toBe(false);
+    // The columns are asked for, and only the relation kinds are: a routine or a trigger in
+    // this list is a row the diagram and the import target cannot use.
+    expect(bodies[0].includeColumns).toBe(true);
+    expect(bodies[0].kinds).toEqual(PG_RELATION_KINDS);
 
-    // Verify fetch was called with POST and connection body
-    const schemaCall = fetchMock.mock.calls.find(
-      (call) => typeof call[0] === "string" && call[0].includes("/api/db/schema"),
+    const inventoryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/objects/inventory"),
     );
-    expect(schemaCall).toBeDefined();
-    expect(schemaCall![1]?.method).toBe("POST");
+    expect(inventoryCall).toBeDefined();
+    expect(inventoryCall![1]?.method).toBe("POST");
+  });
+
+  test("an object the read described nothing for keeps empty columns rather than vanishing", async () => {
+    // A routine has no columns and a bounded read can stop before a folder: both reach the
+    // hook as an object with no detail, and neither may cost the object its row.
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, [], {}, PG_OBJECT_KINDS, [DETAILS[0]]),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema.map((object) => [object.name, object.columns.length])).toEqual([
+      ["users", 2],
+      ["orders", 0],
+    ]);
   });
 
   // ── fetchSchema error ─────────────────────────────────────────────────────
 
   test("fetchSchema shows toast on error", async () => {
     mockGlobalFetch({
-      "/api/db/schema": { ok: false, status: 500, json: { error: "Connection refused" } },
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": { ok: false, status: 500, json: { error: "Connection refused" } },
     });
 
     const { result } = renderHook(() => useConnectionManager(true));
 
-    const conn = makeConnection();
     await act(async () => {
-      await result.current.fetchSchema(conn);
+      await result.current.fetchSchema(makeConnection());
     });
 
     expect(result.current.schema).toEqual([]);
@@ -189,14 +307,60 @@ describe("useConnectionManager", () => {
     expect(mockToastError).toHaveBeenCalledWith("Schema Error", { description: "Connection refused" });
   });
 
+  test("metadata that could not be read is the engine's own failure, and is reported as one", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": { ok: false, status: 503, json: { error: "Connection refused" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schemaError).toBe("Connection refused");
+  });
+
+  test("an engine that declares no relation kind holds nothing, and that is not an error", async () => {
+    // A true statement about the engine: nothing declared a kind whose rows this list
+    // renders, so there is nothing to ask for. No reading failed, so nothing is reported
+    // as a failure and no toast is raised.
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta([{ id: "function", role: "routine", label: "F", labelPlural: "Fs" }]),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaError).toBeNull();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("an inventory body that is not a list of objects is refused rather than rendered", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": { ok: true, json: { objects: "everything" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaError).toBe("The object inventory answered a body this list cannot render");
+  });
+
   // A failing read must not leave the PREVIOUS connection's tables on screen (D31).
   // The assertion above is vacuous on its own — `schema` starts empty — so this one
   // loads a schema first and then fails the next read, which is the measured sequence.
   test("a failed read clears the schema loaded for the previous connection", async () => {
-    mockGlobalFetch({
-      "/api/db/schema/list": { ok: true, json: makeSchema() },
-      "/api/db/schema/relations": { ok: false, status: 500, json: {} },
-    });
+    mockGlobalFetch(catalogRoutes());
 
     const { result } = renderHook(() => useConnectionManager(true));
 
@@ -208,7 +372,8 @@ describe("useConnectionManager", () => {
 
     restoreGlobalFetch();
     mockGlobalFetch({
-      "/api/db/schema/list": { ok: false, status: 500, json: { error: "'(' expected" } },
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": { ok: false, status: 500, json: { error: "'(' expected" } },
     });
 
     await act(async () => {
@@ -223,7 +388,8 @@ describe("useConnectionManager", () => {
 
   test("a read that succeeds after a failure drops the previous error", async () => {
     mockGlobalFetch({
-      "/api/db/schema/list": { ok: false, status: 500, json: { error: "Prepare is not support in Databend" } },
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": { ok: false, status: 500, json: { error: "Prepare is not support in Databend" } },
     });
 
     const { result } = renderHook(() => useConnectionManager(true));
@@ -234,10 +400,7 @@ describe("useConnectionManager", () => {
     expect(result.current.schemaError).toBe("Prepare is not support in Databend");
 
     restoreGlobalFetch();
-    mockGlobalFetch({
-      "/api/db/schema/list": { ok: true, json: makeSchema() },
-      "/api/db/schema/relations": { ok: false, status: 500, json: {} },
-    });
+    mockGlobalFetch(catalogRoutes());
 
     await act(async () => {
       await result.current.fetchSchema(makeConnection({ id: "conn-2" }));
@@ -247,42 +410,13 @@ describe("useConnectionManager", () => {
     expect(result.current.schema.map((t) => t.name)).toEqual(["users", "orders"]);
   });
 
-  // ── Two-phase schema loading (list + relations) ───────────────────────────
-  // The schema fetch was split so a slow/failing FK+index query can never block
-  // (or wipe) the table list. These tests lock in that contract.
-
-  // A list-phase payload: tables + columns + PKs, with relations intentionally
-  // absent (indexes empty, no foreignKeys) — exactly what /schema/list returns.
-  const makeListSchema = (): TableSchema[] => [
-    {
-      name: "users",
-      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
-      indexes: [],
-      foreignKeys: [],
-      rowCount: 100,
-    },
-    {
-      name: "orders",
-      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
-      indexes: [],
-      foreignKeys: [],
-      rowCount: 500,
-    },
-  ];
-
-  test("phase 1 renders the table list, phase 2 merges FKs/indexes by table name", async () => {
-    const relations = [
-      { name: "users", foreignKeys: [], indexes: [{ name: "users_pkey", columns: ["id"], unique: true }] },
-      {
-        name: "orders",
-        foreignKeys: [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
-        indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
-      },
-    ];
-
+  test("a truncated inventory is logged, and the objects it did carry are still rendered", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
     mockGlobalFetch({
-      "/api/db/schema/list": { ok: true, json: makeListSchema() },
-      "/api/db/schema/relations": { ok: true, json: relations },
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, [], {
+        truncated: { limit: 5000, reason: "inventory limit reached" },
+      }),
     });
 
     const { result } = renderHook(() => useConnectionManager(true));
@@ -291,96 +425,18 @@ describe("useConnectionManager", () => {
       await result.current.fetchSchema(makeConnection());
     });
 
-    const orders = result.current.schema.find((t) => t.name === "orders")!;
-    expect(orders.foreignKeys).toEqual([{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }]);
-    expect(orders.indexes).toEqual([{ name: "orders_pkey", columns: ["id"], unique: true }]);
-
-    // Columns from phase 1 survive the merge.
-    expect(orders.columns[0].name).toBe("id");
-    expect(result.current.isLoadingSchema).toBe(false);
-  });
-
-  test("relations failure does NOT wipe the table list and shows no error toast", async () => {
-    // This is the whole reason for the split: FK/index introspection is the slow,
-    // timeout-prone query. If it fails the user must still see their tables.
-    const listData = makeListSchema();
-
-    mockGlobalFetch({
-      "/api/db/schema/list": { ok: true, json: listData },
-      "/api/db/schema/relations": { ok: false, status: 500, json: { error: "statement timeout" } },
-    });
-
-    const { result } = renderHook(() => useConnectionManager(true));
-
-    await act(async () => {
-      await result.current.fetchSchema(makeConnection());
-    });
-
-    // Table list is fully intact (relations merge never ran).
-    expect(result.current.schema).toEqual(listData);
-    expect(result.current.isLoadingSchema).toBe(false);
-    // Relations are best-effort — failure is logged, never surfaced as a toast.
-    expect(mockToastError).not.toHaveBeenCalled();
-  });
-
-  test("phase 1 failure short-circuits — relations endpoint is never called", async () => {
-    const fetchMock = mockGlobalFetch({
-      "/api/db/schema/list": { ok: false, status: 503, json: { error: "Connection refused" } },
-      "/api/db/schema/relations": { ok: true, json: [] },
-    });
-
-    const { result } = renderHook(() => useConnectionManager(true));
-
-    await act(async () => {
-      await result.current.fetchSchema(makeConnection());
-    });
-
-    expect(result.current.schema).toEqual([]);
-    expect(mockToastError).toHaveBeenCalledWith("Schema Error", { description: "Connection refused" });
-
-    // The expensive phase 2 must be skipped entirely when the list fails.
-    const relationsCalled = fetchMock.mock.calls.some(
-      (call) => typeof call[0] === "string" && call[0].includes("/api/db/schema/relations"),
+    expect(result.current.schema.map((t) => t.name)).toEqual(["users", "orders"]);
+    expect(warn).toHaveBeenCalledWith(
+      "Object inventory truncated; objects beyond the limit are not listed",
+      expect.objectContaining({ limit: 5000, reason: "inventory limit reached" }),
     );
-    expect(relationsCalled).toBe(false);
-  });
-
-  test("tables absent from the relations payload are left unchanged", async () => {
-    // Only 'orders' comes back from relations; 'users' must keep its list-phase shape.
-    mockGlobalFetch({
-      "/api/db/schema/list": { ok: true, json: makeListSchema() },
-      "/api/db/schema/relations": {
-        ok: true,
-        json: [
-          {
-            name: "orders",
-            foreignKeys: [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
-            indexes: [],
-          },
-        ],
-      },
-    });
-
-    const { result } = renderHook(() => useConnectionManager(true));
-
-    await act(async () => {
-      await result.current.fetchSchema(makeConnection());
-    });
-
-    const users = result.current.schema.find((t) => t.name === "users")!;
-    expect(users.foreignKeys).toEqual([]);
-    const orders = result.current.schema.find((t) => t.name === "orders")!;
-    expect(orders.foreignKeys!.length).toBe(1);
+    warn.mockRestore();
   });
 
   // ── schemaContext derived value ────────────────────────────────────────────
 
   test("schemaContext is JSON string of schema", async () => {
-    const schemaData = makeSchema();
-
-    mockGlobalFetch({
-      "/api/db/schema": { ok: true, json: schemaData },
-    });
+    mockGlobalFetch(catalogRoutes());
 
     const { result } = renderHook(() => useConnectionManager(true));
 
@@ -388,7 +444,7 @@ describe("useConnectionManager", () => {
       await result.current.fetchSchema(makeConnection());
     });
 
-    expect(result.current.schemaContext).toBe(JSON.stringify(schemaData));
+    expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
   });
 
   // ── isLoadingSchema during fetch ──────────────────────────────────────────
@@ -399,12 +455,12 @@ describe("useConnectionManager", () => {
       resolveSchema = resolve;
     });
 
-    mockGlobalFetch({});
+    mockGlobalFetch({ "/api/db/provider-meta": providerMeta() });
 
     const originalMockedFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/api/db/schema")) {
+      if (url.includes("/api/db/objects/inventory")) {
         return schemaPromise;
       }
       return originalMockedFetch(input, init);
@@ -423,7 +479,7 @@ describe("useConnectionManager", () => {
 
     // Resolve the schema request
     resolveSchema!(
-      new Response(JSON.stringify(makeSchema()), {
+      new Response(JSON.stringify({ objects: OBJECTS, details: DETAILS }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -538,7 +594,10 @@ describe("useConnectionManager", () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/api/db/schema")) {
+      if (url.includes("/api/db/provider-meta")) {
+        return new Response(JSON.stringify(providerMeta().json), { status: 200 });
+      }
+      if (url.includes("/api/db/objects/inventory")) {
         return new Response("Internal Server Error", { status: 500 });
       }
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
@@ -563,7 +622,10 @@ describe("useConnectionManager", () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/api/db/schema")) {
+      if (url.includes("/api/db/provider-meta")) {
+        return new Response(JSON.stringify(providerMeta().json), { status: 200 });
+      }
+      if (url.includes("/api/db/objects/inventory")) {
         throw "non-error string";
       }
       return new Response("{}", { status: 404 });
@@ -608,20 +670,15 @@ describe("useConnectionManager", () => {
   // ── Managed (seed) connection merging ────────────────────────────────────
 
   test("fetchSchema for regular connection success shows schema", async () => {
-    const schemaData = makeSchema();
-
-    mockGlobalFetch({
-      "/api/db/schema": { ok: true, json: schemaData },
-    });
+    mockGlobalFetch(catalogRoutes());
 
     const { result } = renderHook(() => useConnectionManager(true));
 
-    const conn = makeConnection({ id: "pg-1" });
     await act(async () => {
-      await result.current.fetchSchema(conn);
+      await result.current.fetchSchema(makeConnection({ id: "pg-1" }));
     });
 
-    expect(result.current.schema).toEqual(schemaData);
+    expect(result.current.schema).toEqual(joined());
     expect(result.current.isLoadingSchema).toBe(false);
   });
 
@@ -1010,5 +1067,543 @@ describe("useConnectionManager", () => {
       getConnectionsSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+});
+
+// =============================================================================
+// The no-scan escape hatch (#765, #789)
+// =============================================================================
+//
+// `skipObjectScan` on a connection means ZERO catalog reads when it opens. The
+// reporter of #765 asked for exactly this, in their own words: "not preloading
+// anything using command line option or at db connection level". A connection whose
+// owner holds tens of thousands of objects froze the whole editor behind one
+// `/api/db/objects/inventory`, and the tree's two cheap reads are worth deferring as well.
+//
+// Every assertion below COUNTS requests by path rather than checking that something
+// rendered, and every zero is paired with a control that makes the same counter see
+// the requests: an assertion that nothing was requested is vacuous while the reason
+// might be that the counter cannot see requests at all.
+describe("deferring the object scan", () => {
+  // A sibling describe inherits nothing from the one above it, so the fetch mock and
+  // the storage this block installs are restored here or they leak into the next file.
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  /** Catalog reads only. `/api/db/health` is the connection pulse and reads no catalog. */
+  const catalogPaths = (fetchMock: ReturnType<typeof mockGlobalFetch>): string[] =>
+    fetchMock.mock.calls
+      .map((call) => new URL(String(call[0]), "http://localhost:3000").pathname)
+      .filter((path) => path.startsWith("/api/db/schema") || path.startsWith("/api/db/objects"));
+
+  const installSchemaRoutes = () => mockGlobalFetch(catalogRoutes());
+
+  /**
+   * What a connection that reads its catalog asks for. `/api/db/provider-meta` is not in the
+   * list because `catalogPaths` filters it out: it opens no connection and reads no catalog,
+   * which is the whole reason the inventory's kinds can be resolved from it.
+   */
+  const FULL_READ = ["/api/db/objects/inventory"];
+
+  test("a connection that defers its scan reads no catalog at all", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ skipObjectScan: true }));
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual([]);
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  /**
+   * D31, which this file already states at the top: the previous connection's list is not
+   * evidence about this one. A deferred connection reads nothing, so it has NO objects,
+   * and the four surfaces fed from here - `schemaContext` into the AI panels and the agent
+   * rail, the ER diagram, the mobile explorer, and the profiler/codegen/test-data lookups -
+   * must not be handed the last connection's tables under this connection's name. Feeding
+   * them to a model as grounding is the failure class #414 measured.
+   *
+   * The assertion this replaces was vacuous: `schema` is `[]` from mount, so asserting
+   * emptiness after a deferred read proved nothing. The scan of A is the control.
+   */
+  test("deferring a connection drops the tables the PREVIOUS connection loaded", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+    });
+    expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", skipObjectScan: true }));
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaContext).toBe("[]");
+    // Nothing failed either, so nothing may be reported as a failure: an empty panel that
+    // blames the engine for a read nobody issued is worse than an empty panel.
+    expect(result.current.schemaError).toBeNull();
+    expect(catalogPaths(fetchMock)).toEqual(FULL_READ);
+  });
+
+  test("deferring a connection also drops the PREVIOUS connection's failure", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": { ok: false, status: 500, json: { error: "'(' expected" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+    });
+    expect(result.current.schemaError).toBe("'(' expected");
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", skipObjectScan: true }));
+    });
+
+    expect(result.current.schemaError).toBeNull();
+  });
+
+  // The control for the assertion above. Same hook, same routes, same counter, and
+  // the ONLY difference is the flag.
+  test("control: the same read without the flag issues both schema requests", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual(FULL_READ);
+    expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
+  });
+
+  test("objectScanDeferred answers for the ACTIVE connection, and is null-safe", async () => {
+    installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    expect(result.current.objectScanDeferred).toBe(false);
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ skipObjectScan: true }));
+    });
+    expect(result.current.objectScanDeferred).toBe(true);
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ id: "conn-2" }));
+    });
+    expect(result.current.objectScanDeferred).toBe(false);
+  });
+
+  test("loadObjects performs the read the connection deferred, and stops deferring", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ skipObjectScan: true }));
+    });
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ skipObjectScan: true }));
+    });
+    expect(catalogPaths(fetchMock)).toEqual([]);
+
+    await act(async () => {
+      result.current.loadObjects();
+    });
+
+    await waitFor(() => expect(result.current.objectScanDeferred).toBe(false));
+    await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
+    expect(catalogPaths(fetchMock)).toEqual(FULL_READ);
+  });
+
+  // The state is the connection the reader asked for BY ID, derived rather than reset
+  // in an effect. A boolean would leave the next deferred connection already loaded.
+  test("switching to another deferred connection defers again", async () => {
+    installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ skipObjectScan: true }));
+    });
+    await act(async () => {
+      result.current.loadObjects();
+    });
+    await waitFor(() => expect(result.current.objectScanDeferred).toBe(false));
+
+    await act(async () => {
+      result.current.setActiveConnection(makeConnection({ id: "conn-9", skipObjectScan: true }));
+    });
+
+    expect(result.current.objectScanDeferred).toBe(true);
+  });
+
+  // A statement's own refresh goes through `fetchSchema` too (use-query-execution.ts),
+  // so the guard has to hold for it: a reader who deferred the scan did not ask for a
+  // full catalog read after every DDL statement either.
+  test("a deferred connection stays deferred across a later fetchSchema", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    const conn = makeConnection({ skipObjectScan: true });
+    await act(async () => {
+      await result.current.fetchSchema(conn);
+      await result.current.fetchSchema(conn);
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual([]);
+  });
+
+  test("loadObjects with no active connection reads nothing", async () => {
+    const fetchMock = installSchemaRoutes();
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.loadObjects();
+    });
+
+    expect(catalogPaths(fetchMock)).toEqual([]);
+    expect(result.current.objectScanDeferred).toBe(false);
+  });
+});
+
+// =============================================================================
+// The object surface's kinds and paths (#789, Task 25c)
+// =============================================================================
+//
+// Every consumer filter Task 25a wrote reads `kind`, and the flat schema reading carries
+// none, so until this hook asks the object surface for one the filters keep everything and
+// the behaviour is byte-identical to the flat model. These tests are what make the
+// difference observable: each one names the object that must NOT survive a filter, and the
+// mutation that removes the tagging turns them red.
+//
+// The inventory fake below answers the way the ROUTE answers, kinds filter included, rather
+// than replaying one fixed list. `resolveKinds` (`src/lib/api/object-route.ts:227`) returns
+// EVERY declared kind when the body names none, so a fake that ignored the field would be
+// green for a request that asks for all seven kinds and for one that asks for three, which
+// is exactly the difference the fix round exists to make.
+describe("the object inventory the explorer reads", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    // A sibling describe inherits no beforeEach, and a toast left over from the block above
+    // would make the "no toast" assertion below report another test's call.
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  /** Catalog and metadata requests, in order, by path. */
+  const requestPaths = (fetchMock: ReturnType<typeof mockGlobalFetch>): string[] =>
+    fetchMock.mock.calls
+      .map((call) => new URL(String(call[0]), "http://localhost:3000").pathname)
+      .filter((path) => path.startsWith("/api/db/objects") || path.startsWith("/api/db/provider-meta"));
+
+  /*
+    THE INVENTORY IS ASKED FOR RELATION KINDS ONLY.
+
+    Measured on the live MySQL 26.7.0 container rather than invented, because standing
+    ruling 3 already records that a table, a procedure, a function, a trigger and an event
+    called `foo` coexist in one MySQL database. Asking for every declared kind would put
+    four objects this list cannot render beside the one it can, and each one costs a
+    sequential `listObjects` round trip per container inside the route.
+  */
+  test("the inventory names the relation kinds, so the fan-out is three listings per container and not seven", async () => {
+    const bodies: { kinds?: string[] }[] = [];
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, bodies),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].kinds).toEqual(PG_RELATION_KINDS);
+    // Derived from the declaration rather than restated: a hardcoded list here would pass
+    // while the hook asked for something else entirely.
+    expect(PG_RELATION_KINDS).toEqual(
+      PG_OBJECT_KINDS.filter((kind) => kind.role === "relation").map((kind) => kind.id),
+    );
+  });
+
+  test("a routine declared beside a relation is never asked for", async () => {
+    const bodies: { kinds?: string[] }[] = [];
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(MYSQL_OBJECT_KINDS),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, bodies, {}, MYSQL_OBJECT_KINDS),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(bodies[0].kinds).toEqual(["table", "view"]);
+  });
+
+  test("an engine whose capabilities cannot be read is not asked for an inventory at all", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/provider-meta": { ok: false, status: 503, json: { error: "Connection refused" } },
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    // Asking for every kind is the defect the kind filter exists to prevent, so with no
+    // declaration the request is not sent rather than sent unfiltered.
+    expect(requestPaths(fetchMock)).toEqual(["/api/db/provider-meta"]);
+  });
+
+  test("the inventory is addressed the way the object routes require, never as a bare body", async () => {
+    // `/api/db/objects/*` refuses a body that names neither `connection` nor `connectionId`
+    // with a 400, so a request built as a bare connection object would be refused on every
+    // connection.
+    const bodies: unknown[] = [];
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async (req: Request) => {
+        bodies.push(await req.json());
+        return { ok: true, json: { objects: OBJECTS, details: DETAILS } };
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    const conn = makeConnection();
+    await act(async () => {
+      await result.current.fetchSchema(conn);
+    });
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "seeded", managed: true, seedId: "sample" }));
+    });
+
+    expect(bodies).toEqual([
+      // `createdAt` arrives as the ISO string JSON carries, not as the Date the caller held.
+      {
+        connection: { ...conn, createdAt: conn.createdAt.toISOString() },
+        kinds: PG_RELATION_KINDS,
+        includeColumns: true,
+      },
+      { connectionId: "seed:sample", kinds: PG_RELATION_KINDS, includeColumns: true },
+    ]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // A connection switch mid-read (review Minor 8)
+  // ---------------------------------------------------------------------------
+  //
+  // A read used to write the schema under whichever connection was on screen when its
+  // answer landed. Connection A's objects under connection B's name tag nothing where the
+  // names differ and tag WRONGLY where they coincide, and `rowWritableObjects` then offers
+  // an import into a view on the strength of a declaration about A.
+  test("a connection switch mid-read leaves the newer connection's list alone", async () => {
+    // Both connections hold an object called `orders`, which is what makes a stale write
+    // VISIBLE rather than merely wasted: on A it is a table and on B it is a view.
+    let releaseFirstInventory: (() => void) | null = null;
+    const firstInventory = new Promise<void>((resolve) => {
+      releaseFirstInventory = resolve;
+    });
+    let inventoryCalls = 0;
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async () => {
+        inventoryCalls += 1;
+        if (inventoryCalls === 1) {
+          await firstInventory;
+          return { ok: true, json: { objects: [{ name: "orders", kind: "table", path: ["public", "orders"] }] } };
+        }
+        return { ok: true, json: { objects: [{ name: "orders", kind: "view", path: ["public", "orders"] }] } };
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", name: "B" }));
+    });
+    expect(result.current.schema.map((object) => [object.name, object.kind])).toEqual([["orders", "view"]]);
+
+    await act(async () => {
+      releaseFirstInventory?.();
+      await first;
+    });
+
+    // A's answer landed after B's whole read. B's view stays a view.
+    expect(result.current.schema.map((object) => [object.name, object.kind])).toEqual([["orders", "view"]]);
+
+    const capabilities = {
+      queryLanguage: "sql",
+      objectKinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(rowWritableObjects(result.current.schema, capabilities)).toEqual([]);
+  });
+
+  test("a superseded read does not report the newer one as finished", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+
+    let releaseSecond: (() => void) | null = null;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async () => {
+        calls += 1;
+        await (calls === 1 ? gate : secondGate);
+        return { ok: true, json: { objects: OBJECTS, details: DETAILS } };
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+      await Promise.resolve();
+    });
+
+    let second: Promise<void> = Promise.resolve();
+    await act(async () => {
+      second = result.current.fetchSchema(makeConnection({ id: "conn-b" }));
+      await Promise.resolve();
+    });
+    expect(result.current.isLoadingSchema).toBe(true);
+
+    // The superseded read finishes first. It owns no flag, so the newer read is still
+    // reported as in flight.
+    await act(async () => {
+      releaseFirst?.();
+      await first;
+    });
+    expect(result.current.isLoadingSchema).toBe(true);
+
+    await act(async () => {
+      releaseSecond?.();
+      await second;
+    });
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  test("moving to a deferred connection stops reporting the superseded read as in flight", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async () => {
+        await gate;
+        return { ok: true, json: { objects: OBJECTS, details: DETAILS } };
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+      await Promise.resolve();
+    });
+    expect(result.current.isLoadingSchema).toBe(true);
+
+    // The deferred connection issues no request, so it is the only party that can clear the
+    // flag: the read it superseded asks whether it is still current and it is not.
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b", skipObjectScan: true }));
+    });
+    expect(result.current.isLoadingSchema).toBe(false);
+
+    await act(async () => {
+      releaseFirst?.();
+      await first;
+    });
+    expect(result.current.isLoadingSchema).toBe(false);
+    expect(result.current.schema).toEqual([]);
+  });
+
+  test("a failed read for the connection left behind reports nothing under the new one", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async () => {
+        calls += 1;
+        if (calls === 1) {
+          await gate;
+          return { ok: false, status: 500, json: { error: "Connection refused" } };
+        }
+        return { ok: true, json: { objects: OBJECTS, details: DETAILS } };
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.fetchSchema(makeConnection({ id: "conn-a" }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-b" }));
+    });
+
+    await act(async () => {
+      releaseFirst?.();
+      await first;
+    });
+
+    // The failure belongs to a connection nobody is looking at. Naming it would blame the
+    // current connection for a read never issued against it.
+    expect(result.current.schema.map((object) => object.name)).toEqual(["users", "orders"]);
+    expect(result.current.schemaError).toBeNull();
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 });

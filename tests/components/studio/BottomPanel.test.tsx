@@ -211,6 +211,7 @@ function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
     onLoadMore: undefined,
     isLoadingMore: false,
     onExportResults: mock(() => {}),
+    onCopyResults: mock(() => {}),
     ...overrides,
   };
 }
@@ -833,6 +834,88 @@ describe("BottomPanel", () => {
 
       expect(queryByTestId("agent-provenance")).toBeNull();
       expect(capturedResultsGridProps.result).toEqual(TAB_RESULT);
+    });
+  });
+  /**
+   * Copying the result instead of saving it (#701).
+   *
+   * The same writers, the same scope line, a different destination. The menu offers
+   * every format it already offers as a file, because a format that is worth a file is
+   * worth a paste, and a menu that carried a subset would only raise the question of
+   * which subset.
+   */
+  describe("copy to clipboard", () => {
+    const COPY_RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 42 };
+
+    function copyProps(overrides: Record<string, unknown> = {}) {
+      return createDefaultProps({
+        mode: "results",
+        currentTab: {
+          id: "tab-1",
+          name: "Q",
+          query: "SELECT 1",
+          result: COPY_RESULT,
+          isExecuting: false,
+          type: "sql" as const,
+        },
+        ...overrides,
+      });
+    }
+
+    test.each([
+      ["Copy as CSV", "csv", undefined],
+      ["Copy as CSV (semicolon)", "csv", ";"],
+      ["Copy as CSV (tab)", "csv", "\t"],
+      ["Copy as JSON", "json", undefined],
+      ["Copy as SQL INSERT", "sql-insert", undefined],
+      ["Copy as DDL (CREATE TABLE)", "sql-ddl", undefined],
+    ])("%s asks for that format on the clipboard", async (label, format, delimiter) => {
+      const onCopyResults = mock(() => {});
+      const props = copyProps({ onCopyResults });
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      await userEvent.click(within(document.body as HTMLElement).getByText(label));
+
+      // The delimiter is passed only where the entry has one: "CSV" means the
+      // writer's own default, and an explicit `undefined` would be a different call
+      // for the same choice.
+      if (delimiter === undefined) expect(onCopyResults).toHaveBeenCalledWith(format, null);
+      else expect(onCopyResults).toHaveBeenCalledWith(format, null, delimiter);
+    });
+
+    // The scope line says the file holds one page of rows, and a paste looks even more
+    // like a complete answer than a file does. So it is read before the copy items,
+    // not only before the export ones.
+    test("the scope line is stated above the copy items", async () => {
+      const props = copyProps();
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      const menu = within(document.body as HTMLElement);
+      const scope = menu.getByTestId("export-scope");
+      const copy = menu.getByText("Copy as JSON");
+
+      expect(scope.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    test("a copy over a hydrated result carries the run it came from", async () => {
+      const onCopyResults = mock(() => {});
+      const artifact = {
+        runId: "arun_1",
+        correlationId: "corr_9",
+        operationId: "sql.query.read",
+        surface: "results",
+        result: COPY_RESULT,
+        explainPlan: null,
+      };
+      const props = copyProps({ onCopyResults, agentArtifact: artifact, onDismissAgentArtifact: mock(() => {}) });
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      await userEvent.click(within(document.body as HTMLElement).getByText("Copy as JSON"));
+
+      expect(onCopyResults).toHaveBeenCalledWith("json", artifact);
     });
   });
 });

@@ -24,16 +24,13 @@
  *    is what keeps the cost of schema loading in hand.
  */
 
-import type { ColumnSchema, IndexSchema, TableRelations, TableSchema } from "@/lib/types";
-import { COUCHBASE_DEFAULT_SCOPE, keyspaceDisplayName, keyspacePath } from "./keyspace";
+import type { ColumnSchema } from "@/lib/types";
+import { keyspacePath } from "./keyspace";
 import type { CouchbaseRow, CouchbaseTransport, Keyspace } from "./transport";
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-/** Collection every bucket has, and the one a bucket-level catalog row means. */
-const DEFAULT_COLLECTION = "_default";
 
 /** Documents INFER samples per collection. Mirrors the MongoDB provider. */
 const INFER_SAMPLE_SIZE = 100;
@@ -44,11 +41,8 @@ const META_PROPERTY = "~meta";
 /** Type reported for a property whose INFER entry names none. */
 const UNKNOWN_TYPE = "unknown";
 
-/** Name for an index row that carries none, mirroring the MongoDB provider. */
-const UNKNOWN_INDEX_NAME = "unknown";
-
 /** How SQL++ addresses the document key a primary index is built on. */
-const DOCUMENT_KEY_EXPRESSION = "META().id";
+export const DOCUMENT_KEY_EXPRESSION = "META().id";
 
 /**
  * Column carrying the document key. It matches the alias the generated
@@ -66,45 +60,12 @@ export const INFER_TIMEOUT_MS = 5000;
 /** Server-side timeout for the `system:*` catalog reads. */
 export const CATALOG_TIMEOUT_MS = 15000;
 
-/**
- * Collections of the pinned bucket.
- *
- * The LEFT JOIN is deliberate. `system:scopes` does not list `_default` on
- * Server 8.0.2, so an inner join silently drops every collection in the default
- * scope. The second predicate is equally deliberate: the bucket-level row
- * (name = bucket, no `bucket`/`scope` fields) IS the pre-collections default
- * collection, and dropping it would hide every document written before scopes
- * existed.
- */
-const COLLECTION_LIST_SQL = [
-  "SELECT k.`bucket` AS bucket_name, k.`scope` AS scope_name, k.name AS collection_name",
-  "FROM system:keyspaces AS k",
-  "LEFT JOIN system:scopes AS s ON k.`bucket` = s.`bucket` AND k.`scope` = s.name",
-  "WHERE k.`bucket` = $1 OR (k.`bucket` IS MISSING AND k.name = $1)",
-  "ORDER BY scope_name, collection_name",
-].join(" ");
-
-/** Indexes of the pinned bucket, aliased onto the same row shape as above. */
-const INDEX_LIST_SQL = [
-  "SELECT i.name AS index_name, i.bucket_id AS bucket_name, i.scope_id AS scope_name,",
-  "i.keyspace_id AS collection_name, i.index_key AS index_key, i.is_primary AS is_primary",
-  "FROM system:indexes AS i",
-  "WHERE i.bucket_id = $1 OR (i.bucket_id IS MISSING AND i.keyspace_id = $1)",
-  "ORDER BY scope_name, collection_name, index_name",
-].join(" ");
-
 /** A single backtick-quoted identifier, with embedded backticks doubled. */
 const QUOTED_IDENTIFIER = /^`((?:[^`]|``)*)`$/;
 
 // ============================================================================
 // Types
 // ============================================================================
-
-/** A collection and the name the flat schema explorer shows for it. */
-export interface CouchbaseCollection {
-  keyspace: Keyspace;
-  displayName: string;
-}
 
 /** What the sampled documents say about one field. */
 interface FieldStats {
@@ -121,23 +82,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-/**
- * Catalog row -> keyspace, shared by both catalogs because their projections
- * are aliased onto the same field names. Returns null for a row that cannot be
- * placed, so one malformed row cannot take the whole listing down.
- */
-function resolveKeyspace(bucket: string, row: CouchbaseRow): Keyspace | null {
-  if (typeof row.bucket_name !== "string") {
-    return { bucket, scope: COUCHBASE_DEFAULT_SCOPE, collection: DEFAULT_COLLECTION };
-  }
-  if (typeof row.collection_name !== "string") return null;
-  return {
-    bucket,
-    scope: typeof row.scope_name === "string" ? row.scope_name : COUCHBASE_DEFAULT_SCOPE,
-    collection: row.collection_name,
-  };
 }
 
 /** Type names an INFER property carries: one string, or a JSON-schema array. */
@@ -218,24 +162,9 @@ function columnsFromFlavours(flavours: unknown[]): ColumnSchema[] {
 }
 
 /** Strip the quoting Couchbase applies to a plain index key identifier. */
-function unquoteIndexKey(key: string): string {
+export function unquoteIndexKey(key: string): string {
   const match = QUOTED_IDENTIFIER.exec(key);
   return match ? match[1].replaceAll("``", "`") : key;
-}
-
-function toIndexSchema(row: CouchbaseRow): IndexSchema {
-  const isPrimary = row.is_primary === true;
-  const keys = Array.isArray(row.index_key)
-    ? row.index_key.filter((key): key is string => typeof key === "string").map(unquoteIndexKey)
-    : [];
-
-  return {
-    name: typeof row.index_name === "string" ? row.index_name : UNKNOWN_INDEX_NAME,
-    // A primary index carries no index_key: it keys the document key itself.
-    columns: isPrimary && keys.length === 0 ? [DOCUMENT_KEY_EXPRESSION] : keys,
-    // No secondary GSI enforces uniqueness; only the document key is unique.
-    unique: isPrimary,
-  };
 }
 
 /**
@@ -267,19 +196,6 @@ function inferStatement(keyspace: Keyspace): string {
   return `INFER ${keyspacePath(keyspace)} WITH {"sample_size": ${INFER_SAMPLE_SIZE}}`;
 }
 
-/** Collections of the pinned bucket, with their flat display names. */
-export async function listCollections(transport: CouchbaseTransport, bucket: string): Promise<CouchbaseCollection[]> {
-  const result = await transport.query(COLLECTION_LIST_SQL, { args: [bucket], timeoutMs: CATALOG_TIMEOUT_MS });
-
-  const collections: CouchbaseCollection[] = [];
-  for (const row of result.rows) {
-    const keyspace = resolveKeyspace(bucket, row);
-    if (!keyspace) continue;
-    collections.push({ keyspace, displayName: keyspaceDisplayName(keyspace.scope, keyspace.collection) });
-  }
-  return collections;
-}
-
 /**
  * Statistical columns for one collection.
  *
@@ -299,43 +215,22 @@ export async function inferColumns(transport: CouchbaseTransport, keyspace: Keys
 }
 
 /**
- * Fast structural schema: every collection of the bucket, with inferred
- * columns. Indexes are left to getSchemaRelations() so their cost never blocks
- * the tree, exactly as in the SQL providers.
- */
-export async function getSchemaList(transport: CouchbaseTransport, bucket: string): Promise<TableSchema[]> {
-  const collections = await listCollections(transport, bucket);
-  const columns = await mapWithConcurrency(collections, INFER_CONCURRENCY, (collection) =>
-    inferColumns(transport, collection.keyspace),
-  );
-
-  return collections.map((collection, index) => ({
-    name: collection.displayName,
-    columns: columns[index],
-    indexes: [],
-    foreignKeys: [],
-  }));
-}
-
-/**
- * Index lists keyed by display name.
+ * Columns for MANY keyspaces, at most `INFER_CONCURRENCY` statements in flight (#789).
  *
- * Failure propagates on purpose. An empty index list is the signal that a
- * collection has no usable index (decision 6), so degrading a failed catalog
- * read to empty would fabricate that signal for the whole bucket.
+ * One INFER per keyspace and not one statement for all of them, and that is a measurement
+ * on Server 8.0.2 rather than a preference. `INFER a, b` is a syntax error and `INFER`
+ * against a scope is refused ("only 2 or 4 parts are valid"), so the only combined form is
+ * a `WITH`/`UNION ALL` over INFER subqueries - which the parser does accept - and that
+ * form fails ENTIRELY on the first empty keyspace with error 7014. An empty collection is
+ * an ordinary state here, so a combined statement would cost a whole folder its columns
+ * whenever one collection held no documents.
+ *
+ * Answers are written by index, so a keyspace whose INFER was refused carries `[]` in its
+ * own slot rather than shifting another keyspace's columns onto it.
  */
-export async function getSchemaRelations(transport: CouchbaseTransport, bucket: string): Promise<TableRelations[]> {
-  const result = await transport.query(INDEX_LIST_SQL, { args: [bucket], timeoutMs: CATALOG_TIMEOUT_MS });
-
-  const byCollection = new Map<string, IndexSchema[]>();
-  for (const row of result.rows) {
-    const keyspace = resolveKeyspace(bucket, row);
-    if (!keyspace) continue;
-    const displayName = keyspaceDisplayName(keyspace.scope, keyspace.collection);
-    const indexes = byCollection.get(displayName) ?? [];
-    indexes.push(toIndexSchema(row));
-    byCollection.set(displayName, indexes);
-  }
-
-  return [...byCollection.entries()].map(([name, indexes]) => ({ name, foreignKeys: [], indexes }));
+export async function inferColumnsEach(
+  transport: CouchbaseTransport,
+  keyspaces: readonly Keyspace[],
+): Promise<ColumnSchema[][]> {
+  return await mapWithConcurrency([...keyspaces], INFER_CONCURRENCY, (keyspace) => inferColumns(transport, keyspace));
 }

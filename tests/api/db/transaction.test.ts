@@ -366,6 +366,198 @@ describe("POST /api/db/transaction", () => {
     expect(data.error).toContain("Syntax error");
   });
 
+  // ─── Transaction ownership (D72) ──────────────────────────────────────────
+  //
+  // Measured on PostgreSQL 18.4 on 2026-09-13, through POST /api/db/transaction, two Studio
+  // sessions on ONE connection id: `user` opened a transaction and inserted a row, `admin` was
+  // refused its own begin with 400 "Transaction already active", and was then allowed to roll
+  // back with 200. The engine had zero rows and `user`'s own commit came back "No active
+  // transaction". txActive/txClient live on the provider, and getOrCreateProvider caches one
+  // provider per connection id, so every Studio user on that connection drove one transaction.
+
+  /** A provider double whose transaction state actually changes, so ownership can be observed. */
+  function openableProvider() {
+    let txOpen = false;
+    mockTxProvider.isInTransaction.mockImplementation(() => txOpen);
+    mockTxProvider.beginTransaction.mockImplementation(async () => {
+      txOpen = true;
+    });
+    mockTxProvider.commitTransaction.mockImplementation(async () => {
+      txOpen = false;
+    });
+    mockTxProvider.rollbackTransaction.mockImplementation(async () => {
+      txOpen = false;
+    });
+    return {
+      /** Stand in for PostgresProvider's TX_TIMEOUT_MS auto-rollback: no session behind it. */
+      expire: () => {
+        txOpen = false;
+      },
+    };
+  }
+
+  function asSession(username: string, role = "user") {
+    mockGetSession.mockImplementation(async () => ({ role, username }));
+  }
+
+  function call(connectionId: string, body: Record<string, unknown>) {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: { ...validConnection, id: connectionId }, ...body },
+    });
+    return POST(req as never);
+  }
+
+  test("a second session cannot roll back the transaction another session opened", async () => {
+    openableProvider();
+
+    asSession("alice");
+    expect((await call("d72-rollback", { action: "begin" })).status).toBe(200);
+
+    asSession("bob", "admin");
+    const res = await call("d72-rollback", { action: "rollback" });
+    const data = await parseResponseJSON<{ error: string; code: string; availableAt: string }>(res);
+
+    expect(res.status).toBe(409);
+    expect(data.code).toBe("TRANSACTION_NOT_OWNED");
+    expect(data.error).toContain("belongs to another session");
+    expect(data.availableAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(mockTxProvider.rollbackTransaction).not.toHaveBeenCalled();
+  });
+
+  test("a second session cannot begin, query or commit on another session's transaction", async () => {
+    openableProvider();
+
+    asSession("alice");
+    expect((await call("d72-actions", { action: "begin" })).status).toBe(200);
+
+    asSession("bob", "admin");
+    // Collected rather than asserted inside the loop: an assertion in a loop body certifies
+    // nothing if the loop runs zero times, and these two arrays are wrong at the wrong LENGTH.
+    const statuses: number[] = [];
+    const codes: string[] = [];
+    for (const body of [{ action: "begin" }, { action: "commit" }, { action: "query", sql: "SELECT 1" }]) {
+      const res = await call("d72-actions", body);
+      statuses.push(res.status);
+      codes.push((await parseResponseJSON<{ code: string }>(res)).code);
+    }
+    expect(statuses).toEqual([409, 409, 409]);
+    expect(codes).toEqual(["TRANSACTION_NOT_OWNED", "TRANSACTION_NOT_OWNED", "TRANSACTION_NOT_OWNED"]);
+
+    expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(1);
+    expect(mockTxProvider.commitTransaction).not.toHaveBeenCalled();
+    expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+  });
+
+  test("the owner keeps full control of its own transaction, and hands the connection back on commit", async () => {
+    openableProvider();
+
+    asSession("alice");
+    expect((await call("d72-owner", { action: "begin" })).status).toBe(200);
+    expect((await call("d72-owner", { action: "query", sql: "SELECT 1" })).status).toBe(200);
+    expect((await call("d72-owner", { action: "commit" })).status).toBe(200);
+
+    asSession("bob", "admin");
+    expect((await call("d72-owner", { action: "begin" })).status).toBe(200);
+    expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  test("status is answered for every session and says who holds the transaction", async () => {
+    openableProvider();
+
+    asSession("alice");
+    await call("d72-status", { action: "begin" });
+
+    const mine = await parseResponseJSON<{
+      inTransaction: boolean;
+      ownedByYou: boolean;
+      heldByAnotherSession: boolean;
+      startedAt: string | null;
+    }>(await call("d72-status", { action: "status" }));
+    expect(mine).toMatchObject({ inTransaction: true, ownedByYou: true, heldByAnotherSession: false });
+    expect(mine.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    asSession("bob", "admin");
+    const res = await call("d72-status", { action: "status" });
+    expect(res.status).toBe(200);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      inTransaction: true,
+      ownedByYou: false,
+      heldByAnotherSession: true,
+    });
+  });
+
+  test("a transaction the provider auto-rolled back leaves no owner behind", async () => {
+    const provider = openableProvider();
+
+    asSession("alice");
+    await call("d72-expired", { action: "begin" });
+    provider.expire();
+
+    asSession("bob", "admin");
+    const res = await call("d72-expired", { action: "begin" });
+
+    expect(res.status).toBe(200);
+    expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  test("an owner that never comes back releases the connection once its lease lapses", async () => {
+    openableProvider();
+
+    asSession("alice");
+    await call("d72-abandoned", { action: "begin" });
+
+    // MSSQLProvider and OracleProvider have no TX_TIMEOUT_MS of their own, so the transaction
+    // stays open forever. Without the lease the refusal above would never lift for anyone else.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 6 * 60 * 1000;
+    try {
+      asSession("bob", "admin");
+      const res = await call("d72-abandoned", { action: "rollback" });
+      expect(res.status).toBe(200);
+      expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test("a begin the provider refuses does not make the caller the owner of an open transaction", async () => {
+    // The escape-hatch state: a transaction is open and no record names an owner, which is what a
+    // restarted process finds, and what a lapsed lease leaves behind. Any session may end it. A
+    // claim written before the provider answered would hand that transaction to whoever asked
+    // first, and the provider's own "Transaction already active" would be the only thing they saw.
+    mockTxProvider.isInTransaction.mockImplementation(() => true);
+    mockTxProvider.beginTransaction.mockImplementation(async () => {
+      throw new QueryError("Transaction already active", "postgres");
+    });
+
+    asSession("alice");
+    expect((await call("d72-unowned", { action: "begin" })).status).toBe(400);
+
+    asSession("bob", "admin");
+    expect(await parseResponseJSON(await call("d72-unowned", { action: "status" }))).toMatchObject({
+      inTransaction: true,
+      ownedByYou: false,
+      heldByAnotherSession: false,
+    });
+    expect((await call("d72-unowned", { action: "rollback" })).status).toBe(200);
+    expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test("a begin that throws records no owner", async () => {
+    openableProvider();
+    mockTxProvider.beginTransaction.mockImplementation(async () => {
+      throw new QueryError("Transaction already active", "postgres");
+    });
+
+    asSession("alice");
+    expect((await call("d72-failed-begin", { action: "begin" })).status).toBe(400);
+
+    openableProvider();
+    asSession("bob", "admin");
+    expect((await call("d72-failed-begin", { action: "begin" })).status).toBe(200);
+  });
+
   test("DatabaseError returns 500", async () => {
     mockTxProvider.beginTransaction.mockImplementation(async () => {
       throw new DatabaseError("Internal database error", "postgres", "DATABASE_ERROR");

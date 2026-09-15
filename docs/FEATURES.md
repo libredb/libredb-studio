@@ -9,10 +9,10 @@
 *   **Custom DB Theme:** Specialized `db-dark` theme for high-contrast SQL syntax highlighting.
 *   **Power Snippets:** Integrated templates for CTEs, Joins, and complex CRUD operations.
 *   **Modern Editor Specs:** Font ligatures, smooth scrolling, bracket pair colorization, and parameter hints enabled.
-*   **Keyboard Shortcuts:** `Cmd/Ctrl + Enter` to execute, `Alt + Shift + F` to format, `Cmd/Ctrl + Shift + X` to open a new query tab.
+*   **Keyboard Shortcuts:** `Cmd/Ctrl+Enter` to execute the query (editor focused), `Alt+Shift+F` to format the query (editor focused), `Cmd/Ctrl+Shift+X` to open a new query tab (except while renaming a tab), `Cmd/Ctrl+K` to toggle the command palette.
 *   **Command Palette:** Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 
-> See [`docs/editor/`](editor/) for the editor internals — completion provider, alias resolution, and performance design.
+> Shortcut bindings and labels come from `src/lib/keyboard-shortcuts.ts`. After changing the registry, run `bun run shortcuts:sync`; the unit suite checks this list for drift. See [`docs/editor/`](editor/) for the editor internals — completion provider, alias resolution, and performance design.
 
 ### 2. Multi-Tab Query Management
 *   **Workspace Tabs:** Open multiple queries simultaneously in separate tabs.
@@ -24,6 +24,12 @@
 *   **Inline Editing:** Double-click any cell to edit data directly; apply pending cell changes as one `UPDATE` per edited row or discard them. Offered only where the provider declares `supportsInlineRowEdit`. ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, MongoDB, Redis and LibreDB show no editing control at all because they have no single-table row update - on Cassandra because CQL requires the WHOLE primary key restricted by equality while the editor names one column it guessed from the result fields, so a clustered table answers "Some partition key parts are missing" (measured) — on Trino because it declares no primary key for any table in any catalog, so the generated `WHERE` could not identify one row — on the two search engines `UPDATE` is absent from the SQL grammar itself, measured on both; Couchbase shows none because the document key reaches the grid as a projection alias the generated `WHERE` cannot address.
 *   **Data-Type Formatting:** Specialized rendering for Numbers, Booleans, and Nulls.
 *   **Column Management:** Resizable columns and advanced sorting.
+*   **Row Detail:** A control at the left edge of every row opens that row field by field, values beside field names, with per-field copy and the same masking the grid applies.
+    It is how a result with more columns than fit the window stays readable, so it is on the desktop grid and not only on the small-screen card and table views, where it shipped first (#800).
+    The control is pinned to the left edge rather than scrolling away with the first column, and no breakpoint hides it.
+    The field list flows into as many columns as the window fits, asked for by column width rather than by a breakpoint, and the panel is capped at a share of the window rather than always filling it, so a six field row no longer hides the grid it came from.
+    Measured on a 40 field row: one column at 390px and 768px, two at 834px and 1024px, three at 1280px and 1440px, four at 1920px and eight at 3840px.
+    How many of them carry fields depends on how many fields the row has, so a short row fills fewer than the window could hold.
 
 ### 4. Visual EXPLAIN (Query Analyzer)
 *   **Performance Visualization:** Visual execution plan to identify performance bottlenecks.

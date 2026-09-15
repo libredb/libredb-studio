@@ -273,7 +273,7 @@ describe("a refused capture records why it was refused", () => {
       noun: { singular: "table", plural: "tables" },
     });
     expect(event?.fingerprint).toMatch(/^ctx_[0-9a-f]{32}$/);
-    expect(event?.snapshot?.tables).toHaveLength(DEPARTMENTS.length);
+    expect(event?.snapshot?.objects).toHaveLength(DEPARTMENTS.length);
   });
 });
 

@@ -14,9 +14,9 @@ import type { ProviderLabels } from "@/lib/db/types";
  * The word this engine's inventory rows go by, in the run's own prose.
  *
  * Every block a run was shown said "table(s)" until #414's live drive, on every
- * engine, because `TableSchema` is the one shape this product records a schema in. It
- * is a shape, not a claim about the world, and using it as a noun in a PROMPT made a
- * claim: a run told "Schema inventory for this run — 17 table(s)" over a Redis
+ * engine, because the flat schema reading was the one shape this product recorded a
+ * schema in and its element was called a table. It was a shape, not a claim about the
+ * world, and using it as a noun in a PROMPT made a claim: a run told "Schema inventory for this run — 17 table(s)" over a Redis
  * keyspace drafted `KEYS user:*` and `ZCARD user:*`, naming a row as though a command
  * could be given it. The model was reading the sentence correctly.
  *

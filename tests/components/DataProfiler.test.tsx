@@ -69,7 +69,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof DataProfiler>[0
   return {
     isOpen: true,
     onClose: mock(() => {}),
-    tableName: "users",
+    tablePath: ["app", "users"],
     tableSchema: mockUsersTable,
     connection: mockPostgresConnection,
     schemaContext: "",
@@ -112,12 +112,15 @@ describe("DataProfiler", () => {
 
   // ── Shows table name in title ─────────────────────────────────────────────
 
-  test("shows table name in title area", () => {
-    const props = createDefaultProps({ tableName: "users" });
+  test("shows the object's ADDRESS in the title area, not its label", () => {
+    // Two containers can hold one `users`, so the label alone does not say which object
+    // this profile is of (#789, Task 35).
+    const props = createDefaultProps({ tablePath: ["shop", "dbo", "users"] });
     const { container } = render(<DataProfiler {...props} />);
     const view = within(container);
 
-    expect(view.queryByText("users")).not.toBeNull();
+    expect(view.queryByText("shop.dbo.users")).not.toBeNull();
+    expect(view.queryByText("users")).toBeNull();
   });
 
   // ── Loading state during fetch ────────────────────────────────────────────
@@ -133,7 +136,7 @@ describe("DataProfiler", () => {
     const { container } = render(<DataProfiler {...props} />);
     const view = within(container);
 
-    expect(view.queryByText("Profiling users...")).not.toBeNull();
+    expect(view.queryByText("Profiling app.users...")).not.toBeNull();
   });
 
   // ── Displays profiled data after successful fetch ─────────────────────────
@@ -518,7 +521,7 @@ describe("DataProfiler", () => {
     const view = within(container);
 
     // Should not show loading state or profile data
-    expect(view.queryByText("Profiling users...")).toBeNull();
+    expect(view.queryByText("Profiling app.users...")).toBeNull();
 
     // Fetch should not have been called
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -537,13 +540,13 @@ describe("DataProfiler", () => {
     const view = within(container);
 
     // Should not show loading or profile data
-    expect(view.queryByText("Profiling users...")).toBeNull();
+    expect(view.queryByText("Profiling app.users...")).toBeNull();
 
     // The effect calls fetchProfile which returns early if !tableSchema,
     // but it still calls fetch because the guard is inside fetchProfile.
     // Actually looking at the code: useEffect guards on `connection` but not `tableSchema`.
     // fetchProfile guards on both: `if (!connection || !tableSchema) return;`
-    // But the useEffect only checks: `if (isOpen && tableName && connection)`
+    // But the useEffect only checks: `if (isOpen && tablePath.length > 0 && connection)`
     // Since connection is provided but tableSchema is null, the effect fires but fetchProfile returns early.
     // So fetch should NOT have been called.
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -570,8 +573,13 @@ describe("DataProfiler", () => {
     });
 
     expect(onProfile).toHaveBeenCalledTimes(1);
-    const profileArg = (onProfile.mock.calls as unknown[][])[0][0] as { connectionId: string; tableName: string };
-    expect(profileArg.tableName).toBe("users");
+    const profileArg = (onProfile.mock.calls as unknown[][])[0][0] as {
+      connectionId: string;
+      tablePath: readonly string[];
+    };
+    // The adapter is handed the ADDRESS too: a host that resolves it by label has the same
+    // ambiguity the built-in fetch had (#789, Task 35).
+    expect(profileArg.tablePath).toEqual(["app", "users"]);
     expect(profileArg.connectionId).toBe(mockPostgresConnection.id);
 
     // The adapter result is rendered as the AI summary
@@ -584,7 +592,7 @@ describe("DataProfiler", () => {
       tableName: string;
       schemaContext: string;
     };
-    expect(describeArg.tableName).toBe("users");
+    expect(describeArg.tableName).toBe("app.users");
     expect(describeArg.schemaContext).toContain("Column Profiles:");
     expect(describeArg.schemaContext).toContain("schema ctx");
 
@@ -812,7 +820,7 @@ describe("DataProfiler", () => {
     const body = JSON.parse((call[1] as RequestInit).body as string);
     expect(body.connectionId).toBe("seed:mongo-local");
     expect(body.connection).toBeUndefined();
-    expect(body.tableName).toBe("users");
+    expect(body.tablePath).toEqual(["app", "users"]);
   });
 
   // ── Data profile export ───────────────────────────────────────────────────

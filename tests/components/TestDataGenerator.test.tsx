@@ -6,7 +6,20 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
-import type { TableSchema } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ProviderCapabilities } from "@/lib/db/types";
+
+/**
+ * The declaration this modal now takes instead of a bare `queryLanguage` string: the
+ * generated INSERT names the object's whole ADDRESS, so it needs the dialect's quoting as
+ * well as its language (#789, Task 35).
+ */
+function capsOf(overrides: Partial<ProviderCapabilities>): ProviderCapabilities {
+  return { queryLanguage: "sql", ...overrides } as unknown as ProviderCapabilities;
+}
+const jsonCaps = capsOf({ queryLanguage: "json" });
+const postgresCaps = capsOf({ defaultPort: 5432 });
+const mssqlCaps = capsOf({ defaultPort: 1433 });
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -22,8 +35,10 @@ function setExecCommand(execCommand: ((command: string) => boolean) | undefined)
   Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
 }
 
-const schema: TableSchema = {
+const schema: DetailedObject = {
   name: "employees",
+  kind: "table",
+  path: ["employees"],
   indexes: [],
   columns: [
     { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
@@ -47,7 +62,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen={false}
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -60,7 +75,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -71,14 +86,56 @@ describe("TestDataGenerator", () => {
     expect(container.textContent).toContain("INSERT INTO employees");
   });
 
+  test("quotes COLUMN names the way the connected engine reads an identifier", () => {
+    // The target moved onto `quoteObjectPath` (#789) while the column list kept a
+    // hardcoded `"`, so the two halves of one statement spoke different dialects.
+    // A column whose name needs quoting is what separates them: MySQL backticks it,
+    // SQL Server brackets it, and `"order date"` is what MySQL reads as a string
+    // literal rather than a column, so the INSERT did not parse at all.
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [{ name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false }],
+    };
+    const render1 = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "employees"]}
+        tableSchema={awkward}
+        capabilities={capsOf({ defaultPort: 3306 })}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const mysql = render1.container.textContent ?? "";
+    expect(mysql).toContain("`order date`");
+    expect(mysql).not.toContain('"order date"');
+    cleanup();
+
+    // The control: the same column, a different engine, a different spelling. Without
+    // it the assertion above would pass for a component that quoted nothing at all.
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "employees"]}
+        tableSchema={awkward}
+        capabilities={mssqlCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent ?? "").toContain("[order date]");
+  });
+
   test("quotes a generated value that does not match its column's numeric type", () => {
     // The generator is chosen by column NAME and the quoting by column TYPE, so
     // the two can disagree: `phone BIGINT` produces `+1-555-…`, which used to be
     // written into the statement unquoted because the type said numeric. Same
     // shape as the import defect (PR #304 review) — here it makes broken SQL
     // rather than an injection, because the vocabulary is the generator's own.
-    const mismatched: TableSchema = {
+    const mismatched: DetailedObject = {
       name: "contacts",
+      kind: "table",
+      path: ["contacts"],
       indexes: [],
       columns: [{ name: "phone", type: "BIGINT", nullable: false, isPrimary: false }],
     };
@@ -86,7 +143,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="contacts"
+        tablePath={["contacts"]}
         tableSchema={mismatched}
         onExecuteQuery={mock(() => {})}
       />,
@@ -102,7 +159,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -121,7 +178,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={onClose}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -138,9 +195,11 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="users"
+        tablePath={["users"]}
         tableSchema={{
           name: "users",
+          kind: "table",
+          path: ["users"],
           indexes: [],
           columns: [{ name: "email", type: "VARCHAR(255)", nullable: false, isPrimary: false }],
         }}
@@ -159,9 +218,11 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="contacts"
+        tablePath={["contacts"]}
         tableSchema={{
           name: "contacts",
+          kind: "table",
+          path: ["contacts"],
           indexes: [],
           columns: [{ name: "phone", type: "VARCHAR(20)", nullable: true, isPrimary: false }],
         }}
@@ -180,7 +241,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -202,16 +263,18 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="users"
+        tablePath={["users"]}
         tableSchema={{
           name: "users",
+          kind: "table",
+          path: ["users"],
           indexes: [],
           columns: [
             { name: "name", type: "VARCHAR(100)", nullable: false, isPrimary: false },
             { name: "email", type: "VARCHAR(255)", nullable: false, isPrimary: false },
           ],
         }}
-        queryLanguage="json"
+        capabilities={jsonCaps}
         onExecuteQuery={mock(() => {})}
       />,
     );
@@ -232,7 +295,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -252,7 +315,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -273,7 +336,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -291,7 +354,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -311,7 +374,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -333,7 +396,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -354,7 +417,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={onClose}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -380,7 +443,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="employees"
+        tablePath={["employees"]}
         tableSchema={schema}
         onExecuteQuery={mock(() => {})}
       />,
@@ -394,8 +457,10 @@ describe("TestDataGenerator", () => {
   // ── Numeric types not quoted in SQL ─────────────────────────────────────────
 
   test("numeric types are not quoted in SQL output", () => {
-    const numericSchema: TableSchema = {
+    const numericSchema: DetailedObject = {
       name: "metrics",
+      kind: "table",
+      path: ["metrics"],
       indexes: [],
       columns: [
         { name: "score", type: "INTEGER", nullable: false, isPrimary: false },
@@ -409,7 +474,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="metrics"
+        tablePath={["metrics"]}
         tableSchema={numericSchema}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -435,8 +500,10 @@ describe("TestDataGenerator", () => {
   // ── String types quoted in SQL ──────────────────────────────────────────────
 
   test("string types are quoted with single quotes in SQL output", () => {
-    const stringSchema: TableSchema = {
+    const stringSchema: DetailedObject = {
       name: "people",
+      kind: "table",
+      path: ["people"],
       indexes: [],
       columns: [
         { name: "name", type: "VARCHAR(100)", nullable: false, isPrimary: false },
@@ -450,7 +517,7 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="people"
+        tablePath={["people"]}
         tableSchema={stringSchema}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -476,8 +543,10 @@ describe("TestDataGenerator", () => {
   // ── subject/description/color/ip ────────────────────────────────────────────
 
   test("maps location and content columns to their fake generators", () => {
-    const richSchema: TableSchema = {
+    const richSchema: DetailedObject = {
       name: "profiles",
+      kind: "table",
+      path: ["profiles"],
       indexes: [],
       columns: [
         { name: "shipping_address", type: "VARCHAR(255)", nullable: true, isPrimary: false },
@@ -499,9 +568,9 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="profiles"
+        tablePath={["profiles"]}
         tableSchema={richSchema}
-        queryLanguage="json"
+        capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
     );
@@ -561,8 +630,10 @@ describe("TestDataGenerator", () => {
   // ── Type-based fake generators: date/timestamp/uuid/json + default fallback ─
 
   test("maps date, timestamp, uuid, json, and unmatched columns to their fake generators", () => {
-    const typedSchema: TableSchema = {
+    const typedSchema: DetailedObject = {
       name: "events",
+      kind: "table",
+      path: ["events"],
       indexes: [],
       columns: [
         { name: "birth_date", type: "DATE", nullable: true, isPrimary: false },
@@ -579,9 +650,9 @@ describe("TestDataGenerator", () => {
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
-        tableName="events"
+        tablePath={["events"]}
         tableSchema={typedSchema}
-        queryLanguage="json"
+        capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
     );
@@ -594,5 +665,87 @@ describe("TestDataGenerator", () => {
     expect(doc.record_uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(doc.metadata).toBe("{}");
     expect(["Sample text", "Test data", "Example value", "Test content", "Placeholder"]).toContain(doc.misc_value);
+  });
+
+  // ── The address the statement names (#789, Task 35) ────────────────────────
+  //
+  // This modal's product is a statement it can RUN. `INSERT INTO customers` is not a
+  // statement about the object that was clicked wherever two containers hold that label -
+  // measured live on SQL Server, which holds `libredb_objects.app.customers` and
+  // `shop.dbo.customers` - so it wrote rows into whichever one the connection defaulted to.
+
+  const customers: DetailedObject = {
+    name: "customers",
+    kind: "table",
+    path: ["shop", "dbo", "customers"],
+    indexes: [],
+    columns: [{ name: "email", type: "VARCHAR(255)", nullable: false, isPrimary: false }],
+  };
+
+  test("names the object's whole address, not its label", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "dbo", "customers"]}
+        tableSchema={customers}
+        capabilities={mssqlCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain("INSERT INTO shop.dbo.customers (");
+    expect(text).not.toContain("INSERT INTO customers (");
+  });
+
+  test("quotes per segment, so a name containing a dot cannot become a qualifier", () => {
+    const dotted: DetailedObject = { ...customers, name: "a.b", path: ["demo", "a.b"] };
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["demo", "a.b"]}
+        tableSchema={dotted}
+        capabilities={postgresCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent || "").toContain('INSERT INTO demo."a.b" (');
+  });
+
+  test("with no declaration yet, the address is still qualified rather than bare", () => {
+    // `provider-meta` has not answered. The dotted spelling is what `useTabManager` writes
+    // in the same position: a qualified address is valid wherever the bare label is, and the
+    // bare label is the one reading that can address another container's table.
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "dbo", "customers"]}
+        tableSchema={customers}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain("INSERT INTO shop.dbo.customers (");
+    expect(text).not.toContain("INSERT INTO customers (");
+  });
+
+  test("MongoDB takes the collection's own segment, not the joined address", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["sample_shop", "customers"]}
+        tableSchema={{ ...customers, path: ["sample_shop", "customers"] }}
+        capabilities={jsonCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain('"collection": "customers"');
+    // The header does name the address; the STATEMENT must not, because the driver is
+    // connected to the database already.
+    expect(text).not.toContain('"collection": "sample_shop');
   });
 });

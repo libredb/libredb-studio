@@ -330,18 +330,45 @@ export function withoutExtensionOwnershipTest(sql: string): string {
  * is what removes them. The committed tests pin the SQL SHAPE (the composed
  * text carries each filter); the row counts above are the live BEHAVIOUR, and
  * the two are asserted at different layers for that reason.
+ *
+ * `relkind` RIDES ALONG, and it is what lets a run be told what each entry IS
+ * (#789). `information_schema.columns` answers a view's columns beside a table's
+ * with nothing to tell them apart, which is the reading a model was handed a view
+ * under the word table from. The engine's own word for the relation is one join
+ * away - `pg_class` keyed by namespace and name - so it is read here rather than
+ * bought with a fourth statement out of the run's budget, and
+ * `context-snapshot.ts` maps it onto the kind id the PROVIDER declares. The raw
+ * catalog character goes out rather than a word this file invented: the mapping
+ * belongs where the declaration can be consulted.
+ *
+ * LEFT JOIN, deliberately, on both arms. The driver serves PostgreSQL-wire engines
+ * nobody here has run, and one whose `pg_class` does not carry a row for a relation
+ * `information_schema.columns` does answer for would lose that relation from the
+ * whole inventory under an inner join. A missing `relkind` is an unknown kind,
+ * which this path already knows how to say; a missing TABLE is the absence #414
+ * measured. Both sides are cast to `text` because `sql_identifier` is a domain over
+ * `name` on PostgreSQL 12 and later and over `character varying` before it, and the
+ * cast is the one comparison that holds either way.
+ *
+ * Measured on postgres:18 against a fixture holding one relation of each kind: the
+ * relkinds `information_schema.columns` actually returns are `r`, `p`, `v` and `f`.
+ * A materialized view (`m`) and a sequence (`S`) are NOT in that catalog at all, so
+ * this reading cannot see either, and a foreign table (`f`) is one it does see that
+ * `postgres.ts` declares no kind for.
  */
 function composePostgresCatalog(selector: AgentCatalogSelector): string {
   return (
-    "SELECT table_schema, table_name, json_agg(json_build_object(" +
+    "SELECT table_schema, table_name, kc.relkind AS relkind, json_agg(json_build_object(" +
     "'name', column_name, 'type', data_type, 'nullable', is_nullable) " +
     "ORDER BY ordinal_position) AS columns " +
     "FROM information_schema.columns " +
+    "LEFT JOIN pg_catalog.pg_namespace kn ON kn.nspname::text = table_schema::text " +
+    "LEFT JOIN pg_catalog.pg_class kc ON kc.relnamespace = kn.oid AND kc.relname::text = table_name::text " +
     `WHERE ${postgresSchemaExclusion("table_schema")}` +
     ` AND ${postgresRelationExclusion("table_schema", "table_name")}` +
     equalsClause("table_schema", selector.schema, "schema", "postgres") +
     equalsClause("table_name", selector.table, "table", "postgres") +
-    " GROUP BY table_schema, table_name ORDER BY table_schema, table_name"
+    " GROUP BY table_schema, table_name, kc.relkind ORDER BY table_schema, table_name"
   );
 }
 

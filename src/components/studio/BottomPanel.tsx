@@ -3,7 +3,8 @@
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useMemo } from "react";
-import type { DatabaseConnection, QueryTab, TableSchema, QueryResult } from "@/lib/types";
+import type { DatabaseConnection, QueryTab, QueryResult } from "@/lib/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
@@ -36,11 +37,33 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { storage } from "@/lib/storage";
+
+/**
+ * Every form a result can leave this panel in, in the order the menu offers them.
+ *
+ * ONE list, read by both destinations (#701). The file items and the clipboard items
+ * are the same formats by construction rather than by two lists that agree today: the
+ * drift between two spellings of one list is what put the delimiter options out of
+ * step with the writers before.
+ */
+const RESULT_FORMATS: readonly {
+  readonly format: ResultExportFormat;
+  readonly label: string;
+  readonly csvDelimiter?: CsvDelimiter;
+}[] = [
+  { format: "csv", label: "CSV" },
+  { format: "csv", label: "CSV (semicolon)", csvDelimiter: ";" },
+  { format: "csv", label: "CSV (tab)", csvDelimiter: "\t" },
+  { format: "json", label: "JSON" },
+  { format: "sql-insert", label: "SQL INSERT" },
+  { format: "sql-ddl", label: "DDL (CREATE TABLE)" },
+];
 
 export type BottomPanelMode =
   | "results"
@@ -141,7 +164,7 @@ interface BottomPanelProps {
   mode: BottomPanelMode;
   onSetMode: (mode: BottomPanelMode) => void;
   currentTab: QueryTab;
-  schema: TableSchema[];
+  schema: readonly DetailedObject[];
   schemaContext: string;
   activeConnection: DatabaseConnection | null;
   metadata: ProviderMetadata | null;
@@ -169,6 +192,20 @@ interface BottomPanelProps {
   // they are the tab's own: the export writes what it is GIVEN rather than reading the
   // tab back, which is what lets the menu stay open over a hydrated result (B34).
   onExportResults: (
+    format: ResultExportFormat,
+    hydrated: AgentArtifactHydration | null,
+    csvDelimiter?: CsvDelimiter,
+  ) => void;
+  /**
+   * The same rows, in the same formats, onto the clipboard instead of into a file
+   * (#701).
+   *
+   * Its own prop rather than a destination argument on the one above, because the two
+   * do not end the same way: a download either starts or the browser says so, while a
+   * clipboard write can be refused — no secure context, no permission, an unfocused
+   * document — and the shell has to report that outcome once it has one.
+   */
+  onCopyResults: (
     format: ResultExportFormat,
     hydrated: AgentArtifactHydration | null,
     csvDelimiter?: CsvDelimiter,
@@ -205,6 +242,7 @@ export function BottomPanel({
   onLoadMore,
   isLoadingMore,
   onExportResults,
+  onCopyResults,
   agentArtifact = null,
   onDismissAgentArtifact,
 }: BottomPanelProps) {
@@ -253,6 +291,21 @@ export function BottomPanel({
   // How much of the result an export would write — the count the button carries and
   // the shortfall the menu states. Derived here so both read the same numbers.
   const exportScope = describeExportScope(displayedResult ?? { rows: [] });
+
+  /**
+   * Hands one format entry to whichever destination the user chose.
+   *
+   * The delimiter is passed only where the entry carries one, rather than as an
+   * explicit `undefined`: "CSV" means the writer's own default, and a call that spells
+   * the absence out is a different call for the same choice.
+   */
+  const runResultFormat = (
+    run: (format: ResultExportFormat, hydrated: AgentArtifactHydration | null, csvDelimiter?: CsvDelimiter) => void,
+    entry: (typeof RESULT_FORMATS)[number],
+  ) => {
+    if (entry.csvDelimiter === undefined) run(entry.format, exportArtifact);
+    else run(entry.format, exportArtifact, entry.csvDelimiter);
+  };
 
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
     {
@@ -390,42 +443,31 @@ export function BottomPanel({
                   </div>
                 )}
                 <DropdownMenuSeparator className="bg-hairline" />
-                <DropdownMenuItem
-                  onClick={() => onExportResults("csv", exportArtifact)}
-                  className="text-xs cursor-pointer"
-                >
-                  Export as CSV
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onExportResults("csv", exportArtifact, ";")}
-                  className="text-xs cursor-pointer"
-                >
-                  Export as CSV (semicolon)
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onExportResults("csv", exportArtifact, "\t")}
-                  className="text-xs cursor-pointer"
-                >
-                  Export as CSV (tab)
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onExportResults("json", exportArtifact)}
-                  className="text-xs cursor-pointer"
-                >
-                  Export as JSON
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onExportResults("sql-insert", exportArtifact)}
-                  className="text-xs cursor-pointer"
-                >
-                  Export as SQL INSERT
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onExportResults("sql-ddl", exportArtifact)}
-                  className="text-xs cursor-pointer"
-                >
-                  Export as DDL (CREATE TABLE)
-                </DropdownMenuItem>
+                {RESULT_FORMATS.map((entry) => (
+                  <DropdownMenuItem
+                    key={`export-${entry.label}`}
+                    onClick={() => runResultFormat(onExportResults, entry)}
+                    className="text-xs cursor-pointer"
+                  >
+                    Export as {entry.label}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator className="bg-hairline" />
+                {/*
+                  Below the scope line and below the files, because it is the same rows
+                  under the same shortfall: a paste reads even more like a complete
+                  answer than a file does, having no name to carry a caveat.
+                */}
+                <DropdownMenuLabel className="text-xs font-normal text-fg-muted">To clipboard</DropdownMenuLabel>
+                {RESULT_FORMATS.map((entry) => (
+                  <DropdownMenuItem
+                    key={`copy-${entry.label}`}
+                    onClick={() => runResultFormat(onCopyResults, entry)}
+                    className="text-xs cursor-pointer"
+                  >
+                    Copy as {entry.label}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -476,7 +518,12 @@ export function BottomPanel({
                 databaseType={activeConnection?.type}
               />
             ) : mode === "docs" ? (
-              <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />
+              <DatabaseDocs
+                schema={schema}
+                schemaContext={schemaContext}
+                databaseType={activeConnection?.type}
+                capabilities={metadata?.capabilities}
+              />
             ) : mode === "history" ? (
               <QueryHistory
                 refreshTrigger={historyKey}

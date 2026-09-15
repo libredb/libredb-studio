@@ -119,14 +119,39 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // many model calls of its own, so this bounds how often LLM work is STARTED, never how much it
   // spends.
   ai: { maxVar: "RATE_LIMIT_AI_MAX", windowVar: "RATE_LIMIT_AI_WINDOW_SEC", maxDefault: 20, windowDefault: 60 },
-  // Shared across every route that reaches a database - query, multi-query, transaction,
-  // disconnect, cancel, health, maintenance, monitoring, pool-stats, profile, provider-meta,
-  // schema, schema/list, schema/relations, schema-snapshot, test-connection, admin/fleet-health,
-  // plus the three storage routes (storage, storage/[collection], storage/migrate): TWENTY routes
-  // today (grep -rl 'bucket: "query"' src/app/api/ finds eighteen; schema/list and schema/relations
-  // reach this bucket indirectly, through schema-route.ts's shared handleSchemaRequest). The same
-  // workload reached through a different endpoint must not get a second budget - re-verify and
-  // correct this comment again if guardRoute grows a new call site.
+  // Shared across every route that reaches a database. RE-MEASURED 2026-09-12 (#789 Phase 2),
+  // because the previous count was stale in both directions: it said TWENTY and named four schema
+  // routes that no longer exist. `src/lib/api/schema-route.ts`, `db/schema`, `db/schema/list`,
+  // `db/schema/relations` and `db/schema-snapshot` were all removed with the object surface, and
+  // the object routes it never mentioned had joined.
+  //
+  // RE-COUNTED 2026-09-14 (#789 Phase 3), because the sentence three paragraphs down asks by name
+  // for exactly that and the object half of the count moved: the previous figure was TWENTY-THREE
+  // over seven object routes, and the edit surface adds two.
+  //
+  // TWENTY-FIVE handlers today, and there are two ways in, which is why one grep under-counts.
+  // Directly, sixteen call sites that pass bucket: "query" to guardRoute themselves
+  // (grep -rl 'bucket: "query"' src/app/api/ answers sixteen files, one call site each, verified
+  // with grep -rc on the same list): admin/fleet-health, db/cancel, db/disconnect, db/health,
+  // db/maintenance, db/monitoring, db/multi-query, db/pool-stats, db/profile, db/provider-meta,
+  // db/query, db/test-connection, db/transaction, and the three storage routes (storage,
+  // storage/[collection], storage/migrate). Note db/health: only its POST is metered, because the
+  // GET is the container health probe and takes no connection.
+  // Indirectly, the NINE object routes under db/objects (containers, counts, list, describe,
+  // search, inventory, source, edit-plan, edit-apply), which reach this bucket through
+  // handleObjectRequest in object-route.ts and so carry no bucket literal of their own. Counted
+  // from the route directories under src/app/api/db/objects/ and not from a grep, which is the
+  // whole reason this second paragraph exists: those nine carry no literal to find. All nine
+  // directories exist; this passage used to say seven did, because the count moved ahead of the
+  // last two routes landing, and a reader who counts today gets nine.
+  //
+  // A SLOT IS NOT A UNIT OF COST HERE EITHER, and the two new routes are the sharpest example in
+  // this bucket. An edit-apply slot runs DDL against a live engine; a db/pool-stats slot reads a
+  // counter. They share one budget because the workload they share is a connection, and a bucket
+  // per cost class would be a configurable pair per route.
+  //
+  // The same workload reached through a different endpoint must not get a second budget -
+  // re-verify and correct this comment again if guardRoute grows a new call site.
   //
   // The storage family joined when AU1 moved it onto the shared 401 (2026-08-22), and that gave it
   // a limiter it never had. It belongs here rather than in a bucket of its own: under

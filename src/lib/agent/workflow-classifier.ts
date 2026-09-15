@@ -1,6 +1,6 @@
 /**
  * Infers a run's workflow from the objective the user wrote
- * (`docs/superpowers/specs/2026-08-16-agent-workflow-inference-design.md`).
+ * (see the design discussion in issue #790).
  *
  * The rail used to ask for the workflow ABOVE the objective textarea — a
  * classification of a question the user had not written yet. The axis itself is
