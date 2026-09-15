@@ -264,7 +264,9 @@ export default function Studio() {
    * were wrong. Aria-hidden is not removed: the strip stays in the tree, and `StudioTabBar`
    * registers the new-tab shortcut on `document` on purpose, so it works while Monaco owns focus
    * (#745), and a keydown from a control INSIDE the dialog reaches that listener. `addTab` ends
-   * with `setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover.
+   * with `setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover,
+   * and `handleTableClick` is a SECOND one, reachable in the same window through the palette's own
+   * document listener. Both are named where they are refused, in `refuseWhileApplying` below.
    *
    * What follows from that is worse than a mis-addressed clear and is answered in `handleAddTab`
    * below: the new Query tab unmounts the Source pane, and the dialog with it, mid apply. The
@@ -289,6 +291,52 @@ export default function Studio() {
   const [applyInFlight, setApplyInFlight] = useState(false);
 
   const { addTab } = tabMgr;
+
+  /**
+   * The one refusal both tab-opening gestures share while an apply is in flight (D82).
+   *
+   * WHAT IS ACTUALLY REACHABLE IN THIS WINDOW, ENUMERATED BY MEASUREMENT and not by argument,
+   * because an unmeasured "nothing else can reach this" is the mistake D82 was filed over. The
+   * dialog refuses every exit IT owns: while `applying` it withholds its close button and prevents
+   * Escape, a press outside and every other interaction outside. What it cannot refuse is a
+   * listener registered on `document`, and there are TWO of those. `StudioTabBar` registers the
+   * new-tab shortcut (#745) and `CommandPalette` registers Cmd/Ctrl+K, both outside the modal, so
+   * both fire from a control inside it.
+   *
+   * The palette door was measured item by item, with the real palette rendered over a held apply:
+   * Cmd/Ctrl+K opens it, focus moves into its input, and of the ten entries it offered exactly one
+   * moved the active tab. Run Query, Format Query, Save Current Query, New Connection, the ERD and
+   * the connection row all left the dialog standing and the conflict still rendered. A TABLE row
+   * calls this shell's `onTableClick` -> `handleTableClick`, which ends with `setActiveTabId(newId)`
+   * exactly as `addTab` does, and that unmounted the pane and lost the answer. Health Dashboard,
+   * Monitoring and Logout were not measurable here: they call `router.push` and `handleLogout`, and
+   * the router is a double in the harness. They leave the page rather than reshuffle it, which is
+   * an act with its own confirmation and is not this guard's to intercept.
+   *
+   * So the guard is bound to the two handlers that OPEN AND ACTIVATE A TAB, and the message is one
+   * string for both: a gesture and its keyboard twin refusing on different words is the drift this
+   * helper exists to prevent.
+   *
+   * REFUSED IS NOT SWALLOWED, which is the cost of this shape and is paid rather than accepted.
+   * A keystroke that does nothing and says nothing reads as a broken shortcut, so the refusal
+   * toasts, and it says what the reader is waiting for and what to do. Deferring the tab until the
+   * answer lands was considered and rejected: a tab that opens by itself some seconds later is a
+   * gesture the reader no longer connects to anything they did.
+   *
+   * "Once you have READ the answer" and not "once it is on screen", which the first wording said.
+   * The refusal ends the moment `applying` ends, which is the moment the conflict, the refusal or
+   * the failure renders, so a reader who takes the earlier wording literally opens the tab, unmounts
+   * the pane and throws the answer away. Nothing was applied in that case and the copy in the
+   * conflict says so, but advice that discards what the reader was waiting for is not advice.
+   */
+  const refuseWhileApplying = useCallback(() => {
+    toast({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+  }, [toast]);
+
   /**
    * The new-tab shortcut, REFUSED while an object apply is in flight, and answered out loud (D82).
    *
@@ -305,15 +353,7 @@ export default function Studio() {
    * mounted pane would need its own per-tab patch channel and a second live read, while the dialog
    * it kept alive would be drawn over a Query tab the reader had just asked for. That is a wider
    * seam than the defect. Refusing is the smaller change and it matches what the dialog ALREADY
-   * does: while `applying` it withholds its own close button and prevents Escape, a press outside
-   * and any other interaction outside. This window already refuses every way out; the shortcut was
-   * the one way out the dialog could not reach, because the listener is not inside it.
-   *
-   * REFUSED IS NOT SWALLOWED, which is the cost of this shape and is paid rather than accepted.
-   * A keystroke that does nothing and says nothing reads as a broken shortcut, so the refusal
-   * toasts, and it says what the reader is waiting for and what to do. Deferring the tab until the
-   * answer lands was considered and rejected: a tab that opens by itself some seconds later is a
-   * gesture the reader no longer connects to anything they did.
+   * does with every exit it owns, and `refuseWhileApplying` above enumerates what it does not.
    *
    * The `+` button takes the same handler. It is covered by the modal and cannot be pressed in this
    * window, so the guard is unreachable through it, but one gesture and its keyboard twin refusing
@@ -321,15 +361,11 @@ export default function Studio() {
    */
   const handleAddTab = useCallback(() => {
     if (applyInFlight) {
-      toast({
-        title: "Waiting for the apply to answer",
-        description:
-          "A new tab would close this dialog before the apply reports. Press it again once the answer is on screen.",
-      });
+      refuseWhileApplying();
       return;
     }
     addTab();
-  }, [addTab, applyInFlight, toast]);
+  }, [addTab, applyInFlight, refuseWhileApplying]);
 
   // 5. Query Execution
   const queryExec = useQueryExecution({
@@ -683,8 +719,25 @@ export default function Studio() {
     });
   };
 
-  /** Open and run the statement for one object, addressed by its PATH (#789). */
+  /**
+   * Open and run the statement for one object, addressed by its PATH (#789).
+   *
+   * REFUSED while an object apply is in flight, on the same rule and with the same words as the
+   * new-tab shortcut (D82). This is the second door into that window and the only palette entry
+   * that was measured to reach it: `handleTableClick` ends with `setActiveTabId(newId)`, the shell
+   * renders the Source pane only for an active Source tab, and the palette's Cmd/Ctrl+K listener is
+   * on `document`, so a reader inside the apply dialog can press it, search, and take the pane and
+   * the dialog down with the statement already sent. The reasoning is in `refuseWhileApplying`.
+   *
+   * The object tree and the mobile explorer funnel through here too. Both are covered and
+   * aria-hidden by the modal, so the guard is unreachable through them, and they are the `+`
+   * button's case: one funnel, one rule, no drift.
+   */
   const onTableClick = (path: readonly string[]) => {
+    if (applyInFlight) {
+      refuseWhileApplying();
+      return;
+    }
     tabMgr.handleTableClick(path, queryExec.executeQuery);
   };
 

@@ -1354,6 +1354,13 @@ describe("the tab strip's dirty mark survives a remount and still clears", () =>
  *
  * Each test drives the shortcut from the DIALOG's own element, which is the population the entry
  * is about: an event dispatched from inside the modal, bubbling to the document listener.
+ *
+ * The shortcut is not the only document-level listener that reaches this window. `CommandPalette`
+ * registers a second one for Cmd/Ctrl+K, and its table items call this shell's `onTableClick`,
+ * which opens and activates a Query tab exactly as `addTab` does. The last two tests drive that
+ * second door through the captured palette prop; the palette itself is stubbed in this file, so
+ * the reachability of the keystroke was measured against the REAL palette outside the suite and
+ * is recorded in `Studio.tsx`.
  */
 describe("the new-tab shortcut cannot unmount an apply that is in flight", () => {
   const CONFLICT = {
@@ -1410,7 +1417,7 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     expect(mockToast).toHaveBeenCalledWith({
       title: "Waiting for the apply to answer",
       description:
-        "A new tab would close this dialog before the apply reports. Press it again once the answer is on screen.",
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
     });
 
     await act(async () => {
@@ -1464,5 +1471,61 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     pressNewTab(document.body);
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+
+  /** A table opened from the palette, addressed the way the palette addresses it (#789). */
+  function openTableFromPalette(): void {
+    act(() => {
+      (capturedPaletteProps.onTableClick as (path: readonly string[]) => void)(["app", "orders"]);
+    });
+  }
+
+  test("the palette's table item is refused in the same window, and the answer still reaches the reader", async () => {
+    /*
+     * The second door into this window, and the reason the handler above cannot be the whole
+     * answer. Cmd/Ctrl+K is a document listener too, so it fires from inside the modal, the
+     * palette takes focus, and selecting a table runs `handleTableClick`, which ends with
+     * `setActiveTabId(newId)` and unmounts the pane the dialog lives in. Measured against the
+     * real palette before this test was written: the dialog went away and the conflict never
+     * rendered.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    openTableFromPalette();
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
+  test("the palette's table item works again once the answer is on screen", async () => {
+    /*
+     * The control for the test above, on the same argument: the refusal has to be the apply
+     * window and not "a table cannot be opened from a Source tab", which would break #789 to
+     * close D82.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    openTableFromPalette();
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
   });
 });

@@ -891,13 +891,22 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * `previewHere` is DEFENCE IN DEPTH and is labelled as such rather than as a measured live
    * defect. While `preview` is defined the modal is open, and no shipped shell re-addresses this
    * pane through it: a mouse press on the strip hits the overlay, which closes the dialog and
-   * retires the generation; focus is trapped, so the keyboard cannot reach the strip; and the one
-   * document-level shortcut that does move the active tab, the new-tab shortcut in `StudioTabBar`,
-   * UNMOUNTS this pane rather than re-addressing it. That was D82 and it is now answered by the
-   * shell, which refuses the shortcut for as long as `onApplyInFlightChange` below says an apply
-   * is in flight. Its test reaches the case by rerendering props at a moment no shell rerenders
-   * them. The binding is kept because it is one word of the same rule the other three states
-   * carry, and a state bound by construction cannot be the one somebody forgets.
+   * retires the generation; focus is trapped, so the keyboard cannot reach the strip; and the
+   * document-level listeners that DO move the active tab, the new-tab shortcut in `StudioTabBar`
+   * and the command palette's Cmd/Ctrl+K, both UNMOUNT this pane rather than re-addressing it.
+   * That unmount is D82, and the binding here survives it either way.
+   *
+   * D82 is answered for ONE of this pane's two shells, which is why the prop below is optional.
+   * `Studio.tsx` passes `onApplyInFlightChange` and refuses both gestures while an apply is in
+   * flight. `StudioWorkspace.tsx` passes none, hands `StudioTabBar` the bare `tabMgr.addTab` and
+   * mounts this pane only for an active Source tab, so on the embedded shell the shortcut still
+   * takes the dialog down mid apply: MEASURED on a held host `apply`, the tab strip went to
+   * `["Query 1", "Source: ...", "Query 3"]`, the dialog was gone and the conflict never rendered.
+   * Do not read the paragraph above as an all-clear for a host that declares an `objectEditor`.
+   *
+   * Its test reaches the case by rerendering props at a moment no shell rerenders them. The binding
+   * is kept because it is one word of the same rule the other three states carry, and a state bound
+   * by construction cannot be the one somebody forgets.
    */
   const previewHere = boundTo(address, preview);
   const refusalHere = boundTo(address, buildRefusal);
@@ -908,9 +917,13 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    *
    * The dialog ALREADY refuses every way out of this window it owns: `showCloseButton={!applying}`,
    * and Escape, a pointer press outside and any other interaction outside are all prevented while
-   * `applying`. What it cannot refuse is a shortcut registered on `document` by a component it does
+   * `applying`. What it cannot refuse is a listener registered on `document` by a component it does
    * not contain, and the shell that owns that component is the only place that can. So the fact is
    * published, and the refusal is written there.
+   *
+   * OPTIONAL, and the undefined arm is a SHIPPED shell rather than a convenience for callers that
+   * have not caught up: `StudioWorkspace.tsx` passes nothing, and until it does, an embedded host
+   * keeps losing a `conflict`, a `refused` or a `failed` answer in this window.
    *
    * ONE effect with a cleanup that also reports `false`, rather than two. On the true-to-false
    * transition the cleanup and the effect both report `false`, which costs a shell holding this in

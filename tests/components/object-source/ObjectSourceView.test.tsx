@@ -3056,9 +3056,14 @@ describe("ObjectSourceView across two Source tabs", () => {
      * DEFENCE IN DEPTH, and the population is named honestly rather than implied (#789, review
      * fix rounds 1 and 2). Unlike the refusal test above, this one is NOT something a reader can
      * drive today: while the build is in flight the modal is open, a mouse press on the strip hits
-     * the overlay and closes the dialog, focus is trapped, and the one document-level shortcut
-     * that moves the active tab unmounts this pane instead of re-addressing it (filed as D82). The
-     * rerender below moves the address at a moment no shipped shell moves it.
+     * the overlay and closes the dialog, focus is trapped, and the document-level listeners that
+     * move the active tab, the new-tab shortcut and the command palette, unmount this pane instead
+     * of re-addressing it. The rerender below moves the address at a moment no shipped shell moves
+     * it.
+     *
+     * That unmount is D82, and it is a BUILD window here rather than an apply window: nothing has
+     * been sent, so nothing is lost by it. The apply window is where it cost the reader an answer,
+     * and the standalone shell now refuses both gestures there. The embedded shell does not yet.
      *
      * What it now certifies, which the round-1 spelling did NOT: the answer landed is `A_BUILT`,
      * addressed to tab A, so the resolve arm's happy path runs and the only thing left holding the
