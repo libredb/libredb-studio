@@ -1,8 +1,11 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
-import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { maintenanceControl } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { callerBoundTruncationReason, isSourcePartUnavailable } from "@/lib/db/object-kinds";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ---------------------------------------------------------------------------
 // Mock ibm_db BEFORE loading the provider.
@@ -11,10 +14,10 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 // answers `query(sql, cb)` with an array of row objects and `close(cb)`. The provider
 // declares that slice locally (its published typings do not describe a promise API), so
 // the mock only has to honour those three calls. `mockRowsFor` lets a test decide what a
-// given SQL string returns, which is how getSchema is exercised without a live server.
+// given SQL string returns, which is how the object surface is exercised without a live server.
 // ---------------------------------------------------------------------------
 
-let mockRowsFor: (sql: string) => Record<string, unknown>[];
+let mockRowsFor: (sql: string, params?: unknown[]) => Record<string, unknown>[];
 let openShouldFail: boolean;
 let queryShouldThrowFor: (sql: string) => boolean;
 const capturedConnStrings: string[] = [];
@@ -44,7 +47,7 @@ const makeMockConnection = () => ({
       cb(new Error("SQL0551N the user does not have the required authorization"), []);
       return;
     }
-    cb(null, mockRowsFor(sql));
+    cb(null, mockRowsFor(sql, params));
   },
   close: (cb: (err: Error | null) => void) => cb(null),
 });
@@ -357,52 +360,7 @@ describe("Db2Provider query", () => {
   });
 });
 
-describe("Db2Provider getSchema", () => {
-  test("assembles tables with columns, primary keys, foreign keys and indexes", async () => {
-    mockRowsFor = (sql) => {
-      if (sql.includes("SYSCAT.TABLES")) return [{ TABNAME: "USERS", ROW_COUNT: 42 }];
-      if (sql.includes("SYSCAT.COLUMNS")) {
-        return [
-          { TABNAME: "USERS", COLNAME: "ID", TYPENAME: "INTEGER", NULLS: "N", DEFAULT: null, COLNO: 0 },
-          { TABNAME: "USERS", COLNAME: "EMAIL", TYPENAME: "VARCHAR", NULLS: "Y", DEFAULT: null, COLNO: 1 },
-        ];
-      }
-      if (sql.includes("TABCONST")) return [{ TABNAME: "USERS", COLNAME: "ID" }];
-      if (sql.includes("SYSCAT.REFERENCES")) {
-        return [{ TABNAME: "USERS", COLNAME: "ORG_ID", REF_TABLE: "ORGS", REF_COLUMN: "ID" }];
-      }
-      if (sql.includes("SYSCAT.INDEXES")) {
-        return [{ INDNAME: "PK_USERS", TABNAME: "USERS", UNIQUERULE: "P", COLNAME: "ID", COLSEQ: 1 }];
-      }
-      return [];
-    };
-
-    const provider = new Db2Provider(baseConfig);
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-
-    expect(schema).toHaveLength(1);
-    const users = schema[0];
-    expect(users.name).toBe("USERS");
-    expect(users.rowCount).toBe(42);
-    expect(users.columns.map((c) => c.name)).toEqual(["ID", "EMAIL"]);
-    // Type lowercased to match the schema tree's spelling convention.
-    expect(users.columns[0]).toMatchObject({ name: "ID", type: "integer", nullable: false, isPrimary: true });
-    expect(users.columns[1]).toMatchObject({ name: "EMAIL", type: "varchar", nullable: true, isPrimary: false });
-    expect(users.foreignKeys).toEqual([{ columnName: "ORG_ID", referencedTable: "ORGS", referencedColumn: "ID" }]);
-    expect(users.indexes).toEqual([{ name: "PK_USERS", columns: ["ID"], unique: true }]);
-  });
-
-  test("omits rowCount when the catalog cardinality is the -1 never-collected sentinel", async () => {
-    mockRowsFor = (sql) => (sql.includes("SYSCAT.TABLES") ? [{ TABNAME: "T", ROW_COUNT: -1 }] : []);
-    const provider = new Db2Provider(baseConfig);
-    await provider.connect();
-    const schema = await provider.getSchema();
-    await provider.disconnect();
-    expect(schema[0].rowCount).toBeUndefined();
-  });
-});
+// The object surface (#789) lives in its own block at the end of this file.
 
 describe("Db2Provider getHealth and monitoring", () => {
   test("health reports the unavailable cache-ratio sentinel when the read is refused", async () => {
@@ -764,6 +722,811 @@ describe("Db2Provider runMaintenance", () => {
     await provider.connect();
     // `vacuum` is not in maintenanceOperations, so it reaches the unsupported branch.
     await expect(provider.runMaintenance("vacuum", "users")).rejects.toBeInstanceOf(DatabaseConfigError);
+    await provider.disconnect();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The object surface (#786, #789)
+//
+// `catalogRows` mirrors `docker/db2-init/01-object-fixture.sql` as Db2 12.1 answered it on
+// 2026-09-15, including the two shapes a hand-typed double would get wrong: a SCHEMA column
+// is blank-padded to eight characters while an object name is not, and a trigger may live in
+// a schema other than its table's. Each answer is chosen by the catalog view the statement
+// reads and by its BOUND values, never by the statement's exact spelling.
+// ---------------------------------------------------------------------------
+
+const VIEW_TEXT = "CREATE VIEW APP.ORDER_SUMMARY AS\n  SELECT C.NAME, SUM(O.TOTAL) AS TOTAL -- author comment";
+const MQT_TEXT =
+  "CREATE TABLE APP.ORDER_TOTALS AS (SELECT CUSTOMER_ID, SUM(TOTAL) AS TOTAL FROM APP.ORDERS GROUP BY CUSTOMER_ID) DATA INITIALLY DEFERRED REFRESH DEFERRED";
+const PROC_TEXT =
+  "CREATE PROCEDURE APP.ADD_ORDER (IN P_ID INTEGER)\nLANGUAGE SQL\nBEGIN\n  INSERT INTO APP.ORDERS (ID) VALUES (P_ID);\nEND";
+const FN_TEXT = "CREATE FUNCTION APP.ORDER_TOTAL (P_ID INTEGER) RETURNS DECIMAL(12, 2) RETURN 1";
+const TRIGGER_TEXT = "CREATE TRIGGER APP.ORDERS_NOTE_DEFAULT\nNO CASCADE BEFORE INSERT ON APP.ORDERS";
+const AUDIT_TEXT = "CREATE TRIGGER REPORTING.ORDERS_AUDIT AFTER UPDATE ON APP.ORDERS FOR EACH ROW";
+
+const TABLES = [
+  { TABSCHEMA: "APP     ", TABNAME: "CUSTOMERS", TYPE: "T", STATUS: "N", CARD: "2", VALID: null },
+  { TABSCHEMA: "APP     ", TABNAME: "ORDERS", TYPE: "T", STATUS: "N", CARD: "-1", VALID: null },
+  { TABSCHEMA: "APP     ", TABNAME: "Mixed Case", TYPE: "T", STATUS: "C", CARD: "-1", VALID: null },
+  { TABSCHEMA: "APP     ", TABNAME: "ORDER_SUMMARY", TYPE: "V", STATUS: "N", CARD: "-1", VALID: "Y" },
+  { TABSCHEMA: "APP     ", TABNAME: "SCRATCH_VIEW", TYPE: "V", STATUS: "N", CARD: "-1", VALID: "N" },
+  { TABSCHEMA: "APP     ", TABNAME: "ORDER_TOTALS", TYPE: "S", STATUS: "N", CARD: "0", VALID: "Y" },
+  { TABSCHEMA: "APP     ", TABNAME: "CLIENTS", TYPE: "A", STATUS: "N", CARD: "-1", VALID: null },
+  { TABSCHEMA: "REPORTING", TABNAME: "DAILY", TYPE: "T", STATUS: "N", CARD: "-1", VALID: null },
+];
+const VIEW_TEXTS: Record<string, string> = {
+  ORDER_SUMMARY: VIEW_TEXT,
+  SCRATCH_VIEW: "CREATE VIEW APP.SCRATCH_VIEW AS SELECT ID FROM APP.SCRATCH",
+  ORDER_TOTALS: MQT_TEXT,
+};
+const ROUTINES = [
+  {
+    ROUTINESCHEMA: "APP",
+    SPECIFICNAME: "SQL260915014426733",
+    ROUTINENAME: "ADD_ORDER",
+    ROUTINETYPE: "P",
+    VALID: "Y",
+    ORIGIN: "Q",
+    TEXT: PROC_TEXT,
+  },
+  {
+    ROUTINESCHEMA: "APP",
+    SPECIFICNAME: "ORDER_TOTAL_BY_ID",
+    ROUTINENAME: "ORDER_TOTAL",
+    ROUTINETYPE: "F",
+    VALID: "Y",
+    ORIGIN: "Q",
+    TEXT: FN_TEXT,
+  },
+  {
+    ROUTINESCHEMA: "APP",
+    SPECIFICNAME: "SQL260915014426735",
+    ROUTINENAME: "ORDER_TOTAL",
+    ROUTINETYPE: "F",
+    VALID: "Y",
+    ORIGIN: "Q",
+    TEXT: FN_TEXT,
+  },
+  {
+    ROUTINESCHEMA: "APP",
+    SPECIFICNAME: "SQL260915014426740",
+    ROUTINENAME: "EXT_FN",
+    ROUTINETYPE: "F",
+    VALID: "Y",
+    ORIGIN: "E",
+    TEXT: null,
+  },
+];
+const TRIGGERS = [
+  {
+    TRIGSCHEMA: "APP",
+    TRIGNAME: "ORDERS_NOTE_DEFAULT",
+    TABSCHEMA: "APP",
+    TABNAME: "ORDERS",
+    VALID: "Y",
+    TEXT: TRIGGER_TEXT,
+  },
+  {
+    TRIGSCHEMA: "REPORTING",
+    TRIGNAME: "ORDERS_AUDIT",
+    TABSCHEMA: "APP",
+    TABNAME: "ORDERS",
+    VALID: "Y",
+    TEXT: AUDIT_TEXT,
+  },
+];
+const COLUMNS: Record<string, Record<string, unknown>[]> = {
+  ORDERS: [
+    {
+      COLUMN_NAME: "ID",
+      TYPENAME: "INTEGER",
+      LENGTH: 4,
+      SCALE: 0,
+      CODEPAGE: 0,
+      NULLS: "N",
+      DEFAULT_VALUE: null,
+      KEYSEQ: 1,
+    },
+    {
+      COLUMN_NAME: "CUSTOMER_ID",
+      TYPENAME: "INTEGER",
+      LENGTH: 4,
+      SCALE: 0,
+      CODEPAGE: 0,
+      NULLS: "Y",
+      DEFAULT_VALUE: null,
+      KEYSEQ: null,
+    },
+    {
+      COLUMN_NAME: "TOTAL",
+      TYPENAME: "DECIMAL",
+      LENGTH: 12,
+      SCALE: 2,
+      CODEPAGE: 0,
+      NULLS: "Y",
+      DEFAULT_VALUE: "0",
+      KEYSEQ: null,
+    },
+    {
+      COLUMN_NAME: "NOTE",
+      TYPENAME: "VARCHAR",
+      LENGTH: 200,
+      SCALE: 0,
+      CODEPAGE: 1208,
+      NULLS: "Y",
+      DEFAULT_VALUE: null,
+      KEYSEQ: null,
+    },
+  ],
+  CUSTOMERS: [
+    {
+      COLUMN_NAME: "ID",
+      TYPENAME: "INTEGER",
+      LENGTH: 4,
+      SCALE: 0,
+      CODEPAGE: 0,
+      NULLS: "N",
+      DEFAULT_VALUE: null,
+      KEYSEQ: 1,
+    },
+    {
+      COLUMN_NAME: "NAME",
+      TYPENAME: "VARCHAR",
+      LENGTH: 100,
+      SCALE: 0,
+      CODEPAGE: 1208,
+      NULLS: "Y",
+      DEFAULT_VALUE: null,
+      KEYSEQ: null,
+    },
+  ],
+  DAILY: [
+    {
+      COLUMN_NAME: "DAY",
+      TYPENAME: "DATE",
+      LENGTH: 4,
+      SCALE: 0,
+      CODEPAGE: 0,
+      NULLS: "N",
+      DEFAULT_VALUE: null,
+      KEYSEQ: 1,
+    },
+    {
+      COLUMN_NAME: "CUSTOMER_ID",
+      TYPENAME: "INTEGER",
+      LENGTH: 4,
+      SCALE: 0,
+      CODEPAGE: 0,
+      NULLS: "N",
+      DEFAULT_VALUE: null,
+      KEYSEQ: 2,
+    },
+  ],
+};
+const FOREIGN_KEYS: Record<string, Record<string, unknown>[]> = {
+  ORDERS: [{ COLUMN_NAME: "CUSTOMER_ID", REF_SCHEMA: "APP", REF_TABLE: "CUSTOMERS", REF_COLUMN: "ID" }],
+  DAILY: [{ COLUMN_NAME: "CUSTOMER_ID", REF_SCHEMA: "APP", REF_TABLE: "CUSTOMERS", REF_COLUMN: "ID" }],
+};
+const INDEXES: Record<string, Record<string, unknown>[]> = {
+  ORDERS: [
+    { INDEX_SCHEMA: "APP", INDEX_NAME: "ORDERS_CUSTOMER_IX", UNIQUERULE: "D", COLUMN_NAME: "CUSTOMER_ID" },
+    { INDEX_SCHEMA: "APP", INDEX_NAME: "ORDERS_CUSTOMER_IX", UNIQUERULE: "D", COLUMN_NAME: "TOTAL" },
+    { INDEX_SCHEMA: "APP", INDEX_NAME: "ORDERS_PK", UNIQUERULE: "P", COLUMN_NAME: "ID" },
+  ],
+};
+
+const trimmed = (value: unknown) => String(value).trimEnd();
+const withName = (name: string, rows: Record<string, unknown>[] = []) =>
+  rows.map((row) => ({ OBJECT_NAME: name, ...row }));
+
+function catalogRows(sql: string, params: unknown[] = []): Record<string, unknown>[] {
+  const [schema] = params;
+  if (sql.includes("SYSCAT.SCHEMATA")) {
+    return [
+      { NAME: "REPORTING", IS_SESSION_DEFAULT: 0 },
+      { NAME: "APP", IS_SESSION_DEFAULT: 1 },
+    ];
+  }
+  if (sql.includes("COUNT(*)")) {
+    const tables = TABLES.filter((row) => trimmed(row.TABSCHEMA) === schema);
+    const byType = (type: string) => tables.filter((row) => row.TYPE === type).length;
+    const routines = ROUTINES.filter((row) => row.ROUTINESCHEMA === schema);
+    return [
+      ...["T", "V", "S", "A"]
+        .filter((type) => byType(type) > 0)
+        .map((type) => ({ KIND: `TABLES:${type}`, N: byType(type) })),
+      { KIND: "SEQUENCES", N: schema === "APP" ? 1 : 0 },
+      { KIND: "MODULES", N: schema === "APP" ? 1 : 0 },
+      ...["P", "F"]
+        .map((type) => ({ KIND: `ROUTINES:${type}`, N: routines.filter((row) => row.ROUTINETYPE === type).length }))
+        .filter((row) => row.N > 0),
+      { KIND: "TRIGGERS", N: TRIGGERS.filter((row) => row.TRIGSCHEMA === schema).length },
+    ];
+  }
+  // Bulk reads: a target listing, then detail rows restricted to that target.
+  if (sql.includes("AS OBJECT_NAME")) {
+    const [, type, bound] = params;
+    const target = TABLES.filter((row) => trimmed(row.TABSCHEMA) === schema && row.TYPE === type)
+      .map((row) => row.TABNAME)
+      .sort();
+    const limited = typeof bound === "number" ? target.slice(0, bound) : target;
+    if (sql.includes("SYSCAT.COLUMNS")) return limited.flatMap((name) => withName(name, COLUMNS[name]));
+    if (sql.includes("SYSCAT.REFERENCES")) return limited.flatMap((name) => withName(name, FOREIGN_KEYS[name]));
+    if (sql.includes("SYSCAT.INDEXES")) return limited.flatMap((name) => withName(name, INDEXES[name]));
+    return limited.map((name) => ({ OBJECT_NAME: name }));
+  }
+  if (sql.includes("SYSCAT.COLUMNS")) return COLUMNS[String(params[1])] ?? [];
+  if (sql.includes("SYSCAT.REFERENCES")) return FOREIGN_KEYS[String(params[1])] ?? [];
+  if (sql.includes("SYSCAT.INDEXES")) return INDEXES[String(params[1])] ?? [];
+  if (sql.includes("SYSCAT.VIEWS") && sql.includes("TEXT")) {
+    const [, name, type] = params;
+    const row = TABLES.find((t) => trimmed(t.TABSCHEMA) === schema && t.TABNAME === name && t.TYPE === type);
+    return row ? [{ TEXT: VIEW_TEXTS[String(name)] }] : [];
+  }
+  if (sql.includes("SYSCAT.TABLES")) {
+    return TABLES.filter((row) => trimmed(row.TABSCHEMA) === schema && row.TYPE === params[1]).map((row) => ({
+      NAME: row.TABNAME,
+      STATUS: row.STATUS,
+      CARD: row.CARD,
+      VALID: row.VALID,
+    }));
+  }
+  if (sql.includes("SYSCAT.SEQUENCES")) return schema === "APP" ? [{ NAME: "ORDER_SEQ" }] : [];
+  if (sql.includes("SYSCAT.MODULES")) return schema === "APP" ? [{ NAME: "ORDER_MOD" }] : [];
+  if (sql.includes("SYSCAT.ROUTINES")) {
+    if (sql.includes("TEXT")) {
+      const [, specific, type] = params;
+      return ROUTINES.filter(
+        (r) => r.ROUTINESCHEMA === schema && r.SPECIFICNAME === specific && r.ROUTINETYPE === type,
+      );
+    }
+    return ROUTINES.filter((row) => row.ROUTINESCHEMA === schema && row.ROUTINETYPE === params[1]).map((row) => ({
+      SEGMENT: row.SPECIFICNAME,
+      NAME: row.ROUTINENAME,
+      VALID: row.VALID,
+    }));
+  }
+  if (sql.includes("SYSCAT.TRIGGERS")) {
+    if (sql.includes("TEXT")) {
+      // [schema, name] for a trigger hanging off the schema, [schema, table, name] under its table.
+      return TRIGGERS.filter((row) =>
+        params.length === 3
+          ? row.TRIGSCHEMA === schema &&
+            row.TABNAME === params[1] &&
+            row.TRIGNAME === params[2] &&
+            row.TABSCHEMA === schema
+          : row.TRIGSCHEMA === schema && row.TRIGNAME === params[1] && row.TABSCHEMA !== schema,
+      );
+    }
+    return TRIGGERS.filter((row) => row.TRIGSCHEMA === schema).map((row) => ({
+      NAME: row.TRIGNAME,
+      PARENT: row.TABSCHEMA === row.TRIGSCHEMA ? row.TABNAME : null,
+      VALID: row.VALID,
+    }));
+  }
+  return [];
+}
+
+async function connectedProvider() {
+  const provider = new Db2Provider(baseConfig);
+  await provider.connect();
+  return provider;
+}
+
+describe("Db2Provider object declarations", () => {
+  const caps = new Db2Provider(baseConfig).getCapabilities();
+
+  test("one container level, the schema", () => {
+    expect(caps.containerLevels).toEqual([{ id: "schema", label: "Schema", labelPlural: "Schemas" }]);
+  });
+
+  test("declares the nine kinds SYSCAT answers for, in tree order", () => {
+    expect(caps.objectKinds?.map((kind) => kind.id)).toEqual([
+      "table",
+      "view",
+      "materialized_query_table",
+      "alias",
+      "sequence",
+      "module",
+      "procedure",
+      "function",
+      "trigger",
+    ]);
+  });
+
+  test("source is declared exactly where SYSCAT keeps the statement text", () => {
+    const withSource = caps.objectKinds?.filter((kind) => kind.hasSource === true).map((kind) => kind.id);
+    expect(withSource).toEqual(["view", "materialized_query_table", "procedure", "function", "trigger"]);
+    for (const kind of caps.objectKinds ?? []) {
+      if (kind.hasSource === true) expect(kind.sourceLanguage).toBe("sql");
+      expect(kind.acceptsSourceEdits).toBeUndefined();
+    }
+  });
+
+  test("a trigger hangs off a table, a module groups routines, and only a table takes row writes", () => {
+    const byId = Object.fromEntries((caps.objectKinds ?? []).map((kind) => [kind.id, kind]));
+    expect(byId.trigger.attachedTo).toBe("table");
+    expect(byId.module.childKinds).toEqual(["procedure", "function"]);
+    expect((caps.objectKinds ?? []).filter((kind) => kind.acceptsRowWrites === true).map((kind) => kind.id)).toEqual([
+      "table",
+    ]);
+  });
+});
+
+describe("Db2Provider object surface", () => {
+  test("conforms against the fixture mirror", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    await assertObjectSurface(provider, {
+      containers: [["APP"], ["REPORTING"]],
+      kinds: {
+        table: 3,
+        view: 2,
+        materialized_query_table: 1,
+        alias: 1,
+        sequence: 1,
+        module: 1,
+        procedure: 1,
+        function: 3,
+        trigger: 1,
+      },
+      sampleObject: { path: ["APP", "ORDERS"], kind: "table" },
+      absentSource: { path: ["APP", "NO_SUCH_VIEW"], kind: "view" },
+    });
+    await provider.disconnect();
+  });
+
+  test("the second schema answers its own objects, including a trigger on another schema's table", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["REPORTING"], "table")).toEqual([
+      { path: ["REPORTING", "DAILY"], name: "DAILY", kind: "table" },
+    ]);
+    // Its table is APP.ORDERS, which is not in REPORTING, so there is no row in this schema
+    // to nest it under: it hangs off the schema itself.
+    expect(await provider.listObjects(["REPORTING"], "trigger")).toEqual([
+      { path: ["REPORTING", "ORDERS_AUDIT"], name: "ORDERS_AUDIT", kind: "trigger" },
+    ]);
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider listContainers", () => {
+  test("lists schemas sorted by name, flags the session default, and hides the reserved ones", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listContainers()).toEqual([
+      { path: ["APP"], name: "APP", level: 0, isSessionDefault: true },
+      { path: ["REPORTING"], name: "REPORTING", level: 0, isSessionDefault: false },
+    ]);
+    const statement = capturedQueries.find((sql) => sql.includes("SYSCAT.SCHEMATA"));
+    // Owner type cannot separate them: an implicitly created user schema is OWNER SYSIBM too.
+    expect(statement).toContain("NOT LIKE 'SYS%'");
+    expect(statement).toContain("RTRIM(SCHEMANAME)");
+    await provider.disconnect();
+  });
+
+  test("nothing nests under a schema", async () => {
+    const provider = await connectedProvider();
+    expect(await provider.listContainers(["APP"])).toEqual([]);
+    expect(capturedQueries).toHaveLength(0);
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider countObjects", () => {
+  test("seeds every declared kind at zero and binds the schema", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const counts = await provider.countObjects(["REPORTING"]);
+    expect(counts).toEqual({
+      table: { count: 1 },
+      view: { count: 0 },
+      materialized_query_table: { count: 0 },
+      alias: { count: 0 },
+      sequence: { count: 0 },
+      module: { count: 0 },
+      procedure: { count: 0 },
+      function: { count: 0 },
+      trigger: { count: 1 },
+    });
+    const index = capturedQueries.findIndex((sql) => sql.includes("COUNT(*)"));
+    expect(capturedParams[index]).toEqual(["REPORTING", "REPORTING", "REPORTING", "REPORTING", "REPORTING"]);
+    await provider.disconnect();
+  });
+
+  test("a refused read reports Db2's own sentence against every kind, never a zero", async () => {
+    queryShouldThrowFor = (sql) => sql.includes("COUNT(*)");
+    const provider = await connectedProvider();
+    const counts = await provider.countObjects(["APP"]);
+    expect(Object.keys(counts)).toHaveLength(9);
+    for (const count of Object.values(counts)) {
+      expect(count).toEqual({ unavailable: "SQL0551N the user does not have the required authorization" });
+    }
+    await provider.disconnect();
+  });
+
+  test("a container path that is not one schema is refused rather than read as empty", async () => {
+    const provider = await connectedProvider();
+    await expect(provider.countObjects([])).rejects.toThrow(/container path is \[schema\]/);
+    await expect(provider.listObjects(["DB", "APP"], "table")).rejects.toThrow(QueryError);
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider listObjects", () => {
+  test("a table carries a measured row count and the status a reader acts on", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["APP"], "table")).toEqual([
+      { path: ["APP", "CUSTOMERS"], name: "CUSTOMERS", kind: "table", rowCount: 2 },
+      // CARD -1 is "RUNSTATS never ran", an absence, so no rowCount at all.
+      { path: ["APP", "Mixed Case"], name: "Mixed Case", kind: "table", status: "SET INTEGRITY PENDING" },
+      { path: ["APP", "ORDERS"], name: "ORDERS", kind: "table" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("an invalid view is marked and a valid one is not", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["APP"], "view")).toEqual([
+      { path: ["APP", "ORDER_SUMMARY"], name: "ORDER_SUMMARY", kind: "view" },
+      { path: ["APP", "SCRATCH_VIEW"], name: "SCRATCH_VIEW", kind: "view", status: "INVALID" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("an overloaded function is addressed by its specific name and labelled by its routine name", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["APP"], "function")).toEqual([
+      { path: ["APP", "ORDER_TOTAL_BY_ID"], name: "ORDER_TOTAL", kind: "function" },
+      { path: ["APP", "SQL260915014426735"], name: "ORDER_TOTAL", kind: "function" },
+      { path: ["APP", "SQL260915014426740"], name: "EXT_FN", kind: "function" },
+    ]);
+    const statement = capturedQueries.find((sql) => sql.includes("SYSCAT.ROUTINES"));
+    // A module's routines belong to the module, and a built-in or system-generated one to nobody.
+    expect(statement).toContain("ROUTINEMODULENAME IS NULL");
+    await provider.disconnect();
+  });
+
+  test("a trigger in its table's schema nests under the table", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["APP"], "trigger")).toEqual([
+      { path: ["APP", "ORDERS", "ORDERS_NOTE_DEFAULT"], name: "ORDERS_NOTE_DEFAULT", kind: "trigger" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("routine and trigger validity use Db2's codes", async () => {
+    mockRowsFor = (sql) => {
+      if (sql.includes("SYSCAT.ROUTINES")) return [{ SEGMENT: "P1", NAME: "P1", VALID: "X" }];
+      if (sql.includes("SYSCAT.TRIGGERS")) return [{ NAME: "T1", PARENT: null, VALID: "N" }];
+      return [];
+    };
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["APP"], "procedure")).toEqual([
+      { path: ["APP", "P1"], name: "P1", kind: "procedure", status: "INOPERATIVE" },
+    ]);
+    expect(await provider.listObjects(["APP"], "trigger")).toEqual([
+      { path: ["APP", "T1"], name: "T1", kind: "trigger", status: "INVALID" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("sequences, modules and aliases list by name", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.listObjects(["APP"], "sequence")).toEqual([
+      { path: ["APP", "ORDER_SEQ"], name: "ORDER_SEQ", kind: "sequence" },
+    ]);
+    expect(await provider.listObjects(["APP"], "module")).toEqual([
+      { path: ["APP", "ORDER_MOD"], name: "ORDER_MOD", kind: "module" },
+    ]);
+    expect(await provider.listObjects(["APP"], "alias")).toEqual([
+      { path: ["APP", "CLIENTS"], name: "CLIENTS", kind: "alias" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a kind Db2 does not declare is refused, not answered empty", async () => {
+    const provider = await connectedProvider();
+    await expect(provider.listObjects(["APP"], "package")).rejects.toThrow('Db2 declares no object kind "package"');
+    expect(capturedQueries).toHaveLength(0);
+    await provider.disconnect();
+  });
+
+  test("a failed listing is mapped rather than answered empty", async () => {
+    queryShouldThrowFor = (sql) => sql.includes("SYSCAT.SEQUENCES");
+    const provider = await connectedProvider();
+    await expect(provider.listObjects(["APP"], "sequence")).rejects.toThrow(/SQL0551N/);
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider describeObject", () => {
+  test("columns carry the engine's type with its length, the key, the default and nullability", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const detail = await provider.describeObject(["APP", "ORDERS"], "table");
+    expect(detail).toEqual({
+      path: ["APP", "ORDERS"],
+      columns: [
+        { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+        { name: "CUSTOMER_ID", type: "INTEGER", nullable: true, isPrimary: false },
+        { name: "TOTAL", type: "DECIMAL(12,2)", nullable: true, isPrimary: false, defaultValue: "0" },
+        { name: "NOTE", type: "VARCHAR(200)", nullable: true, isPrimary: false },
+      ],
+      indexes: [
+        { name: "ORDERS_CUSTOMER_IX", columns: ["CUSTOMER_ID", "TOTAL"], unique: false },
+        { name: "ORDERS_PK", columns: ["ID"], unique: true },
+      ],
+      foreignKeys: [{ columnName: "CUSTOMER_ID", referencedTable: "CUSTOMERS", referencedColumn: "ID" }],
+    });
+    // Every read is bound to one schema and one object, and nothing is interpolated.
+    for (const [index, sql] of capturedQueries.entries()) {
+      if (sql.includes("SYSCAT.")) expect(capturedParams[index]).toEqual(["APP", "ORDERS"]);
+    }
+    await provider.disconnect();
+  });
+
+  test("a foreign key into another schema names that schema", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const detail = await provider.describeObject(["REPORTING", "DAILY"], "table");
+    expect(detail.foreignKeys).toEqual([
+      { columnName: "CUSTOMER_ID", referencedTable: "APP.CUSTOMERS", referencedColumn: "ID" },
+    ]);
+    expect(detail.columns.filter((column) => column.isPrimary).map((column) => column.name)).toEqual([
+      "DAY",
+      "CUSTOMER_ID",
+    ]);
+    await provider.disconnect();
+  });
+
+  test("the referenced key is joined on its table, because a constraint name is unique per table", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    await provider.describeObject(["APP", "ORDERS"], "table");
+    const statement = capturedQueries.find((sql) => sql.includes("SYSCAT.REFERENCES"));
+    expect(statement).toContain("pk.TABNAME = r.REFTABNAME");
+    await provider.disconnect();
+  });
+
+  test("a kind that is not a relation answers empty detail without a round trip", async () => {
+    const provider = await connectedProvider();
+    expect(await provider.describeObject(["APP", "ORDER_SEQ"], "sequence")).toEqual({
+      path: ["APP", "ORDER_SEQ"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(capturedQueries).toHaveLength(0);
+    await provider.disconnect();
+  });
+
+  test("a path of the wrong shape is refused by name", async () => {
+    const provider = await connectedProvider();
+    await expect(provider.describeObject(["APP"], "table")).rejects.toThrow(/"table" path is \[schema, name\]/);
+    await expect(provider.describeObject(["APP", "T", "X", "Y"], "trigger")).rejects.toThrow(
+      /\[schema, table, name\] or \[schema, name\]/,
+    );
+    await expect(provider.describeObject(["APP", "X"], "nope")).rejects.toThrow('Db2 declares no object kind "nope"');
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider describeObjects", () => {
+  test("describes a whole kind in four round trips, sorted by path", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.truncated).toBeUndefined();
+    expect(batch.details.map((detail) => detail.path)).toEqual([
+      ["APP", "CUSTOMERS"],
+      ["APP", "Mixed Case"],
+      ["APP", "ORDERS"],
+    ]);
+    const single = await new Db2Provider(baseConfig).getCapabilities();
+    expect(single.objectKinds).toBeDefined();
+    const orders = batch.details.find((detail) => detail.path[1] === "ORDERS");
+    expect(orders).toEqual(await provider.describeObject(["APP", "ORDERS"], "table"));
+    await provider.disconnect();
+  });
+
+  test("a caller's bound reads one row more and reports the truncation in the caller's number", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const batch = await provider.describeObjects(["APP"], "table", 2);
+    expect(batch.details).toHaveLength(2);
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
+    const target = capturedQueries.findIndex((sql) => sql.includes("AS OBJECT_NAME"));
+    expect(capturedParams[target]).toEqual(["APP", "T", 3]);
+    await provider.disconnect();
+  });
+
+  test("an exact bound is not marked truncated", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const batch = await provider.describeObjects(["APP"], "table", 3);
+    expect(batch.details).toHaveLength(3);
+    expect(batch.truncated).toBeUndefined();
+    await provider.disconnect();
+  });
+
+  test("an empty kind costs one round trip and a non-relation none", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    expect(await provider.describeObjects(["REPORTING"], "view")).toEqual({ details: [] });
+    expect(capturedQueries).toHaveLength(1);
+    expect(await provider.describeObjects(["APP"], "procedure")).toEqual({ details: [] });
+    expect(capturedQueries).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("a bound that is not a positive whole number is refused", async () => {
+    const provider = await connectedProvider();
+    await expect(provider.describeObjects(["APP"], "table", 0)).rejects.toThrow(/positive whole number/);
+    await expect(provider.describeObjects(["APP"], "table", 1.5)).rejects.toThrow(/positive whole number/);
+    await expect(provider.describeObjects(["APP"], "nope")).rejects.toThrow('Db2 declares no object kind "nope"');
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider readObjectSource", () => {
+  test("a view's text is the author's stored statement, complete", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const document = await provider.readObjectSource!(["APP", "ORDER_SUMMARY"], "view");
+    expect(document).toEqual({
+      path: ["APP", "ORDER_SUMMARY"],
+      kind: "view",
+      parts: [
+        { id: "definition", label: "Definition", text: VIEW_TEXT, language: "sql", form: "complete", origin: "stored" },
+      ],
+    });
+    const index = capturedQueries.findIndex((sql) => sql.includes("SYSCAT.VIEWS"));
+    expect(capturedParams[index]).toEqual(["APP", "ORDER_SUMMARY", "V"]);
+    await provider.disconnect();
+  });
+
+  test("a view read under the materialized query table kind is an absence", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    await expect(provider.readObjectSource!(["APP", "ORDER_SUMMARY"], "materialized_query_table")).rejects.toThrow(
+      'Db2 holds no materialized query table called "ORDER_SUMMARY" in APP',
+    );
+    await provider.disconnect();
+  });
+
+  test("an external routine is a refusal part naming why Db2 has no text", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const document = await provider.readObjectSource!(["APP", "SQL260915014426740"], "function");
+    expect(document.parts).toHaveLength(1);
+    const [part] = document.parts;
+    expect(isSourcePartUnavailable(part)).toBe(true);
+    expect(part).toEqual({
+      id: "definition",
+      label: "Definition",
+      unavailable: expect.stringContaining("EXTERNAL routine") as unknown as string,
+    });
+    await provider.disconnect();
+  });
+
+  test("a sourced routine and one of unknown origin each say which", async () => {
+    let origin = "U";
+    mockRowsFor = (sql) => (sql.includes("SYSCAT.ROUTINES") ? [{ TEXT: null, ORIGIN: origin }] : []);
+    const provider = await connectedProvider();
+    const sourced = await provider.readObjectSource!(["APP", "S1"], "function");
+    expect(sourced.parts[0]).toMatchObject({ unavailable: expect.stringContaining("SOURCED") });
+    origin = "F";
+    const federated = await provider.readObjectSource!(["APP", "S1"], "function");
+    expect(federated.parts[0]).toMatchObject({ unavailable: expect.stringContaining("FEDERATED") });
+    origin = "Z";
+    const unknown = await provider.readObjectSource!(["APP", "S1"], "function");
+    expect(unknown.parts[0]).toMatchObject({ unavailable: expect.stringContaining("ORIGIN 'Z'") });
+    await provider.disconnect();
+  });
+
+  test("a procedure and both trigger addresses read their stored text", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const proc = await provider.readObjectSource!(["APP", "SQL260915014426733"], "procedure");
+    expect(proc.parts[0]).toMatchObject({ text: PROC_TEXT });
+    const nested = await provider.readObjectSource!(["APP", "ORDERS", "ORDERS_NOTE_DEFAULT"], "trigger");
+    expect(nested.parts[0]).toMatchObject({ text: TRIGGER_TEXT });
+    const loose = await provider.readObjectSource!(["REPORTING", "ORDERS_AUDIT"], "trigger");
+    expect(loose.parts[0]).toMatchObject({ text: AUDIT_TEXT });
+    // The same trigger under an address the listing never produced is not found.
+    await expect(provider.readObjectSource!(["APP", "ORDERS_NOTE_DEFAULT"], "trigger")).rejects.toThrow(QueryError);
+    await provider.disconnect();
+  });
+
+  test("a caller's bound truncates the text and says so", async () => {
+    mockRowsFor = catalogRows;
+    const provider = await connectedProvider();
+    const document = await provider.readObjectSource!(["APP", "ORDER_SUMMARY"], "view", 10);
+    expect(document.parts[0]).toMatchObject({ text: VIEW_TEXT.slice(0, 10), truncated: { limit: 10 } });
+    await provider.disconnect();
+  });
+
+  test("an empty text is a refusal and a non-string text raises", async () => {
+    let text: unknown = "   ";
+    mockRowsFor = (sql) => (sql.includes("SYSCAT.VIEWS") ? [{ TEXT: text }] : []);
+    const provider = await connectedProvider();
+    const empty = await provider.readObjectSource!(["APP", "V"], "view");
+    expect(isSourcePartUnavailable(empty.parts[0])).toBe(true);
+    text = Buffer.from("CREATE VIEW");
+    await expect(provider.readObjectSource!(["APP", "V"], "view")).rejects.toThrow(/rather than a string/);
+    await provider.disconnect();
+  });
+
+  test("a kind with no stored text is refused before any round trip", async () => {
+    const provider = await connectedProvider();
+    await expect(provider.readObjectSource!(["APP", "ORDERS"], "table")).rejects.toThrow(
+      'Db2 publishes no definition text for the kind "table"',
+    );
+    await expect(provider.readObjectSource!(["APP"], "view")).rejects.toThrow(/"view" path is \[schema, name\]/);
+    expect(capturedQueries).toHaveLength(0);
+    await provider.disconnect();
+  });
+});
+
+describe("Db2Provider object surface under a changed declaration", () => {
+  // The provider reads its own declaration rather than assuming it, so each of these swaps a
+  // declaration in and drives the arm only a DECLARATION can reach.
+  function withCapabilities(change: (caps: ProviderCapabilities) => ProviderCapabilities) {
+    return class extends Db2Provider {
+      public override getCapabilities(): ProviderCapabilities {
+        return change(super.getCapabilities());
+      }
+    };
+  }
+
+  test("a declaration with no schema level is refused by name rather than bound as undefined", async () => {
+    const Provider = withCapabilities((caps) => ({
+      ...caps,
+      containerLevels: [{ id: "catalog", label: "Database", labelPlural: "Databases" }],
+    }));
+    const provider = new Provider(baseConfig);
+    await provider.connect();
+    await expect(provider.countObjects(["TESTDB"])).rejects.toThrow(/needs a "schema" container level/);
+    expect(capturedQueries).toHaveLength(0);
+    await provider.disconnect();
+  });
+
+  test("a declared kind with no listing statement says so", async () => {
+    const Provider = withCapabilities((caps) => ({
+      ...caps,
+      objectKinds: [
+        ...(caps.objectKinds ?? []),
+        { id: "nickname", role: "relation", label: "Nickname", labelPlural: "Nicknames" },
+      ],
+    }));
+    const provider = new Provider(baseConfig);
+    await provider.connect();
+    await expect(provider.listObjects(["APP"], "nickname")).rejects.toThrow(
+      'Db2 declares the kind "nickname" but has no statement that lists it',
+    );
+    await provider.disconnect();
+  });
+
+  test("a kind given source with no statement to read it says so", async () => {
+    const Provider = withCapabilities((caps) => ({
+      ...caps,
+      objectKinds: (caps.objectKinds ?? []).map((kind) =>
+        kind.id === "sequence" ? { ...kind, hasSource: true, sourceLanguage: "sql" } : kind,
+      ),
+    }));
+    const provider = new Provider(baseConfig);
+    await provider.connect();
+    await expect(provider.readObjectSource(["APP", "ORDER_SEQ"], "sequence")).rejects.toThrow(
+      'Db2 declares readable source for the kind "sequence" but has no statement that reads it',
+    );
     await provider.disconnect();
   });
 });

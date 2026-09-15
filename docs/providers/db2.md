@@ -48,8 +48,12 @@ the same category as DuckDB's `@duckdb/node-api` (see [`duckdb.md`](./duckdb.md)
 - **Its install can fail in an air-gapped or egress-restricted network**, because the postinstall
   fetches the CLI driver from IBM. `ibm_db` is listed in `package.json` `trustedDependencies` so its
   postinstall runs under Bun.
-- **It is a compiled addon**, so there is an N-API/Bun-runtime compatibility question that the live
-  pass (§9) must settle: confirm the provider loads and runs under Bun, not only Node.
+- **It is a compiled addon that needs Node, not Bun.** Measured with Bun 1.4.2 on 2026-09-15: the
+  module loads, and the first `ibm_db.open()` panics the whole process with
+  `unsupported uv function: uv_default_loop`. Every shipped entry point runs the server under Node
+  (`next dev`/`next start`, the Docker image, and `bin/studio.js`, whose `#!/usr/bin/env node` shebang
+  is load-bearing for the same reason it is for `better-sqlite3`), so only a caller who asks for
+  `bunx --bun` reaches it. The mock-based suite runs under Bun and never loads the addon.
 
 The trade the driver-free providers make — you own the pooling, failover and retry the driver would
 otherwise write — applies here too, and this provider makes the editor's choice: it holds **one**
@@ -65,7 +69,8 @@ Same Strategy-Pattern hierarchy as the other SQL providers:
 ```
 BaseDatabaseProvider (abstract)
 └── SQLBaseProvider (abstract)   ← identifier escaping, LIMIT helpers, read-only detection
-    └── Db2Provider              ← src/lib/db/providers/sql/db2.ts
+    └── Db2Provider              ← src/lib/db/providers/sql/db2/index.ts
+                                   (catalog statements and row mapping in db2/objects.ts)
 ```
 
 The `ibm_db` surface the provider touches (`open` → a connection with `query`/`close`) is declared
@@ -91,27 +96,10 @@ Oracle's: it builds on the statement's own text via `readStatementEnd()` and **d
 `wasLimited: false`) when the tail cannot be safely cut, so a clause is never appended inside a
 trailing comment (the #280 hazard). It only rewrites a `SELECT` that does not already carry a bound.
 
-### 3.3 Schema from `SYSCAT.*`, scoped to `CURRENT SCHEMA`
+### 3.3 The object surface reads `SYSCAT.*` across every schema (#789)
 
-`getSchema()` reads the standard read-only catalog views — `SYSCAT.TABLES`, `SYSCAT.COLUMNS`,
-`SYSCAT.KEYCOLUSE`/`SYSCAT.TABCONST`, `SYSCAT.REFERENCES`, `SYSCAT.INDEXES`/`SYSCAT.INDEXCOLUSE` —
-filtered by `TABSCHEMA = CURRENT SCHEMA`. `CURRENT SCHEMA` is Db2's session default schema (the
-connecting user's schema unless `SET SCHEMA` changed it), which is the namespace a bare table name
-resolves against, so it is the right filter for "this connection's tables". A Db2 **schema** is the
-namespace level, read the way Oracle reads its owner. Column type names are lowercased to match the
-spelling convention the schema tree uses for the other SQL engines.
-
-`SYSCAT.TABLES.CARD` is reported as `rowCount` only when it is a real measurement: it is `-1` until
-`RUNSTATS` has run, and the provider omits `rowCount` in that case rather than reporting `-1` as a
-count.
-
-**Which schema the browser shows follows `CURRENT SCHEMA` (measured).** There is no per-connection
-schema field in the connect form: the explorer lists the tables of whatever `CURRENT SCHEMA` resolves
-to. On a fresh connection that is the connecting user's own schema (verified: the connecting user's id
-becomes `CURRENT SCHEMA`). The provider holds one connection handle for the session, so a
-`SET CURRENT SCHEMA other_schema` run in the query editor persists and the next schema refresh browses
-that schema — the same session-state model as Oracle's current-schema. To browse a schema you do not
-own, run `SET CURRENT SCHEMA name` and refresh.
+The object browser is not confined to `CURRENT SCHEMA`.
+See §6.1 for the containers, kinds and addresses, and for every catalog fact they rest on.
 
 ### 3.4 `columnTypes` is omitted, deliberately
 
@@ -256,7 +244,7 @@ The runtime behaviours that most often surprise on a new SQL provider, and where
   `BIGINT` of `9223372036854775807` (2^63−1, well past `Number.MAX_SAFE_INTEGER`) came back as the JS
   **string** `"9223372036854775807"` — so the driver preserves it losslessly the way `pg` returns
   `int8`, and no widening or precision fix is needed. (`SYSCAT.TABLES.CARD` likewise arrives as a
-  string, which `getSchema` reads through `Number(...)`.)
+  string, which the listing reads through `Number(...)`.)
 
 - **Db2-only types, measured.** `VARGRAPHIC` → string, `XML` → its serialized text
   (`<?xml …?><root>…`), and `DATE`/`TIME`/`TIMESTAMP` → strings — all render sanely in the grid and
@@ -324,7 +312,7 @@ bug where `query()` ignored its params argument and every bound statement failed
 
 ## 6. Schema and monitoring
 
-`getSchema()` is real (§3.3), and so is most of the monitoring set. Db2's live data lives in the
+The object surface is real (§6.1), and so is most of the monitoring set. Db2's live data lives in the
 `MON_GET_*` table functions and `SYSIBMADM.*` administrative views. These are **permission-gated**
 (they need SYSMON authority or an explicit grant), so every read is wrapped to return empty on refusal
 rather than throw — a locked-down account degrades to blank panels while a monitoring-authorized
@@ -399,6 +387,87 @@ Still neutral: `getHealth().databaseSize` stays `"N/A"` (the Overview card shows
 through OUT parameters rather than a result set — a follow-up). Every gated read that a restricted
 account cannot run returns empty, never throws.
 
+### 6.1 The object surface (#789)
+
+One container level, the **schema**, read from `SYSCAT.SCHEMATA`.
+Every read below binds the schema and the object name as `?` markers, so nothing a caller supplies is interpolated.
+Measured against `icr.io/db2_community/db2:12.1.0.0` with [`docker/db2-init/01-object-fixture.sql`](../../docker/db2-init/01-object-fixture.sql) on 2026-09-15.
+
+**Which schemas are listed.**
+Every schema except `SYS%`, `NULLID` and `SQLJ`.
+The rule is by name because the owner cannot separate them: the schema Db2 creates implicitly on a user's first unqualified `CREATE` is `OWNER SYSIBM`, `OWNERTYPE 'S'`, exactly like `SYSCAT`.
+An upper-case `SYS` prefix is reserved (`CREATE SCHEMA SYSX` answers `SQL0553N`), while a delimited lower-case `"sysx"` is a legal user schema, and `LIKE` is case-sensitive, so that one stays listed.
+`SCHEMANAME` comes back blank-padded to eight characters (`"APP     "`), so the read trims it; object names are not padded.
+The schema equal to `CURRENT SCHEMA` is marked as the session default, and it is marked only when it exists: a fresh `db2inst1` connection has `CURRENT SCHEMA` `DB2INST1`, which is not a schema until something is created in it.
+
+**Nine kinds.**
+
+| Kind | Catalog | Address | Source |
+|---|---|---|---|
+| `table` | `SYSCAT.TABLES` `TYPE 'T'` | `[schema, name]` | Not supported |
+| `view` | `TYPE 'V'` | `[schema, name]` | `SYSCAT.VIEWS.TEXT` |
+| `materialized_query_table` | `TYPE 'S'` | `[schema, name]` | `SYSCAT.VIEWS.TEXT` |
+| `alias` | `TYPE 'A'` | `[schema, name]` | Not supported |
+| `sequence` | `SYSCAT.SEQUENCES` `SEQTYPE 'S'` | `[schema, name]` | Not supported |
+| `module` | `SYSCAT.MODULES` `MODULETYPE 'M'` or `'P'` | `[schema, name]` | Not supported |
+| `procedure` | `SYSCAT.ROUTINES` `ROUTINETYPE 'P'` | `[schema, specific name]` | `SYSCAT.ROUTINES.TEXT` |
+| `function` | `ROUTINETYPE 'F'` | `[schema, specific name]` | `SYSCAT.ROUTINES.TEXT` |
+| `trigger` | `SYSCAT.TRIGGERS` | `[schema, table, name]` or `[schema, name]` | `SYSCAT.TRIGGERS.TEXT` |
+
+A routine is addressed by its `SPECIFICNAME` and labelled by its `ROUTINENAME`.
+Db2 overloads a routine name by parameter types: the fixture's two `ORDER_TOTAL` functions carry one routine name and two specific names.
+The specific name is Db2's own unique identifier and the one `DROP SPECIFIC FUNCTION` takes.
+The cost is that a system-generated specific name (`SQL260915014426735`) changes when the routine is dropped and created again, so an address saved before that no longer resolves.
+
+A routine is listed only when it is not in a module and its `ORIGIN` is one a person wrote: `E` external, `F` federated, `Q` SQL-bodied, `U` sourced.
+A module's routines carry `ROUTINEMODULENAME` and belong to the module, which is a leaf node like an Oracle package: its members are declared through `childKinds` and not browsable.
+A sequence is listed only with `SEQTYPE 'S'`, because `'I'` is the sequence behind an identity column.
+
+A trigger nests under its table only when both are in the same schema.
+Db2 lets a trigger's schema differ from its table's (the fixture's `REPORTING.ORDERS_AUDIT` fires on `APP.ORDERS`), and `[REPORTING, ORDERS, ORDERS_AUDIT]` would address a table that does not exist, so that trigger is `[REPORTING, ORDERS_AUDIT]`.
+The source read binds the address it was given, so a trigger under the other shape is not found.
+
+**Status.**
+Only a state a reader acts on is published: `VALID 'N'` reads `INVALID` (measured: a view over a dropped table under `AUTO_REVAL DEFERRED`), `VALID 'X'` and `TABLES.STATUS 'X'` read `INOPERATIVE`, and `TABLES.STATUS 'C'` reads `SET INTEGRITY PENDING`.
+
+**Row counts.**
+`SYSCAT.TABLES.CARD` is published for a table and a materialized query table only when it is a measurement.
+It is `-1` until `RUNSTATS` runs, and that absence publishes no `rowCount` at all rather than a 0; measured, `ORDERS` read no count before `RUNSTATS` and 2 after it.
+
+**Detail.**
+Columns come from `SYSCAT.COLUMNS`, with the primary key read from `KEYSEQ`, which is the column's position in the key and `NULL` outside it.
+The type is spelled the way Db2 takes it back in DDL, because schema diff compares these strings and the migration generator writes one into `SET DATA TYPE`, where a bare `VARCHAR` is a syntax error.
+Measured: `LENGTH` is the declared length for the character, graphic, binary and LOB types; `DECIMAL` carries precision in `LENGTH` and scale in `SCALE`; `TIMESTAMP` carries its fractional precision in `SCALE` (6 when declared bare); `DECFLOAT` reports 8 bytes for `DECFLOAT(16)` and 16 for `DECFLOAT(34)`; a character column with `CODEPAGE 0` is `FOR BIT DATA`.
+
+Foreign keys join `SYSCAT.REFERENCES` to `SYSCAT.KEYCOLUSE` twice, and the referenced key is joined on its table as well as its schema and constraint name.
+A constraint name is unique per table and not per schema: measured, two tables in `APP` both carried a primary key named `PK`, so a join without the table pairs one foreign key with every key of that name.
+A reference into another schema is qualified (`APP.CUSTOMERS` from `REPORTING.DAILY`) and a reference inside the schema is bare.
+
+Indexes are filtered by the table's schema, not the index's, because a system-generated key index lives in `INDSCHEMA SYSIBM` while its table is in the user's schema.
+
+**Bulk detail.**
+`describeObjects()` answers a whole relation kind in four round trips: the target listing, then columns, foreign keys and indexes restricted to that target through a CTE.
+A caller's bound is sent as `FETCH FIRST ? ROWS ONLY` at one more than the bound, so a saturated read is told apart from an exact one, and the extra object is dropped.
+Measured, the bulk answer is identical to the single read for every relation in both fixture schemas.
+The target is ordered by `TABNAME` under the database collation (`IDENTITY` on the fixture's UTF-8 database), and the returned details are then sorted by path.
+
+#### Object source (#789)
+
+Source is declared on `view`, `materialized_query_table`, `procedure`, `function` and `trigger`, in `sql`.
+Every text is `stored` and `complete`: a view created through `ibm_db` with irregular spacing and a trailing `--` comment read back from `SYSCAT.VIEWS.TEXT` byte-identical, and every text begins with its `CREATE`.
+A table, an alias, a sequence and a module have no stored text, and Db2 offers no read-only way to generate one: `db2look` is a client tool, and `SYSPROC.DB2LK_GENERATE_DDL` writes its output into `SYSTOOLS` tables.
+
+An external or sourced routine answers a refusal part, not an empty editor and not an error.
+Measured, `SYSCAT.ROUTINES.TEXT` is `NULL` for `ORIGIN 'E'` (the fixture's `APP.EXT_FN`, a C function) and `ORIGIN 'U'`, and the part says which.
+An object the read cannot find raises a `QueryError` naming it, and so does a view read under the `materialized_query_table` kind, because the read also binds the catalog type.
+
+#### Object edit (#789)
+
+This engine is DEFERRED rather than refused, and the measurements say which half of the ruling it passes.
+The failure arm is safe: a `CREATE OR REPLACE PROCEDURE` and a `CREATE OR REPLACE TRIGGER` that do not compile answer `SQL0206N` and leave the previous object `VALID` with its previous text, measured on 12.1.
+A successful replace keeps the object's privileges (an `EXECUTE` granted to `PUBLIC` survived it), but replacing a view leaves every view that reads it `VALID 'N'` until its next use, which is a consequence the preview would have to show before it could ship.
+No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
 ---
 
 ## 7. Maintenance
@@ -415,6 +484,10 @@ command-line utilities), both taking a table name:
 user-initiated action (§3.5 explains why that is appropriate where auto-emitting it into a migration
 file is not). An operation called without a target is refused rather than sent.
 
+The target is a bare table name, and Db2 resolves it against `CURRENT SCHEMA`.
+Measured: `RUNSTATS` on `ORDERS` from a `db2inst1` session answered `SQL2306N The table or index "DB2INST1.ORDERS" does not exist`, and succeeded once the connection string carried `CurrentSchema=APP`.
+That agrees with the Operations tab, whose table list is also read from `CURRENT SCHEMA`.
+
 ---
 
 ## 8. Known limitations
@@ -423,7 +496,11 @@ file is not). An operation called without a target is refused rather than sent.
 - **No interactive-transaction toolbar yet** (§3.6). BEGIN/COMMIT/ROLLBACK and SANDBOX are hidden.
 - **`columnTypes` not reported** (§3.4). The grid infers display from values; declared types are a
   follow-up.
-- **Monitoring is mostly empty** (§6). Real `MON_GET_*`/`SYSIBMADM.*` reads are follow-up work.
+- **Monitoring and maintenance follow `CURRENT SCHEMA`** (§6, §7). The object browser lists every schema, but the table and index panels and the maintenance targets are the session schema's.
+- **Routine addresses are specific names** (§6.1). A system-generated one changes when the routine is created again.
+- **Module members are not browsable** (§6.1). A module is a leaf node.
+- **No object editing** (§6.1, Object edit).
+- **Node only** (§1). `bunx --bun` crashes on the first connection.
 - **Native driver, with an install-time download** (§1). Air-gapped installs must pre-provision the
   `ibm_db` CLI driver.
 - **No pool, failover or retry** (§3.1).
@@ -439,7 +516,8 @@ Mock-based unit/integration coverage lives in
 [`tests/integration/db/db2-provider.test.ts`](../../tests/integration/db/db2-provider.test.ts):
 validation, capability honesty, `prepareQuery` FETCH FIRST/OFFSET, connection-string building, the
 `columnTypes` omission, positional-parameter binding (params forwarded to the driver; the no-params
-two-arg call form), `getSchema` catalog mapping, the neutral monitoring values, and the
+two-arg call form), the object surface against a mirror of the fixture (including
+`assertObjectSurface`), the neutral monitoring values, and the
 `RUNSTATS`/`REORG` maintenance SQL. The migration-generator's Db2 branch (SET DATA TYPE, the REORG
 advisory, the transaction wrapper) is pinned in
 [`tests/unit/schema-diff/migration-generator.test.ts`](../../tests/unit/schema-diff/migration-generator.test.ts).
@@ -457,8 +535,9 @@ container with `LICENSE=accept` and a slow first boot). Results of the gate-4 pa
   put in REORG-pending, and capture the exact `SQL0668N` driver text (and its reason code) so a
   future error branch can decode it (§3.7) — **not yet exercised** (no REORG-pending table was
   induced on the live server); still a follow-up;
-- schema introspection — **VERIFIED**: columns, PK/nullable flags, foreign keys, and indexes map from
-  `SYSCAT.*` with untrimmed names; the explorer follows `CURRENT SCHEMA` (§3.3);
+- the object surface — **VERIFIED** on 12.1 against the fixture (§6.1): every count, listing, detail,
+  bulk read and source read, including the external routine, the cross-schema trigger and the
+  truncated bulk read;
 - **value fidelity — VERIFIED** on Db2 v11.5.x (`ibm_db` 4.0.1), via `probe-db2.mjs DB2_MATRIX=1`:
   CLOB→string, BLOB→`Buffer` (exact bytes), `BIGINT`→lossless string, DECIMAL/DECFLOAT/REAL/DOUBLE→
   number, VARGRAPHIC/XML/DATE/TIME/TIMESTAMP→strings, `CHAR(n)` space-padded (expected). No
@@ -478,7 +557,8 @@ container with `LICENSE=accept` and a slow first boot). Results of the gate-4 pa
 - each maintenance operation — **VERIFIED**: `RUNSTATS`/`REORG` succeed per table via
   `SYSPROC.ADMIN_CMD`; a global (no-target) request and an unsupported op are refused with a clear
   message;
-- **`ibm_db` loads and runs under both Bun and Node** — **VERIFIED** (the native-addon risk);
+- **`ibm_db` runs under Node, and not under Bun** — **MEASURED** on Bun 1.4.2: the first `open()`
+  panics the process (§1);
 - integer fidelity — **VERIFIED**: `BIGINT` `9223372036854775807` (past `Number.MAX_SAFE_INTEGER`)
   arrives as the exact JS string, no precision loss.
 

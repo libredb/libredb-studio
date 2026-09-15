@@ -32,6 +32,7 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "cassandra",
   "clickhouse",
   "couchbase",
+  "db2",
   "druid",
   "duckdb",
   "elasticsearch",

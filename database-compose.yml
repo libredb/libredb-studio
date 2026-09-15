@@ -157,6 +157,12 @@ services:
       AUTOCONFIG: "false"
     ports:
       - "50000:50000"
+    volumes:
+      # The object-browser fixture (#786, #789): two schemas, one object of every declared kind,
+      # an overloaded function, a trigger in a schema other than its table's, an external routine
+      # with no stored text and a view left invalid. The image runs /var/custom once, after
+      # first-boot setup, so an existing container has to be recreated before an edit takes effect.
+      - ./docker/db2-init:/var/custom:ro
     healthcheck:
       # `db2gcf -s` reports the instance state; the database is queryable once the entrypoint
       # writes "Setup has completed" to the log, but db2gcf is the machine-readable signal.

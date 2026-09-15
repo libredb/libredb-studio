@@ -22,11 +22,9 @@
 // `ibm_db`'s published typings are thin, so the driver surface this provider touches is
 // declared here and the import is typed against it. The dynamic import in factory.ts is
 // what keeps the native addon out of the initial bundle.
-import { SQLBaseProvider } from "./sql-base";
+import { SQLBaseProvider } from "../sql-base";
 import {
   type DatabaseConnection,
-  type TableSchema,
-  type ColumnSchema,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -43,13 +41,46 @@ import {
   type StorageStats,
   type PreparedQuery,
   type QueryPrepareOptions,
-} from "../../types";
-// IndexSchema and ForeignKeySchema are not re-exported by db/types.ts (the shared
-// db-provider type surface), so they come straight from the app-wide type module.
-import { type IndexSchema, type ForeignKeySchema } from "@/lib/types";
-import { DatabaseConfigError, ConnectionError, mapDatabaseError } from "../../errors";
-import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
-import { formatBytes, formatDuration } from "../../utils/pool-manager";
+  type Container,
+  type DatabaseObject,
+  type KindCount,
+  type ObjectDetail,
+  type ObjectDetailBatch,
+  type ObjectSourceDocument,
+} from "../../../types";
+import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../../errors";
+import { callerBoundTruncationReason, declaredKinds, requireSourceKind } from "../../../object-kinds";
+import { comparePaths } from "../../../object-path";
+import {
+  COUNTS_SQL,
+  CONTAINERS_SQL,
+  DB2_CONTAINER_LEVELS,
+  DB2_OBJECT_KINDS,
+  OBJECT_COLUMNS_SQL,
+  OBJECT_FOREIGN_KEYS_SQL,
+  OBJECT_INDEXES_SQL,
+  assertObjectPathShape,
+  bulkDetailSql,
+  bulkTargetSql,
+  byObjectName,
+  containerSchema,
+  containersFromRows,
+  countsFromRows,
+  listingStatement,
+  objectAddress,
+  objectDetailFromRows,
+  objectFromRow,
+  relationTableType,
+  requireKind,
+  sourcePartFromRow,
+  sourceStatement,
+  unavailableCounts,
+  type ContainerRow,
+  type KindCountRow,
+  type ObjectRow,
+} from "./objects";
+import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
+import { formatBytes, formatDuration } from "../../../utils/pool-manager";
 import { logger } from "@/lib/logger";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
@@ -80,47 +111,7 @@ interface Db2Driver {
 // SQL statements
 // ============================================================================
 // Multi-line SQL is hoisted to module scope so per-line coverage attribution stays
-// stable (repo pattern, see the SCHEMA_*_SQL consts in oracle.ts / mssql.ts).
-//
-// The schema reads target SYSCAT.*, the standard read-only catalog views every Db2 LUW
-// exposes. `CURRENT SCHEMA` is Db2's session default schema — the connecting user's
-// schema unless SET SCHEMA changed it — which is the namespace a bare table name
-// resolves against, so it is the right filter for "this connection's tables".
-
-const SCHEMA_COLUMNS_SQL = `SELECT TABNAME, COLNAME, TYPENAME, NULLS, "DEFAULT", COLNO
-         FROM SYSCAT.COLUMNS
-         WHERE TABSCHEMA = CURRENT SCHEMA
-         ORDER BY TABNAME, COLNO`;
-
-const SCHEMA_TABLES_SQL = `SELECT TABNAME, CARD AS ROW_COUNT
-         FROM SYSCAT.TABLES
-         WHERE TABSCHEMA = CURRENT SCHEMA AND TYPE = 'T'
-         ORDER BY TABNAME`;
-
-const SCHEMA_PRIMARY_KEYS_SQL = `SELECT kc.TABNAME, kc.COLNAME
-         FROM SYSCAT.KEYCOLUSE kc
-         JOIN SYSCAT.TABCONST tc
-           ON kc.CONSTNAME = tc.CONSTNAME AND kc.TABSCHEMA = tc.TABSCHEMA AND kc.TABNAME = tc.TABNAME
-         WHERE tc.TABSCHEMA = CURRENT SCHEMA AND tc.TYPE = 'P'`;
-
-const SCHEMA_FOREIGN_KEYS_SQL = `SELECT r.TABNAME,
-                fk.COLNAME,
-                r.REFTABNAME AS REF_TABLE,
-                pk.COLNAME AS REF_COLUMN
-         FROM SYSCAT.REFERENCES r
-         JOIN SYSCAT.KEYCOLUSE fk
-           ON r.CONSTNAME = fk.CONSTNAME AND r.TABSCHEMA = fk.TABSCHEMA AND r.TABNAME = fk.TABNAME
-         JOIN SYSCAT.KEYCOLUSE pk
-           ON r.REFKEYNAME = pk.CONSTNAME AND r.REFTABSCHEMA = pk.TABSCHEMA
-              AND pk.COLSEQ = fk.COLSEQ
-         WHERE r.TABSCHEMA = CURRENT SCHEMA`;
-
-const SCHEMA_INDEXES_SQL = `SELECT ic.INDNAME, ic.TABNAME, ic.UNIQUERULE, icu.COLNAME, icu.COLSEQ
-         FROM SYSCAT.INDEXES ic
-         JOIN SYSCAT.INDEXCOLUSE icu
-           ON ic.INDNAME = icu.INDNAME AND ic.INDSCHEMA = icu.INDSCHEMA
-         WHERE ic.TABSCHEMA = CURRENT SCHEMA
-         ORDER BY ic.TABNAME, ic.INDNAME, icu.COLSEQ`;
+// stable. The object surface's statements live in ./objects.ts.
 
 const VERSION_SQL = `SELECT SERVICE_LEVEL FROM TABLE(SYSPROC.ENV_GET_INST_INFO()) AS T`;
 
@@ -240,12 +231,6 @@ const INDEX_STATS_SQL = `WITH SCANS AS (
          ORDER BY i.TABNAME, i.INDNAME`;
 
 // ============================================================================
-// Row shapes
-// ============================================================================
-
-type ForeignKeyRow = { columnName: string; referencedTable: string; referencedColumn: string };
-
-// ============================================================================
 // Db2 Provider
 // ============================================================================
 
@@ -298,6 +283,8 @@ export class Db2Provider extends SQLBaseProvider {
         analyze: { label: "Run Statistics", perEntity: true, global: false },
         optimize: { label: "Reorganize Table", perEntity: true, global: false },
       },
+      containerLevels: DB2_CONTAINER_LEVELS,
+      objectKinds: DB2_OBJECT_KINDS,
     };
   }
 
@@ -564,96 +551,142 @@ export class Db2Provider extends SQLBaseProvider {
   }
 
   // ============================================================================
-  // Schema Operations
+  // Object surface (#786, #789)
   // ============================================================================
 
-  public async getSchema(): Promise<TableSchema[]> {
+  /** A catalog read, with the driver's error mapped onto the shared classes. */
+  private async runCatalog(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
+    try {
+      return await this.run(sql, params);
+    } catch (error) {
+      throw mapDatabaseError(error, "db2", sql);
+    }
+  }
+
+  /** The schemas this connection can see. One level, so nothing nests under a schema. */
+  public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     this.ensureConnected();
+    if (parent !== undefined && parent.length > 0) return [];
+    const rows = await this.runCatalog(CONTAINERS_SQL, []);
+    return containersFromRows(rows as unknown as ContainerRow[]);
+  }
 
-    const [tableRows, columnRows, pkRows, fkRows, indexRows] = await Promise.all([
-      this.run(SCHEMA_TABLES_SQL),
-      this.run(SCHEMA_COLUMNS_SQL),
-      this.run(SCHEMA_PRIMARY_KEYS_SQL),
-      this.run(SCHEMA_FOREIGN_KEYS_SQL),
-      this.run(SCHEMA_INDEXES_SQL),
-    ]);
-
-    // Primary-key column set, keyed "table\0column" for O(1) isPrimary lookup.
-    const pkSet = new Set<string>();
-    for (const row of pkRows) {
-      pkSet.add(`${String(row.TABNAME)}\0${String(row.COLNAME)}`);
+  /**
+   * How many objects of each declared kind one schema holds, in one statement. A refused read
+   * carries Db2's own sentence against every kind rather than a zero nobody measured.
+   */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const schema = containerSchema(capabilities, container);
+    const kinds = declaredKinds(capabilities);
+    try {
+      const rows = await this.run(COUNTS_SQL, [schema, schema, schema, schema, schema]);
+      return countsFromRows(kinds, rows as unknown as KindCountRow[]);
+    } catch (error) {
+      return unavailableCounts(kinds, error);
     }
+  }
 
-    // Columns grouped per table.
-    const columnsByTable = new Map<string, ColumnSchema[]>();
-    for (const row of columnRows) {
-      const table = String(row.TABNAME);
-      const name = String(row.COLNAME);
-      const list = columnsByTable.get(table) ?? [];
-      list.push({
-        name,
-        type: String(row.TYPENAME).toLowerCase(),
-        // SYSCAT.COLUMNS.NULLS is 'Y' / 'N'.
-        nullable: String(row.NULLS) === "Y",
-        isPrimary: pkSet.has(`${table}\0${name}`),
-        defaultValue: row.DEFAULT === null || row.DEFAULT === undefined ? undefined : String(row.DEFAULT),
-      });
-      columnsByTable.set(table, list);
+  /** The objects of one kind in one schema, sorted by address. */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const schema = containerSchema(capabilities, container);
+    requireKind(capabilities, kind);
+    const statement = listingStatement(schema, kind);
+    if (statement === undefined) {
+      throw new QueryError(`Db2 declares the kind "${kind}" but has no statement that lists it`, "db2");
     }
+    const rows = await this.runCatalog(statement.sql, statement.params);
+    return (rows as unknown as ObjectRow[])
+      .map((row) => objectFromRow(container, kind, row))
+      .sort((left, right) => comparePaths(left.path, right.path));
+  }
 
-    // Foreign keys grouped per table.
-    const fksByTable = new Map<string, ForeignKeyRow[]>();
-    for (const row of fkRows) {
-      const table = String(row.TABNAME);
-      const list = fksByTable.get(table) ?? [];
-      list.push({
-        columnName: String(row.COLNAME),
-        referencedTable: String(row.REF_TABLE),
-        referencedColumn: String(row.REF_COLUMN),
-      });
-      fksByTable.set(table, list);
+  /**
+   * Columns, indexes and foreign keys for one object. Only the three relation kinds have any,
+   * so an alias, a sequence, a module, a routine and a trigger answer empty with no round trip.
+   */
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = requireKind(capabilities, kind);
+    assertObjectPathShape(capabilities, spec, path);
+    if (relationTableType(kind) === undefined) {
+      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
+    const { schema, name } = objectAddress(capabilities, path);
+    const binds = [schema, name];
+    const columns = await this.runCatalog(OBJECT_COLUMNS_SQL, binds);
+    const foreignKeys = await this.runCatalog(OBJECT_FOREIGN_KEYS_SQL, binds);
+    const indexes = await this.runCatalog(OBJECT_INDEXES_SQL, binds);
+    return objectDetailFromRows(path, schema, { columns, foreignKeys, indexes });
+  }
 
-    // Indexes grouped per table, then per index name (to collect ordered columns).
-    const indexAccumulator = new Map<string, Map<string, { columns: string[]; unique: boolean }>>();
-    for (const row of indexRows) {
-      const table = String(row.TABNAME);
-      const indexName = String(row.INDNAME);
-      const perTable = indexAccumulator.get(table) ?? new Map();
-      const entry = perTable.get(indexName) ?? {
-        columns: [],
-        // SYSCAT.INDEXES.UNIQUERULE: 'U' unique, 'P' primary, 'D' duplicates allowed.
-        unique: String(row.UNIQUERULE) === "U" || String(row.UNIQUERULE) === "P",
-      };
-      entry.columns.push(String(row.COLNAME));
-      perTable.set(indexName, entry);
-      indexAccumulator.set(table, perTable);
+  /**
+   * Columns, indexes and foreign keys for EVERY object of one relation kind in one schema, in
+   * four round trips. The bound is the caller's: the target read asks for one row more, so a
+   * saturated read is told apart from an exact one without a second count.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    requireKind(capabilities, kind);
+    const schema = containerSchema(capabilities, container);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      throw new QueryError(`A Db2 bulk column read limit must be a positive whole number, received ${limit}`, "db2");
     }
+    const type = relationTableType(kind);
+    if (type === undefined) return { details: [] };
 
-    const indexesByTable = new Map<string, IndexSchema[]>();
-    for (const [table, perTable] of indexAccumulator) {
-      const list: IndexSchema[] = [];
-      for (const [name, entry] of perTable) {
-        list.push({ name, columns: entry.columns, unique: entry.unique });
-      }
-      indexesByTable.set(table, list);
+    const bounded = limit !== undefined;
+    const binds = bounded ? [schema, type, limit + 1] : [schema, type];
+    const targets = await this.runCatalog(bulkTargetSql(bounded), binds);
+    const truncated = bounded && targets.length > limit;
+    const described = truncated ? targets.slice(0, limit) : targets;
+    if (described.length === 0) return { details: [] };
+
+    const statements = bulkDetailSql(bounded);
+    const detailBinds = [...binds, schema];
+    const columns = byObjectName(await this.runCatalog(statements.columns, detailBinds));
+    const foreignKeys = byObjectName(await this.runCatalog(statements.foreignKeys, detailBinds));
+    const indexes = byObjectName(await this.runCatalog(statements.indexes, detailBinds));
+
+    const details = described
+      .map((row) => {
+        const name = String(row.OBJECT_NAME);
+        return objectDetailFromRows([...container, name], schema, {
+          columns: columns.get(name) ?? [],
+          foreignKeys: foreignKeys.get(name) ?? [],
+          indexes: indexes.get(name) ?? [],
+        });
+      })
+      .sort((left, right) => comparePaths(left.path, right.path));
+    return truncated ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+  }
+
+  /**
+   * ONE object's definition, from the text SYSCAT stores for it. An object the read cannot find
+   * RAISES; a routine Db2 keeps no text for answers a refusal part saying why.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    this.ensureConnected();
+    const capabilities = this.getCapabilities();
+    const spec = requireSourceKind(capabilities, kind, { displayName: "Db2", type: "db2" });
+    assertObjectPathShape(capabilities, spec, path);
+    const address = objectAddress(capabilities, path);
+    const statement = sourceStatement(kind, address, path);
+    const [row] = await this.runCatalog(statement.sql, statement.params);
+    const where = `${path.slice(0, -1).join(".")}.${address.name}`;
+    if (row === undefined) {
+      throw new QueryError(
+        `Db2 holds no ${spec.label.toLowerCase()} called "${address.name}" in ${path.slice(0, -1).join(".")}`,
+        "db2",
+        statement.sql,
+      );
     }
-
-    return tableRows.map((row) => {
-      const name = String(row.TABNAME);
-      const foreignKeys = fksByTable.get(name) ?? [];
-      const schema: TableSchema = {
-        name,
-        columns: columnsByTable.get(name) ?? [],
-        indexes: indexesByTable.get(name) ?? [],
-        foreignKeys: foreignKeys as ForeignKeySchema[],
-      };
-      // SYSCAT.TABLES.CARD is the last-collected cardinality, -1 when RUNSTATS has never
-      // run. Report it only when it is a real measurement.
-      const card = Number(row.ROW_COUNT);
-      if (Number.isFinite(card) && card >= 0) schema.rowCount = card;
-      return schema;
-    });
+    return { path: [...path], kind, parts: [sourcePartFromRow(row, spec.sourceLanguage, limit, where)] };
   }
 
   // ============================================================================
