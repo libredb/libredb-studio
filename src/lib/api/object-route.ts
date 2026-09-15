@@ -664,14 +664,27 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
  * re-read are what make it safe on the other two.
  *
- * THE WRITE PATH IS NOT COVERED HERE AT ALL, and it is the larger gap. Deleting a field from a READ
+ * THE WRITE PATH IS NOT COVERED HERE AT ALL, and it never can be. Deleting a field from a READ
  * response cannot bind a caller: a client that never calls `/api/db/objects/source`, or that simply
  * ignores the field that was deleted, can POST the truncated prefix straight to the edit routes.
- * MEASURED by grep at this commit, nothing on the write path enforces either fact: `object-edit.ts`
- * names neither `truncated` nor `acceptsSourceEdits`. That is an obligation ON THE EDIT-PLAN ROUTE,
- * stated here by name so it is not read as already discharged: that route must REFUSE a plan whose
- * part is truncated, and REFUSE a kind that fails `kindAcceptsSourceEdits` on the CONNECTED provider.
- * Until it does, this function decides what the UI is OFFERED and never what the server ACCEPTS.
+ * That was an obligation ON THE EDIT-PLAN ROUTE and BOTH HALVES OF IT HAVE LANDED, so what follows
+ * names the enforcer of each half and where it sits, MEASURED by grep at this commit.
+ *
+ * THE KIND, at `src/app/api/db/objects/edit-plan/route.ts:89`: that route calls
+ * `requireEditableKind(provider.getCapabilities(), kind, ...)` before it reaches the builder, on the
+ * CONNECTED provider and never on the client's copy of the declaration, and its comment there cites
+ * this docblock by name as the reason. `src/app/api/db/objects/edit-apply/route.ts:141` asks the same
+ * question of the plan's kind, so neither half of the write path takes a caller's word for it.
+ *
+ * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
+ * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3090`, `providers/keyvalue/redis.ts:1764`
+ * and `providers/sql/trino/index.ts:1451`. The second is what closes the class rather than narrowing
+ * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
+ * truncated never reaches a plan at all, whatever the client POSTs.
+ *
+ * So this function decides what the UI is OFFERED, and the two edit routes decide what the server
+ * ACCEPTS.
  *
  * WHAT THIS CANNOT COVER ON THE READ PATH ITSELF, said out loud rather than left for a reader to
  * assume the opposite.

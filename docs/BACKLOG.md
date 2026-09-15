@@ -33,7 +33,7 @@ None of it is a GitHub issue.
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 16
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3–DOC5 · 3
+- [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
@@ -1864,29 +1864,6 @@ guard, which is what makes the change stick - the guard bans the FORM, so a corr
 too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
 of those two were rewritten in round 17 and are the natural first pair; the round left them out because
 they were another lane's live files at the time, not because they are correct.
-
-### DOC5. `stripEdit`'s docblock still calls the write-path obligation undischarged, and it is discharged
-
-`src/lib/api/object-route.ts:667-674` says "MEASURED by grep at this commit, nothing on the write path
-enforces either fact", names an obligation on the edit-plan route to "REFUSE a plan whose part is
-truncated, and REFUSE a kind that fails `kindAcceptsSourceEdits` on the CONNECTED provider", and closes
-"Until it does, this function decides what the UI is OFFERED and never what the server ACCEPTS".
-
-Both halves have since landed, in this same phase. The kind:
-`src/app/api/db/objects/edit-plan/route.ts:89` calls `requireEditableKind` on the connected provider and
-its own comment cites this very docblock as the reason. The bound: that route refuses a submitted text
-over `EDIT_CHARACTER_LIMIT` at line 74, and all three day-one providers refuse a READ definition over the
-same constant inside `buildObjectEdit` (`postgres.ts:3012`, `redis.ts:1747`,
-`trino/index.ts` refusal 1), so a truncated prefix cannot become a plan.
-
-Not a live bug. It is a sentence that tells a reader a guard is missing when the guard is two files away,
-which is the failure mode this repository files its stale citations for.
-
-Found by the external review of PR #831 (#789, discussion #778).
-
-**Done when:** the paragraph says what enforces each half and where, and the "until it does" sentence is
-gone.
-
 
 ---
 
