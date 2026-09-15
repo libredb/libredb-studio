@@ -9,7 +9,7 @@
 *   **Custom DB Theme:** Specialized `db-dark` theme for high-contrast SQL syntax highlighting.
 *   **Power Snippets:** Integrated templates for CTEs, Joins, and complex CRUD operations.
 *   **Modern Editor Specs:** Font ligatures, smooth scrolling, bracket pair colorization, and parameter hints enabled.
-*   **Keyboard Shortcuts:** `Cmd/Ctrl+Enter` to execute the query (editor focused), `Alt+Shift+F` to format the query (editor focused), `Cmd/Ctrl+Shift+X` to open a new query tab (except while renaming a tab), `Cmd/Ctrl+K` to toggle the command palette.
+*   **Keyboard Shortcuts:** `Cmd/Ctrl+Enter` to execute the query (editor focused), `Alt+Shift+F` to format the query (editor focused), `Cmd/Ctrl+Shift+X` to open a new query tab (except while renaming a tab or while an object apply is in flight), `Cmd/Ctrl+K` to toggle the command palette.
 *   **Command Palette:** Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 
 > Shortcut bindings and labels come from `src/lib/keyboard-shortcuts.ts`. After changing the registry, run `bun run shortcuts:sync`; the unit suite checks this list for drift. See [`docs/editor/`](editor/) for the editor internals — completion provider, alias resolution, and performance design.

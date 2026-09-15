@@ -29,7 +29,7 @@ export const SHORTCUTS = {
     primary: true,
     alt: false,
     shift: true,
-    description: "open a new query tab (except while renaming a tab)",
+    description: "open a new query tab (except while renaming a tab or while an object apply is in flight)",
   },
   commandPalette: { code: "KeyK", primary: true, alt: false, shift: false, description: "toggle the command palette" },
 } as const satisfies Record<string, Shortcut>;
