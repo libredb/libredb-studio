@@ -697,3 +697,108 @@ describe("POST /api/db/query with an explain request", () => {
     expect("explainFormat" in data).toBe(false);
   });
 });
+
+describe("POST /api/db/query and the transaction a single statement can leave open", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+  });
+
+  // ── An unfinished transaction never outlives the request (D74) ────────────
+  //
+  // MEASURED 2026-09-15 against PostgreSQL 18.4 through this very handler, with the
+  // real provider and the real process-wide cache and only the session mocked. A lone
+  // `BEGIN` answered HTTP 200 and released its pooled client in status `T`. The NEXT
+  // request on the same cached provider, which is any other signed-in user of that
+  // stored connection, then ran `CREATE TABLE d74_probe_victim (a int)` INSIDE the
+  // stranger's transaction: HTTP 200, same client object, and an independent reader on
+  // its own connection saw no such table. Driven a second way the loss is loud instead
+  // of silent: `BEGIN`, then a statement naming a missing relation, left the client in
+  // `E`, and the next user's `SELECT 1` answered HTTP 500 "current transaction is
+  // aborted, commands ignored until end of transaction block".
+  //
+  // So the route ends what its own statement left open, in a `finally` so no path can
+  // skip it, and the response says what became of it.
+
+  function providerEndingTransactions(outcome: "none" | "rolled-back") {
+    const endOpenQueryTransaction = mock(async () => outcome);
+    mockGetOrCreateProvider.mockResolvedValueOnce({ ...createMockProvider(), endOpenQueryTransaction } as never);
+    return endOpenQueryTransaction;
+  }
+
+  test("ends a transaction the statement left open and says so", async () => {
+    const endOpenQueryTransaction = providerEndingTransactions("rolled-back");
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "BEGIN" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ openTransaction?: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect(data.openTransaction).toBe("rolled-back");
+  });
+
+  test("says nothing when the statement left no transaction open", async () => {
+    // Absent rather than "none", the rule every additive channel on this route
+    // follows: a client renders the notice from the field's presence alone, so an
+    // always-present "none" would announce something that did not happen.
+    const endOpenQueryTransaction = providerEndingTransactions("none");
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect("openTransaction" in data).toBe(false);
+  });
+
+  test("ends it on the failure path too, where the poisoned handle is actually produced", async () => {
+    // The arm a line after the call could not reach, and the one the measurement
+    // above produced status "E" on: the statement raised, the response is an error,
+    // and the transaction is still ended before the handle goes back to the cache.
+    const endOpenQueryTransaction = mock(async () => "rolled-back" as const);
+    const provider = { ...createMockProvider(), endOpenQueryTransaction };
+    (provider.query as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+      throw new QueryError(
+        "current transaction is aborted, commands ignored until end of transaction block",
+        "postgres",
+      );
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(400);
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test("a provider that cannot end one is asked nothing and answers as before", async () => {
+    // The control. `createMockProvider()` declares no `endOpenQueryTransaction`, which
+    // is the fourteen type-ids of D75, and the route must not invent a rollback there.
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect("openTransaction" in data).toBe(false);
+  });
+});
