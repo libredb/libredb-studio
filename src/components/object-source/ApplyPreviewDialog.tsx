@@ -255,6 +255,59 @@ function applyFrame(state: ApplyPreviewState): {
   return { title: "This apply is done", disposition: "The new definition is on the server.", preimageIsCurrent: false };
 }
 
+/**
+ * The widget lets go of its two models before anything disposes them (#789 Phase 3, X21).
+ *
+ * MEASURED in Chromium on 2026-09-14, on EVERY successful apply driven through the UI:
+ * `TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.
+ * `@monaco-editor/react`'s unmount reads `editor.getModel()`, disposes `original` and `modified`
+ * unless the two keep flags are set, and disposes the widget LAST, so both models go while the
+ * widget still holds them and Monaco's own disposal path writes that line. Nothing is visible to
+ * the reader and nothing is lost; it is noise on the exact channel this phase's CSP assertion
+ * reads, and a page-error assertion added later would break on it.
+ *
+ * So this releases them first and then disposes them itself. The keep flags stay FALSE, which
+ * keeps the wrapper the backstop: if this cleanup never ran, the wrapper would still dispose both
+ * models and the failure would be one console line rather than the roughly 2 MB of retained text
+ * per opened preview the browser probe measured when nothing disposed them.
+ *
+ * A COMPONENT and not an effect in `ApplyPreviewDialog`, and the reason is React's unmount order.
+ * React destroys a deleted subtree's effects from the top down, so a cleanup on the PARENT of
+ * `DiffEditor` always runs before the wrapper's own. An effect on the dialog has that order only
+ * when the whole dialog is deleted: when the diff alone goes, the preview expiring under an open
+ * dialog, the deleted child's effects are destroyed before the surviving parent's, which is the
+ * wrong way round for exactly the case this is correcting.
+ */
+function ReleasedDiffEditor({
+  editorRef,
+  decorationsRef,
+  children,
+}: {
+  readonly editorRef: React.RefObject<{
+    readonly diff: Monaco.editor.IStandaloneDiffEditor;
+    readonly monaco: typeof Monaco;
+  } | null>;
+  readonly decorationsRef: React.RefObject<Monaco.editor.IEditorDecorationsCollection | null>;
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  useEffect(
+    () => () => {
+      const mounted = editorRef.current;
+      if (mounted === null) return;
+      editorRef.current = null;
+      // The collection lives on the modified model, so it dies with it. Left set, a remount would
+      // paint through a collection whose model is gone.
+      decorationsRef.current = null;
+      const models = mounted.diff.getModel();
+      mounted.diff.setModel(null);
+      models?.original.dispose();
+      models?.modified.dispose();
+    },
+    [editorRef, decorationsRef],
+  );
+  return <>{children}</>;
+}
+
 /** The warning grammar the pane already uses for a truncated part (`ObjectSourceView.tsx:491-497`). */
 function WarningRow({ testId, children }: { testId: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -590,30 +643,32 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
                 </span>
               </div>
               <div className="h-72">
-                <DiffEditor
-                  original={diffOriginal}
-                  modified={diffModified}
-                  language={diffLanguage}
-                  originalModelPath={`libredb-apply-original:${address}/${partId}`}
-                  modifiedModelPath={`libredb-apply-modified:${address}/${partId}`}
-                  theme={theme === "light" ? STUDIO_THEME_LIGHT : STUDIO_THEME_DARK}
-                  beforeMount={defineStudioThemes}
-                  onMount={(diff, monaco) => {
-                    editorRef.current = { diff, monaco };
-                    paintRanges();
-                  }}
-                  options={{
-                    // WCAG 2.1.2: without this the diff is a keyboard trap, because Tab inserts a
-                    // tab character instead of moving focus out of the control.
-                    tabFocusMode: true,
-                    readOnly: true,
-                    originalEditable: false,
-                    renderSideBySide: true,
-                    automaticLayout: true,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                  }}
-                />
+                <ReleasedDiffEditor editorRef={editorRef} decorationsRef={decorationsRef}>
+                  <DiffEditor
+                    original={diffOriginal}
+                    modified={diffModified}
+                    language={diffLanguage}
+                    originalModelPath={`libredb-apply-original:${address}/${partId}`}
+                    modifiedModelPath={`libredb-apply-modified:${address}/${partId}`}
+                    theme={theme === "light" ? STUDIO_THEME_LIGHT : STUDIO_THEME_DARK}
+                    beforeMount={defineStudioThemes}
+                    onMount={(diff, monaco) => {
+                      editorRef.current = { diff, monaco };
+                      paintRanges();
+                    }}
+                    options={{
+                      // WCAG 2.1.2: without this the diff is a keyboard trap, because Tab inserts a
+                      // tab character instead of moving focus out of the control.
+                      tabFocusMode: true,
+                      readOnly: true,
+                      originalEditable: false,
+                      renderSideBySide: true,
+                      automaticLayout: true,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                    }}
+                  />
+                </ReleasedDiffEditor>
               </div>
             </div>
           )}

@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 38
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 15
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 14
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1523,21 +1523,6 @@ stated in `readDefaultBody`'s own docblock.
 
 **Done when:** a body above the framework's clone limit gets one answer that names the size, on every
 route, rather than an empty-body claim on five and a parser error on one.
-
-### X21. Closing the apply preview dialog after a successful apply logs a Monaco disposal error
-
-MEASURED in Chromium on 2026-09-14, on every successful apply driven through the UI:
-`TextModel got disposed before DiffEditorWidget model got reset`, one console error per apply.
-
-`ApplyPreviewDialog` disposes the diff's original and modified models while the `DiffEditor` still holds
-them, so Monaco's own disposal path throws into the console. The disposal itself is deliberate and
-documented; the ORDER is what needs correcting.
-
-Nothing is visible to the reader and nothing is lost. It matters because it is noise on the exact channel
-#789 Phase 3's CSP assertion reads, and a page-error assertion added later would break on it.
-
-**Done when:** the widget releases the models before they are disposed, and the E2E spec can assert an
-empty console after an apply.
 
 ### X22. The object-edit E2E's restored-tab test fails its first attempt on every CI run so far
 

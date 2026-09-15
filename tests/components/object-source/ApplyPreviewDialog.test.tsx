@@ -47,6 +47,22 @@ let definedThemes: string[] = [];
 /** Set by a single test, to drive the one branch where the modified model is not there yet. */
 let modelIsNull = false;
 
+/**
+ * What Monaco would have written to the console, and what happened to the two models, in order.
+ *
+ * X21 was MEASURED in Chromium and not here: every successful apply logged
+ * `TextModel got disposed before DiffEditorWidget model got reset`, once. This layer can still see
+ * it, because the whole of that error is an ORDER between four calls the double makes itself, and
+ * the three of them that belong to `@monaco-editor/react` are transcribed from its shipped
+ * `dist/index.mjs` rather than invented: its unmount runs
+ * `const m = editor.getModel(); keepOriginal || m?.original.dispose(); keepModified ||
+ * m?.modified.dispose(); editor.dispose();`, so the models go while the widget still holds them.
+ * `modelDouble` raises Monaco's sentence on exactly that condition, a model disposed while it is
+ * still attached to a widget that is still alive.
+ */
+let monacoErrors: string[] = [];
+let modelLog: string[] = [];
+
 class RangeDouble implements FakeRange {
   constructor(
     readonly startLineNumber: number,
@@ -67,10 +83,36 @@ function monacoDouble() {
   };
 }
 
+interface ModelDouble {
+  attached: boolean;
+  disposed: boolean;
+  getPositionAt: (offset: number) => { lineNumber: number; column: number };
+  dispose: () => void;
+}
+
 function diffEditorDouble() {
-  const model = {
-    getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+  let widgetDisposed = false;
+  const modelDouble = (name: string): ModelDouble => {
+    const model: ModelDouble = {
+      attached: true,
+      disposed: false,
+      getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+      dispose: () => {
+        // Monaco's own assertion: the widget subscribes to its models, so a model that is still
+        // attached to a LIVE widget writes this sentence to the console when it is disposed.
+        if (model.attached && !widgetDisposed) {
+          monacoErrors.push("TextModel got disposed before DiffEditorWidget model got reset");
+        }
+        model.disposed = true;
+        modelLog.push(`dispose:${name}`);
+      },
+    };
+    return model;
   };
+
+  const original = modelDouble("original");
+  const model = modelDouble("modified");
+  let models: { original: ModelDouble; modified: ModelDouble } | null = { original, modified: model };
   const collection = {
     set: (decorations: readonly { range: FakeRange }[]) => {
       painted = decorations;
@@ -86,7 +128,21 @@ function diffEditorDouble() {
       return collection;
     },
   };
-  return { getModifiedEditor: () => modified };
+  return {
+    getModifiedEditor: () => modified,
+    getModel: () => models,
+    setModel: (next: unknown) => {
+      if (next !== null) throw new Error("the double only models the release");
+      original.attached = false;
+      model.attached = false;
+      models = null;
+      modelLog.push("release");
+    },
+    dispose: () => {
+      widgetDisposed = true;
+      modelLog.push("dispose:widget");
+    },
+  };
 }
 
 mock.module("@monaco-editor/react", () => ({
@@ -98,12 +154,35 @@ mock.module("@monaco-editor/react", () => ({
   ) {
     diffProps = props;
     const mounted = React.useRef(false);
+    const editor = React.useRef<ReturnType<typeof diffEditorDouble> | null>(null);
+    const keep = React.useRef({ original: false, modified: false });
+    keep.current = {
+      original: props.keepCurrentOriginalModel === true,
+      modified: props.keepCurrentModifiedModel === true,
+    };
     React.useEffect(() => {
       if (mounted.current) return;
       mounted.current = true;
+      editor.current = diffEditorDouble();
       props.beforeMount?.(monacoDouble());
-      props.onMount?.(diffEditorDouble(), monacoDouble());
+      props.onMount?.(editor.current, monacoDouble());
     });
+    /*
+     * The WRAPPER's unmount, transcribed from `@monaco-editor/react`'s shipped `dist/index.mjs`.
+     * It is the second half of X21: the models go first and the widget goes last, so anything that
+     * has to release the models has to have done it before this runs.
+     */
+    React.useEffect(
+      () => () => {
+        const live = editor.current;
+        if (live === null) return;
+        const models = live.getModel();
+        if (!keep.current.original) models?.original.dispose();
+        if (!keep.current.modified) models?.modified.dispose();
+        live.dispose();
+      },
+      [],
+    );
     return (
       <div>
         <textarea data-testid="diff-original" readOnly value={props.original ?? ""} />
@@ -366,6 +445,8 @@ describe("ApplyPreviewDialog", () => {
     paintCalls = 0;
     definedThemes = [];
     modelIsNull = false;
+    monacoErrors = [];
+    modelLog = [];
     handlers.onApply.mockClear();
     handlers.onRebuild.mockClear();
     handlers.onGoToError.mockClear();
@@ -1104,6 +1185,50 @@ describe("ApplyPreviewDialog", () => {
     expect(diffProps?.modifiedModelPath).toBe("libredb-apply-modified:conn/app.f(integer)/function/definition");
     expect(diffProps?.keepCurrentOriginalModel).toBeFalsy();
     expect(diffProps?.keepCurrentModifiedModel).toBeFalsy();
+  });
+
+  test("closing the dialog RELEASES the two models before anything disposes them", () => {
+    /*
+     * X21, MEASURED in Chromium on 2026-09-14: every successful apply driven through the UI wrote
+     * `TextModel got disposed before DiffEditorWidget model got reset` to the console, once. The
+     * disposal is deliberate, the ORDER was not: `@monaco-editor/react` disposes both models and
+     * only then the widget, so Monaco's own disposal path fires while the widget still holds them.
+     *
+     * Nothing is visible to the reader. It matters because it is noise on the channel Phase 3's
+     * CSP assertion reads, and it is what would stop an E2E spec asserting an empty console after
+     * an apply.
+     */
+    draw(PREVIEW);
+    expect(modelLog).toEqual([]);
+    cleanup();
+    expect(monacoErrors).toEqual([]);
+    // Released first, then disposed, then the widget: the models are still disposed, because the
+    // browser probe measured roughly 2 MB of retained text per preview when they were not.
+    expect(modelLog).toEqual(["release", "dispose:original", "dispose:modified", "dispose:widget"]);
+  });
+
+  test("the release also runs when the DIFF goes and the dialog stays open", () => {
+    // The other way this component unmounts a diff, and the one an unmount-only cleanup on the
+    // dialog would miss: the preview expires under an open dialog, `plan` goes away and the whole
+    // diff block with it while the shell stays mounted.
+    const view = draw(PREVIEW);
+    view.rerender(
+      <ApplyPreviewDialog
+        open
+        state={{ kind: "expired" }}
+        objectLabel="app.order_total(integer)"
+        partLabel="Definition"
+        address="conn/app.f(integer)/function"
+        partId="definition"
+        onApply={handlers.onApply}
+        onRebuild={handlers.onRebuild}
+        onGoToError={handlers.onGoToError}
+        onClose={handlers.onClose}
+      />,
+    );
+    expect(query("-diff")).toBeNull();
+    expect(monacoErrors).toEqual([]);
+    expect(modelLog).toEqual(["release", "dispose:original", "dispose:modified", "dispose:widget"]);
   });
 
   test("the diff is not a keyboard trap, and is read-only on both sides", () => {
