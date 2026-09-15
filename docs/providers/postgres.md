@@ -710,6 +710,9 @@ The identity comparison is everything up to and including the parenthesis that C
 It read the FIRST `)` until #789 task 31, and that ended the header early for every routine whose header carries a parenthesis before the parameter list closes, after which a change to a LATER parameter was never compared at all.
 SEVEN such shapes were measured on 18.4 by creating the object and reading `pg_get_functiondef` back, re-measured on 2026-09-15 on a `postgres:18` container answering `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1)` where every one of those renderings and their `md5(pg_get_functiondef(oid))` came back byte for byte, and all of them are ordinary PostgreSQL: a parameter `DEFAULT` holding a call, rendered `DEFAULT abs('-1'::integer)`; a `DEFAULT` holding a `)` and a `DEFAULT` holding a `(` inside a string literal; a quoted function NAME as in `app."we)ird"(a integer, b integer)`; a quoted PARAMETER name as in `app.pn("a)b" integer, c integer)`; and the two mixed-quote shapes `app.mix("a')b" integer, c integer)` and `app.mix2(a text DEFAULT '")'::text, b integer DEFAULT 1)`, which are why the scan tracks both quote kinds and has each ignore the other.
 That numeral is the only count of this population in this document and it is not maintained by hand: `PAREN_HEADER_FIXTURES` in `tests/integration/db/postgres-provider.test.ts` is the population, and a test in that file reads the sentence above out of this file and asserts the word against the array's length, so adding an eighth shape without correcting this paragraph is a RED and not a silent drift.
+One of those shapes is now BUILT by this repository rather than transcribed from a run (D77): `docker/postgres-init/03-object-fixture.sql` creates `app.dl(a text DEFAULT ')', b integer DEFAULT 1)`, and a test in the same file reads that `CREATE` out of the SQL and matches it against these constants, so the object cannot be deleted from the fixture without going red.
+Before it existed, every routine in that fixture had a header whose first `)` was also its last, so the whole scan was a guard over an empty LIVE population and only a driver double could reach the outcome it prevents.
+MEASURED against the rebuilt container on 2026-09-15, driving this provider: `md5(pg_get_functiondef(oid))` answered `0c7937f7060d7bc0c2a583af49227203`, which is the constant the suite carries; the same edit that changes the LATER parameter to `bigint` was refused `identity` with both whole headers in the sentence; and a plan built elsewhere and carrying that fork applied, raised `LB003` from the emitted unit's own post-condition, answered `applied-elsewhere` with `undone: true`, and left ONE `pg_proc` row with `oid` 16782 and `xmin` 837 unmoved, against the control of the same plan without the fork, which answered `applied`.
 A second test in that file refuses any numeral written directly in front of the word `shapes` in this document or in its own, which is the drift the paragraph below carried until 2026-09-15: it stated the count a second time in prose with nothing bound to it, so an eighth shape would have been caught here and left that sentence wrong.
 The shape a reader expects to be the dangerous one is NOT in that population and cannot be: `pg_get_functiondef` renders parameter types through `format_type(t, NULL)` and DROPS the type modifier, so a function declared `(a numeric(10,2), b varchar(9), c char(5), d time(3), e timestamp(3), f decimal(8,4), g interval hour to second(2), h bit(4))` is rendered `(a numeric, b character varying, c character, d time without time zone, e timestamp without time zone, f numeric, g interval, h bit)`, with every parenthesis gone.
 A typmod therefore only ever reaches this comparison from the text the READER submitted.
@@ -854,13 +857,22 @@ The emitted unit is one parameterless simple query and PostgreSQL runs every sta
 The build now refuses such a text, and it does so WITHOUT a splitter of ours: a dollar-quoted body may carry any number of semicolons and a `BEGIN ATOMIC` body carries them by construction, and no reader in `src/lib/sql/` can tell a separator from a character of a definition.
 The question goes to the engine instead.
 The build opens a transaction on a pooled client, poisons it with `SELECT 1/0`, parses the reader's text alone as a NAMED prepared statement, and rolls the transaction back.
-In an already-aborted block the server performs no parse analysis, no planning and no execution, and its multi-command check still runs because it precedes the aborted-block check in `exec_parse_message`, on the raw grammar parse.
+For every text that reaches this check the server performs no parse analysis, no planning and no execution, and its multi-command check still runs because it precedes the aborted-block check in `exec_parse_message`, on the raw grammar parse.
 The probe therefore understands dollar quoting, `BEGIN ATOMIC`, comments and string literals exactly the way the engine does, because it IS the engine.
+
+The aborted block is NOT a universal brake, and the clause above is bounded by the population it was measured over rather than by caution.
+Measured on 18.4 on 2026-09-15, one `BEGIN` plus `SELECT 1/0` plus a named Parse per row, with `pg_prepared_statements` counted after the `ROLLBACK`: `COMMIT`, `ROLLBACK`, `END` and `ABORT` answer no error at all, run, END the block this check opened, and leave one prepared statement behind, because `exec_parse_message` exempts a transaction-exit statement from the aborted-block check.
+An empty, whitespace-only or comment-only text answers `25P02` from Bind rather than from Parse, because the server takes its empty-parse-list branch, so the named statement IS created and survives the `ROLLBACK` on a client that then goes back to the pool.
+Neither class can reach this check, and what keeps them away is the ORDER of the build's refusals rather than the block: `routineIdentityHeader` answers the WHOLE text when it finds no closing parenthesis, so both render a header that is not the addressed routine's and are refused two refusals earlier with no round trip at all.
+So the order is load-bearing and not only the saved round trip the code comment used to give as its whole reason, and the provider's own suite asserts it.
 
 Three things are load-bearing and each one alone would turn the check into an execution: the poison, the NAME on the prepared statement, since `query({ text, values: [] })` with no name takes node-postgres's simple-query path and measured running a rider, and the rollback.
 The probe reads the borrowed client's ReadyForQuery byte first and refuses `guard` when it is anything but `I`, because opening and rolling back a transaction on a client somebody else left inside one destroys work this user was never shown.
 It asks about the SUBMITTED text alone and never about the assembled unit, which is multi-statement by construction.
-It runs at build time only: the plan is sealed and the apply never sees the source text again, so a plan carrying a rider cannot come into existence and an apply-time copy would guard an empty population.
+It runs at build time only, and the reason is what the apply HOLDS rather than an empty population.
+The plan is sealed and `applyObjectEdit` never sees the reader's text again: what it holds is the assembled unit, which is multi-statement by construction, so this check cannot be run on it at all without refusing every legitimate apply.
+The population that survives is real and it is the same one the entry guard above names, a `@libredb/studio` consumer that builds its own plan: `applyObjectEdit` sends `plan.unit.steps[0].text` verbatim, so a consumer-built plan carrying a rider still RUNS.
+What answers it is the result count below, which REPORTS such a round trip and does not prevent it.
 
 | What the Parse answered | What the build does |
 | --- | --- |
@@ -886,7 +898,14 @@ Measured on 18.4 through `pg`: the emitted unit answers four results, `[SET, DO,
 Four held for a reader's text ending in `;`, in a `--` line comment, in a newline and in `$$`, so the doubled semicolon above costs no result of its own.
 An apply that answers anything but four is NOT reported `applied`: it answers `interrupted` with `committed: "unknown"` and a sentence carrying both numbers, because statements ran, this provider cannot say which, and a retry would apply it again.
 That is what makes the `object_edit` audit event's claim as wide as the round trip rather than as wide as the plan.
-Its population is not the rider, which the build now refuses: it is this provider's own composition, and anything between it and the server that rewrites a round trip.
+Its population is not the rider a reader types, which the build now refuses.
+It is three other things: this provider's own composition, anything between it and the server that rewrites a round trip, and the consumer-built plan the entry guard above names, since `applyObjectEdit` sends `plan.unit.steps[0].text` verbatim and a `@libredb/studio` consumer can put a rider there.
+
+The arm it reports on is `interrupted` with `committed: "unknown"`, and that is a DEVIATION from what `src/lib/db/types.ts` documents that arm as, recorded here rather than left for a reader to hit.
+That arm is written for "the statement was SENT and the engine's answer never arrived", and for a count mismatch the answer DID arrive and the engine DID speak.
+It is used anyway because it is the only arm in the union whose disposition is right: statements ran, this provider cannot say which, the write is not established, and a retry would apply twice.
+`ApplyPreviewDialog` says the same thing on its own second line, "Whether it was applied is unknown: LibreDB has no answer that says whether it landed", which is true of this member; its FIRST line still reads "Whether it reached the server is unknown", which is not.
+Closing that means either a seventh outcome arm or a narrowed sentence in `src/lib/db/types.ts` and in the dialog, and it is open in the backlog.
 
 **The limit every claim on this page carries (D62).**
 Every PostgreSQL row above is a claim about 18.4.

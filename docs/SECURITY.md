@@ -266,12 +266,24 @@ repository cannot count the statements in a routine body itself: a dollar-quoted
 any number of semicolons, a `BEGIN ATOMIC` body contains them by construction, and no parser here
 can tell a statement separator from a character of the definition. So the engine is asked instead.
 The build parses the reader's submitted text alone as a NAMED prepared statement inside a
-transaction block it has already poisoned with `SELECT 1/0`, then rolls that block back: in an
-aborted block the server performs no parse analysis, no planning and no execution, and its
-multi-command check still runs because it precedes the aborted-block check in the server's own
-`exec_parse_message`. A text PostgreSQL parses as more than one statement is refused, no plan is
+transaction block it has already poisoned with `SELECT 1/0`, then rolls that block back: for every
+text that reaches this check the server performs no parse analysis, no planning and no execution,
+and its multi-command check still runs because it precedes the aborted-block check in the server's
+own `exec_parse_message`. A text PostgreSQL parses as more than one statement is refused, no plan is
 minted and nothing is sent; a server that does not answer that check is refused `unsupported`
-rather than trusted. On the apply side, a simple query answers one result per statement, so the
+rather than trusted.
+
+**The aborted block is not a universal brake, and that is why the sentence above is bounded by the
+population it was measured over.** Measured on 18.4 on 2026-09-15, one `BEGIN` plus `SELECT 1/0`
+plus a named Parse per row: `exec_parse_message` exempts a transaction-exit statement, so `COMMIT`,
+`ROLLBACK`, `END` and `ABORT` answer no error at all, run, and end the very block this check opened;
+and an empty, whitespace-only or comment-only text answers `25P02` from Bind rather than from Parse,
+so the named statement is created and survives the rollback on a client that then goes back to the
+pool. Neither class can reach this check, and the reason is the ORDER of the build's refusals rather
+than the block: the identity comparison answers two refusals earlier and renders a header that is
+not the addressed routine's for either one. So the order is load-bearing and not only a saved round
+trip, and the provider's own suite asserts that neither class reaches the wire rather than leaving
+it to a comment. On the apply side, a simple query answers one result per statement, so the
 provider counts the results it already receives and reports `interrupted` with
 `committed: "unknown"`, never a plain `applied`, when the count is not the four statements the unit
 is made of. Measured on PostgreSQL 18.4 on 2026-09-15, driven through the provider: the rider that

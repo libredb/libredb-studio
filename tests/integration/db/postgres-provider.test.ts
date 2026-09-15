@@ -5867,6 +5867,43 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         await provider.disconnect();
       });
 
+      /**
+       * THE OTHER ARM OF THAT SAME REFUSAL, WHICH NOTHING DROVE AND THE LINE GATE COULD NOT SEE
+       * (D76, wave 2 review finding 4).
+       *
+       * The `malformed` refusal converts PostgreSQL's reported position into the reader's own
+       * coordinates when there is one and answers `{ within: "none" }` when there is not. Nothing
+       * reached the second half: every 42601 this suite produced carried `position: "19"`, so the
+       * ternary FOLDED and bun's lcov recorded the whole expression as covered, `LF:1574 LH:1574`
+       * with no `DA:...,0` anywhere in the file. A 100 percent line gate cannot see an arm that
+       * shares a line with a taken one, which is why this test exists rather than a coverage run.
+       *
+       * ITS POPULATION IS D62'S, the same one the `unreadable` arm above is written for, and it is
+       * measured rather than asserted. On 18.4 every non-"multiple commands" 42601 this task could
+       * produce carried a position: `syntax error` 19, `unterminated dollar-quoted string` 104,
+       * `unterminated /* comment` 230. So no PostgreSQL reaches this arm, and a fork under this
+       * same type id that answers 42601 without one does. Guessing a position instead would be
+       * worse than saying none: Monaco silently CLAMPS an out-of-range marker rather than
+       * rejecting it, so the reader would be sent to a character that is not the one at fault.
+       */
+      test("a 42601 carrying NO position places no marker, rather than guessing one", async () => {
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [ROUTINE_ROW] });
+        mockParseAnswer = Object.assign(new Error("syntax error at end of input"), { code: "42601" });
+        const build = await provider.buildObjectEdit({
+          path: ["app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        });
+        if (build.built) throw new Error("expected a refusal");
+        expect(build.refusal.refusal).toBe("definition");
+        expect(build.refusal.code).toBe("42601");
+        expect(build.refusal.sentence).toBe("syntax error at end of input");
+        expect(build.refusal.at).toEqual({ within: "none" });
+        await provider.disconnect();
+      });
+
       test("a server that ACCEPTS the Parse is refused as UNSUPPORTED, because the count was never established", async () => {
         // No PostgreSQL answers this: an aborted block refuses every Parse. The population is
         // D62's, a wire-compatible fork, and reading silence as "one statement" is the one reading
@@ -5905,6 +5942,13 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       test("the poison's OWN error is swallowed, because raising it IS the point", async () => {
         // `SELECT 1/0` answers 22012 on a live server. It is not a failure of the check, it is the
         // check's precondition, so it is caught and discarded and the Parse still happens.
+        //
+        // THIS TEST PASSES AGAINST THE PRE-FIX PROVIDER TOO, and it is labelled rather than left
+        // to look like a regression test (wave 2 review finding 5). Measured by rebuilding the
+        // tree at the D76 commit's parent with this file on it: of the thirteen tests that commit
+        // added, nine fail there and four pass, and this is the only one of the four not already
+        // carrying the word CONTROL. It is not vacuous: post-fix it discriminates, because
+        // removing the `catch {}` around the poison makes it red.
         const provider = await connected();
         mockQueryFn = async (sql) => {
           if (sql === "SELECT 1/0") throw Object.assign(new Error("division by zero"), { code: "22012" });
@@ -6374,6 +6418,103 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         // server received. Mutating the no-answer arm to an empty string leaves the refusal in
         // place and empties the sentence, so this assertion is what makes that arm measured.
         expect(build.refusal.sentence).toContain(truncated);
+      });
+
+      /**
+       * THE LIVE PRODUCER FOR THIS SCAN, AND FOR `applied-elsewhere` ON THIS ENGINE (D77).
+       *
+       * Everything above is a constant. Each `definition` is bytes a server once answered and each
+       * `revision` is the md5 it answered for them, and a constant is a transcription: a fixture
+       * this repository never builds cannot be re-measured, and the guard reads as one over a
+       * population nothing here creates. Until this test the whole parenthesis scan, and the
+       * `applied-elsewhere` outcome it exists to prevent a reader from reaching, had no producer
+       * on this engine at all other than a driver double. Every routine in
+       * `docker/postgres-init/03-object-fixture.sql` had a header whose FIRST `)` was also its
+       * LAST, so the first-`)` reading and the real one answered the same thing for every live
+       * object here.
+       *
+       * So the fixture now BUILDS `app.dl`, and these two tests bind the file to this array: the
+       * first reads the SQL and locates the `CREATE`, and the second drives the outcome over the
+       * bytes that `CREATE` renders to. Delete the object from the fixture and the first goes red
+       * rather than the population going quietly empty again.
+       *
+       * MEASURED against that fixture on 18.4 in container `pg-p3fix` on 2026-09-15, rebuilt from
+       * this repository's own `docker/postgres-init/`, driving the real `PostgresProvider`:
+       *
+       * ```
+       * BEFORE rows for app.dl: [{"oid":16782,"xmin":"837","args":"a text, b integer"}]
+       * md5(pg_get_functiondef(oid)):  0c7937f7060d7bc0c2a583af49227203
+       * BUILD on a changed argument list: refused identity
+       *   this text declares "CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')'::text, b bigint
+       *   DEFAULT 1)" and the object being edited is "CREATE OR REPLACE FUNCTION app.dl(a text
+       *   DEFAULT ')'::text, b integer DEFAULT 1)"
+       * BUILD on a legitimate body edit: built
+       * APPLY of the consumer-built forked plan:
+       *   {"outcome":"applied-elsewhere","undone":true,"duration":4}
+       * AFTER rows for app.dl: [{"oid":16782,"xmin":"837","args":"a text, b integer"}]
+       * CONTROL, the same plan without the fork: {"outcome":"applied", ...}
+       * ```
+       *
+       * Both halves matter. The build refuses the fork, which is the scan working over a header
+       * whose parameter list closes AFTER a `)` inside a string literal; and a plan built elsewhere
+       * and carrying the fork still reaches the engine, raises `LB003` from the emitted unit's own
+       * post-condition, and is rolled back with ONE `pg_proc` row left and `xmin` unmoved. That
+       * second half is the population `applyObjectEdit`'s entry guard names, a `@libredb/studio`
+       * consumer building its own plan, and it is why this provider keeps the `applied-elsewhere`
+       * arm although no build of its own can now reach it.
+       */
+      test("the fixture this repository ships BUILDS the routine these constants describe", () => {
+        const sql = readFileSync(
+          path.join(import.meta.dir, "../../..", "docker/postgres-init/03-object-fixture.sql"),
+          "utf8",
+        );
+        // The parameter DEFAULT holding a closing parenthesis is the whole point of the object, so
+        // it is matched rather than the routine name: a fixture that kept the name and dropped the
+        // literal would leave this array's population empty again and pass a name check.
+        expect(sql).toContain("CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1)");
+        // And the constants below are the ones that object renders to, which the live run above
+        // read back from `pg_get_functiondef`.
+        const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dl(text,integer)");
+        if (fixture === undefined) throw new Error("app.dl is not in the measured population");
+        expect(fixture.definition).toContain("a text DEFAULT ')'::text, b integer DEFAULT 1)");
+        expect(createHash("md5").update(fixture.definition).digest("hex")).toBe(fixture.revision);
+      });
+
+      test("a plan built ELSEWHERE that forks that routine is `applied-elsewhere` and UNDONE", async () => {
+        const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dl(text,integer)");
+        if (fixture === undefined) throw new Error("app.dl is not in the measured population");
+        const provider = await connected();
+        mockQueryFn = async () => ({ rows: [rowFor(fixture.definition, fixture.revision)] });
+        // The consumer's starting point is a plan this provider DID mint, for a legitimate body
+        // edit, because that is the only way a caller outside this repository gets a sealed unit.
+        const legitimate = fixture.definition.replace("SELECT 1", "SELECT 2");
+        const built = await provider.buildObjectEdit({
+          path: [...fixture.path],
+          kind: "function",
+          partId: "definition",
+          text: legitimate,
+        });
+        if (!built.built) throw new Error(`expected a plan: ${built.refusal.sentence}`);
+        if (built.plan.unit.medium !== "statement") throw new Error("narrowing");
+        const step = built.plan.unit.steps[0];
+        const forked = step.text.replace(legitimate, fixture.definition.replace(...fixture.forked));
+        // THE CONTROL ON THE SETUP: the splice must actually have changed the unit, or the apply
+        // below would be driving the legitimate plan and the assertion would certify nothing.
+        expect(forked).not.toBe(step.text);
+        // The engine's own answer to that unit, measured live above: the post-condition sees an
+        // `xmin` that did not move, raises LB003, and the whole round trip rolls back.
+        mockQueryFn = async () => {
+          throw Object.assign(new Error("libredb: this apply did not change the object it was addressed to"), {
+            code: "LB003",
+          });
+        };
+        const outcome = await provider.applyObjectEdit({
+          ...built.plan,
+          unit: { medium: "statement", steps: [{ ...step, text: forked }] },
+        });
+        if (outcome.outcome !== "applied-elsewhere") throw new Error(`expected a fork, got ${outcome.outcome}`);
+        expect(outcome.undone).toBe(true);
+        await provider.disconnect();
       });
     });
   });

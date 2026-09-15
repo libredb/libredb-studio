@@ -1010,9 +1010,14 @@ const GUARDED_BATCH_STATEMENT_COUNT = 4;
 /**
  * The statement that poisons the transaction block the single-statement check parses inside (D76).
  *
- * It answers `22012 division_by_zero`, and that failure IS the mechanism: in an aborted block the
- * server performs no parse analysis, no planning and no execution, so the Parse that follows can
- * never run the reader's text.
+ * It answers `22012 division_by_zero`, and that failure IS the mechanism: for every text that
+ * reaches this check the server performs no parse analysis, no planning and no execution in an
+ * aborted block, so the Parse that follows can never run the reader's text.
+ *
+ * THE BOUND ON THAT SENTENCE IS MEASURED AND IT IS NOT CAUTION. `exec_parse_message` exempts a
+ * transaction-exit statement and takes a separate branch for a text with no statement in it, so
+ * neither is stopped by the block; what keeps both away from here is the ORDER of the refusals in
+ * `buildObjectEdit`. `countSubmittedStatements` carries the measurement and the ordering argument.
  */
 const STATEMENT_COUNT_POISON_SQL = "SELECT 1/0";
 
@@ -3499,9 +3504,18 @@ export class PostgresProvider extends SQLBaseProvider {
    * IT ASKS ABOUT THE SUBMITTED TEXT ALONE AND NEVER ABOUT THE ASSEMBLED UNIT. The unit is
    * multi-statement BY CONSTRUCTION, so probing it would refuse every legitimate edit.
    *
-   * BUILD TIME IS SUFFICIENT AND AN APPLY-TIME COPY WOULD GUARD AN EMPTY POPULATION. The plan is
-   * SEALED: `applyObjectEdit` takes only the plan and never the source text again, so a plan
-   * carrying a rider cannot come into existence.
+   * IT RUNS AT BUILD TIME ONLY, AND THE REASON IS WHAT THE APPLY HOLDS RATHER THAN AN EMPTY
+   * POPULATION. This docblock used to say a copy of this check inside `applyObjectEdit` "would
+   * guard an empty population", and `applyObjectEdit`'s own entry guard NAMES that population 130
+   * lines below, so the file disagreed with itself (wave 2 review). The population is not empty:
+   * the apply sends `plan.unit.steps[0].text` verbatim, so a `@libredb/studio` consumer that
+   * builds its own plan and puts a rider in it still RUNS one.
+   *
+   * What is true is narrower and it is about the SUBJECT. The plan is SEALED and the apply never
+   * sees the reader's text again; what it holds is the assembled unit, which is multi-statement BY
+   * CONSTRUCTION, so this check run there would refuse every legitimate apply. A copy is therefore
+   * impossible rather than unnecessary, and the consumer-built rider is REPORTED instead, by the
+   * result count the apply asserts on what came back.
    */
   private async countSubmittedStatements(text: string): Promise<SubmittedStatementCount> {
     const client = await this.pool!.connect();
@@ -3695,6 +3709,27 @@ export class PostgresProvider extends SQLBaseProvider {
     // say which, so the honest disposition is the one arm that tells a client the write is not
     // established and that retrying would apply twice. A non-array answer counts as one result,
     // which is what `pg` hands back for a single-statement query and is equally not this shape.
+    //
+    // THIS IS A DEVIATION FROM WHAT `src/lib/db/types.ts` DOCUMENTS THIS ARM AS, and it is written
+    // here rather than left to be found (wave 2 review). That arm is documented "the statement was
+    // SENT and the engine's answer never arrived", and here the answer ARRIVED and the engine
+    // spoke. It is used anyway because the union has no arm whose meaning fits better and every
+    // other one would be a worse lie: `applied` claims the plan is what ran, `refused` and
+    // `conflict` both claim nothing changed, `applied-elsewhere` claims the addressed object was
+    // not what moved, and `applied-with-collateral` requires a NON-EMPTY list of what was lost,
+    // which is exactly what a count cannot produce. The disposition this arm carries is the one
+    // that is true of a count mismatch: the write is not established and a retry applies twice.
+    //
+    // WHAT A NEW ARM WOULD COST, since that is the alternative and it was weighed rather than
+    // dismissed. The wire shape lives in `src/lib/db/types.ts` and `ApplyPreviewDialog` reads the
+    // discriminant directly, with no exhaustiveness check on `applyFrame`, so an arm added on this
+    // side alone falls into that function's `applied` tail and the reader is shown "This apply is
+    // done. The new definition is on the server." for a round trip that carried something the plan
+    // did not name. That is strictly worse than today, where the dialog's second line, which X20
+    // narrowed, already says the true thing: LibreDB holds no answer that settles whether the
+    // change landed. What is left wrong is that dialog's FIRST line, "Whether it reached the server
+    // is unknown", over a member where it demonstrably did. Both files belong to other hands and
+    // the residual is in the backlog and in `docs/providers/postgres.md`.
     const carried = Array.isArray(answered) ? answered.length : 1;
     if (carried !== GUARDED_BATCH_STATEMENT_COUNT) {
       return {

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { auditReadingFor } from "@/lib/db/object-edit";
@@ -203,12 +205,56 @@ describe("object edit apply: the audited write (control 3.6)", () => {
 
   test("the claim the log makes is the NARROW one, and the target names the address", async () => {
     // The event says an edit was applied AT THIS ADDRESS, with this strategy, and with this
-    // outcome. It does NOT say the round trip carried nothing else, and it cannot: the day-one
-    // PostgreSQL unit is a multi-statement simple query and this repository has measured itself
-    // unable to count the statements in a routine body. That limit is written on the posture page
-    // under "Notes on individual rows" rather than left for a reader of the log to discover.
+    // outcome. It does NOT say WHICH statements the round trip carried, and the reason is measured
+    // (D76): the day-one PostgreSQL unit is a multi-statement simple query, no reader in
+    // `src/lib/sql/` can count the statements in a routine body, so the count is asked of the
+    // ENGINE on both sides of the plan. The build refuses a text PostgreSQL parses as more than
+    // one statement, and the apply counts the results the round trip answered and reports
+    // `interrupted` rather than `applied` when that count is not the plan's. What survives is that
+    // a count says how many ran and never which, and that limit is written on the posture page
+    // rather than left for a reader of the log to discover. The test below is what stops that
+    // citation from dangling again.
     const events = await applyAndRead();
     expect(events[1].target).toBe("function:app/order_total(integer):definition");
     expect(events[1].details).toBe("guarded-atomic-batch");
+  });
+
+  /**
+   * THE CITATION ABOVE IS ASSERTED AND NOT WRITTEN DOWN, because the version of it that was merely
+   * written down went stale and stayed stale (D76, wave 2 review).
+   *
+   * Until this test, `src/lib/audit.ts` and the comment above both gave "this repository has
+   * measured itself unable to count the statements in a routine body" as the reason the
+   * `object_edit` claim is narrow, and pointed at a posture-page limit. The D76 fix then made the
+   * repository able to establish that count, by asking the engine instead of parsing, and changed
+   * the posture page to say so; nothing pointed the other two sites at it and both kept asserting
+   * the opposite of the page they cited. A pointer nobody reads back is a pointer that rots.
+   *
+   * So the page is read here, and the claims the two sites above cite it for are located in it. It
+   * matches on the SUBSTANCE of each sentence rather than on a whole paragraph, because a
+   * paragraph comparison fails on every wording change and teaches the next hand to delete the
+   * guard. The page is hard wrapped, so the note's whitespace is collapsed first: a sentence that
+   * happens to straddle a line break is the same sentence, and a matcher that says otherwise would
+   * be red for a reflow.
+   */
+  test("the posture page states every claim this log's docblocks cite it for", () => {
+    const page = readFileSync(path.join(import.meta.dir, "../..", "docs/SECURITY.md"), "utf8");
+    // The note this control's limits live under, so a page that dropped the section is caught
+    // before the sentence assertions below could pass against some other row's prose.
+    expect(page).toContain("## Notes on individual rows");
+    const start = page.indexOf("**3.6.**");
+    expect(start).toBeGreaterThan(-1);
+    const end = page.indexOf("## Known limits", start);
+    expect(end).toBeGreaterThan(start);
+    const note = page.slice(start, end).replace(/\s+/g, " ");
+    // The count is the ENGINE's and never a parser here, which is the sentence `src/lib/audit.ts`
+    // and the test above both reason from.
+    expect(note).toContain("This repository cannot count the statements in a routine body itself");
+    // And the limit that survives the fix: a count says how many ran, never which.
+    expect(note).toContain("says how many statements ran and never which");
+    // The non-execution claim is NARROWED to the population it was measured over, and it names the
+    // exemption rather than leaving the next reader to find it (D76, wave 2 review finding 2).
+    expect(note).toContain("for every text that reaches this check");
+    expect(note).toContain("transaction-exit");
   });
 });
