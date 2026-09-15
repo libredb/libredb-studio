@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { TUNNEL_FAR_END } from "@/lib/types";
 import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
@@ -67,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:485-492` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:534-538` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -93,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:485` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:534` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -126,8 +128,10 @@ describe("connectionFingerprint", () => {
     };
     expect(await connectionFingerprint(asTheProviderSeesIt)).toBe(await connectionFingerprint(record));
     // FAIL CLOSED, and the control the equality above needs. Without the marker the same rewritten
-    // record still answers the local endpoint and is still refused: the compare was not widened,
-    // and nothing here falls back to "equal if we cannot tell".
+    // record still answers the local endpoint and is still refused: this walk relaxes nothing and
+    // never falls back to "equal if we cannot tell". What the marker DOES admit is a case this
+    // arithmetic cannot see - a pooled tunnel opened for another address, measured and stated on
+    // `tunnelledConnection` in `src/lib/db/factory.ts`.
     expect(await connectionFingerprint({ ...record, host: "127.0.0.1", port: 54_321 })).not.toBe(
       await connectionFingerprint(record),
     );
@@ -245,5 +249,136 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(bare)).not.toBe(
       await connectionFingerprint({ ...bare, sshTunnel: { ...BASTION, enabled: false } }),
     );
+  });
+});
+
+/**
+ * The docblock on `WithTunnelFarEnd` argues that the far end must NOT be a field on
+ * `DatabaseConnection`, and the whole argument rests on three named maps being exhaustive over
+ * `keyof DatabaseConnection`. The argument was right and every one of the three names was wrong:
+ * two of them (`CONNECTION_FIELD_RELEVANCE`, `CONNECTION_FIELD_CLASSES`) existed nowhere in the
+ * repository, and the third (`connectionFields`) is a per-engine UI field list in
+ * `src/lib/db-ui-config.ts`, so a reader who greps the file it is attributed to finds something
+ * that is not a `keyof` map and concludes the argument is unsound.
+ *
+ * A prose pointer nobody executes rots the moment a map is renamed, so the names are held in one
+ * place here and checked from both sides: the docblock must name exactly this table, and every row
+ * of the table must be a real `Record<keyof DatabaseConnection, ...>` declaration in the file it
+ * names. Renaming any of the three then fails here with the name to write.
+ */
+const KEYOF_CONNECTION_READERS: { identifier: string; file: string }[] = [
+  { identifier: "FIELD_OWNERSHIP", file: "src/hooks/use-connection-form.ts" },
+  { identifier: "CONNECTION_RELEVANCE", file: "src/hooks/use-connection-payload.ts" },
+  { identifier: "CONNECTION_FIELDS", file: "src/lib/storage/connection-secrets.ts" },
+];
+
+describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof DatabaseConnection", () => {
+  const repoRoot = join(import.meta.dir, "../../../..");
+  const docblock = (() => {
+    const source = readFileSync(join(repoRoot, "src/lib/types.ts"), "utf8");
+    const start = source.indexOf("Carries {@link TUNNEL_FAR_END}");
+    const end = source.indexOf("export interface WithTunnelFarEnd");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return source
+      .slice(start, end)
+      .replace(/^\s*\*/gm, "")
+      .replace(/\s+/g, " ");
+  })();
+
+  test("the docblock names exactly the identifiers and files in the table", () => {
+    const named = [...docblock.matchAll(/`([A-Za-z_][A-Za-z0-9_]*)` in `(src\/[A-Za-z0-9_./-]+\.ts)`/g)].map(
+      (match) => `${match[1]} in ${match[2]}`,
+    );
+
+    expect(named.length).toBeGreaterThan(0);
+    expect(named).toEqual(KEYOF_CONNECTION_READERS.map((row) => `${row.identifier} in ${row.file}`));
+  });
+
+  test("every named map is really declared as Record<keyof DatabaseConnection, ...>", () => {
+    const missing = KEYOF_CONNECTION_READERS.filter((row) => {
+      const source = readFileSync(join(repoRoot, row.file), "utf8");
+      return !source.includes(`${row.identifier}: Record<keyof DatabaseConnection,`);
+    }).map((row) => `${row.identifier} in ${row.file}`);
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * This module and this test file cite `src/lib/db/factory.ts` BY LINE, and that pointer rots in
+ * silence: any insertion above the cited line invalidates it from a hand nowhere near this file.
+ * It happened here. The X23 commit inserted thirty-four lines above the tunnel branch, and the
+ * four pointers at line 485 it left behind now name `const cacheKey = connection.id;` and a
+ * `@param` line inside a docblock.
+ *
+ * The guard holds every number in ONE place, the cited file itself: the table names the ANCHOR,
+ * the test greps it and derives the number the prose must be writing. A correct renumbering costs
+ * no edit here and a stale one fails with the number to write. It is the shape
+ * `tests/unit/lib/api/object-route-edit.test.ts` already uses for `src/lib/api/object-route.ts`.
+ *
+ * `after` exists because the tunnel branch is written three times in `factory.ts` - once in each
+ * rewrite site - so the anchor alone is ambiguous and the scope has to say which one.
+ *
+ * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose. Two other `factory.ts` citations went
+ * stale in the same commit, in `src/lib/api/object-edit-plan-token.ts` and `docs/AGENT_GUIDE.md`,
+ * and both belong to another owner; a repo-wide version of this check belongs with whoever owns
+ * the repository's lint surface rather than with this entry.
+ */
+const FACTORY = "src/lib/db/factory.ts";
+const GET_OR_CREATE = "export async function getOrCreateProvider(";
+const TUNNEL_BRANCH = "if (connection.sshTunnel?.enabled && connection.host && connection.port) {";
+const TUNNEL_REWRITE = "effectiveConnection = tunnelledConnection(connection, farEnd, tunnel);";
+
+type CitedFactoryLine = {
+  /** The path exactly as the prose writes it, which differs between the module and its test. */
+  as: string;
+  /** A line that is unique in `factory.ts`, from which the anchors below are searched forward. */
+  after: string;
+  /** The line the citation means, or the first and last line when the citation is a range. */
+  anchor: string | [string, string];
+};
+
+const CITED_FACTORY_LINES: CitedFactoryLine[] = [
+  // `enabled` is framed because this branch tests exactly that flag before anything is rewritten.
+  { as: "src/lib/db/factory.ts", after: GET_OR_CREATE, anchor: TUNNEL_BRANCH },
+  { as: "factory.ts", after: GET_OR_CREATE, anchor: TUNNEL_BRANCH },
+  // The rewrite itself, cited as a range: the branch through the call that replaces the endpoint.
+  { as: "src/lib/db/factory.ts", after: GET_OR_CREATE, anchor: [TUNNEL_BRANCH, TUNNEL_REWRITE] },
+  { as: "factory.ts", after: GET_OR_CREATE, anchor: [TUNNEL_BRANCH, TUNNEL_REWRITE] },
+];
+
+describe("the factory.ts lines the fingerprint module and its test cite", () => {
+  const repoRoot = join(import.meta.dir, "../../../..");
+  const factoryLines = readFileSync(join(repoRoot, FACTORY), "utf8").split("\n");
+  const citing = ["src/lib/db/connection-fingerprint.ts", "tests/unit/lib/db/connection-fingerprint.test.ts"];
+
+  const linesOf = (anchor: string, from: number): number[] =>
+    factoryLines.flatMap((line, index) => (index + 1 > from && line.includes(anchor) ? [index + 1] : []));
+  const scopeOf = (site: CitedFactoryLine): number[] => linesOf(site.after, 0);
+  const citationOf = (site: CitedFactoryLine): string => {
+    const from = scopeOf(site)[0] ?? 0;
+    const anchors = Array.isArray(site.anchor) ? site.anchor : [site.anchor];
+    return `${site.as}:${anchors.map((anchor) => linesOf(anchor, from)[0]).join("-")}`;
+  };
+
+  test("every scope anchor sits on exactly one line of factory.ts", () => {
+    const ambiguous = CITED_FACTORY_LINES.filter((site) => scopeOf(site).length !== 1).map((site) => site.after);
+    expect(ambiguous).toEqual([]);
+  });
+
+  test("every cited factory.ts line is the line its anchor actually sits on", () => {
+    const expected = new Set(CITED_FACTORY_LINES.map(citationOf));
+    const stale = citing.flatMap((file) => {
+      const cited = readFileSync(join(repoRoot, file), "utf8").match(/[A-Za-z0-9_./-]*factory\.ts:\d+(?:-\d+)?/g) ?? [];
+      return [...new Set(cited)].filter((citation) => !expected.has(citation)).map((c) => `${file} :: ${c}`);
+    });
+    expect(stale).toEqual([]);
+  });
+
+  test("the population is not empty, so a guard that certifies nothing goes red", () => {
+    const cited = citing.flatMap(
+      (file) => readFileSync(join(repoRoot, file), "utf8").match(/[A-Za-z0-9_./-]*factory\.ts:\d+(?:-\d+)?/g) ?? [],
+    );
+    expect(cited.length).toBe(CITED_FACTORY_LINES.length);
   });
 });

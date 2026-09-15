@@ -200,7 +200,8 @@ export async function createDatabaseProvider(
 /**
  * The connection a provider is built with when its traffic goes through an SSH tunnel: `host`
  * and `port` point at the tunnel's LOCAL endpoint, which is where the driver must dial, and the
- * address that endpoint forwards to travels with them under `TUNNEL_FAR_END`.
+ * address this factory ASKED that endpoint to forward to travels with them under
+ * `TUNNEL_FAR_END`.
  *
  * The far end is carried because the rewrite alone made the whole tunnelled population unable to
  * edit anything (X23). A provider seals every object edit plan with
@@ -218,6 +219,18 @@ export async function createDatabaseProvider(
  * `base` is separate from `farEnd` because `acquireExecutionProfileProvider` has already
  * substituted the agent credential onto the connection by the time it gets here, while the
  * address it forwarded to is the record's.
+ *
+ * THE LIMIT, stated rather than left to be discovered, and open in the backlog. `farEnd` is the
+ * address the CALLER asked for and never one read back from `tunnel`: `TunnelInfo` carries no
+ * `remoteHost`/`remotePort`, and `createSSHTunnel` pools by connection id ALONE, so a second
+ * provider on a live id is handed the forward the first one opened. MEASURED 2026-09-15 against
+ * the live bastion, no mocks: a provider built on the id of a tunnel to `pg-p3fix:5432` with the
+ * record changed to `db-elsewhere.invalid:6543` dialled the existing forward, answered
+ * `libredb_dev` at `172.23.0.2`, and sealed `db-elsewhere.invalid:6543` - which is exactly what
+ * the edit routes recompute, so that plan verifies against a machine the statement never reaches.
+ * Before X23 the same case was refused, by the accident of an unequal digest rather than by a
+ * check. Closing it needs the tunnel to say what it actually forwards to, which is
+ * `src/lib/ssh/tunnel.ts` and not this file.
  */
 function tunnelledConnection(
   base: DatabaseConnection,

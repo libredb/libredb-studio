@@ -178,7 +178,15 @@ export interface SSHTunnelConfig {
  */
 export const TUNNEL_FAR_END: unique symbol = Symbol("libredb.tunnelFarEnd");
 
-/** The far side of an SSH forward: the address the bastion opens on the reader's behalf. */
+/**
+ * The far side of an SSH forward AS THE FACTORY ASKED FOR IT: the `host` and `port` it passed to
+ * `createSSHTunnel` for this connection, which is the record's own address.
+ *
+ * It is not read back from the forward, and the two can differ. `createSSHTunnel` pools by
+ * connection id ALONE, so a second provider on that id is handed whatever the first one opened,
+ * whatever address it asks for. The limit and the live measurement behind it are stated on
+ * `tunnelledConnection` in `src/lib/db/factory.ts`.
+ */
 export interface TunnelFarEnd {
   readonly host: string;
   readonly port: number;
@@ -189,8 +197,8 @@ export interface TunnelFarEnd {
  * `DatabaseConnection` itself.
  *
  * `keyof DatabaseConnection` is a WRITE LIST with three exhaustive readers -
- * `connectionFields` in `src/hooks/use-connection-form.ts`, `CONNECTION_FIELD_RELEVANCE` in
- * `src/hooks/use-connection-payload.ts` and `CONNECTION_FIELD_CLASSES` in
+ * `FIELD_OWNERSHIP` in `src/hooks/use-connection-form.ts`, `CONNECTION_RELEVANCE` in
+ * `src/hooks/use-connection-payload.ts` and `CONNECTION_FIELDS` in
  * `src/lib/storage/connection-secrets.ts` - and each of them answers a question about what a
  * USER may fill in, send and have stored. This value is none of those things, so adding it
  * there would have made all three classify something they never see. Intersecting instead keeps

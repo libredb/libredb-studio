@@ -246,12 +246,18 @@ against", so it is named in the row above rather than left as an implementation 
 a change to the frame is a change to this control. Ten fields are hashed and each one, changed alone,
 sends the same approved statement somewhere else: `type`, `host`, `port`, `database`, `user`, the
 `connectionString` that overrides all of those when a record carries one, Trino's session `schema`,
-Oracle's `serviceName`, a MSSQL `instanceName`, and the SSH tunnel's route, which the provider
-factory rewrites `host` and `port` to before the driver ever opens. The connection's `id` and `name`
-are deliberately OUT, because a caller supplies them, and so is the password, because rotating a
-credential must not invalidate a plan built five minutes earlier. Both of the last two additions came
-from external review of the change that introduced the control, each with a colliding pair measured
-against the real module, so this list is a measured floor rather than a design intention.
+Oracle's `serviceName`, a MSSQL `instanceName`, and the SSH tunnel's ROUTE - its four addressing
+fields, because the same `db:5432` reached through two different bastions is two different databases.
+`host` and `port` are the FAR END on both sides of the compare. The provider factory rewrites a
+tunnelled record to the tunnel's loopback endpoint before the driver opens, so it carries the far end
+alongside that rewrite and the seal hashes the far end, never the ephemeral local port, which is a
+property of this process and not of the server. The measured limit of that, open in the backlog: the
+far end is the address the factory ASKED the bastion to forward to, and a tunnel pooled under the same
+connection id may be forwarding somewhere else. The connection's `id` and `name` are deliberately OUT,
+because a caller supplies them, and so is the password, because rotating a credential must not
+invalidate a plan built five minutes earlier. Both of the last two additions came from external review
+of the change that introduced the control, each with a colliding pair measured against the real
+module, so this list is a measured floor rather than a design intention.
 
 **What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
 parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the
