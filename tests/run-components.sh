@@ -310,6 +310,7 @@ run_group "Group 15/16: Remaining components" \
   tests/components/ResultsGrid.test.tsx \
   tests/components/SchemaDiagram.test.tsx \
   tests/components/DataProfiler.test.tsx \
+  tests/components/ShortcutsDialog.test.tsx \
   tests/components/schema-explorer/SchemaExplorer.test.tsx \
   tests/components/schema-explorer/ColumnList.test.tsx \
   tests/components/sidebar/ConnectionItem.test.tsx \

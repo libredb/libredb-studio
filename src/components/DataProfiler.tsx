@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 
 interface DataProfilerProps {
   isOpen: boolean;
@@ -214,221 +215,236 @@ export function DataProfiler({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        {/*
+    <>
+      {/*
+        Mounted only while the profiler is open (#746) - it unmounts, listener and all, the
+        same instant `isOpen` does, matching the Escape effect above. This is what makes it
+        reachable from the embedded workspace too: that shell renders this component but not
+        `Studio.tsx`, so there is nowhere else to mount it that would still cover both hosts.
+      */}
+      <ShortcutsDialog />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col overflow-hidden">
+          {/* Header */}
+          {/*
           `shrink-0` and `relative z-10`, and the title row `min-w-0` with the table
           name truncating: the card is `overflow-hidden`, so a header that shrinks or
           overflows takes its close control out of reach along with it - and the names
           that overflow it are exactly the ones the profile route fails on (a Redis key
           prefix is a whole glob, not an identifier).
         */}
-        <div className="relative z-10 shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline">
-          <div className="flex min-w-0 items-center gap-2">
-            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-hue-cyan" />
-            <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
-            <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
+          <div className="relative z-10 shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline">
+            <div className="flex min-w-0 items-center gap-2">
+              <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-hue-cyan" />
+              <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
+              <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1">
+              {profile && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs font-medium text-fg-tertiary hover:text-fg-bright gap-1.5"
+                    >
+                      <Download strokeWidth={1.5} className="w-3 h-3" />
+                      Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
+                    <DropdownMenuItem onClick={() => exportProfile("csv")} className="text-xs cursor-pointer">
+                      Export as CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => exportProfile("json")} className="text-xs cursor-pointer">
+                      Export as JSON
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              <button
+                onClick={onClose}
+                aria-label="Close data profiler"
+                className="shrink-0 p-1 rounded hover:bg-fill text-fg-muted"
+              >
+                <X strokeWidth={1.5} className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
-            {profile && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs font-medium text-fg-tertiary hover:text-fg-bright gap-1.5"
-                  >
-                    <Download strokeWidth={1.5} className="w-3 h-3" />
-                    Export
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
-                  <DropdownMenuItem onClick={() => exportProfile("csv")} className="text-xs cursor-pointer">
-                    Export as CSV
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => exportProfile("json")} className="text-xs cursor-pointer">
-                    Export as JSON
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+          {/* Content */}
+          <div className="flex-1 overflow-auto p-5 space-y-4">
+            {isLoading && (
+              <div className="flex items-center justify-center gap-2 py-12 text-fg-muted">
+                <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
+                <span className="text-xs">Profiling {tableName}...</span>
+              </div>
             )}
 
-            <button
-              onClick={onClose}
-              aria-label="Close data profiler"
-              className="shrink-0 p-1 rounded hover:bg-fill text-fg-muted"
-            >
-              <X strokeWidth={1.5} className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-auto p-5 space-y-4">
-          {isLoading && (
-            <div className="flex items-center justify-center gap-2 py-12 text-fg-muted">
-              <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
-              <span className="text-xs">Profiling {tableName}...</span>
-            </div>
-          )}
-
-          {error && (
-            <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger flex items-center gap-2">
-              <CircleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
-              {error}
-            </div>
-          )}
-
-          {profile && (
-            <>
-              {/* Summary Stats */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-muted">Total Rows</p>
-                  <p className="text-xs font-medium text-fg mt-1">{profile.totalRows.toLocaleString()}</p>
-                </div>
-                <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-muted">Columns</p>
-                  <p className="text-xs font-medium text-fg mt-1">{profile.columns.length}</p>
-                </div>
-                <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-muted">Avg Null %</p>
-                  <p className="text-xs font-medium text-fg mt-1">
-                    {profile.columns.length > 0
-                      ? Math.round(profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length)
-                      : 0}
-                    %
-                  </p>
-                </div>
+            {error && (
+              <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger flex items-center gap-2">
+                <CircleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+                {error}
               </div>
+            )}
 
-              {/* Column Profiles */}
-              <div className="space-y-2">
-                <h3 className="text-xs font-medium text-fg-tertiary">Column Profiles</h3>
-                {profile.columns.map((col) => (
-                  <div key={col.name} className="bg-surface rounded-lg p-3 border border-hairline">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Hash strokeWidth={1.5} className="w-3 h-3 text-hue-blue" />
-                        <span className="text-xs font-medium text-fg">{col.name}</span>
-                        {col.type && <span className="text-xs text-fg-muted font-mono">{col.type}</span>}
-                        {sensitiveColumnNames.has(col.name) && (
-                          <span title="Sensitive column - values masked">
-                            <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple" />
-                          </span>
-                        )}
+            {profile && (
+              <>
+                {/* Summary Stats */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-surface rounded-lg p-3 border border-hairline">
+                    <p className="text-xs font-medium text-fg-muted">Total Rows</p>
+                    <p className="text-xs font-medium text-fg mt-1">{profile.totalRows.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-surface rounded-lg p-3 border border-hairline">
+                    <p className="text-xs font-medium text-fg-muted">Columns</p>
+                    <p className="text-xs font-medium text-fg mt-1">{profile.columns.length}</p>
+                  </div>
+                  <div className="bg-surface rounded-lg p-3 border border-hairline">
+                    <p className="text-xs font-medium text-fg-muted">Avg Null %</p>
+                    <p className="text-xs font-medium text-fg mt-1">
+                      {profile.columns.length > 0
+                        ? Math.round(
+                            profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length,
+                          )
+                        : 0}
+                      %
+                    </p>
+                  </div>
+                </div>
+
+                {/* Column Profiles */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-medium text-fg-tertiary">Column Profiles</h3>
+                  {profile.columns.map((col) => (
+                    <div key={col.name} className="bg-surface rounded-lg p-3 border border-hairline">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Hash strokeWidth={1.5} className="w-3 h-3 text-hue-blue" />
+                          <span className="text-xs font-medium text-fg">{col.name}</span>
+                          {col.type && <span className="text-xs text-fg-muted font-mono">{col.type}</span>}
+                          {sensitiveColumnNames.has(col.name) && (
+                            <span title="Sensitive column - values masked">
+                              <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple" />
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs text-fg-muted">{col.distinctCount.toLocaleString()} distinct</span>
                       </div>
-                      <span className="text-xs text-fg-muted">{col.distinctCount.toLocaleString()} distinct</span>
-                    </div>
 
-                    {col.error ? (
-                      <p className="text-xs text-warning">{col.error}</p>
-                    ) : (
-                      <>
-                        {/* Null bar */}
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <div className="flex-1 h-1.5 bg-overlay rounded-full overflow-hidden">
-                            <div
+                      {col.error ? (
+                        <p className="text-xs text-warning">{col.error}</p>
+                      ) : (
+                        <>
+                          {/* Null bar */}
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="flex-1 h-1.5 bg-overlay rounded-full overflow-hidden">
+                              <div
+                                className={cn(
+                                  "h-full rounded-full transition-all",
+                                  col.nullPercent > 50
+                                    ? "bg-danger-tint"
+                                    : col.nullPercent > 20
+                                      ? "bg-warning-tint"
+                                      : "bg-success-tint",
+                                )}
+                                style={{ width: `${100 - col.nullPercent}%` }}
+                              />
+                            </div>
+                            <span
                               className={cn(
-                                "h-full rounded-full transition-all",
+                                "text-xs font-mono w-10 text-right",
                                 col.nullPercent > 50
-                                  ? "bg-danger-tint"
+                                  ? "text-danger"
                                   : col.nullPercent > 20
-                                    ? "bg-warning-tint"
-                                    : "bg-success-tint",
+                                    ? "text-warning"
+                                    : "text-success",
                               )}
-                              style={{ width: `${100 - col.nullPercent}%` }}
-                            />
+                            >
+                              {col.nullPercent}% null
+                            </span>
                           </div>
-                          <span
-                            className={cn(
-                              "text-xs font-mono w-10 text-right",
-                              col.nullPercent > 50
-                                ? "text-danger"
-                                : col.nullPercent > 20
-                                  ? "text-warning"
-                                  : "text-success",
-                            )}
-                          >
-                            {col.nullPercent}% null
-                          </span>
-                        </div>
 
-                        {/* Min/Max */}
-                        <div className="flex gap-4 text-xs">
-                          {col.minValue &&
-                            (() => {
-                              const rule = sensitiveColumnNames.get(col.name);
-                              const display = rule ? maskValue(col.minValue, rule) : col.minValue.substring(0, 30);
-                              return (
-                                <span className="text-fg-muted">
-                                  min:{" "}
-                                  <span className={cn("font-mono", rule ? "text-fg-muted italic" : "text-fg-tertiary")}>
+                          {/* Min/Max */}
+                          <div className="flex gap-4 text-xs">
+                            {col.minValue &&
+                              (() => {
+                                const rule = sensitiveColumnNames.get(col.name);
+                                const display = rule ? maskValue(col.minValue, rule) : col.minValue.substring(0, 30);
+                                return (
+                                  <span className="text-fg-muted">
+                                    min:{" "}
+                                    <span
+                                      className={cn("font-mono", rule ? "text-fg-muted italic" : "text-fg-tertiary")}
+                                    >
+                                      {display}
+                                    </span>
+                                  </span>
+                                );
+                              })()}
+                            {col.maxValue &&
+                              (() => {
+                                const rule = sensitiveColumnNames.get(col.name);
+                                const display = rule ? maskValue(col.maxValue, rule) : col.maxValue.substring(0, 30);
+                                return (
+                                  <span className="text-fg-muted">
+                                    max:{" "}
+                                    <span
+                                      className={cn("font-mono", rule ? "text-fg-muted italic" : "text-fg-tertiary")}
+                                    >
+                                      {display}
+                                    </span>
+                                  </span>
+                                );
+                              })()}
+                          </div>
+
+                          {/* Sample Values */}
+                          {col.sampleValues && col.sampleValues.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {col.sampleValues.map((val, i) => {
+                                const rule = sensitiveColumnNames.get(col.name);
+                                const display = rule ? maskValue(val, rule) : val.substring(0, 20);
+                                return (
+                                  <span
+                                    key={i}
+                                    className={cn(
+                                      "text-xs px-1.5 py-0.5 bg-overlay rounded font-mono",
+                                      rule ? "text-fg-muted italic" : "text-fg-tertiary",
+                                    )}
+                                  >
                                     {display}
                                   </span>
-                                </span>
-                              );
-                            })()}
-                          {col.maxValue &&
-                            (() => {
-                              const rule = sensitiveColumnNames.get(col.name);
-                              const display = rule ? maskValue(col.maxValue, rule) : col.maxValue.substring(0, 30);
-                              return (
-                                <span className="text-fg-muted">
-                                  max:{" "}
-                                  <span className={cn("font-mono", rule ? "text-fg-muted italic" : "text-fg-tertiary")}>
-                                    {display}
-                                  </span>
-                                </span>
-                              );
-                            })()}
-                        </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
 
-                        {/* Sample Values */}
-                        {col.sampleValues && col.sampleValues.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {col.sampleValues.map((val, i) => {
-                              const rule = sensitiveColumnNames.get(col.name);
-                              const display = rule ? maskValue(val, rule) : val.substring(0, 20);
-                              return (
-                                <span
-                                  key={i}
-                                  className={cn(
-                                    "text-xs px-1.5 py-0.5 bg-overlay rounded font-mono",
-                                    rule ? "text-fg-muted italic" : "text-fg-tertiary",
-                                  )}
-                                >
-                                  {display}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </>
+                {/* AI Summary */}
+                {(aiSummary || isAiLoading) && (
+                  <div className="bg-hue-cyan-tint/5 border border-hue-cyan-tint/10 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />
+                      <span className="text-xs font-medium text-hue-cyan">AI Analysis</span>
+                      {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-hue-cyan" />}
+                    </div>
+                    {aiSummary && (
+                      <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
                     )}
                   </div>
-                ))}
-              </div>
-
-              {/* AI Summary */}
-              {(aiSummary || isAiLoading) && (
-                <div className="bg-hue-cyan-tint/5 border border-hue-cyan-tint/10 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />
-                    <span className="text-xs font-medium text-hue-cyan">AI Analysis</span>
-                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-hue-cyan" />}
-                  </div>
-                  {aiSummary && (
-                    <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

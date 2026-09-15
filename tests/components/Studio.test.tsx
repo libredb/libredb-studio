@@ -1642,6 +1642,16 @@ describe("Studio", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/monitoring");
   });
 
+  test("CommandPalette onShowShortcuts opens the shortcuts dialog", () => {
+    const { getByText, queryByText } = render(<Studio />);
+    expect(queryByText("Keyboard Shortcuts")).toBeNull();
+
+    const fn = capturedCommandPaletteProps.onShowShortcuts as () => void;
+    act(() => fn());
+
+    expect(getByText("Keyboard Shortcuts")).not.toBeNull();
+  });
+
   // Awaited because the diagram is code-split: opening it resolves a dynamic import
   // before the component can mount.
   test("CommandPalette onShowDiagram opens diagram", async () => {

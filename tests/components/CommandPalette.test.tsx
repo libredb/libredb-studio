@@ -116,6 +116,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof CommandPalette>
     onFormatQuery: mock(() => {}),
     onSaveQuery: mock(() => {}),
     onAskAgent: mock(() => {}),
+    onShowShortcuts: mock(() => {}),
     onLogout: mock(() => {}),
     ...overrides,
   };
@@ -444,6 +445,19 @@ describe("CommandPalette", () => {
     const saveItem = getByText("Save Current Query").closest('[role="option"]');
     expect(saveItem).not.toBeNull();
     fireEvent.click(saveItem!);
+  });
+
+  test("Keyboard Shortcuts action callback fires via runAction", () => {
+    const onShowShortcuts = mock(() => {});
+    const props = createDefaultProps({ onShowShortcuts });
+    const { getByText } = render(<CommandPalette {...props} />);
+
+    // Open dialog
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+
+    const shortcutsItem = getByText("Keyboard Shortcuts").closest('[role="option"]');
+    expect(shortcutsItem).not.toBeNull();
+    fireEvent.click(shortcutsItem!);
   });
 
   /**

@@ -13,6 +13,7 @@ import { SchemaExplorer } from "@/components/schema-explorer";
 import { ConnectionModal } from "@/components/ConnectionModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
+import { ShortcutsDialog, type ShortcutsDialogRef } from "@/components/ShortcutsDialog";
 import { DataImportModal } from "@/components/DataImportModal";
 import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
 import { DataProfiler } from "@/components/DataProfiler";
@@ -98,6 +99,7 @@ const SchemaDiagram = React.lazy(
 
 export default function Studio() {
   const queryEditorRef = useRef<QueryEditorRef>(null);
+  const shortcutsDialogRef = useRef<ShortcutsDialogRef>(null);
   const router = useRouter();
   const { toast } = useToast();
 
@@ -1336,8 +1338,11 @@ export default function Studio() {
         onFormatQuery={() => queryEditorRef.current?.format()}
         onSaveQuery={() => setIsSaveQueryModalOpen(true)}
         onAskAgent={agentEnabled ? askAgentAboutStatement : undefined}
+        onShowShortcuts={() => shortcutsDialogRef.current?.open()}
         onLogout={handleLogout}
       />
+
+      <ShortcutsDialog ref={shortcutsDialogRef} />
 
       <MobileNav
         activeTab={activeMobileTab}

@@ -791,6 +791,27 @@ describe("DataProfiler", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  // ── Shortcuts dialog (#746) ────────────────────────────────────────────────
+
+  test("? opens the shortcuts dialog while the profiler is open", () => {
+    const props = createDefaultProps({ isOpen: true });
+    const { queryByText } = render(<DataProfiler {...props} />);
+    expect(queryByText("Keyboard Shortcuts")).toBeNull();
+
+    fireEvent.keyDown(document, { key: "?" });
+
+    expect(queryByText("Keyboard Shortcuts")).not.toBeNull();
+  });
+
+  test("? does nothing while the profiler is closed", () => {
+    const props = createDefaultProps({ isOpen: false });
+    const { queryByText } = render(<DataProfiler {...props} />);
+
+    fireEvent.keyDown(document, { key: "?" });
+
+    expect(queryByText("Keyboard Shortcuts")).toBeNull();
+  });
+
   // Same rule as every other connection-bearing request: a managed (seed)
   // connection is sent as its seed id, because the copy the browser holds has had
   // `password` and `connectionString` stripped. Sending the object made
