@@ -30,7 +30,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
-import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { AGENT_HISTORY_MAX_CONVERSATIONS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -245,6 +245,18 @@ describe("docs/AGENT_DATA_FLOW.md states the frozen ceilings as they are", () =>
     const row = DATA_FLOW.split("\n").find((line) => line.includes(`\`${bound}\``));
     expect(row).toBeDefined();
     expect(row).toContain(`${expected}, by workflow`);
+  });
+});
+
+describe("the guide's history bound is the retention constant", () => {
+  const AGENT_GUIDE = read("docs/AGENT_GUIDE.md");
+
+  test("the number in the newest-conversations sentence is AGENT_HISTORY_MAX_CONVERSATIONS", () => {
+    // Prose is the one part nothing else checks: "50" could become "5" here and
+    // every gate stays green, which is exactly the drift this guard exists for.
+    const match = AGENT_GUIDE.match(/keeps the (\d+) newest conversations/);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(AGENT_HISTORY_MAX_CONVERSATIONS);
   });
 });
 

@@ -28,9 +28,8 @@ needs the mechanism behind it, it links there instead of restating it.
 - [The budget meter's numbers](#the-budget-meters-numbers)
 - [When the model is refused](#when-the-model-is-refused)
 - [Running the agent on a local model (Ollama)](#running-the-agent-on-a-local-model-ollama)
+- [Returning to earlier conversations](#returning-to-earlier-conversations)
 - [What the agent does not do](#what-the-agent-does-not-do)
-
----
 
 ## Where the agent is
 
@@ -902,6 +901,26 @@ recommendation copied from a vendor page:
 
 Reproduce either reading against your own endpoint before trusting it here — that is the whole point
 of the probe existing.
+
+---
+
+## Returning to earlier conversations
+
+A finished run stays listed after it ends. The **History** button in the rail's header unfolds the
+conversations this account has finished, newest first; each row names the latest question, its step
+count, whether it answered and when it ended.
+
+- **A conversation is its steps.** Open one to see every question in it, numbered, and read any
+  step's report — its claims, the answer statement it handed over and its closing words — without
+  starting a new run. The report shown is the run's own ledger, the same
+  `GET /api/agent/runs/{runId}` the live rail reads.
+- **The list is yours alone.** It is scoped to the signed-in account and lists finished runs only: a
+  run that is still going is the live timeline, not history.
+- **It is bounded, and pages rather than sprawls.** The list keeps the 50 newest conversations and
+  serves them in pages; **Load more** fetches the next one. That number is a listing bound, not a
+  deletion — a run you can still name by id is still openable.
+- **History is the index, not the record.** A reopened report reads the run's own ledger, so the
+  listing can never contradict what the run actually recorded.
 
 ---
 

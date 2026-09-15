@@ -1052,6 +1052,55 @@ session; `404` when this server runs no agents.
 
 ---
 
+#### GET /api/agent/runs
+
+The finished conversations the calling session can reopen, newest first. This is the **history
+index**, not the run record: each conversation carries its steps (run id, objective, workflow, mode,
+status, whether it answered, connection, timestamps) so the list needs no per-run ledger read, and a
+reopened report is the `GET /api/agent/runs/{runId}` below.
+
+**Authentication:** Required, and scoped to the calling session — a user can only list their own
+runs. `404` when this server runs no agents, `401` without a session.
+
+**Query parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | number | No | Page size, default 20, clamped to 100 at most. A value that is not a positive integer is refused with `400` |
+| `cursor` | string | No | The opaque cursor the previous page returned; absent means the newest page. An unreadable value is refused with `400` |
+
+**Response (200 OK):**
+
+```json
+{
+  "conversations": [
+    {
+      "threadId": "arun_…",
+      "steps": [
+        {
+          "runId": "arun_…",
+          "objective": "Why is checkout slow?",
+          "workflowType": "investigation",
+          "mode": "agent",
+          "status": "succeeded",
+          "answered": true,
+          "connectionId": "seed:sample",
+          "createdAtMs": 1740000000000,
+          "updatedAtMs": 1740000120000
+        }
+      ]
+    }
+  ],
+  "nextCursor": "1740000120000.arun_…"
+}
+```
+
+`steps` is oldest first within a conversation; conversations are newest first overall. `nextCursor`
+is `null` when there is no page after this one. The list is bounded to the 50 newest conversations —
+a listing bound, not a deletion.
+
+---
+
 #### POST /api/agent/runs
 
 Opens a run and returns immediately; the drive happens in the background.

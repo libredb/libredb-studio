@@ -1603,3 +1603,47 @@ export interface AgentRunRecord {
   /** The run's ledger, in order. The only history there is. */
   readonly events: readonly AgentRunEvent[];
 }
+
+/**
+ * One step of a finished conversation, as the history surface needs it.
+ *
+ * Carried by `AgentConversationSummary` rather than by the run record itself: a
+ * conversation's steps are separate runs, each with its own ledger, and the history
+ * surface needs one projection of them it can list without reading N ledgers.
+ *
+ * Inert by construction, like every contract here: identifiers, enumerated strings
+ * and numbers. It is what `src/lib/agent/history.ts` folds out of the history index
+ * stream, and the route returns it to the owner verbatim.
+ */
+export interface AgentConversationStep {
+  readonly runId: string;
+  readonly objective: string;
+  readonly workflowType: AgentRunWorkflowType;
+  readonly mode: AgentRunMode;
+  readonly status: AgentRunTerminalStatus;
+  /**
+   * Whether the run ANSWERED, in the verifier's own verdict — `null` when no verdict
+   * exists, which is the case for a run that never entered the loop (it ended before
+   * it began, so there is nothing to judge).
+   */
+  readonly answered: boolean | null;
+  /** The connection the step was opened on; single-connection by thread induction. */
+  readonly connectionId: string;
+  readonly createdAtMs: number;
+  /** When the step finished, not when it was opened. */
+  readonly updatedAtMs: number;
+}
+
+/**
+ * One finished conversation, whole: every step that belongs to it, oldest first.
+ *
+ * The steps are the conversation — the thread is a linked list in the run headers,
+ * and the history index records the same links as a flat, append-only stream. This
+ * shape carries no derived "latest" fields, because a derived figure beside the
+ * components it was derived from is two answers to one question and they can
+ * disagree; the latest step is `steps.at(-1)`.
+ */
+export interface AgentConversationSummary {
+  readonly threadId: string;
+  readonly steps: readonly AgentConversationStep[];
+}

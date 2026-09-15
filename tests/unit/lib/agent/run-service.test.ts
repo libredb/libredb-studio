@@ -1045,3 +1045,39 @@ describe("AgentRunService — drive ownership", () => {
     h.service.releaseDrive(runId);
   });
 });
+
+// ─── run history (#830) ────────────────────────────────────────────────────
+
+describe("AgentRunService — run history", () => {
+  test("finishing a run indexes it for the actor, and the service lists it back", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+    await h.service.finish(runId, "succeeded");
+
+    const page = await h.service.listConversations(ACTOR.sessionId);
+
+    expect(page.conversations).toHaveLength(1);
+    expect(page.conversations[0]?.threadId).toBe(runId);
+    expect(page.conversations[0]?.steps[0]).toMatchObject({ runId, status: "succeeded" });
+    expect(page.nextCursor).toBeNull();
+  });
+
+  test("a history-index write that fails is logged, not fatal to the finish", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    const errorSpy = spyOn(logger, "error");
+    const historySpy = spyOn(h.store, "recordHistoryFinish");
+    historySpy.mockRejectedValue(new Error("disk full"));
+    try {
+      const finished = await h.service.finish(runId, "succeeded");
+      expect(finished.status).toBe("succeeded");
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      historySpy.mockRestore();
+    }
+  });
+});

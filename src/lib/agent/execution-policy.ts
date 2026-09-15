@@ -511,3 +511,36 @@ export const AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS = 200;
  * that half-read a conversation must not be confident about the half it has.
  */
 export const AGENT_THREAD_MAX_STEPS = 20;
+
+/**
+ * How many finished conversations the run history retains, per user.
+ *
+ * The history index is append-only — one entry per finished run — so this is a READ
+ * bound, not a write bound: `foldHistoryEntries` keeps the newest conversations up
+ * to this count and drops older ones from the listing. Nothing is deleted from the
+ * index stream, because deleting from an append-only ledger would be a second kind
+ * of write and the cost of the cap is a listing, not a retention promise.
+ *
+ * The number is a user-facing bound and is stated in `docs/AGENT_GUIDE.md`; changing
+ * it there without changing it here fails the drift guard that pins the two.
+ */
+export const AGENT_HISTORY_MAX_CONVERSATIONS = 50;
+
+/**
+ * How many conversations one history page serves when the caller says nothing.
+ *
+ * A page, not the whole history: the route clamps a caller's `limit` to
+ * `AGENT_HISTORY_PAGE_MAX` and defaults an absent one here, so a caller cannot
+ * make a single request read more than the bounded index is sized for.
+ */
+export const AGENT_HISTORY_PAGE_DEFAULT = 20;
+
+/**
+ * The largest `limit` the history route will honour.
+ *
+ * Everything above it is clamped rather than refused: a caller asking for 10 000
+ * conversations gets the bounded page, and a clamped answer is the honest one —
+ * the alternative, refusing, would teach a client a number it does not need to
+ * know and turn a large page into an error the UI has to special-case.
+ */
+export const AGENT_HISTORY_PAGE_MAX = 100;

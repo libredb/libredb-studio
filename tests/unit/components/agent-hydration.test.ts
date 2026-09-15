@@ -148,6 +148,7 @@ describe("the agent rail's module boundary", () => {
   // Anchored to this file rather than to process.cwd(), so the scan is correct whoever launches it.
   const AGENT_DIR = path.resolve(import.meta.dir, "../../..", "src/components/agent");
   const RAIL_MODULES = [
+    "AgentHistory.tsx",
     "AgentRail.tsx",
     // The three the 2026-08-21 redesign split out of `AgentRail.tsx`, plus the module
     // holding what it and the answer card both render. They are listed for the same

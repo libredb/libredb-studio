@@ -3,7 +3,12 @@ import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
+import {
+  AGENT_HISTORY_PAGE_DEFAULT,
+  AGENT_HISTORY_PAGE_MAX,
+  AGENT_MAX_OBJECTIVE_LENGTH,
+} from "@/lib/agent/execution-policy";
+import { decodeHistoryCursor, type AgentHistoryCursor } from "@/lib/agent/history";
 import { threadContextMaxCharsFor } from "@/lib/agent/models";
 import { agentPosture } from "@/lib/agent/posture";
 import type { AgentRunStatusReport } from "@/lib/agent/run-service";
@@ -132,6 +137,59 @@ type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported"
 
 function badRequest(message: string, refused?: AgentStartRefusalCode): NextResponse {
   return NextResponse.json({ error: message, ...(refused === undefined ? {} : { refused }) }, { status: 400 });
+}
+
+/**
+ * The finished conversations this session can reopen, newest first (#830).
+ *
+ * The list is scoped to the verified session — `guardRoute` above — and the
+ * session id is the one a run's `actor.sessionId` records, so one user can only
+ * ever list their own runs. An absent runtime answers the same `404` as every
+ * other agent route, so an unauthenticated caller learns nothing.
+ */
+export async function GET(req: Request) {
+  const guard = await guardRoute({ route: "GET /api/agent/runs", bucket: "ai", request: req });
+  if ("response" in guard) return guard.response;
+
+  if (!isAgentRuntimeEnabled()) {
+    return NextResponse.json({ error: "The agent runtime is not enabled on this server" }, { status: 404 });
+  }
+
+  const url = new URL(req.url);
+  const rawLimit = url.searchParams.get("limit");
+  let limit = AGENT_HISTORY_PAGE_DEFAULT;
+  if (rawLimit !== null) {
+    // A plain decimal spelling only: `Number.parseInt` would accept "1.5" as 1,
+    // and a value that is not the integer it claims to be must be refused rather
+    // than coerced into the page the caller happened to ask for.
+    if (!/^\d+$/.test(rawLimit)) {
+      return badRequest("limit must be a positive integer");
+    }
+    const parsed = Number(rawLimit);
+    if (parsed <= 0) {
+      return badRequest("limit must be a positive integer");
+    }
+    // Clamped rather than refused: a caller asking for a page larger than the
+    // bounded index is served the bounded page, and a refusal would teach it a
+    // number it does not need to know.
+    limit = Math.min(parsed, AGENT_HISTORY_PAGE_MAX);
+  }
+
+  const rawCursor = url.searchParams.get("cursor");
+  let cursor: AgentHistoryCursor | undefined;
+  if (rawCursor !== null) {
+    const decoded = decodeHistoryCursor(rawCursor);
+    if (decoded === null) return badRequest("cursor is not a valid history cursor");
+    cursor = decoded;
+  }
+
+  try {
+    const service = await getAgentRunService();
+    const page = await service.listConversations(guard.session.username, { limit, cursor });
+    return NextResponse.json({ conversations: page.conversations, nextCursor: page.nextCursor });
+  } catch (error) {
+    return createErrorResponse(error, { route: "api/agent/runs" });
+  }
 }
 
 export async function POST(req: Request) {

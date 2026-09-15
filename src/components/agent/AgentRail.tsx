@@ -2,7 +2,18 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square, TriangleAlert, X } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  History,
+  LoaderCircle,
+  PencilLine,
+  Play,
+  Square,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -49,6 +60,7 @@ import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AnswerCard, answerCardState } from "./AnswerCard";
+import { AgentHistory } from "./AgentHistory";
 import { ConsentCard } from "./ConsentCard";
 /*
   The pieces the answer card renders too, in the module they moved to when it was split
@@ -883,6 +895,8 @@ export function AgentRail({
   const [connectionDropped, setConnectionDropped] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
   const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
+  /** Whether the run-history panel is open under the header. */
+  const [historyOpen, setHistoryOpen] = useState(false);
   const run = useAgentRun();
 
   /*
@@ -1970,6 +1984,25 @@ export function AgentRail({
           full label, so the grouping adds nothing a screen reader needs.
         */}
         <div className="flex items-center gap-1">
+          {/*
+            The run-history seam: a toggle that unfolds the finished conversations
+            below the header. It is beside the mode toggle rather than inside the
+            scroll area, because it is a view of the whole panel and not a choice
+            about the run being started.
+          */}
+          <button
+            type="button"
+            data-testid="agent-history-toggle"
+            aria-label="Run history"
+            aria-pressed={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+            className={cn(
+              "p-1 rounded transition-colors",
+              historyOpen ? "text-brand-bright bg-brand-tint/15" : "text-fg-tertiary hover:bg-fill hover:text-fg",
+            )}
+          >
+            <History strokeWidth={1.5} className="w-3.5 h-3.5" />
+          </button>
           {(Object.keys(MODE_LABELS) as AgentRunMode[]).map((candidate) => (
             <button
               key={candidate}
@@ -2006,6 +2039,12 @@ export function AgentRail({
           </button>
         )}
       </div>
+
+      {historyOpen && (
+        <div className="shrink-0 border-b border-hairline max-h-72 overflow-y-auto">
+          <AgentHistory />
+        </div>
+      )}
 
       {/*
         The standing reading of what the open run executes — or of what pressing Start

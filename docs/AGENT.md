@@ -318,8 +318,10 @@ host, port, database, service, instance, role and the SSH tunnel the database is
 deliberately not the password. A follow-up whose database does not match its predecessor's declines as
 `"unavailable"` rather than carrying it. Rotating a credential or renaming a connection is the same
 database and keeps the conversation, and a predecessor that recorded no identity at all is carried
-rather than refused — no conversation in flight across a deploy is ended by a silence. What is left of
-B67 is run history across threads.
+rather than refused — no conversation in flight across a deploy is ended by a silence. A user's
+finished conversations are listed by the run-history surface under the rail's header, which reads the
+per-actor history index stream (`src/lib/agent/history.ts`); each conversation's steps come off that
+index and a reopened report is served by `GET /api/agent/runs/{runId}` as usual.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `driver-resolved`, `context-captured`, `context-unavailable`, `statement-drafted`,
@@ -2500,7 +2502,8 @@ src/lib/agent/
 ├── types.ts              # durable domain contracts: run, events, snapshot, artifact/evidence refs
 ├── state-guard.ts        # refuses to persist a function, a client, a credential or a result set
 ├── run-store.ts          # the append-only ledger over the durable backend
-├── run-service.ts        # start / status / cancel / resume / stream, decided from the ledger
+├── history.ts            # the per-actor finished-run index: entry, fold, retention and pages
+├── run-service.ts        # start / status / cancel / resume / stream / history, decided from the ledger
 ├── investigation.ts      # the one workflow; start and resume are the same call
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
@@ -2572,10 +2575,6 @@ the role's own grants are the whole boundary (A3).
 - **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
   metrics: the record described above is complete, and getting it into a stack the operator already
   runs is designed (#332) and deliberately unbuilt.
-- **B67** — there is no run history across conversations. The rail names the conversation a run
-  continues and lists its steps from the run's own header, but a user cannot see the conversations
-  they had yesterday or return to one: the store has no enumeration, there is no list route, and
-  pagination and retention have not been decided.
 - **B75** — a conversation's database is checked when a follow-up OPENS; a run already open is not
   re-checked, so a resumed drive can read a repointed database while carrying a conversation and a
   captured schema established against the old one. The record now carries the identity needed to close
@@ -2625,7 +2624,7 @@ the role's own grants are the whole boundary (A3).
   fixed here because separating "unasked" from "measured empty" changes a type every consumer
   reads, and two tests currently pin the wrong half as intended.
 
-**Settled as limits rather than as work.** The seven below have no entry in `docs/BACKLOG.md`, and
+**Settled as limits rather than as work.** The eight below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet
 it, rather than a queue item nobody was going to pick up. A limitation needs a record; it does not
 need a work item to hold that record.
@@ -2670,6 +2669,16 @@ need a work item to hold that record.
   server-held connections are the seeds, and editing a seed makes it browser-local, which the rail
   refuses before any thread check. Reaching it takes a seed run, an edit of that seed's target on the
   SERVER between two questions, and a second question with the rail mounted throughout.
+- **The run history index is a pointer list, not the record.** A finished run is appended to a
+  per-user index stream after its `run-finished` entry; the run ledger remains the authority a
+  reopened report reads from. If that index append fails — a full disk, a backend error — the run
+  still finishes and stays reopenable by id, but it is missing from the History listing, and nothing
+  rebuilds the index afterwards (a resume that finishes again would append it). `AGENT_HISTORY_MAX_CONVERSATIONS`
+  is a listing bound, not storage retention: the index stream is append-only and grows with every
+  finished run, while the listing folds it and keeps the newest 50 conversations. The listing reads
+  the whole stream in 1 000-chunk pages rather than the world's default 100, because each page makes
+  the backend re-list the chunk directory and re-skip every earlier file — the default would make the
+  read quadratic in the page count, not in the bytes. It is a pointer list and not a query table.
 
 ## Related documentation
 

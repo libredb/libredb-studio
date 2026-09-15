@@ -45,6 +45,7 @@
 import { releaseExecutionRun } from "@/lib/db/operations/execution";
 import { logger } from "@/lib/logger";
 import { verifyRunGoal } from "./goal-verifier";
+import type { AgentHistoryCursor, AgentHistoryPage } from "./history";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
@@ -484,6 +485,21 @@ export class AgentRunService {
   }
 
   /**
+   * The finished conversations this actor can reopen (#830).
+   *
+   * Scoped by the caller's session id, which the route supplies from the
+   * verified session — the same `actor.sessionId` every run record carries, so
+   * a user can only ever list their own history. The service delegates straight
+   * to the store: authorization is the route's decision, not this layer's.
+   */
+  async listConversations(
+    sessionId: string,
+    options?: { readonly limit?: number; readonly cursor?: AgentHistoryCursor },
+  ): Promise<AgentHistoryPage> {
+    return this.store.listConversations(sessionId, options);
+  }
+
+  /**
    * Performs one step of a run, with the ledger written ahead of the effect.
    *
    * The order is the contract: checkpoint, then the durable invocation, then the
@@ -603,10 +619,13 @@ export class AgentRunService {
 
     // Spread rather than the fields outright: an ending that has neither writes the
     // entry it always wrote, so a ledger from before these fields and one after them
-    // are the same bytes for the same event.
+    // are the same bytes for the same event. The finish timestamp is computed once
+    // and shared with the history index below, so the two records of one ending
+    // cannot disagree on when it happened.
+    const finishedAt = this.clock();
     await this.store.appendEvent(runId, {
       kind: "run-finished",
-      atMs: this.clock(),
+      atMs: finishedAt,
       status,
       ...(reason === undefined ? {} : { reason }),
       ...(stopReason === undefined ? {} : { stopReason }),
@@ -621,6 +640,32 @@ export class AgentRunService {
             },
           }),
     });
+
+    /*
+      The history index is a pointer list, not the record: the run ledger above is
+      the authority a resumed drive and a reopened report read from. A write that
+      fails here must not fail the finish the ledger has already recorded, so it is
+      caught and logged — the run is still terminal and reopenable by id, it is
+      only missing from the listing until it is driven again.
+    */
+    try {
+      await this.store.recordHistoryFinish({
+        atMs: finishedAt,
+        runId,
+        sessionId: record.actor.sessionId,
+        threadId: record.thread.threadId,
+        objective: record.objective,
+        workflowType: record.workflowType,
+        mode: record.mode,
+        connectionId: record.connectionId,
+        createdAtMs: record.createdAtMs,
+        status,
+        answered: verdict === null ? null : verdict.outcome === "answered",
+      });
+    } catch (error) {
+      logger.error(`agent run ${runId}: failed to record the history index entry`, error, { runId });
+    }
+
     try {
       releaseExecutionRun({ runId, tracker: this.resources.tracker, artifacts: this.resources.artifacts });
     } finally {

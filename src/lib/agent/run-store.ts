@@ -58,6 +58,15 @@
 
 import { randomUUID } from "node:crypto";
 import { getAgentRuntimeConfig } from "./config";
+import {
+  type AgentHistoryCursor,
+  type AgentHistoryEntry,
+  type AgentHistoryPage,
+  foldHistoryEntries,
+  historyStreamName,
+  paginateHistory,
+  parseHistoryEntry,
+} from "./history";
 import { assertPersistableState } from "./state-guard";
 import {
   type AgentThreadHeader,
@@ -420,6 +429,17 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
 const closedStreams = new Set<string>();
 
 /**
+ * How many chunks one whole-stream read asks for per page.
+ *
+ * The world's default page is 100, and `world-local` re-lists the chunk
+ * directory and re-skips every earlier file on EACH call — so a default-page
+ * read of N chunks is quadratic in the number of pages, not in the bytes. One
+ * large page keeps a 10 000-entry history index to a handful of round trips
+ * instead of a hundred re-walks.
+ */
+const STREAM_CHUNK_PAGE_SIZE = 1000;
+
+/**
  * The run ledger. One instance per process is enough: it holds no run state of
  * its own, only the world it writes through.
  */
@@ -555,6 +575,37 @@ export class AgentRunStore {
     await this.world.closeStream(ledgerStreamName(id), id);
   }
 
+  /**
+   * Appends one finished run to the actor's history index (#830).
+   *
+   * Written by `run-service.ts`'s `finalize` — the single path every terminal
+   * run goes through — and never from `openRun`: a run that is still queued or
+   * running is the rail's live timeline, not history. The entry is inert and
+   * self-contained, so the listing below never opens the run's own ledger.
+   */
+  async recordHistoryFinish(entry: Omit<AgentHistoryEntry, "kind">): Promise<void> {
+    assertPersistableState(entry, "agent.history");
+    const line = `${JSON.stringify({ kind: "history-finished", ...entry })}\n`;
+    await this.world.writeToStream(historyStreamName(entry.sessionId), entry.runId, line);
+  }
+
+  /**
+   * The finished conversations this actor can reopen, newest first.
+   *
+   * One stream read, folded in `history.ts`; the retention cap and the page
+   * boundary both live there, so the store is only the I/O seam.
+   */
+  async listConversations(
+    sessionId: string,
+    options?: { readonly limit?: number; readonly cursor?: AgentHistoryCursor },
+  ): Promise<AgentHistoryPage> {
+    const lines = await this.readStreamLines(historyStreamName(sessionId));
+    const entries = lines
+      .map((line) => parseHistoryEntry(line))
+      .filter((entry): entry is AgentHistoryEntry => entry !== null);
+    return paginateHistory(foldHistoryEntries(entries), options ?? {});
+  }
+
   private async append(runId: string, entry: AgentLedgerEntry): Promise<void> {
     if (closedStreams.has(runId)) {
       throw new AgentRunStoreError(
@@ -570,24 +621,33 @@ export class AgentRunStore {
   }
 
   private async readEntries(runId: string): Promise<readonly AgentLedgerEntry[]> {
-    const name = ledgerStreamName(runId);
+    const lines = await this.readStreamLines(ledgerStreamName(runId));
+    return lines.map((line) => parseEntry(runId, line));
+  }
+
+  /**
+   * Reads a stream back as whole lines, in chunk order.
+   *
+   * Decoded once over the concatenation: a multi-byte character may straddle a
+   * chunk boundary, so per-chunk decoding would corrupt an objective written in
+   * any non-ASCII script.
+   */
+  private async readStreamLines(name: string): Promise<readonly string[]> {
     const chunks: Uint8Array[] = [];
     let cursor: string | undefined;
     do {
-      const page = await this.world.getStreamChunks(name, runId, cursor === undefined ? {} : { cursor });
+      const page = await this.world.getStreamChunks(
+        name,
+        "",
+        cursor === undefined ? { limit: STREAM_CHUNK_PAGE_SIZE } : { limit: STREAM_CHUNK_PAGE_SIZE, cursor },
+      );
       for (const chunk of page.data) chunks.push(chunk.data);
       cursor = page.hasMore && page.cursor !== null ? page.cursor : undefined;
     } while (cursor !== undefined);
 
-    // Decoded once over the concatenation: a multi-byte character may straddle a
-    // chunk boundary, so per-chunk decoding would corrupt an objective written in
-    // any non-ASCII script.
     const decoder = new TextDecoder();
     const text = chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
-    return text
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => parseEntry(runId, line));
+    return text.split("\n").filter((line) => line.length > 0);
   }
 }
 
