@@ -1038,9 +1038,21 @@ export class RedisProvider extends BaseDatabaseProvider {
    *
    * THE `scope` PARAMETER IS DECLARED ON THE INTERFACE AND IGNORED HERE, deliberately (D87). It
    * exists so a provider that borrows a DIFFERENT pooled client per call can name the one the
-   * caller's own statements ran on; this provider holds ONE cached connection for its whole life, so there is no other client to
-   * name and no request whose transaction this could be. A signature that took it and did nothing
-   * with it would only suggest the question had been considered per call, which it has not.
+   * caller's own statements ran on; this provider holds ONE cached connection for its whole life, so
+   * there is no other client to name. A signature that took it and did nothing with it would only
+   * suggest the question had been considered per call, which it has not.
+   *
+   * WHAT THAT DOES NOT MEAN: that the transaction ended here is the caller's own. It is the clearest case of the three
+   * providers that ignore this parameter. A `MULTI` is state of the CONNECTION, and this provider
+   * has one for every concurrent request on the stored connection, so `POST /api/db/query` running
+   * this in its `finally` PINGs and, on `QUEUED`, `DISCARD`s whatever `MULTI` is open there, whoever
+   * opened it. A plain `GET` typed by one user therefore drops a `MULTI` another user had just
+   * queued commands into, and that user is told nothing: their next command answers `QUEUED` from
+   * no transaction. The `DISCARD` catch below already half-knows this, since "another caller on
+   * this shared connection ended it in between" is the same collision seen from the other side.
+   * It is the D87 shape on a single connection and it is NOT closed: closing it needs the `MULTI`
+   * owned by a call scope rather than by the connection, which is a design change and not a
+   * parameter, so it is filed rather than worked around here.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();

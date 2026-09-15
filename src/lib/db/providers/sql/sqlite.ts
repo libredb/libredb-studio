@@ -1274,9 +1274,18 @@ export class SQLiteProvider extends SQLBaseProvider {
    *
    * THE `scope` PARAMETER IS DECLARED ON THE INTERFACE AND IGNORED HERE, deliberately (D87). It
    * exists so a provider that borrows a DIFFERENT pooled client per call can name the one the
-   * caller's own statements ran on; this provider holds ONE connection for its whole life, so there is no other client to
-   * name and no request whose transaction this could be. A signature that took it and did nothing
-   * with it would only suggest the question had been considered per call, which it has not.
+   * caller's own statements ran on; this provider holds ONE handle for its whole life, so
+   * there is no other client to name. A signature that took it and did nothing with it would only
+   * suggest the question had been considered per call, which it has not.
+   *
+   * WHAT THAT DOES NOT MEAN: that the transaction ended here is the caller's own. One handle shared by every
+   * request on this stored connection is what makes another request's transaction REACHABLE, not
+   * what puts it out of reach: `getOrCreateProvider` caches this provider per `connection.id` for
+   * the whole process, which is the same sharing the paragraph above measured from the other side.
+   * `inTransaction` reports the handle's state, not who opened it, so a request whose own
+   * statements left nothing open still rolls back a concurrent request's `BEGIN`. That is the D87
+   * shape on a single connection and it is NOT closed: closing it needs the transaction owned by a
+   * scope rather than by a client, which is a design change and not a parameter.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();

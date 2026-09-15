@@ -670,9 +670,18 @@ export class DuckDBProvider extends SQLBaseProvider {
    *
    * THE `scope` PARAMETER IS DECLARED ON THE INTERFACE AND IGNORED HERE, deliberately (D87). It
    * exists so a provider that borrows a DIFFERENT pooled client per call can name the one the
-   * caller's own statements ran on; this provider holds ONE connection for its whole life, so there is no other client to
-   * name and no request whose transaction this could be. A signature that took it and did nothing
-   * with it would only suggest the question had been considered per call, which it has not.
+   * caller's own statements ran on; this provider holds ONE connection for its whole life, so
+   * there is no other client to name. A signature that took it and did nothing with it would only
+   * suggest the question had been considered per call, which it has not.
+   *
+   * WHAT THAT DOES NOT MEAN: that the transaction ended here is the caller's own. One connection shared by every
+   * request on this stored connection is what makes another request's transaction REACHABLE, not
+   * what puts it out of reach - the paragraph above measures that sharing from the other side. The
+   * act here is an unconditional `ROLLBACK` whose refusal is the reading, and a refusal cannot say
+   * WHOSE transaction it found, so a request whose own statements left nothing open still discards
+   * a concurrent request's. That is the D87 shape on a single connection and it is NOT closed:
+   * closing it needs the transaction owned by a scope rather than by a client, which is a design
+   * change and not a parameter.
    */
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();

@@ -514,6 +514,24 @@ between; the queue is gone either way, which is what `"rolled-back"` reports.
 `DISCARD` and not `EXEC`: a script that queued commands and never said `EXEC` did not ask for them
 to run, so the queue is dropped rather than executed on an authority nobody gave.
 
+**WHAT IS STILL OPEN: the ender cannot tell whose `MULTI` it is ending.**
+`endOpenQueryTransaction()` takes the caller's call scope on the interface and ignores it here,
+because this provider holds one connection and there is no other client to name.
+That is true and it is not the same as the transaction being the caller's own: a `MULTI` is state
+of the CONNECTION, and one connection serves every concurrent request on this stored connection.
+So `POST /api/db/query`, which now ends what it opened in a `finally` (above), PINGs and on `QUEUED`
+`DISCARD`s whatever `MULTI` is open there, whoever opened it.
+A plain `GET` typed by one user drops a `MULTI` another user had just queued commands into, and that
+user is told nothing: their next command answers `QUEUED` from no transaction.
+The one `DISCARD` failure this code reads rather than raises is the same collision seen from the
+other side.
+This is the D87 shape on a single connection and it is NOT closed.
+Closing it means the `MULTI` owned by a call scope rather than by the connection, which is a design
+change: the provider would have to record which scope opened the `MULTI` it observes, and a `MULTI`
+opened before any scope was recorded still has no owner.
+The same argument applies to `sqlite` and `duckdb`, which likewise hold one handle for every
+concurrent request and ignore the scope for the same reason.
+
 ### 5.3 Schema-explorer menu actions
 
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that node,
