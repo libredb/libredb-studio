@@ -698,74 +698,116 @@ describe("POST /api/db/query with an explain request", () => {
   });
 });
 
-describe("POST /api/db/query and the transaction a single statement can leave open", () => {
+describe("POST /api/db/query and a transaction it cannot name", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
   });
 
-  // ── An unfinished transaction never outlives the request (D74) ────────────
+  // ── WHY THIS ROUTE ENDS NOTHING (D74, and the blocker that keeps it open) ──
   //
-  // MEASURED 2026-09-15 against PostgreSQL 18.4 through this very handler, with the
-  // real provider and the real process-wide cache and only the session mocked. A lone
-  // `BEGIN` answered HTTP 200 and released its pooled client in status `T`. The NEXT
-  // request on the same cached provider, which is any other signed-in user of that
-  // stored connection, then ran `CREATE TABLE d74_probe_victim (a int)` INSIDE the
-  // stranger's transaction: HTTP 200, same client object, and an independent reader on
-  // its own connection saw no such table. Driven a second way the loss is loud instead
-  // of silent: `BEGIN`, then a statement naming a missing relation, left the client in
-  // `E`, and the next user's `SELECT 1` answered HTTP 500 "current transaction is
-  // aborted, commands ignored until end of transaction block".
+  // A single statement CAN leave a transaction open here: MEASURED 2026-09-15 against
+  // PostgreSQL 18.4 through this handler with the real provider and the real cache, a
+  // lone `BEGIN` answered 200, released its pooled client in status `T`, and the next
+  // request on the same cached provider ran its `CREATE TABLE` inside that stranger's
+  // transaction, answered 200, and an independent reader saw no such table. That is the
+  // leak, and it is real.
   //
-  // So the route ends what its own statement left open, in a `finally` so no path can
-  // skip it, and the response says what became of it.
+  // The obvious answer, a `finally` calling `provider.endOpenQueryTransaction()` spelled
+  // the way `/api/db/multi-query` spells it, is WORSE than the leak and was measured to
+  // be. `PostgresProvider.endOpenQueryTransaction()` acts on `lastQueryClient`, ONE field
+  // that every concurrent caller of the per-connection-id cached provider overwrites, so
+  // the client it rolls back is "whichever client anybody recorded last", not the one
+  // this request's statement ran on. Driven live on the same engine with that finally in
+  // place: a plain `SELECT pg_sleep(3)` through this route rolled back a concurrent
+  // `/api/db/multi-query` script mid-flight, the script was told all four statements
+  // succeeded including its `COMMIT`, and its `CREATE TABLE` was gone; the same plain
+  // SELECT also discarded an interactive `POST /api/db/transaction` session's committed
+  // `CREATE TABLE` while the status route still read `inTransaction` and `commit`
+  // answered "Transaction committed". Nothing threw in either run, and both survive on
+  // the pre-fix tree. The leak itself also survives that finally under concurrency: the
+  // opener's own client was left `idle in transaction` because another request had
+  // overwritten the pointer before its finally ran.
+  //
+  // So this route ends nothing until the provider surface can NAME the client a call ran
+  // on. This test pins that: a request here must not discard a transaction that belongs
+  // to another caller of the shared provider.
 
-  function providerEndingTransactions(outcome: "none" | "rolled-back") {
-    const endOpenQueryTransaction = mock(async () => outcome);
-    mockGetOrCreateProvider.mockResolvedValueOnce({ ...createMockProvider(), endOpenQueryTransaction } as never);
-    return endOpenQueryTransaction;
+  /**
+   * A stand-in for the shared `PostgresProvider`: one `lastQueryClient` pointer that
+   * every caller overwrites, and an ender that acts on whatever that pointer holds.
+   */
+  function sharedProviderWithOneClientPointer() {
+    let recorded: { inTransaction: boolean } | null = null;
+    let releaseSlowQuery = () => {};
+    let slowQueryStarted = () => {};
+    const slowQueryRunning = new Promise<void>((resolve) => {
+      slowQueryStarted = resolve;
+    });
+
+    const provider = {
+      ...createMockProvider(),
+      query: mock(async (sql: string) => {
+        const client = { inTransaction: /^\s*BEGIN/i.test(sql) };
+        recorded = client;
+        if (sql.includes("pg_sleep")) {
+          slowQueryStarted();
+          await new Promise<void>((resolve) => {
+            releaseSlowQuery = resolve;
+          });
+        }
+        return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+      }),
+      endOpenQueryTransaction: mock(async () => {
+        if (recorded === null || !recorded.inTransaction) return "none" as const;
+        recorded.inTransaction = false;
+        return "rolled-back" as const;
+      }),
+      lastRecordedClient: () => recorded,
+    };
+    return { provider, slowQueryRunning, releaseSlowQuery: () => releaseSlowQuery() };
   }
 
-  test("ends a transaction the statement left open and says so", async () => {
-    const endOpenQueryTransaction = providerEndingTransactions("rolled-back");
+  test("does not discard a transaction another caller of the shared provider opened", async () => {
+    const { provider, slowQueryRunning, releaseSlowQuery } = sharedProviderWithOneClientPointer();
+    mockGetOrCreateProvider.mockResolvedValue(provider as never);
 
-    const req = createMockRequest("/api/db/query", {
-      method: "POST",
-      body: { connection: validConnection, sql: "BEGIN" },
-    });
+    // A: an ordinary slow read through this route. It opens nothing.
+    const slow = POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT pg_sleep(3)" },
+      }) as never,
+    );
+    await slowQueryRunning;
 
-    const res = await POST(req as never);
-    const data = await parseResponseJSON<{ openTransaction?: string }>(res);
+    // B: another caller of the same cached provider opens a transaction while A runs,
+    // which is what a `/api/db/multi-query` script or the interactive session does. It
+    // overwrites the pointer A's statement set.
+    await provider.query("BEGIN");
+    const foreign = provider.lastRecordedClient();
 
-    expect(res.status).toBe(200);
-    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
-    expect(data.openTransaction).toBe("rolled-back");
-  });
-
-  test("says nothing when the statement left no transaction open", async () => {
-    // Absent rather than "none", the rule every additive channel on this route
-    // follows: a client renders the notice from the field's presence alone, so an
-    // always-present "none" would announce something that did not happen.
-    const endOpenQueryTransaction = providerEndingTransactions("none");
-
-    const req = createMockRequest("/api/db/query", {
-      method: "POST",
-      body: { connection: validConnection, sql: "SELECT 1" },
-    });
-
-    const res = await POST(req as never);
+    releaseSlowQuery();
+    const res = await slow;
     const data = await parseResponseJSON<Record<string, unknown>>(res);
 
     expect(res.status).toBe(200);
-    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    // B's transaction is still B's. A rolled nothing back, and A claimed nothing.
+    expect(foreign?.inTransaction).toBe(true);
     expect("openTransaction" in data).toBe(false);
+
+    // The control that makes the two assertions above non-vacuous: the double's ender
+    // is live, and it is exactly what would have taken B's transaction away.
+    expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
+    expect(foreign?.inTransaction).toBe(false);
+
+    mockGetOrCreateProvider.mockResolvedValue(mockProvider as never);
   });
 
-  test("ends it on the failure path too, where the poisoned handle is actually produced", async () => {
-    // The arm a line after the call could not reach, and the one the measurement
-    // above produced status "E" on: the statement raised, the response is an error,
-    // and the transaction is still ended before the handle goes back to the cache.
+  test("tells a failing statement's caller nothing about a transaction either", async () => {
+    // The same rule on the error path, where the poisoned handle is actually produced:
+    // the route reports what the statement did and invents no transaction verdict.
     const endOpenQueryTransaction = mock(async () => "rolled-back" as const);
     const provider = { ...createMockProvider(), endOpenQueryTransaction };
     (provider.query as ReturnType<typeof mock>).mockImplementationOnce(async () => {
@@ -776,29 +818,16 @@ describe("POST /api/db/query and the transaction a single statement can leave op
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
 
-    const req = createMockRequest("/api/db/query", {
-      method: "POST",
-      body: { connection: validConnection, sql: "SELECT 1" },
-    });
-
-    const res = await POST(req as never);
-
-    expect(res.status).toBe(400);
-    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
-  });
-
-  test("a provider that cannot end one is asked nothing and answers as before", async () => {
-    // The control. `createMockProvider()` declares no `endOpenQueryTransaction`, which
-    // is the fourteen type-ids of D75, and the route must not invent a rollback there.
-    const req = createMockRequest("/api/db/query", {
-      method: "POST",
-      body: { connection: validConnection, sql: "SELECT 1" },
-    });
-
-    const res = await POST(req as never);
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1" },
+      }) as never,
+    );
     const data = await parseResponseJSON<Record<string, unknown>>(res);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
+    expect(endOpenQueryTransaction).not.toHaveBeenCalled();
     expect("openTransaction" in data).toBe(false);
   });
 });
