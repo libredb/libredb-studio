@@ -851,6 +851,22 @@ Surfaced via `POST /api/db/transaction`.
 | `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`, then closes the connection. Throws if none active. |
 | `isInTransaction()` | Current state. |
 
+### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the engine has no transaction to leave open
+
+`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) for a transaction a statement run through `query()` left behind on the session the next request borrows.
+This provider does not, and the reason is that on this path **the engine has no transaction to leave open**.
+
+Two independent facts in `query()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) make that true, and neither is an inference about the engine's name:
+
+- Every statement executes with `autoCommit: true`, so Oracle ends the transaction that statement implicitly started, at that statement. A statement that FAILS ends it too: Oracle rolls a failed statement back to its own implicit savepoint, and the statement before it was already committed. `BEGIN` does not change this — in Oracle it opens a PL/SQL block, not a transaction.
+- The pooled connection is closed in the `finally` of every call, so nothing survives the statement for a later caller to inherit. `oracledb` 6.10.0 in Thin mode also rolls back inside that close: `ThinConnectionImpl.close()` issues a rollback when `_protocol.txnInProgress` is set, before the session goes back to the pool.
+
+The ask exists on this driver, unlike `mysql` and `mssql`: `oracledb` publishes `connection.transactionInProgress`, read from the server's own end-of-call `TXN_IN_PROGRESS` status flag.
+It is not usable here, because by the time a caller could ask, the connection the statement ran on has been closed.
+That is also why implementing the surface to answer `"none"` would be wrong rather than harmless: it would certify an absence on a session that no longer exists.
+
+The interactive lifecycle above is the only transaction this provider holds open, and it is not what the surface names: it runs on a connection of its own with `autoCommit: false`, which `query()` never borrows.
+
 ---
 
 ## 7. Schema introspection
