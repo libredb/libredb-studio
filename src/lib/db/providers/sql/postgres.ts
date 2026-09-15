@@ -2574,7 +2574,23 @@ export class PostgresProvider extends SQLBaseProvider {
    * So the caller names the scope it ran under and only the clients THAT scope left open are
    * ended. The scope is spent here: the entry is dropped whether anything was rolled back or
    * not, so a second call for the same scope answers `"none"` and the map cannot grow past
-   * the requests in flight.
+   * the requests in flight. It is dropped AFTER every client has been attempted, and each
+   * client is attempted inside its own try: a scope holds several clients whenever a script
+   * runs, because `/api/db/multi-query` passes one scope to a `query()` per statement and
+   * each of those borrows its own pooled client. Deleting first and awaiting the ROLLBACKs
+   * bare meant one dead socket left every LATER client of that scope in "T" or "E" with the
+   * map entry already gone, so nothing could name them again.
+   *
+   * A FAILED ROLLBACK RAISES, after all of them have been tried. Neither arm of
+   * `OpenQueryTransactionOutcome` is true of a client still sitting in "T": `"none"` denies
+   * the transaction and `"rolled-back"` certifies a rollback that did not happen, and this
+   * surface exists precisely so that a caller can tell the user what became of the work. The
+   * cost is real and deliberate: both routes call this in a `finally`, so the throw replaces
+   * the response the request had already produced with a 500. A leaked transaction that
+   * could not be ended poisons the pooled client for every later user of that stored
+   * connection, which is the failure this whole surface was built for, so it is louder than
+   * one lost result set. Reporting it in the response body instead would need a third arm on
+   * the outcome type and both routes to carry it.
    *
    * WHAT IT STILL CANNOT UNDO, written down rather than left to be rediscovered. A client
    * this scope released in "T" is back in the pool's idle list, and the pool may hand it to
@@ -2585,17 +2601,33 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async endOpenQueryTransaction(scope: string): Promise<OpenQueryTransactionOutcome> {
     const clients = this.openQueryScopes.get(scope);
-    this.openQueryScopes.delete(scope);
     if (clients === undefined) return "none";
 
     let outcome: OpenQueryTransactionOutcome = "none";
+    const failures: string[] = [];
     for (const client of clients) {
-      // Asked again here rather than trusted from the record: the transaction can have
-      // been ended in the meantime by a later statement of this same scope.
-      const status = client.getTransactionStatus();
-      if (status !== "T" && status !== "E") continue;
-      await client.query("ROLLBACK");
-      outcome = "rolled-back";
+      try {
+        // Asked again here rather than trusted from the record: the transaction can have
+        // been ended in the meantime by a later statement of this same scope.
+        const status = client.getTransactionStatus();
+        if (status !== "T" && status !== "E") continue;
+        await client.query("ROLLBACK");
+        outcome = "rolled-back";
+      } catch (error) {
+        // Held, not swallowed: it is raised below, once every OTHER client of this scope
+        // has had its own attempt. One unreachable client must not decide the fate of the
+        // rest, and it must not pass silently either.
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    this.openQueryScopes.delete(scope);
+
+    if (failures.length > 0) {
+      throw new QueryError(
+        `Could not roll back the transaction this request left open on ${failures.length} of ${clients.size} pooled clients: ${failures.join("; ")}`,
+        "postgres",
+        "ROLLBACK",
+      );
     }
     return outcome;
   }

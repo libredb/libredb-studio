@@ -1102,9 +1102,16 @@ describe("PostgresProvider", () => {
       const client = {
         status: "I" as "I" | "T" | "E",
         issued,
+        /**
+         * Set to make this client refuse its ROLLBACK the way a dead socket or a revoked
+         * grant does: the statement raises and the server never moves the status byte.
+         */
+        failRollbackWith: undefined as Error | undefined,
         query: async (sql: string) => {
           issued.push(String(sql));
-          client.status = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(String(sql)) ? "I" : afterStatement;
+          const endsTransaction = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(String(sql));
+          if (endsTransaction && client.failRollbackWith !== undefined) throw client.failRollbackWith;
+          client.status = endsTransaction ? "I" : afterStatement;
           return { rows: [], fields: [], rowCount: 0 };
         },
         getTransactionStatus: () => client.status,
@@ -1265,6 +1272,54 @@ describe("PostgresProvider", () => {
       client.status = "T";
       expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
       expect(client.issued.filter((sql) => sql === "ROLLBACK")).toHaveLength(1);
+    });
+
+    test("one client whose ROLLBACK throws does not strand the rest of the scope", async () => {
+      // A script on /api/db/multi-query runs every statement under ONE scope and each
+      // statement borrows its own pooled client, so a scope holding several clients is
+      // ordinary traffic and not a corner. An earlier form deleted the scope before the
+      // loop and awaited ROLLBACK with no try/catch: the first dead socket left every
+      // later client of that scope in T or E with the map entry already gone, so nothing
+      // could ever reach them again.
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      first.failRollbackWith = new Error("Connection terminated unexpectedly");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+
+      // It raises rather than answering: neither arm of the outcome type is true of a
+      // client still sitting in T, and "rolled-back" would certify a rollback that failed.
+      await expect(provider.endOpenQueryTransaction("scope-script")).rejects.toThrow(
+        /1 of 2 pooled clients: Connection terminated unexpectedly/,
+      );
+
+      // The point of the test: the client AFTER the failing one was still attempted.
+      expect(second.issued).toContain("ROLLBACK");
+      expect(second.getTransactionStatus()).toBe("I");
+      // And the failing one really failed, so the assertion above is not vacuous.
+      expect(first.getTransactionStatus()).toBe("T");
+
+      // The scope is spent all the same: it is minted per request and the request that
+      // owns it is over, so keeping the entry would grow the map with clients no caller
+      // can name.
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("none");
+    });
+
+    test("the control: with neither client failing the scope reports rolled-back", async () => {
+      provider = await connectedProvider();
+      const first = fakeClient("T");
+      const second = fakeClient("T");
+      handOut(first, second);
+
+      await provider.query("BEGIN", undefined, undefined, "scope-script");
+      await provider.query("CREATE TABLE t(id int)", undefined, undefined, "scope-script");
+
+      expect(await provider.endOpenQueryTransaction("scope-script")).toBe("rolled-back");
+      expect(first.getTransactionStatus()).toBe("I");
+      expect(second.getTransactionStatus()).toBe("I");
     });
 
     test("an UNNAMED call records nothing, so no ender can find its client", async () => {
