@@ -6428,10 +6428,9 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
        * this repository never builds cannot be re-measured, and the guard reads as one over a
        * population nothing here creates. Until this test the whole parenthesis scan, and the
        * `applied-elsewhere` outcome it exists to prevent a reader from reaching, had no producer
-       * on this engine at all other than a driver double. Every routine in
-       * `docker/postgres-init/03-object-fixture.sql` had a header whose FIRST `)` was also its
-       * LAST, so the first-`)` reading and the real one answered the same thing for every live
-       * object here.
+       * on this engine at all other than a driver double. Every routine this repository's
+       * `docker/postgres-init/` builds had a header whose FIRST `)` was also its LAST, so the
+       * first-`)` reading and the real one answered the same thing for every live object here.
        *
        * So the fixture now BUILDS `app.dl`, and these two tests bind the file to this array: the
        * first reads the SQL and locates the `CREATE`, and the second drives the outcome over the
@@ -6468,16 +6467,30 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
           path.join(import.meta.dir, "../../..", "docker/postgres-init/03-object-fixture.sql"),
           "utf8",
         );
-        // The parameter DEFAULT holding a closing parenthesis is the whole point of the object, so
-        // it is matched rather than the routine name: a fixture that kept the name and dropped the
-        // literal would leave this array's population empty again and pass a name check.
-        expect(sql).toContain("CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1)");
-        // And the constants below are the ones that object renders to, which the live run above
-        // read back from `pg_get_functiondef`.
         const fixture = PAREN_HEADER_FIXTURES.find((entry) => entry.object === "app.dl(text,integer)");
         if (fixture === undefined) throw new Error("app.dl is not in the measured population");
-        expect(fixture.definition).toContain("a text DEFAULT ')'::text, b integer DEFAULT 1)");
-        expect(createHash("md5").update(fixture.definition).digest("hex")).toBe(fixture.revision);
+        // THE WHOLE STATEMENT AND NOT ONLY ITS HEADER (wave 3 review, finding 4). The first
+        // version matched two substrings that both stopped at the parameter list's closing
+        // parenthesis, so `RETURNS bigint` or a body of `SELECT 2` in the SQL file left every
+        // assertion green while `definition` and `revision` stopped describing what the engine
+        // renders. Each piece is now asserted on BOTH sides, in the two spellings the two sides
+        // legitimately have: the file writes the default the reader types, `pg_get_functiondef`
+        // renders it back with its cast.
+        const statement = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION app.dl(")).split(";")[0];
+        // The parameter DEFAULT holding a closing parenthesis is the whole point of the object, so
+        // the header is matched rather than the routine name: a fixture that kept the name and
+        // dropped the literal would leave this array's population empty again and pass a name check.
+        for (const [written, rendered] of [
+          ["app.dl(a text DEFAULT ')', b integer DEFAULT 1)", "app.dl(a text DEFAULT ')'::text, b integer DEFAULT 1)"],
+          ["RETURNS integer", "RETURNS integer"],
+          ["LANGUAGE sql", "LANGUAGE sql"],
+          ["$function$ SELECT 1 $function$", "$function$ SELECT 1 $function$"],
+        ]) {
+          expect(statement).toContain(written);
+          expect(fixture.definition).toContain(rendered);
+        }
+        // `revision` is the md5 of `definition` for every entry in the array, asserted once over
+        // the whole population by the first test in this describe, so it is not restated here.
       });
 
       /**

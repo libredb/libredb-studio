@@ -283,14 +283,16 @@ pool. Neither class can reach this check, and the reason is the ORDER of the bui
 than the block: the identity comparison answers two refusals earlier and renders a header that is
 not the addressed routine's for either one. So the order is load-bearing and not only a saved round
 trip, and the provider's own suite asserts that neither class reaches the wire rather than leaving
-it to a comment. On the apply side, a simple query answers one result per statement, so the
-provider counts the results it already receives and reports `interrupted` with
-`committed: "unknown"`, never a plain `applied`, when the count is not the four statements the unit
-is made of. Measured on PostgreSQL 18.4 on 2026-09-15, driven through the provider: the rider that
-used to drop another routine at HTTP 200 is now refused at build with the victim's `count(*)`
-unmoved, while a routine whose body carries semicolons inside `$function$` and a `BEGIN ATOMIC`
-body of two `SELECT`s both still build and apply. `docs/providers/postgres.md` carries the full
-table.
+it to a comment.
+
+**On the apply side the round trip is counted rather than trusted.** A simple query answers one
+result per statement, so the provider counts the results it already receives and reports
+`interrupted` with `committed: "unknown"`, never a plain `applied`, when the count is not the four
+statements the unit is made of. Measured on PostgreSQL 18.4 on 2026-09-15, driven through the
+provider: the rider that used to drop another routine at HTTP 200 is now refused at build with the
+victim's `count(*)` unmoved, while a routine whose body carries semicolons inside `$function$` and
+a `BEGIN ATOMIC` body of two `SELECT`s both still build and apply. `docs/providers/postgres.md`
+carries the full table.
 
 **What that still does NOT claim.** The check is exactly as good as the server's own parser, and
 this type id also serves CockroachDB and Materialize, neither of which was probed. The result count

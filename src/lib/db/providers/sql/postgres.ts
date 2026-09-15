@@ -3506,8 +3506,8 @@ export class PostgresProvider extends SQLBaseProvider {
    *
    * IT RUNS AT BUILD TIME ONLY, AND THE REASON IS WHAT THE APPLY HOLDS RATHER THAN AN EMPTY
    * POPULATION. This docblock used to say a copy of this check inside `applyObjectEdit` "would
-   * guard an empty population", and `applyObjectEdit`'s own entry guard NAMES that population 130
-   * lines below, so the file disagreed with itself (wave 2 review). The population is not empty:
+   * guard an empty population", and `applyObjectEdit`'s own entry guard NAMES that population
+   * further down this file, so the file disagreed with itself (wave 2 review). It is not empty:
    * the apply sends `plan.unit.steps[0].text` verbatim, so a `@libredb/studio` consumer that
    * builds its own plan and puts a rider in it still RUNS one.
    *

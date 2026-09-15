@@ -79,10 +79,12 @@ GRANT CREATE ON SCHEMA app TO src_probe;
 -- `routineIdentityHeader` in src/lib/db/providers/sql/postgres.ts returns the rendered text up to
 -- the parenthesis that closes the parameter list, tracking quoting so a `)` inside a string
 -- literal or a quoted identifier is not mistaken for it. Until this object existed, every routine
--- in this fixture had a header whose FIRST `)` was also its LAST, so a provider that had simply
--- sliced to the first one answered the same header for every live object here and the whole scan
--- was a guard over an EMPTY live population: `app.order_total(integer)`, `app.huge_fn(integer)`,
--- `app.over_limit_fn(integer)` and `app.touch_order()` all pass either reading. The seven shapes
+-- this repository's docker/postgres-init/ builds had a header whose FIRST `)` was also its LAST,
+-- so a provider that had simply sliced to the first one answered the same header for every live
+-- object here and the whole scan was a guard over an EMPTY live population:
+-- `app.order_total(integer)` and `app.touch_order(order_id integer)` from 02-sample-data.sql, and
+-- `app.huge_fn(integer)` and `app.over_limit_fn(integer)` from this file, all pass either
+-- reading. The seven shapes
 -- the provider suite measures are declared in tests/integration/db/postgres-provider.test.ts as
 -- constants, and a constant is a transcription rather than an engine.
 --
@@ -102,6 +104,9 @@ GRANT CREATE ON SCHEMA app TO src_probe;
 --
 -- The rendering is pinned: `md5(pg_get_functiondef(oid))` answers
 -- 0c7937f7060d7bc0c2a583af49227203, which is the `revision` constant the provider suite carries
--- for `app.dl`, so the fixture and the suite bind and neither can drift alone.
+-- for `app.dl`. The suite asserts the header, the return type, the language and the body of the
+-- statement below against that constant, one piece at a time on both sides, so neither file can
+-- drift from the other without a red. The md5 itself is an engine measurement and only a re-run
+-- against 18.4 re-checks it.
 CREATE OR REPLACE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1)
 RETURNS integer LANGUAGE sql AS $function$ SELECT 1 $function$;
