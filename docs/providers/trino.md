@@ -467,6 +467,20 @@ lesson): the generators otherwise derive the quote character from `defaultPort`,
 generic HTTP port that says nothing about a dialect. Trino quotes with `"`, and a backtick is not a
 quote character in its grammar at all.
 
+### 3.14 `endOpenQueryTransaction()` is not implemented, and the honest reason is that nobody has measured it yet
+
+`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+This provider does not, and unlike the other absences in this repository the reason is not settled: **nobody has measured it yet**.
+
+What the code says is clear enough.
+Trino does have `START TRANSACTION`, and the protocol carries a transaction on a header, not on a socket: the coordinator answers a started transaction with `X-Trino-Started-Transaction-Id` and a client joins it by sending `X-Trino-Transaction-Id` on the next statement.
+[`http-transport.ts`](../../src/lib/db/providers/sql/trino/http-transport.ts) writes neither and reads neither - its header set is User, Source, Catalog, Schema and Time-Zone - so a statement after a `START TRANSACTION` does not join it, and this provider carries nothing between statements that an `endOpenQueryTransaction()` could name or end.
+That is the same fact `supportsTransactions: false` reports ([§9](#9-capabilities--labels)).
+
+What nobody here has measured is the other end: what a live coordinator does with a transaction that was started and whose id was then dropped, how long it stays before the idle timeout takes it, and whether it holds anything a later user of the same cluster would notice.
+Until that is run against a live Trino, the entry stays open, and the absence is recorded as unmeasured rather than argued into one of the other two.
+Guessing at it would be worse than leaving it: a rollback invented for a state this provider cannot name would be a write nobody asked for.
+
 ---
 
 ## 4. Connection
