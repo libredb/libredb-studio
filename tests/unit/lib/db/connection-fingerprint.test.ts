@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:533-537` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:533-540` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -116,8 +116,9 @@ describe("connectionFingerprint", () => {
     // fingerprint the UNREWRITTEN record. The two could never be equal, so 100 percent of
     // tunnelled connections were refused `EDIT_PLAN_INVALID` with no sentence saying why.
     //
-    // The factory now carries the pre-rewrite endpoint under `TUNNEL_FAR_END` and this walk frames
-    // it. Driven end to end through the factory in `tests/isolated/factory.test.ts` and against a
+    // The factory now carries the FORWARD'S far end under `TUNNEL_FAR_END` and this walk frames
+    // it - the record's pre-rewrite endpoint whenever the two agree, and the forward's when they
+    // do not (D86). Driven end to end through the factory in `tests/isolated/factory.test.ts` and against a
     // real bastion in `tests/live/ssh-tunnel-edit-plan.ts`; what is RUN here is the arithmetic.
     const record = vary({ sshTunnel: BASTION });
     const asTheProviderSeesIt: DatabaseConnection & WithTunnelFarEnd = {
@@ -129,9 +130,10 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(asTheProviderSeesIt)).toBe(await connectionFingerprint(record));
     // FAIL CLOSED, and the control the equality above needs. Without the marker the same rewritten
     // record still answers the local endpoint and is still refused: this walk relaxes nothing and
-    // never falls back to "equal if we cannot tell". What the marker DOES admit is a case this
-    // arithmetic cannot see - a pooled tunnel opened for another address, measured and stated on
-    // `tunnelledConnection` in `src/lib/db/factory.ts`.
+    // never falls back to "equal if we cannot tell". The case this arithmetic cannot see - a pooled
+    // tunnel opened for another address, or through another bastion - is closed in the transport
+    // instead, by the pool key; measured and stated on `tunnelledConnection` in
+    // `src/lib/db/factory.ts` and on `activeTunnels` in `src/lib/ssh/tunnel.ts`.
     expect(await connectionFingerprint({ ...record, host: "127.0.0.1", port: 54_321 })).not.toBe(
       await connectionFingerprint(record),
     );

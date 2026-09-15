@@ -270,10 +270,11 @@ describe("SSH Tunnel", () => {
       expect((mockSSHInstance.connectOptions as Record<string, unknown>)?.port).toBe(22);
     });
 
-    // A pooled tunnel is keyed by the connection id AND the far end it was opened for
-    // (D86). Keyed by the id alone, the second provider on a live id was handed the
-    // forward the first one opened, whatever address it asked for, and nothing in
-    // `TunnelInfo` let the caller notice.
+    // A pooled tunnel is keyed by the connection id AND the forward it was opened for -
+    // bastion route and far end (D86). Keyed by the id alone, the second provider on a live
+    // id was handed the forward the first one opened, whatever address it asked for, and
+    // nothing in `TunnelInfo` let the caller notice. The route half is driven in
+    // `tests/unit/lib/ssh/tunnel-pool-route.test.ts`.
     test("returns the existing tunnel for the same connection id and the same far end", async () => {
       const connId = "test-cache-" + Date.now();
       lastConnectionId = connId;
@@ -298,10 +299,10 @@ describe("SSH Tunnel", () => {
       expect(second.remoteHost).toBe("other-db.internal");
       expect(second.remotePort).toBe(3306);
       // Both are pooled under the one id, and asking for either far end answers its own.
-      expect(getTunnelInfo(connId, { host: "db.internal", port: 5432 })).toBe(first);
-      expect(getTunnelInfo(connId, { host: "other-db.internal", port: 3306 })).toBe(second);
-      expect(hasTunnel(connId, { host: "db.internal", port: 5432 })).toBe(true);
-      expect(hasTunnel(connId, { host: "third-db.internal", port: 5432 })).toBe(false);
+      expect(getTunnelInfo(connId, { ssh: BASTION, farEnd: { host: "db.internal", port: 5432 } })).toBe(first);
+      expect(getTunnelInfo(connId, { ssh: BASTION, farEnd: { host: "other-db.internal", port: 3306 } })).toBe(second);
+      expect(hasTunnel(connId, { ssh: BASTION, farEnd: { host: "db.internal", port: 5432 } })).toBe(true);
+      expect(hasTunnel(connId, { ssh: BASTION, farEnd: { host: "third-db.internal", port: 5432 } })).toBe(false);
     });
 
     test("closing a connection id closes every far end pooled under it", async () => {
@@ -314,8 +315,8 @@ describe("SSH Tunnel", () => {
       await closeSSHTunnel(connId);
 
       expect(hasTunnel(connId)).toBe(false);
-      expect(hasTunnel(connId, { host: "db.internal", port: 5432 })).toBe(false);
-      expect(hasTunnel(connId, { host: "other-db.internal", port: 3306 })).toBe(false);
+      expect(hasTunnel(connId, { ssh: BASTION, farEnd: { host: "db.internal", port: 5432 } })).toBe(false);
+      expect(hasTunnel(connId, { ssh: BASTION, farEnd: { host: "other-db.internal", port: 3306 } })).toBe(false);
     });
 
     // A one-shot tunnel (`shared: false`) is the transport for the routes that build a

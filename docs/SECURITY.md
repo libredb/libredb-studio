@@ -252,12 +252,18 @@ fields, because the same `db:5432` reached through two different bastions is two
 tunnelled record to the tunnel's loopback endpoint before the driver opens, so it carries the far end
 alongside that rewrite and the seal hashes the far end, never the ephemeral local port, which is a
 property of this process and not of the server. The far end is read back off the tunnel and is never
-the address the factory asked for: the pool keys a forward by connection id AND far end, so a provider
-handed a reused tunnel seals the machine that forward actually reaches. The connection's `id` and `name` are deliberately OUT,
-because a caller supplies them, and so is the password, because rotating a credential must not
-invalidate a plan built five minutes earlier. Both of the last two additions came from external review
-of the change that introduced the control, each with a colliding pair measured against the real
-module, so this list is a measured floor rather than a design intention.
+the address the factory asked for, and the tunnel pool keys a forward by connection id, by that far
+end and by the same four bastion fields this seal frames, so the only forward a provider can be
+handed is one opened to the address it seals THROUGH the bastion its record names. Measured against a
+live bastion in both directions on 2026-09-15: with the far end alone in the key, a record edited to
+name a bastion that does not resolve was served the forward already open through the real one,
+reached the old machine, and sealed a digest the route recomputed to the same value; with the route
+in the key the same record opens its own forward and fails to connect, which is what the same record
+on a connection id nothing is pooled under has always done. The connection's `id` and `name` are
+deliberately OUT, because a caller supplies them, and so is the password, because rotating a
+credential must not invalidate a plan built five minutes earlier. Both of the last two additions came
+from external review of the change that introduced the control, each with a colliding pair measured
+against the real module, so this list is a measured floor rather than a design intention.
 
 **What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
 parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the

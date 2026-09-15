@@ -17,8 +17,14 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
  * `enabled` is in because the tunnel branch in `getOrCreateProvider`
  * (`src/lib/db/factory.ts:533`) tests exactly that flag: a switched-off tunnel is not a route at
  * all, and an absent `sshTunnel` frames to the empty string, which no present tunnel can produce.
+ *
+ * EXPORTED FOR THE TUNNEL POOL, which keys a forward on this exact string (`poolKey` in
+ * `src/lib/ssh/tunnel.ts`). Taken rather than re-derived, and for the reason this function already
+ * takes `connectionIdentity`'s field set: the pool must never hand one record's provider a forward
+ * opened for a route this seal calls a different server, and two hand-kept lists of the same four
+ * fields drift. Adding a field here narrows the pool key with it, which is the safe direction.
  */
-function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
+export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
   if (tunnel === undefined) return "";
   return [String(tunnel.enabled), tunnel.host, String(tunnel.port), tunnel.username]
     .map((value) => `${value.length}:${value}`)
@@ -73,7 +79,7 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * - `serviceName` is Oracle's connect-string tail, `oracle.ts:1551-1560` building
  *   `host:port/serviceName`, so it selects WHICH DATABASE on that listener.
  * - `sshTunnel` is the ROUTE and not a credential. `getOrCreateProvider`
- *   (`src/lib/db/factory.ts:533-537`) REWRITES `host` and `port` to the tunnel's local endpoint
+ *   (`src/lib/db/factory.ts:533-540`) REWRITES `host` and `port` to the tunnel's local endpoint
  *   before the provider is constructed, so with a tunnel enabled the bastion, and not the record's
  *   own `host`, decides which machine the sealed statement reaches. Only the four route values are
  *   framed, by `tunnelRoute` above. Live under the day-one editable set: any of the three engines
@@ -85,9 +91,11 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * population unable to edit anything at all: the provider framed `127.0.0.1:<ephemeral>` and the
  * route framed the record's own address, so the compare at `edit-plan/route.ts` could never be
  * equal and 100 percent of tunnelled connections were refused with no sentence saying why. So the
- * factory attaches the pre-rewrite endpoint under {@link TUNNEL_FAR_END} and this walk frames THAT
- * when it is there. The local endpoint is deliberately NOT in the frame: it is an ephemeral port
- * on a loopback interface, which is a property of this process and not of the server.
+ * factory attaches the far end under {@link TUNNEL_FAR_END} and this walk frames THAT when it is
+ * there - the forward's own far end, which is the record's pre-rewrite endpoint whenever the two
+ * agree and is the authority when they do not (D86, below). The local endpoint is deliberately NOT
+ * in the frame: it is an ephemeral port on a loopback interface, which is a property of this
+ * process and not of the server.
  *
  * It does not relax the compare itself. Both sides still frame one concrete address, the bastion is
  * still framed separately by `tunnelRoute`, and a provider built through a tunnel WITHOUT the
@@ -102,8 +110,11 @@ function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * pooled tunnel opened for a DIFFERENT address sealed the record's claimed far end, the route
  * recomputed the same value, and the plan verified for a machine the statement never reached - a
  * case the pre-X23 digest refused by accident rather than by a check. Measured against the live
- * bastion on 2026-09-15, and closed on both sides: the pool now keys on the far end, so a request
- * for an address nothing is forwarding to opens its own forward.
+ * bastion on 2026-09-15, and closed on both sides: the pool now keys on the far end AND on
+ * `tunnelRoute` of the record's own `sshTunnel`, so a request for an address nothing is forwarding
+ * to, or for a route nothing was opened through, opens its own forward. The pool key frames the
+ * route with the function above for that reason: a forward can only be reused by a record this
+ * seal calls the SAME server, which is what makes the marker's address the whole difference.
  *
  * Every provider path in the five bullets above is relative to `src/lib/db/providers/`, and the
  * line numbers are a reading taken on 2026-09-14: they are a pointer to the branch, not a contract,

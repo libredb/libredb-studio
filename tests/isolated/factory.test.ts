@@ -305,7 +305,12 @@ const mockCreateSSHTunnel = mock(async (_id: string, _sshConfig: unknown, remote
 
 const mockCloseSSHTunnel = mock(async () => {});
 
-const mockHasTunnel = mock(() => false);
+/**
+ * Takes its arguments so the assertions on them are not vacuous: the factory must ask about ONE
+ * forward - this connection's route and far end - and the loose question would answer `true` for
+ * a forward this call is about to open, which is the FD-leak the `tunnelPreexisted` flag guards.
+ */
+const mockHasTunnel = mock((_connectionId: string, _forward?: unknown) => false);
 
 mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel: mockCreateSSHTunnel,
@@ -616,6 +621,33 @@ describe("getOrCreateProvider", () => {
 
     await getOrCreateProvider(conn);
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+  });
+
+  test("asks the pool about THIS forward, route and far end, before opening one", async () => {
+    // D86. `tunnelPreexisted` decides whether a failed connect may close the tunnel, so the
+    // question has to be the specific one: a loose `hasTunnel(id)` answers `true` for any forward
+    // under the id, and the forward this call opened would then be left open on failure. Deleting
+    // the second argument in `getOrCreateProvider` fails here and nowhere else.
+    const conn = makeConnection("sqlite", {
+      id: "ssh-has-tunnel-args",
+      host: "remote-db.example.com",
+      port: 5432,
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    } as Partial<DatabaseConnection>);
+
+    await getOrCreateProvider(conn);
+
+    expect(mockHasTunnel).toHaveBeenLastCalledWith("ssh-has-tunnel-args", {
+      ssh: conn.sshTunnel,
+      farEnd: { host: "remote-db.example.com", port: 5432 },
+    });
   });
 
   test("seals the far end the tunnel forwards to, not the one the record names", async () => {
@@ -1213,6 +1245,12 @@ describe("acquireExecutionProfileProvider", () => {
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     expect(agent.config.host).toBe("127.0.0.1");
     expect(agent.config.port).toBe(54321);
+    // The same specific question as the writable path, for the same reason (D86): this
+    // acquisition may only tear down a forward it opened itself.
+    expect(mockHasTunnel).toHaveBeenLastCalledWith("pg-tunnel-profile", {
+      ssh: conn.sshTunnel,
+      farEnd: { host: "remote-db.example.com", port: 5432 },
+    });
   });
 
   test("tears down a freshly created tunnel when the profile connection fails", async () => {

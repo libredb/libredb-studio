@@ -174,7 +174,10 @@ export interface SSHTunnelConfig {
  * seal depends on cannot live somewhere a caller fills in.
  *
  * It is NOT the bastion. `SSHTunnelConfig` is still framed separately by `tunnelRoute`, so the
- * same `db:5432` reached through two different machines stays two different digests.
+ * same `db:5432` reached through two different machines stays two different digests - and what
+ * makes that the machine the bytes traverse rather than only the one the record names is the
+ * tunnel pool, which keys a forward on that same `tunnelRoute` string (D86). Framed here and
+ * shared there, a record can only be handed a forward through the bastion it names.
  */
 export const TUNNEL_FAR_END: unique symbol = Symbol("libredb.tunnelFarEnd");
 
@@ -185,8 +188,9 @@ export const TUNNEL_FAR_END: unique symbol = Symbol("libredb.tunnelFarEnd");
  *
  * It is deliberately not the address the factory ASKED for. The two could differ while
  * `createSSHTunnel` pooled by connection id alone, and a provider on a reused tunnel then
- * sealed a machine its statements never reached (D86). The pool keys on the far end now, and
- * the measurement that closed it is on `tunnelledConnection` in `src/lib/db/factory.ts`.
+ * sealed a machine its statements never reached (D86). The pool keys on the far end and the
+ * bastion route now, and the measurement that closed it is on `tunnelledConnection` in
+ * `src/lib/db/factory.ts`.
  */
 export interface TunnelFarEnd {
   readonly host: string;
