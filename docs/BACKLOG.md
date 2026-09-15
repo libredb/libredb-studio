@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D92, U17 · 37
+- [Drivers and connections](#drivers-and-connections) — D1–D94, U17 · 38
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
@@ -993,59 +993,6 @@ statement MEANS, and none of them is reset.
 **Done when:** either the pool resets a connection on release, or every route that mutates session state
 restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
 
-### D86. A pooled SSH tunnel serves a far end the record no longer names, and the seal now agrees with it
-
-`createSSHTunnel` (`src/lib/ssh/tunnel.ts:110-115`) returns a pooled tunnel keyed on the CONNECTION ID
-alone, ignoring `remoteHost`, `remotePort` and the bastion config, and `TunnelInfo` carries no
-`remoteHost`/`remotePort` for a caller to check. So the second provider built on a live tunnel's id
-dials the forward the FIRST one opened, whatever address it asked for. `getOrCreateProvider` builds
-`TUNNEL_FAR_END` from `connection.host`/`connection.port`, the address it ASKED to forward to, so both
-sides of the object-edit seal then agree on a server the statement never reaches.
-
-MEASURED 2026-09-15 against the live `p3fix-bastion` and `pg-p3fix`, no mocks, through the real
-`getOrCreateProvider`:
-
-```
-B1 tunnel opened: 127.0.0.1:45391 -> pg-p3fix:5432
-B2 second provider dials 127.0.0.1:45391          # record now says db-elsewhere.invalid:6543
-B3 same local endpoint, so the SAME pooled tunnel: true
-B4 the statement actually lands on: {"db":"libredb_dev","addr":"172.23.0.2/32"}
-B5 provider seal : 70f2a016d6289c077ff95fbc440fc156a2202b6ce3e37072f356578e35ea6e8c
-B6 route digest  : 70f2a016d6289c077ff95fbc440fc156a2202b6ce3e37072f356578e35ea6e8c
-B7 the edit-plan route would ACCEPT this plan: true
-B8 the record it agrees on is NOT the server reached: {"host":"db-elsewhere.invalid","port":6543}
-B9 pre-fix digest: 6381d7d2c1e845c48ddfbbe360f3cf6f6410f3c90d7fd542c4fab34aacac88f4
-B10 pre-fix would have REFUSED: true
-```
-
-The second call used the same id with a different host and a changed `queryTimeout`; the timeout change
-is what makes the provider cache miss (`factory.ts:511-520` disconnects and deletes the entry) without
-closing the tunnel, and `hasTunnel` then hands the new provider the old forward. `isConnected() === false`
-on the cached provider opens the same window with no timeout change at all.
-
-THIS IS NOT ONLY AN EDIT-PATH DEFECT. The mis-route is in the transport, so every query on the stale
-tunnel lands on the old machine; X23's seal is what stopped the EDIT path noticing, and before X23 this
-case was refused by the accident of an unequal digest rather than by a check. Reachable from the
-ordinary UI: `/api/db/disconnect` is called from exactly one place, `src/components/Studio.tsx:703`, on
-connection DELETE, so editing a tunnelled connection's host and saving leaves the pooled tunnel on the
-old machine. Reachable by choice too: `src/lib/seed/resolve-connection.ts:21-23` returns an inline
-connection verbatim, id included, so a caller picks which pooled tunnel their provider reuses.
-
-No test can catch it today and none was written for that reason: the CI mock in
-`tests/isolated/factory.test.ts` returns a fixed local endpoint and has no far end to be wrong about,
-so a test asserting the current behaviour would only pin the defect.
-
-**Done when:** `TunnelInfo` carries the `remoteHost`/`remotePort` the forward was opened for, and the
-pooled lookup either keys on them or refuses when they differ from what the caller asked for. Refusing
-whenever `tunnelPreexisted` is true is NOT a substitute: every second provider on a live tunnel reuses
-it, so that would refuse a large part of the honest population. The factory then takes the far end from
-the tunnel rather than from the record, and the three narrowed sentences that state this limit go with
-the fix: `tunnelledConnection`'s docblock in `src/lib/db/factory.ts`, `TunnelFarEnd`'s in
-`src/lib/types.ts`, and the "WHAT IT DOES ADMIT" paragraph in `src/lib/db/connection-fingerprint.ts`,
-plus the sentence in `docs/SECURITY.md` that names it as an open limit. Two tests: a pooled tunnel asked
-for a second far end does not silently serve the first, and the digest a provider seals is the address
-its forward actually reaches.
-
 ### D88. A multi-statement text sent to the single-statement query route answers HTTP 500
 
 `POST /api/db/query` is the single-statement route and nothing stops a caller sending two. PostgreSQL
@@ -1173,6 +1120,129 @@ place.
 **Done when:** either a probe forces the interleave and the result is recorded, or the route holds
 one client for the script's scope. The second changes pool semantics for every caller of `query()`
 and is the larger change, which is why this is filed rather than folded into D87.
+
+### D93. One connection id can hold unboundedly many live SSH forwards, and only whole-connection teardown reaps them
+
+D86 was closed by KEYING the tunnel pool on the forward - `(connectionId, remoteHost, remotePort,
+tunnelRoute(sshConfig))` in `poolKey`, `src/lib/ssh/tunnel.ts` - rather than by refusing a mismatch.
+That was the trade D86 itself allowed, and refusing is still the wrong answer: nothing on the
+edit path closes a stale forward, so a refusal would leave the connection unusable, and every second
+provider on a live tunnel legitimately reuses it. The cost is that the pool now holds one live
+forward per distinct (route, far end) asked for under an id, where before it held exactly one.
+
+MEASURED at the unit level, real pool, `ssh2` and `net` faked so the handles are countable
+(`scratchpad/probes/d86-unbounded-route.test.ts`): 50 requests under ONE connection id, 25 far ends
+across two bastions, gave
+
+```
+distinct loopback listeners open under one connection id: 50
+live net servers: 50 live ssh clients: 50
+after closeSSHTunnel, live net servers: 0 live ssh clients: 0
+```
+
+Each entry is an open SSH client plus a listening loopback socket. Nothing in the map reaps a
+superseded one: the provider cache miss that opens the next forward disconnects the PROVIDER
+(`factory.ts`, the query-timeout arm) and leaves the forward pooled. What takes them is the
+connection's own teardown - `removeProvider` and the 30-minute idle sweep, both of which close BY
+CONNECTION ID and take every forward with them - so the count is what one id accumulates inside one
+idle window. It is caller-driven, on the same reachability D86 already established:
+`src/lib/seed/resolve-connection.ts:21-23` returns a posted inline connection verbatim, id included,
+so the host, the port and the bastion of each request are the caller's to vary.
+
+It is disclosed where a writer will read it (the `activeTunnels` docblock states the count, the
+measurement and what reaps it) and it is NOT disclosed to an operator anywhere: no metric, no log
+line counts forwards per connection, and `docs/SECURITY.md` says nothing about it.
+
+**Done when:** the number of simultaneously live forwards under one connection id is bounded, by a
+cap that refuses or by closing a forward once nothing can still be using it, and the choice is
+written down where the next writer of the pool will read it. A test drives N distinct forwards under
+one id and asserts the bound holds, with a control that the honest population is untouched: a second
+provider on the same id, route and far end still gets the one forward and opens no second one.
+
+### D94. On a single-connection provider the transaction ender cannot tell whose transaction it is ending
+
+`endOpenQueryTransaction(scope)` takes the caller's call scope so that a POOLED provider can name the
+client its own statements ran on (D87). The three providers that hold ONE connection, `sqlite`,
+`duckdb` and `redis`, take no argument at all, and their docblocks said the parameter was irrelevant
+there because there is "no other client to name and no request whose transaction this could be". The
+first half is true. The second is false, and one shared connection is what makes another request's
+transaction REACHABLE rather than what puts it out of reach: `getOrCreateProvider` caches one
+provider per `connection.id` for the whole process, so every concurrent request on a stored
+connection shares the one handle. Wave 6 corrected all three docblocks and `docs/providers/redis.md`;
+the defect itself is this entry.
+
+**Redis is the measurable case and the worst one.** A `MULTI` is state of the CONNECTION. Measured
+2026-09-15 on redis 7.4.11 through ioredis 5.11.1 and recorded in `docs/providers/redis.md` section
+5.2a: after a bare `MULTI`, every later command on that connection answers the string `QUEUED` and
+does nothing, `SET`, `GET` and `CLIENT INFO` alike, while a second connection is untouched. Since
+D74, `POST /api/db/query` awaits the ender in its `finally` on every request, and the ender PINGs and
+then `DISCARD`s whatever `MULTI` that PING found. Neither command can say who opened it. So a plain
+`GET` typed by one user drops a `MULTI` another user had just queued commands into, and that user is
+told nothing: their next command answers `QUEUED` from no transaction, and their queue is gone. The
+`DISCARD` catch in `src/lib/db/providers/keyvalue/redis.ts` already reads the same collision from the
+other side, "another caller on this shared connection ended it in between".
+
+`sqlite` and `duckdb` carry the same shape and were checked rather than assumed. Both hold one handle
+for every concurrent request. `sqlite` reads `inTransaction`, which reports the handle's state and
+not who opened it; `duckdb` publishes no transaction reading at all on v1.5.5, so its act IS the ask,
+an unconditional `ROLLBACK` whose refusal is the answer, and a refusal cannot name an owner either.
+NOT SEPARATELY MEASURED on those two: the sharing is measured (2026-09-13, recorded in both
+docblocks, where the NEXT user's write joined an abandoned transaction), and the ender's reach over
+it is read off the code.
+
+The fix is not a parameter. It is transaction OWNERSHIP on a single connection: the provider would
+have to record which scope opened the transaction it later observes, and a transaction opened before
+any scope was recorded, by an interactive session or by a caller that passed no scope, still has no
+owner. Refusing to end an unowned transaction reinstates the leak D71 and D74 exist to close, so the
+two have to be weighed together rather than one at a time.
+
+**Done when:** each of the three either names the scope that opened the transaction it ends, with a
+test that a second scope's ender leaves it alone and a control that its own scope still reaches it,
+or its provider doc records why ending an unowned transaction is the right trade on that engine and a
+test pins the behaviour that was chosen.
+
+---
+
+# D94 (proposed): hand-copied source coordinates across this repository are stale by thousands of lines
+
+**Status:** proposed, wave 6 slot B fix round.
+
+Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
+moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
+`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
+Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
+`64ee0e3f^` was wrong before this round touched anything:
+
+| Citation | Cited in | Anchor actually at |
+|---|---|---|
+| `postgres.ts:915` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
+| `postgres.ts:889` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` | 2415 |
+| `postgres.ts:892` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
+| `postgres.ts:2095-2099` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
+| `postgres.ts:1239` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
+| `postgres.ts:1285` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
+| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
+| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
+| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
+
+Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
+follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
+agent that re-derives its own citations after an edit, which this epic has now asked for three
+times, is paying a per-commit tax on coordinates that were never right.
+
+Two halves, and the second is what stops it recurring:
+
+1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
+   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
+   a number is correct only until the next commit.
+2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
+   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
+   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
+   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
+
+**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
+and the citations present at that commit all resolve. The test needs one case per shape it must
+accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
 
 
 ## Value interpolation
