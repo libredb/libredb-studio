@@ -905,7 +905,7 @@ The arm it reports on is `interrupted` with `committed: "unknown"`, and that is 
 That arm is written for "the statement was SENT and the engine's answer never arrived", and for a count mismatch the answer DID arrive and the engine DID speak.
 It is used anyway because it is the only arm in the union whose disposition is right: statements ran, this provider cannot say which, the write is not established, and a retry would apply twice.
 `ApplyPreviewDialog` says the same thing on its own second line, "Whether it was applied is unknown: LibreDB has no answer that says whether it landed", which is true of this member; its FIRST line still reads "Whether it reached the server is unknown", which is not.
-Closing that means either a seventh outcome arm or a narrowed sentence in `src/lib/db/types.ts` and in the dialog, and both of those files sit outside this provider, so the residual is recorded here and in the provider's own docblock rather than filed anywhere a reader could be sent.
+Closing that means either a seventh outcome arm or a narrowed sentence in `src/lib/db/types.ts` and in the dialog, and both of those files sit outside this provider, so the residual is filed as D89 in `docs/BACKLOG.md` with the cost of each way out.
 
 **The limit every claim on this page carries (D62).**
 Every PostgreSQL row above is a claim about 18.4.

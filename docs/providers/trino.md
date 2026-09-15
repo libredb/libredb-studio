@@ -478,7 +478,7 @@ Trino does have `START TRANSACTION`, and the protocol carries a transaction on a
 That is the same fact `supportsTransactions: false` reports ([§9](#9-capabilities--labels)).
 
 What nobody here has measured is the other end: what a live coordinator does with a transaction that was started and whose id was then dropped, how long it stays before the idle timeout takes it, and whether it holds anything a later user of the same cluster would notice.
-Until that is run against a live Trino, the entry stays open, and the absence is recorded as unmeasured rather than argued into one of the other two.
+Until that is run against a live Trino, the absence is recorded as unmeasured rather than argued into one of the other two, and the run itself is filed as D90.
 Guessing at it would be worse than leaving it: a rollback invented for a state this provider cannot name would be a write nobody asked for.
 
 ---

@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D88, U17 · 40
+- [Drivers and connections](#drivers-and-connections) — D1–D90, U17 · 40
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X26, U2–U21 · 14
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X27, U2–U21 · 15
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1036,41 +1036,6 @@ nothing else; then the routes that want it, this one and `/api/db/multi-query`, 
 Two tests: the serial leak closes, and the cross-request probe above leaves the other caller's
 transaction untouched. Blocked on D87, which is the same aliasing seen from the provider side.
 
-### D75. `endOpenQueryTransaction()` covers three type-ids, and the other fourteen still leak
-
-PR #823 added the provider-side surface that answers whether a transaction is open, and implemented it on
-`postgres`, `sqlite` and `duckdb`, which are the three engines the leak was measured on.
-The surface is optional and has no default, so the other fourteen type-ids answer nothing and the route
-cannot end what a script left open there.
-
-So with #823 merged, a script that opens a transaction and fails on MySQL, MariaDB, SQL Server, Oracle,
-ClickHouse, Trino, Cassandra, MongoDB, Redis, Couchbase, Elasticsearch, OpenSearch, libSQL or LibreDB
-still leaves it open on the cached provider, with whatever consequence that engine has.
-
-This is a declared boundary rather than a fallback: the shape check carries no default and the absence is
-visible in the type.
-It is recorded because a boundary nobody wrote down becomes a fallback the next reader trusts.
-
-**Done when:** each remaining type-id either implements the surface, or its provider doc says which
-absence it is: the engine has no transaction to leave open, the driver cannot be asked, or nobody has
-measured it yet.
-
-### D77. The PostgreSQL object fixture builds no producer for the post-condition, so `applied-elsewhere` has only a test double
-
-`docker/postgres-init/03-object-fixture.sql` builds the truncation population and the ownership
-population, and it builds nothing that can reach the emitted unit's post-condition on this engine. The
-build's identity check compares the rendered header up to the FIRST `)`, so a changed argument list only
-gets past it when a parameter `DEFAULT` holds a `)` inside a string literal, and no fixture routine has
-one. The #789 Phase 3 acceptance run had to create the object itself,
-`CREATE FUNCTION app.<name>(a text DEFAULT 'x)y', b integer DEFAULT 1) RETURNS text LANGUAGE sql AS $b$ SELECT a $b$`,
-edited to `b bigint`, which answered `applied-elsewhere` with `undone: true` and left one row.
-
-Without it in the fixture, the only producer of `applied-elsewhere` on this engine that this repository
-builds is a driver mock, and the guard reads as one over a population nothing here creates.
-
-**Done when:** the fixture carries a routine with a parameter `DEFAULT` holding a `)` in a string
-literal, and the integration suite's `applied-elsewhere` case is driven against it.
-
 ### D78. An object edit refuses on a pooled client somebody else left in a transaction, and nothing clears it
 
 MEASURED 2026-09-14 on PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) through `pg` 8.23, on a throwaway
@@ -1150,38 +1115,40 @@ shell means "this workspace changed it", and the absence of one never means "not
 through a field on the `onQueryExecute` answer. Both are NEW PUBLISHED SURFACES on `@libredb/studio`,
 which is why this is filed rather than folded into the apply.
 
-### D82. A new-tab shortcut fires through the apply modal, unmounts the Source pane and loses the answer
+### D82. The new-tab shortcut still unmounts an apply mid flight in the EMBEDDED shell
 
-MEASURED 2026-09-14 in this repository's own component environment, with two probes rather than by
-reading, because the code comment at `src/components/Studio.tsx:255-268` says the opposite and this
-entry exists to correct it.
+The standalone half is closed (commits `ae1c8cc5` and the review-fix commit that follows it).
+`ObjectSourceView` publishes the in-flight window through the optional `onApplyInFlightChange`, and
+`Studio.tsx` refuses BOTH gestures that open and activate a tab for as long as it is open, with a
+toast rather than a swallowed keystroke: the new-tab shortcut (`handleAddTab`) and the command
+palette's table rows (`onTableClick`). The false reachability paragraph in `Studio.tsx` is corrected
+and the two document-level listeners are enumerated by measurement rather than asserted. Five tests
+in `tests/components/studio/source-tab.test.tsx` drive both gestures from the dialog's own element,
+including the conflict landing on a dialog that is still mounted, plus a control for each.
 
-That comment says "the strip cannot be moved while the dialog is open, because Radix's modal aria-hides
-it, and `setActiveTabId` has no caller outside the strip and the sidebar tree, both of which the modal
-covers". Both halves are wrong. Probe one rendered this repository's own `DialogContent` with a
-`document` keydown listener installed beside a `role="tablist"`: the strip stayed IN the tree
-(`document.body.contains(strip)` true, it is aria-hidden and covered, not removed) and a `keydown`
-dispatched from the focused control inside the dialog reached the document listener. That is exactly how
-`StudioTabBar` registers Ctrl/Cmd+Shift+T: on `document`, deliberately, "so it also works while Monaco
-owns focus" (#745). The handler calls `onAddTab`, `addTab` in `src/hooks/use-tab-manager.ts` ends with
-`setActiveTabId(newId)`, so `setActiveTabId` does have a caller the modal does not cover.
+What is left is the SAME defect in `src/workspace/StudioWorkspace.tsx`, which was outside that task's
+ownership. That shell renders `StudioTabBar` with the bare `tabMgr.addTab` (line ~629) and renders
+`ObjectSourceView` only for an active Source tab (line ~681), and it passes
+`onApply={conn.sourceApplier}` (line ~786) with no `onApplyInFlightChange`, so a host that declares
+an `objectEditor` reaches exactly the window D82 measured.
 
-The consequence is not a mis-addressed clear. `Studio.tsx` renders the Source pane only while the active
-tab is a Source tab, so the new Query tab UNMOUNTS `ObjectSourceView` and the dialog with it, mid apply.
-Probe two measured what that costs: with an apply in flight, unmounting the pane and then landing a
-`conflict` answer left `object-source-apply-conflict` null and the body text empty, no throw and no
-warning. The statement was already sent, and the reader is never told whether it was refused, conflicted
-or failed. A successful apply still reaches the toast through `onApplied`, so success is the one outcome
-that survives the unmount.
+MEASURED on this shell, not inferred from the file. With the host's `apply` held between Confirm and
+the answer and the shortcut pressed from the apply dialog's own element, the tab strip went to
+`["Query 1", "Source: app.order_total(integer)", "Query 3"]`, the dialog was GONE, and after the
+held `conflict` landed no conflict surface rendered at all. Probe:
+`.../scratchpad/probes/post/tests/components/studio/zz2-probe-embedded.test.tsx`, PROBE F.
 
-Not fixable inside the pane, which is why it is filed rather than folded into #789 Phase 3's pane work:
-the fix belongs to the shell, either by refusing the shortcut while an object apply is in flight or by
-keeping the pane mounted for the tab that owns it. The pane's own state is already bound to its address
-(`boundTo`), so nothing there is drawn over the wrong object.
+The palette half does NOT apply here: `StudioWorkspace.tsx` renders no `CommandPalette`, so the
+embedded shell has exactly one document-level listener that moves the active tab.
 
-**Done when:** an apply in flight cannot be unmounted by the new-tab shortcut, or its answer reaches the
-reader anyway, with a test that presses the shortcut between Confirm and the answer, and the false
-reachability paragraph in `Studio.tsx` is corrected in the same change.
+The mechanism to reuse already exists and needs no new code in the pane: mirror
+`onApplyInFlightChange` into shell state and wrap `onAddTab`, as `handleAddTab` in `Studio.tsx` does.
+
+**Done when:** the embedded shell refuses the new-tab shortcut while an object apply is in flight and
+says so, with a test in `tests/components/studio/embedded-source.test.tsx` that presses the shortcut
+between Confirm and the answer and asserts the answer still reaches the reader.
+
+FILE
 
 ### D86. A pooled SSH tunnel serves a far end the record no longer names, and the seal now agrees with it
 
@@ -1294,6 +1261,68 @@ Found while probing D74. Not caused by it and not fixed by it.
 provider names which result of an array it answers with. The first is the smaller change and is what
 the route's own name claims; D76's single-statement check on the object-edit path is the precedent for
 asking the engine rather than splitting the text.
+
+### D89. A count mismatch is reported on the `interrupted` arm, whose documented meaning says the engine never answered
+
+`applyObjectEdit` on `postgres` counts the results the round trip answered and reports
+`{ outcome: "interrupted", committed: "unknown" }` when that count is not the four statements the
+emitted unit is made of (D76).
+
+`src/lib/db/types.ts` documents that arm as "the statement was SENT and the engine's answer never
+arrived: a timeout, a cancellation, a dropped socket, or any throw out of `applyObjectEdit`". For a
+count mismatch the answer DID arrive and the engine DID speak, so the arm is used outside its own
+contract, and the UI copy is written against the contract rather than against the member:
+`src/components/object-source/ApplyPreviewDialog.tsx` renders "This apply's outcome is unknown" and
+"**Whether it reached the server is unknown.** Read the definition again before you edit it." above
+the provider's true sentence. The second line of `OutcomeRegion`, which X20 narrowed to "Whether it
+was applied is unknown: LibreDB has no answer that says whether it landed", IS true of this member.
+
+The provider side was weighed and left as it is, with the reason written into
+`src/lib/db/providers/sql/postgres.ts` and `docs/providers/postgres.md`: no other arm in the union
+fits better, and an arm added on the provider side ALONE falls into `applyFrame`'s `applied` tail,
+which has no exhaustiveness check, so the reader would be shown "This apply is done. The new
+definition is on the server." That is strictly worse than today.
+
+**Done when:** either a seventh outcome arm exists with its wire shape in `src/lib/db/types.ts`, its
+own arm in `ApplyPreviewDialog.applyFrame` and `OutcomeRegion`, and tests for both; or the
+`interrupted` docblock in `src/lib/db/types.ts` and the `applyFrame` disposition line are narrowed to
+what is true of every member, and a test pins that the dialog's first line makes no transport claim.
+
+### D90. Three type-ids declare a `endOpenQueryTransaction()` absence that is not final
+
+D75 asked every type-id that does not implement the surface to say WHICH absence it is, and all
+fourteen now do. Three of those answers are explicitly provisional, and each provider doc says so
+where it bites. They are collected here because a doc that says "this is filed as its own change"
+needs the change to exist.
+
+**`mysql` and `mssql`: the DRIVER cannot be asked, and the SERVER can.** Both were measured live.
+On MySQL 8.0.46 through `mysql2` 3.24.4, with the question asked from outside the pool on the
+released session's `threadId`, `performance_schema.events_transactions_current` answers `ACTIVE`
+for a bare `BEGIN` and for a `BEGIN` followed by a failing statement, and `ROLLED BACK` for the
+control. On SQL Server 2022 through `mssql` 12.7.2, `sys.dm_exec_sessions.open_transaction_count`
+on the released session's `@@SPID` answers 1 and 1 against a control of 0. Both readings are taken
+AFTER the connection went back to the pool, so they also measure that the leak is real rather than
+inferred. `docs/providers/mysql.md` section 6.1 and `docs/providers/mssql.md` section 6.1 carry the
+full tables.
+
+Neither was implemented on that ask, for one reason each and both written down. On `mysql` the
+provider also serves MariaDB, where `performance_schema` is OFF by default and its tables answer
+NULL rather than failing, so the same query would report no open transaction while one is open, and
+rolling nothing back is the one outcome worse than reporting nothing. That needs a per-server
+capability probe of the kind `objectKinds` and the EXPLAIN grammar already use on this provider.
+On `mssql` the state is readable on `tedious`'s `Connection`, which `mssql.Request` never hands out.
+
+**`trino`: nobody has measured it yet.** The code side is settled and `docs/providers/trino.md`
+section 3.14 states it: the coordinator carries a transaction on `X-Trino-Transaction-Id`, the
+transport writes and reads neither, so this provider holds nothing between statements that the
+surface could name. What is unmeasured is the other end, what a live coordinator does with a
+transaction whose id was dropped, how long it survives the idle timeout, and whether it holds
+anything a later user of the same cluster notices.
+
+**Done when:** each of the three either implements the surface or its doc records the measurement
+that closes the question. For `mysql` that is a per-server `performance_schema` capability probe
+plus the implementation behind it. For `mssql` it is whether a pinned `ConnectionPool.acquire()`
+connection can carry a statement at all. For `trino` it is one run against a live coordinator.
 
 
 ## Value interpolation
@@ -1691,6 +1720,20 @@ otherwise the assertion lands red on messages that have nothing to do with the a
 
 **Done when:** an E2E spec reads the whole browser console across an object-edit apply and fails on an
 unexpected message, with the allowed set named and justified, so a regression of X21 turns a job red.
+
+### X27. The published description of the new-tab shortcut does not name its two exceptions
+
+`src/lib/keyboard-shortcuts.ts:32` describes `newTab` as "open a new query tab (except while renaming
+a tab)". D82 added a second, equally transient exception: the shortcut is refused while an object
+apply is in flight. The string is what `docs/FEATURES.md:12` renders, so the shipped shortcut table
+under-describes the shortcut.
+
+No gate catches it: `readme:check` does not cover `FEATURES.md`, and `shortcuts:sync` is not in the
+required check set. Both files were outside the D82 task's ownership.
+
+**Done when:** the `newTab` description names both exceptions, `docs/FEATURES.md` is regenerated from
+it by its own generator rather than hand-edited, and the existing `keyboard-shortcuts` test asserts
+the new string.
 
 
 ## Dependencies

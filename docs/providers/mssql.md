@@ -440,7 +440,7 @@ Measured on `mssql` 12.7.2: after `request.query()` resolves, the `Request` carr
 
 So the absence is not the server's refusal, and it is not the pool's either: it is that this provider cannot name the session to key the ask on.
 `SELECT @@SPID` issued afterwards is a NEW request, which the pool is free to place on another connection, and answering a question about the wrong session is how a rollback ends up rolling back somebody else's transaction.
-Closing that needs a different query path rather than a different question, which is its own change and is filed as one.
+Closing that needs a different query path rather than a different question, which is its own change and is filed as D90.
 
 Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
 The cost while it stands: an abandoned transaction holds its locks until the connection is reused by a caller that ends it, or the pool closes.

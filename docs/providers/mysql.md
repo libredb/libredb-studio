@@ -596,7 +596,7 @@ Every reading above is taken AFTER `release()`, so the table is also the measure
 
 So the absence is the driver's and not the engine's, and implementing the surface on the `performance_schema` ask is open rather than shut.
 It is not done here for a reason peculiar to this type-id: `mysql` also serves MariaDB ([§1.1](#11-mariadb-and-the-other-mysql-protocol-engines)), where `performance_schema` is OFF by default and its tables answer NULL instead of failing, so the same query would report no open transaction on a default MariaDB while one is open, and rolling nothing back is the one outcome worse than reporting nothing.
-Doing it needs a per-server capability probe of the kind `objectKinds` and the EXPLAIN grammar already use here, which is a change of its own and is filed as one rather than smuggled into a doc note.
+Doing it needs a per-server capability probe of the kind `objectKinds` and the EXPLAIN grammar already use here, which is a change of its own and is filed as D90 rather than smuggled into a doc note.
 
 Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
 The cost while it stands: an abandoned transaction keeps its InnoDB row locks until the connection is reused by a caller that ends it, or the pool closes.
