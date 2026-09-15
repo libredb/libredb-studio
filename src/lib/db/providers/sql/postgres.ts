@@ -2886,6 +2886,18 @@ export class PostgresProvider extends SQLBaseProvider {
       );
     }
 
+    // THE EDIT AFFORDANCE IS A ROUTINE FACT, so a kind that declares an edit with no routine
+    // statement behind it is refused here rather than drawn (D81). `routineEditAffordance` below
+    // reads `may_replace` and `owner`, which only `SOURCE_ROUTINE_SQL` selects, so such a kind
+    // would answer `offered: false` carrying "owned by another role": a DECLARATION DRIFT reported
+    // in the words of an ownership problem, which is a sentence the reader cannot act on.
+    // `routineAddress` is the BUILD's own guard over the same two lists and it raises the build's
+    // own sentence, so the read and the build refuse this with ONE spelling. Its return is
+    // discarded, because this method has already derived the schema and the name it uses, and it
+    // runs BEFORE the round trip, so the refusal costs no query.
+    const editable = kindAcceptsSourceEdits(capabilities, kind);
+    if (editable) this.routineAddress(capabilities, kind, path);
+
     const client = await this.pool!.connect();
     let rows: SourceRow[];
     try {
@@ -2932,7 +2944,7 @@ export class PostgresProvider extends SQLBaseProvider {
           ...(bounded.truncated === undefined ? {} : { truncated: bounded.truncated }),
           // The affordance travels with the READ, and it is resolved on the CONNECTED provider, which
           // is the whole reason it is here rather than on the client's copy of the declaration (D57).
-          ...(kindAcceptsSourceEdits(capabilities, kind) ? { edit: routineEditAffordance(rows[0], schema, name) } : {}),
+          ...(editable ? { edit: routineEditAffordance(rows[0], schema, name) } : {}),
         },
       ],
     };

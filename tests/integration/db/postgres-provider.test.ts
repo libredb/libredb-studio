@@ -4993,6 +4993,32 @@ describe("PostgreSQL object source", () => {
     await provider.disconnect();
   });
 
+  test("a declared EDITABLE kind with no routine statement raises the build's own sentence", async () => {
+    sourceDouble(MEASURED_VIEW_DEFINITION);
+    const provider = makeProvider();
+    await provider.connect();
+    const capabilities = provider.getCapabilities();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...capabilities,
+      objectKinds: (capabilities.objectKinds ?? []).map((kind) =>
+        kind.id === "view" ? { ...kind, acceptsSourceEdits: true } : kind,
+      ),
+    });
+    try {
+      // The affordance is a ROUTINE fact: `routineEditAffordance` reads `may_replace` and `owner`,
+      // which only the routine statement selects. Without this the pane would have drawn
+      // `offered: false` with "owned by another role" over a kind nobody owns wrongly, reporting a
+      // declaration drift in the words of an ownership problem. One sentence and one helper with
+      // the build, which refuses the same drift by name.
+      await expect(provider.readObjectSource(["app", "order_summary"], "view")).rejects.toThrow(
+        /declares an editable kind "view" but has no statement that reads it/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
   test("a declared readable kind with no statement behind it is refused by name", async () => {
     sourceDouble(MEASURED_VIEW_DEFINITION);
     const provider = makeProvider();

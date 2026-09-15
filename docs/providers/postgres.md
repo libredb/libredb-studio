@@ -690,6 +690,12 @@ Measured with the `src_probe` role that `docker/postgres-init/03-object-fixture.
 The CONTROL is in the same session: that same role creating a function OF ITS OWN in that same schema succeeds, so the refusal is about ownership and no grant can make the apply work.
 The engine's own sentence is `must be owner of function order_total`, SQLSTATE `42501`, and the shipped error mapper turns it into HTTP 500 because the message matches none of its substrings, which is why this answer is given before a statement is sent.
 
+**A kind that declares an edit with no routine statement is refused on the READ too.**
+The affordance is a routine fact: it reads `may_replace` and `owner`, which only the routine statement selects.
+So the source read raises the build's own sentence, `declares an editable kind "<kind>" but has no statement that reads it`, through the build's own address helper, rather than drawing `offered: false` with "owned by another role" over a declaration drift.
+No shipped declaration reaches it: only `function` and `procedure` declare `acceptsSourceEdits` and both have a routine statement.
+The refusal is raised before the round trip, so it costs no query.
+
 **The five build refusals, in the order they are answered.**
 
 | Class | When | The sentence, or its shape |
