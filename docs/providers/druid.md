@@ -712,6 +712,18 @@ Strategy details:
   only way to show both without pretending one is the parent of the other; a single query is its own
   root.
 
+### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
+
+`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+This provider does not, and here **the engine has no transaction to leave open**.
+
+Two facts, and neither is an inference from the engine's name.
+Druid SQL through this endpoint cannot write at all - the server refuses INSERT, UPDATE and DELETE itself ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) - so there is no uncommitted work for a transaction to hold, which is the same reason `supportsTransactions` is `false` ([§9](#9-capabilities--labels)).
+And the transport is one `POST /druid/v2/sql` per statement with no session identifier of any kind ([`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts)), so there is no handle between two statements for state to survive on even if the engine had some.
+
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+
+
 ---
 
 ## 4. Connection

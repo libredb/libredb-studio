@@ -569,6 +569,18 @@ instance.
   and each data-skipping index) and each deserves its own line, with the selected-over-initial ratio
   shown when both counts are present.
 
+### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
+
+`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+This provider does not, and the reason is the one [§3.11](#311-statelessness-no-session_id-is-pinned) already states: **the engine has no transaction to leave open** on anything this provider holds.
+
+The transport sends one HTTP request per statement and pins no `session_id` ([`http-transport.ts`](../../src/lib/db/providers/sql/clickhouse/http-transport.ts) sets `default_format`, `output_format_json_quote_64bit_integers` and `database`, and nothing else identifies a session), and `close()` there has nothing to release for the same reason.
+Session state is what a transaction would live in: `SET max_block_size` was verified to persist inside a pinned `session_id` and not outside one, and ClickHouse's own transaction support is experimental and setting-gated ([§11](#11-testing) and the limitations section).
+So there is no handle between two statements for a `BEGIN TRANSACTION` to survive on, and nothing for a later caller to inherit.
+
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+
+
 ---
 
 ## 4. Connection

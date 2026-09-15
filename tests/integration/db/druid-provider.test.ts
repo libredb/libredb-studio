@@ -30,6 +30,8 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { DruidProvider } from "@/lib/db/providers/sql/druid";
 import {
   DRUID_ACTIVE_TASK_SQL,
@@ -2781,5 +2783,32 @@ describe("the bulk column read", () => {
     const batch = await provider.describeObjects!([OBJECT_SCHEMA], "datasource");
 
     expect(batch.details.map((detail) => detail.path[1])).toEqual(["\u{1f600}", ""]);
+  });
+});
+
+// ============================================================================
+// endOpenQueryTransaction(): the absence is declared, not accidental (D75)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new DruidProvider(makeConnection());
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/druid.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the engine has no transaction to leave open"]);
   });
 });

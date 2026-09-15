@@ -434,6 +434,19 @@ down.
 both. So the column-type map is keyed on the class name for those two, and an unmeasured custom type
 is reported as the server spelled it rather than guessed into a CQL word.
 
+### 3.9 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
+
+`postgres`, `sqlite` and `duckdb` implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) so that `POST /api/db/multi-query` can end a transaction a failed script left open on the session the next request borrows.
+This provider does not, and here **the engine has no transaction to leave open** at all.
+
+CQL has no statement that opens one.
+`BEGIN BATCH … APPLY BATCH` is a single statement and not a transaction ([§5.5](#55-writes-and-what-upsert-costs-a-reader)), a lightweight transaction is a per-partition compare-and-set inside one statement, and the driver agrees: `cassandra-driver` 4.9.0 declares no begin, commit or rollback anywhere in its public types, unlike every pooled SQL driver in this repository.
+The provider holds a long-lived `Client` session ([`driver-transport.ts`](../../src/lib/db/providers/sql/cassandra/driver-transport.ts)), so it WOULD have a handle to name; there is simply no state on it to name.
+That is the same fact `supportsTransactions: false` reports to the editor toolbar.
+
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+
+
 ---
 
 ## 4. Connection
