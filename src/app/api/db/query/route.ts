@@ -145,8 +145,10 @@ export async function POST(req: NextRequest) {
       ...result,
       ...(explainFormat !== undefined && { explainFormat }),
       // Present only when there was a transaction to end, the way `/api/db/multi-query`
-      // reports it: the client renders the notice from the field's presence alone, so an
-      // always-present "none" would announce something that did not happen.
+      // reports it, so an always-present "none" would announce something that did not happen.
+      // `use-query-execution.ts` raises the notice off this field on BOTH paths; it used to raise
+      // it only inside its `multiStatement` branch, which a lone statement never sets, so this
+      // field was answered and never rendered for its whole first commit.
       ...(openTransaction === "rolled-back" && { openTransaction }),
       pagination: {
         limit: prepared.limit,
