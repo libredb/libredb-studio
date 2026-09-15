@@ -702,6 +702,9 @@ describe("POST /api/db/query and a transaction it cannot name", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
+    // One test below installs a persistent provider double, so the default is put back
+    // here rather than at the end of that test, where a failing assertion would skip it.
+    mockGetOrCreateProvider.mockResolvedValue(mockProvider as never);
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
   });
 
@@ -801,8 +804,6 @@ describe("POST /api/db/query and a transaction it cannot name", () => {
     // is live, and it is exactly what would have taken B's transaction away.
     expect(await provider.endOpenQueryTransaction()).toBe("rolled-back");
     expect(foreign?.inTransaction).toBe(false);
-
-    mockGetOrCreateProvider.mockResolvedValue(mockProvider as never);
   });
 
   test("tells a failing statement's caller nothing about a transaction either", async () => {
