@@ -993,6 +993,71 @@ const ROW_VERSION_SETTING_LITERAL = "'libredb.row_version'";
 const CONCURRENT_UPDATE_SENTENCE = "tuple concurrently updated";
 
 /**
+ * The statements the emitted unit is made of: the `SET LOCAL`, the pre `DO`, the reader's ONE
+ * statement, and the post `DO` (D76).
+ *
+ * A number rather than a count of anything, because there is nothing here to count: the shape is
+ * composed by `buildObjectEdit` a few lines apart and the reader's segment is held at exactly one
+ * statement by the check below. MEASURED on PostgreSQL 18.4 through `pg` on 2026-09-15: a simple
+ * query answers ONE RESULT PER STATEMENT with the engine's own command tag, so the emitted unit
+ * answers `[SET, DO, CREATE, DO]` and the same unit with a rider spliced into the reader's segment
+ * answers `[SET, DO, CREATE, DROP, DO]`. Four held for a reader's text ending in `;`, in a `--`
+ * line comment, in a newline and in `$$`, so the doubled semicolon the terminator can produce
+ * costs no result of its own.
+ */
+const GUARDED_BATCH_STATEMENT_COUNT = 4;
+
+/**
+ * The statement that poisons the transaction block the single-statement check parses inside (D76).
+ *
+ * It answers `22012 division_by_zero`, and that failure IS the mechanism: in an aborted block the
+ * server performs no parse analysis, no planning and no execution, so the Parse that follows can
+ * never run the reader's text.
+ */
+const STATEMENT_COUNT_POISON_SQL = "SELECT 1/0";
+
+/** `current transaction is aborted`, which the server answers for a text it parsed as ONE statement. */
+const ABORTED_BLOCK_SQLSTATE = "25P02";
+
+/** `syntax_error`, which carries BOTH the multi-command refusal and an ordinary grammar error. */
+const SYNTAX_ERROR_SQLSTATE = "42601";
+
+/**
+ * How many statements PostgreSQL parsed in the text the reader submitted (D76).
+ *
+ * `one` covers zero as well, because a whitespace-only or comment-only text reaches the
+ * aborted-block answer too. That is not a hole: such a text is already refused by the identity
+ * check above, whose rendered header cannot match.
+ */
+type SubmittedStatementCount =
+  | { readonly kind: "one" }
+  | { readonly kind: "many" }
+  | { readonly kind: "malformed"; readonly sentence: string; readonly code: string; readonly position?: unknown }
+  | { readonly kind: "borrowed" }
+  | { readonly kind: "unreadable"; readonly sentence: string };
+
+/**
+ * One Parse answer, turned into the count it means (D76).
+ *
+ * THE VERDICT IS THE SQLSTATE AND NEVER THE MESSAGE, which is this file's standing rule. The one
+ * substring here picks between two REFUSALS and never between refusing and proceeding: `42601` is
+ * the multi-command answer and an ordinary grammar error, both of them are refused, and the
+ * substring only decides which sentence the reader is shown. Only `25P02` lets a build continue,
+ * and that is a code.
+ */
+function classifySubmittedStatementCount(error: unknown): SubmittedStatementCount {
+  const sentence = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: unknown }).code;
+  if (code === ABORTED_BLOCK_SQLSTATE) return { kind: "one" };
+  if (code === SYNTAX_ERROR_SQLSTATE) {
+    return sentence.includes("multiple commands")
+      ? { kind: "many" }
+      : { kind: "malformed", sentence, code, position: (error as { position?: unknown }).position };
+  }
+  return { kind: "unreadable", sentence };
+}
+
+/**
  * Whether a failed source read is the SERVER refusing rather than nobody answering.
  *
  * Two codes and no others, and both are a wire-compatible FORK missing a piece of PostgreSQL
@@ -3040,7 +3105,9 @@ export class PostgresProvider extends SQLBaseProvider {
    * body that reads ANOTHER schema unqualified is refused rather than silently succeeding on
    * whichever path the last borrower happened to leave.
    *
-   * FIVE REFUSALS, IN THIS ORDER, and each one answers before anything is sent.
+   * SIX REFUSALS, IN THIS ORDER. The first five answer before anything is sent at all. The sixth
+   * asks PostgreSQL itself how many statements the reader's text carries, which costs a round trip
+   * and executes nothing, so it answers last (D76).
    *
    * THE READ HERE IS NOT THE PANE'S READ, and it cannot be taken from the document the pane is
    * showing: it produces the revision, it is the pre-image the preview's left side needs, it
@@ -3177,6 +3244,74 @@ export class PostgresProvider extends SQLBaseProvider {
       );
     }
 
+    // 6. ONE STATEMENT, and PostgreSQL counts it (D76). The only refusal here that costs a round
+    //    trip, so it answers last, and it executes nothing: `countSubmittedStatements` parses the
+    //    reader's text inside a transaction block it has already poisoned and rolls that block
+    //    back. Its docblock carries the mechanism and the measurement.
+    const counted = await this.countSubmittedStatements(request.text);
+    if (counted.kind === "many") {
+      return {
+        built: false,
+        refusal: {
+          refusal: "definition",
+          sentence:
+            `PostgreSQL parsed this text as more than one statement, and an edit is one statement. ` +
+            `Everything in it would run in the same round trip, and only the statement that replaces ` +
+            `"${schema}.${name}" is what this plan describes, what the audit records and what the guards can ` +
+            `undo. Remove everything after the definition and run it in the SQL editor, where it is shown and ` +
+            `recorded as the statement it is`,
+          code: SYNTAX_ERROR_SQLSTATE,
+          // PostgreSQL reports no position for this refusal, and a guessed one is silently CLAMPED
+          // by Monaco rather than rejected.
+          at: { within: "none" },
+        },
+      };
+    }
+    if (counted.kind === "malformed") {
+      // The engine's own grammar error, answered at BUILD time now that the text is parsed here,
+      // which is earlier than the apply used to report it and with nothing sent.
+      //
+      // THE POSITION NEEDS NO SEGMENT ARITHMETIC: what was parsed IS the reader's text, so a
+      // one-segment step over it converts PostgreSQL's 1-based character offset with the same
+      // helper the apply uses, and an offset that does not land is `outside` rather than a number.
+      const submittedStep: ObjectEditStep = {
+        text: request.text,
+        language: spec.sourceLanguage,
+        segments: [{ from: "user", start: 0, end: request.text.length }],
+      };
+      return {
+        built: false,
+        refusal: {
+          refusal: "definition",
+          sentence: counted.sentence,
+          code: counted.code,
+          at:
+            typeof counted.position === "string" || typeof counted.position === "number"
+              ? userPositionOf(submittedStep, Number(counted.position) - 1)
+              : { within: "none" },
+        },
+      };
+    }
+    if (counted.kind === "borrowed") {
+      return refuse(
+        "guard",
+        "this connection's pooled session is inside a transaction somebody else opened, so the check that " +
+          "this edit is a single statement cannot be run on it without rolling their work back",
+      );
+    }
+    if (counted.kind === "unreadable") {
+      // The count was never established, and reading silence as "one statement" is the one reading
+      // that lets a rider through. The population is D62's: this type id also serves CockroachDB
+      // and Materialize, neither of which was probed, and a fork that does not refuse a Parse in an
+      // aborted block lands here.
+      return refuse(
+        "unsupported",
+        `this server did not answer PostgreSQL's own multi-statement check for this text (${counted.sentence}), so ` +
+          "LibreDB cannot establish that the edit is a single statement and refuses it rather than sending a text " +
+          "whose extra statements would run",
+      );
+    }
+
     const pinnedSearchPath = `${this.escapeIdentifier(schema)}, pg_catalog`;
     const guardSubject =
       `FROM pg_catalog.pg_proc p\n` +
@@ -3302,6 +3437,91 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
+   * HOW MANY STATEMENTS THE READER'S TEXT CARRIES, ANSWERED BY POSTGRESQL AND BY NO PARSER OF OURS
+   * (D76, the residual of #831 Phase 3).
+   *
+   * THE DEFECT THIS CLOSES, MEASURED live on PostgreSQL 18.4 through the two edit routes: the
+   * definition of `app.order_total(integer)` followed by `;` and `DROP FUNCTION
+   * app.r19f1_victim();` built with `consequences: []`, applied at HTTP 200 with a plain
+   * `"outcome": "applied"`, and the victim routine's `count(*)` went 1 to 0. The apply sends one
+   * parameterless simple query and PostgreSQL runs EVERY statement in one of those.
+   *
+   * IT IS NOT A SPLITTER AND IT MUST NEVER BECOME ONE. A dollar-quoted body may carry any number
+   * of semicolons and a `BEGIN ATOMIC` body carries them by construction, and this repository has
+   * measured that no reader in `src/lib/sql/` can tell a statement separator from a character of a
+   * definition. So the question goes to the engine: PostgreSQL's extended query protocol refuses a
+   * multi-statement string at Parse with `42601 cannot insert multiple commands into a prepared
+   * statement`, the check lives in the server's own `exec_parse_message`, and it runs on the raw
+   * grammar parse, so it understands dollar quoting, `BEGIN ATOMIC`, comments and string literals
+   * exactly the way the engine does, because it IS the engine.
+   *
+   * NOTHING CAN RUN HERE, and each of the three moves below is what buys that:
+   *
+   * - the block is POISONED first, so the server answers `25P02` and performs no parse analysis,
+   *   no planning and no execution, and the multi-command check is still reached because it
+   *   precedes the aborted-block check in the server's own message handler;
+   * - the statement is NAMED, because `client.query({ text, values: [] })` with no name takes
+   *   node-postgres's SIMPLE query path, which MEASURED runs a rider;
+   * - the block is ROLLED BACK, so the pooled client goes home idle.
+   *
+   * MEASURED on 18.4 in container `pg-p3fix` on 2026-09-15, with a `pg_proc` count for the probe's
+   * own objects answering 0 after every row: the verbatim `pg_get_functiondef` output, a `BEGIN
+   * ATOMIC` body of two `SELECT`s, a procedure, a text ending in a line comment or a block comment
+   * or no semicolon at all, and a whitespace-only text all answer `25P02`; the D76 reproduction,
+   * the same rider without its final semicolon, with a comment before it, and placed FIRST all
+   * answer `42601 cannot insert multiple commands`; and `CREATE OR REPLACE FUNCTIN app.x()`
+   * answers `42601 syntax error at or near "FUNCTIN"`, which is the third arm.
+   *
+   * IT ASKS ABOUT THE SUBMITTED TEXT ALONE AND NEVER ABOUT THE ASSEMBLED UNIT. The unit is
+   * multi-statement BY CONSTRUCTION, so probing it would refuse every legitimate edit.
+   *
+   * BUILD TIME IS SUFFICIENT AND AN APPLY-TIME COPY WOULD GUARD AN EMPTY POPULATION. The plan is
+   * SEALED: `applyObjectEdit` takes only the plan and never the source text again, so a plan
+   * carrying a rider cannot come into existence.
+   */
+  private async countSubmittedStatements(text: string): Promise<SubmittedStatementCount> {
+    const client = await this.pool!.connect();
+    // A CLIENT THAT IS NOT IDLE BELONGS TO SOMEBODY ELSE'S TRANSACTION (D78), and this check opens
+    // one and rolls it back, which on such a client would destroy work this user was never shown.
+    // So it refuses on the same fact the apply refuses on rather than probing.
+    if (client.getTransactionStatus() !== "I") {
+      client.release();
+      return { kind: "borrowed" };
+    }
+    try {
+      await client.query("BEGIN");
+      try {
+        await client.query(STATEMENT_COUNT_POISON_SQL);
+      } catch {
+        // `22012 division_by_zero`, which is the POINT rather than a failure: it is what aborts
+        // the block. A server that somehow answered it without aborting is caught below, because
+        // the Parse then succeeds and that is the `unreadable` arm.
+      }
+      try {
+        // A NAMED statement with an EMPTY values array, which is the only shape that reaches
+        // Parse. The name is unique per call: nothing is ever prepared, because the aborted block
+        // refuses before the statement is created, but a collision would be a second failure mode
+        // for no gain.
+        await client.query({
+          text,
+          values: [],
+          name: `libredb_statement_count_${randomBytes(8).toString("hex")}`,
+        });
+        return {
+          kind: "unreadable",
+          sentence: "this server accepted a prepared statement inside a transaction block it had already aborted",
+        };
+      } catch (error) {
+        return classifySubmittedStatementCount(error);
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * The routine's current definition and revision, re-read for the outcome that needs it.
    *
    * Two callers and two different questions: a SUCCESS needs the NEW revision, because the token
@@ -3339,6 +3559,10 @@ export class PostgresProvider extends SQLBaseProvider {
    *
    * NO PARAMETERS, ever. Binding one does not degrade the atomicity, it REFUSES it: MEASURED,
    * `42601 cannot insert multiple commands into a prepared statement`.
+   *
+   * THE ANSWER IS COUNTED AND NOT DISCARDED (D76). A simple query answers one result per statement,
+   * so the reply itself says how many statements ran, and an apply that did not carry exactly the
+   * statements the plan is made of is not reported as a plain `applied`.
    *
    * THIS METHOD OPENS NO TRANSACTION OF ITS OWN, and that is a prohibition rather than an
    * omission: `txActive` is one flag per `connection.id` (D72), a dangling `BEGIN` poisons one
@@ -3415,8 +3639,9 @@ export class PostgresProvider extends SQLBaseProvider {
     // that is invisible; on a pool of one, which `POSTGRES_POOL_MAX=1` and a single-slot PgBouncer
     // both produce, the re-read waits for a client that is waiting for it.
     let failure: { error: unknown } | undefined;
+    let answered: unknown;
     try {
-      await client.query(step.text);
+      answered = await client.query(step.text);
     } catch (error) {
       failure = { error };
     } finally {
@@ -3424,6 +3649,38 @@ export class PostgresProvider extends SQLBaseProvider {
     }
     if (failure !== undefined) {
       return await this.classifyApplyFailure(plan, step, failure.error, Date.now() - started);
+    }
+
+    // WHAT THE ROUND TRIP ACTUALLY CARRIED, counted, which is what makes the `object_edit` audit
+    // event's claim as wide as the write (D76). An `object_edit` event says an edit was applied at
+    // one address with one outcome; it did NOT say the round trip carried nothing else, and it
+    // could not, because this method used to throw the query's answer away.
+    //
+    // NO PARSER IS INVOLVED. A simple query answers ONE RESULT PER STATEMENT with the engine's own
+    // command tag, so the count is already in the reply. MEASURED on PostgreSQL 18.4 through `pg`
+    // on 2026-09-15: the emitted unit answers `[SET, DO, CREATE, DO]`, and the same unit with a
+    // rider spliced into the reader's segment answers `[SET, DO, CREATE, DROP, DO]`.
+    //
+    // ITS POPULATION IS NOT THE RIDER, which `buildObjectEdit` now refuses and the sealed plan
+    // cannot reacquire. It is this provider's own composition, and anything between it and the
+    // server that rewrites a round trip. It ships because the alternative is an audit line that
+    // asserts something nothing measured.
+    //
+    // `interrupted` AND NOT A SUCCESS, AND NOT A REFUSAL. Statements ran and this provider cannot
+    // say which, so the honest disposition is the one arm that tells a client the write is not
+    // established and that retrying would apply twice. A non-array answer counts as one result,
+    // which is what `pg` hands back for a single-statement query and is equally not this shape.
+    const carried = Array.isArray(answered) ? answered.length : 1;
+    if (carried !== GUARDED_BATCH_STATEMENT_COUNT) {
+      return {
+        outcome: "interrupted",
+        committed: "unknown",
+        sentence:
+          `PostgreSQL answered ${carried} result(s) for a unit this plan built out of ` +
+          `${GUARDED_BATCH_STATEMENT_COUNT} statements, so this apply cannot say that what ran is what the plan ` +
+          "described. Read the object and the server log before you retry: a retry would apply it again",
+        duration: Date.now() - started,
+      };
     }
 
     const after = await this.readRoutineAfterApply(plan);

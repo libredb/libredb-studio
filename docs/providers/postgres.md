@@ -849,6 +849,45 @@ An uncorrected coordinate would not be caught anywhere downstream: Monaco silent
 **The doubled semicolon.**
 `SELECT 1;;SELECT 2;` in one parameterless query is ACCEPTED and answers both rows, so the terminator after the reader's text is appended unconditionally rather than conditionally on their last character.
 
+**THE READER'S TEXT MUST BE ONE STATEMENT, AND POSTGRESQL IS WHAT COUNTS IT (D76).**
+The emitted unit is one parameterless simple query and PostgreSQL runs every statement in one of those, so a text carrying a second statement after its terminator used to run that statement too.
+The build now refuses such a text, and it does so WITHOUT a splitter of ours: a dollar-quoted body may carry any number of semicolons and a `BEGIN ATOMIC` body carries them by construction, and no reader in `src/lib/sql/` can tell a separator from a character of a definition.
+The question goes to the engine instead.
+The build opens a transaction on a pooled client, poisons it with `SELECT 1/0`, parses the reader's text alone as a NAMED prepared statement, and rolls the transaction back.
+In an already-aborted block the server performs no parse analysis, no planning and no execution, and its multi-command check still runs because it precedes the aborted-block check in `exec_parse_message`, on the raw grammar parse.
+The probe therefore understands dollar quoting, `BEGIN ATOMIC`, comments and string literals exactly the way the engine does, because it IS the engine.
+
+Three things are load-bearing and each one alone would turn the check into an execution: the poison, the NAME on the prepared statement, since `query({ text, values: [] })` with no name takes node-postgres's simple-query path and measured running a rider, and the rollback.
+The probe reads the borrowed client's ReadyForQuery byte first and refuses `guard` when it is anything but `I`, because opening and rolling back a transaction on a client somebody else left inside one destroys work this user was never shown.
+It asks about the SUBMITTED text alone and never about the assembled unit, which is multi-statement by construction.
+It runs at build time only: the plan is sealed and the apply never sees the source text again, so a plan carrying a rider cannot come into existence and an apply-time copy would guard an empty population.
+
+| What the Parse answered | What the build does |
+| --- | --- |
+| `25P02`, the aborted block | the text is one statement, or none, and the build proceeds |
+| `42601` whose message contains `multiple commands` | refused `definition`, naming the addressed routine and pointing the reader at the SQL editor |
+| `42601` with any other message | refused `definition` with the engine's own sentence, its SQLSTATE, and the position converted into the reader's own line and column |
+| anything else, including no error at all | refused `unsupported`, because the count was never established and reading silence as "one statement" is what lets a rider through |
+
+Measured on 18.4 in a container built from this repository's `docker/postgres-init/` on 2026-09-15, with a `pg_proc` count for the probe's own objects answering 0 after every row, so nothing executed in any of them.
+`pg_get_functiondef` output verbatim, the same with a trailing newline or a trailing line comment or a trailing block comment, the same with its trailing `;` removed, a `BEGIN ATOMIC` body of two `SELECT`s, a procedure, and a whitespace-only or comment-only text all answer `25P02`.
+The D76 reproduction, the same rider with no final semicolon, a comment between the `;` and the rider, `; SELECT 1;` and `; COMMIT;` riders, and the rider placed FIRST all answer `42601 cannot insert multiple commands into a prepared statement`.
+`CREATE OR REPLACE FUNCTIN app.x()` answers `42601 syntax error at or near "FUNCTIN"`.
+
+Driven end to end through this provider against the same server on 2026-09-15, which is the control the table needs.
+The D76 reproduction is refused `definition` at build and `count(*)` for the victim routine reads 1 before and 1 after, where the shipped code took it to 0.
+The legitimate edit of `app.order_total(integer)`, whose body carries a semicolon inside `$function$`, builds and applies `applied`.
+A `BEGIN ATOMIC` function whose body is `SELECT 1; SELECT a;` builds and applies `applied`, which is the case a splitter would refuse.
+`RETURNZ numeric` in place of `RETURNS numeric` is refused at build with `syntax error at or near "RETURNZ"`, `42601`, at line 2 column 2 of the reader's own text, which the apply used to be the first thing to report.
+
+**THE APPLY COUNTS WHAT THE ROUND TRIP CARRIED (D76).**
+A simple query answers one result per statement with the engine's own command tag, so the reply already says how many statements ran and no parser is needed to read it.
+Measured on 18.4 through `pg`: the emitted unit answers four results, `[SET, DO, CREATE, DO]`, and the same unit with a rider spliced into the reader's segment answers five, `[SET, DO, CREATE, DROP, DO]`.
+Four held for a reader's text ending in `;`, in a `--` line comment, in a newline and in `$$`, so the doubled semicolon above costs no result of its own.
+An apply that answers anything but four is NOT reported `applied`: it answers `interrupted` with `committed: "unknown"` and a sentence carrying both numbers, because statements ran, this provider cannot say which, and a retry would apply it again.
+That is what makes the `object_edit` audit event's claim as wide as the round trip rather than as wide as the plan.
+Its population is not the rider, which the build now refuses: it is this provider's own composition, and anything between it and the server that rewrites a round trip.
+
 **The limit every claim on this page carries (D62).**
 Every PostgreSQL row above is a claim about 18.4.
 This type id also serves CockroachDB and Materialize, and neither was probed for any of it.
@@ -892,16 +931,25 @@ The same edit is now refused at build time as `identity`, with both whole header
 Whether ANY text that passes the identity comparison can still fork the routine was not measured, so the post-condition stays as the second line and `applied-elsewhere` stays in this provider's outcome set: a guard is not removed because nobody could name a case for it.
 What is measured is that the byte-identical re-render, which used to trip this post-condition and is recorded above, no longer does, because the guard compares `xmin` and not the rendering.
 
-**A SUCCESSFUL APPLY CAN DESTROY AN OBJECT THE PLAN NEVER NAMED, and that is open (`docs/BACKLOG.md` D76).**
-The reader's text is spliced into the emitted unit as a whole segment of one parameterless simple query, and PostgreSQL runs every statement in such a query, so a text that carries a second statement after its terminator runs that statement too.
-Nothing above the wire is a single-statement check: the build's identity comparison reads the rendered HEADER, and the post-condition asks whether the addressed row was rewritten, which a `CREATE OR REPLACE` followed by a rider answers yes to.
+**A SUCCESSFUL APPLY COULD DESTROY AN OBJECT THE PLAN NEVER NAMED, and the build now refuses that text (D76).**
+This is what the acceptance run measured against the code as it shipped, and the repair is the single-statement check in 3.1.6 above.
+The reader's text is spliced into the emitted unit as a whole segment of one parameterless simple query, and PostgreSQL runs every statement in such a query, so a text that carried a second statement after its terminator ran that statement too.
+Nothing above the wire looked at the statement count: the build's identity comparison reads the rendered HEADER, and the post-condition asks whether the addressed row was rewritten, which a `CREATE OR REPLACE` followed by a rider answers yes to.
 MEASURED end to end through the two routes on the same 18.4 image: `app.order_total(integer)`'s own definition followed by `;` and `DROP FUNCTION app.r19f1_victim();` built with `consequences: []`, applied at HTTP 200 with a plain `"outcome": "applied"`, and `count(*)` for `app.r19f1_victim` went 1 to 0.
-The bytes ARE in the sealed preview, so the seal holds and the user was shown them: in the shipped re-run the step measured 2,473 characters, the reader's own 268-character segment ran from 1,506 to 1,774, and the rider sat at offset 1,741, between a 1,506-character provider prefix and a 699-character provider suffix.
+The bytes ARE in the sealed preview, so the seal held and the user was shown them: in that re-run the step measured 2,473 characters, the reader's own 268-character segment ran from 1,506 to 1,774, and the rider sat at offset 1,741, between a 1,506-character provider prefix and a 699-character provider suffix.
 Those three offsets move with the reader's own text and the prefix's random dollar-quote tags; the prefix and suffix lengths are what the reader has to scroll past either way.
-What is missing is everything above the bytes.
-The plan's consequence model reported nothing lost, no acknowledgement was asked for, and the two `object_edit` audit events name `target: "function:app/order_total(integer):definition"` and carry the string `r19f1_victim` nowhere at all.
-So a definition pasted out of a migration script that carries a trailing statement is applied, reported `applied`, and the routine it dropped is named in no answer, no consequence and no audit row.
-This is ruling 1b clause (ii), a SUCCESS destroying something the user was not SHOWN in any surface that speaks about consequences, and it is unfixed here: this subsection is a measurement of the shipped code, and the repair belongs in the emitted unit above it.
+What was missing was everything above the bytes.
+The plan's consequence model reported nothing lost, no acknowledgement was asked for, and the two `object_edit` audit events named `target: "function:app/order_total(integer):definition"` and carried the string `r19f1_victim` nowhere at all.
+
+WHAT CHANGED, measured on the same engine on 2026-09-15 through this provider.
+The same rider text is now refused at build with class `definition` and SQLSTATE `42601`, no plan is minted, nothing is sent, and the victim routine's `count(*)` reads 1 before the build and 1 after it.
+The control in the same run, the legitimate edit whose body carries a semicolon inside `$function$`, still builds and still applies `applied`, and so does a `BEGIN ATOMIC` routine whose body is two semicolon-separated `SELECT`s.
+The apply additionally asserts that the round trip answered exactly the four results the emitted unit is made of, so an apply that carried more or fewer statements is reported `interrupted` with `committed: "unknown"` rather than `applied`.
+
+WHAT IS STILL NOT GUARDED, stated rather than implied.
+The check is PostgreSQL's own parser reached through the extended query protocol, so it is exactly as good as that server's `exec_parse_message`: this type id also serves CockroachDB and Materialize and neither was probed, and a fork that does not refuse a Parse inside an aborted block is refused `unsupported` rather than trusted.
+The result count says how MANY statements ran, never which, so it detects a round trip that did not match the plan and cannot name what it carried.
+Neither half makes the plan's consequence model wider: a single statement whose own effects reach beyond the addressed routine is still described only by the `consequences: []` the strategy carries.
 
 **A TRUNCATED PART CANNOT BE EDITED, and the two bounds are two different refusals.**
 The read of `app.over_limit_fn(integer)` carries `truncated: { limit: 1000000, ... }` and carries NO `edit` key at all, and 1,000,000 characters of text.

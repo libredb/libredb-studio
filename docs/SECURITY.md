@@ -253,15 +253,34 @@ credential must not invalidate a plan built five minutes earlier. Both of the la
 from external review of the change that introduced the control, each with a colliding pair measured
 against the real module, so this list is a measured floor rather than a design intention.
 
-**What 3.6 does NOT claim: that the round trip carried nothing but the addressed object.** The
-day-one PostgreSQL unit is a multi-statement simple query, and this repository has measured itself
-unable to count the statements in a routine body: a dollar-quoted body may contain any number of
-semicolons, and no parser here can tell a statement separator from a character of the definition.
-So the event says an edit was applied at this address, with this strategy, and with this outcome.
-It does not say that one statement, and only one, reached the engine, and a reader of the log must
-not take it that way. This paragraph is where a reader of the control meets the limit, and
-`docs/BACKLOG.md` D76 is the work: it records the same fact from the destruction side, measured live,
-with what closing it would take.
+**What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
+parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the
+reader's text carried used to run, and the audit event named only the addressed object. This
+repository cannot count the statements in a routine body itself: a dollar-quoted body may contain
+any number of semicolons, a `BEGIN ATOMIC` body contains them by construction, and no parser here
+can tell a statement separator from a character of the definition. So the engine is asked instead.
+The build parses the reader's submitted text alone as a NAMED prepared statement inside a
+transaction block it has already poisoned with `SELECT 1/0`, then rolls that block back: in an
+aborted block the server performs no parse analysis, no planning and no execution, and its
+multi-command check still runs because it precedes the aborted-block check in the server's own
+`exec_parse_message`. A text PostgreSQL parses as more than one statement is refused, no plan is
+minted and nothing is sent; a server that does not answer that check is refused `unsupported`
+rather than trusted. On the apply side, a simple query answers one result per statement, so the
+provider counts the results it already receives and reports `interrupted` with
+`committed: "unknown"`, never a plain `applied`, when the count is not the four statements the unit
+is made of. Measured on PostgreSQL 18.4 on 2026-09-15, driven through the provider: the rider that
+used to drop another routine at HTTP 200 is now refused at build with the victim's `count(*)`
+unmoved, while a routine whose body carries semicolons inside `$function$` and a `BEGIN ATOMIC`
+body of two `SELECT`s both still build and apply. `docs/providers/postgres.md` carries the full
+table.
+
+**What that still does NOT claim.** The check is exactly as good as the server's own parser, and
+this type id also serves CockroachDB and Materialize, neither of which was probed. The result count
+says how many statements ran and never which, so it detects a round trip that did not match the
+plan and cannot name what it carried. And neither half widens the plan's consequence model: one
+statement whose effects reach beyond the addressed routine is still described by the empty
+consequence list the strategy carries. So the event says an edit was applied at this address, with
+this strategy, and with this outcome, and a reader of the log should read it as exactly that.
 
 ## Known limits
 
