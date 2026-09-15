@@ -1845,3 +1845,137 @@ describe("the embedded workspace applies an object edit through the host", () =>
     expect(screen.queryByTestId("object-source-stale")).toBeNull();
   });
 });
+
+/**
+ * D82 on THIS shell: the new-tab shortcut, pressed between Confirm and the host's answer.
+ *
+ * MEASURED here rather than inferred from the standalone half. `StudioWorkspace` rendered
+ * `StudioTabBar` with the bare `tabMgr.addTab` and passed `onApply` with no
+ * `onApplyInFlightChange`, so with the host's `apply` held the shortcut pressed from the apply
+ * dialog's own element took the strip to
+ * `["Query 1", "Source: app.order_total(integer)", "Query 3"]`, the dialog was GONE, and the held
+ * `conflict` then rendered nothing at all.
+ *
+ * ONE DOCUMENT-LEVEL LISTENER MOVES THE ACTIVE TAB IN THIS SHELL, enumerated rather than assumed.
+ * `StudioWorkspace.tsx` renders no `CommandPalette`, so the palette half of D82 has nothing to
+ * reach here; `StudioTabBar` registers the new-tab shortcut on `document` (#745) and is the only
+ * listener left. `src/components/ui/sidebar.tsx` registers a second one, on `window`, and it
+ * toggles a sidebar rather than opening a tab.
+ */
+describe("the embedded shell refuses the new-tab shortcut while a host apply is in flight", () => {
+  const CONFLICT = {
+    outcome: "conflict",
+    conflict: "object-changed",
+    current: { text: `${DEFINITION}\n-- somebody else got there first`, language: "sql" },
+    duration: 5,
+  } as unknown as ObjectEditOutcome;
+
+  /** The host's `apply`, HELD: sent, and no answer back until the test hands one over. */
+  let releaseApply: ((outcome: ObjectEditOutcome) => void) | undefined;
+
+  /**
+   * Edit, Preview, Confirm, and STOP with the host's apply in flight.
+   *
+   * The window D82 is about cannot be reached with a host that answers at once: the pane leaves
+   * `applying` in the same promise continuation the answer arrives in, so there is no frame in
+   * between for a keystroke to land in.
+   */
+  async function confirmAndHold(): Promise<void> {
+    const holdingHost = {
+      build: async () => BUILT,
+      apply: () => new Promise<ObjectEditOutcome>((resolve) => (releaseApply = resolve)),
+    } as unknown as HostEditor;
+    await previewThrough(holdingHost);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() =>
+      expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Applying this definition"),
+    );
+  }
+
+  async function release(outcome: ObjectEditOutcome): Promise<void> {
+    await act(async () => {
+      releaseApply?.(outcome);
+      await Promise.resolve();
+    });
+  }
+
+  /**
+   * The tab strip read from the DOM, which is the only way to read it while the dialog is open.
+   *
+   * `getAllByRole` applies the accessibility filter and Radix aria-hides everything outside the
+   * modal, so `tabNames()` answers nothing here. That is the entry's first measurement in one
+   * line: the strip is aria-hidden and covered, and it is still in the tree and still listening.
+   */
+  function tabNamesInDom(): string[] {
+    return [...document.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent ?? "");
+  }
+
+  /** The shortcut as a reader presses it, from the control the dialog has focus in. */
+  function pressNewTab(target: HTMLElement): void {
+    act(() => {
+      fireEvent.keyDown(target, { key: "X", code: "KeyX", ctrlKey: true, shiftKey: true });
+    });
+  }
+
+  test("the shortcut is refused, said out loud, and the host's answer still reaches the reader", async () => {
+    await confirmAndHold();
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+
+    // No tab was opened, so nothing moved the active tab off the Source tab that is applying.
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    // And the keystroke is ANSWERED rather than swallowed.
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+
+    await release(CONFLICT);
+
+    // The half the reader lost before: the conflict lands on a dialog that is still mounted.
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+    expect(screen.getByTestId("mock-monaco-diff-editor").getAttribute("data-original")).toContain(
+      "somebody else got there first",
+    );
+  });
+
+  test("the refusal lasts exactly as long as the apply: the shortcut opens a tab once the answer is on screen", async () => {
+    /*
+     * The control for the test above. Without it the refusal could be "the shortcut never works
+     * over a Source tab", which would close D82 by breaking #745 instead of by guarding it.
+     */
+    await confirmAndHold();
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    pressNewTab(screen.getByTestId("object-source-apply-dialog"));
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+    // The sentence goes with the window that raised it rather than sitting on screen for ever.
+    expect(screen.queryByTestId("workspace-apply-refusal")).toBeNull();
+  });
+
+  test("the refusal does not outlive the pane that raised it", async () => {
+    /*
+     * The latch is the pane's state and this shell only mirrors it, so a pane that goes away with
+     * an apply still in flight has to take the refusal with it. Otherwise the shortcut would be
+     * dead for the rest of the session, which is a worse defect than the one D82 reports.
+     *
+     * The tab click is a DIRECT DOM click, which is how the strip is reachable under an
+     * aria-hidden modal at all. It is not a gesture a reader can make; it is the one path that can
+     * still unmount the pane mid apply, and it is here to prove the flag is released rather than
+     * held.
+     */
+    await confirmAndHold();
+
+    act(() => {
+      (document.querySelectorAll('[role="tab"]')[0] as HTMLElement).click();
+    });
+    await waitFor(() => expect(screen.queryByTestId("object-source-apply-dialog")).toBeNull());
+
+    pressNewTab(document.body);
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "Query 3"]));
+  });
+});

@@ -531,6 +531,77 @@ export function StudioWorkspace({
   }, [onSourceChange]);
 
   /**
+   * Whether the Source pane has an apply in flight: sent, and no answer back yet (D82).
+   *
+   * The pane publishes it and this shell only mirrors it, because the shell cannot see it: the
+   * plan, the round trip and the dialog all live inside the pane. `src/components/Studio.tsx`
+   * mirrors the same callback into the same shape, and the two are deliberately one spelling.
+   */
+  const [applyInFlight, setApplyInFlight] = useState(false);
+  /** Whether a tab-opening gesture was refused in the window that is still open (D82). */
+  const [refusedWhileApplying, setRefusedWhileApplying] = useState(false);
+
+  /**
+   * The mirror, which also RETIRES the sentence the refusal left on screen (D82).
+   *
+   * The pane calls this with `false` both when the answer lands and when it unmounts, so the
+   * refusal cannot outlive the window that raised it, and a reader who pressed the shortcut while
+   * waiting is not left reading advice about a dialog that is gone.
+   */
+  const onApplyInFlightChange = useCallback((inFlight: boolean) => {
+    setApplyInFlight(inFlight);
+    if (!inFlight) setRefusedWhileApplying(false);
+  }, []);
+
+  const { addTab } = tabMgr;
+
+  /**
+   * The new-tab shortcut, REFUSED while an object apply is in flight, and answered out loud (D82).
+   *
+   * MEASURED on THIS shell and not carried over from the standalone one. `StudioTabBar` registers
+   * the shortcut on `document` on purpose, so it works while Monaco owns focus (#745), and a
+   * keydown from a control inside the apply dialog reaches that listener even though Radix has
+   * aria-hidden and covered the strip. `addTab` ends with `setActiveTabId(newId)` and this shell
+   * renders the Source pane only for an ACTIVE Source tab, so the new Query tab unmounted the pane
+   * and took the dialog with it after the host's statement had been sent: the held `conflict` then
+   * rendered nothing at all, and the one outcome that still reached the reader was `applied`,
+   * through `onApplied`, which is the outcome they did not need to be told about.
+   *
+   * WHAT ELSE IS REACHABLE IN THIS WINDOW, ENUMERATED BY MEASUREMENT, because an unmeasured
+   * "nothing else can reach this" is the mistake D82 was filed over. The dialog refuses every exit
+   * it owns while `applying`: no close button, no Escape, no press outside. What it cannot refuse
+   * is a listener on `document`, and this shell has exactly ONE that opens and activates a tab.
+   * The standalone shell has a second, `CommandPalette`'s Cmd/Ctrl+K, whose table rows call its
+   * `handleTableClick`; this shell renders no palette, so there is nothing there to guard. The
+   * one other global listener in the package, in `src/components/ui/sidebar.tsx`, is on `window`
+   * and toggles a sidebar rather than moving the active tab.
+   *
+   * REFUSED IS NOT SWALLOWED, and on this shell that costs a surface rather than a toast. A
+   * keystroke that does nothing and says nothing reads as a broken shortcut. `useToast` wraps
+   * `sonner`, whose toasts render only into a mounted `<Toaster />`; this package re-exports none
+   * and this shell mounts none, for the reason `handleApplied` above records, so the standalone
+   * shell's toast would be a line no adopter can see. The refusal is therefore rendered by this
+   * shell itself, as a live region, below.
+   *
+   * WHY REFUSE THE KEYSTROKE RATHER THAN KEEP THE PANE MOUNTED, chosen and not defaulted into, and
+   * it is the same choice `src/components/Studio.tsx` made for the same seam: this shell renders
+   * one pane, `onSourceChange` addresses `activeTabId`, and a second mounted pane would need its
+   * own per-tab patch channel and a second live read, while the dialog it kept alive would be
+   * drawn over a Query tab the reader had just asked for.
+   *
+   * The `+` button takes the same handler. It is covered by the modal and cannot be pressed in
+   * this window, so the guard is unreachable through it, but one gesture and its keyboard twin
+   * refusing on different rules is the drift this handler exists to prevent.
+   */
+  const handleAddTab = useCallback(() => {
+    if (applyInFlight) {
+      setRefusedWhileApplying(true);
+      return;
+    }
+    addTab();
+  }, [addTab, applyInFlight]);
+
+  /**
    * The row menu's actions in THIS shell, which is four of the six (U22, #789).
    *
    * The three modals below are mounted here and had nothing able to set their table once
@@ -626,7 +697,7 @@ export function StudioWorkspace({
               onSetEditingTabName={tabMgr.setEditingTabName}
               onSetTabs={tabMgr.setTabs}
               onCloseTab={tabMgr.closeTab}
-              onAddTab={tabMgr.addTab}
+              onAddTab={handleAddTab}
             />
 
             <main className="flex-1 overflow-hidden relative">
@@ -784,6 +855,15 @@ export function StudioWorkspace({
                                 the part, from whoever answered it.
                               */
                               onApply={conn.sourceApplier}
+                              /*
+                                The window D82 is about, published by the only party that can see
+                                it (D82). The pane sends the statement and waits, and the shell
+                                mirrors that into `applyInFlight` so `handleAddTab` above can
+                                refuse the one document-level gesture that would unmount this pane
+                                mid apply. Optional on the pane, so the standalone shell and this
+                                one pass the same prop rather than each growing their own.
+                              */
+                              onApplyInFlightChange={onApplyInFlightChange}
                               onApplied={handleApplied}
                               onChange={onSourceChange}
                             />
@@ -948,6 +1028,28 @@ export function StudioWorkspace({
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/*
+        The refusal, said where an adopter can actually read it (D82).
+
+        `output` rather than a div with `role="status"`: it carries the live region natively, the
+        same choice `LazyView` and the pane's own loading region make. Fixed and above the
+        dialog's `z-50` overlay, because the only moment this renders is while that overlay is up,
+        and a sentence painted underneath it is a sentence nobody reads. It is rendered only while
+        the refusal is live: the mirror above clears it the moment the apply answers or the pane
+        goes away, so it cannot linger over a dialog that is gone.
+      */}
+      {refusedWhileApplying && (
+        <output
+          data-testid="workspace-apply-refusal"
+          className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-lg border border-hairline bg-overlay px-4 py-3 shadow-lg"
+        >
+          <span className="block text-xs font-medium text-fg">Waiting for the apply to answer</span>
+          <span className="mt-1 block text-xs leading-relaxed text-fg-muted">
+            Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.
+          </span>
+        </output>
+      )}
 
       {/* Mobile Navigation — hidden in embedded mode, platform provides its own */}
     </div>
