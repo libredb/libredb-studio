@@ -510,6 +510,23 @@ an alias of `get_current_timestamp()`, and the client context object carries onl
 the session nothing: measured, the very next statement runs normally. Any OTHER rollback failure is
 raised rather than read as an answer.
 
+Both query routes call this in a `finally` and report the outcome, `POST /api/db/multi-query` and
+`POST /api/db/query`, each under a call scope of its own (D74, D87).
+
+**WHAT IS NOT CLOSED: the ender cannot tell whose transaction it is ending.** The `scope` parameter
+is declared on the interface and ignored here, because this provider holds ONE connection and there
+is no other client to name, and that is not the same as the transaction being the caller's own.
+`getOrCreateProvider` caches the provider per `connection.id` for the whole process, so one
+connection is shared by every concurrent request on that stored connection: the sharing measured
+above is what makes another request's transaction REACHABLE here, not what puts it out of reach.
+The act is an unconditional `ROLLBACK` whose refusal is the reading, and a refusal cannot say WHOSE
+transaction it found, so a request whose own statements left nothing open still discards a
+concurrent request's, and that request is told nothing. That is the D87 shape on a single
+connection and it is NOT closed: closing it needs the transaction owned by a call scope rather than
+by a client, which is a design change and not a parameter, so it is recorded here rather than
+worked around. `sqlite.md` §3.5 and `redis.md` §5.2a carry the same residual for the same reason,
+and the three were checked rather than inferred from one another.
+
 ### EXPLAIN
 
 `explainFormat` is `duckdb-json`. The provider sends `EXPLAIN (FORMAT JSON) <query>`, reads
