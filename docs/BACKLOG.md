@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D82, U17 · 38
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X23, U2–U21 · 14
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X26, U2–U21 · 15
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -1584,6 +1584,34 @@ entirely, so a caller could re-point an approved plan through a bastion they own
 
 **Done when:** a connection with an enabled SSH tunnel can build and apply an object edit plan, with a
 test that drives the two sides through the factory rather than asserting the digest alone.
+
+### X26. Nothing in CI reads the browser console across an object-edit apply
+
+X21 asked for two things and only one of them landed. The fix is in (`ef37e436`): `ReleasedDiffEditor`
+in `src/components/object-source/ApplyPreviewDialog.tsx` calls `setModel(null)` before it disposes the
+two diff models, which is what stops Monaco raising `TextModel got disposed before DiffEditorWidget
+model got reset` (`monaco-editor/esm/vs/editor/browser/widget/diffEditor/diffEditorWidget.js:233-240`
+registers `onWillDispose` on BOTH models inside an autorun keyed on the diff model, and resetting the
+model disposes that autorun's store). The other half of X21's "Done when", "the E2E spec can assert an
+empty console after an apply", was not done, and the entry was deleted anyway. This is that half.
+
+`e2e/object-edit.spec.ts` DOES install a console listener, `watchForCspViolations`, and it keeps only
+messages whose text contains `Content Security Policy`, so it cannot see this class of error or any
+other. Nothing else under `e2e/` reads the console.
+
+The consequence is an evidence gap, not a live defect: the symptom X21 was filed for, a Chromium
+console error on every apply driven through the UI, was never re-read after the fix. What pins the fix
+is a component test against a hand-written Monaco double
+(`tests/components/object-source/ApplyPreviewDialog.test.tsx`, "closing the dialog RELEASES the two
+models before anything disposes them"), whose error condition is a reconstruction of Monaco's rather
+than a transcription of it.
+
+Widening `watchForCspViolations` is not the fix by itself. The page is not known to be console clean
+today, so this needs the live console read first and then a decision about what the allowed set is,
+otherwise the assertion lands red on messages that have nothing to do with the apply.
+
+**Done when:** an E2E spec reads the whole browser console across an object-edit apply and fails on an
+unexpected message, with the allowed set named and justified, so a regression of X21 turns a job red.
 
 
 ## Dependencies
