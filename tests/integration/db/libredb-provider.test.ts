@@ -1152,3 +1152,32 @@ describe("LibreDBProvider object surface (#789)", () => {
     );
   });
 });
+
+// ============================================================================
+// endOpenQueryTransaction() (D75)
+// ============================================================================
+
+describe("endOpenQueryTransaction()", () => {
+  /** The only three answers D75 accepts from a provider that does not implement the surface. */
+  const ABSENCES = [
+    "the engine has no transaction to leave open",
+    "the driver cannot be asked",
+    "nobody has measured it yet",
+  ] as const;
+
+  test("is not implemented, and the doc names WHICH absence that is", () => {
+    const provider: DatabaseProvider = new LibreDBProvider(makeConn(tmpFile));
+
+    expect(provider.endOpenQueryTransaction).toBeUndefined();
+
+    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
+    // absence has to be readable in the doc as well as in the type. Exactly one of the
+    // three: "one of these two" is not an answer, and a doc that names none has not
+    // declared anything.
+    const doc = fs.readFileSync(path.join(import.meta.dir, "../../../docs/providers/libredb.md"), "utf8");
+    expect(doc).toContain("endOpenQueryTransaction");
+    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
+      "the engine has no transaction to leave open",
+    ]);
+  });
+});

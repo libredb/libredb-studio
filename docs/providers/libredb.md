@@ -445,6 +445,22 @@ such row to name; the row menu reads no maintenance capability of its own. `Gene
 stays: it names the row, it does not address it, and it sanitises the name into an identifier that
 is legal in every target language (`users:*` -> `User`), keeping Unicode letters intact.
 
+### 5.4 `endOpenQueryTransaction()` is absent, and which absence it is (D75)
+
+The optional provider surface that ends a transaction a statement left open on the session
+`query()` runs on ([`types.ts`](../../src/lib/db/types.ts), implemented on `postgres`, `sqlite` and
+`duckdb`) is **not implemented here, because the engine has no transaction to leave open.**
+
+The command grammar (§5.1) is a closed set of five verbs and the dispatcher refuses everything else
+by name. Measured 2026-09-15 through this provider against `@libredb/libredb`: `begin`, `commit`,
+`rollback`, `transact` and `start transaction` are each refused with *"Unknown command `<verb>`.
+Supported: get, put, delete, prefix, range"*, and a `put` straight afterwards still writes. The
+kernel's own `transact()` is a single atomic call rather than a session that stays open (§13), and
+no verb reaches it.
+
+So the surface would have nothing to report, and the absence is a declared boundary rather than a
+fallback: the caller shape-checks for the method and this provider does not answer it.
+
 ---
 
 ## 6. Schema introspection
