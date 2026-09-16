@@ -229,4 +229,45 @@ describe("CodeGenerator", () => {
     // After closing, the dropdown items are gone
     expect(pythonItems.length).toBe(0);
   });
+
+  test("Escape closes the code generator", () => {
+    const onClose = mock(() => {});
+    render(<CodeGenerator isOpen onClose={onClose} tablePath={["app", "users"]} tableSchema={schema} />);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("a key other than Escape leaves the code generator open", () => {
+    const onClose = mock(() => {});
+    render(<CodeGenerator isOpen onClose={onClose} tablePath={["app", "users"]} tableSchema={schema} />);
+
+    fireEvent.keyDown(document, { key: "Enter" });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("a handled Escape does not close the code generator underneath", () => {
+    const onClose = mock(() => {});
+    render(<CodeGenerator isOpen onClose={onClose} tablePath={["app", "users"]} tableSchema={schema} />);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    event.preventDefault();
+
+    document.dispatchEvent(event);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("removes the Escape listener when the code generator closes", () => {
+    const onClose = mock(() => {});
+    const { rerender } = render(
+      <CodeGenerator isOpen onClose={onClose} tablePath={["app", "users"]} tableSchema={schema} />,
+    );
+
+    rerender(<CodeGenerator isOpen={false} onClose={onClose} tablePath={["app", "users"]} tableSchema={schema} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

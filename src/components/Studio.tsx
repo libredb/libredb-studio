@@ -305,7 +305,7 @@ export default function Studio() {
    * because an unmeasured "nothing else can reach this" is the mistake D82 was filed over. The
    * dialog refuses every exit IT owns: while `applying` it withholds its close button and prevents
    * Escape, a press outside and every other interaction outside. What it cannot refuse is a global
-   * listener, and `grep -rE 'addEventListener\(\s*"keydown' src` answers FIVE, of which TWO can
+   * listener, and `grep -rE 'addEventListener\(\s*"keydown' src` answers SIX, of which TWO can
    * move the active tab here:
    *
    * - `src/components/studio/StudioTabBar.tsx`, on `document`: the new-tab shortcut (#745).
@@ -316,6 +316,9 @@ export default function Studio() {
    *   own `onClose`. It moves no tab. An earlier form of this paragraph said there were two
    *   listeners and missed it, which is the unmeasured-absence mistake D82 was filed over, so it is
    *   named here rather than left out for being harmless.
+   * - `src/components/CodeGenerator.tsx`, on `document`, and MOUNTED BY THIS SHELL. It is bound only
+   *   while the generator is open, answers an unhandled Escape alone, closes only that modal and
+   *   moves no tab (#879).
    * - `src/components/ShortcutsDialog.tsx`, on `document` (#746), and MOUNTED BY THIS SHELL. It
    *   answers `?` alone (guarded against the editor and every text input), opens a dialog that
    *   reads shortcut labels and closes itself, and moves no tab.
