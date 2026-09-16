@@ -30,7 +30,8 @@
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>、
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
-  <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>
+  <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>、
+  <a href="https://www.dragonflydb.io/docs/integrations/libredb-studio">DragonflyDB</a>
   の公式ドキュメントにも掲載
 </p>
 
