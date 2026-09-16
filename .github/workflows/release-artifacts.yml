@@ -408,6 +408,10 @@ jobs:
       - name: Generate SHA256SUMS
         # Covers the POSIX tarballs AND the win32 zip: winget, Chocolatey,
         # and the npx launcher all verify against this one checksum file.
+        # Those are the only payload assets that exist this early - the snap,
+        # .deb/.rpm/.AppImage and SBOM assets are built by later jobs, so
+        # publish-release widens this file over the whole draft asset set
+        # (issue #913) before the release is published.
         run: |
           cd dist
           sha256sum libredb-studio-standalone-*.tar.gz libredb-studio-standalone-*.zip > SHA256SUMS
@@ -1121,6 +1125,37 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The widening step below runs a repo script, so the job needs the tree.
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      # Close the checksum gap (issue #913). The publish job can only cover the
+      # tarballs and the win32 zip, because nothing else exists when it runs;
+      # by now every payload asset is on the draft, so rebuild the one combined
+      # file over the whole set - the two snaps and the CycloneDX SBOM were the
+      # assets left with no checksum of any kind. This has to happen before the
+      # publish below: from there the asset set is frozen (issue #154), and
+      # dist/SHA256SUMS is the file the widening rewrites. The script reads
+      # each asset's recorded sha256 from the releases API and refuses to emit
+      # a file in which an entry the release already carried has changed, so
+      # the npx launcher, Homebrew and Chocolatey/winget lookups stay valid -
+      # a rebuilt file only ever widens.
+      - name: Widen SHA256SUMS to cover every payload asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > /tmp/release.json
+          mkdir -p dist
+          gh release download "$TAG" --pattern SHA256SUMS --dir dist --clobber --repo "$GITHUB_REPOSITORY"
+          node scripts/release-sums.mjs /tmp/release.json \
+            --existing dist/SHA256SUMS --allow-download > dist/SHA256SUMS.new
+          mv dist/SHA256SUMS.new dist/SHA256SUMS
+          cat dist/SHA256SUMS
+          gh release upload "$TAG" dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+
       - name: Verify the draft carries the full asset set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

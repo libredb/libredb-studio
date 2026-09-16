@@ -196,15 +196,19 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 |---|---|---|
 | Standalone server tarball | `libredb-studio-standalone-<version>-<os>-<arch>.tar.gz` | `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64` |
 | Standalone server zip (Windows) | `libredb-studio-standalone-<version>-win32-x64.zip` | `win32-x64` (bundled Node runtime + `libredb-studio.exe` launcher) |
-| Checksums | `SHA256SUMS` | covers all standalone tarballs and the win32 zip |
+| Checksums | `SHA256SUMS` | covers every payload asset except the `.sha256` sidecars |
 | Debian package | `libredb-studio_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` |
 | RPM package | `libredb-studio-<version>.<arch>.rpm` (+ `.sha256` sidecar) | `x86_64`, `aarch64` |
 | Snap | `libredb-studio_<version>_<arch>.snap` | `amd64`, `arm64` (also published to the Snap Store) |
 | Desktop AppImage | `libredb-studio-desktop-<version>-linux-<arch>.AppImage` (+ `.sha256` sidecar) | `x64`, `arm64` (also the artifact the in-repo Flatpak manifest repacks) |
 | Desktop Debian package | `libredb-studio-desktop_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` (from 0.9.62; the artifact FlatPark pins as extra-data) |
 
-`SHA256SUMS` covers the standalone tarballs and the win32 zip; each `.deb`/`.rpm`/`.AppImage`
-ships its own per-file `<artifact>.sha256` sidecar instead (those are built in separate jobs).
+`SHA256SUMS` covers every payload asset in the release — the standalone tarballs, the win32 zip,
+both `.snap` files and the CycloneDX SBOM — so one file answers "what is the hash of what I just
+downloaded?", whichever artifact that was. The `.deb`/`.rpm` packages and the desktop AppImage
+additionally ship a per-file `<artifact>.sha256` sidecar, written by the job that builds them; the
+combined file covers them too, so a reader no longer has to know which of the two mechanisms
+applies to the artifact they picked.
 
 **Two different `.deb`s ship per release and they are not interchangeable.**
 `libredb-studio_<version>_<arch>.deb` is the headless server: it installs a systemd unit and is
@@ -1281,11 +1285,13 @@ All channels have now had their first live run (the Snap publish completed its f
 
 ### Artifact provenance roadmap
 
-Standalone tarballs and `.deb`/`.rpm` packages are checksum-verified against `SHA256SUMS` /
-per-package `.sha256` sidecars (see [Release artifact naming](#release-artifact-naming)) — both
-from the same GitHub release. That pairing detects corruption, not substitution: whoever can
-replace an asset can replace its checksum line too. The `.snap` release asset ships no sidecar
-(`--dangerous` installs skip the Snap Store's own verification).
+Every payload asset is checksum-verified against `SHA256SUMS`, and the `.deb`/`.rpm` packages and
+the desktop AppImage ship their own `<artifact>.sha256` sidecar as well
+(see [Release artifact naming](#release-artifact-naming)) — all from the same GitHub release. That
+pairing detects corruption, not substitution: whoever can replace an asset can replace its
+checksum line too, which is what the signed provenance below is for. The `.snap` assets are covered
+by `SHA256SUMS` like every other payload asset, which matters for `snap install --dangerous`: the
+Snap Store's own verification is skipped there, so the release checksum is the only one a user has.
 
 Signed provenance moves the trust root out of the release — the signer is the workflow's GitHub
 OIDC identity (repo + workflow + commit), recorded in a public transparency log. All three steps of
