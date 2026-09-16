@@ -70,8 +70,16 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
     }
 
     // Detect table name from current tab or query
+    const fromQuery = currentTab.query.match(/FROM\s+(\S+)/i)?.[1];
+    const fromTab = currentTab.name.replace(/^Query[: ]*/, "");
+
+    const isDefaultQueryTab = /^Query \d+$/.test(currentTab.name.trim());
+
     const tableName =
-      currentTab.name.replace(/^Query[:  ]*/, "") || currentTab.query.match(/FROM\s+(\S+)/i)?.[1] || "table_name";
+      (isDefaultQueryTab && isBareIdentifier(fromQuery ?? "") && fromQuery) ||
+      fromTab ||
+      fromQuery ||
+      "table_name";
 
     // The table name is a GUESS (a tab title, or the first word after FROM), so it
     // is validated rather than quoted: quoting would change its case semantics and

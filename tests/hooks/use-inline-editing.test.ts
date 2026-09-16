@@ -224,7 +224,37 @@ describe("useInlineEditing", () => {
     expect(result.current.pendingChanges).toEqual([]);
     expect(result.current.editingEnabled).toBe(false);
   });
+  test("uses the FROM table when the tab has a default Query name", async () => {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          name: "Query 2",
+          query: "SELECT id, name, category FROM products ORDER BY id",
+        }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
 
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({
+          columnId: "name",
+          originalValue: "Alice",
+          newValue: "Alice Updated",
+        }),
+      );
+    });
+
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+
+    const sql = mockExecuteQuery.mock.calls[0][0] as string;
+    expect(sql).toContain("UPDATE products");
+  });
   // ── handleApplyChanges one request per edited row (#269) ──────────────────
 
   test("handleApplyChanges executes one statement per edited row, never a joined payload", async () => {
