@@ -27,11 +27,12 @@
 <p align="center">
   Listado también en la documentación oficial de
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
-  <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>
+  <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>,
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
-  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>
-  y
+  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>
+  y
+  <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>
 </p>
 
 <p align="center">
