@@ -49,6 +49,43 @@ describe("LoginPage (OIDC mode)", () => {
     expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
   });
 
+  // One message per failure class. The configuration case gives no retry advice, because trying
+  // again fails identically until an operator edits the deployment; the discovery case names the
+  // provider as the thing that did not answer; state and exchange failures keep "try again",
+  // which is the right advice for those.
+  test("tells the user to contact an administrator for oidc_config", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_config"));
+    const { getByText } = render(<LoginForm authProvider="oidc" />);
+    const message = getByText(/not configured correctly on this server/);
+    expect(message.textContent).not.toMatch(/try again/i);
+  });
+
+  test("names the identity provider as unreachable for oidc_discovery", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_discovery"));
+    const { getByText } = render(<LoginForm authProvider="oidc" />);
+    expect(getByText(/identity provider could not be reached/)).not.toBeNull();
+  });
+
+  test("renders the generic message for every other code", () => {
+    for (const code of ["oidc_state_missing", "oidc_state_invalid", "oidc_no_claims", "constructor", "__proto__"]) {
+      setMockSearchParams(new URLSearchParams(`error=${code}`));
+      const { getByText, unmount } = render(<LoginForm authProvider="oidc" />);
+      expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
+      unmount();
+    }
+  });
+
+  test("never renders the query value itself", () => {
+    // The login page is unauthenticated. A code is a class name, never the issuer's own words; if
+    // anything upstream ever put error text in the query, the page must still not echo it.
+    const leaked = "ClientError: only requests to HTTPS are allowed";
+    setMockSearchParams(new URLSearchParams({ error: leaked }));
+    const { container, getByText } = render(<LoginForm authProvider="oidc" />);
+    expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
+    expect(container.textContent).not.toContain("HTTPS");
+    expect(container.textContent).not.toContain("ClientError");
+  });
+
   test("does not show error message when no error param", () => {
     const { queryByText } = render(<LoginForm authProvider="oidc" />);
     expect(queryByText("Authentication failed. Please try again.")).toBeNull();

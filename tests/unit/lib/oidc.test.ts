@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 // ─── Mock openid-client before importing oidc.ts ────────────────────────────
 
@@ -166,6 +167,30 @@ describe("getOIDCConfig", () => {
   test("throws when OIDC_CLIENT_ID is missing", () => {
     delete process.env.OIDC_CLIENT_ID;
     expect(() => getOIDCConfig()).toThrow("OIDC_CLIENT_ID");
+  });
+
+  test("throws AuthConfigError when OIDC_ISSUER is not an https URL", () => {
+    // openid-client refuses a plain-http issuer before sending anything, and a value that does
+    // not parse (or parses with a bogus scheme, as the scheme-less form does) would fail the same
+    // way inside discovery. All of these are the operator's .env, so they classify as
+    // configuration on the login route rather than as a provider that did not answer.
+    for (const issuer of [
+      "http://localhost:8080/realms/dev",
+      "localhost:8080/realms/dev",
+      "example.com/realms/dev",
+      "https://",
+    ]) {
+      process.env.OIDC_ISSUER = issuer;
+      expect(() => getOIDCConfig()).toThrow(AuthConfigError);
+      expect(() => getOIDCConfig()).toThrow("https://");
+    }
+  });
+
+  test("accepts an issuer whose scheme is upper-case", () => {
+    // Schemes are case-insensitive to the URL parser and to openid-client; the guard must not be
+    // stricter than the library it fronts.
+    process.env.OIDC_ISSUER = "HTTPS://example.auth0.com";
+    expect(getOIDCConfig().issuer).toBe("HTTPS://example.auth0.com");
   });
 
   test("throws when OIDC_CLIENT_SECRET is missing", () => {

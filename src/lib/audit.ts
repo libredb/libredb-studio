@@ -81,6 +81,16 @@ export type AuditReason =
   | "oidc_no_claims"
   | "oidc_failed"
   | "oidc_config"
+  /**
+   * The login route's configuration was complete, but the provider did not answer discovery: an
+   * issuer that does not resolve, a TLS failure, a response that is not JSON or names a different
+   * issuer. (openid-client checks nothing else in the document, so one that parses but lacks an
+   * endpoint fails later, as `oidc_failed`.) Kept apart from
+   * `oidc_config` because Studio cannot tell up front whether .env is to blame (a mistyped issuer
+   * host lands here too; only the scheme is checked before discovery), and from `oidc_failed`
+   * because the login page tells the user something different for each.
+   */
+  | "oidc_discovery"
   // Agent execution path (#328). The thirteen `agent_*` codes below mirror
   // `PolicyDenyCode` one-for-one, plus the two outcomes that are not policy
   // denials: an operation that may only ever require approval, and a provider

@@ -27,6 +27,8 @@ export interface OIDCState {
 // src/lib/config/auth-env.ts (bun coverage under-counts multi-line string continuations).
 const OIDC_CONFIG_MISSING_MESSAGE =
   "OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when using OIDC authentication";
+const OIDC_ISSUER_NOT_HTTPS_MESSAGE =
+  "OIDC_ISSUER must be an https:// URL; openid-client refuses plain http, localhost included";
 
 export function getOIDCConfig(): OIDCConfig {
   const issuer = process.env.OIDC_ISSUER;
@@ -42,6 +44,16 @@ export function getOIDCConfig(): OIDCConfig {
     // ships here happened to not contain "config" until this fix, which is exactly how it was
     // caught misclassifying itself as oidc_failed).
     throw new AuthConfigError(OIDC_CONFIG_MISSING_MESSAGE);
+  }
+
+  // openid-client v6 refuses a non-https issuer before it sends anything. Checked on the parsed
+  // URL rather than the raw string, the way openid-client does: `HTTPS://host` is https, and a
+  // scheme-less value either fails to parse or parses with a bogus scheme (`localhost:8080/...`
+  // becomes protocol `localhost:`). Either way it is the operator's .env, not the network, so it
+  // is named here as configuration rather than surfacing as a discovery failure that "try again
+  // later" cannot fix.
+  if (URL.parse(issuer)?.protocol !== "https:") {
+    throw new AuthConfigError(OIDC_ISSUER_NOT_HTTPS_MESSAGE);
   }
 
   return {

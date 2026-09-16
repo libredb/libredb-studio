@@ -15,12 +15,32 @@ import { ConnectionSignature } from "@/components/login/connection-signature";
 import { DatabaseShowcase } from "@/components/login/database-showcase";
 import { HeroProof, HERO_CLAIMS } from "@/components/login/hero-proof";
 import { WireCompatibleLine } from "@/components/login/wire-compatible-line";
+import type { AuditReason } from "@/lib/audit";
 
 /**
  * The agent half of the mobile summary. Pulled from `HERO_CLAIMS` rather than retyped, so
  * the mobile line states exactly what the desktop figure states about the two modes.
  */
 const agentClaimDetail = HERO_CLAIMS.find((claim) => claim.key === "agent")?.detail ?? "";
+
+/**
+ * One fixed sentence per failure class, keyed by the `?error=` code the OIDC routes redirect with.
+ * The page is unauthenticated, so nothing the issuer said is ever rendered here: the code names the
+ * class and that is all. A `switch` rather than an object lookup, so an unexpected value (including
+ * `constructor` or any other inherited key) always falls through to the generic message. The labels
+ * are pinned to the audit union so a renamed reason fails to compile here instead of quietly
+ * degrading to the generic sentence.
+ */
+function oidcErrorMessage(code: string): string {
+  switch (code) {
+    case "oidc_config" satisfies AuditReason:
+      return "Single sign-on is not configured correctly on this server. Contact your administrator.";
+    case "oidc_discovery" satisfies AuditReason:
+      return "The identity provider could not be reached. Try again later, or contact your administrator if this continues.";
+    default:
+      return "Authentication failed. Please try again.";
+  }
+}
 
 function LoginFormInner({ authProvider }: { authProvider: string }) {
   const isOIDC = authProvider === "oidc";
@@ -249,7 +269,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                 <>
                   {oidcError && (
                     <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-                      Authentication failed. Please try again.
+                      {oidcErrorMessage(oidcError)}
                     </div>
                   )}
 
