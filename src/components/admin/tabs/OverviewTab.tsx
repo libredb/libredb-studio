@@ -42,7 +42,7 @@ import Link from "next/link";
 import type { FleetHealthItem } from "@/app/api/admin/fleet-health/route";
 import type { AuditEvent } from "@/lib/audit";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
-import { chartTooltipStyle } from "@/lib/charts/palette";
+import { chartTheme, chartTooltipStyle } from "@/lib/charts/palette";
 
 // ─── Animation Variants ─────────────────────────────────────────────────────
 
@@ -432,6 +432,7 @@ function HeroStatusBanner({
   fleetLoading: boolean;
   onRefresh: () => void;
 }) {
+  const { grid } = chartTheme(useEffectiveTheme());
   const animatedScore = useAnimatedCounter(healthScore);
   const animatedConns = useAnimatedCounter(connections.length);
   const animatedQueries = useAnimatedCounter(queryStats.total);
@@ -488,7 +489,7 @@ function HeroStatusBanner({
                   startAngle={90}
                   endAngle={-270}
                 >
-                  <RadialBar dataKey="value" cornerRadius={6} background={{ fill: "rgba(255,255,255,0.04)" }} />
+                  <RadialBar dataKey="value" cornerRadius={6} background={{ fill: grid }} />
                 </RadialBarChart>
               </ResponsiveContainer>
             </div>
@@ -851,6 +852,7 @@ function MetricGauge({
   color: string;
   maxValue?: number;
 }) {
+  const { grid } = chartTheme(useEffectiveTheme());
   const pct = Math.round((value / maxValue) * 100);
   const animatedValue = useAnimatedCounter(value);
   const gaugeData = [{ value: pct, fill: color }];
@@ -867,7 +869,7 @@ function MetricGauge({
             startAngle={90}
             endAngle={-270}
           >
-            <RadialBar dataKey="value" cornerRadius={4} background={{ fill: "rgba(255,255,255,0.03)" }} />
+            <RadialBar dataKey="value" cornerRadius={4} background={{ fill: grid }} />
           </RadialBarChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
