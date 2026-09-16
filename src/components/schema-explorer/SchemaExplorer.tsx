@@ -21,6 +21,7 @@ interface SchemaExplorerProps {
   schemaError?: string | null;
   onTableClick?: (path: readonly string[]) => void;
   onGenerateSelect?: (path: readonly string[]) => void;
+  onGenerateCount?: (path: readonly string[]) => void;
   onCreateTableClick?: () => void;
   isAdmin?: boolean;
   onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", path?: readonly string[]) => void;
@@ -37,6 +38,7 @@ export function SchemaExplorer({
   schemaError = null,
   onTableClick,
   onGenerateSelect,
+  onGenerateCount,
   onCreateTableClick,
   isAdmin = false,
   onOpenMaintenance,
@@ -200,6 +202,7 @@ export function SchemaExplorer({
               isAdmin={isAdmin}
               onTableClick={onTableClick}
               onGenerateSelect={onGenerateSelect}
+              onGenerateCount={onGenerateCount}
               onProfileTable={onProfileTable}
               onGenerateCode={onGenerateCode}
               onGenerateTestData={onGenerateTestData}

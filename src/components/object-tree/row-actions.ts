@@ -57,7 +57,19 @@
  * objects. Standing ruling 4 against #789 Tasks 20 and 23.
  */
 
-import { ChartColumn, Code, FileCode, Funnel, Plus, Search, Trash2, WandSparkles, type LucideIcon } from "lucide-react";
+import {
+  ChartColumn,
+  Code,
+  FileCode,
+  Funnel,
+  Hash,
+  Plus,
+  Search,
+  Trash2,
+  WandSparkles,
+  type LucideIcon,
+} from "lucide-react";
+import { canGenerateCountQuery } from "@/lib/query-generators";
 import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
 import {
   maintenanceControl,
@@ -80,6 +92,8 @@ import type { TreeRowModel } from "./flatten";
 export interface TreeRowActionHandlers {
   /** Put a generated statement in a new tab WITHOUT running it. */
   readonly onGenerateSelect?: (object: DatabaseObject) => void;
+  /** Prepare a count in the editor; a full-table scan must remain an explicit Run. */
+  readonly onGenerateCount?: (object: DatabaseObject) => void;
   readonly onProfileObject?: (object: DatabaseObject) => void;
   readonly onGenerateCode?: (object: DatabaseObject) => void;
   /** Generates INSERTs and can run them, which is why it is gated on both row-write facts. */
@@ -162,6 +176,11 @@ function objectActions(
       icon: Funnel,
       run: () => select(object),
     });
+  }
+
+  const count = handlers.onGenerateCount;
+  if (isRelation && count !== undefined && canGenerateCountQuery(capabilities)) {
+    actions.push({ id: "generate-count", label: "Generate Count Query", icon: Hash, run: () => count(object) });
   }
 
   // Profile asks two engine-wide facts rather than a per-kind one: see the note at the top of

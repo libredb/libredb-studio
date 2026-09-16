@@ -214,6 +214,20 @@ export function escapeIdentifier(identifier: string, provider: DatabaseType): st
   return `"${cleaned}"`;
 }
 
+const ROW_COUNT_FORMATTER = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+/** Compact catalog figures consistently across the desktop and mobile explorers (#702). */
+export function formatRowCount(rows: number): string {
+  if (!Number.isFinite(rows) || rows < 0) return "N/A";
+  return ROW_COUNT_FORMATTER.format(rows);
+}
+
+/** The full reported figure is not an exact COUNT on most engines. */
+export function formatRowCountTitle(rows: number): string {
+  if (!Number.isFinite(rows) || rows < 0) return "Row count unavailable";
+  return `${rows.toLocaleString("en-US")} rows, as the engine reported them, which is an estimate on most engines`;
+}
+
 /**
  * Format bytes to human readable size.
  *

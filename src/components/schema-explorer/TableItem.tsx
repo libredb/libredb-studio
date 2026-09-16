@@ -7,6 +7,7 @@ import {
   Play,
   ChevronRight,
   Funnel,
+  Hash,
   EllipsisVertical,
   Copy,
   Trash2,
@@ -17,6 +18,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { kindAcceptsRowWrites } from "@/lib/db/object-kinds";
 import { maintenanceControl, offersCodeGeneration, offersColumnProfiling } from "@/lib/db/types";
+import { formatRowCount, formatRowCountTitle } from "@/lib/db/utils/pool-manager";
+import { canGenerateCountQuery } from "@/lib/query-generators";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -48,6 +51,7 @@ interface TableItemProps {
   isAdmin: boolean;
   onTableClick?: (path: readonly string[]) => void;
   onGenerateSelect?: (path: readonly string[]) => void;
+  onGenerateCount?: (path: readonly string[]) => void;
   // ADDRESSES, one element per segment, the same shape `onTableClick` above already takes:
   // the shell resolves the object by path, because a label is not unique (#789, Task 35).
   onProfileTable?: (path: readonly string[]) => void;
@@ -58,7 +62,13 @@ interface TableItemProps {
 
 type TableItemCallbacks = Pick<
   TableItemProps,
-  "onTableClick" | "onGenerateSelect" | "onProfileTable" | "onGenerateCode" | "onGenerateTestData" | "onOpenMaintenance"
+  | "onTableClick"
+  | "onGenerateSelect"
+  | "onGenerateCount"
+  | "onProfileTable"
+  | "onGenerateCode"
+  | "onGenerateTestData"
+  | "onOpenMaintenance"
 >;
 
 /**
@@ -135,6 +145,12 @@ function renderMenuItems({
         <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
         {labels?.generateAction || "Generate Query"}
       </Item>
+      {callbacks.onGenerateCount !== undefined && canGenerateCountQuery(capabilities) && (
+        <Item onClick={() => callbacks.onGenerateCount?.(table.path)}>
+          <Hash strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
+          {"Generate Count Query"}
+        </Item>
+      )}
       <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || "Table"} name`)}>
         <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
         {"Copy Name"}
@@ -221,6 +237,7 @@ export const TableItem = React.memo(function TableItem({
   isAdmin,
   onTableClick,
   onGenerateSelect,
+  onGenerateCount,
   onProfileTable,
   onGenerateCode,
   onGenerateTestData,
@@ -240,6 +257,7 @@ export const TableItem = React.memo(function TableItem({
   const callbacks = {
     onTableClick,
     onGenerateSelect,
+    onGenerateCount,
     onProfileTable,
     onGenerateCode,
     onGenerateTestData,
@@ -284,10 +302,16 @@ export const TableItem = React.memo(function TableItem({
               </span>
             </button>
 
-            <div className="shrink-0 relative w-8 h-6 flex items-center justify-center">
+            <div
+              title={table.rowCount === undefined ? undefined : formatRowCountTitle(table.rowCount)}
+              className="shrink-0 relative w-8 h-6 flex items-center justify-center"
+            >
               {table.rowCount !== undefined && (
-                <span className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
-                  {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount}
+                <span
+                  title={formatRowCountTitle(table.rowCount)}
+                  className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none"
+                >
+                  {formatRowCount(table.rowCount)}
                 </span>
               )}
               <DropdownMenu>

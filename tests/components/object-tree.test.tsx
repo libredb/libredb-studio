@@ -596,7 +596,12 @@ describe("ObjectTree object rows", () => {
     // An ICON, not a word laid out in the row: the word is there for a reader who needs it.
     expect(status.querySelector("svg")).not.toBeNull();
     expect(status.getAttribute("title")).toBe("INVALID");
-    expect(within(row(/orders/)).getByTestId("tree-row-count").textContent).toBe("1,234");
+    expect(within(row(/orders/)).getByTestId("tree-row-count").textContent).toBe("1.2K");
+    expect(
+      within(row(/orders/))
+        .getByTestId("tree-row-count")
+        .getAttribute("title"),
+    ).toContain("1,234 rows");
     expect(within(row(/order_total/)).queryByTestId("tree-row-status")).toBeNull();
     expect(within(row(/order_total/)).queryByTestId("tree-row-count")).toBeNull();
   });

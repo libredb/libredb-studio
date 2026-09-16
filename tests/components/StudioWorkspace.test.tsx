@@ -37,6 +37,7 @@ const mockUpdateCurrentTab = mock(() => {});
 const mockUpdateTabById = mock(() => {});
 const mockHandleTableClick = mock(() => {});
 const mockHandleGenerateSelect = mock(() => {});
+const mockHandleGenerateCount = mock(() => {});
 // Query adapter
 const mockExecuteQuery = mock(() => {});
 const mockForceExecuteQuery = mock(() => {});
@@ -170,6 +171,7 @@ mock.module("@/hooks/use-tab-manager", () => ({
       updateTabById: mockUpdateTabById,
       handleTableClick: mockHandleTableClick,
       handleGenerateSelect: mockHandleGenerateSelect,
+      handleGenerateCount: mockHandleGenerateCount,
       ...held,
       ...tabMgrOverride,
     };
@@ -417,6 +419,7 @@ describe("StudioWorkspace", () => {
     mockUpdateTabById.mockClear();
     mockHandleTableClick.mockClear();
     mockHandleGenerateSelect.mockClear();
+    mockHandleGenerateCount.mockClear();
     mockExecuteQuery.mockClear();
     mockForceExecuteQuery.mockClear();
     mockCancelQuery.mockClear();
@@ -904,6 +907,9 @@ describe("StudioWorkspace", () => {
 
     act(() => sidebarActions().onGenerateSelect?.(usersObject));
     expect(mockHandleGenerateSelect).toHaveBeenCalledWith(["app", "users"]);
+
+    act(() => sidebarActions().onGenerateCount?.(usersObject));
+    expect(mockHandleGenerateCount).toHaveBeenCalledWith(["app", "users"]);
 
     act(() => sidebarActions().onProfileObject?.(usersObject));
     expect(queryByTestId("dataprofiler")).not.toBeNull();

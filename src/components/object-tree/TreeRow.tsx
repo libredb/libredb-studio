@@ -10,6 +10,7 @@
  * a leaf must not claim to be closed, and a folder whose count the engine refused is a leaf.
  */
 
+import { formatRowCount, formatRowCountTitle } from "@/lib/db/utils/pool-manager";
 import {
   ChevronDown,
   ChevronRight,
@@ -413,10 +414,10 @@ export function TreeRow({
         <span
           id={rowNameId("count", row.id)}
           data-testid="tree-row-count"
-          title="Rows, as the engine reported them, which is an estimate on most engines"
+          title={formatRowCountTitle(object.rowCount)}
           className="ml-auto shrink-0 pl-2 text-[10px] text-muted-foreground tabular-nums"
         >
-          {object.rowCount.toLocaleString("en-US")}
+          {formatRowCount(object.rowCount)}
         </span>
       )}
       {/*

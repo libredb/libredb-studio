@@ -88,6 +88,43 @@ describe("useTabManager", () => {
     mockToastDismiss.mockClear();
   });
 
+  test("a count query opens and activates an editable tab without executing it", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+    act(() => result.current.handleGenerateCount(["app", "Order.Items"]));
+    const tab = result.current.tabs[1];
+    expect(tab.name).toBe("Count: Order.Items");
+    expect(tab.query).toBe('SELECT COUNT(*) AS row_count\nFROM app."Order.Items";');
+    expect(tab.type).toBe("sql");
+    expect(tab.isExecuting).toBe(false);
+    expect(tab.result).toBeNull();
+    expect(result.current.activeTabId).toBe(tab.id);
+  });
+
+  test("a MongoDB count opens in the correct editor language", () => {
+    const metadata = {
+      ...defaultMetadata,
+      capabilities: { ...defaultMetadata.capabilities, queryLanguage: "json" as const },
+    };
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection({ type: "mongodb" }), metadata, schema: [] }),
+    );
+    act(() => result.current.handleGenerateCount(["database", "orders"]));
+    expect(result.current.tabs[1].type).toBe("mongodb");
+    expect(JSON.parse(result.current.tabs[1].query)).toEqual({ collection: "orders", operation: "count", filter: {} });
+  });
+
+  test.each([
+    null,
+    { ...defaultMetadata, capabilities: { ...defaultMetadata.capabilities, queryDialect: "redis" as const } },
+  ])("unresolved or unsupported metadata never creates a count tab (%#)", (metadata) => {
+    const { result } = renderHook(() => useTabManager({ activeConnection: makeConnection(), metadata, schema: [] }));
+    act(() => result.current.handleGenerateCount(["user:*"]));
+    expect(result.current.tabs).toHaveLength(1);
+    expect(result.current.activeTabId).toBe("default");
+  });
+
   test("starts with one default tab", () => {
     const { result } = renderHook(() =>
       useTabManager({

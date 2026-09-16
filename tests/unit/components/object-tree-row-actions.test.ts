@@ -128,6 +128,25 @@ function idsFor(
 }
 
 describe("rowActions on an object row", () => {
+  test("offers a count query only for a supported relation with a handler", () => {
+    const record: DatabaseObject[] = [];
+    const handlers = { onGenerateCount: (object: DatabaseObject) => record.push(object) };
+    const actions = rowActions({ row: objectRow("table"), object: orders, capabilities: postgres, handlers });
+    expect(actions.map((action) => action.id)).toEqual(["generate-count"]);
+    actions[0].run();
+    expect(record).toEqual([orders]);
+    expect(idsFor(objectRow("table"), postgres, {})).not.toContain("generate-count");
+    expect(idsFor(objectRow("function"), postgres, handlers)).not.toContain("generate-count");
+    expect(idsFor(folderRow("table"), postgres, handlers)).not.toContain("generate-count");
+    for (const capabilities of [
+      { ...postgres, tablesAreDerivedGroupings: true },
+      { ...postgres, queryDialect: "redis" as const },
+      { ...postgres, queryDialect: "libredb" as const },
+    ]) {
+      expect(idsFor(objectRow("table"), capabilities, handlers)).not.toContain("generate-count");
+    }
+    expect(idsFor(objectRow("view"), postgres, handlers)).toEqual(["generate-count"]);
+  });
   test("a relation is offered every action the engine and the shell allow", () => {
     expect(idsFor(objectRow("table"), postgres)).toEqual([
       "generate-select",

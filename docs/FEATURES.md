@@ -86,9 +86,14 @@ Two components are described below and a claim true of one can be false of the o
 *   **Lazy Object Tree (desktop sidebar):** Containers, per-kind folders and object rows, each level read only when it is opened, so connecting costs one listing rather than a walk of the whole database. Expanding an object of a kind whose provider declares that it has columns adds one row per column, with the declared type right-aligned and a key mark on the primary key, from a single-object read issued when the row is opened and kept for the life of the connection; a kind whose provider declares nothing has no chevron, is never read, and stays a leaf. The two gestures on an object row are separate and do different things: clicking the row opens that object's data in a tab, and clicking the chevron to its left opens and closes its columns. With the row focused, Enter and Space open the data, ArrowRight and ArrowLeft open and close the columns.
 *   **Deep Tree Inspection (schema tab):** Expand tables to view column definitions, data types, and Primary Key (PK) constraints with intuitive iconography.
 *   **Global Search & Filter (schema tab):** Real-time, high-performance filtering across both table names and column names.
-*   **Precision Row Counts:** Optimized PostgreSQL integration using `pg_class` statistics for fast, accurate (estimated) row counts even on large datasets.
+*   **Catalog Row Counts:** Both explorers draw the row count the engine already holds in its catalog, in compact K/M/B/T units (for example, `1.6M`).
+    Hover to see the complete figure and the caveat that it is an estimate on most engines.
+    A missing count stays absent, and drawing a badge never runs a full-table count.
 *   **Visual Table Designer:** Create new tables directly from the explorer with a modern, column-based UI. No SQL knowledge required for basic structures.
-*   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
+*   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", "Generate Count Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
+*   **Generate Count Query (both explorers):** Opens an editable count statement in a new tab without running it, so a filter can be added before Run.
+    SQL engines get a qualified, dialect-quoted `SELECT COUNT(*)` (`COUNT_BIG(*)` on SQL Server), and MongoDB gets its `count` document.
+    Redis, LibreDB and Prometheus have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.

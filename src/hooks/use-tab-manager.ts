@@ -6,7 +6,7 @@ import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { generateTableQuery, generateSelectQuery, objectSegment } from "@/lib/query-generators";
+import { generateTableQuery, generateSelectQuery, generateCountQuery, objectSegment } from "@/lib/query-generators";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
@@ -416,6 +416,29 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     [metadata, schema],
   );
 
+  const handleGenerateCount = useCallback(
+    (path: readonly string[]) => {
+      const capabilities = metadata?.capabilities;
+      if (capabilities === undefined) return;
+      const query = generateCountQuery(path, capabilities);
+      if (query === null) return;
+      const id = newLocalId();
+      setTabs((prev) => [
+        ...prev,
+        {
+          id,
+          name: `Count: ${objectSegment(path)}`,
+          query,
+          result: null,
+          isExecuting: false,
+          type: resolveTabType(capabilities),
+        },
+      ]);
+      setActiveTabId(id);
+    },
+    [metadata],
+  );
+
   /**
    * Open one object's DEFINITION in a read-only Source tab, or focus the one already open
    * against that object (#789 Phase 2).
@@ -506,6 +529,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     updateTabById,
     handleTableClick,
     handleGenerateSelect,
+    handleGenerateCount,
     openSourceTab,
   };
 }

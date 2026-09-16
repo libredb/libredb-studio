@@ -14,10 +14,12 @@ mock.module("@/components/schema-explorer/TableItem", () => ({
     table,
     isExpanded,
     onToggle,
+    onGenerateCount,
   }: {
     table: { name: string; path: readonly string[] };
     isExpanded: boolean;
     onToggle: () => void;
+    onGenerateCount?: (path: readonly string[]) => void;
   }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
@@ -30,6 +32,9 @@ mock.module("@/components/schema-explorer/TableItem", () => ({
         onClick: onToggle,
       },
       table.name,
+      onGenerateCount === undefined
+        ? null
+        : React.createElement("button", { onClick: () => onGenerateCount(table.path) }, "Count"),
     );
   },
 }));
@@ -100,6 +105,13 @@ function createDefaultProps(overrides: Partial<Parameters<typeof SchemaExplorer>
 }
 
 describe("SchemaExplorer", () => {
+  test("forwards the count callback with each table's complete address", async () => {
+    const onGenerateCount = mock(() => {});
+    const { getByTestId } = render(<SchemaExplorer {...createDefaultProps({ onGenerateCount })} />);
+    const table = mockSchema[0];
+    await userEvent.click(within(getByTestId(`table-${table.name}`)).getByRole("button", { name: "Count" }));
+    expect(onGenerateCount).toHaveBeenCalledWith(table.path);
+  });
   afterEach(() => {
     cleanup();
   });
