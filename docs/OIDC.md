@@ -145,13 +145,27 @@ Navigate to `/login` and click **"Login with SSO"**.
 
 4. **Role Mapping:**
 
-   Keycloak includes realm roles in the ID token by default:
+   Keycloak's built-in **realm roles** protocol mapper ships with the claim on the
+   **access token only**. LibreDB Studio reads roles from the **ID token**
+   (`tokens.claims()`), so you must also enable the claim on the ID token or every
+   user maps to `role: "user"` and `/admin` stays unreachable.
+
+   In Keycloak Admin → Client scopes → `roles` → Mappers → `realm roles`, set:
+
+   - `Add to ID token` = `ON` (`id.token.claim: true`)
+   - `Add to access token` can stay `ON`
+   - Claim name: `realm_access.roles`
+
+   Then configure Studio:
+
    ```env
    OIDC_ROLE_CLAIM=realm_access.roles
    OIDC_ADMIN_ROLES=admin
    ```
 
    > The dot-notation `realm_access.roles` navigates nested claims: `{ "realm_access": { "roles": ["admin", "user"] } }`
+   >
+   > **Do not assume defaults:** Keycloak 26.x does **not** put realm roles in the ID token until `id.token.claim` is enabled on that mapper.
 
 ### Okta
 
