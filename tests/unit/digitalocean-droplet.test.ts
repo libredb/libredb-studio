@@ -26,13 +26,13 @@ const firstBoot = read("files/var/lib/cloud/scripts/per-instance/99-libredb-firs
  * which name the same variables: a test that passes because of a comment is worse
  * than no test.
  */
-const OPEN = "cat > /etc/libredb-studio.env <<EOF\n";
+const OPEN = "cat > /etc/libredb-studio.env.tmp <<EOF\n";
 const envFile = (() => {
   const start = firstBoot.indexOf(OPEN);
-  if (start < 0) throw new Error("the first-boot script no longer writes /etc/libredb-studio.env with a heredoc");
+  if (start < 0) throw new Error("the first-boot script no longer writes the env file with a heredoc");
   const body = firstBoot.slice(start + OPEN.length);
   const end = body.indexOf("\nEOF");
-  if (end < 0) throw new Error("the heredoc that writes /etc/libredb-studio.env is not terminated");
+  if (end < 0) throw new Error("the heredoc that writes the env file is not terminated");
   return body.slice(0, end);
 })();
 
@@ -52,8 +52,25 @@ describe("DigitalOcean Droplet first boot", () => {
     expect(envFile.split("\n")).toContain("AUTH_COOKIE_SECURE=false");
   });
 
-  test("the environment file is written with a restrictive mode", () => {
-    expect(firstBoot).toMatch(/chmod 600 \/etc\/libredb-studio\.env/);
+  test("the environment file is never created world-readable", () => {
+    // cloud-init runs per-instance scripts with umask 0022, so a plain redirect
+    // would create the file 0644 with live secrets in it and only narrow the
+    // mode afterwards. A failure in between leaves a truncated env file that the
+    // systemd unit happily starts with. The AWS image writes the env file under
+    // umask 077 into a temp file and moves it into place; this is the same shape.
+    const umaskAt = firstBoot.indexOf("umask 077");
+    const heredocAt = firstBoot.indexOf("cat > /etc/libredb-studio.env.tmp");
+    expect(umaskAt).toBeGreaterThan(0);
+    expect(umaskAt).toBeLessThan(heredocAt);
+    // Ordering alone is not the property: `( umask 077 )` closed before the
+    // heredoc restores the world-readable window while keeping the order.
+    expect(firstBoot.slice(umaskAt, heredocAt)).not.toContain(")");
+  });
+
+  test("the environment file is installed atomically with a restrictive mode", () => {
+    expect(firstBoot).not.toContain("cat > /etc/libredb-studio.env <<EOF");
+    expect(firstBoot).toMatch(/chmod 600 \/etc\/libredb-studio\.env\.tmp/);
+    expect(firstBoot).toMatch(/mv \/etc\/libredb-studio\.env\.tmp \/etc\/libredb-studio\.env/);
   });
 
   test("no comment leaks into the environment file", () => {
