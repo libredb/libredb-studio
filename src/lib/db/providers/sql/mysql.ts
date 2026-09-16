@@ -282,9 +282,18 @@ function statusValue(rows: RowDataPacket[], name: string): unknown {
 // Multi-line SQL is hoisted to module scope so per-line coverage attribution
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
 
+/**
+ * `COALESCE(INDEX_LENGTH, 0)` in every size sum below, not just `INDEX_LENGTH`: measured
+ * 2026-09-16 on StarRocks 4.1.4 and 3.3.22 alike, a real `BASE TABLE` with rows and a real
+ * `DATA_LENGTH` answers `INDEX_LENGTH` NULL always, never 0 - so the addition poisoned the
+ * whole sum to NULL and every size read "0 B" for a table actually holding data. A VIEW's
+ * `DATA_LENGTH` stays NULL on every engine measured, so `NULL + COALESCE(NULL, 0)` is still
+ * NULL there and the "unmeasured" reading `measuredNumber`/`measuredNullableAggregate` give
+ * a view is unchanged.
+ */
 const DATABASE_SIZE_MB_SQL = `
         SELECT
-          ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) as size_mb
+          ROUND(SUM(DATA_LENGTH + COALESCE(INDEX_LENGTH, 0)) / 1024 / 1024, 2) as size_mb
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?;
       `;
@@ -321,7 +330,7 @@ const MAINTENANCE_TABLES_SQL = `
     `;
 
 const OVERVIEW_DATABASE_SIZE_SQL = `
-        SELECT SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
+        SELECT SUM(DATA_LENGTH + COALESCE(INDEX_LENGTH, 0)) as size_bytes
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?;
       `;
@@ -531,12 +540,12 @@ const TABLE_STATS_SQL = `
           TABLE_ROWS as row_count,
           DATA_LENGTH as table_size_bytes,
           INDEX_LENGTH as index_size_bytes,
-          DATA_LENGTH + INDEX_LENGTH as total_size_bytes,
+          DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) as total_size_bytes,
           DATA_FREE as free_space_bytes
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?
         AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY DATA_LENGTH + INDEX_LENGTH DESC
+        ORDER BY DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) DESC
         LIMIT 100;
       `;
 
@@ -578,7 +587,7 @@ const INDEX_SIZES_SQL = `
 const STORAGE_STATS_SQL = `
         SELECT
           TABLE_SCHEMA as name,
-          SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
+          SUM(DATA_LENGTH + COALESCE(INDEX_LENGTH, 0)) as size_bytes
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?
         GROUP BY TABLE_SCHEMA;
@@ -809,7 +818,7 @@ function listingSql(catalog: "tables" | "routines", spellings: number): string {
   const placeholders = Array.from({ length: spellings }, () => "?").join(", ");
   if (catalog === "tables") {
     return `
-        SELECT TABLE_NAME AS name, TABLE_ROWS AS row_count, DATA_LENGTH + INDEX_LENGTH AS size_bytes
+        SELECT TABLE_NAME AS name, TABLE_ROWS AS row_count, DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) AS size_bytes
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN (${placeholders})`;
   }

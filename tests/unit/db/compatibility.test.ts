@@ -147,13 +147,16 @@ describe("wire-compatibility registry", () => {
   test("the Doris row is not the StarRocks row, and says so where it matters", () => {
     // A fork's measurements are a PRIOR, never an inheritance. This test pins the one
     // difference that would be tempting to copy across and would be wrong: StarRocks'
-    // caveats say the row counts and sizes are hard zeros, and Doris's must not, because
-    // the probe read the true numbers there.
+    // caveats say a freshly loaded table's row count and size both wait on its own
+    // background statistics collector, and Doris's must not, because the probe read the
+    // true numbers there immediately.
     const byName = new Map(WIRE_COMPATIBLE_ENGINES.map((engine) => [engine.name, engine]));
     const starrocks = byName.get("StarRocks");
     const doris = byName.get("Apache Doris");
-    expect(starrocks?.caveats.some((caveat) => caveat.includes("Row counts and sizes are always 0"))).toBe(true);
-    expect(doris?.caveats.some((caveat) => caveat.includes("always 0"))).toBe(false);
+    expect(starrocks?.caveats.some((caveat) => caveat.includes("background statistics collector catches up"))).toBe(
+      true,
+    );
+    expect(doris?.caveats.some((caveat) => caveat.includes("background statistics collector"))).toBe(false);
     expect(doris?.caveats.some((caveat) => caveat.includes("2000 rows"))).toBe(true);
   });
 

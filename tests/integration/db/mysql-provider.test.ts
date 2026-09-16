@@ -2115,6 +2115,136 @@ describe("MySQLProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // A real BASE TABLE's INDEX_LENGTH is NULL on StarRocks, always, never 0 -
+  // measured 2026-09-16 on StarRocks 4.1.4 and 3.3.22 alike against a table with
+  // real rows and a real DATA_LENGTH. `DATA_LENGTH + INDEX_LENGTH` in SQL is
+  // NULL-poisoned by that alone, so every one of the five size sums below read
+  // "0 B"/absent for a table that demonstrably holds data - confirmed live: the
+  // Overview panel's DB Size and the Tables panel's Size total both read "0 B"
+  // against a real 5-row, 683-byte StarRocks table, while that same table's
+  // Monitoring > Tables row read the correct 683 B (a different query, built
+  // from separate DATA_LENGTH/INDEX_LENGTH columns combined in JS with `|| "0"`,
+  // which is immune to the same defect). `COALESCE(INDEX_LENGTH, 0)` fixes the
+  // SQL side to match.
+  // --------------------------------------------------------------------------
+
+  describe("StarRocks: a NULL INDEX_LENGTH must not poison a real DATA_LENGTH", () => {
+    function protocolCallsMatching(fragment: string): ProtocolCall[] {
+      return protocolCalls.filter((c) => c.sql.toLowerCase().includes(fragment.toLowerCase()));
+    }
+
+    test("getOverview()'s database-size sum coalesces INDEX_LENGTH before adding it", async () => {
+      protocolCalls = [];
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.getOverview();
+
+      const sizeQueries = protocolCallsMatching("sum(data_length");
+      expect(sizeQueries.length).toBeGreaterThan(0);
+      for (const call of sizeQueries) {
+        expect(call.sql).toContain("COALESCE(INDEX_LENGTH, 0)");
+      }
+    });
+
+    test("a StarRocks-shaped row (real DATA_LENGTH, NULL INDEX_LENGTH) reports its real size, not zero", async () => {
+      // Models what a COALESCE-corrected OVERVIEW_DATABASE_SIZE_SQL answers on a real
+      // StarRocks server: DATA_LENGTH 683 for the one populated table, INDEX_LENGTH NULL,
+      // so the corrected sum is 683 - never the NULL an uncoalesced `SUM(a + b)` would give
+      // for the same row.
+      mockExecuteFn = (sql: string) => {
+        const normalized = sql.toLowerCase();
+        if (
+          normalized.includes("information_schema.tables") &&
+          normalized.includes("sum(data_length") &&
+          !normalized.includes("table_name")
+        ) {
+          return Promise.resolve([[{ size_mb: "0.00", size_bytes: "683", name: "testdb" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.databaseSizeBytes).toBe(683);
+      expect(overview.databaseSize).toBe("683 B");
+    });
+
+    test("getTableStats()'s per-table total-size sum coalesces INDEX_LENGTH before adding it", async () => {
+      protocolCalls = [];
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.getTableStats();
+
+      const tableStatsQuery = protocolCallsMatching("table_rows").find((c) =>
+        c.sql.toLowerCase().includes("data_length"),
+      );
+      expect(tableStatsQuery?.sql).toContain("DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) as total_size_bytes");
+      expect(tableStatsQuery?.sql).toContain("ORDER BY DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) DESC");
+    });
+
+    test("a StarRocks-shaped table (real DATA_LENGTH, NULL INDEX_LENGTH) reports its real total size", async () => {
+      mockExecuteFn = (sql: string) => {
+        const normalized = sql.toLowerCase();
+        if (normalized.includes("information_schema.tables") && normalized.includes("table_rows")) {
+          return Promise.resolve([
+            [
+              {
+                table_name: "t1",
+                row_count: "5",
+                table_size_bytes: "683",
+                index_size_bytes: null,
+                // What a COALESCE-corrected TABLE_STATS_SQL answers: 683 + COALESCE(NULL, 0).
+                total_size_bytes: "683",
+                free_space_bytes: null,
+                schema_name: "verify_db",
+              },
+            ],
+            [],
+          ]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const [t1] = await provider.getTableStats();
+
+      expect(t1.tableSizeBytes).toBe(683);
+      expect(t1.indexSizeBytes).toBe(0);
+      expect(t1.totalSizeBytes).toBe(683);
+      expect(t1.totalSize).toBe("683 B");
+    });
+
+    test("getStorageStats()'s data-size sum coalesces INDEX_LENGTH before adding it", async () => {
+      protocolCalls = [];
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.getStorageStats();
+
+      const sizeQueries = protocolCallsMatching("group by table_schema");
+      expect(sizeQueries.length).toBeGreaterThan(0);
+      for (const call of sizeQueries) {
+        expect(call.sql).toContain("COALESCE(INDEX_LENGTH, 0)");
+      }
+    });
+
+    test("the object browser's table listing coalesces INDEX_LENGTH before adding it", async () => {
+      protocolCalls = [];
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.listObjects(["testdb"], "table");
+
+      const listingQuery = protocolCallsMatching("table_type in");
+      expect(listingQuery.length).toBeGreaterThan(0);
+      for (const call of listingQuery) {
+        expect(call.sql).toContain("DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) AS size_bytes");
+      }
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Note: MySQLProvider does not expose a getPoolStats() method.
   // Pool stats are handled by the base provider if needed.
   // --------------------------------------------------------------------------
