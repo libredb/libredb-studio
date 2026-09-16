@@ -145,7 +145,8 @@ Navigate to `/login` and click **"Login with SSO"**.
 
 4. **Role Mapping:**
 
-   Keycloak includes realm roles in the ID token by default:
+   Verified on Keycloak 26.4: enable the realm-role mapper's **Add to ID token** setting via **Client scopes → roles → Mappers → realm roles → Add to ID token**, then click **Save**.
+   This is required because Keycloak does not enable this setting by default.
    ```env
    OIDC_ROLE_CLAIM=realm_access.roles
    OIDC_ADMIN_ROLES=admin
@@ -349,6 +350,7 @@ The role mapping system:
 
 ### Role is always "user" even for admins
 
+- For Keycloak, first verify **Client scopes → roles → Mappers → realm roles → Add to ID token** is enabled and saved (verified on Keycloak 26.4)
 - Verify `OIDC_ROLE_CLAIM` points to the correct claim in your ID token
 - Use your provider's token debugger to inspect the actual claims returned
 - Check `OIDC_ADMIN_ROLES` matches the role value exactly (case-insensitive)
@@ -816,6 +818,8 @@ Forces the OIDC provider to show the login screen on every SSO click, even if th
 ## Role Mapping Engine
 
 The role mapping system converts provider-specific claims into LibreDB's binary role model (`admin` | `user`).
+
+Studio reads role claims from the ID token returned by the authorization-code exchange; it does not read the access token.
 
 ### Algorithm (`mapOIDCRole`)
 
