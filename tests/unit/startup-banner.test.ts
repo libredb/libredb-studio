@@ -76,6 +76,21 @@ describe("printStartupBanner", () => {
     expect(capture()).toContain("http://127.0.0.1:3000");
   });
 
+  // Same convention as startupUrl (tests/unit/launcher-utils.test.ts): the
+  // dual-stack wildcard bind answers on ::1, and both spellings of it must
+  // produce the same URL so the two copies cannot drift apart.
+  test("prints an IPv6 loopback URL for the :: wildcard bind", () => {
+    process.env.HOSTNAME = "::";
+
+    expect(capture()).toContain("http://[::1]:3000");
+  });
+
+  test("prints an IPv6 loopback URL for the bracketed [::] wildcard bind", () => {
+    process.env.HOSTNAME = "[::]";
+
+    expect(capture()).toContain("http://[::1]:3000");
+  });
+
   test("brackets a bare IPv6 bind address", () => {
     process.env.HOSTNAME = "fe80::1";
 
