@@ -42,6 +42,36 @@ export const DEFAULT_COVERAGE_DIR = "coverage/raw";
  */
 export const DEFAULT_FILE_TIMEOUT_MS = 300_000;
 
+/**
+ * The per-test timeout the runner gives its children on Windows, in place of bun's
+ * own 5000ms default.
+ *
+ * Measured on windows-latest: filesystem work under the user's temp directory is
+ * intermittently slow there and returns transient sharing violations (EPERM, EBUSY,
+ * ENOENT on a rename) that the libraries doing the work retry. The retries are
+ * correct; they are just not free. Across three CI runs, six tests in four unrelated
+ * files - the flat-zip packer, the agent run store, the SQLite provider and the agent
+ * investigation - each died between 5003ms and 5522ms, all of them doing temp I/O or
+ * spawning a process, and none of them on Linux or macOS.
+ *
+ * So 5000ms is not a budget anybody chose for Windows, it is a default that happens to
+ * sit just under what that machine costs. Raising it here does not hide a hang: a file
+ * that genuinely stops is still killed and reported by DEFAULT_FILE_TIMEOUT_MS above,
+ * which is an order of magnitude larger again.
+ */
+export const WINDOWS_PER_TEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The `--timeout` a child is started with, or nothing at all.
+ *
+ * Windows only, and deliberately not "a bigger number everywhere": Linux is the leg
+ * that has to keep failing when a test really does get slow, and it is the leg every
+ * contributor and the coverage gate run on.
+ */
+export function perTestTimeoutArgs(platform: NodeJS.Platform): string[] {
+  return platform === "win32" ? [`--timeout=${WINDOWS_PER_TEST_TIMEOUT_MS}`] : [];
+}
+
 function positiveInteger(name: string, raw: string): number {
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {

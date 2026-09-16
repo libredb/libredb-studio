@@ -326,6 +326,14 @@ Forwarding a flag to `bun test` works only when the runner is invoked directly a
 Measured on 1.4.2: `bun run test -- --bail` reaches the script as `["--bail"]`, because `bun run` removes the first `--`, and bun removes one that sits straight after the script path too, so `bun tests/run-tests.ts -- --bail` loses it as well.
 `bun tests/run-tests.ts tests/unit -- --bail` is the form that arrives whole, and it is what the runner's unknown-option error names when it refuses a flag it does not own.
 
+One flag the runner supplies itself: on Windows, and only there, every child is started with `--timeout=30000` in place of bun's own 5000ms per-test default.
+Measured across three CI runs on windows-latest, six tests in four unrelated files died between 5003ms and 5522ms: the flat-zip packer, the agent run store, the SQLite provider and the agent investigation.
+Every one of them was doing filesystem work under the user's temp directory or spawning a process, and the failures came with transient Windows sharing violations (`EPERM`, `EBUSY`, `ENOENT` on a rename) that the libraries doing the work retry internally.
+The retries are correct and they are not free, so 5000ms is not a budget chosen for that machine, it is a default that happens to sit just under what it costs; the same files pass in 2.5s on a run where the machine is not loaded.
+Raising it hides no hang, because a file that genuinely stops is still killed and reported by the runner's own per-file budget, which is 300 seconds.
+Linux and macOS are left on bun's default on purpose: Linux is the leg the coverage gate and every contributor run on, and it is where a test that really did get slow has to stay visible.
+The flag is placed before the forwarded arguments, so `-- --timeout=...` still wins, bun taking the last of a repeated option; `tests/unit/test-runner-cli.test.ts` measures that precedence against the real bun binary rather than assuming it.
+
 The titles of the tests a file skipped come from the same report, and their describe path from its nested `<testsuite>` elements rather than from the `classname` attribute.
 classname lists those titles too, but bun joins them with " &gt; " and writes a literal ">" inside a title as "&gt;" as well, so no split rule can tell the separator from the character: measured on 1.4.2, splitting classname turned a describe titled "rows where count > 100" into "100 > rows where count".
 The titles are worth printing at all because a skip in this repository states its reason in its title, and bun prints that title nowhere: piped, with `FORCE_COLOR` set, and under a real pty, the output carries the count and nothing else.

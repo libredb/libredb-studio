@@ -867,4 +867,31 @@ describe("the test runner, end to end", () => {
       rmSync(workDir, { recursive: true, force: true });
     }
   });
+
+  /*
+    The Windows default the runner injects (perTestTimeoutArgs) is placed BEFORE the
+    forwarded arguments, so a contributor's own --timeout still decides. That placement
+    rests entirely on bun taking the LAST of a repeated option, which is a fact about the
+    bun binary and not about this repository, so it is measured here against the real one
+    rather than assumed. Both orders are run: without the second arm the first would pass
+    just as well for a bun that took the FIRST and happened to time the fixture out anyway.
+  */
+  test("bun takes the last of a repeated --timeout, which is what lets a forwarded one override the default", () => {
+    const sandbox = sandboxWith(
+      [
+        'import { test } from "bun:test";',
+        'test("sleeps longer than the short timeout and less than the long one", async () => {',
+        "  await Bun.sleep(400);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+
+    const shortLast = runInSandbox(sandbox, ["tests/unit/fixture.test.ts", "--", "--timeout=100000", "--timeout=50"]);
+    expect(shortLast.exitCode).not.toBe(0);
+    expect(`${shortLast.stdout}${shortLast.stderr}`).toContain("timed out after 50ms");
+
+    const longLast = runInSandbox(sandbox, ["tests/unit/fixture.test.ts", "--", "--timeout=50", "--timeout=100000"]);
+    expect(longLast.exitCode).toBe(0);
+  });
 });

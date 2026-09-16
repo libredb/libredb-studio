@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { parseRunnerArgs } from "../runner/options";
+import {
+  DEFAULT_FILE_TIMEOUT_MS,
+  parseRunnerArgs,
+  perTestTimeoutArgs,
+  WINDOWS_PER_TEST_TIMEOUT_MS,
+} from "../runner/options";
 
 const defaults = { cpuCount: 8 };
 
@@ -107,5 +112,27 @@ describe("runner command line", () => {
 
   test("a value written as a separate argument is refused with the form that works", () => {
     expect(() => parseRunnerArgs(["--jobs", "4"], defaults)).toThrow(/--jobs=4/);
+  });
+});
+
+describe("the per-test timeout the children are given", () => {
+  test("Windows children are given a raised timeout, because bun's 5000ms default is not enough there", () => {
+    expect(perTestTimeoutArgs("win32")).toEqual([`--timeout=${WINDOWS_PER_TEST_TIMEOUT_MS}`]);
+  });
+
+  test("Linux and macOS children are given nothing, so bun's own default still applies", () => {
+    // The paired control. Without it the case above would pass just as well for a
+    // function that raised the timeout everywhere, which is the thing not wanted:
+    // Linux is where a real slowdown has to stay visible.
+    expect(perTestTimeoutArgs("linux")).toEqual([]);
+    expect(perTestTimeoutArgs("darwin")).toEqual([]);
+  });
+
+  test("the raised timeout is well clear of bun's default and well under the runner's per-file budget", () => {
+    // Both bounds matter. Below bun's default it would lower the timeout rather than
+    // raise it; at or above the per-file budget the file's own kill would fire first
+    // and the failure would be reported as a hang instead of as the test that ran long.
+    expect(WINDOWS_PER_TEST_TIMEOUT_MS).toBeGreaterThan(5_000);
+    expect(WINDOWS_PER_TEST_TIMEOUT_MS).toBeLessThan(DEFAULT_FILE_TIMEOUT_MS);
   });
 });

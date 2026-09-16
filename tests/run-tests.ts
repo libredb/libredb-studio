@@ -41,7 +41,7 @@ import { captureBounded } from "./runner/capture";
 import { assertCoverageDirIsOurs, assertMergeTargetIsOurs } from "./runner/coverage";
 import { COVERAGE_EXEMPT_FILES, selectTestFiles } from "./runner/discover";
 import { coverageDirFor, type RunFile, runTestFiles, type SpawnOutcome } from "./runner/execute";
-import { parseRunnerArgs, type RunnerOptions } from "./runner/options";
+import { parseRunnerArgs, perTestTimeoutArgs, type RunnerOptions } from "./runner/options";
 import { formatFileLine, formatSummary } from "./runner/report";
 import { missingHelm, planRequirements, requiredCapabilities, systemHelmProbe } from "./runner/requirements";
 import { exitCodeForSignal, STOP_SIGNALS, type StopSignal } from "./runner/signals";
@@ -231,6 +231,10 @@ function spawnTestFile(bunArgs: string[], junitDir: string): RunFile {
       // kill-on-close Job Object on Windows, so a timeout leaves nothing behind.
       "--no-orphans",
       "test",
+      // BEFORE the forwarded arguments, so a contributor's own `-- --timeout=...` still
+      // decides: bun takes the last of a repeated option, the same rule the reporter
+      // flags below rely on. Empty everywhere but Windows.
+      ...perTestTimeoutArgs(process.platform),
       ...bunArgs,
       // AFTER the user's arguments, because bun takes the last of a repeated option:
       // a forwarded `-- --reporter-outfile=x` would otherwise send the report
