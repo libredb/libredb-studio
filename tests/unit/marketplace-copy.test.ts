@@ -24,7 +24,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { DB_UI_CONFIG, getDBConfig } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
@@ -392,10 +392,16 @@ function deployScripts(dir: string): string[] {
   });
 }
 
+/**
+ * A repo-relative path with POSIX separators, so the discovered set reads the same on
+ * Windows, where `join` produces `\` and the mapped paths below would never match.
+ */
+const repoRelative = (full: string): string => relative(REPO_ROOT, full).split(sep).join("/");
+
 /** The provisioners that write the override, as repo-relative paths. */
 const plainHttpProvisioners: string[] = deployScripts(join(REPO_ROOT, "deploy"))
   .filter((file) => WRITES_OVERRIDE_UNCONDITIONALLY.test(readFileSync(file, "utf8")))
-  .map((file) => file.slice(REPO_ROOT.length + 1))
+  .map(repoRelative)
   .sort();
 
 describe("every plain-HTTP channel discloses the cleartext cookie in its listing", () => {
