@@ -30,9 +30,10 @@
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>,
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
-  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>
-  और
+  <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>
+  और
+  <a href="https://opensearch.org/community-projects/">OpenSearch</a>
   के आधिकारिक docs में भी सूचीबद्ध
 </p>
 
