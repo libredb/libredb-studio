@@ -381,6 +381,7 @@ describe("LibSQLProvider capabilities", () => {
     expect(capabilities.explainFormat).toBe("sqlite-queryplan");
     expect(capabilities.supportsConnectionString).toBe(true);
     expect(capabilities.defaultPort).toBe(8080);
+    expect(capabilities.supportsResultPagination).toBe(true);
   });
 
   test("declares no transaction, because the stream closes with each statement", () => {

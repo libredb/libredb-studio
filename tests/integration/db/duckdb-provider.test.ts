@@ -175,6 +175,7 @@ describe("DuckDBProvider capabilities", () => {
 
   test("declares an embedded engine with no port and no connection string", () => {
     expect(capabilities.defaultPort).toBeNull();
+    expect(capabilities.supportsResultPagination).toBe(true);
     expect(capabilities.supportsConnectionString).toBe(false);
   });
 

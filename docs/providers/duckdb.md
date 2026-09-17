@@ -1202,3 +1202,8 @@ to a database login.
 - [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the registration checklist this provider followed
 - [`docs/providers/sqlite.md`](sqlite.md) — the other embedded, file-based engine, and the same deployment constraint
 - [`docs/providers/postgres.md`](postgres.md) — the canonical SQL-family walkthrough
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: true` is declared by this provider. Table previews use a 50-row execution limit without putting a row bound in the generated SQL. Load More reuses the first page size and appends the next offset page. A user-written row bound is a hard bound, and an unchanged statement is never paginated. Without an outer `ORDER BY`, order across pages is not guaranteed; Studio displays this condition without requiring a sort.

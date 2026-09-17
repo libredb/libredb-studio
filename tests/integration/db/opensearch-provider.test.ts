@@ -946,12 +946,11 @@ describe("OpenSearch faults", () => {
 // ============================================================================
 
 describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
-  test("declares the same capabilities as the other type-id, except the one declared divergence", () => {
+  test("shares capabilities except the declared quoting and result-pagination differences", () => {
     // The guard: one implementation serves both type-ids, so a capability that
     // differs without being deliberate means a behaviour difference was smuggled
-    // into the wrong place. `identifierQuoting` is the ONE exception, and it is
-    // subtracted here explicitly rather than by relaxing the comparison, so a
-    // second divergence still fails this test.
+    // into the wrong place. Quoting and offset pagination are subtracted explicitly
+    // rather than relaxing the comparison, so any further divergence still fails.
     //
     // Why it diverges: measured on OpenSearch 3.8.0, a double-quoted identifier is
     // a STRING LITERAL, so `WHERE "customer" = 'acme'` answers HTTP 200 with
@@ -959,12 +958,20 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
     // derives its dialect from `defaultPort`, and both products are 9200 - so
     // without a declared quote style the generated query would silently return no
     // rows for data that exists.
-    const { identifierQuoting: osQuoting, ...opensearch } = new OpenSearchProvider(makeConnection()).getCapabilities();
-    const { identifierQuoting: esQuoting, ...elasticsearch } = new ElasticsearchProvider(
-      makeConnection({ type: ELASTICSEARCH }),
-    ).getCapabilities();
+    const {
+      identifierQuoting: osQuoting,
+      supportsResultPagination: osPagination,
+      ...opensearch
+    } = new OpenSearchProvider(makeConnection()).getCapabilities();
+    const {
+      identifierQuoting: esQuoting,
+      supportsResultPagination: esPagination,
+      ...elasticsearch
+    } = new ElasticsearchProvider(makeConnection({ type: ELASTICSEARCH })).getCapabilities();
 
     expect(opensearch).toEqual(elasticsearch);
+    expect(osPagination).toBe(true);
+    expect(esPagination).toBe(false);
     expect(osQuoting).toBe("backtick");
     expect(esQuoting).toBe("double");
     expect(opensearch.queryLanguage).toBe("sql");
@@ -2076,4 +2083,8 @@ describe("endOpenQueryTransaction()", () => {
       "the engine has no transaction to leave open",
     ]);
   });
+});
+
+test("supports offset result pagination (#816)", () => {
+  expect(new OpenSearchProvider(makeConnection()).getCapabilities().supportsResultPagination).toBe(true);
 });

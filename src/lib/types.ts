@@ -458,6 +458,11 @@ export interface QueryTab {
   currentOffset?: number;
   isLoadingMore?: boolean;
   allRows?: Record<string, unknown>[];
+  /** The executed statement and editor/connection identity, used to reject stale next pages. */
+  resultQuery?: string;
+  resultSourceQuery?: string;
+  resultConnectionId?: string;
+  loadMoreError?: string;
   /**
    * Present exactly on a Source tab (#789 Phase 2).
    *

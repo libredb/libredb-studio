@@ -227,6 +227,12 @@ export interface ProviderCapabilities {
    */
   explainFormat?: ExplainFormat;
   supportsExternalQueryLimiting: boolean;
+  /**
+   * Whether this provider applies an offset when fetching another result page.
+   * Optional for compatibility with published ProviderCapabilities implementers.
+   * Every built-in provider declares it; consumers require `=== true`.
+   */
+  supportsResultPagination?: boolean;
   supportsCreateTable: boolean;
   /**
    * Whether this engine accepts the single-table row update the results grid's

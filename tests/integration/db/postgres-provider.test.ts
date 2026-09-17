@@ -2735,6 +2735,7 @@ describe("PostgresProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML — exactly the
       // statement shape the inline row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      expect(caps.supportsResultPagination).toBe(true);
       // BEGIN/COMMIT/ROLLBACK run over one held pool client here, so the toolbar's
       // transaction trio and the sandbox toggle are offered (#464).
       expect(caps.supportsTransactions).toBe(true);

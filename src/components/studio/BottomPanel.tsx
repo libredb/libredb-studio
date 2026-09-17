@@ -10,6 +10,7 @@ import type { MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
+import { hasPageableResult } from "@/lib/query-pagination";
 import { QueryHistory } from "@/components/QueryHistory";
 import { SavedQueries } from "@/components/SavedQueries";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
@@ -569,8 +570,14 @@ export function BottomPanel({
             ) : displayedResult ? (
               <ResultsGrid
                 result={displayedResult}
-                onLoadMore={hydratedHere ? undefined : onLoadMore}
+                supportsResultPagination={metadata?.capabilities.supportsResultPagination}
+                query={currentTab.resultQuery ?? currentTab.query}
+                queryType={activeConnection?.type}
+                onLoadMore={
+                  hydratedHere || !hasPageableResult(currentTab, activeConnection?.id) ? undefined : onLoadMore
+                }
                 isLoadingMore={isLoadingMore}
+                loadMoreError={currentTab.loadMoreError}
                 maskingEnabled={maskingEnabled}
                 onToggleMasking={onToggleMasking}
                 userRole={userRole}

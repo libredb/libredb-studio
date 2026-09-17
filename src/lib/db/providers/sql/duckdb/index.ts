@@ -386,6 +386,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "duckdb-json",
       supportsInlineRowEdit: true,
+      supportsResultPagination: true,
       // DuckDB HAS transactions - `BEGIN`/`COMMIT` are accepted - but this provider
       // holds no session for one, so POST /api/db/transaction refuses the call and the
       // controls stay hidden. Same position as sqlite.ts.

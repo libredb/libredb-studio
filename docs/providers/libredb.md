@@ -1286,3 +1286,8 @@ await provider.disconnect();
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: false` is declared by this provider. This provider does not implement offset result pagination. Studio hides Load More; it never repeats page one as a later page.

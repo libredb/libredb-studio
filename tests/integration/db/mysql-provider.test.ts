@@ -947,6 +947,7 @@ describe("MySQLProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core MySQL DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      expect(caps.supportsResultPagination).toBe(true);
       // One held connection carries the transaction, so the trio is offered (#464).
       expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so

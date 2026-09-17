@@ -799,3 +799,8 @@ For Turso Cloud, create a database and a token with the `turso` CLI and paste th
 - Hrana protocol specification — <https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md>
 - [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the registration checklist this provider followed
 - [`docs/providers/sqlite.md`](sqlite.md) — the same dialect against a file
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: true` is declared by this provider. Table previews use a 50-row execution limit without putting a row bound in the generated SQL. Load More reuses the first page size and appends the next offset page. A user-written row bound is a hard bound, and an unchanged statement is never paginated. Without an outer `ORDER BY`, order across pages is not guaranteed; Studio displays this condition without requiring a sort.

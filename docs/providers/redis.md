@@ -1608,3 +1608,8 @@ This Redis provider is a good template for a non-relational backend. To add anot
 7. **Test** with a `mock.module()`-based integration test mirroring the structure above.
 8. **Document** the provider in `docs/providers/<name>.md` using this file as the template, and add
    the query format to `docs/API_DOCS.md`.
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: false` is declared by this provider. This provider does not implement offset result pagination. Studio hides Load More; it never repeats page one as a later page.

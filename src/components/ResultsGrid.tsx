@@ -2,6 +2,8 @@
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from "react";
 import { QueryResult } from "@/lib/types";
+import type { DatabaseType } from "@/lib/types";
+import { hasResultOrder } from "@/lib/sql/result-order";
 import {
   type ColumnDef,
   type SortingState,
@@ -82,6 +84,10 @@ const tableFeatureSet = tableFeatures({
 
 interface ResultsGridProps {
   result: QueryResult;
+  supportsResultPagination?: boolean;
+  query?: string;
+  queryType?: DatabaseType;
+  loadMoreError?: string;
   onLoadMore?: () => void;
   isLoadingMore?: boolean;
   maskingEnabled?: boolean;
@@ -137,6 +143,10 @@ function detectIdColumn(fields: string[]): string | null {
 
 export function ResultsGrid({
   result,
+  supportsResultPagination,
+  query,
+  queryType,
+  loadMoreError,
   onLoadMore,
   isLoadingMore,
   maskingEnabled,
@@ -583,6 +593,14 @@ export function ResultsGrid({
     <div className="flex flex-col h-full bg-sunken">
       <StatsBar
         result={result}
+        canPageResults={
+          supportsResultPagination === true && result.pagination?.wasLimited === true && onLoadMore !== undefined
+        }
+        orderAcrossPagesUnspecified={
+          supportsResultPagination === true &&
+          result.pagination?.wasLimited === true &&
+          !hasResultOrder(query ?? "", queryType)
+        }
         filteredRowCount={filteredRows.length}
         activeFilterCount={activeFilterCount}
         onClearFilters={handleClearFilters}
@@ -813,9 +831,18 @@ export function ResultsGrid({
         </div>
       </div>
 
-      {result.pagination?.hasMore && onLoadMore && (
-        <LoadMoreFooter hasMore={true} onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} />
-      )}
+      {supportsResultPagination === true &&
+        result.pagination?.wasLimited &&
+        result.pagination.hasMore &&
+        onLoadMore && (
+          <LoadMoreFooter
+            hasMore={true}
+            onLoadMore={onLoadMore}
+            isLoadingMore={isLoadingMore}
+            pageSize={result.pagination.limit}
+            error={loadMoreError}
+          />
+        )}
 
       {selectedRow && (
         <RowDetailSheet

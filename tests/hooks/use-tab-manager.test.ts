@@ -542,7 +542,7 @@ describe("useTabManager", () => {
     expect(result.current.tabs).toHaveLength(2);
     const newTab = result.current.tabs[1];
     expect(newTab.name).toBe("users");
-    expect(newTab.query).toBe("SELECT * FROM users LIMIT 50;");
+    expect(newTab.query).toBe("SELECT * FROM users;");
     expect(newTab.type).toBe("sql");
 
     // Active tab should be the new one
@@ -552,7 +552,7 @@ describe("useTabManager", () => {
     // The hook uses setTimeout(..., 100), so we wait for it
     return new Promise<void>((resolve) => {
       setTimeout(() => {
-        expect(executeFn).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50;", newTab.id);
+        expect(executeFn).toHaveBeenCalledWith("SELECT * FROM users;", newTab.id, false, { limit: 50 });
         resolve();
       }, 150);
     });
@@ -933,7 +933,7 @@ describe("useTabManager", () => {
     });
 
     const newTab = result.current.tabs[1];
-    expect(newTab.query).toBe("SELECT * FROM users LIMIT 50;");
+    expect(newTab.query).toBe("SELECT * FROM users;");
     expect(newTab.type).toBe("sql");
     expect(newTab.name).toBe("users");
   });
@@ -1191,7 +1191,7 @@ describe("useTabManager addresses an object by its path", () => {
     });
 
     const newTab = result.current.tabs[1];
-    expect(newTab.query).toBe("SELECT TOP 50 * FROM libredb_objects.app.customers;");
+    expect(newTab.query).toBe("SELECT * FROM libredb_objects.app.customers;");
     // The tab is still LABELLED with the object's own segment.
     expect(newTab.name).toBe("customers");
   });
@@ -1272,7 +1272,7 @@ describe("useTabManager addresses an object by its path", () => {
       result.current.handleTableClick(["app", "customers"], executeFn);
     });
 
-    expect(result.current.tabs[1].query).toBe("SELECT * FROM app.customers LIMIT 50;");
+    expect(result.current.tabs[1].query).toBe("SELECT * FROM app.customers;");
   });
 });
 

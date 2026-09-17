@@ -33,6 +33,37 @@ describe("results-grid/StatsBar", () => {
     cleanup();
   });
 
+  test("an unordered paginated query states the ordering condition once beside the auto-limit badge", () => {
+    const { getByText, getAllByText } = render(
+      <StatsBar
+        result={makeResult()}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={() => {}}
+        viewMode="table"
+        onSetViewMode={() => {}}
+        wrapText={false}
+        onToggleWrapText={() => {}}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+        orderAcrossPagesUnspecified={true}
+      />,
+    );
+    expect(getByText("AUTO-LIMITED")).toBeDefined();
+    expect(getAllByText("Order across pages is not guaranteed")).toHaveLength(1);
+  });
+
+  test("the next-page button shows the actual size and retries a visible page error", () => {
+    const retry = mock(() => {});
+    const { getByRole } = render(
+      <LoadMoreFooter hasMore={true} onLoadMore={retry} pageSize={50} error="page failed" />,
+    );
+    expect(getByRole("alert").textContent).toBe("page failed");
+    fireEvent.click(getByRole("button", { name: "Retry (50 rows)" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
   test("renders stats and filter summary, clears filters", () => {
     const onClearFilters = mock(() => {});
     const { queryByText } = render(

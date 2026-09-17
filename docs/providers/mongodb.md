@@ -1154,3 +1154,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - Tests: [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md) · query format also in [`CLAUDE.md`](../../CLAUDE.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: false` is declared by this provider. This provider does not implement offset result pagination. Studio hides Load More; it never repeats page one as a later page.

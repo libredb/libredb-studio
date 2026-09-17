@@ -329,6 +329,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // (get/put/delete/prefix/range), so there is no `UPDATE ... SET` for the
       // inline row editor to emit (issue #269).
       supportsInlineRowEdit: false,
+      supportsResultPagination: false,
       // The command grammar has no transaction verb.
       supportsTransactions: false,
       // The embedded engine's catalog declares namespaces and columns, and nothing

@@ -254,6 +254,7 @@ export class CassandraProvider extends SQLBaseProvider {
       // real table - is "Some partition key parts are missing: id". Editing a key
       // column is refused outright ("PRIMARY KEY part id found in SET part").
       supportsInlineRowEdit: false,
+      supportsResultPagination: false,
       // CQL has no transaction; BATCH is not one.
       supportsTransactions: false,
       // There is no referential constraint in the model at all: `ALTER TABLE … ADD

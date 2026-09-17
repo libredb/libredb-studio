@@ -284,6 +284,7 @@ describe("CouchbaseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsResultPagination: true,
       // The HTTP query service is stateless per request; no session spans two of them.
       supportsTransactions: false,
       declaresForeignKeys: false,
@@ -315,6 +316,7 @@ describe("CouchbaseProvider metadata", () => {
     // matches nothing. Addressing a document needs `META(d).id` or `USE KEYS`, which
     // is per-dialect statement building - deferred to issue #279.
     expect(new CouchbaseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(new CouchbaseProvider(makeConnection()).getCapabilities().supportsResultPagination).toBe(true);
   });
 
   test("declares declaresForeignKeys false because SQL++ has no referential constraint", () => {

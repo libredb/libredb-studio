@@ -695,6 +695,7 @@ abstract class SearchProvider extends SQLBaseProvider {
       // the inline editor's statement could only ever produce an error. False hides
       // the affordance instead of offering it (#269).
       supportsInlineRowEdit: false,
+      supportsResultPagination: this.product.acceptsOffsetClause,
       // Neither grammar has BEGIN; both are reached over stateless HTTP.
       supportsTransactions: false,
       // The engine has no such constraint in its model: denormalization is the

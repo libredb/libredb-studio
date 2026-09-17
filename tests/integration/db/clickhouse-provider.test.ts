@@ -438,6 +438,7 @@ describe("ClickHouseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsResultPagination: true,
       supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: true,
@@ -473,6 +474,7 @@ describe("ClickHouseProvider metadata", () => {
     // bare `UPDATE ... SET` the inline row editor builds answers code 48
     // NOT_IMPLEMENTED (documented in docs/providers/clickhouse.md §13).
     expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsResultPagination).toBe(true);
   });
 
   test("declares declaresForeignKeys false because no constraint catalog exists here", () => {

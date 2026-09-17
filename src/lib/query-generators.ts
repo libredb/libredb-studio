@@ -422,21 +422,10 @@ export function generateTableQuery(
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++)
   if (capabilities.defaultPort === COUCHBASE_PORT) {
-    return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS} LIMIT 50;`;
+    return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS};`;
   }
-  // Oracle
-  if (capabilities.defaultPort === 1521) {
-    return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY${terminator(capabilities)}`;
-  }
-  // MSSQL
-  if (capabilities.defaultPort === 1433) {
-    return `SELECT TOP 50 * FROM ${table};`;
-  }
-  // PostgreSQL / MySQL / SQLite / ClickHouse / Elasticsearch / OpenSearch. The
-  // trailing LIMIT matters for ClickHouse specifically: it also accepts `FORMAT x`
-  // and `SETTINGS ...` as trailing clauses, and a LIMIT placed after either is a
-  // syntax error, so the limit must stay last (issue #264).
-  return `SELECT * FROM ${table} LIMIT 50${terminator(capabilities)}`;
+  // The preview size travels as an execution option. A bound in the editor is the user's hard bound.
+  return `SELECT * FROM ${table}${terminator(capabilities)}`;
 }
 
 /**

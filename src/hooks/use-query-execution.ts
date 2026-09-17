@@ -11,6 +11,7 @@ import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { hasPageableResult } from "@/lib/query-pagination";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
@@ -177,6 +178,7 @@ export function useQueryExecution({
   // studio unmounts resolves into a setState on a component that is gone. Every
   // tab's run, not just the last one started.
   useEffect(() => {
+    if (!activeConnection) return;
     const runs = runsRef.current;
     const lastRuns = lastRunRef.current;
     return () => {
@@ -184,7 +186,7 @@ export function useQueryExecution({
       runs.clear();
       lastRuns.clear();
     };
-  }, []);
+  }, [activeConnection]);
 
   const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
@@ -267,6 +269,8 @@ export function useQueryExecution({
                 ...t,
                 isExecuting: !isLoadMore,
                 isLoadingMore: isLoadMore,
+                loadMoreError: undefined,
+                ...(!isLoadMore && !isExplain && { result: null, allRows: undefined, currentOffset: 0 }),
               }
             : t,
         ),
@@ -323,7 +327,15 @@ export function useQueryExecution({
       /** Write to the tab this run owns — and only while it still owns it. */
       const commitToTab = (update: (tab: QueryTab) => QueryTab) => {
         if (isSuperseded()) return;
-        setTabs((prev) => prev.map((t) => (t.id === targetTabId ? update(t) : t)));
+        setTabs((prev) =>
+          prev.map((t) => {
+            if (t.id !== targetTabId) return t;
+            if (isLoadMore && (t.result !== tabToExec.result || !hasPageableResult(t, activeConnection.id))) {
+              return { ...t, isLoadingMore: false };
+            }
+            return update(t);
+          }),
+        );
       };
 
       // Playground mode: begin a transaction before executing (will rollback after)
@@ -613,6 +625,11 @@ export function useQueryExecution({
             result: isExplain ? null : resultData, // Don't show EXPLAIN as results
             allRows: isExplain ? t.allRows : resultData.rows,
             currentOffset: isExplain ? t.currentOffset : resultData.rows.length,
+            ...(!isExplain && {
+              resultQuery: queryToExecute,
+              resultSourceQuery: tabToExec.query,
+              resultConnectionId: activeConnection.id,
+            }),
             isExecuting: false,
             isLoadingMore: false,
             explainPlan: explainPlanData || t.explainPlan,
@@ -672,7 +689,16 @@ export function useQueryExecution({
         // A superseded run must not clear the flags the newer run just set: the
         // spinner belongs to the query that is still running.
         const superseded = isSuperseded();
-        commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
+        commitToTab((t) => ({
+          ...t,
+          isExecuting: false,
+          isLoadingMore: false,
+          ...(isLoadMore &&
+            !(error instanceof DOMException && error.name === "AbortError") && {
+              loadMoreError: error instanceof Error ? error.message : "Unknown error",
+            }),
+        }));
+        if (superseded) return;
 
         // Don't show error toast for user-initiated cancellation
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -684,7 +710,7 @@ export function useQueryExecution({
           return;
         }
 
-        const title = "Query Error";
+        const title = isLoadMore ? "Load More Error" : "Query Error";
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         // Fallback string check for cancellation errors not caught by response code
         if (errorMessage.includes("Query was cancelled") || errorMessage.includes("cancelled")) {
@@ -854,15 +880,23 @@ export function useQueryExecution({
   );
 
   // Load More handler
-  const handleLoadMore = useCallback(() => {
-    if (!currentTab.result?.pagination?.hasMore) return;
+  const handleLoadMore = useCallback(async () => {
+    if (
+      metadata?.capabilities.supportsResultPagination !== true ||
+      !activeConnection ||
+      !hasPageableResult(currentTab, activeConnection.id) ||
+      currentTab.isLoadingMore ||
+      currentTab.isExecuting ||
+      runsRef.current.has(currentTab.id)
+    )
+      return;
 
-    const currentOffset = currentTab.currentOffset || currentTab.result.rows.length;
-    executeQuery(currentTab.query, currentTab.id, false, {
-      limit: 500,
+    const currentOffset = currentTab.currentOffset ?? currentTab.result!.rows.length;
+    await executeQuery(currentTab.resultQuery ?? currentTab.query, currentTab.id, false, {
+      limit: currentTab.result!.pagination!.limit,
       offset: currentOffset,
     });
-  }, [currentTab, executeQuery]);
+  }, [currentTab, executeQuery, metadata, activeConnection]);
 
   // Unlimited query handler
   const handleUnlimitedQuery = useCallback(() => {

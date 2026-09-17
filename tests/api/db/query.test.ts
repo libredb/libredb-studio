@@ -394,6 +394,30 @@ describe("POST /api/db/query", () => {
     expect(data.pagination.totalReturned).toBe(50);
   });
 
+  test("an unchanged statement offers no next page even at exactly the execution limit (#816)", async () => {
+    (mockProvider.prepareQuery as ReturnType<typeof mock>).mockReturnValueOnce({
+      query: "SELECT * FROM users LIMIT 50",
+      wasLimited: false,
+      limit: 50,
+      offset: 0,
+    });
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: Array.from({ length: 50 }, (_, i) => ({ id: i })),
+      fields: ["id"],
+      rowCount: 50,
+      executionTime: 1,
+    });
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT * FROM users LIMIT 50" },
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    const data = await parseResponseJSON<{ pagination: { hasMore: boolean } }>(res);
+    expect(data.pagination.hasMore).toBe(false);
+  });
+
   test("pagination hasMore is false when rows.length less than limit", async () => {
     const threeRows = [{ id: 1 }, { id: 2 }, { id: 3 }];
     (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({

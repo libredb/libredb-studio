@@ -355,6 +355,7 @@ export class TrinoProvider extends SQLBaseProvider {
       // primary key for any table in any catalog, so there is no column that
       // identifies one row - an edit would silently rewrite every row that matches.
       supportsInlineRowEdit: false,
+      supportsResultPagination: true,
       // Trino has START TRANSACTION, but a transaction lives in an HTTP session
       // header this provider does not carry between statements.
       supportsTransactions: false,

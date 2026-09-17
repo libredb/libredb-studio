@@ -1612,3 +1612,8 @@ database-wide statistics. Transaction and cancel routes do not apply — see
   <https://clickhouse.com/docs/en/operations/system-tables/data_skipping_indices>
 - EXPLAIN: <https://clickhouse.com/docs/en/sql-reference/statements/explain>
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: true` is declared by this provider. Table previews use a 50-row execution limit without putting a row bound in the generated SQL. Load More reuses the first page size and appends the next offset page. A user-written row bound is a hard bound, and an unchanged statement is never paginated. Without an outer `ORDER BY`, order across pages is not guaranteed; Studio displays this condition without requiring a sort.

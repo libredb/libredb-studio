@@ -1687,3 +1687,8 @@ This engine is a REFUSAL because it was NOT PROBED, and this section says so rat
 Neither wave of #789 ran the two questions an editable Cassandra kind turns on: how a replace behaves across a function's SIGNATURE, and what happens to an aggregate when the function it names is replaced under it.
 Nothing here claims that no strategy exists; it records that nobody measured one, and this phase declares a kind editable only where a failure cannot lose the object and a success destroys nothing the user was not shown, neither of which an unprobed engine can be shown to satisfy.
 No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
+
+
+## Result pagination (#816)
+
+`supportsResultPagination: false` is declared by this provider. CQL has no OFFSET clause; `prepareQuery` refuses a SELECT with a positive offset. Studio hides Load More instead of offering a request that cannot succeed.

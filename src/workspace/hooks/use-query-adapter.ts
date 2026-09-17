@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, useCallback, useRef, useEffect, type Dispatch, type SetStateAction } from "react";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { WorkspaceQueryResult, WorkspaceFeatures } from "@/workspace/types";
 import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
+import { hasPageableResult } from "@/lib/query-pagination";
 
 /**
  * The channels a host result carries beyond rows and counts (#285).
@@ -35,6 +36,7 @@ function carriedChannels(result: WorkspaceQueryResult): Pick<QueryTab["result"] 
 }
 
 interface UseQueryAdapterParams {
+  supportsResultPagination?: boolean;
   activeConnection: DatabaseConnection | null;
   onQueryExecute: (
     connectionId: string,
@@ -54,6 +56,7 @@ interface UseQueryAdapterParams {
 }
 
 export function useQueryAdapter({
+  supportsResultPagination,
   activeConnection,
   onQueryExecute,
   tabs,
@@ -66,7 +69,22 @@ export function useQueryAdapter({
   // Reserved for future use (schema refresh after DDL, feature gating)
   void _fetchSchema;
   void _features;
+  // Sidebar previews execute after their new tab is created. Read that committed tab, not the old callback's tabs.
+  const tabsRef = useRef(tabs);
+  const currentTabRef = useRef(currentTab);
+  useEffect(() => {
+    tabsRef.current = tabs;
+    currentTabRef.current = currentTab;
+  });
   const cancelledRef = useRef(false);
+  const pageRequestsRef = useRef(new Map<string, object>());
+  useEffect(() => {
+    if (!activeConnection) return;
+    const requests = pageRequestsRef.current;
+    return () => {
+      requests.clear();
+    };
+  }, [activeConnection]);
 
   const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
@@ -85,9 +103,10 @@ export function useQueryAdapter({
       tabId?: string,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       _isExplain: boolean = false,
+      executionOptions?: { limit?: number; offset?: number; unlimited?: boolean },
     ) => {
       const targetTabId = tabId || activeTabId;
-      const tabToExec = tabs.find((t) => t.id === targetTabId) || currentTab;
+      const tabToExec = tabsRef.current.find((t) => t.id === targetTabId) || currentTabRef.current;
 
       const queryToExecute = overrideQuery || tabToExec.query;
 
@@ -111,6 +130,7 @@ export function useQueryAdapter({
       }
 
       cancelledRef.current = false;
+      pageRequestsRef.current.delete(targetTabId);
 
       // Set tab executing state
       setTabs((prev) =>
@@ -119,6 +139,11 @@ export function useQueryAdapter({
             ? {
                 ...t,
                 isExecuting: true,
+                result: null,
+                allRows: undefined,
+                currentOffset: 0,
+                isLoadingMore: false,
+                loadMoreError: undefined,
               }
             : t,
         ),
@@ -128,7 +153,9 @@ export function useQueryAdapter({
       const startTime = Date.now();
 
       try {
-        const result = await onQueryExecute(activeConnection.id, queryToExecute);
+        const result = await (executionOptions === undefined
+          ? onQueryExecute(activeConnection.id, queryToExecute)
+          : onQueryExecute(activeConnection.id, queryToExecute, executionOptions));
 
         // Check if cancelled while awaiting
         if (cancelledRef.current) return;
@@ -150,6 +177,9 @@ export function useQueryAdapter({
                 ...carriedChannels(result),
               },
               allRows: result.rows,
+              resultQuery: queryToExecute,
+              resultSourceQuery: tabToExec.query,
+              resultConnectionId: activeConnection.id,
               currentOffset: result.rows.length,
               isExecuting: false,
               isLoadingMore: false,
@@ -184,7 +214,7 @@ export function useQueryAdapter({
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       }
     },
-    [activeConnection, tabs, currentTab, activeTabId, toast, onQueryExecute, setTabs],
+    [activeConnection, activeTabId, toast, onQueryExecute, setTabs],
   );
 
   // Force execute (bypass safety check)
@@ -203,6 +233,7 @@ export function useQueryAdapter({
       }
 
       cancelledRef.current = false;
+      pageRequestsRef.current.delete(activeTabId);
 
       setTabs((prev) =>
         prev.map((t) =>
@@ -210,6 +241,11 @@ export function useQueryAdapter({
             ? {
                 ...t,
                 isExecuting: true,
+                result: null,
+                allRows: undefined,
+                currentOffset: 0,
+                isLoadingMore: false,
+                loadMoreError: undefined,
               }
             : t,
         ),
@@ -239,6 +275,9 @@ export function useQueryAdapter({
                   ...carriedChannels(result),
                 },
                 allRows: result.rows,
+                resultQuery: query,
+                resultSourceQuery: currentTab.query,
+                resultConnectionId: activeConnection.id,
                 currentOffset: result.rows.length,
                 isExecuting: false,
                 isLoadingMore: false,
@@ -268,16 +307,17 @@ export function useQueryAdapter({
           toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
         });
     },
-    [activeConnection, activeTabId, toast, onQueryExecute, setTabs],
+    [activeConnection, activeTabId, currentTab, toast, onQueryExecute, setTabs],
   );
 
   // Cancel running query (best-effort via ref flag)
   const cancelQuery = useCallback(() => {
+    pageRequestsRef.current.clear();
     cancelledRef.current = true;
 
     setTabs((prev) =>
       prev.map((t) =>
-        t.isExecuting
+        t.isExecuting || t.isLoadingMore
           ? {
               ...t,
               isExecuting: false,
@@ -291,11 +331,24 @@ export function useQueryAdapter({
   }, [setTabs, toast]);
 
   // Load More handler
-  const handleLoadMore = useCallback(() => {
-    if (!currentTab.result?.pagination?.hasMore) return;
-    if (!activeConnection) return;
+  const handleLoadMore = useCallback(async () => {
+    if (
+      supportsResultPagination !== true ||
+      !activeConnection ||
+      !hasPageableResult(currentTab, activeConnection.id) ||
+      currentTab.isLoadingMore ||
+      currentTab.isExecuting ||
+      pageRequestsRef.current.has(currentTab.id)
+    )
+      return;
 
-    const currentOffset = currentTab.currentOffset || currentTab.result.rows.length;
+    cancelledRef.current = false;
+    const currentOffset = currentTab.currentOffset ?? currentTab.result!.rows.length;
+    const originalResult = currentTab.result!;
+    const request = {};
+    const requests = pageRequestsRef.current;
+    requests.set(currentTab.id, request);
+    const ownsRequest = () => requests.get(currentTab.id) === request && !cancelledRef.current;
 
     setTabs((prev) =>
       prev.map((t) =>
@@ -303,61 +356,68 @@ export function useQueryAdapter({
           ? {
               ...t,
               isLoadingMore: true,
+              loadMoreError: undefined,
             }
           : t,
       ),
     );
 
-    onQueryExecute(activeConnection.id, currentTab.query, {
-      limit: 500,
-      offset: currentOffset,
-    })
-      .then((result) => {
-        if (cancelledRef.current) return;
-
-        setTabs((prev) =>
-          prev.map((t) => {
-            if (t.id !== currentTab.id) return t;
-
-            const existingRows = t.allRows || t.result?.rows || [];
-            const newAllRows = [...existingRows, ...result.rows];
-
-            return {
-              ...t,
-              result: {
-                rows: newAllRows,
-                fields: result.fields,
-                rowCount: newAllRows.length,
-                executionTime: t.result?.executionTime || 0,
-                pagination: result.pagination,
-              },
-              allRows: newAllRows,
-              currentOffset: currentOffset + result.rows.length,
-              isExecuting: false,
-              isLoadingMore: false,
-            };
-          }),
-        );
-      })
-      .catch((error) => {
-        if (cancelledRef.current) return;
-
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === currentTab.id
-              ? {
-                  ...t,
-                  isExecuting: false,
-                  isLoadingMore: false,
-                }
-              : t,
-          ),
-        );
-
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        toast({ title: "Load More Error", description: errorMessage, variant: "destructive" });
+    try {
+      const result = await onQueryExecute(activeConnection.id, currentTab.resultQuery ?? currentTab.query, {
+        limit: originalResult.pagination!.limit,
+        offset: currentOffset,
       });
-  }, [currentTab, activeConnection, onQueryExecute, setTabs, toast]);
+      if (!ownsRequest()) return;
+
+      setTabs((prev) =>
+        prev.map((t) => {
+          if (t.id !== currentTab.id) return t;
+          if (t.result !== originalResult || !hasPageableResult(t, activeConnection.id))
+            return { ...t, isLoadingMore: false };
+
+          const existingRows = t.allRows || t.result?.rows || [];
+          const newAllRows = [...existingRows, ...result.rows];
+
+          return {
+            ...t,
+            result: {
+              ...t.result,
+              rows: newAllRows,
+              fields: result.fields,
+              rowCount: newAllRows.length,
+              executionTime: t.result?.executionTime || 0,
+              pagination: result.pagination,
+              ...carriedChannels(result),
+            },
+            allRows: newAllRows,
+            currentOffset: currentOffset + result.rows.length,
+            isExecuting: false,
+            isLoadingMore: false,
+          };
+        }),
+      );
+    } catch (error) {
+      if (!ownsRequest()) return;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === currentTab.id
+            ? {
+                ...t,
+                isExecuting: false,
+                isLoadingMore: false,
+                loadMoreError: errorMessage,
+              }
+            : t,
+        ),
+      );
+
+      toast({ title: "Load More Error", description: errorMessage, variant: "destructive" });
+    } finally {
+      if (requests.get(currentTab.id) === request) requests.delete(currentTab.id);
+    }
+  }, [currentTab, activeConnection, onQueryExecute, setTabs, toast, supportsResultPagination]);
 
   // Unlimited query handler
   const handleUnlimitedQuery = useCallback(() => {
@@ -365,8 +425,10 @@ export function useQueryAdapter({
     if (!activeConnection) return;
 
     const { query, tabId } = pendingUnlimitedQuery;
+    const sourceQuery = tabs.find((tab) => tab.id === tabId)?.query ?? query;
 
     cancelledRef.current = false;
+    pageRequestsRef.current.delete(tabId);
 
     setTabs((prev) =>
       prev.map((t) =>
@@ -374,6 +436,11 @@ export function useQueryAdapter({
           ? {
               ...t,
               isExecuting: true,
+              result: null,
+              allRows: undefined,
+              currentOffset: 0,
+              isLoadingMore: false,
+              loadMoreError: undefined,
             }
           : t,
       ),
@@ -397,6 +464,9 @@ export function useQueryAdapter({
                 pagination: result.pagination,
               },
               allRows: result.rows,
+              resultQuery: query,
+              resultSourceQuery: sourceQuery,
+              resultConnectionId: activeConnection.id,
               currentOffset: result.rows.length,
               isExecuting: false,
               isLoadingMore: false,
@@ -428,7 +498,7 @@ export function useQueryAdapter({
 
     setUnlimitedWarningOpen(false);
     setPendingUnlimitedQuery(null);
-  }, [pendingUnlimitedQuery, activeConnection, onQueryExecute, setTabs, toast]);
+  }, [pendingUnlimitedQuery, activeConnection, onQueryExecute, setTabs, toast, tabs]);
 
   return {
     executeQuery,

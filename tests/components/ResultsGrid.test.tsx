@@ -72,6 +72,9 @@ mock.module("@/components/results-grid/StatsBar", () => ({
         `${(props.result as { rows: unknown[] })?.rows?.length ?? 0} rows`,
       ),
       React.createElement("span", { "data-testid": "filtered-count" }, `${props.filteredRowCount} filtered`),
+      props.orderAcrossPagesUnspecified
+        ? React.createElement("span", { "data-testid": "page-order-notice" }, "Order across pages is not guaranteed")
+        : null,
       React.createElement(
         "span",
         { "data-testid": "exec-time" },
@@ -268,6 +271,7 @@ describe("ResultsGrid", () => {
     const { queryByTestId } = render(
       React.createElement(ResultsGrid, {
         result: mockPaginatedResult,
+        supportsResultPagination: true,
         onLoadMore,
       }),
     );
@@ -277,6 +281,46 @@ describe("ResultsGrid", () => {
     expect(loadMoreBtn!.textContent).toContain("Load More");
   });
 
+  test.each([undefined, false])("no next-page control unless the provider declares pagination (%s)", (supported) => {
+    const { queryByTestId } = render(
+      React.createElement(ResultsGrid, {
+        result: mockPaginatedResult,
+        supportsResultPagination: supported,
+        onLoadMore: mock(() => {}),
+      }),
+    );
+    expect(queryByTestId("load-more-footer") === null).toBe(true);
+  });
+
+  test.each([
+    ["SELECT * FROM people", true, true, true],
+    ["SELECT * FROM people ORDER BY id", true, true, false],
+    ["SELECT * FROM people LIMIT 50", true, false, false],
+    ["SELECT * FROM people", false, true, false],
+  ])("only a pageable unordered result shows the order notice (%s)", (query, supported, wasLimited, visible) => {
+    const { queryAllByTestId } = render(
+      React.createElement(ResultsGrid, {
+        result: { ...mockPaginatedResult, pagination: { ...mockPaginatedResult.pagination!, wasLimited } },
+        supportsResultPagination: supported,
+        query,
+        queryType: "sqlite",
+        onLoadMore: mock(() => {}),
+      }),
+    );
+    expect(queryAllByTestId("page-order-notice")).toHaveLength(visible ? 1 : 0);
+  });
+
+  test("an unrewritten statement offers no next-page control even if a host claims hasMore", () => {
+    const { queryByTestId } = render(
+      React.createElement(ResultsGrid, {
+        result: { ...mockPaginatedResult, pagination: { ...mockPaginatedResult.pagination!, wasLimited: false } },
+        supportsResultPagination: true,
+        onLoadMore: mock(() => {}),
+      }),
+    );
+    expect(queryByTestId("load-more-footer") === null).toBe(true);
+  });
+
   // ── 7. Load More button fires onLoadMore ──────────────────────────────────
 
   test("Load More button fires onLoadMore callback", () => {
@@ -284,6 +328,7 @@ describe("ResultsGrid", () => {
     const { getByTestId } = render(
       React.createElement(ResultsGrid, {
         result: mockPaginatedResult,
+        supportsResultPagination: true,
         onLoadMore,
       }),
     );

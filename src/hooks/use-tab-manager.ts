@@ -328,7 +328,10 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
    * Takes executeQuery as a callback param to avoid a circular dependency.
    */
   const handleTableClick = useCallback(
-    (path: readonly string[], executeQueryFn: (query: string, tabId: string) => void) => {
+    (
+      path: readonly string[],
+      executeQueryFn: (query: string, tabId: string, isExplain: boolean, options: { limit: number }) => void,
+    ) => {
       const capabilities = metadata?.capabilities;
       const tableName = objectSegment(path);
       // Look the object up exactly as handleGenerateSelect does: the Redis generator is
@@ -338,7 +341,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       const columns = table?.columns || [];
       const newQuery = capabilities
         ? generateTableQuery(path, capabilities, columns)
-        : `SELECT * FROM ${path.join(".")} LIMIT 50;`;
+        : `SELECT * FROM ${path.join(".")};`;
 
       const newId = newLocalId();
       const newTab: QueryTab = {
@@ -351,7 +354,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newId);
-      setTimeout(() => executeQueryFn(newQuery, newId), 100);
+      setTimeout(() => executeQueryFn(newQuery, newId, false, { limit: 50 }), 100);
     },
     [metadata, schema],
   );

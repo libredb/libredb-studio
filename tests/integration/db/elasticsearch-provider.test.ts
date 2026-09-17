@@ -992,6 +992,7 @@ describe("ElasticsearchProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsResultPagination: false,
       supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: false,
@@ -1047,7 +1048,7 @@ describe("ElasticsearchProvider metadata", () => {
     const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
 
     expect(capabilities.statementTerminator).toBe("none");
-    expect(generateTableQuery(["orders"], capabilities)).toBe("SELECT * FROM orders LIMIT 50");
+    expect(generateTableQuery(["orders"], capabilities)).toBe("SELECT * FROM orders");
   });
 
   test("declares no explain format at all, which is what hides the button and the tab", () => {
@@ -1076,6 +1077,7 @@ describe("ElasticsearchProvider metadata", () => {
     // ever produce an error; false hides the affordance instead of offering it.
     // Documents change through the document APIs, which this provider does not expose.
     expect(new ElasticsearchProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().supportsResultPagination).toBe(false);
   });
 
   test("declares declaresForeignKeys false because the engine has no such constraint", () => {

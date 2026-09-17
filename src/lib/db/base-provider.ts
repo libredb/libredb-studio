@@ -325,6 +325,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: true,
       supportsInlineRowEdit: true,
+      supportsResultPagination: false,
       // False, unlike supportsInlineRowEdit above: this class implements no
       // transaction methods, so a subclass that does not add them has none, and
       // POST /api/db/transaction refuses the call. The four that hold a session for

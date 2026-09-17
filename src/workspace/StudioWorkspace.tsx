@@ -204,6 +204,7 @@ export function StudioWorkspace({
 
   // 3. Query Adapter (platform-delegated execution)
   const queryExec = useQueryAdapter({
+    supportsResultPagination: conn.metadata?.capabilities.supportsResultPagination,
     activeConnection: conn.activeConnection,
     onQueryExecute,
     tabs: tabMgr.tabs,

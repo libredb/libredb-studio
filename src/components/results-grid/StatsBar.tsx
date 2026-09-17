@@ -22,10 +22,11 @@ import { describeWarning } from "@/components/results-grid/utils";
 
 const MASKED_LABEL = "MASKED";
 const LOADING_LABEL = "Loading...";
-const LOAD_MORE_LABEL = "Load More (500 rows)";
 
 export interface StatsBarProps {
   result: QueryResult;
+  canPageResults?: boolean;
+  orderAcrossPagesUnspecified?: boolean;
   filteredRowCount: number;
   activeFilterCount: number;
   onClearFilters: () => void;
@@ -50,6 +51,8 @@ export interface StatsBarProps {
 
 export function StatsBar({
   result,
+  canPageResults,
+  orderAcrossPagesUnspecified,
   filteredRowCount,
   activeFilterCount,
   onClearFilters,
@@ -70,12 +73,12 @@ export function StatsBar({
   const warningDetail = warnings.map(describeWarning).join("\n");
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface text-xs text-fg-muted font-mono">
-      <div className="flex items-center gap-4">
+    <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-hairline bg-surface text-xs text-fg-muted font-mono">
+      <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-x-4 gap-y-2 sm:basis-auto">
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-success-tint/50" />
           {result.rows.length} rows
-          {result.pagination?.hasMore && <span className="text-warning ml-1">(more available)</span>}
+          {canPageResults && result.pagination?.hasMore && <span className="text-warning ml-1">(more available)</span>}
         </span>
         <span className="hidden sm:inline">{result.fields.length} columns</span>
         {activeFilterCount > 0 && (
@@ -92,6 +95,11 @@ export function StatsBar({
         {result.pagination?.wasLimited && (
           <span className="text-brand text-xs bg-brand-tint/10 px-2 py-0.5 rounded">AUTO-LIMITED</span>
         )}
+        {orderAcrossPagesUnspecified && (
+          <span className="text-warning" title="Pages may repeat or skip rows when the query has no outer ORDER BY.">
+            Order across pages is not guaranteed
+          </span>
+        )}
         {warnings.length > 0 && (
           <span className="text-warning text-xs bg-warning-tint/10 px-2 py-0.5 rounded" title={warningDetail}>
             {warnings.length} WARNING{warnings.length > 1 ? "S" : ""}
@@ -100,7 +108,7 @@ export function StatsBar({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {hasSensitive &&
           (userCanToggle && onToggleMasking ? (
             <Button
@@ -195,13 +203,20 @@ export interface LoadMoreFooterProps {
   hasMore: boolean;
   onLoadMore: () => void;
   isLoadingMore?: boolean;
+  pageSize?: number;
+  error?: string;
 }
 
-export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore }: LoadMoreFooterProps) {
+export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore, pageSize = 500, error }: LoadMoreFooterProps) {
   if (!hasMore) return null;
 
   return (
-    <div className="flex items-center justify-center py-3 border-t border-hairline bg-surface">
+    <div className="flex flex-col items-center justify-center gap-2 py-3 border-t border-hairline bg-surface">
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
       <Button
         variant="outline"
         size="sm"
@@ -218,7 +233,7 @@ export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore }: LoadMoreF
         {!isLoadingMore && (
           <>
             <ChevronDown strokeWidth={1.5} className="w-3 h-3 mr-2" />
-            {LOAD_MORE_LABEL}
+            {`${error ? "Retry" : "Load More"} (${pageSize} rows)`}
           </>
         )}
       </Button>

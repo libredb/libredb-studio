@@ -69,6 +69,7 @@ function makeHookParams(overrides: Record<string, unknown> = {}) {
 
   return {
     activeConnection: makeConnection(),
+    supportsResultPagination: true,
     onQueryExecute,
     tabs,
     activeTabId: "tab-1",

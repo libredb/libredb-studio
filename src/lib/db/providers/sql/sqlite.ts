@@ -1027,6 +1027,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
       supportsInlineRowEdit: true,
+      supportsResultPagination: true,
       // SQLite HAS transactions; this provider holds no session for one, so
       // POST /api/db/transaction refuses the call and the controls stay hidden.
       supportsTransactions: false,

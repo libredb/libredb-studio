@@ -506,6 +506,7 @@ describe("DruidProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsResultPagination: true,
       supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: false,
@@ -533,6 +534,7 @@ describe("DruidProvider metadata", () => {
     // `Unsupported SQL statement [UPDATE]`, so the inline row editor's statement
     // could never run. Druid SQL has no row-level DML at all.
     expect(new DruidProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(new DruidProvider(makeConnection()).getCapabilities().supportsResultPagination).toBe(true);
   });
 
   test("declares declaresForeignKeys false because a datasource cannot reference another", () => {

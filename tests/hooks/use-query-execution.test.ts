@@ -47,6 +47,7 @@ const mockMetadata: ProviderMetadata = {
     supportsExplain: true,
     explainFormat: "postgres-json" as const,
     supportsExternalQueryLimiting: true,
+    supportsResultPagination: true,
     supportsCreateTable: true,
     supportsInlineRowEdit: true,
     supportsMaintenance: true,

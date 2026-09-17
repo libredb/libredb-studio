@@ -597,6 +597,7 @@ describe("TrinoProvider metadata", () => {
 
     expect(capabilities.declaresForeignKeys).toBe(false);
     expect(capabilities.supportsInlineRowEdit).toBe(false);
+    expect(capabilities.supportsResultPagination).toBe(true);
     // Trino has START TRANSACTION, but a transaction lives in an HTTP session header
     // this provider does not carry between statements, so the trio is withheld (#464).
     expect(capabilities.supportsTransactions).toBe(false);
