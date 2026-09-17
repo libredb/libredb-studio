@@ -1,0 +1,38 @@
+version: "1"
+
+# A `${vault:...}` reference carries a `#` between the path and the key, and YAML treats an
+# unquoted `#` as the start of a comment, so every reference here is quoted. The integration
+# test that loads this fixture is what proves the quoted form survives the parser.
+connections:
+  - id: "vault-postgres"
+    name: "Postgres (password from Vault)"
+    type: postgres
+    host: pg.internal
+    port: 5432
+    database: appdb
+    user: "vaultuser"
+    password: "${vault:secret/data/prod/postgres#password}"
+    roles: ["*"]
+    managed: true
+
+  - id: "vault-mysql"
+    name: "MySQL (password from Vault, editable)"
+    type: mysql
+    host: mysql.internal
+    port: 3306
+    database: appdb
+    user: "vaultuser"
+    password: "${vault:secret/data/prod/mysql#password}"
+    roles: ["*"]
+    managed: false
+
+  - id: "env-postgres"
+    name: "Postgres (env var)"
+    type: postgres
+    host: pg.internal
+    port: 5432
+    database: appdb
+    user: "envuser"
+    password: "${VAULT_FIXTURE_ENV_PASSWORD}"
+    roles: ["*"]
+    managed: false

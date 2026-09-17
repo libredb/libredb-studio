@@ -1,5 +1,6 @@
 import type { DatabaseConnection } from "@/lib/types";
 import { getSeedConnectionById, getSeedConnectionByIdUnfiltered } from "./index";
+import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
 
 export class SeedConnectionError extends Error {
@@ -53,7 +54,10 @@ export async function resolveConnection(
       user: session.username,
     });
 
-    return seedConn;
+    // After the access decision, never before it: a `${vault:...}` reference is read here,
+    // for this one connection. The list path handed it back unresolved, so listing
+    // connections never reads a secret.
+    return resolveVaultCredentials(seedConn);
   }
 
   throw new SeedConnectionError("Either connection or connectionId is required", 400);

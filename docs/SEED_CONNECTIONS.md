@@ -188,6 +188,77 @@ connections:
 
 **Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`
 
+### Vault References
+
+A field can take its value from HashiCorp Vault instead of an environment variable:
+
+```yaml
+connections:
+  - id: "prod-db"
+    password: "${vault:secret/data/prod/postgres#password}"
+    connectionString: "${vault:secret/data/prod/postgres#dsn}"   # Same path, one request
+```
+
+The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after it is the key inside the returned data object. Only KV v2 is supported: the server reads `GET <VAULT_ADDR>/v1/<path>` and takes `data.data.<key>`, so a v1-shaped path (`secret/prod/postgres`) is refused with a message naming the shape it expects rather than read as an empty secret.
+
+**Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
+
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`). A reference with no `#key` fails when the connection is opened.
+
+A Vault reference is read lazily, one connection at a time:
+
+1. Listing connections (`GET /api/connections/managed`) makes **zero** Vault requests. The reference is handed back unresolved, and for a `managed: false` connection it is the reference — not a secret — that reaches the browser.
+2. Opening a connection reads the referenced path once, then caches the result per path for `VAULT_CACHE_TTL_MS` (default 60000). A second connection to the same path within that TTL makes no request.
+3. A failure — Vault unreachable, the path or key missing, the token refused — fails that one connection with an explicit error. There is no fallback to an empty password, no retry loop and no fallback to an environment variable, and the failure never affects the boot or another connection.
+4. The resolved value is never logged, never written to an error message and never reaches the audit log. The reference string may be logged; it is not a secret.
+
+`${ENV_VAR}` resolution is unchanged: synchronous on the list path, and a dictionary lookup. Only `${vault:...}` is deferred.
+
+#### Vault Environment Variables
+
+Vault credentials come from the environment, never from the seed file — a seed file that could carry a token would make the product hold a new secret, which is the thing this feature exists to avoid.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VAULT_ADDR` | — | Vault address with scheme and port (`http://vault.vault.svc:8200`). Required for the scheme to work |
+| `VAULT_TOKEN` | — | Static token. Takes precedence over `VAULT_ROLE` when both are set |
+| `VAULT_ROLE` | — | Kubernetes auth role, used when `VAULT_TOKEN` is unset. The login token's lease is tracked and refreshed before it lapses |
+| `VAULT_K8S_TOKEN_PATH` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Projected service account token presented to the Kubernetes login |
+| `VAULT_NAMESPACE` | — | Vault Enterprise namespace, sent as `X-Vault-Namespace` when set |
+| `VAULT_CACHE_TTL_MS` | `60000` | How long a read secret is cached |
+
+Every one of these is optional. With none of them set, and no `${vault:...}` reference in the seed file, the application boots and behaves exactly as it does without this feature: no startup probe, no reachability check and no warning about Vault. A reference used without `VAULT_ADDR` fails with a message naming the missing variable.
+
+#### Secret Rotation
+
+A rotated secret becomes visible within `VAULT_CACHE_TTL_MS` (the secret cache) plus `SEED_CACHE_TTL_MS` (the parsed seed file cache) — 120 seconds with both defaults. No restart and no seed file change: the reference stays the same and only the value behind it moves.
+
+#### Demo Stack
+
+`docker-compose.vault-demo.yml` at the repository root starts Studio, PostgreSQL and a dev-mode Vault, writes the database password into Vault and the seed file into a volume Studio mounts. It pulls the published image, so it needs no source checkout:
+
+```bash
+docker compose -f docker-compose.vault-demo.yml up
+```
+
+That Vault is dev mode: in memory, unsealed, root token, no TLS, no policies and no audit device. It is for development and demonstration only and is not a production configuration — a real deployment should follow HashiCorp's [production hardening guide](https://developer.hashicorp.com/vault/tutorials/operations/production-hardening).
+
+To see the payoff rather than a connection that merely works, rotate the secret and watch the connection pick it up:
+
+```bash
+# 1. Change the password in Vault and in PostgreSQL.
+docker compose -f docker-compose.vault-demo.yml exec -T vault \
+  vault kv put secret/prod/postgres password=rotated
+docker compose -f docker-compose.vault-demo.yml exec -T postgres \
+  psql -U demo -d demo -c "ALTER USER demo WITH PASSWORD 'rotated';"
+
+# 2. Wait out VAULT_CACHE_TTL_MS (10s in that file), then open the
+#    "Postgres (password from Vault)" connection again. It authenticates with
+#    the new password, and no container was restarted.
+```
+
+In a real deployment the policy is one read on one path — `path "secret/data/prod/postgres" { capabilities = ["read"] }` — and the Kubernetes auth role binds that policy to the pod's service account. Prefer `VAULT_ROLE` to `VAULT_TOKEN`, so the credential is a lease rather than something long-lived.
+
 ### Credential Sources by Deployment
 
 | Deployment | How to provide credentials |
@@ -195,7 +266,8 @@ connections:
 | **Docker** | `-e DB_PASSWORD=secret` |
 | **Docker Compose** | `environment:` block or `.env` file |
 | **Kubernetes** | `Secret` → `extraEnvFrom` in Helm values |
-| **Vault/SSM** | External Secrets Operator → K8s Secret → `extraEnvFrom` |
+| **Vault** | `${vault:...}` references resolved at connect time, or External Secrets Operator → K8s Secret → `extraEnvFrom` |
+| **AWS SSM and other secret managers** | External Secrets Operator → K8s Secret → `extraEnvFrom` (no direct resolver) |
 
 ### Kubernetes Example
 
@@ -407,6 +479,9 @@ extraEnvFrom:
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |
+| `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |
+| `${vault:...}` reference with no `#key`, or a v1-shaped path | Fails with an error naming the expected KV v2 shape. The value is never treated as a literal. |
+| `${vault:...}` reference with `VAULT_ADDR` unset | Fails with a message naming the missing variable. |
 | User role doesn't match any connection | Empty list returned. Normal behavior. |
 | Seed connection not found at query time | 404 response. |
 | User doesn't have access to seed connection | 403 response. |
@@ -447,6 +522,8 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
 
+The `VAULT_*` variables that back `${vault:...}` references are listed under [Vault Environment Variables](#vault-environment-variables).
+
 These are unrelated to the embedded sample connection described below, which uses its own `LIBREDB_EMBEDDED_SAMPLE` / `LIBREDB_EMBEDDED_SAMPLE_PATH` variables.
 
 ---
@@ -481,7 +558,8 @@ The sample files are only created if they don't already exist — the seeding is
 1. Check if the config file exists at `SEED_CONFIG_PATH`
 2. Check server logs for `Seed config file not found` warning
 3. Verify the YAML is valid: `cat seed-connections.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"`
-4. Check if `${ENV_VAR}` values are set: connections with unresolvable vars are silently skipped
+4. Check if `${ENV_VAR}` values are set: connections with unresolvable vars are skipped
+5. `${vault:...}` references do not stop a connection appearing, but opening it fails with the Vault error. Check `VAULT_ADDR`, that the path is the KV v2 shape (`<mount>/data/<name>`) and that the token has a read policy on it. See [Secret Rotation](#secret-rotation) for how long a cached value can outlive a change in Vault.
 
 ### "Access denied" error when querying
 
@@ -526,7 +604,7 @@ seed-connections.yaml (volume mount)
         │         └───────────────────────────────────────┘
   ┌─────▼───────────────────────┐
   │ GET /api/connections/managed │  Auth + strip credentials for managed:true
-  └─────┬───────────────────────┘
+  └─────┬───────────────────────┘                          ${vault:...} stays unresolved here
         │
   ┌─────▼────────────────────┐
   │ useConnectionManager     │  Merge managed + user connections
@@ -534,16 +612,21 @@ seed-connections.yaml (volume mount)
         │
   ┌─────▼────────────────────────────┐
   │ resolveConnection() (all routes) │  seed: prefix → server-side credential resolution
-  └──────────────────────────────────┘
+  └─────┬────────────────────────────┘
+        │
+  ┌─────▼────────────────────┐
+  │ VaultClient (lazy)       │  ${vault:...} → KV v2 read + per-path TTL cache
+  └──────────────────────────┘
 ```
 
-**Module:** `src/lib/seed/` (8 files, about 700 lines total)
+**Module:** `src/lib/seed/` (9 files, about 900 lines total)
 
 | File | Responsibility |
 |------|---------------|
 | `types.ts` | Zod schemas + TypeScript types |
 | `config-loader.ts` | File read + parse + validate + cache |
-| `credential-resolver.ts` | `${ENV_VAR}` resolution |
+| `credential-resolver.ts` | `${ENV_VAR}` resolution (eager) + `${vault:...}` resolution (lazy, per connection) |
+| `vault-client.ts` | HashiCorp Vault KV v2 reads: env config, Kubernetes auth, per-path TTL cache |
 | `connection-filter.ts` | Role filter + defaults merge |
 | `resolve-connection.ts` | Shared utility for all API routes |
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |

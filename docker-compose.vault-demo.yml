@@ -1,0 +1,139 @@
+# =============================================================================
+# LibreDB Studio — HashiCorp Vault seed-credential demo
+# =============================================================================
+# DEVELOPMENT AND DEMONSTRATION ONLY.
+#
+# The Vault this file starts is in dev mode: in memory (lost when the container
+# goes away), unsealed, a root token, no TLS, no policies and no audit device. It
+# is not a production Vault configuration and must not be presented as one. For
+# what a real deployment needs — the policy shape, the path convention, the
+# Kubernetes auth role and what least privilege looks like — see the Vault
+# section of docs/SEED_CONNECTIONS.md, and HashiCorp's own production hardening
+# guide:
+#   https://developer.hashicorp.com/vault/tutorials/operations/production-hardening
+#
+# One command brings up Studio, PostgreSQL, Vault and a one-shot init container
+# that writes the database password into Vault and the seed file into a volume
+# Studio mounts. It pulls the published image, so no source checkout is needed:
+#
+#   docker compose -f docker-compose.vault-demo.yml up
+#
+# Then open http://localhost:3000. There is no JWT_SECRET or ADMIN_PASSWORD here
+# on purpose: the zero-config bootstrap prints the admin credentials to the
+# Studio log on first run (see "Zero-config first run" in README.md), and making
+# that a required variable would turn one command into three.
+#
+# The point of the demo is rotation, not a connection that works. After the
+# stack is up:
+#
+#   docker compose -f docker-compose.vault-demo.yml exec -T vault \
+#     vault kv put secret/prod/postgres password=rotated
+#   docker compose -f docker-compose.vault-demo.yml exec -T postgres \
+#     psql -U demo -d demo -c "ALTER USER demo WITH PASSWORD 'rotated';"
+#
+# Wait out VAULT_CACHE_TTL_MS (10s below), open "Postgres (password from Vault)"
+# again, and it authenticates with the new password with no container restarted.
+# =============================================================================
+
+services:
+  vault:
+    image: hashicorp/vault:latest
+    container_name: libredb-vault-demo
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:18
+    container_name: libredb-vault-demo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo
+      # Without this the official image trusts every host connection and the demo
+      # proves nothing: any password would open the connection. initdb's --auth-host
+      # covers the loopback lines the entrypoint would otherwise leave as trust, and
+      # POSTGRES_HOST_AUTH_METHOD appends the rule for every other host.
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Writes the password into Vault and the seed file into the shared volume.
+  # Keeping both here is what makes this a single downloadable file: there is no
+  # YAML fixture to fetch alongside it. The reference is quoted because YAML
+  # reads an unquoted `#` as a comment.
+  vault-init:
+    image: hashicorp/vault:latest
+    container_name: libredb-vault-demo-init
+    # The image runs as the unprivileged `vault` user, which cannot create the seed
+    # file in the shared volume. Root here; the file it writes is world-readable.
+    user: root
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: root
+      PG_PASSWORD: demo
+    volumes:
+      - vault-seed:/seed
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        vault kv put secret/prod/postgres password="$$PG_PASSWORD" >/dev/null
+        cat > /seed/seed-connections.yaml <<'YAML'
+        version: "1"
+        connections:
+          - id: "vault-postgres"
+            name: "Postgres (password from Vault)"
+            type: postgres
+            host: postgres
+            port: 5432
+            database: demo
+            user: demo
+            password: "$${vault:secret/data/prod/postgres#password}"
+            roles: ["*"]
+            managed: true
+        YAML
+
+  libredb-studio:
+    image: ghcr.io/libredb/libredb-studio:latest
+    container_name: libredb-vault-demo-studio
+    restart: unless-stopped
+    depends_on:
+      vault:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    environment:
+      SEED_CONFIG_PATH: /app/config/seed-connections.yaml
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: root
+      # Short enough that a rotation shows up in one sitting; the default is 60000.
+      VAULT_CACHE_TTL_MS: "10000"
+    volumes:
+      - vault-seed:/app/config:ro
+
+volumes:
+  vault-seed:

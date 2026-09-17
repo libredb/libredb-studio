@@ -102,6 +102,31 @@ describe("GET /api/connections/managed", () => {
     expect(data.pendingSeeds).toEqual([]);
   });
 
+  // A `${vault:...}` reference stays unresolved on this path — listing reads no secret —
+  // so for a `managed: false` connection the reference string, not a secret, is what
+  // reaches the browser. Pinned here rather than in a new file so this suite keeps its
+  // single `@/lib/auth` stub (D85).
+  it("hands a ${vault:...} reference to an editable connection", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "vault-config.yaml");
+    process.env.VAULT_FIXTURE_ENV_PASSWORD = "env-secret";
+    resetCache();
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const editable = data.connections.find((c: { seedId: string }) => c.seedId === "vault-mysql");
+    const locked = data.connections.find((c: { seedId: string }) => c.seedId === "vault-postgres");
+
+    expect(editable.password).toBe("${vault:secret/data/prod/mysql#password}");
+    expect(locked.password).toBeUndefined();
+    expect(JSON.stringify(data)).not.toContain("vault-secret");
+
+    process.env.SEED_CONFIG_PATH = origPath;
+    delete process.env.VAULT_FIXTURE_ENV_PASSWORD;
+    resetCache();
+  });
+
   it("advertises the sqlite sample while its async seed is in flight", async () => {
     setSqliteSampleSeedState("seeding");
     try {
