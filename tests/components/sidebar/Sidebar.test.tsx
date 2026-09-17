@@ -160,14 +160,17 @@ describe("Sidebar", () => {
     expect(queryByText("LibreDB Studio")).not.toBeNull();
   });
 
-  test('shows "Add Connection" button (Plus icon)', () => {
+  test("the new-connection icon has an accessible name and calls its handler", () => {
     const onAddConnection = mock(() => {});
     const props = createDefaultProps({ onAddConnection });
-    const { getAllByRole } = render(<Sidebar {...props} />);
+    const { getByRole, rerender } = render(<Sidebar {...props} />);
 
-    // The Plus button is in the header
-    const buttons = getAllByRole("button");
-    expect(buttons.length).toBeGreaterThan(0);
+    fireEvent.click(getByRole("button", { name: "New connection" }));
+    expect(onAddConnection).toHaveBeenCalledTimes(1);
+
+    rerender(<Sidebar {...props} activeConnection={null} />);
+    fireEvent.click(getByRole("button", { name: "New connection" }));
+    expect(onAddConnection).toHaveBeenCalledTimes(2);
   });
 
   test("the object tree only renders when activeConnection exists", () => {

@@ -200,6 +200,19 @@ describe("TableItem", () => {
 
   // ── Rendering ─────────────────────────────────────────────────────────────
 
+  test("each table action button is named after its table and does not toggle the row", () => {
+    const onToggle = mock(() => {});
+    const { getByRole, rerender } = render(
+      <TableItem table={largeTable} isExpanded={false} onToggle={onToggle} isAdmin={false} />,
+    );
+
+    fireEvent.click(getByRole("button", { name: "Actions for users" }));
+    expect(onToggle).not.toHaveBeenCalled();
+
+    rerender(<TableItem table={smallTable} isExpanded onToggle={onToggle} isAdmin={false} />);
+    expect(getByRole("button", { name: "Actions for settings" })).not.toBeNull();
+  });
+
   test("renders table name", () => {
     const { queryByText } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,

@@ -122,6 +122,8 @@ export function Sidebar({
           )}
           <button
             className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="New connection"
+            title="New connection"
             onClick={onAddConnection}
           >
             <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />

@@ -65,7 +65,7 @@ describe("results-grid/StatsBar", () => {
     const onSetViewMode = mock((mode: "card" | "table") => {
       void mode;
     });
-    const { container, queryByText } = render(
+    const { getByRole, queryByText } = render(
       <StatsBar
         result={makeResult()}
         filteredRowCount={2}
@@ -86,9 +86,12 @@ describe("results-grid/StatsBar", () => {
     fireEvent.click(queryByText("MASK")!);
     expect(onToggleMasking).toHaveBeenCalledTimes(1);
 
-    const buttons = container.querySelectorAll("button");
-    fireEvent.click(buttons[buttons.length - 2]!);
-    fireEvent.click(buttons[buttons.length - 1]!);
+    const cardButton = getByRole("button", { name: "Card view", pressed: false });
+    const tableButton = getByRole("button", { name: "Table view", pressed: true });
+    fireEvent.click(cardButton);
+    expect(onSetViewMode).toHaveBeenLastCalledWith("card");
+    fireEvent.click(tableButton);
+    expect(onSetViewMode).toHaveBeenLastCalledWith("table");
     expect(onSetViewMode).toHaveBeenCalledTimes(2);
   });
 
@@ -252,7 +255,7 @@ describe("results-grid/StatsBar", () => {
     const pendingChanges: CellChange[] = [
       { rowIndex: 0, columnId: "name", originalValue: "Alice", newValue: "Alicia" },
     ];
-    const { queryByText, getByLabelText } = render(
+    const { queryByText, getByRole } = render(
       <StatsBar
         result={makeResult()}
         filteredRowCount={2}
@@ -273,8 +276,8 @@ describe("results-grid/StatsBar", () => {
     );
 
     expect(queryByText("1 change")).not.toBeNull();
-    fireEvent.click(getByLabelText("Apply changes"));
-    fireEvent.click(getByLabelText("Discard changes"));
+    fireEvent.click(getByRole("button", { name: "Apply changes" }));
+    fireEvent.click(getByRole("button", { name: "Discard changes" }));
     expect(onApplyChanges).toHaveBeenCalledTimes(1);
     expect(onDiscardChanges).toHaveBeenCalledTimes(1);
   });

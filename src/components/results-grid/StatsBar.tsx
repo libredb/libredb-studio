@@ -168,6 +168,9 @@ export function StatsBar({
 
         <div className="flex md:hidden items-center bg-fill rounded-lg p-0.5">
           <button
+            aria-label="Card view"
+            aria-pressed={viewMode === "card"}
+            title="Card view"
             onClick={() => onSetViewMode("card")}
             className={cn(
               "p-1.5 rounded transition-all",
@@ -177,6 +180,9 @@ export function StatsBar({
             <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
           <button
+            aria-label="Table view"
+            aria-pressed={viewMode === "table"}
+            title="Table view"
             onClick={() => onSetViewMode("table")}
             className={cn(
               "p-1.5 rounded transition-all",

@@ -142,7 +142,9 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         )}
         {!conn.managed && onEdit && (
           <button
-            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
+            className="p-1 rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
+            aria-label={`Edit connection ${conn.name}`}
+            title={`Edit connection ${conn.name}`}
             onClick={(e) => {
               e.stopPropagation();
               onEdit(conn);
@@ -153,7 +155,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         )}
         {!conn.managed && onDuplicate && (
           <button
-            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
+            className="p-1 rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
             aria-label="Duplicate connection"
             title="Duplicate connection"
             onClick={(e) => {
@@ -166,7 +168,9 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         )}
         {!conn.managed && (
           <button
-            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-danger-tint/20 hover:text-danger"
+            className="p-1 rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-danger-tint/20 hover:text-danger"
+            aria-label={`Delete connection ${conn.name}`}
+            title={`Delete connection ${conn.name}`}
             onClick={(e) => {
               e.stopPropagation();
               onDelete(conn.id);

@@ -164,8 +164,30 @@ describe("ConnectionItem", () => {
     expect(defaultOnSelect).toHaveBeenCalledWith(mockPostgresConnection);
   });
 
+  test.each([false, true])("connection action names follow the connection when active=%s", (isActive) => {
+    const props = {
+      connection: mockPostgresConnection,
+      isActive,
+      onSelect: defaultOnSelect,
+      onDelete: defaultOnDelete,
+      onEdit: defaultOnEdit,
+    };
+    const { getByRole, queryByRole, rerender } = render(<ConnectionItem {...props} />);
+
+    expect(getByRole("button", { name: "Edit connection Test PostgreSQL" })).not.toBeNull();
+    expect(getByRole("button", { name: "Delete connection Test PostgreSQL" })).not.toBeNull();
+
+    rerender(<ConnectionItem {...props} connection={{ ...mockPostgresConnection, name: "Production" }} />);
+    expect(getByRole("button", { name: "Edit connection Production" })).not.toBeNull();
+    expect(getByRole("button", { name: "Delete connection Production" })).not.toBeNull();
+    expect(queryByRole("button", { name: "Edit connection Test PostgreSQL" })).toBeNull();
+
+    rerender(<ConnectionItem {...props} connection={{ ...mockPostgresConnection, managed: true }} />);
+    expect(queryByRole("button")).toBeNull();
+  });
+
   test("onEdit fires on edit button click with stopPropagation", () => {
-    const { container } = render(
+    const { getByRole } = render(
       <ConnectionItem
         connection={mockPostgresConnection}
         isActive={false}
@@ -175,11 +197,9 @@ describe("ConnectionItem", () => {
       />,
     );
 
-    // Find buttons within this component's container
-    const buttons = container.querySelectorAll("button");
-    // First button is edit (Pencil), second is delete (Trash2)
-    expect(buttons.length).toBeGreaterThanOrEqual(2);
-    const editButton = buttons[0];
+    const editButton = getByRole("button", { name: "Edit connection Test PostgreSQL" });
+    expect(editButton.title).toBe("Edit connection Test PostgreSQL");
+    expect(editButton.className).toContain("focus-visible:opacity-100");
     fireEvent.click(editButton);
 
     expect(defaultOnEdit).toHaveBeenCalledTimes(1);
@@ -222,7 +242,7 @@ describe("ConnectionItem", () => {
   });
 
   test("onDelete fires on delete button click with stopPropagation", () => {
-    const { container } = render(
+    const { getByRole } = render(
       <ConnectionItem
         connection={mockPostgresConnection}
         isActive={false}
@@ -232,10 +252,9 @@ describe("ConnectionItem", () => {
       />,
     );
 
-    const buttons = container.querySelectorAll("button");
-    // Second button is delete (Trash2)
-    expect(buttons.length).toBeGreaterThanOrEqual(2);
-    const deleteButton = buttons[1];
+    const deleteButton = getByRole("button", { name: "Delete connection Test PostgreSQL" });
+    expect(deleteButton.title).toBe("Delete connection Test PostgreSQL");
+    expect(deleteButton.className).toContain("focus-visible:opacity-100");
     fireEvent.click(deleteButton);
 
     expect(defaultOnDelete).toHaveBeenCalledTimes(1);

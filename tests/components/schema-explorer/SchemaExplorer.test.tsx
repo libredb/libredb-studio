@@ -408,9 +408,7 @@ describe("SchemaExplorer", () => {
     // Only users table visible after typing
     expect(container.querySelector('[data-testid="table-orders"]')).toBeNull();
 
-    // The clear button is a <button> with a Hash icon (rotate-45)
-    const clearButton = container.querySelector("button.absolute.right-2") as HTMLElement;
-    expect(clearButton).not.toBeNull();
+    const clearButton = view.getByRole("button", { name: "Clear search" });
     await user.click(clearButton);
 
     // All tables should reappear
