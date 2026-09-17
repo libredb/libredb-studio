@@ -73,7 +73,18 @@ export function setupRechartssMock() {
       Area: () => null,
       Bar: () => null,
       Line: () => null,
-      RadialBar: () => null,
+      RadialBar: ({ background }: { background?: { fill?: string } | boolean }) =>
+        React.createElement("div", {
+          "data-testid": "mock-radial-bar",
+          "data-track-fill":
+            typeof background === "object" && background !== null
+              ? (background.fill as string | undefined)
+              : undefined,
+          "data-bg":
+            typeof background === "object" && background !== null
+              ? (background.fill as string | undefined)
+              : undefined,
+        }),
       XAxis: () => null,
       YAxis: () => null,
       CartesianGrid: () => null,

@@ -749,4 +749,33 @@ describe("OverviewTab", () => {
     expect(bg).toBe("#ffffff");
     expect(color).toBe("#3f3f46");
   });
+
+  // ── Radial health gauge track ─────────────────────────────────────────────
+
+  /**
+   * The radial health gauge track background also cannot read CSS tokens and must
+   * receive the theme-aware grid token, ensuring contrast in both themes.
+   */
+  async function radialBarTrackUnderTheme(theme: "dark" | "light") {
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(theme);
+    mockGlobalFetch({ "/api/admin/audit": { ok: true, json: { events: [] } } });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const radialBar = result!.container.querySelector("[data-testid='mock-radial-bar']");
+    return radialBar?.getAttribute("data-track-fill");
+  }
+
+  test("the radial health gauge track uses the dark grid tone in the dark theme", async () => {
+    const track = await radialBarTrackUnderTheme("dark");
+    expect(track).toBe("#222222");
+  });
+
+  test("and the light grid tone in the light theme", async () => {
+    const track = await radialBarTrackUnderTheme("light");
+    expect(track).toBe("#e4e4e7");
+  });
 });
