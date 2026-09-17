@@ -16,11 +16,10 @@ USER_PASSWORD=$(openssl rand -hex 12)
 # not come back on its own.
 # cloud-init runs per-instance scripts with umask 0022, so a plain redirect would
 # create the env file 0644 - world-readable with live secrets in it - and only
-# narrow the mode afterwards; a failure in between would also leave a truncated
-# env file that the systemd unit happily starts with. The AWS image writes the env
-# file the safe way (deploy/aws/ami/files/usr/local/sbin/libredb-firstboot); this
-# is the same shape: umask 077 around the heredoc, a temp file, and an atomic move
-# whose completion is the only observable state.
+# narrow the mode afterwards. The AWS image writes the env file the safe way
+# (deploy/aws/ami/files/usr/local/sbin/libredb-firstboot); this is the same shape:
+# umask 077 around the heredoc, a temp file, and an atomic move whose completion
+# is the only observable state.
 ( umask 077
   cat > /etc/libredb-studio.env.tmp <<EOF
 JWT_SECRET=$JWT_SECRET
