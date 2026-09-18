@@ -1987,4 +1987,786 @@ describe("useInlineEditing", () => {
     expect(seen[0].sql).not.toContain("IN (1)");
     expect(seen[0].params).toEqual([1]);
   });
+
+  // ── A key value this editor cannot carry back ─────────────────────────────
+
+  /**
+   * Nothing may be asked of the engine about a key whose JavaScript form is not the
+   * value the row holds, because every answer it could give would be about a different
+   * row — or, as measured, about no row at all.
+   */
+  function watchFetch(): unknown[] {
+    const seen: unknown[] = [];
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      seen.push(init);
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ rows: [{ id: 1, count: "1" }], fields: ["id", "count"], rowCount: 1 }),
+      });
+    }) as unknown as typeof fetch;
+    return seen;
+  }
+
+  /**
+   * One row on screen whose key is `key`, with its `note` edited.
+   *
+   * `declaredKeyType` is what the engine called the `id` column in the very response that
+   * carried the row - `QueryResult.columnTypes`, which `/api/db/query` answers beside the
+   * rows. Left out, the result declares nothing, which is the state a driver with no type
+   * metadata leaves it in.
+   */
+  async function applyKeyedBy(key: unknown, type: DatabaseConnection["type"] = "postgres", declaredKeyType?: string) {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type }),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [{ id: key, note: "first" }],
+            fields: ["id", "note"],
+            rowCount: 1,
+            ...(declaredKeyType !== undefined && { columnTypes: { id: declaredKeyType, note: "text" } }),
+          }),
+          resultQuery: "SELECT id, note FROM keyed",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange({ rowIndex: 0, columnId: "note", originalValue: "first", newValue: "changed" });
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+    return result;
+  }
+
+  test("refuses a bytea key before asking the engine, rather than calling its row missing", async () => {
+    // Measured against PostgreSQL 16 through this hook, with `pg` handing the grid what it
+    // really hands it: a `bytea` arrives as a Buffer, `String(buffer)` mangles it to the
+    // bytes read as text, and the check then asked
+    // `WHERE "id" IN ($1)` with that text. PostgreSQL refused the parameter outright
+    // (`invalid byte sequence for encoding "UTF8": 0x00`); MySQL 8.4 accepted it and matched
+    // nothing, so the apply answered "some of the rows you edited are no longer in the
+    // table. Run the query again" while `SELECT count(*) ... WHERE note = 'first'` answered
+    // 1. Running the query again produces the same Buffer and the same refusal, for ever.
+    const seen = watchFetch();
+    const result = await applyKeyedBy(Buffer.from([0x00, 0x11, 0x22, 0x33]));
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("cannot address a row by id here: in 1 row you edited it is binary data"),
+    });
+    // The claim that was false: the row is exactly where it was.
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("no longer in the table"),
+    });
+    // And the advice is something other than the one that loops.
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("Put a column that identifies a row as text or a whole number"),
+    });
+    expect(result.current.pendingChanges).toHaveLength(1);
+  });
+
+  test("refuses a binary key in the shape the browser actually holds", async () => {
+    // The HTTP path is JSON, so a Buffer reaches the grid as `{"type":"Buffer","data":[…]}`
+    // and `String()` gives "[object Object]". Measured on PostgreSQL 16: the check matched
+    // no rows and the apply said they were no longer in the table, with all of them there.
+    const seen = watchFetch();
+    await applyKeyedBy({ type: "Buffer", data: [0, 17, 34, 51] });
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is binary data"),
+    });
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("no longer in the table"),
+    });
+  });
+
+  test("refuses a MySQL BINARY key the same way, whatever the dialect binds", async () => {
+    const seen = watchFetch();
+    await applyKeyedBy(Buffer.from([0xff, 0xee, 0xdd, 0xcc]), "mysql");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is binary data"),
+    });
+  });
+
+  test("refuses a date key, whose sub-second precision is gone before it gets here", async () => {
+    // Measured against PostgreSQL 16: the table holds 2026-09-17 10:00:00.123456, `pg` hands
+    // the grid a Date, which carries milliseconds at best, and `String(date)` is
+    // "Thu Sep 17 2026 10:00:00 GMT+0000 (Coordinated Universal Time)" — no fractional
+    // seconds at all. The engine answered `invalid input syntax for type timestamp` for that
+    // text, so the user was shown a driver error for a row that was never in doubt.
+    const seen = watchFetch();
+    await applyKeyedBy(new Date("2026-09-17T10:00:00.123Z"));
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is a date and time"),
+    });
+  });
+
+  test("refuses a key that is a document rather than a value", async () => {
+    // A JSON column, or a driver that hands back a composite. `String()` gives
+    // "[object Object]" for every one of them, so the engine would be asked about a
+    // value no row has ever held.
+    const seen = watchFetch();
+    await applyKeyedBy({ part: 1, of: 2 });
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a value with no text form the engine could match"),
+    });
+  });
+
+  test("refuses a key number the driver has already rounded", async () => {
+    // One row, so the two-rows-one-value refusal cannot fire: `mysql2` rounds a BIGINT past
+    // 2^53, so 9007199254740993 arrives as ...992 and `WHERE id = 9007199254740992`
+    // addresses the NEIGHBOURING row. The engine would answer one group of one row and the
+    // apply would write to a row nobody edited.
+    const seen = watchFetch();
+    // 2 ** 53 is what 9007199254740993 becomes, and writing the value that way rather than
+    // as the literal is the defect spelled by the language itself: the literal will not
+    // survive being typed either.
+    await applyKeyedBy(2 ** 53, "mysql");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a whole number past the range this editor carries exactly"),
+    });
+  });
+
+  test("refuses a fractional key", async () => {
+    const seen = watchFetch();
+    await applyKeyedBy(1.5);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number"),
+    });
+  });
+
+  test("refuses a key that is not a number at all", async () => {
+    const seen = watchFetch();
+    await applyKeyedBy(Number.NaN);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is not a number"),
+    });
+  });
+
+  test("counts the rows carrying the same unusable kind, and no others", async () => {
+    const seen = watchFetch();
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [
+              { id: Buffer.from([1]), note: "one" },
+              { id: Buffer.from([2]), note: "two" },
+              { id: new Date("2026-09-17T10:00:00.000Z"), note: "three" },
+            ],
+            fields: ["id", "note"],
+            rowCount: 3,
+          }),
+          resultQuery: "SELECT id, note FROM keyed",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+
+    const notes = ["one", "two", "three"];
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        result.current.handleCellChange({ rowIndex: i, columnId: "note", originalValue: notes[i], newValue: `y${i}` });
+      }
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(seen).toHaveLength(0);
+    // Two rows carry binary data; the third carries a date, and is not counted as binary.
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 2 rows you edited it is binary data"),
+    });
+  });
+
+  test("still lets a whole number and a text key through to the engine", async () => {
+    // The guard this sits in front of is unchanged for every key that is fine: a safe
+    // integer and a string are both asked about, and both applied.
+    const seen: Array<{ params: unknown[] }> = [];
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      seen.push({ params: JSON.parse(String(init?.body ?? "{}")).params ?? [] });
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            rows: [
+              { id: 7, count: "1" },
+              { id: "SKU-1", count: "1" },
+            ],
+            fields: ["id", "count"],
+            rowCount: 2,
+          }),
+      });
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [
+              { id: 7, note: "one" },
+              { id: "SKU-1", note: "two" },
+            ],
+            fields: ["id", "note"],
+            rowCount: 2,
+          }),
+          resultQuery: "SELECT id, note FROM keyed",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange({ rowIndex: 0, columnId: "note", originalValue: "one", newValue: "a" });
+      result.current.handleCellChange({ rowIndex: 1, columnId: "note", originalValue: "two", newValue: "b" });
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(seen[0].params).toEqual([7, "SKU-1"]);
+    expect(updateCalls()).toHaveLength(2);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  // ── A refusal may not report half of what the engine answered ─────────────
+
+  test("names the rows that have gone as well as the key that duplicates", async () => {
+    // Measured against PostgreSQL 16. `zz_dup_keys` held k_id 1 twice and k_id 2 once; the
+    // grid was read with all three rows on it; someone then deleted the k_id 2 row. The
+    // check asked about 1 and 2 and was answered with ONE group of two rows, so the totals
+    // came out two-into-two and the apply said "k_id does not tell these rows apart in this
+    // table: the 2 rows you edited would write to 2 rows" - which reads as harmless, and
+    // says nothing at all about the row that has gone.
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ rows: [{ k_id: 1, count: "2" }], fields: ["k_id", "count"], rowCount: 1 }),
+      }),
+    ) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [
+              { k_id: 1, note: "one-a" },
+              { k_id: 2, note: "two" },
+            ],
+            fields: ["k_id", "note"],
+            rowCount: 2,
+          }),
+          resultQuery: "SELECT k_id, note FROM zz_dup_keys",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange({ rowIndex: 0, columnId: "note", originalValue: "one-a", newValue: "x" });
+      result.current.handleCellChange({ rowIndex: 1, columnId: "note", originalValue: "two", newValue: "z" });
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(updateCalls()).toHaveLength(0);
+    // Both halves, in one sentence: the duplication AND the key the engine could not answer for.
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("k_id does not tell these rows apart in this table"),
+    });
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("the engine answered for only 1 of those 2 keys"),
+    });
+    expect(result.current.pendingChanges).toHaveLength(2);
+  });
+
+  test("says both halves even when the totals come out short as well", async () => {
+    // Three keys: one addressing two rows, two the engine has no answer for. The total is
+    // smaller than the number of keys, which used to send this straight to "no longer in
+    // the table" - true, and silent about the key that writes to two rows.
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ rows: [{ id: 1, count: "2" }], fields: ["id", "count"], rowCount: 1 }),
+      }),
+    ) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [
+              { id: 1, note: "one" },
+              { id: 2, note: "two" },
+              { id: 3, note: "three" },
+            ],
+            fields: ["id", "note"],
+            rowCount: 3,
+          }),
+          resultQuery: "SELECT id, note FROM keyed",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+
+    const notes = ["one", "two", "three"];
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        result.current.handleCellChange({ rowIndex: i, columnId: "note", originalValue: notes[i], newValue: `y${i}` });
+      }
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("the 3 rows you edited would write to 2 rows"),
+    });
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("the engine answered for only 1 of those 3 keys"),
+    });
+  });
+
+  // ── VERIFIER (agent 8 audit) ──────────────────────────────────────────────
+  //
+  // Everything below was measured against the live engines before it was written:
+  // PostgreSQL 16.15 in `guide-pg` and MySQL 8.4.11 in `guide-my`, driven through the
+  // real `createDatabaseProvider` path, with this hook rendered over the rows those
+  // providers actually returned. The mock engines here answer exactly what the live
+  // ones answered.
+
+  /** An engine that is asked and finds nothing — and a record of having been asked. */
+  function answerNothing(): unknown[] {
+    const seen: unknown[] = [];
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body ?? "{}")));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ rows: [], fields: ["id", "count"], rowCount: 0 }),
+      });
+    }) as unknown as typeof fetch;
+    return seen;
+  }
+
+  test("a timestamp key in the shape the browser holds is still called a missing row", async () => {
+    // MEASURED, PostgreSQL 16.15, `zz_v8_ts(ts_id timestamp PRIMARY KEY)` holding
+    // 2026-01-01 10:00:00.123456 and 10:00:00.654321, read through the real postgres
+    // provider and applied through this hook.
+    //
+    // On the LIBRARY path `pg` hands the grid a Date and the new check refuses it before
+    // the engine — that case is covered above. But the browser does not get a Date: the
+    // rows reach it through `/api/db/query`, which is JSON, and `JSON.stringify(date)` is
+    // an ISO STRING. A string is waved through as "its own text", the engine IS asked
+    //   SELECT "ts_id", COUNT(*) FROM zz_v8_ts WHERE "ts_id" IN ($1, $2) GROUP BY "ts_id"
+    // with '2026-01-01T07:00:00.123Z' — the local-time shift AND the lost microseconds —
+    // it matches nothing, and the user is told:
+    //   "some of the rows you edited are no longer in the table. Run the query again."
+    // `SELECT count(*) FROM zz_v8_ts` answered 2 at that moment. The sentence is false and
+    // the advice loops: the same query produces the same ISO string for ever.
+    const seen = answerNothing();
+    await applyKeyedBy("2026-01-01T07:00:00.123Z");
+
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("no longer in the table"),
+    });
+    expect(seen).toHaveLength(0);
+  });
+
+  test("a MySQL DATETIME(6) key over the wire is called a missing row too", async () => {
+    // MEASURED, MySQL 8.4.11, `zz_v8_dt(d_id DATETIME(6) PRIMARY KEY)`. `mysql2` hands the
+    // library path a Date — refused correctly — and the HTTP path the same ISO string,
+    // which is asked about and matches nothing. Both rows were still in the table.
+    const seen = answerNothing();
+    await applyKeyedBy("2026-01-01T10:00:00.123Z", "mysql");
+
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("no longer in the table"),
+    });
+    expect(seen).toHaveLength(0);
+  });
+
+  test("a double precision key is refused with a reason that is not true of it", async () => {
+    // MEASURED, PostgreSQL 16.15, `zz_v8_flt(f_id double precision PRIMARY KEY)` holding
+    // 0.30000000000000004. The editor refuses before the engine with
+    //   "in 1 row you edited it is a fractional number, which does not reach the table as
+    //    the row holds it"
+    // and that second half is false. `String(0.30000000000000004)` is the shortest decimal
+    // that round-trips to the same double, PostgreSQL parses it back to the same double,
+    // and `SELECT count(*) FROM zz_v8_flt WHERE f_id = 0.30000000000000004` answered 1.
+    // The value reaches the table exactly as the row holds it.
+    const seen = answerNothing();
+    await applyKeyedBy(0.30000000000000004);
+
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("does not reach the table as the row holds it"),
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  test("a double precision key is carried back whatever its decimals, because the result says so", async () => {
+    // The other half of the same measurement. `zz40_flt(f_id double precision)` holding 1.5:
+    // the column's declaration is the only thing that says how wide the engine reads the
+    // decimal back, and at 64 bits `String()` of a JavaScript number IS the value the row
+    // holds. Measured on PostgreSQL 16.15 and MySQL 8.4.11 - every one of 1.5, 0.1, 1e-7 and
+    // 0.30000000000000004 answered one row through this hook's own bound-parameter path.
+    const seen = countAsks();
+    await applyKeyedBy(1.5, "postgres", "double precision");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a MySQL FLOAT key in the shape its text protocol hands over is refused, and truthfully", async () => {
+    // MEASURED, MySQL 8.4.11, `zz40_f(k FLOAT)` holding 0.1. mysql2's text protocol hands the
+    // grid the double 0.1, the row holds the 32-bit 0.100000001490116..., and
+    // `SELECT k FROM zz40_f WHERE k IN (0.1)` matched NOTHING - over `query()` and over
+    // `execute()` alike. This one really cannot be addressed by the decimal in front of the
+    // user, and `float` means 32 bits here and 64 in T-SQL, so the word settles nothing.
+    const seen = countAsks();
+    await applyKeyedBy(0.1, "mysql", "float");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number"),
+    });
+    // The half that has to be true of it: nothing here states the width, which is the fact.
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("nothing here says the column holds it as a 64-bit float"),
+    });
+  });
+
+  test("the same FLOAT column over the binary protocol carries its own value back", async () => {
+    // MEASURED, same table, same session: `execute()` hands that FLOAT over as the 17-digit
+    // 0.10000000149011612 - the 32-bit value written out in full - and sending THAT back
+    // matched the row. Nine significant digits is the most any 32-bit float needs, so a
+    // longer decimal cannot be one, and this value can only have come from a 64-bit read.
+    const seen = countAsks();
+    await applyKeyedBy(0.10000000149011612, "mysql", "float");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["postgres", "double precision", 1e21],
+    ["postgres", "double precision", 1e300],
+    ["mysql", "double", 1e21],
+  ] as const)("a %s %s key carries its own value back however large it is", async (type, declared, key) => {
+    // MEASURED 2026-09-18, and the defect this closes. `zz43_dbl(f_id double precision
+    // PRIMARY KEY)` on PostgreSQL 16.15 and `zz43_dbl(f_id DOUBLE PRIMARY KEY)` on MySQL
+    // 8.4.11, both holding 1e21, 1e300 and 3. The editor refused the first two with
+    //   "it is a whole number past the range this editor carries exactly, which does not
+    //    reach the table as the row holds it"
+    // and BOTH halves are false about a `double precision` column: 1e21 and 1e300 are
+    // doubles a 64-bit column holds exactly, nothing about them is out of range, and the
+    // engines answered ONE row for each sent back through this hook's own bound-parameter
+    // path - `WHERE "f_id" IN ($1)` with 1e21, and with 1e300. After the refusal was made
+    // to read the DECLARED type rather than the magnitude, the same edit ran end to end on
+    // both engines: the check asked, the UPDATE went out bound as the number, and the row
+    // holding that key was the only row whose `note` changed.
+    const seen = countAsks();
+    await applyKeyedBy(key, type, declared);
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a BIGINT key past 2^53 is still refused, because that column is not a double", async () => {
+    // The other side of the same distinction, and why it is the DECLARATION that decides.
+    // MEASURED 2026-09-18 on `zz43_big(b_id BIGINT PRIMARY KEY)` holding 9007199254740993
+    // and 9007199254740992: mysql2 on its own defaults - and `pg` with int8 parsed as a
+    // number - hand the first row's key over as 9007199254740992, the SECOND row's key.
+    // `SELECT ... WHERE b_id = 9007199254740992` answered that neighbouring row, so an
+    // apply let through here would have rewritten a row nobody edited and reported success.
+    const seen = countAsks();
+    await applyKeyedBy(2 ** 53, "mysql", "bigint");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a whole number past the range this editor carries exactly"),
+    });
+  });
+
+  test("a large whole number with no declared type at all stays refused", async () => {
+    // Fail closed where nothing states the width. MEASURED: the same 1e21 row read with its
+    // `columnTypes` stripped - the state a driver carrying no type metadata leaves a result
+    // in - is refused, and it has to be: the identical JavaScript number reaches the grid
+    // from a `double precision` column that holds it exactly and from a BIGINT the driver
+    // rounded, and nothing in the value tells those two apart.
+    const seen = countAsks();
+    await applyKeyedBy(1e21);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a whole number past the range this editor carries exactly"),
+    });
+  });
+
+  test("an empty binary value is binary data like any other", async () => {
+    // MEASURED, PostgreSQL 16.15, `zz_v8_edge` holding decode('','hex'). `asBytes` reads
+    // `{"type":"Buffer","data":[]}` as an empty Uint8Array, and the refusal names it.
+    const seen = watchFetch();
+    await applyKeyedBy({ type: "Buffer", data: [] });
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is binary data"),
+    });
+  });
+
+  test("the short answer never asserts the rows were deleted", async () => {
+    // MEASURED twice, and the point of #11: the same answer has two causes.
+    //  - MySQL 8.4.11, `zz_v8_ci(c_id VARCHAR(20) COLLATE utf8mb4_0900_ai_ci)` holding
+    //    'abc' and 'ABC'. Both rows present; the engine folds the two keys into one group
+    //    of two. Nothing was deleted.
+    //  - PostgreSQL 16.15, `zz_v8_dup` read with k_id 1 twice and k_id 2 once, k_id 2
+    //    deleted afterwards. One group of two, and a row really has gone.
+    // Both produced the same sentence, which is the only honest one: it names both.
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const bound = (body.params ?? []) as unknown[];
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ rows: [{ id: bound[0], count: "2" }], fields: ["id", "count"], rowCount: 1 }),
+      });
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type: "mysql" }),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [
+              { id: "abc", note: "one" },
+              { id: "ABC", note: "two" },
+            ],
+            fields: ["id", "note"],
+            rowCount: 2,
+          }),
+          resultQuery: "SELECT id, note FROM zz_v8_ci",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+    act(() => {
+      result.current.handleCellChange({ rowIndex: 0, columnId: "note", originalValue: "one", newValue: "x" });
+      result.current.handleCellChange({ rowIndex: 1, columnId: "note", originalValue: "two", newValue: "y" });
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("the engine answered for only 1 of those 2 keys"),
+    });
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("a row gone since you read it, or two keys this engine reads as one"),
+    });
+    // It must not settle on the half that is false of the collation case.
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("no longer in the table"),
+    });
+  });
+
+  // ── The COLUMN's declared type, not the value's shape (#4) ────────────────
+  //
+  // MEASURED 2026-09-18 against PostgreSQL 16.15 (`guide-pg`) and MySQL 8.4.11
+  // (`guide-my`), reading the rows through the real provider and then through
+  // `JSON.parse(JSON.stringify(result))` - which is exactly what `/api/db/query` delivers
+  // and what the browser therefore holds. The declared types below are the ones those
+  // responses really carried.
+
+  /** What the engine is asked, and whether it was asked at all. */
+  function countAsks(): { readonly length: number } {
+    const seen: unknown[] = [];
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      seen.push(body);
+      const bound = (body.params ?? [1]) as unknown[];
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            rows: bound.map((key) => ({ id: key, count: "1" })),
+            fields: ["id", "count"],
+            rowCount: bound.length,
+          }),
+      });
+    }) as unknown as typeof fetch;
+    return seen;
+  }
+
+  test.each([
+    ["postgres", "timestamp without time zone", "2026-01-01T10:00:00.123Z"],
+    ["postgres", "timestamp with time zone", "2026-01-01T10:00:00.123Z"],
+    ["mysql", "datetime", "2026-01-01T10:00:00.123Z"],
+  ] as const)("a %s %s key is refused over the wire, before the engine", async (type, declared, key) => {
+    // The defect this closes. All three columns really answered that ISO string over HTTP,
+    // the string was waved through as its own text, the engine WAS asked, it matched
+    // nothing, and the user was told "some of the rows you edited are no longer in the
+    // table. Run the query again" - with `SELECT count(*)` answering 2 at that moment, and
+    // with running the query again producing the identical string for ever.
+    const seen = countAsks();
+    await applyKeyedBy(key, type, declared);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is a date and time"),
+    });
+    expect(mockToastError).not.toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("no longer in the table"),
+    });
+  });
+
+  test("a date key declared by the engine is refused whatever shape the driver chose", async () => {
+    // The declaration is the fact; the value's shape is only ever evidence. `mysql2` run
+    // with `dateStrings` hands a DATETIME back as the engine's own spelling, which no ISO
+    // test would ever match - and the column is still a column this editor cannot key on.
+    const seen = countAsks();
+    await applyKeyedBy("2026-01-01 10:00:00.123456", "mysql", "datetime");
+
+    expect(seen).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is a date and time"),
+    });
+  });
+
+  test("a text key holding the exact text of a serialized date is still a key", async () => {
+    // The case the fix must not break, and the reason it reads the DECLARATION first:
+    // PostgreSQL `text` really holding `2026-01-01T07:00:00.123Z`. Measured end to end
+    // against `zz_a9_txt` - the UPDATE went out, the engine took it, and reading the table
+    // back showed the new value on that row and no other.
+    const seen = countAsks();
+    await applyKeyedBy("2026-01-01T07:00:00.123Z", "postgres", "text");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test.each([["2024-01-15T10:30:00Z"], ["2024-01-15"], ["2024-01-15 10:30:00"], ["2026-02-30T00:00:00.000Z"]])(
+    "an undeclared key holding %s is a key, not a date",
+    async (key) => {
+      // Where the result declares nothing, the shape a `Date` takes through JSON is all
+      // there is to read - and it is read EXACTLY. None of these is that shape: the first
+      // three carry no three-digit fraction, and the fourth is a day no `Date` would ever
+      // print, since `new Date` rolls it forward to 2026-03-02.
+      const seen = countAsks();
+      await applyKeyedBy(key);
+
+      expect(seen).toHaveLength(1);
+      expect(updateCalls()).toHaveLength(1);
+      expect(mockToastError).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a daterange key is not read as a date", async () => {
+    // The type's FIRST WORD, never a substring of it. PostgreSQL's `daterange`, `tsrange`
+    // and `tstzrange` all render as text whose text is their identity, and a
+    // `.includes("date")` would take three working keys away to catch one broken one.
+    const seen = countAsks();
+    await applyKeyedBy("[2024-01-01,2024-02-01)", "postgres", "daterange");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a time-of-day key is not read as a date either", async () => {
+    // `pg` and `mysql2` both hand a time back as the string the engine prints, which is
+    // its own identity and matches when it is sent back. Refusing it would take away a
+    // key that works, so `time` is deliberately outside the set.
+    const seen = countAsks();
+    await applyKeyedBy("10:00:00", "postgres", "time without time zone");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a wrapped ClickHouse DateTime64 is read through its wrappers", async () => {
+    // ClickHouse spells a nullable column by WRAPPING the real type, so the wrappers come
+    // off before the first word is read.
+    const seen = countAsks();
+    await applyKeyedBy("2026-01-01 10:00:00.123456", "clickhouse", "Nullable(DateTime64(6, 'UTC'))");
+
+    expect(seen).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is a date and time"),
+    });
+  });
+
+  test("a column called constructor declares nothing rather than inheriting one", async () => {
+    // `columnTypes` arrives through `JSON.parse`, so it carries `Object.prototype`, and
+    // `SELECT 1 AS constructor` is legal SQL. A plain property read would answer with the
+    // prototype's own `constructor` - a function - for a column nothing declared.
+    const seen = countAsks();
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({
+            rows: [{ constructor_id: "2024-01-15T10:30:00Z", note: "first" }],
+            fields: ["constructor_id", "note"],
+            rowCount: 1,
+            columnTypes: {},
+          }),
+          resultQuery: "SELECT constructor_id, note FROM keyed",
+        }),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+    act(() => {
+      result.current.handleCellChange({ rowIndex: 0, columnId: "note", originalValue: "first", newValue: "changed" });
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
 });
