@@ -129,7 +129,7 @@ path uses, so the error reader handles both. 400 is in the provider's authentica
 401 and 403 for that reason: keying only on 401 would report a malformed token as a connection
 failure.
 
-### 3.4 Integers arrive as decimal strings, and they stay exact
+### 3.4 Integers arrive as decimal strings, and the same digits go back as integers
 
 Hrana quotes every integer — `{"type":"integer","value":"2000"}` — which is the protocol protecting
 64-bit values from a double. `decodeInteger` returns a `number` when the value is exactly
@@ -139,6 +139,68 @@ Trino version of the same lesson).
 
 The one place a wide integer IS parsed to a double is `readNumber` in `introspect.ts`, and only for
 display statistics: a row count above 2^53 is 9 quadrillion rows. Result CELLS never pass through it.
+
+**Sending one back.** Reading exactly is only half an edit. `decodeInteger` is lossy in ONE direction:
+`9007199254740993` the integer and `'9007199254740993'` the text both leave this transport as the same
+JavaScript string, so a value arriving in a bind carries no clue which it was. SQLite settles that by
+the COLUMN's affinity, and only for a column that HAS one. Measured 2026-09-18 against sqld 0.24.33
+(`ghcr.io/tursodatabase/libsql-server:v0.24.33`, SQLite 3.45.1), on a row whose key is
+`9007199254740993`, sending each bind over `POST /v2/pipeline` both ways:
+
+| Column declared | `{"type":"text"}` (what the read used to send back) | `{"type":"integer"}` (what it sends now) |
+|---|---|---|
+| `INTEGER` / `NUMERIC` | 1 row | 1 row |
+| `TEXT` | 1 row | 1 row |
+| `BLOB` | **0 rows** | 1 row |
+| no type at all | **0 rows** | 1 row |
+
+`INTEGER` and `NUMERIC` affinity convert the text to a number before comparing and `TEXT` affinity
+converts the integer to text, so those answer the same either way. A column declared `BLOB` or
+declared NOTHING has NO affinity: SQLite compares the operands as they stand, a text is never equal to
+an integer, and **the row the grid had just read could not be found again** — `UPDATE … WHERE id = ?`
+reported 0 rows changed and the editor told the user nothing had happened.
+
+Note what this is NOT. Unlike `bun:sqlite`, the read side here never rounds — Hrana quotes its
+integers — so the damage was a silent NO-OP, never a write onto the neighbouring row
+([sqlite.md §3.6](./sqlite.md#36-a-64-bit-integer-survives-the-round-trip-in-both-directions) is the
+other half of that comparison).
+
+The affinity is not knowable at a bind — a bind is a value, and the protocol never names the column an
+operand belongs to — so `encodeValue` answers the question it CAN answer exactly: **it accepts back
+precisely what `decodeInteger` hands out**, and leaves every other string as text. Those digits are
+emitted for one input only, a 64-bit integer outside the safe range, so reading them back as that
+integer is the exact inverse:
+
+| Bound string | Sent as | Why |
+|---|---|---|
+| `"9007199254740993"`, `"-9007199254740993"`, `"9223372036854775807"` | `{"type":"integer"}` | the only shape the read emits |
+| `"1"`, `"9007199254740991"` | `{"type":"text"}` | inside the safe range the read hands out a NUMBER, never digits, so such a string is the caller's own text |
+| `"007"`, `"+7"`, `" 7"`, `""`, `"7.0"`, `"9e15"` | `{"type":"text"}` | shapes the read cannot emit |
+| `"99999999999999999999"`, `"9223372036854775808"` | `{"type":"text"}` | wider than SQLite's own `INTEGER`, so no row could match as a number either |
+
+Only a real `string` is tested, never `String(param)` of some other object: the read side hands out
+strings and nothing else, so nothing else can be a value it emitted.
+
+**The round trip, end to end through the provider against that live server.** Two rows with ids
+`9007199254740992` and `9007199254740993`, read back and then edited on the id that was read:
+
+| Column declared | Read back | `UPDATE` on the read key | Rows afterwards |
+|---|---|---|---|
+| `INTEGER` | `"9007199254740992"`, `"9007199254740993"` | 1 row | `…992=neighbour`, `…993=edited` |
+| `TEXT` | the same two | 1 row | the same |
+| `BLOB` | the same two | 1 row | the same |
+| no type at all | the same two | 1 row | the same |
+
+Ordinary values are untouched in the same pass: `SELECT 1` is still the number `1` and `COUNT(*)`
+still a number. A genuinely textual all-digit key is still text — `'9007199254740993'` and `'007'` in
+a `TEXT PRIMARY KEY` both match, and `typeof(id)` reads `text` for both — because `TEXT` affinity
+converts the bind back to text.
+
+What that costs, measured and accepted: in a column with NO affinity that genuinely stores this shape
+as TEXT, the bind now misses where it used to match. That is the same ambiguity read from the other
+end, it cannot be resolved without the affinity, and the integer reading is the one these digits exist
+for. This is the same rule `toSQLiteBindValue` applies in the SQLite driver, by design — the two
+providers hand out the same shape, so they accept the same shape back.
 
 ### 3.5 The server refuses four statements, so four controls are withheld
 
@@ -875,6 +937,7 @@ await provider.disconnect();
 | No WAL size on the Storage tab | No statement reports it, and `PRAGMA wal_checkpoint` is refused | The engine's |
 | Turso Database (the Rust engine) is not reachable | It publishes no server image and ships in-process | Revisit when a server image exists |
 | No `function` object kind | `CREATE FUNCTION ... LANGUAGE wasm` is refused by the server's parser and `libsql_wasm_func_table` does not exist (§6.1) | The engine's. Declare the kind if a build ever accepts it |
+| A no-affinity column holding these digits as TEXT cannot be keyed on | The bind is a value with no column attached, so the transport cannot read the affinity that would settle it (§3.4) | Ours, and accepted: the integer reading is the one the digits exist for |
 | The object surface reads `main` only | `ATTACH` is refused outright and a declaration is read off a provider that never connects | Ours, and Phase 1's scope |
 
 ---

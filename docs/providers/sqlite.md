@@ -77,8 +77,11 @@ SQLite driver by runtime:
 - **Identical behaviour:** the adapter exposes the exact `bun:sqlite`-shaped surface the provider
   uses (`exec` / `prepare().all/get/run` / `close`) and bridges the small `node:sqlite` deltas
   (`get()` miss returns `null` not `undefined`; `run().changes` normalized to `number`;
-  `close(throwOnError)` is bun's flag for "release the file now" and node:sqlite needs none), so
-  results and error mapping are the same under both runtimes.
+  `close(throwOnError)` is bun's flag for "release the file now" and node:sqlite needs none; the
+  big-integer flag is `safeIntegers` on bun and `readBigInts` on node,
+  [§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions); the declared column types
+  are `columnNames` + `declaredTypes` on bun and one `columns()` on node,
+  [§5](#declared-column-types)), so results and error mapping are the same under both runtimes.
 - **Why not `better-sqlite3`?** Bun refuses to load it outright, and its native binding must match
   the installing runtime's ABI (a bun-installed binding fails under Node). The built-in drivers
   need no native dependency at all. (`better-sqlite3` remains the *storage-layer* driver.)
@@ -241,6 +244,92 @@ The `scope` parameter is declared on the interface and ignored here, because thi
 That is the D87 shape on a single connection and it is NOT closed: closing it needs the transaction owned by a call scope rather than by a client, which is a design change and not a parameter, so it is recorded here rather than worked around.
 `redis.md` §5.2a and `duckdb.md` carry the same residual for the same reason, and the three were checked rather than inferred from one another.
 
+### 3.6 A 64-bit integer survives the round trip, in both directions
+
+SQLite's `INTEGER` is a signed 64-bit value and a JavaScript `number` is not, so an id past 2^53 does
+not survive a naive read. **Both built-in drivers got it wrong, and they got it wrong differently** —
+measured 2026-09-18 reading `9007199254740993` back with each driver's own DEFAULTS, bun:sqlite under
+Bun 1.4.0 (SQLite 3.51.0) and node:sqlite under Node 24.14.0 (SQLite 3.51.2):
+
+| Driver, defaults | Reading `9007199254740993` |
+|---|---|
+| `bun:sqlite` | `9007199254740992` (number) — silently the value the row BESIDE it reads |
+| `node:sqlite` | throws `ERR_OUT_OF_RANGE: Value is too large to be represented as a JavaScript number: 9007199254740992` |
+
+Two spellings of one defect, and the silent one is the dangerous half: the grid showed two rows
+carrying the same id, and the inline editor's `UPDATE … WHERE id = <that key>` then edited the
+NEIGHBOURING row and reported success.
+
+**The flag alone is not the fix.** Each driver can hand every integer back as a `BigInt` and each
+spells the request its own way — bun `safeIntegers`, node `readBigInts` — but it is all-or-nothing:
+`1`, `COUNT(*)` and every PRAGMA column become `BigInt` too, and `JSON.stringify`, which is how every
+row reaches the browser, refuses a `BigInt` outright. So both adapters set their own spelling and
+[`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts) converts back at the one seam
+every row crosses — `prepare()`, the provider's only row-returning entry point (`exec()` returns
+nothing), wrapped by `withoutBigInts()` so `all()`, `get()` and `run()` are covered alike. Measured
+through both adapters in the same pass, with identical answers:
+
+| Value read | Answered as |
+|---|---|
+| `1` | `1` (number) |
+| `COUNT(*)` over two rows | `2` (number) |
+| `9007199254740991` (`Number.MAX_SAFE_INTEGER`) | `9007199254740991` (number) |
+| `9007199254740992` | `"9007199254740992"` |
+| `9007199254740993` | `"9007199254740993"` |
+| `-9007199254740992` | `"-9007199254740992"` |
+| `9223372036854775807` (INT64's own maximum) | `"9223372036854775807"` |
+
+The boundary is `Number.MAX_SAFE_INTEGER`: what fits comes back AS a number, what does not comes back
+as its decimal string with every digit kept, and **nothing outside the adapter ever sees a `BigInt`**.
+That is the same shape the MySQL provider answers for a wide `BIGINT`
+([mysql.md §3.7](./mysql.md#37-a-bigint-past-253-arrives-as-a-string)), deliberately: the two hand out
+one shape.
+
+**And the same string is accepted back**, which is what completes the edit. The conversion above is
+lossy in ONE direction: `9007199254740993` the integer and `'9007199254740993'` the text both leave
+here as the same JavaScript string, so a value arriving in a bind carries no clue which it was. SQLite
+settles that by the COLUMN's affinity, and only for a column that HAS one. Measured the same day on
+both drivers, against a row whose key is `9007199254740993`:
+
+| Column declared | Bound as text (what the read used to hand back) | Bound as a 64-bit integer (what it does now) |
+|---|---|---|
+| `INTEGER` / `NUMERIC` | 1 row | 1 row |
+| `TEXT` | 1 row | 1 row |
+| `BLOB` | **0 rows** | 1 row |
+| no type at all | **0 rows** | 1 row |
+
+`INTEGER` and `NUMERIC` affinity convert the text to a number before comparing and `TEXT` affinity
+converts the integer to text, so those answer the same either way. A column declared `BLOB` or
+declared NOTHING has NO affinity: SQLite compares the operands as they stand, a text is never equal to
+an integer, and **the row the grid had just read could not be found again** — the `UPDATE` reported 0
+rows changed and the editor told the user nothing had happened. That is the case the round trip could
+not serve at all before, not a case it served wrongly.
+
+The affinity is not knowable at a bind — a bind is a value with no column attached — so
+`toSQLiteBindValue()` answers the question it CAN answer exactly: it accepts back precisely what the
+read hands out, and leaves every other string alone. Measured, string by string:
+
+| Bound string | Sent as | Why |
+|---|---|---|
+| `"9007199254740993"`, `"-9007199254740993"`, `"9223372036854775807"` | a 64-bit integer | the only shape the read emits |
+| `"1"`, `"9007199254740991"` | text | inside the safe range the read hands out a NUMBER, so digits are the caller's own text |
+| `"007"`, `"+7"`, `" 7"`, `""`, `"7.0"`, `"9e15"` | text | shapes the read cannot emit |
+| `"99999999999999999999"`, `"9223372036854775808"` | text | wider than SQLite's own `INTEGER`, so no row could match as a number either |
+
+End to end, on both drivers: reading the two ids and then `UPDATE`ing on the one that was read
+changes exactly one row — the target — in an `INTEGER`, `NUMERIC`, `TEXT`, `BLOB` and undeclared
+column alike, and the neighbour is untouched in all five.
+
+**What it costs, measured and accepted.** A row written ELSEWHERE as TEXT in a column with no
+affinity now misses where it used to match: measured, `INSERT INTO na VALUES ('9007199254740993', …)`
+into `CREATE TABLE na (id, label TEXT)` stores storage class `text`, reads back as those digits, and
+the `UPDATE` keyed on them reports 0 rows. That is the same ambiguity read from the other end, it
+cannot be resolved without the affinity, and the integer reading is the one these digits exist for. A
+`TEXT`-declared column is NOT affected — `TEXT` affinity converts the bind back to text — so an
+ordinary textual key still matches as text, `'007'` included (measured: both match, both stored as
+`text`). A value written through THIS provider into a no-affinity column is stored as an integer and
+round-trips consistently.
+
 ---
 
 ## 4. Connection
@@ -353,6 +442,55 @@ real closer so the run never terminates (`SELECT [a]] FROM t`), a confirmation p
 #297 asks about text the reader cannot resolve. Both are on statements the server refuses, and both are
 pinned by tests rather than left to be discovered.
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
+
+### Declared column types
+
+`QueryResult.columnTypes` names the type each result column was DECLARED with
+(`sqlite3_column_decltype`). **This provider never filled it before** — so the SQL-DDL export named a
+column by the JavaScript type of its value, and the inline editor had nothing to read a key's width
+from. `query()` and `queryReadOnly()` both carry it now
+([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)).
+
+Both drivers publish the declaration and spell it differently — bun:sqlite `columnNames` beside
+`declaredTypes`, node:sqlite one `columns()` answering both — so
+[`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts) bridges them into a single
+`declaredColumns()`, exactly as it bridges `inTransaction` and the big-integer flag, and
+`declaredColumnTypes()` ([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)) turns
+that into the field the way the four code-reporting drivers already do.
+
+**It is read AFTER the rows.** Measured 2026-09-18: bun:sqlite THROWS *Statement must be executed
+before accessing declaredTypes* until the statement has run, while node:sqlite answers either way — so
+after the rows is the one order both drivers accept, and that is why the declarations are read off the
+same statement object that produced them. A statement that matched NO rows still answers
+(`SELECT i, r FROM dt WHERE i = -1` → `INTEGER`, `REAL`, zero rows), so an empty result is described
+rather than guessed at, and a write answers an EMPTY list on both drivers.
+
+**An absent declaration stays absent rather than becoming a guess.** SQLite declares nothing for
+anything it computed, and the key is simply omitted. Measured over one statement, identically on both
+drivers:
+
+| Result column | Declared |
+|---|---|
+| `i INTEGER`, `r REAL`, `txt TEXT`, `n NUMERIC`, `b BLOB`, `ts DATETIME` | `INTEGER`, `REAL`, `TEXT`, `NUMERIC`, `BLOB`, `DATETIME` — the schema's own words, unchanged |
+| a column declared with no type at all | *absent* |
+| an expression (`i + 1`) | *absent* |
+| a literal (`42`) | *absent* |
+| an aggregate (`COUNT(*)`) | *absent* |
+| a function call (`upper(txt)`) | *absent* |
+| every column of a PRAGMA (`PRAGMA table_info`) | *absent* |
+
+**NOT bun:sqlite's `columnTypes`, which is a different question wearing a similar name.** Measured the
+same day on the same table: it reports the RUNTIME storage class of the row just read, so the `REAL`
+column answers `FLOAT` where its declaration is `REAL`, and the UNDECLARED column holding `7` answers
+`INTEGER` where there is no declaration at all. It also throws on anything that is not a read-only
+statement — *columnTypes is not available for non-read-only statements* — `PRAGMA journal_mode`
+included. Reading it here would have typed every float column wrong and broken every PRAGMA this
+provider runs.
+
+A 64-bit id is where the two features meet: it leaves as the decimal string
+[§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions) prints, and it is still
+declared `INTEGER`, so the export writes an `INTEGER` column rather than the `TEXT` a value-shaped
+guess would produce.
 
 ---
 
@@ -967,7 +1105,11 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 ### 11.2 Coverage
 
 Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
-write), capabilities, health, maintenance
+write), 64-bit integers past 2^53 (both ids read whole, the `UPDATE` landing on the row that was
+read, no `BigInt` on any public path, ordinary integers and PRAGMA columns unchanged, and the same
+on the agent read-only path), declared column types (the computed column that declares nothing, the
+empty result, the write, two columns of one name, the storage-class trap, and what the SQL export and
+the row editor read off them), capabilities, health, maintenance
 (vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
 table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the object surface
 ([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root
@@ -1184,6 +1326,12 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   ([§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver)). `getIndexStats()` still reports
   `indexSize: "N/A"` per index even where `dbstat` exists — the per-table index bytes it feeds the
   Storage tab are measured, the per-index rows are not yet.
+- **A key declared `REAL` still cannot hold a 64-bit id**, and nothing here can change that: `REAL`
+  affinity converts on INSERT, so the collapse happens in the FILE before any driver sees it.
+  Measured 2026-09-18 — `9007199254740992` and `9007199254740993` inserted into a `REAL` column both
+  read back as `9007199254740992` with storage class `real`, so the two rows are genuinely
+  indistinguishable on disk ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)
+  repairs the INTEGER case only).
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
 - **No path sandboxing (by design).** `getDatabasePath()` validates only that the path contains
