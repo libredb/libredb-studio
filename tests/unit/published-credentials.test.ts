@@ -181,27 +181,145 @@ function pairedAssignments(lines: string[], name: string): string[] {
 
 /**
  * A Markdown table row, which is how a README lists its variables: the name in one cell and
- * the value in the next. It assigns nothing in the `NAME=value` sense and a reader still
- * reads a working login out of it, which is how `| `ADMIN_PASSWORD` | `example-not-a-real-password` |`
- * passed this guard - measured, on the most common table shape in these files.
+ * the value somewhere else in the row. It assigns nothing in the `NAME=value` sense and a
+ * reader still reads a working login out of it, which is how
+ * `| `ADMIN_PASSWORD` | `example-not-a-real-password` |` passed this guard - measured, on the most common
+ * table shape in these files.
  *
- * Only a value cell written as a code span with no space inside it counts. That is what
- * tells the value column from the description column beside it: `| `ADMIN_PASSWORD` | Admin
- * password |` is a table OF variables, not a table of credentials, and flagging those would
- * light up every README here and get this guard deleted by the next person it stopped.
+ * WHICH cell holds the value is not answerable by position. The tables actually written here
+ * are `| Variable | Required | Description |` (README.md:640, DOCKERHUB.md:184), where a
+ * default is written inside the description as ``(default: `x`)`` - the `ADMIN_EMAIL` row
+ * does exactly that - and `| Variable | Source | Conditional |` (docs/HELM_CHART.md:166),
+ * where the second cell is a chart value PATH. Reading the cell after the name misses the
+ * first and reports `secrets.adminPassword` as a published password in the second, which is
+ * the failure that gets a guard deleted by the next person it stops.
+ *
+ * So a row is read by what the table says about itself, not by where a cell sits:
+ *
+ * 1. A column whose HEADER names values - `Value`, `Default`, `Example`, `Sample` - holds
+ *    values, and is read as one. `Required`, `Source`, `Conditional`, `Notes`, `Description`
+ *    and every header not recognised describe something ABOUT the variable, never its value,
+ *    so nothing is read from them positionally.
+ * 2. A cell in ANY column that writes a default in words - ``default: `x` ``, `defaults to x`,
+ *    ``default `x` `` - is read, because that phrasing is itself the assignment. A bare word
+ *    counts only when the phrase separates it (`default: x`, not `by default the account ...`)
+ *    AND the value ends the cell: prose carries on in words, which is the same thing
+ *    VALUE_ENDS says one line up.
+ * 3. With no header row at all - a row quoted on its own - only the cell after the name is
+ *    read. That is the single positional convention left when nothing has been declared.
+ * 4. A two-column table offers no column to choose between: whatever its header calls that
+ *    one cell, it is everything the table says about the variable, so a value written there
+ *    AS a value - `x` or **x** - is read as one. deploy/koyeb/README.md:68 and
+ *    deploy/kubero/README.md:56 are that table, headed `Notes`, and a bare word in them is a
+ *    note (`auto-generated`) while a marked-up one is a credential, measured on both.
+ *
+ * Read in a table, a value that spells the variable's own name is a reference to the setting
+ * and not its value: `secrets.adminPassword`, `secrets.jwtSecret.fromExistingSecret`,
+ * `admin-password`. The chart's `existingSecretKeys` exemption above is the same collision in
+ * YAML; this is it in Markdown. It is deliberately narrow - `ADMIN_PASSWORD=admin-password`
+ * in a shell line is still read as an assignment by the rule below.
  */
+const VALUE_COLUMN = /\b(?:value|values|default|defaults|example|examples|sample|samples)\b/i;
+
+/** The `| --- | --- |` rule, which is the only thing that makes the line above it a header. */
+function isTableRule(line: string): boolean {
+  return /^\s*\|[\s:|-]*-[\s:|-]*$/.test(line);
+}
+
+/**
+ * The header cells governing each line, and which lines are the table's own scaffolding.
+ * docs/STORAGE.md:388 writes `| `STORAGE_ENCRYPTION_KEY` | Key used |` as a HEADER; a header
+ * states a column, it does not publish a value, so it is not read as a row.
+ */
+function tableStructure(lines: string[]): { header: string[] | null; structural: boolean }[] {
+  const rows = lines.map(() => ({ header: null as string[] | null, structural: false }));
+  for (const [index, line] of lines.entries()) {
+    if (index === 0 || !isTableRule(line) || !/^\s*\|/.test(lines[index - 1])) continue;
+    const header = lines[index - 1].split("|").map((cell) => cell.trim());
+    rows[index - 1].structural = true;
+    rows[index].structural = true;
+    for (let row = index + 1; row < lines.length && /^\s*\|/.test(lines[row]) && !isTableRule(lines[row]); row += 1) {
+      rows[row].header = header;
+    }
+  }
+  return rows;
+}
+
+/**
+ * A cell that is nothing but a value: a code span, a bold run, or a bare token. A space in it
+ * makes it a sentence - `Admin password`, `generated on first run`, `32+ chars, set your own`
+ * - and a cell of punctuation is an em dash for "none".
+ */
+function cellValue(cell: string, markedUp = false): string | null {
+  const text = cell.trim();
+  if (markedUp && !/^(?:`[\s\S]*`|\*\*[\s\S]*\*\*)$/.test(text)) return null;
+  const bare = cell
+    .trim()
+    .replace(/^\*\*([\s\S]*)\*\*$/, "$1")
+    .trim()
+    .replace(/^`([\s\S]*)`$/, "$1")
+    .trim()
+    .replace(/^\*\*([\s\S]*)\*\*$/, "$1")
+    .trim();
+  if (bare === "" || /\s/.test(bare)) return null;
+  const value = usableValue(bare);
+  return value !== null && /[A-Za-z0-9]/.test(value) ? value : null;
+}
+
+/** `default:`, `defaults to`, `default is`, or `default` with the value marked up after it. */
+const DEFAULT_PHRASE = /\bdefaults?\b(\s+(?:to|is)\b|\s*[:=])?\s*/gi;
+
+/**
+ * The values a cell writes as the default. A marked-up value (`x` or **x**) needs no
+ * separator; a bare one needs `:`, `=`, `to` or `is` in front of it and nothing but the end
+ * of the cell or a closing punctuation behind it, so `defaults to a value of your own` stays
+ * a sentence.
+ */
+function defaultValues(cell: string): string[] {
+  const found: string[] = [];
+  for (const match of cell.matchAll(DEFAULT_PHRASE)) {
+    const rest = cell.slice(match.index + match[0].length);
+    const marked = /^(?:`([^`|]+)`|\*\*([^*|]+)\*\*)/.exec(rest);
+    if (marked !== null) {
+      const value = cellValue(marked[1] ?? marked[2] ?? "");
+      if (value !== null) found.push(value);
+      continue;
+    }
+    if (match[1] === undefined) continue;
+    const bare = /^([A-Za-z0-9][^\s|]*?)(?=[),;]|\s*$)/.exec(rest);
+    const value = bare === null ? null : cellValue(bare[1]);
+    if (value !== null) found.push(value);
+  }
+  return found;
+}
+
+/** Whether the text is the variable's own name rather than a value of it. */
+function namesItself(value: string, name: string): boolean {
+  const flatten = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = flatten(name);
+  return flatten(value) === target || value.split(/[./_:-]/).some((part) => flatten(part) === target);
+}
+
 function tableAssignments(lines: string[], name: string): string[] {
   const found: string[] = [];
-  for (const line of lines) {
-    if (!/^\s*\|/.test(line)) continue;
+  const structure = tableStructure(lines);
+  for (const [index, line] of lines.entries()) {
+    if (!/^\s*\|/.test(line) || structure[index].structural) continue;
     const cells = line.split("|").map((cell) => cell.trim());
-    for (const [index, cell] of cells.entries()) {
+    const header = structure[index].header;
+    for (const [column, cell] of cells.entries()) {
       if (cell.replace(/`/g, "").trim() !== name) continue;
-      const span = /^`([^`\s]+)`$/.exec(cells[index + 1] ?? "");
-      if (span === null) continue;
-      const value = usableValue(span[1]);
-      // A cell of punctuation - an em dash for "none", a lone hyphen - is not a password.
-      if (value !== null && /[A-Za-z0-9]/.test(value)) found.push(value);
+      const lone = cells.filter((other, at) => at !== column && other !== "").length === 1;
+      for (const [other, text] of cells.entries()) {
+        if (other === column) continue;
+        const declared =
+          header === null ? other === column + 1 : VALUE_COLUMN.test(header[other] ?? "") || (lone && text !== "");
+        const markedUp = header !== null && !VALUE_COLUMN.test(header[other] ?? "");
+        const values = [...(declared ? [cellValue(text, markedUp)] : []), ...defaultValues(text)];
+        for (const value of values) {
+          if (value !== null && !namesItself(value, name)) found.push(value);
+        }
+      }
     }
   }
   return found;
@@ -257,16 +375,25 @@ const JSON_PASSWORD_STANDINS = new Set(["string", "password", "secret", "null", 
  * `postgres` or `password123`. Nothing this project ships is reachable with those, and
  * flagging them would put this guard in the way of writing a connection example at all.
  *
- * Of what is left, only a double-quoted literal that reads as a value counts: a space in it
- * makes it an instruction, and a `your-` prefix makes it a placeholder.
+ * Of what is left, only a QUOTED literal that reads as a value counts: a space in it makes it
+ * an instruction, and a `your-` prefix makes it a placeholder. Single quotes and a bare key
+ * count as much as double ones - `{ email: 'a@b.c', password: 'example-fake-login' }` is how a
+ * JavaScript object literal is written and how docs/API_DOCS.md wrote the second of its two,
+ * so requiring double quotes read one of that file's two published logins and walked past the
+ * other, measured. What stays unquoted is an expression, not a literal: the fetch() example
+ * now reads `password: process.env.ADMIN_PASSWORD`, which publishes nothing.
  */
 function jsonPasswordValues(text: string): string[] {
   const found: string[] = [];
   // `email` on either side of `password`, within one small object - not across a document.
-  const inLoginBody =
-    /"email"\s*:[\s\S]{0,120}?"(?:password|newPassword|currentPassword)"\s*:\s*"([^"]*)"|"(?:password|newPassword|currentPassword)"\s*:\s*"([^"]*)"[\s\S]{0,120}?"email"\s*:/g;
+  const key = `["']?\\b(?:newPassword|currentPassword|password)\\b["']?\\s*:`;
+  const email = `["']?\\bemail\\b["']?\\s*:`;
+  const inLoginBody = new RegExp(
+    `${email}[\\s\\S]{0,120}?${key}\\s*(["'])((?:(?!\\1).)*)\\1|${key}\\s*(["'])((?:(?!\\3).)*)\\3[\\s\\S]{0,120}?${email}`,
+    "g",
+  );
   for (const match of text.matchAll(inLoginBody)) {
-    const value = usableValue(match[1] ?? match[2] ?? "");
+    const value = usableValue(match[2] ?? match[4] ?? "");
     if (value === null || /\s/.test(value) || /^your[-_]/i.test(value)) continue;
     if (JSON_PASSWORD_STANDINS.has(value.toLowerCase())) continue;
     found.push(value);
@@ -317,18 +444,35 @@ describe("the documentation publishes no credential that works", () => {
 
   test("reads a password out of a login body, and leaves a schema alone", () => {
     const caught = (text: string) => jsonPasswordValues(text);
-    // The two shapes that were in docs/API_DOCS.md, one cURL and one fetch().
-    expect(caught(`-d '{"email": "admin@libredb.org", "password": "example-fake-login"}'`)).toEqual(["example-fake-login"]);
+    // The two shapes that were really in docs/API_DOCS.md, copied from it: the cURL body at
+    // line 1685 and the fetch() body at line 1769. The second is a JavaScript object literal
+    // - bare key, single quotes - and a rule that required double quotes read the first and
+    // walked past the second, which is how that file published two logins and reported one.
+    expect(caught(`  -d '{"email": "admin@libredb.org", "password": "example-fake-login"}' \\`)).toEqual(["example-fake-login"]);
+    expect(caught(`    body: JSON.stringify({ email: 'admin@libredb.org', password: 'example-fake-login' }),`)).toEqual([
+      "example-fake-login",
+    ]);
+    // The same fetch() body written as JSON throughout, which is the other way it gets typed.
     expect(caught(`body: JSON.stringify({ "email": "a@b.c", "password": "example-not-a-real-password" })`)).toEqual(["example-not-a-real-password"]);
-    // The password before the email reads the same way.
+    // The password before the email reads the same way, in either quoting.
     expect(caught(`{\n  "password": "example-fake-login",\n  "email": "admin@libredb.org"\n}`)).toEqual(["example-fake-login"]);
+    expect(caught(`{ password: 'example-fake-login', email: 'admin@libredb.org' }`)).toEqual(["example-fake-login"]);
+
+    // An unquoted value is an expression, not a literal: this is what docs/API_DOCS.md:1773
+    // reads now, and it publishes nothing.
+    expect(
+      caught(`body: JSON.stringify({ email: 'admin@libredb.org', password: process.env.ADMIN_PASSWORD }),`),
+    ).toEqual([]);
 
     // A CONNECTION body is the reader's own database, not an account this project ships.
     expect(caught(`{"host": "127.0.0.1", "user": "postgres", "password": "postgres"}`)).toEqual([]);
+    expect(caught(`{ host: 'h', user: 'postgres', password: 'postgres' }`)).toEqual([]);
     expect(caught(`{"host": "h", "port": 8091, "user": "Administrator", "password": "password123"}`)).toEqual([]);
 
     // And the stand-ins, or every API table in docs/ fails this guard.
     expect(caught(`{"email": "a@b.c", "password": "string"}`)).toEqual([]);
+    expect(caught(`{ email: 'a@b.c', password: 'string' }`)).toEqual([]);
+    expect(caught(`{ email: 'a@b.c', password: 'your-password' }`)).toEqual([]);
     expect(caught(`{"email": "a@b.c", "password": "your-password"}`)).toEqual([]);
     expect(caught(`{"email": "a@b.c", "password": "your admin password"}`)).toEqual([]);
     expect(caught(`{"email": "a@b.c", "password": "<your password>"}`)).toEqual([]);
@@ -408,6 +552,107 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught("docker run -e ADMIN_PASSWORD=example-not-a-real-password libredb/libredb-studio", "ADMIN_PASSWORD")).toEqual([
       "example-not-a-real-password",
     ]);
+  });
+
+  test("reads a value a table hides past the cell after the name", () => {
+    const caught = (text: string, name = "ADMIN_PASSWORD") => assignments(text, name);
+
+    // README.md:640 and DOCKERHUB.md:184 are shaped `| Variable | Required | Description |`.
+    // The cell after the name is a tick or a cross, and the value goes inside the description
+    // - which is where the ADMIN_EMAIL row directly above already writes its own default.
+    const required = "| Variable | Required | Description |\n|----------|----------|-------------|\n";
+    expect(caught(required + "| `ADMIN_PASSWORD` | Yes | Admin password (default: `example-not-a-real-password`) |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password, defaults to `example-not-a-real-password` |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: example-not-a-real-password) |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: **example-not-a-real-password**) |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+
+    // A column the header calls a value is one, wherever it sits and however it is marked up.
+    const valued = "| Variable | Value | Description |\n|---|---|---|\n";
+    expect(caught(valued + "| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |")).toEqual(["example-not-a-real-password"]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | example-not-a-real-password | the admin login |")).toEqual(["example-not-a-real-password"]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | **example-not-a-real-password** | the admin login |")).toEqual(["example-not-a-real-password"]);
+
+    // A secret is judged by its length, so a table that hides one is the same hole twice.
+    const table = "| Variable | Default |\n|---|---|\n| `JWT_SECRET` | `0123456789abcdef0123456789abcdef` |";
+    const secret = caught(table, "JWT_SECRET");
+    expect(secret).toEqual(["0123456789abcdef0123456789abcdef"]);
+    expect(secret[0].length).toBeGreaterThanOrEqual(JWT_SECRET_MIN_LENGTH);
+
+    // A two-column table has no column to choose between - deploy/koyeb/README.md:68 heads
+    // its one cell `Notes` - so a value written there AS a value is read as one.
+    const notes = "| Variable | Notes |\n|----------|-------|\n";
+    expect(caught(notes + "| `JWT_SECRET` | `0123456789abcdef0123456789abcdef` |", "JWT_SECRET")).toEqual([
+      "0123456789abcdef0123456789abcdef",
+    ]);
+    expect(caught(notes + "| `ADMIN_PASSWORD` | **example-not-a-real-password** |")).toEqual(["example-not-a-real-password"]);
+
+    // With no header row the row is a fragment, and the cell after the name is all there is.
+    expect(caught("| `ADMIN_PASSWORD` | example-not-a-real-password |")).toEqual(["example-not-a-real-password"]);
+    expect(caught("| `ADMIN_PASSWORD` | **example-not-a-real-password** |")).toEqual(["example-not-a-real-password"]);
+  });
+
+  test("leaves a table that names a source, a requirement or a note alone", () => {
+    const caught = (text: string, name = "ADMIN_PASSWORD") => assignments(text, name);
+
+    // docs/HELM_CHART.md:166 is `| Variable | Source | Conditional |` and its second cell is
+    // a chart value PATH. Read positionally it reports the path as a published password, and
+    // `secrets.jwtSecret.fromExistingSecret` is 37 characters, so it would fail the "no
+    // secret the server would accept" test outright. This is the misfire that gets a guard
+    // weakened or deleted by the next person it stops.
+    const source = "| Variable | Source | Conditional |\n|----------|--------|-------------|\n";
+    expect(caught(source + "| `ADMIN_PASSWORD` | `secrets.adminPassword` | When local auth |")).toEqual([]);
+    const path = source + "| `JWT_SECRET` | `secrets.jwtSecret.fromExistingSecret` | Always |";
+    expect(caught(path, "JWT_SECRET")).toEqual([]);
+    expect(caught(source + "| `ADMIN_PASSWORD` | `admin-password` | When local auth |")).toEqual([]);
+    expect(caught(source + "| `ADMIN_PASSWORD` | string | When local auth |")).toEqual([]);
+    expect(caught(source + "| `ADMIN_PASSWORD` | none | When local auth |")).toEqual([]);
+    expect(caught(source + "| `ADMIN_PASSWORD` | yes | When local auth |")).toEqual([]);
+
+    // The rows as README.md:640 and DOCKERHUB.md:186 actually write them: where the password
+    // comes from, never what it is.
+    const required = "| Variable | Required | Description |\n|----------|----------|-------------|\n";
+    const real = "| `ADMIN_PASSWORD` | @(autogenerated) | Admin password; auto-generated on first run |";
+    expect(caught(required + real)).toEqual([]);
+    const optional = "| `USER_PASSWORD` | No | Never generated - the account exists only when you set it |";
+    expect(caught(required + optional, "USER_PASSWORD")).toEqual([]);
+
+    // docs/API_DOCS.md:1835 is a row ABOUT `USER_EMAIL` that names `USER_PASSWORD` in passing
+    // and carries a default of its own. The subject of a row is the cell the name fills.
+    const other =
+      "| `USER_EMAIL` | No | Login email (default `user@libredb.org`, only read when `USER_PASSWORD` is set) |";
+    expect(caught(required + other, "USER_PASSWORD")).toEqual([]);
+
+    // deploy/koyeb/README.md:68 and deploy/railway/PUBLISH.md:31, measured as written. In a
+    // two-column table an unmarked cell is the note it is headed as, however few words it is.
+    const notes = "| Variable | Notes |\n|---|---|\n| `JWT_SECRET` | 32+ chars, set your own |";
+    expect(caught(notes, "JWT_SECRET")).toEqual([]);
+    expect(
+      caught("| Variable | Notes |\n|---|---|\n| `JWT_SECRET` | auto-generated by Cosmos |", "JWT_SECRET"),
+    ).toEqual([]);
+    expect(caught("| Variable | Notes |\n|---|---|\n| `ADMIN_PASSWORD` | auto-generated |")).toEqual([]);
+    expect(caught("| Variable | Notes | When |\n|---|---|---|\n| `ADMIN_PASSWORD` | `auto` | Always |")).toEqual([]);
+    const railway =
+      "| Variable | Value | Description |\n|---|---|---|\n| `ADMIN_PASSWORD` | `${{ secret(16) }}` | Auto |";
+    expect(caught(railway)).toEqual([]);
+
+    // docs/STORAGE.md:388 writes the name in a HEADER cell. A header states what a column
+    // holds; it does not publish a value.
+    const heading =
+      "| `STORAGE_ENCRYPTION_KEY` | Key used |\n|---|---|\n| unset (default) | Derived from `JWT_SECRET` |";
+    expect(caught(heading, "STORAGE_ENCRYPTION_KEY")).toEqual([]);
+
+    // And a description that says the word "default" without assigning one.
+    expect(caught(required + "| `ADMIN_PASSWORD` | No | By default the account password is generated |")).toEqual([]);
+    expect(caught(required + "| `ADMIN_PASSWORD` | No | Defaults to a value of your own choosing |")).toEqual([]);
+    expect(caught(required + "| `ADMIN_PASSWORD` | No | Generated by default; printed once |")).toEqual([]);
   });
 
   test("stays quiet on the innocent shapes nearest to those four", () => {
