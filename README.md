@@ -161,21 +161,26 @@ what comes back, and finishes by composing a report whose every claim cites the 
   goes through the agent's own audited pipeline — a policy decision, an audit event and budget
   accounting before the driver is touched (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`)
   — under a read-only execution profile: a read-only transaction on PostgreSQL, `PRAGMA query_only`
-  re-asserted per statement on SQLite, and a `READ_ONLY` engine handle on DuckDB paired with an
+  re-asserted per statement on SQLite, a `READ_ONLY` engine handle on DuckDB paired with an
   SQL-level guard, because that flag alone still lets `COPY … TO`, `EXPORT DATABASE` and the
-  local-file table functions through. Writes and DDL are refused before the database is reached,
+  local-file table functions through, and, on SQL Server, which has no read-only transaction of any
+  kind, a session principal verified at open to be unable to write, an optimizer admission that
+  compiles each statement without running it, a server-side row bound, and a transaction that is
+  always rolled back. Writes and DDL are refused before the database is reached,
   and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
   agent's alone: statements you run yourself in the editor call the provider directly
   (`src/app/api/db/query/route.ts:44`) and are neither policy-checked nor audited this way.
-- **Agent mode reads PostgreSQL, SQLite and DuckDB only.** The read-only profile is database-native,
-  so it exists only where a provider implements it — `queryReadOnly` on `postgres.ts:915`,
-  `sqlite.ts:537` and `duckdb/index.ts:525`, and nowhere else. On any other engine, an Agent-mode run ends `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`). **Plan** mode opens on every connection — the model there is
-  toolless, runs no statement of yours, writes nothing, and drafts a statement for you to run
-  yourself. Its GROUNDING reaches every engine: on PostgreSQL and SQLite the server composes catalog
-  statements itself, and on every other connection it asks that connection's own provider to describe its
+- **Agent mode reads PostgreSQL, SQLite, DuckDB and SQL Server only.** The read-only profile is
+  database-native, so it exists only where a provider implements it — `queryReadOnly` on
+  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts` and `mssql.ts`, and nowhere else. On any other engine
+  an Agent-mode run whose workflow sends statements is refused when it is started, before a run is
+  opened, and any that reaches the provider factory ends `engine-unsupported`. **Plan** mode opens on
+  every connection — the model there is toolless, runs no statement of yours, writes nothing, and
+  drafts a statement for you to run yourself. Its GROUNDING reaches every engine: on PostgreSQL and
+  SQLite the server composes catalog statements itself, and on every other connection it asks that
+  connection's own provider to describe its
   schema — the reading the sidebar already performs — which needs no read-only statement path. So the
-  two limits are separate: agent mode is those three engines, grounding is all of them, and a run whose
+  two limits are separate: agent mode is those four engines, grounding is all of them, and a run whose
   reading fails says so plainly rather than inventing tables.
 - **Three workflows**: **Investigate** (answer a question), **Optimize** (compare estimated plans,
   propose an index or a rewrite), **Assess** (profile tables — counts only, never values).
