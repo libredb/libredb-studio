@@ -4,10 +4,14 @@ import { join } from "node:path";
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 
 // A copy-and-run example that carries a password IS a published credential, whatever the
-// value is called. `a-placeholder-shaped-value` read as a placeholder and signed in; example-not-a-real-password
-// was repeated underneath as the login to use; change-me-to-a-random-32-char-string is 36
-// characters, so it clears the minimum and the server accepts it - and with
-// STORAGE_ENCRYPTION_KEY unset it is also what saved connection passwords are sealed with.
+// value is called. Of the three removed by hand, the first told the reader in its own name
+// to set a real password and signed in as it stood; the second was the admin login, written
+// underneath as the one to use; the third was a change-me placeholder 36 characters long,
+// so it cleared the minimum and the server accepted it - and with STORAGE_ENCRYPTION_KEY
+// unset that one is also what saved connection passwords are sealed with.
+//
+// None of the three is spelled out here, and no fixture below is a value anyone could sign
+// in with: every fixture in this file names itself as an example on sight.
 //
 // The rule these files follow instead: set no password, and say where the generated one is
 // printed. This guard exists because each of those three was removed by hand and nothing
@@ -448,14 +452,20 @@ describe("the documentation publishes no credential that works", () => {
     // line 1685 and the fetch() body at line 1769. The second is a JavaScript object literal
     // - bare key, single quotes - and a rule that required double quotes read the first and
     // walked past the second, which is how that file published two logins and reported one.
-    expect(caught(`  -d '{"email": "admin@libredb.org", "password": "example-fake-login"}' \\`)).toEqual(["example-fake-login"]);
-    expect(caught(`    body: JSON.stringify({ email: 'admin@libredb.org', password: 'example-fake-login' }),`)).toEqual([
+    expect(caught(`  -d '{"email": "admin@libredb.org", "password": "example-fake-login"}' \\`)).toEqual([
       "example-fake-login",
     ]);
+    expect(caught(`    body: JSON.stringify({ email: 'admin@libredb.org', password: 'example-fake-login' }),`)).toEqual(
+      ["example-fake-login"],
+    );
     // The same fetch() body written as JSON throughout, which is the other way it gets typed.
-    expect(caught(`body: JSON.stringify({ "email": "a@b.c", "password": "example-not-a-real-password" })`)).toEqual(["example-not-a-real-password"]);
+    expect(caught(`body: JSON.stringify({ "email": "a@b.c", "password": "example-not-a-real-password" })`)).toEqual([
+      "example-not-a-real-password",
+    ]);
     // The password before the email reads the same way, in either quoting.
-    expect(caught(`{\n  "password": "example-fake-login",\n  "email": "admin@libredb.org"\n}`)).toEqual(["example-fake-login"]);
+    expect(caught(`{\n  "password": "example-fake-login",\n  "email": "admin@libredb.org"\n}`)).toEqual([
+      "example-fake-login",
+    ]);
     expect(caught(`{ password: 'example-fake-login', email: 'admin@libredb.org' }`)).toEqual(["example-fake-login"]);
 
     // An unquoted value is an expression, not a literal: this is what docs/API_DOCS.md:1773
@@ -498,14 +508,22 @@ describe("the documentation publishes no credential that works", () => {
   test("reads a value that is not the last thing on its line, and still not prose", () => {
     const caught = (text: string, name: string) => assignments(text, name);
     // The shapes that got past the old "value must end the line" rule.
-    expect(caught("docker run -e ADMIN_PASSWORD=example-fake-password -e HOSTNAME=db \\", "ADMIN_PASSWORD")).toEqual(["example-fake-password"]);
-    expect(caught("      ADMIN_PASSWORD: example-fake-password  # the login", "ADMIN_PASSWORD")).toEqual(["example-fake-password"]);
-    expect(caught("| `ADMIN_PASSWORD=example-fake-password` | the admin login |", "ADMIN_PASSWORD")).toEqual(["example-fake-password"]);
-    expect(caught("  adminPassword: example-fake-password", "adminPassword")).toEqual(["example-fake-password"]);
-    expect(caught("      - key: ADMIN_PASSWORD\n        value: example-fake-password", "ADMIN_PASSWORD")).toEqual(["example-fake-password"]);
-    expect(caught("            - name: ADMIN_PASSWORD\n              value: example-fake-password", "ADMIN_PASSWORD")).toEqual([
+    expect(caught("docker run -e ADMIN_PASSWORD=example-fake-password -e HOSTNAME=db \\", "ADMIN_PASSWORD")).toEqual([
       "example-fake-password",
     ]);
+    expect(caught("      ADMIN_PASSWORD: example-fake-password  # the login", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
+    ]);
+    expect(caught("| `ADMIN_PASSWORD=example-fake-password` | the admin login |", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
+    ]);
+    expect(caught("  adminPassword: example-fake-password", "adminPassword")).toEqual(["example-fake-password"]);
+    expect(caught("      - key: ADMIN_PASSWORD\n        value: example-fake-password", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
+    ]);
+    expect(
+      caught("            - name: ADMIN_PASSWORD\n              value: example-fake-password", "ADMIN_PASSWORD"),
+    ).toEqual(["example-fake-password"]);
     // ...and the shapes that must stay quiet, or a maintainer deletes this guard.
     expect(caught("ADMIN_PASSWORD: generated on first run", "ADMIN_PASSWORD")).toEqual([]);
     expect(caught('  adminPassword: "{{ .Values.secrets.adminPassword }}"', "adminPassword")).toEqual([]);
@@ -534,14 +552,22 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught("| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |", "ADMIN_PASSWORD")).toEqual([
       "example-not-a-real-password",
     ]);
-    expect(caught("| ADMIN_PASSWORD | `example-not-a-real-password` |", "ADMIN_PASSWORD")).toEqual(["example-not-a-real-password"]);
+    expect(caught("| ADMIN_PASSWORD | `example-not-a-real-password` |", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // 2. A shell line that carries on after the value.
-    expect(caught("export ADMIN_PASSWORD=example-not-a-real-password && echo ok", "ADMIN_PASSWORD")).toEqual(["example-not-a-real-password"]);
+    expect(caught("export ADMIN_PASSWORD=example-not-a-real-password && echo ok", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // 3. A value with a space in it, which used to be read as one word plus prose.
-    expect(caught('ADMIN_PASSWORD="example fake admin password"', "ADMIN_PASSWORD")).toEqual(["example fake admin password"]);
-    expect(caught("USER_PASSWORD='example fake user password'", "USER_PASSWORD")).toEqual(["example fake user password"]);
+    expect(caught('ADMIN_PASSWORD="example fake admin password"', "ADMIN_PASSWORD")).toEqual([
+      "example fake admin password",
+    ]);
+    expect(caught("USER_PASSWORD='example fake user password'", "USER_PASSWORD")).toEqual([
+      "example fake user password",
+    ]);
     // The same hole let a secret through, and a secret is judged by its LENGTH, so reading
     // one word of it hid a value the server would have accepted.
     const secret = caught('JWT_SECRET="an example fake secret of forty chars xx"', "JWT_SECRET");
@@ -549,9 +575,9 @@ describe("the documentation publishes no credential that works", () => {
     expect(secret[0].length).toBeGreaterThanOrEqual(JWT_SECRET_MIN_LENGTH);
 
     // 4. `docker run` with the image name after the value, rather than another flag.
-    expect(caught("docker run -e ADMIN_PASSWORD=example-not-a-real-password libredb/libredb-studio", "ADMIN_PASSWORD")).toEqual([
-      "example-not-a-real-password",
-    ]);
+    expect(
+      caught("docker run -e ADMIN_PASSWORD=example-not-a-real-password libredb/libredb-studio", "ADMIN_PASSWORD"),
+    ).toEqual(["example-not-a-real-password"]);
   });
 
   test("reads a value a table hides past the cell after the name", () => {
@@ -561,24 +587,30 @@ describe("the documentation publishes no credential that works", () => {
     // The cell after the name is a tick or a cross, and the value goes inside the description
     // - which is where the ADMIN_EMAIL row directly above already writes its own default.
     const required = "| Variable | Required | Description |\n|----------|----------|-------------|\n";
-    expect(caught(required + "| `ADMIN_PASSWORD` | Yes | Admin password (default: `example-not-a-real-password`) |")).toEqual([
-      "example-not-a-real-password",
-    ]);
-    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password, defaults to `example-not-a-real-password` |")).toEqual([
-      "example-not-a-real-password",
-    ]);
-    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: example-not-a-real-password) |")).toEqual([
-      "example-not-a-real-password",
-    ]);
-    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: **example-not-a-real-password**) |")).toEqual([
-      "example-not-a-real-password",
-    ]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | Yes | Admin password (default: `example-not-a-real-password`) |"),
+    ).toEqual(["example-not-a-real-password"]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | No | Admin password, defaults to `example-not-a-real-password` |"),
+    ).toEqual(["example-not-a-real-password"]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: example-not-a-real-password) |"),
+    ).toEqual(["example-not-a-real-password"]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: **example-not-a-real-password**) |"),
+    ).toEqual(["example-not-a-real-password"]);
 
     // A column the header calls a value is one, wherever it sits and however it is marked up.
     const valued = "| Variable | Value | Description |\n|---|---|---|\n";
-    expect(caught(valued + "| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |")).toEqual(["example-not-a-real-password"]);
-    expect(caught(valued + "| `ADMIN_PASSWORD` | example-not-a-real-password | the admin login |")).toEqual(["example-not-a-real-password"]);
-    expect(caught(valued + "| `ADMIN_PASSWORD` | **example-not-a-real-password** | the admin login |")).toEqual(["example-not-a-real-password"]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | example-not-a-real-password | the admin login |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | **example-not-a-real-password** | the admin login |")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // A secret is judged by its length, so a table that hides one is the same hole twice.
     const table = "| Variable | Default |\n|---|---|\n| `JWT_SECRET` | `example-fake-secret-not-a-real-x` |";
@@ -592,7 +624,9 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught(notes + "| `JWT_SECRET` | `example-fake-secret-not-a-real-x` |", "JWT_SECRET")).toEqual([
       "example-fake-secret-not-a-real-x",
     ]);
-    expect(caught(notes + "| `ADMIN_PASSWORD` | **example-not-a-real-password** |")).toEqual(["example-not-a-real-password"]);
+    expect(caught(notes + "| `ADMIN_PASSWORD` | **example-not-a-real-password** |")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // With no header row the row is a fragment, and the cell after the name is all there is.
     expect(caught("| `ADMIN_PASSWORD` | example-not-a-real-password |")).toEqual(["example-not-a-real-password"]);

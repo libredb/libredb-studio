@@ -43,10 +43,7 @@ describe("the Koyeb deploy button", () => {
 
   test("prefills no password at all", () => {
     const env = koyebEnv();
-    // A placeholder password is still a password. `a-placeholder-shaped-value` was the previous
-    // spelling and it SIGNED IN: measured against a running container, the standard user
-    // account accepted it, and a deploy where only the administrator field was replaced
-    // left an account open on a credential published in this file. There is no placeholder
+    // A placeholder password is still a password. There is no placeholder
     // that fixes that, so the button carries neither. Unset, the two behave differently and
     // both answers are safe: `ADMIN_PASSWORD` is generated on first run and printed to the
     // log, while `USER_PASSWORD` is never generated — `getAuthUsers` adds that account only
