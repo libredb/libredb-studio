@@ -477,7 +477,9 @@ describe("the documentation publishes no credential that works", () => {
     // A CONNECTION body is the reader's own database, not an account this project ships.
     expect(caught(`{"host": "127.0.0.1", "user": "postgres", "password": "postgres"}`)).toEqual([]);
     expect(caught(`{ host: 'h', user: 'postgres', password: 'postgres' }`)).toEqual([]);
-    expect(caught(`{"host": "h", "port": 8091, "user": "Administrator", "password": "example-fake-connection-pw"}`)).toEqual([]);
+    expect(
+      caught(`{"host": "h", "port": 8091, "user": "Administrator", "password": "example-fake-connection-pw"}`),
+    ).toEqual([]);
 
     // And the stand-ins, or every API table in docs/ fails this guard.
     expect(caught(`{"email": "a@b.c", "password": "string"}`)).toEqual([]);
