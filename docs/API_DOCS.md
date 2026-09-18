@@ -1679,10 +1679,14 @@ including login - is refused this way.
 ### cURL Examples
 
 #### Login
+
+The admin password is generated on first run and printed to the server log, or set
+through `ADMIN_PASSWORD`. Put yours in place of the placeholder below.
+
 ```bash
 curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email": "admin@libredb.org", "password": "admin123"}' \
+  -d '{"email": "admin@libredb.org", "password": "<your admin password>"}' \
   -c cookies.txt
 ```
 
@@ -1766,7 +1770,7 @@ async function executeQuery(sql: string) {
   await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@libredb.org', password: 'admin123' }),
+    body: JSON.stringify({ email: 'admin@libredb.org', password: process.env.ADMIN_PASSWORD }),
     credentials: 'include'
   });
 
