@@ -212,6 +212,7 @@ export class DruidProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "druid-native",
       supportsExternalQueryLimiting: true,
+      supportsResultPagination: true,
       // Not merely unimplemented: CREATE is not in Druid's grammar at all.
       // Live-verified, `CREATE TABLE t (id BIGINT)` answers 400 "Incorrect syntax
       // near the keyword 'CREATE' at line 1, column 1" and the parser lists the

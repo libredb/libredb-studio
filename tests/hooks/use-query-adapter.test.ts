@@ -740,7 +740,7 @@ describe("useQueryAdapter", () => {
         fields: ["id", "name"],
         rowCount: 2,
         executionTime: 42,
-        pagination: { limit: 500, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
+        pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
       },
     });
     const otherTab = makeTab({ id: "tab-2", name: "Query 2" });
@@ -768,7 +768,7 @@ describe("useQueryAdapter", () => {
       await new Promise((r) => setTimeout(r, 10));
     });
 
-    expect(onQueryExecute).toHaveBeenCalledWith("conn-1", "SELECT * FROM users", { limit: 500, offset: 2 });
+    expect(onQueryExecute).toHaveBeenCalledWith("conn-1", "SELECT * FROM users", { limit: 50, offset: 2 });
     expect(tabs[0].result!.rows).toHaveLength(4);
     expect(tabs[0].result!.rowCount).toBe(4);
     expect(tabs[0].allRows).toHaveLength(4);
@@ -781,12 +781,13 @@ describe("useQueryAdapter", () => {
 
   test("handleLoadMore error resets loading state and toasts", async () => {
     const tabWithMore = makeTab({
+      currentOffset: 500,
       result: {
         rows: [{ id: 1 }],
         fields: ["id"],
         rowCount: 1,
         executionTime: 10,
-        pagination: { limit: 500, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+        pagination: { limit: 50, offset: 500, hasMore: true, totalReturned: 50, wasLimited: true },
       },
     });
     const otherTab = makeTab({ id: "tab-2", name: "Query 2" });
@@ -810,6 +811,7 @@ describe("useQueryAdapter", () => {
     expect(tabs[0].isLoadingMore).toBe(false);
     expect(tabs[1].result).toBeNull();
     expect(mockToastError).toHaveBeenCalled();
+    expect(tabs[0].currentOffset).toBe(500);
   });
 
   // ── handleUnlimitedQuery guards ─────────────────────────────────────────────

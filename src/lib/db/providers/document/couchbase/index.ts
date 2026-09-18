@@ -338,6 +338,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       supportsExplain: true,
       explainFormat: "couchbase-json",
       supportsExternalQueryLimiting: true,
+      supportsResultPagination: true,
       // Collections are schemaless and CREATE COLLECTION takes no columns, so a
       // column-list modal could only ever emit invalid SQL++ (decision 7).
       supportsCreateTable: false,

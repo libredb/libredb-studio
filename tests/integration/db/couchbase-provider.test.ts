@@ -288,6 +288,7 @@ describe("CouchbaseProvider metadata", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: true,
+      supportsResultPagination: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
       // All three go through `requireTarget`, so all three are per-keyspace only.
       // The global Reindex card that #U6 wired up answered *"The reindex operation

@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const hasMore = result.rows.length === prepared.limit;
+    const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
 
     return NextResponse.json({
       ...result,

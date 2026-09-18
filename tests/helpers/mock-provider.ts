@@ -61,6 +61,7 @@ const defaultCapabilities: ProviderCapabilities = {
   queryLanguage: "sql",
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
+  supportsResultPagination: true,
   supportsCreateTable: true,
   supportsInlineRowEdit: true,
   supportsMaintenance: true,

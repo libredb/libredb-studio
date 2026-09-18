@@ -569,6 +569,7 @@ export function BottomPanel({
             ) : displayedResult ? (
               <ResultsGrid
                 result={displayedResult}
+                supportsResultPagination={metadata?.capabilities.supportsResultPagination === true}
                 onLoadMore={hydratedHere ? undefined : onLoadMore}
                 isLoadingMore={isLoadingMore}
                 maskingEnabled={maskingEnabled}

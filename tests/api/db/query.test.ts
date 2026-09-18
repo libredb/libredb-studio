@@ -241,6 +241,7 @@ describe("POST /api/db/query", () => {
     expect(data.pagination.limit).toBe(50);
     expect(data.pagination.offset).toBe(0);
     expect(data.pagination.wasLimited).toBe(true);
+    expect(data.pagination.hasMore).toBe(data.pagination.wasLimited && data.rows.length === data.pagination.limit);
   });
 
   test("returns 400 when connection is missing", async () => {

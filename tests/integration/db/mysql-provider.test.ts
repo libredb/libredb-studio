@@ -922,6 +922,12 @@ describe("MySQLProvider", () => {
       expect(caps.maintenanceOperations).not.toContain("vacuum");
     });
 
+    test("supports result pagination", () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      const caps = provider.getCapabilities();
+      expect(caps.supportsResultPagination).toBe(true);
+    });
+
     test("the vacuum label names OPTIMIZE, and the surfaces send that", () => {
       // The base default put "Vacuum Table" in the explorer's per-row menu and
       // "Run Vacuum / Reclaim Space" on the Operations tab for an engine that has

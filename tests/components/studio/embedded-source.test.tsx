@@ -512,7 +512,7 @@ describe("the embedded workspace reads an object's source through the host", () 
      */
     await userEvent.click(row(/orders/));
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "orders"]));
-    await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders LIMIT 50;"]));
+    await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders;"]));
     expect(screen.getByTestId("query-editor")).toBeTruthy();
     expect(screen.queryByTestId("source-editor")).toBeNull();
     // The negative that matters: activating a relation asks the host for no definition.
@@ -523,7 +523,7 @@ describe("the embedded workspace reads an object's source through the host", () 
     await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
     expect(asked).toEqual([["host-conn-1", ["app", "order_total(integer)"], "function"]]);
     // And the routine branch runs nothing: the statement list has not moved.
-    expect(executed).toEqual(["SELECT * FROM app.orders LIMIT 50;"]);
+    expect(executed).toEqual(["SELECT * FROM app.orders;"]);
   });
 
   test("a Source tab shows no Run toolbar and no query editor, rather than a disabled one", async () => {
@@ -2053,7 +2053,7 @@ describe("the embedded shell refuses a tab-opening gesture while a host apply is
     clickRowInDom("orders");
 
     await waitFor(() => expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
-    await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders LIMIT 50;"]));
+    await waitFor(() => expect(executed).toEqual(["SELECT * FROM app.orders;"]));
   });
 
   test("a SECOND routine's row opens no Source tab while the apply is in flight", async () => {

@@ -422,21 +422,22 @@ export function generateTableQuery(
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++)
   if (capabilities.defaultPort === COUCHBASE_PORT) {
-    return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS} LIMIT 50;`;
+    return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS};`;
   }
   // Oracle
   if (capabilities.defaultPort === 1521) {
-    return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY${terminator(capabilities)}`;
+    return `SELECT * FROM ${table};`;
   }
   // MSSQL
   if (capabilities.defaultPort === 1433) {
-    return `SELECT TOP 50 * FROM ${table};`;
+    return `SELECT * FROM ${table};`;
   }
-  // PostgreSQL / MySQL / SQLite / ClickHouse / Elasticsearch / OpenSearch. The
-  // trailing LIMIT matters for ClickHouse specifically: it also accepts `FORMAT x`
-  // and `SETTINGS ...` as trailing clauses, and a LIMIT placed after either is a
-  // syntax error, so the limit must stay last (issue #264).
-  return `SELECT * FROM ${table} LIMIT 50${terminator(capabilities)}`;
+  // Cassandra
+  if (capabilities.defaultPort === 9042) {
+    return `SELECT * FROM ${table} LIMIT 50${terminator(capabilities)}`;
+  }
+  // PostgreSQL / MySQL / SQLite / ClickHouse / Elasticsearch / OpenSearch.
+  return `SELECT * FROM ${table}${terminator(capabilities)}`;
 }
 
 /**

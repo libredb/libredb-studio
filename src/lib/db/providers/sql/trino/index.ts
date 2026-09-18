@@ -346,6 +346,7 @@ export class TrinoProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "trino-json",
       supportsExternalQueryLimiting: true,
+      supportsResultPagination: true,
       // In the grammar and live-verified working on the memory connector. Whether it
       // works on THIS catalog is the connector's answer, not the engine's, and the
       // connector says so in its own words.

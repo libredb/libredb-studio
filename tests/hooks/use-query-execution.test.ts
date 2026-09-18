@@ -489,7 +489,7 @@ describe("useQueryExecution", () => {
     const tabWithResults = createTab({
       result: {
         ...mockQueryResult,
-        pagination: { limit: 500, offset: 0, hasMore: true, totalReturned: 500, wasLimited: true },
+        pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },
       },
       currentOffset: 500,
     });
@@ -516,6 +516,39 @@ describe("useQueryExecution", () => {
       expect(queryCall).toBeDefined();
       const body = JSON.parse(queryCall![1]!.body as string);
       expect(body.options.offset).toBe(500);
+      expect(body.options.limit).toBe(50);
+    });
+  });
+
+  test("handleLoadMore does not advance offset when the request fails", async () => {
+    const tabWithResults = createTab({
+      result: {
+        ...mockQueryResult,
+        pagination: {
+          limit: 50,
+          offset: 0,
+          hasMore: true,
+          totalReturned: 50,
+          wasLimited: true,
+        },
+      },
+      currentOffset: 500,
+    });
+
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: false,
+        json: { error: "Failed to load more rows" },
+      },
+    });
+
+    const params = createDefaultParams({
+      tabs: [tabWithResults],
+      currentTab: tabWithResults,
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+    await act(async () => {
+      result.current.handleLoadMore();
     });
   });
 

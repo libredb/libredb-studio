@@ -268,6 +268,7 @@ describe("ResultsGrid", () => {
     const { queryByTestId } = render(
       React.createElement(ResultsGrid, {
         result: mockPaginatedResult,
+        supportsResultPagination: true,
         onLoadMore,
       }),
     );
@@ -277,6 +278,19 @@ describe("ResultsGrid", () => {
     expect(loadMoreBtn!.textContent).toContain("Load More");
   });
 
+  test("Load More button does not show when result pagination is unsupported", () => {
+    const onLoadMore = mock(() => {});
+    const { queryByTestId } = render(
+      React.createElement(ResultsGrid, {
+        result: mockPaginatedResult,
+        supportsResultPagination: false,
+        onLoadMore,
+      }),
+    );
+
+    expect(queryByTestId("load-more-footer")).toBeNull();
+  });
+
   // ── 7. Load More button fires onLoadMore ──────────────────────────────────
 
   test("Load More button fires onLoadMore callback", () => {
@@ -284,6 +298,7 @@ describe("ResultsGrid", () => {
     const { getByTestId } = render(
       React.createElement(ResultsGrid, {
         result: mockPaginatedResult,
+        supportsResultPagination: true,
         onLoadMore,
       }),
     );

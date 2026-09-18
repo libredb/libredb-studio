@@ -309,7 +309,7 @@ export function useQueryAdapter({
     );
 
     onQueryExecute(activeConnection.id, currentTab.query, {
-      limit: 500,
+      limit: currentTab.result.pagination.limit,
       offset: currentOffset,
     })
       .then((result) => {

@@ -82,6 +82,7 @@ const tableFeatureSet = tableFeatures({
 
 interface ResultsGridProps {
   result: QueryResult;
+  supportsResultPagination?: boolean;
   onLoadMore?: () => void;
   isLoadingMore?: boolean;
   maskingEnabled?: boolean;
@@ -137,6 +138,7 @@ function detectIdColumn(fields: string[]): string | null {
 
 export function ResultsGrid({
   result,
+  supportsResultPagination,
   onLoadMore,
   isLoadingMore,
   maskingEnabled,
@@ -813,7 +815,7 @@ export function ResultsGrid({
         </div>
       </div>
 
-      {result.pagination?.hasMore && onLoadMore && (
+      {supportsResultPagination === true && result.pagination?.hasMore && onLoadMore && (
         <LoadMoreFooter hasMore={true} onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} />
       )}
 

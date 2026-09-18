@@ -507,6 +507,7 @@ describe("DruidProvider metadata", () => {
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTransactions: false,
+      supportsResultPagination: true,
       declaresForeignKeys: false,
       supportsMaintenance: false,
       maintenanceOperations: [],

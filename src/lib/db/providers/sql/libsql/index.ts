@@ -190,6 +190,7 @@ export class LibSQLProvider extends SQLBaseProvider {
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      supportsResultPagination: true,
       // libSQL HAS transactions - `BEGIN` is accepted and Hrana keeps an
       // interactive stream alive with a `baton` to continue one - but this provider
       // closes its stream in the same request as the statement, so it holds no

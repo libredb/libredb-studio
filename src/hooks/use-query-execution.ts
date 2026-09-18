@@ -859,7 +859,7 @@ export function useQueryExecution({
 
     const currentOffset = currentTab.currentOffset || currentTab.result.rows.length;
     executeQuery(currentTab.query, currentTab.id, false, {
-      limit: 500,
+      limit: currentTab.result.pagination.limit,
       offset: currentOffset,
     });
   }, [currentTab, executeQuery]);

@@ -477,6 +477,10 @@ describe("capabilities", () => {
     expect(capabilities.supportsTransactions).toBe(false);
   });
 
+  test("result pagination is not supported", () => {
+    expect(capabilities.supportsResultPagination).toBeUndefined();
+  });
+
   test("there are no foreign keys in the model at all", () => {
     // `ALTER TABLE probe.customers ADD CONSTRAINT … FOREIGN KEY …` is a syntax error:
     // the clause does not exist. An empty relations list is the engine's answer here,
