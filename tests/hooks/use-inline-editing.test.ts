@@ -2483,6 +2483,95 @@ describe("useInlineEditing", () => {
     expect(mockToastError).not.toHaveBeenCalled();
   });
 
+  // ── SQLite's REAL is the engine's only float, and it is 64 bits ───────────
+  //
+  // MEASURED 2026-09-18 through the real `createDatabaseProvider` path, on bun:sqlite
+  // (Bun 1.4.0) and on libSQL server v0.24.33 over its HTTP pipeline:
+  //
+  //   sqlite   zz_real(r REAL, f FLOAT, d DOUBLE, dp DOUBLE PRECISION)
+  //            decltypes REAL / FLOAT / DOUBLE / DOUBLE PRECISION, and
+  //            typeof() answered `real` for every one of them
+  //   libsql   the same table, the same four decltypes, the same four `real`s
+  //
+  // One storage class, and it is 8 bytes: SQLite has NO 32-bit float to hold these in.
+  // 0.30000000000000004 was written and read back `=== 0.30000000000000004`, which no
+  // 32-bit column can do, and `WHERE r = 1.5`, `WHERE f = 0.1`, `WHERE d =
+  // 0.30000000000000004` and `WHERE dp = 0.1` each answered exactly ONE row on both.
+  //
+  // So on these two dialects the declaration DOES state the width, and the refusal's
+  // sentence - "nothing here says the column holds it as a 64-bit float" - was false
+  // about them. Measured before this changed, on a live `zz_live(k_id REAL PRIMARY KEY)`
+  // holding 1.5 and 2.5: the engine answered one row for `WHERE "k_id" IN (1.5)` and the
+  // editor refused the edit anyway, leaving the table untouched.
+  test.each([
+    ["sqlite", "REAL"],
+    ["sqlite", "FLOAT"],
+    ["sqlite", "DOUBLE"],
+    ["sqlite", "DOUBLE PRECISION"],
+    ["libsql", "REAL"],
+    ["libsql", "FLOAT"],
+  ] as const)("a %s %s key is carried back, because that engine has no other float width", async (type, declared) => {
+    const seen = countAsks();
+    await applyKeyedBy(1.5, type, declared);
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["postgres", "real"],
+    ["postgres", "float4"],
+    ["mysql", "float"],
+    ["duckdb", "REAL"],
+    ["duckdb", "FLOAT"],
+    ["trino", "real"],
+  ] as const)("a %s %s key is still refused, because that word is 32 bits there", async (type, declared) => {
+    // The other side, and why the dialect has to be read rather than the word. MEASURED
+    // 2026-09-18 on the live engines:
+    //
+    //   PostgreSQL 16.15  `real` and `float4` are both spelled `real` by `pg`, both
+    //                     `pg_column_size` 4, and `0.1::real::float8` is
+    //                     0.10000000149011612 - NOT the double 0.1.
+    //   MySQL 8.4.11      `zz_w(f FLOAT, d DOUBLE)` holding 0.1: `f = 0.1` answered
+    //                     FALSE and `d = 0.1` answered TRUE, in the same row.
+    //   DuckDB            `zz_flt(r REAL, f FLOAT, d DOUBLE)` holding 0.1: the driver
+    //                     hands the two 32-bit columns over as 0.10000000149011612 and
+    //                     the DOUBLE as 0.1, and `r::DOUBLE = 0.1` answered false.
+    //   Trino             not measured here - no engine was reachable - so it keeps the
+    //                     refusal, which is the closed side of the same rule.
+    //
+    // 1.5 is exact at both widths, which is the point: what is refused is the WIDTH the
+    // decimal will be read back at, and on these dialects nothing in front of us states it.
+    const seen = countAsks();
+    await applyKeyedBy(1.5, type, declared);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("nothing here says the column holds it as a 64-bit float"),
+    });
+  });
+
+  test.each([
+    ["sqlite", "TEXT"],
+    ["sqlite", undefined],
+    ["libsql", "NUMERIC"],
+  ] as const)("a %s key declared %s is refused like any other, dialect or no dialect", async (type, declared) => {
+    // The dialect widens WHICH WORDS state 64 bits; it does not wave a column through that
+    // declared something else, or nothing at all. A SQLite column is dynamically typed, so
+    // a `TEXT` or `NUMERIC` one really can be holding 1.5, and neither word says at what
+    // width the engine will read the decimal back.
+    const seen = countAsks();
+    await applyKeyedBy(1.5, type, declared);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number"),
+    });
+  });
+
   test.each([
     ["postgres", "double precision", 1e21],
     ["postgres", "double precision", 1e300],

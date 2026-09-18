@@ -119,8 +119,45 @@ const INSTANT_TYPE_NAMES: ReadonlySet<string> = new Set([
  * - `real`. PostgreSQL's and Trino's are 32 bits; SQLite's is 64. (PostgreSQL happens to
  *   match a `real` key anyway — it infers the parameter's type from the column and re-reads
  *   the decimal at 32-bit precision — but that is `pg`'s doing, not the value's.)
+ *
+ * Which is why the two words are absent from THIS set and not from the rule: on an engine
+ * that has no 32-bit float at all they mean 64 bits and nothing else, and that is what
+ * `FLOAT64_ONLY_NAMES` below adds back, for those engines only.
  */
 const FLOAT64_TYPE_NAMES: ReadonlySet<string> = new Set(["double", "float8", "float64", "binary_double"]);
+
+/**
+ * The engines with only ONE float width, and the words that therefore state it there.
+ *
+ * SQLite has no 32-bit float: `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four
+ * spellings of one storage class, 8 bytes of IEEE double, which is exactly as wide as the
+ * JavaScript number in front of us. So on these dialects the declaration DOES say the
+ * width, and the refusal's sentence — "nothing here says the column holds it as a 64-bit
+ * float" — is false about them.
+ *
+ * MEASURED 2026-09-18 through the real provider path, on bun:sqlite (Bun 1.4.0) and on
+ * libSQL server v0.24.33 over its HTTP pipeline: `zz_real(r REAL, f FLOAT, d DOUBLE, dp
+ * DOUBLE PRECISION)` reported those four decltypes and answered `real` to `typeof()` for
+ * every one of them; 0.30000000000000004 was written and read back identical, which no
+ * 32-bit column can do; and `WHERE r = 1.5`, `WHERE f = 0.1`, `WHERE d =
+ * 0.30000000000000004` and `WHERE dp = 0.1` each matched exactly one row on both.
+ *
+ * `libsql` is here for the reason `sqlite` is: it embeds the same engine and reports the
+ * same `sqlite3_column_decltype` declarations.
+ *
+ * NO OTHER DIALECT IS, and each was measured rather than assumed. PostgreSQL 16.15:
+ * `real` and `float4` are both spelled `real` by `pg`, both `pg_column_size` 4, and
+ * `0.1::real::float8` is 0.10000000149011612 — a different number to the double 0.1.
+ * MySQL 8.4.11: one row holding 0.1 in a `FLOAT` and a `DOUBLE` answered `f = 0.1` FALSE
+ * and `d = 0.1` TRUE. DuckDB: `REAL` and `FLOAT` are one 32-bit type, handed over as
+ * 0.10000000149011612, and `r::DOUBLE = 0.1` is false. Trino was not reachable to measure,
+ * so it keeps the refusal — the closed side is the safe side, which is what this rule
+ * already chose.
+ */
+const FLOAT64_ONLY_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set(["sqlite", "libsql"]);
+
+/** The words that mean 64 bits ONLY on the dialects above, and 32 elsewhere. */
+const FLOAT64_ONLY_NAMES: ReadonlySet<string> = new Set(["real", "float"]);
 
 /**
  * Reads one declared type down to its first word.
@@ -130,8 +167,12 @@ const FLOAT64_TYPE_NAMES: ReadonlySet<string> = new Set(["double", "float8", "fl
  * come off first, and only then the parameters: `DateTime64(6, 'UTC')` is `datetime64`,
  * Trino's `timestamp(3) with time zone` is `timestamp`, and `character varying` is
  * `character`, which is in no set here.
+ *
+ * The DIALECT is read alongside the word, because one word is two widths across engines:
+ * `REAL` is 64 bits on SQLite and 32 on PostgreSQL, and the same declaration therefore
+ * settles the question on one and settles nothing on the other.
  */
-function keyColumnKind(declaredType: string | undefined): KeyColumnKind {
+function keyColumnKind(declaredType: string | undefined, dialect: DatabaseConnection["type"]): KeyColumnKind {
   if (declaredType === undefined) return "undeclared";
   let name = declaredType.trim().toLowerCase();
   for (;;) {
@@ -143,7 +184,8 @@ function keyColumnKind(declaredType: string | undefined): KeyColumnKind {
   }
   const first = name.split("(")[0].trim().split(/\s+/)[0];
   if (INSTANT_TYPE_NAMES.has(first)) return "date-time";
-  return FLOAT64_TYPE_NAMES.has(first) ? "float64" : "declared";
+  if (FLOAT64_TYPE_NAMES.has(first)) return "float64";
+  return FLOAT64_ONLY_DIALECTS.has(dialect) && FLOAT64_ONLY_NAMES.has(first) ? "float64" : "declared";
 }
 
 /**
@@ -395,7 +437,9 @@ async function keyAddressesOneRow(
   /** What the result said this key column is — `undefined` where it said nothing. */
   declaredKeyType: string | undefined,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const column = keyColumnKind(declaredKeyType);
+  // The connection is already in hand — the same object line 433 reads its dialect from —
+  // so the width a declared float means is read from the engine that declared it.
+  const column = keyColumnKind(declaredKeyType, connection.type);
   // A key with no value cannot be addressed by `=` at all, and `String(null)` would send
   // the text "null" — which an integer column rejects, so the whole apply would fail on a
   // driver error rather than on the reason.
