@@ -902,6 +902,18 @@ extraEnvFrom:
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in ms (hot-reload interval) |
 
+### One-Command Vault Demo
+
+[`docker-compose.vault-demo.yml`](docker-compose.vault-demo.yml) starts Studio, PostgreSQL and a dev-mode HashiCorp Vault, plus a one-shot init container that writes the database password into Vault and the seed file into the volume Studio mounts. It pulls the published image, so there's nothing to build, and the connection it defines takes its password from Vault through the reference `${vault:secret/data/prod/postgres#password}` instead of from an environment variable.
+
+```bash
+docker compose -f docker-compose.vault-demo.yml up
+```
+
+Open **http://localhost:3000** and log in with the admin credentials the first run prints to the Studio log, same as the [Quick Start](#quick-start). The sidebar has a **Postgres (password from Vault)** connection — open it and run any statement, and it connects with the password Vault holds. To watch a rotation, change the password in Vault and in PostgreSQL, wait out the 10-second cache the file sets, and open the connection again: it authenticates with the new value, with no container restarted.
+
+> The Vault in that file is dev mode — in-memory, root token, no TLS, no policies — so it's for demonstration only. The reference scheme, the `VAULT_*` variables, the rotation window and both rotation commands are in [`docs/SEED_CONNECTIONS.md`](docs/SEED_CONNECTIONS.md#vault-references); a real deployment starts from HashiCorp's [production hardening guide](https://developer.hashicorp.com/vault/tutorials/operations/production-hardening).
+
 ---
 
 ## Roadmap
