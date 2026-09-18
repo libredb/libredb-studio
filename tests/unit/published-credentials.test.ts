@@ -102,6 +102,12 @@ function documentationFiles(): string[] {
  * Markdown table cell. So the line no longer has to end - the VALUE has to end, at one of
  * the four things that end one. Prose carries on in words, and a word matches none of these,
  * so `ADMIN_PASSWORD: generated on first run` is still a sentence and still unflagged.
+ *
+ * This applies to `NAME: value` only. `NAME=value` needs none of it: a sentence does not
+ * write an equals sign, so whatever follows the value is the rest of a command line - the
+ * image name of a `docker run`, an `&& echo`, a second statement. Requiring one of these
+ * four after an `=` is what let `docker run -e ADMIN_PASSWORD=example-fake-password img` publish a
+ * working login, measured.
  */
 const VALUE_ENDS = /^\s*(?:#|$)|^\s*\||^\s+-{1,2}[A-Za-z]|^\s+[A-Za-z_][A-Za-z_0-9.]*\s*=/;
 
@@ -139,6 +145,10 @@ function usableValue(raw: string): string | null {
   if (value === "" || value === "..." || /^\$/.test(value) || value.startsWith("{{") || value.startsWith("<")) {
     return null;
   }
+  // A printf format is a hole the value is poured into, not the value:
+  // `printf 'ADMIN_PASSWORD=%s\n' "$APP_ADMIN_PASSWORD"` writes the password from a variable.
+  // Only a run made ENTIRELY of specifiers and escapes counts, so `%s-2026` is still a value.
+  if (/^(?:%[-#0 +'0-9.]*[a-zA-Z]|\\[nrt0])+$/.test(value)) return null;
   return value;
 }
 
@@ -170,6 +180,34 @@ function pairedAssignments(lines: string[], name: string): string[] {
 }
 
 /**
+ * A Markdown table row, which is how a README lists its variables: the name in one cell and
+ * the value in the next. It assigns nothing in the `NAME=value` sense and a reader still
+ * reads a working login out of it, which is how `| `ADMIN_PASSWORD` | `example-not-a-real-password` |`
+ * passed this guard - measured, on the most common table shape in these files.
+ *
+ * Only a value cell written as a code span with no space inside it counts. That is what
+ * tells the value column from the description column beside it: `| `ADMIN_PASSWORD` | Admin
+ * password |` is a table OF variables, not a table of credentials, and flagging those would
+ * light up every README here and get this guard deleted by the next person it stopped.
+ */
+function tableAssignments(lines: string[], name: string): string[] {
+  const found: string[] = [];
+  for (const line of lines) {
+    if (!/^\s*\|/.test(line)) continue;
+    const cells = line.split("|").map((cell) => cell.trim());
+    for (const [index, cell] of cells.entries()) {
+      if (cell.replace(/`/g, "").trim() !== name) continue;
+      const span = /^`([^`\s]+)`$/.exec(cells[index + 1] ?? "");
+      if (span === null) continue;
+      const value = usableValue(span[1]);
+      // A cell of punctuation - an em dash for "none", a lone hyphen - is not a password.
+      if (value !== null && /[A-Za-z0-9]/.test(value)) found.push(value);
+    }
+  }
+  return found;
+}
+
+/**
  * `NAME=value` in a shell example, or `NAME: value` in a compose one - plus the two-line
  * form above, because a credential does not stop working for being written across two lines.
  */
@@ -187,13 +225,53 @@ function assignments(text: string, name: string): string[] {
     if (at > 0 && /[A-Za-z_0-9.]/.test(line[at - 1])) continue;
     if (parents[index] === "existingSecretKeys") continue;
     const rest = line.slice(at + name.length).replace(/\\\s*$/, "");
-    const assigned = /^\s*[=:]\s*(\S+)([\s\S]*)$/.exec(rest);
+    // A quoted value is taken whole. Reading up to the first space instead stopped at the
+    // first word, and a value with a space in it then looked like a value followed by prose,
+    // which the check below reads as a sentence: `ADMIN_PASSWORD="example fake admin password"` was
+    // published that way, measured, and so was a 42-character JWT_SECRET.
+    const assigned = /^\s*([=:])\s*("[^"]*"|'[^']*'|\S+)([\s\S]*)$/.exec(rest);
     if (assigned === null) continue;
-    if (!VALUE_ENDS.test(assigned[2])) continue;
-    const value = usableValue(assigned[1]);
+    if (assigned[1] === ":" && !VALUE_ENDS.test(assigned[3])) continue;
+    const value = usableValue(assigned[2]);
     if (value !== null) found.push(value);
   }
-  return [...found, ...pairedAssignments(lines, name)];
+  return [...found, ...pairedAssignments(lines, name), ...tableAssignments(lines, name)];
+}
+
+/**
+ * Words that stand in for a password in the slot a login example puts one. A schema or an
+ * API table writes the TYPE there, and a sentence writes an instruction - which is why a
+ * value with a space in it is never read as one.
+ */
+const JSON_PASSWORD_STANDINS = new Set(["string", "password", "secret", "null", "undefined", "admin", "user"]);
+
+/**
+ * A login example's JSON body, which names no environment variable at all and so was read
+ * by none of the rules above: `-d '{"email": "...", "password": "example-fake-login"}'` published a
+ * working login in docs/API_DOCS.md twice, in a cURL block and a fetch() block, and the
+ * same string had already been removed from CONTRIBUTING.md by hand.
+ *
+ * What makes it a LOGIN body is the `email` beside it, and that is the whole test. The same
+ * documentation is full of CONNECTION bodies - `host`, `port`, `database`, `user`,
+ * `password` - and the password in one of those is the READER'S own database, sampled as
+ * `postgres` or `example-fake-connection-pw`. Nothing this project ships is reachable with those, and
+ * flagging them would put this guard in the way of writing a connection example at all.
+ *
+ * Of what is left, only a double-quoted literal that reads as a value counts: a space in it
+ * makes it an instruction, and a `your-` prefix makes it a placeholder.
+ */
+function jsonPasswordValues(text: string): string[] {
+  const found: string[] = [];
+  // `email` on either side of `password`, within one small object - not across a document.
+  const inLoginBody =
+    /"email"\s*:[\s\S]{0,120}?"(?:password|newPassword|currentPassword)"\s*:\s*"([^"]*)"|"(?:password|newPassword|currentPassword)"\s*:\s*"([^"]*)"[\s\S]{0,120}?"email"\s*:/g;
+  for (const match of text.matchAll(inLoginBody)) {
+    const value = usableValue(match[1] ?? match[2] ?? "");
+    if (value === null || /\s/.test(value) || /^your[-_]/i.test(value)) continue;
+    if (JSON_PASSWORD_STANDINS.has(value.toLowerCase())) continue;
+    found.push(value);
+  }
+  return found;
 }
 
 function publishedValues(file: string, name: string): string[] {
@@ -227,6 +305,36 @@ describe("the documentation publishes no credential that works", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  test("hands no working password to a login example", () => {
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const value of jsonPasswordValues(readFileSync(file, "utf8"))) offenders.push(`${file}: ${value}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("reads a password out of a login body, and leaves a schema alone", () => {
+    const caught = (text: string) => jsonPasswordValues(text);
+    // The two shapes that were in docs/API_DOCS.md, one cURL and one fetch().
+    expect(caught(`-d '{"email": "admin@libredb.org", "password": "example-fake-login"}'`)).toEqual(["example-fake-login"]);
+    expect(caught(`body: JSON.stringify({ "email": "a@b.c", "password": "example-not-a-real-password" })`)).toEqual(["example-not-a-real-password"]);
+    // The password before the email reads the same way.
+    expect(caught(`{\n  "password": "example-fake-login",\n  "email": "admin@libredb.org"\n}`)).toEqual(["example-fake-login"]);
+
+    // A CONNECTION body is the reader's own database, not an account this project ships.
+    expect(caught(`{"host": "127.0.0.1", "user": "postgres", "password": "postgres"}`)).toEqual([]);
+    expect(caught(`{"host": "h", "port": 8091, "user": "Administrator", "password": "example-fake-connection-pw"}`)).toEqual([]);
+
+    // And the stand-ins, or every API table in docs/ fails this guard.
+    expect(caught(`{"email": "a@b.c", "password": "string"}`)).toEqual([]);
+    expect(caught(`{"email": "a@b.c", "password": "your-password"}`)).toEqual([]);
+    expect(caught(`{"email": "a@b.c", "password": "your admin password"}`)).toEqual([]);
+    expect(caught(`{"email": "a@b.c", "password": "<your password>"}`)).toEqual([]);
+    expect(caught(`{"email": "a@b.c", "password": "$ADMIN_PASSWORD"}`)).toEqual([]);
+    expect(caught(`{"email": "a@b.c", "password": ""}`)).toEqual([]);
+    expect(caught(`| \`password\` | string | required |`)).toEqual([]);
   });
 
   test("assigns no secret the server would accept", () => {
@@ -272,5 +380,57 @@ describe("the documentation publishes no credential that works", () => {
         "ADMIN_PASSWORD",
       ),
     ).toEqual([]);
+  });
+
+  test("reads the four shapes a reviewer published a working password through", () => {
+    const caught = (text: string, name: string) => assignments(text, name);
+
+    // 1. The variable table, which is how every README here lists its settings. The name and
+    // the value are two cells of one row and nothing between them is an assignment.
+    expect(caught("| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught("| ADMIN_PASSWORD | `example-not-a-real-password` |", "ADMIN_PASSWORD")).toEqual(["example-not-a-real-password"]);
+
+    // 2. A shell line that carries on after the value.
+    expect(caught("export ADMIN_PASSWORD=example-not-a-real-password && echo ok", "ADMIN_PASSWORD")).toEqual(["example-not-a-real-password"]);
+
+    // 3. A value with a space in it, which used to be read as one word plus prose.
+    expect(caught('ADMIN_PASSWORD="example fake admin password"', "ADMIN_PASSWORD")).toEqual(["example fake admin password"]);
+    expect(caught("USER_PASSWORD='example fake user password'", "USER_PASSWORD")).toEqual(["example fake user password"]);
+    // The same hole let a secret through, and a secret is judged by its LENGTH, so reading
+    // one word of it hid a value the server would have accepted.
+    const secret = caught('JWT_SECRET="an example fake secret of forty chars xx"', "JWT_SECRET");
+    expect(secret).toEqual(["an example fake secret of forty chars xx"]);
+    expect(secret[0].length).toBeGreaterThanOrEqual(JWT_SECRET_MIN_LENGTH);
+
+    // 4. `docker run` with the image name after the value, rather than another flag.
+    expect(caught("docker run -e ADMIN_PASSWORD=example-not-a-real-password libredb/libredb-studio", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
+    ]);
+  });
+
+  test("stays quiet on the innocent shapes nearest to those four", () => {
+    const caught = (text: string, name: string) => assignments(text, name);
+
+    // A table OF variables. The cell beside the name is a description, and if these fired
+    // the guard would be deleted by the next person it stopped.
+    expect(caught("| `ADMIN_PASSWORD` | Admin password | no |", "ADMIN_PASSWORD")).toEqual([]);
+    expect(caught("| `ADMIN_PASSWORD` | `generated on first run` |", "ADMIN_PASSWORD")).toEqual([]);
+    expect(caught("| `ADMIN_PASSWORD` | - | printed to the log |", "ADMIN_PASSWORD")).toEqual([]);
+    expect(caught("| `ADMIN_PASSWORD` | `<your password>` |", "ADMIN_PASSWORD")).toEqual([]);
+    expect(caught("| Variable | Value |\n| --- | --- |", "ADMIN_PASSWORD")).toEqual([]);
+
+    // A printf format is the hole a value is poured into, not the value. This one is in
+    // deploy/azure/src/install.sh and the password it writes comes from a variable.
+    expect(caught(`printf 'ADMIN_PASSWORD=%s\\n' "$APP_ADMIN_PASSWORD"`, "ADMIN_PASSWORD")).toEqual([]);
+
+    // A quoted stand-in is still a stand-in.
+    expect(caught('ADMIN_PASSWORD="<your admin password>"', "ADMIN_PASSWORD")).toEqual([]);
+    expect(caught('ADMIN_PASSWORD=""', "ADMIN_PASSWORD")).toEqual([]);
+
+    // And prose still reads as prose, with a colon and without one.
+    expect(caught("ADMIN_PASSWORD: generated on first run and printed", "ADMIN_PASSWORD")).toEqual([]);
+    expect(caught("Set ADMIN_PASSWORD to a value of your own", "ADMIN_PASSWORD")).toEqual([]);
   });
 });
