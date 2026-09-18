@@ -220,7 +220,7 @@ export function useQueryExecution({
       tabId?: string,
       isExplain: boolean = false,
       executionOptions?: QueryExecutionOptions,
-    ) => {
+    ): Promise<boolean> => {
       const activeTabId = activeTabIdRef.current;
       const targetTabId = tabId || activeTabId;
       const tabToExec = tabsRef.current.find((t) => t.id === targetTabId) || currentTabRef.current;
@@ -236,7 +236,7 @@ export function useQueryExecution({
 
       if (!activeConnection) {
         toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
-        return;
+        return false;
       }
 
       // Safety check for dangerous queries (skip for explain, load-more, playground, and force-execute)
@@ -251,7 +251,7 @@ export function useQueryExecution({
         isDangerousQuery(queryToExecute, activeConnection.type)
       ) {
         setSafetyCheckQuery(queryToExecute);
-        return;
+        return false;
       }
 
       // Options extraction
@@ -292,7 +292,7 @@ export function useQueryExecution({
         setTabs((prev) =>
           prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t)),
         );
-        return;
+        return false;
       }
 
       const startTime = Date.now();
@@ -480,7 +480,7 @@ export function useQueryExecution({
           if (errorCode === ApiErrorCode.QUERY_CANCELLED) {
             commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
             toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
-            return;
+            return false;
           }
 
           throw new Error(errorMessage);
@@ -656,6 +656,12 @@ export function useQueryExecution({
         if (!isExplain && !isLoadMore && !resultData.hasError) {
           maybeInviteToStar();
         }
+
+        // Same test as the invitation just above: not every caller only fires it on
+        // success, but every caller needs to know whether this run's statement(s)
+        // actually took (#882) - a caller that awaits this and never reads the
+        // answer is unaffected either way.
+        return !resultData.hasError;
       } catch (error) {
         // Playground mode: rollback on error too
         if (isPlaygroundRun) {
@@ -681,7 +687,7 @@ export function useQueryExecution({
           if (!superseded) {
             toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
           }
-          return;
+          return false;
         }
 
         const title = "Query Error";
@@ -689,9 +695,10 @@ export function useQueryExecution({
         // Fallback string check for cancellation errors not caught by response code
         if (errorMessage.includes("Query was cancelled") || errorMessage.includes("cancelled")) {
           toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
-          return;
+          return false;
         }
         toast({ title, description: errorMessage, variant: "destructive" });
+        return false;
       } finally {
         // Only the run that still owns this tab's slot may clear it. A superseded
         // run finishes AFTER its replacement started, and deleting the entry here

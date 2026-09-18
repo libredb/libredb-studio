@@ -61,7 +61,7 @@ describe("useInlineEditing", () => {
   let mockExecuteQuery: ReturnType<typeof mock>;
 
   beforeEach(() => {
-    mockExecuteQuery = mock(() => {});
+    mockExecuteQuery = mock(() => Promise.resolve(true));
     mockToastSuccess.mockClear();
     mockToastError.mockClear();
   });
@@ -77,7 +77,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -92,7 +92,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -112,7 +112,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -135,7 +135,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -161,7 +161,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -185,7 +185,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -205,7 +205,9 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+    // The UPDATE, and then a re-run of the tab's own query to refresh the grid
+    // with real rows now that the edit has landed (#883).
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
 
     const sql = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls[0][0] as string;
     expect(sql).toContain("UPDATE");
@@ -220,6 +222,10 @@ describe("useInlineEditing", () => {
       params: ["Alice Updated", 1],
     });
 
+    const refreshCall = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls[1];
+    expect(refreshCall[0]).toBe("SELECT * FROM users");
+    expect(refreshCall[1]).toBe("tab-1");
+
     // Changes should be cleared after apply
     expect(result.current.pendingChanges).toEqual([]);
     expect(result.current.editingEnabled).toBe(false);
@@ -232,7 +238,7 @@ describe("useInlineEditing", () => {
           name: "Query 2",
           query: "SELECT id, name, category FROM products ORDER BY id",
         }),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -250,8 +256,6 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
-
     const sql = mockExecuteQuery.mock.calls[0][0] as string;
     expect(sql).toContain("UPDATE products");
   });
@@ -268,7 +272,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -285,9 +289,11 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+    // Two UPDATEs, one per row, and then the refresh re-run (#883).
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(3);
 
-    const sent = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls.map((call) => call[0] as string);
+    const updateCalls = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls.slice(0, 2);
+    const sent = updateCalls.map((call) => call[0] as string);
     for (const sql of sent) {
       expect(sql).not.toContain("\n");
       expect(sql.match(/UPDATE/g)).toHaveLength(1);
@@ -297,7 +303,7 @@ describe("useInlineEditing", () => {
     expect(sent[1]).toBe(`UPDATE users SET "email" = $1 WHERE "id" = $2`);
     // Each row carries its own parameters, so a shared statement text is not a
     // shared payload: placeholder numbering restarts per request.
-    const options = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls.map((call) => call[3]);
+    const options = updateCalls.map((call) => call[3]);
     expect(options[0]).toEqual({ skipSafety: true, params: ["Alice Updated", 1] });
     expect(options[1]).toEqual({ skipSafety: true, params: ["bob@new.test", 2] });
   });
@@ -313,7 +319,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -330,7 +336,10 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    const calls = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls;
+    // The two per-row UPDATEs; the refresh call after them (#883) is a plain
+    // re-run of the tab's own SELECT and carries no options at all, so it is not
+    // part of what this test is about.
+    const calls = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls.slice(0, 2);
     expect(calls).toHaveLength(2);
     for (const call of calls) {
       expect((call[3] as { skipSafety?: boolean }).skipSafety).toBe(true);
@@ -346,15 +355,15 @@ describe("useInlineEditing", () => {
     const sequential = mock((sql: string) => {
       order.push(`start:${sql}`);
       if (!resolveFirst) {
-        return new Promise<void>((resolve) => {
+        return new Promise<boolean>((resolve) => {
           resolveFirst = () => {
             order.push(`end:${sql}`);
-            resolve();
+            resolve(true);
           };
         });
       }
       order.push(`end:${sql}`);
-      return Promise.resolve();
+      return Promise.resolve(true);
     });
 
     const { result } = renderHook(() =>
@@ -393,6 +402,10 @@ describe("useInlineEditing", () => {
       `end:UPDATE users SET "name" = $1 WHERE "id" = $2`,
       `start:UPDATE users SET "name" = $1 WHERE "id" = $2`,
       `end:UPDATE users SET "name" = $1 WHERE "id" = $2`,
+      // Both rows applied, so the refresh re-run (#883) follows, on the same
+      // sequential mock, after the last row's UPDATE actually settles.
+      "start:SELECT * FROM users",
+      "end:SELECT * FROM users",
     ]);
   });
 
@@ -410,7 +423,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: tabNoPk,
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -440,7 +453,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: null,
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -462,7 +475,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -481,7 +494,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -517,7 +530,7 @@ describe("useInlineEditing", () => {
         currentTab: makeTab({
           result: makeResult({ fields: ["id", hostile], rows: [{ id: 1, [hostile]: "v" }] }),
         }),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -528,7 +541,8 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+    // The UPDATE, and the refresh re-run that follows a successful apply (#883).
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
     const sql = mockExecuteQuery.mock.calls[0][0] as string;
     expect(sql).toBe(`UPDATE users SET "${hostile}" = $1 WHERE "id" = $2`);
     // Nothing outside the quoted identifier ends the statement.
@@ -542,7 +556,7 @@ describe("useInlineEditing", () => {
         currentTab: makeTab({
           result: makeResult({ fields: ["id", "first name"], rows: [{ id: 1, "first name": "Alice" }] }),
         }),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -556,16 +570,16 @@ describe("useInlineEditing", () => {
     expect(mockExecuteQuery.mock.calls[0][0]).toBe("UPDATE users SET `first name` = ? WHERE `id` = ?");
   });
 
-  test("refuses to apply when the table name could not be read as an identifier", async () => {
-    // The table name is GUESSED from the tab name or a FROM match, so unlike a
-    // column it cannot be quoted safely: quoting a hand-typed lowercase name would
-    // break Oracle, where the real table is upper-cased. An unusable guess is
-    // therefore refused rather than interpolated.
+  test("refuses to apply when no FROM table could be read from the query", async () => {
+    // The table name is GUESSED from the query's FROM clause, so unlike a column it
+    // cannot be quoted safely: quoting a hand-typed lowercase name would break
+    // Oracle, where the real table is upper-cased. An unusable guess is therefore
+    // refused rather than interpolated.
     const { result } = renderHook(() =>
       useInlineEditing({
         activeConnection: makeConnection(),
-        currentTab: makeTab({ name: "users; DROP TABLE users; --", query: "" }),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        currentTab: makeTab({ name: "users", query: "" }),
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -578,14 +592,17 @@ describe("useInlineEditing", () => {
 
     expect(mockExecuteQuery).not.toHaveBeenCalled();
     expect(result.current.pendingChanges).toHaveLength(1);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("Could not read a table name"),
+    });
   });
 
-  test("accepts a schema-qualified table name", async () => {
+  test("accepts a schema-qualified table name from the query", async () => {
     const { result } = renderHook(() =>
       useInlineEditing({
         activeConnection: makeConnection(),
-        currentTab: makeTab({ name: "public.users" }),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        currentTab: makeTab({ query: "SELECT * FROM public.users" }),
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -597,6 +614,61 @@ describe("useInlineEditing", () => {
     });
 
     expect(mockExecuteQuery.mock.calls[0][0]).toBe(`UPDATE public.users SET "name" = $1 WHERE "id" = $2`);
+  });
+
+  // ── The table comes from the QUERY, never the tab title (#881) ────────────
+  //
+  // A tab title is free text: it survives when the query is replaced, and it is
+  // not tied in any way to what the query actually reads. Trusting it sent
+  // `UPDATE <tab name> ...` whenever a renamed tab still showed an older query's
+  // rows — silent data loss when the tab name happened to name a real table
+  // sharing the edited column and primary key, a confusing failure otherwise.
+
+  test("a tab renamed to another table's name still writes to the table the query reads", async () => {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({ name: "orders", query: "SELECT * FROM products" }),
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const sql = mockExecuteQuery.mock.calls[0][0] as string;
+    expect(sql).toContain("UPDATE products");
+    expect(sql).not.toContain("UPDATE orders");
+  });
+
+  test("refuses to apply when the query joins more than one table", async () => {
+    // Which table an edited column belongs to cannot be read off the FROM clause
+    // alone once a JOIN is present (#881's suggested direction: refuse rather than
+    // guess, the way an unusable identifier already is below).
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({ query: "SELECT * FROM orders JOIN customers ON orders.customer_id = customers.id" }),
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(result.current.pendingChanges).toHaveLength(1);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("joins more than one table"),
+    });
   });
 
   // ── Values are bound, not interpolated (#290) ─────────────────────────────
@@ -622,7 +694,7 @@ describe("useInlineEditing", () => {
         useInlineEditing({
           activeConnection: makeConnection({ type }),
           currentTab: makeTab(),
-          executeQuery: mockExecuteQuery as (sql: string) => void,
+          executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
         }),
       );
 
@@ -647,7 +719,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection({ type: "mysql" }),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -678,7 +750,7 @@ describe("useInlineEditing", () => {
             rows: [{ id: hostileKey, name: "Alice" }],
           }),
         }),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -701,7 +773,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection(),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -730,7 +802,7 @@ describe("useInlineEditing", () => {
       useInlineEditing({
         activeConnection: makeConnection({ type: "clickhouse" }),
         currentTab: makeTab(),
-        executeQuery: mockExecuteQuery as (sql: string) => void,
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
       }),
     );
 
@@ -744,5 +816,130 @@ describe("useInlineEditing", () => {
     const [sql, , , options] = mockExecuteQuery.mock.calls[0];
     expect(sql).toBe(`UPDATE users SET "name" = 'a\\\\''b' WHERE "id" = 1`);
     expect(options).toEqual({ skipSafety: true });
+  });
+
+  // ── A row's own outcome, not a blanket reset (#882) ────────────────────────
+  //
+  // executeQuery's return value used to go unread: the three lines after the loop
+  // ran unconditionally, so a rejected edit looked identical to an applied one —
+  // pending changes gone, EDIT mode off, "Changes Applied" on screen — with no way
+  // to retry it from the grid.
+
+  test("a row that fails keeps its pending change; a row that succeeded does not", async () => {
+    // Both rows edit the same column, so the SQL TEXT is identical between them —
+    // the value is bound, not interpolated (#290) — and only the params tell them
+    // apart.
+    const failing = mock(
+      async (_sql: string, _tabId?: string, _isExplain?: boolean, options?: { params?: unknown[] }) =>
+        !options?.params?.includes("Bob Updated"),
+    );
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: failing as (sql: string) => Promise<boolean>,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 0, columnId: "name", originalValue: "Alice", newValue: "Alice Updated" }),
+      );
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 1, columnId: "name", originalValue: "Bob", newValue: "Bob Updated" }),
+      );
+    });
+
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(result.current.pendingChanges).toHaveLength(1);
+    expect(result.current.pendingChanges[0].rowIndex).toBe(1);
+    expect(result.current.pendingChanges[0].newValue).toBe("Bob Updated");
+    // Something applied, so EDIT mode is not the thing telling the user nothing
+    // happened — but it stays ON, because a row is still pending.
+    expect(result.current.editingEnabled).toBe(true);
+    expect(mockToastError).toHaveBeenCalledWith("Some Changes Applied", {
+      description: expect.stringContaining("1 of 2"),
+    });
+  });
+
+  test("when every row fails, nothing is reset and the pending changes are untouched", async () => {
+    const alwaysFails = mock(async () => false);
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: alwaysFails as (sql: string) => Promise<boolean>,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(result.current.pendingChanges).toHaveLength(1);
+    expect(result.current.editingEnabled).toBe(true);
+    expect(mockToastError).toHaveBeenCalledWith("Changes Not Applied", {
+      description: expect.stringContaining("1 row(s) failed"),
+    });
+    // Nothing applied, so there is nothing new for the grid to show (#883) — the
+    // one call is the rejected UPDATE, never a refresh re-run.
+    expect(alwaysFails).toHaveBeenCalledTimes(1);
+  });
+
+  test("when every row applies, editingEnabled turns off and the toast says so plainly", async () => {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(result.current.pendingChanges).toEqual([]);
+    expect(result.current.editingEnabled).toBe(false);
+    expect(mockToastSuccess).toHaveBeenCalledWith("Changes Applied", {
+      description: expect.stringContaining("1 UPDATE statement(s) applied"),
+    });
+  });
+
+  // ── The grid shows real rows again after a successful apply (#883) ────────
+  //
+  // The UPDATE's own result — no rows, or a rowcount depending on the driver —
+  // used to replace the SELECT result the grid was showing: the edit succeeded
+  // and the grid read "no data", Export included.
+
+  test("a successful apply re-runs the tab's own query, targeting this tab by id", async () => {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({ id: "tab-42", query: "SELECT * FROM widgets" }),
+        executeQuery: mockExecuteQuery as (sql: string) => Promise<boolean>,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const calls = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls;
+    const refreshCall = calls[calls.length - 1];
+    expect(refreshCall[0]).toBe("SELECT * FROM widgets");
+    expect(refreshCall[1]).toBe("tab-42");
   });
 });

@@ -12,14 +12,16 @@ interface UseInlineEditingParams {
   currentTab: QueryTab;
   /**
    * `useQueryExecution`'s `executeQuery`. `handleApplyChanges` awaits it between
-   * rows and passes its execution options, so the signature carries both.
+   * rows and passes its execution options, so the signature carries both. The
+   * resolved boolean is whether the statement actually applied (#882) — a caller
+   * that only fires it and forgets, as this hook used to, is unaffected either way.
    */
   executeQuery: (
     sql: string,
     tabId?: string,
     isExplain?: boolean,
     options?: { skipSafety?: boolean; params?: unknown[] },
-  ) => void | Promise<unknown>;
+  ) => Promise<boolean>;
 }
 
 export function useInlineEditing({ activeConnection, currentTab, executeQuery }: UseInlineEditingParams) {
@@ -69,34 +71,46 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
       changesByRow.set(change.rowIndex, existing);
     }
 
-    // Detect table name from current tab or query
-    const fromQuery = currentTab.query.match(/FROM\s+(\S+)/i)?.[1];
-    const fromTab = currentTab.name.replace(/^Query[: ]*/, "");
+    // Detect the table name from the QUERY that produced these rows, never from the
+    // tab title (#881). A tab is free text: it survives when the query is replaced,
+    // it is not tied to the query in any way, and a user editing a result has no
+    // reason to expect it to select the write target. #924 fixed this only for a
+    // tab still carrying its default "Query N" name — a tab RENAMED to another
+    // real table's name (the issue's own repro) still won there, silently
+    // rewriting `UPDATE <tab name> ...` for a query that read a different table.
+    // Reading the query alone, unconditionally, covers both: #924's case, because
+    // a default-named tab never disagreed with its query anyway, and #881's.
+    const fromMatch = currentTab.query.match(/FROM\s+(\S+)/i)?.[1];
 
-    const isDefaultQueryTab = /^Query \d+$/.test(currentTab.name.trim());
+    // A JOIN means the rows can carry columns from more than one table, so which
+    // one an edited column belongs to cannot be read off the FROM clause alone —
+    // the same "cannot be determined" case the suggested fix in #881 names for
+    // computed columns and subqueries. Refusing here is the identifier check
+    // below applied one step earlier: say so instead of guessing.
+    const hasJoin = /\bJOIN\b/i.test(currentTab.query);
 
-    const tableName =
-      (isDefaultQueryTab && isBareIdentifier(fromQuery ?? "") && fromQuery) || fromTab || fromQuery || "table_name";
-
-    // The table name is a GUESS (a tab title, or the first word after FROM), so it
-    // is validated rather than quoted: quoting would change its case semantics and
-    // break a hand-typed lowercase name on Oracle, while interpolating an arbitrary
-    // string would let a tab title carry statement text. A guess that is not a bare
-    // identifier is not usable, so say so instead of building SQL from it.
-    if (!isBareIdentifier(tableName)) {
+    // The table name is a GUESS (the first word after FROM), so it is validated
+    // rather than quoted: quoting would change its case semantics and break a
+    // hand-typed lowercase name on Oracle, while interpolating an arbitrary string
+    // would let it carry statement text. A guess that is not a bare identifier is
+    // not usable, so say so instead of building SQL from it.
+    if (fromMatch === undefined || hasJoin || !isBareIdentifier(fromMatch)) {
       toast({
         title: "Cannot Apply Changes",
-        description: `Could not read a table name from this tab ("${tableName}"). Edit the SQL manually.`,
+        description: hasJoin
+          ? "This query joins more than one table, so which table an edited column belongs to cannot be determined. Edit the SQL manually."
+          : `Could not read a table name from this tab's query${fromMatch ? ` ("${fromMatch}")` : ""}. Edit the SQL manually.`,
         variant: "destructive",
       });
       return;
     }
+    const tableName = fromMatch;
 
     const dialect = activeConnection.type;
     const quote = (identifier: string) => quoteIdentifier(identifier, dialect);
 
     // Generate UPDATE statements
-    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const statements: Array<{ sql: string; params: unknown[]; rowIndex: number }> = [];
     for (const [rowIndex, changes] of changesByRow) {
       const row = currentTab.result.rows[rowIndex];
       const pkValue = row[pkColumn];
@@ -134,6 +148,7 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
       statements.push({
         sql: `UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${quote(pkColumn)} = ${pkVal}`,
         params,
+        rowIndex,
       });
     }
 
@@ -153,21 +168,61 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
     //    confirms, silently dropping the rest. Apply is the confirmation here: these
     //    statements are generated rather than typed, each carries a WHERE on the
     //    detected key, and the pending changes were reviewed in the grid first.
+    // `executeQuery` reports its own success (#882 - it used to be a void call, so
+    // nothing here ever branched on whether a row actually applied). Read per row,
+    // so a row that failed can be told apart from one that did not.
+    const failedRowIndexes = new Set<number>();
     for (const statement of statements) {
-      await executeQuery(statement.sql, undefined, false, {
+      const applied = await executeQuery(statement.sql, undefined, false, {
         skipSafety: true,
         ...(statement.params.length > 0 && { params: statement.params }),
       });
+      if (!applied) failedRowIndexes.add(statement.rowIndex);
     }
-    setPendingChanges([]);
-    setEditingEnabled(false);
-    toast({
-      // "submitted", not "executed": executeQuery reports a failing row itself and
-      // returns, so the loop runs on and a partial application is possible now that
-      // each row is its own request. Claiming all N ran would be the dishonest half.
-      title: "Changes Applied",
-      description: `${statements.length} UPDATE statement(s) submitted; check the results panel for each row.`,
-    });
+
+    const succeededCount = statements.length - failedRowIndexes.size;
+
+    // The UPDATE's own result — no rows, or a rowcount, depending on the driver —
+    // would otherwise replace the SELECT result the grid is showing (#883): the
+    // user's edit succeeds and the grid reads "no data", Export included. Re-run
+    // the tab's own query, the way a manual re-run would, so the applied edits are
+    // visible in real, current rows rather than in the write's own empty answer.
+    // Skipped when nothing applied: there is nothing new to show, and re-running
+    // would cost a round trip only to redraw the same rows this tab already has.
+    if (succeededCount > 0) {
+      await executeQuery(currentTab.query, currentTab.id, false);
+    }
+
+    // Only a row that FAILED keeps its pending change — one that applied is done,
+    // and one that never got a request could not have (there are none of those
+    // here, every pending row got a statement). A row's own failure already raised
+    // its own toast (executeQuery's error path), so what follows is the aggregate
+    // outcome, not a repeat of that.
+    const stillPending = pendingChanges.filter((c) => failedRowIndexes.has(c.rowIndex));
+    setPendingChanges(stillPending);
+    // EDIT mode stays on exactly while there is something left to retry or discard
+    // — turning it off regardless of outcome, the old behaviour, discarded a
+    // rejected edit with nothing to show for it but the toast (#882).
+    setEditingEnabled(stillPending.length > 0);
+
+    if (failedRowIndexes.size === 0) {
+      toast({
+        title: "Changes Applied",
+        description: `${statements.length} UPDATE statement(s) applied.`,
+      });
+    } else if (succeededCount === 0) {
+      toast({
+        title: "Changes Not Applied",
+        description: `${failedRowIndexes.size} row(s) failed; see the results panel for each row's error. Nothing was reset — retry or discard.`,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Some Changes Applied",
+        description: `${succeededCount} of ${statements.length} row(s) applied; ${failedRowIndexes.size} failed and are still pending.`,
+        variant: "destructive",
+      });
+    }
   }, [activeConnection, currentTab, pendingChanges, executeQuery, toast]);
 
   const handleDiscardChanges = useCallback(() => {
