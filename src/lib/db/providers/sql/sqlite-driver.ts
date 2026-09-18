@@ -75,6 +75,237 @@ export type SQLiteConstructor = new (path: string, options?: SQLiteOpenOptions) 
 
 export type SQLiteDriverName = "bun" | "node";
 
+// ============================================================================
+// Big integers at the provider boundary (#39)
+// ============================================================================
+
+/**
+ * SQLite stores INTEGER as a signed 64-bit value, so an id past 2^53 does not
+ * survive a JavaScript `number`. Measured 2026-09-18, reading 9007199254740993
+ * back through this provider with each driver's defaults:
+ *
+ * - bun:sqlite (what the Docker image runs) silently answers 9007199254740992 -
+ *   the row NEXT to the one that was asked for. The inline editor then builds its
+ *   UPDATE ... WHERE id = <that key> and edits the neighbouring row.
+ * - node:sqlite (npx / brew / deb installs) throws ERR_OUT_OF_RANGE instead:
+ *   loud, and no wrong write.
+ *
+ * Both drivers can hand back every integer as a BigInt instead, and each spells
+ * the flag its own way - bun `safeIntegers`, node `readBigInts`. The flag alone is
+ * not a fix, because it is all-or-nothing: `1`, `COUNT(*)` and every PRAGMA
+ * column become BigInt too, rows are serialized to the browser with
+ * JSON.stringify, and JSON.stringify refuses BigInt outright ("cannot serialize
+ * BigInt") - measured, that alone turns 180 passing SQLite tests into 149 passing
+ * and 31 failing, 16 of them connections that will not even open.
+ *
+ * So the flag is turned on for BOTH drivers and the BigInt is converted back
+ * HERE, at the one seam every row crosses:
+ *
+ * - a value that fits a JavaScript number exactly comes back AS a number, so `1`
+ *   stays `1`, COUNT(*) stays a number and PRAGMA columns are unchanged;
+ * - a value that does not fit comes back as its decimal STRING, every digit kept.
+ *
+ * That is exactly what `supportBigNumbers` already does on the MySQL side, so the
+ * two providers now answer the same shape. Nothing outside this module ever sees
+ * a BigInt.
+ */
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
+
+/** One 64-bit integer, as a number when that is lossless and as digits when it is not. */
+export function normalizeSQLiteBigInt(value: bigint): number | string {
+  return value >= MIN_SAFE_BIGINT && value <= MAX_SAFE_BIGINT ? Number(value) : value.toString();
+}
+
+/**
+ * Sending one back (#42)
+ * ----------------------
+ * The conversion above is lossy in ONE direction that matters: `9007199254740993`
+ * the integer and `'9007199254740993'` the text both leave this provider as the same
+ * JavaScript string, so a value coming back in a bind carries no clue which it was.
+ * SQLite settles it by the COLUMN's affinity, and only for a column that HAS one:
+ * measured 2026-09-18 on bun:sqlite (Bun 1.4.0) and node:sqlite (Node 24), against a
+ * row whose key is 9007199254740993 -
+ *
+ *   column declared   | bound as text | bound as a 64-bit integer
+ *   INTEGER / NUMERIC |       matches |                   matches
+ *   TEXT              |       matches |                   matches
+ *   BLOB / undeclared |   NO MATCH    |                   matches
+ *
+ * INTEGER and NUMERIC affinity convert the text to a number before comparing, and
+ * TEXT affinity converts the integer to text, so those three columns answer the same
+ * either way. A column declared BLOB or declared NOTHING has NO affinity: SQLite
+ * compares the operands as they stand, a text is never equal to an integer, and the
+ * row the grid just read cannot be found again - `UPDATE ... WHERE id = ?` reports 0
+ * rows changed and the editor tells the user nothing happened.
+ *
+ * The affinity is not knowable here - a bind is a value, with no column attached, and
+ * neither driver exposes which column an operand belongs to - so the seam answers the
+ * question it CAN answer exactly: it accepts back precisely what it handed out.
+ * `normalizeSQLiteBigInt` emits these digits for one input only, a 64-bit integer
+ * outside the safe range, so reading them back as that integer is its exact inverse
+ * and every other string is left alone:
+ *
+ * - inside the safe range (`'1'`, `'9007199254740991'`) the read hands out a NUMBER,
+ *   never digits, so such a string is the caller's own text;
+ * - `'007'`, `'+7'`, `''`, `' 7'`, `'7.0'` are not shapes it can emit at all;
+ * - wider than 64 bits (`'99999999999999999999'`) is not a value SQLite's INTEGER can
+ *   hold, so no row could match it as a number either.
+ *
+ * What that costs, measured and accepted: in a column with NO affinity that genuinely
+ * stores this shape as TEXT, the bind now misses where it used to match. That is the
+ * same ambiguity read from the other end, it cannot be resolved without the affinity,
+ * and the integer reading is the one these digits exist for. A TEXT-declared column is
+ * NOT affected - TEXT affinity converts the bind back to text - so an ordinary textual
+ * key still matches as text. Every string function agrees on both forms as well
+ * (measured: `length`, `substr`, `||`, `LIKE`, `lower`, `printf`, `CAST(? AS TEXT)`);
+ * `typeof(?)` and `quote(?)` are the ones that can tell, and they are asking which
+ * storage class it is, which is the question this conversion answers.
+ */
+
+/** SQLite's own INTEGER: signed 64-bit, and nothing wider can be stored in a row. */
+const MAX_INT64_BIGINT = BigInt("9223372036854775807");
+const MIN_INT64_BIGINT = BigInt("-9223372036854775808");
+
+/**
+ * The exact shape `normalizeSQLiteBigInt` prints: an optional minus, a non-zero first
+ * digit, at most 19 digits in all (INT64's own width). Leading zeros, a leading `+`,
+ * surrounding space, a decimal point and the empty string all fall outside it.
+ */
+const SQLITE_INT64_DIGITS = /^-?[1-9][0-9]{0,18}$/;
+
+/** One bound parameter, with the digits of a 64-bit integer read back as that integer. */
+export function toSQLiteBindValue(param: unknown): unknown {
+  if (typeof param !== "string" || !SQLITE_INT64_DIGITS.test(param)) {
+    return param;
+  }
+  const parsed = BigInt(param);
+  if (parsed >= MIN_SAFE_BIGINT && parsed <= MAX_SAFE_BIGINT) {
+    return param;
+  }
+  if (parsed < MIN_INT64_BIGINT || parsed > MAX_INT64_BIGINT) {
+    return param;
+  }
+  return parsed;
+}
+
+/**
+ * Every parameter of one call. Positional only, which is the one shape this provider
+ * binds (`query(sql, params: unknown[])`); a named-parameter OBJECT passes through
+ * untouched rather than being walked, so it keeps the behaviour it has today.
+ */
+function toSQLiteBindValues(params: unknown[]): unknown[] {
+  return params.map(toSQLiteBindValue);
+}
+
+/**
+ * Convert the BigInt cells of one returned record, in place.
+ *
+ * In place on purpose: node:sqlite returns null-prototype row objects and
+ * bun:sqlite returns its own row objects, and rebuilding them would change what
+ * every existing caller receives. Only the BigInt cells change. A BLOB column is
+ * a typed array, never a row, and is left alone rather than walked byte by byte.
+ */
+function normalizeRecordInPlace(record: unknown): unknown {
+  if (record === null || record === undefined) {
+    return record;
+  }
+  if (typeof record === "bigint") {
+    return normalizeSQLiteBigInt(record);
+  }
+  if (typeof record !== "object" || ArrayBuffer.isView(record)) {
+    return record;
+  }
+  const row = record as Record<string, unknown>;
+  for (const key of Object.keys(row)) {
+    const value = row[key];
+    if (typeof value === "bigint") {
+      row[key] = normalizeSQLiteBigInt(value);
+    }
+  }
+  return record;
+}
+
+/**
+ * Wrap one prepared statement so every row it returns, and every parameter it is given,
+ * crosses the conversions above.
+ *
+ * Both driver adapters below route `prepare()` through this, which is what makes the
+ * coverage argument checkable: the provider reaches the database ONLY through
+ * `SQLiteDatabase`, whose sole row-returning entry point is `prepare()` (`exec()`
+ * returns nothing). The wrapper republishes exactly the three methods of
+ * `SQLiteStatement` and hands back none of the raw driver statement, so a plain
+ * query, a prepared statement, a statement inside a transaction and every schema /
+ * PRAGMA read go through it alike, and a future row-returning driver method cannot
+ * quietly bypass it. The parameters travel the same three methods, so the two
+ * directions are inverses at ONE seam rather than at two that can drift apart.
+ */
+function withoutBigInts(stmt: SQLiteStatement): SQLiteStatement {
+  return {
+    all: (...params: unknown[]): unknown[] => {
+      const rows = stmt.all(...toSQLiteBindValues(params));
+      for (const row of rows) {
+        normalizeRecordInPlace(row);
+      }
+      return rows;
+    },
+    get: (...params: unknown[]): unknown => normalizeRecordInPlace(stmt.get(...toSQLiteBindValues(params))),
+    run: (...params: unknown[]): { changes: number } => {
+      // `changes` is a row count and always fits; `lastInsertRowid` (bun publishes it)
+      // is a rowid and does not have to, so the whole result goes through the same
+      // conversion before anything reads it.
+      const info = normalizeRecordInPlace(stmt.run(...toSQLiteBindValues(params))) as Record<string, unknown> & {
+        changes: number | bigint;
+      };
+      return { ...info, changes: Number(info.changes) };
+    },
+  };
+}
+
+/**
+ * bun:sqlite's own open options: the flags the provider passes, plus `safeIntegers`
+ * - bun's spelling of "read 64-bit integers without rounding them". node:sqlite
+ * spells the same request `readBigInts`; the two are bridged here and in
+ * `createNodeSQLiteDriver` below, so the provider keeps passing one set of flags
+ * and no new option reaches any shared surface.
+ */
+export type BunSQLiteOpenOptions = SQLiteOpenOptions & { safeIntegers?: boolean };
+export type BunSQLiteConstructor = new (path: string, options?: BunSQLiteOpenOptions) => SQLiteDatabase;
+
+/**
+ * Adapt bun:sqlite's Database: open it with `safeIntegers`, and convert what the
+ * flag produces back at `prepare()`. Exported with an injectable constructor for
+ * the same reason `createNodeSQLiteDriver` is - the semantics are then unit-testable
+ * against a stand-in on any runtime.
+ */
+export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLiteConstructor {
+  class BunSQLiteDatabase implements SQLiteDatabase {
+    private readonly db: SQLiteDatabase;
+
+    constructor(dbPath: string, options?: SQLiteOpenOptions) {
+      this.db = new DatabaseCtor(dbPath, { ...options, safeIntegers: true });
+    }
+
+    exec(sql: string): void {
+      this.db.exec(sql);
+    }
+
+    prepare(sql: string): SQLiteStatement {
+      return withoutBigInts(this.db.prepare(sql));
+    }
+
+    close(throwOnError?: boolean): void {
+      this.db.close(throwOnError);
+    }
+
+    get inTransaction(): boolean {
+      return this.db.inTransaction;
+    }
+  }
+
+  return BunSQLiteDatabase;
+}
+
 // Minimal structural view of node:sqlite (kept local so the adapter and its
 // tests never need the real module, which Bun does not implement).
 type NodeStatementLike = {
@@ -90,7 +321,7 @@ export type NodeDatabaseSyncLike = {
   readonly isTransaction: boolean;
 };
 /** node:sqlite's own open options — only the ones this adapter maps. */
-export type NodeSQLiteOpenOptions = { readOnly?: boolean };
+export type NodeSQLiteOpenOptions = { readOnly?: boolean; readBigInts?: boolean };
 export type NodeSQLiteModule = {
   DatabaseSync: new (path: string, options?: NodeSQLiteOpenOptions) => NodeDatabaseSyncLike;
 };
@@ -118,7 +349,7 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
   // At runtime nothing changes: Bun resolves its builtin natively, and this
   // branch is only ever taken under the Bun runtime.
   const sqlite = await import(/* turbopackIgnore: true */ /* webpackIgnore: true */ "bun:sqlite");
-  return sqlite.Database as unknown as SQLiteConstructor;
+  return createBunSQLiteDriver(sqlite.Database as unknown as BunSQLiteConstructor);
 }
 
 /**
@@ -137,6 +368,9 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  * - `close(throwOnError)` is bun's spelling of "release the file now". node:sqlite has
  *   no such flag and needs none, so this is the one delta with nothing to bridge; see
  *   the measurement on `SQLiteDatabase.close` above.
+ * - the big-integer flag is `readBigInts` here and `safeIntegers` on bun:sqlite; both
+ *   adapters set their own spelling and both send `prepare()` through the same
+ *   conversion, so the two drivers answer a 64-bit id identically (#39).
  * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
@@ -149,7 +383,7 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
     private readonly db: NodeDatabaseSyncLike;
 
     constructor(dbPath: string, options?: SQLiteOpenOptions) {
-      this.db = new DatabaseSyncCtor(dbPath, { readOnly: options?.readonly === true });
+      this.db = new DatabaseSyncCtor(dbPath, { readOnly: options?.readonly === true, readBigInts: true });
     }
 
     exec(sql: string): void {
@@ -158,14 +392,14 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
 
     prepare(sql: string): SQLiteStatement {
       const stmt = this.db.prepare(sql);
-      return {
+      return withoutBigInts({
         all: (...params: unknown[]): unknown[] => stmt.all(...params) as unknown[],
         get: (...params: unknown[]): unknown => stmt.get(...params) ?? null,
         run: (...params: unknown[]): { changes: number } => {
           const info = stmt.run(...params);
           return { changes: Number(info.changes) };
         },
-      };
+      });
     }
 
     // Takes no `throwOnError`, and needs none: node:sqlite's own close already finalizes
