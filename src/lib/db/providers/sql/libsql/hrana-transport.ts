@@ -199,13 +199,90 @@ function decodeValue(raw: unknown): unknown {
 }
 
 /**
+ * Sending one back (#44)
+ * ----------------------
+ * `decodeInteger` above is lossy in ONE direction that matters: `9007199254740993`
+ * the integer and `'9007199254740993'` the text both leave this transport as the
+ * same JavaScript string, so a value arriving in a bind carries no clue which it
+ * was. SQLite settles it by the COLUMN's affinity, and only for a column that HAS
+ * one: measured 2026-09-18 against sqld 0.24.33
+ * (`ghcr.io/tursodatabase/libsql-server:v0.24.33`, SQLite 3.47.0), on a row whose
+ * key is 9007199254740993 -
+ *
+ *   column declared   | bound as text | bound as an integer
+ *   INTEGER / NUMERIC |       matches |             matches
+ *   TEXT              |       matches |             matches
+ *   BLOB / undeclared |   NO MATCH    |             matches
+ *
+ * INTEGER and NUMERIC affinity convert the text to a number before comparing and
+ * TEXT affinity converts the integer to text, so those answer the same either way.
+ * A column declared BLOB or declared NOTHING has NO affinity: SQLite compares the
+ * operands as they stand, a text is never equal to an integer, and the row the grid
+ * just read cannot be found again - `UPDATE ... WHERE id = ?` reports 0 rows changed
+ * and the editor tells the user nothing happened. Measured here before the fix:
+ * INTEGER 1 row, TEXT 1 row, BLOB 0 rows, undeclared 0 rows.
+ *
+ * Note what this is NOT: unlike bun:sqlite, the libSQL read side never rounds - the
+ * neighbouring row is never edited on either side of this change. Hrana quotes its
+ * integers, so the damage here is a silent no-op, not a wrong write.
+ *
+ * The affinity is not knowable here - a bind is a value, with no column attached,
+ * and the protocol never names the column an operand belongs to - so the seam
+ * answers the question it CAN answer exactly: it accepts back precisely what it
+ * handed out. `decodeInteger` emits these digits for one input only, a 64-bit
+ * integer outside the safe range, so reading them back as that integer is its exact
+ * inverse and every other string is left alone:
+ *
+ * - inside the safe range (`'1'`, `'9007199254740991'`) the read hands out a NUMBER,
+ *   never digits, so such a string is the caller's own text;
+ * - `'007'`, `'+7'`, `''`, `' 7'`, `'7.0'`, `'9e15'` are not shapes it can emit;
+ * - wider than 64 bits (`'99999999999999999999'`) is not a value SQLite's INTEGER
+ *   can hold, so no row could match it as a number either.
+ *
+ * What that costs, measured and accepted: in a column with NO affinity that
+ * genuinely stores this shape as TEXT, the bind now misses where it used to match.
+ * That is the same ambiguity read from the other end, it cannot be resolved without
+ * the affinity, and the integer reading is the one these digits exist for. A
+ * TEXT-declared column is NOT affected - TEXT affinity converts the bind back to
+ * text - so an ordinary textual key still matches as text.
+ *
+ * This is the same rule `toSQLiteBindValue` applies in the SQLite driver (#42), by
+ * design: the two providers hand out the same shape, so they must accept the same
+ * shape back.
+ */
+
+/** SQLite's own INTEGER: signed 64-bit, and nothing wider can be stored in a row. */
+const MAX_INT64_BIGINT = BigInt("9223372036854775807");
+const MIN_INT64_BIGINT = BigInt("-9223372036854775808");
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
+
+/**
+ * The exact shape `decodeInteger` prints: an optional minus, a non-zero first digit,
+ * at most 19 digits in all (INT64's own width). Leading zeros, a leading `+`,
+ * surrounding space, a decimal point, exponent form and the empty string all fall
+ * outside it.
+ */
+const HRANA_INT64_DIGITS = /^-?[1-9][0-9]{0,18}$/;
+
+/** Whether these digits are ones `decodeInteger` could itself have handed out. */
+function isDecodedInteger(param: string): boolean {
+  if (!HRANA_INT64_DIGITS.test(param)) return false;
+  const parsed = BigInt(param);
+  // Inside the safe range the read hands out a number, so digits are the caller's text.
+  if (parsed >= MIN_SAFE_BIGINT && parsed <= MAX_SAFE_BIGINT) return false;
+  return parsed >= MIN_INT64_BIGINT && parsed <= MAX_INT64_BIGINT;
+}
+
+/**
  * One JavaScript parameter as a wire value.
  *
  * `bigint` is encoded from its own decimal form rather than through `Number`, for
  * the reason `decodeInteger` states in the other direction. A boolean becomes 1
  * or 0 because that is what SQLite stores - it has no boolean type - and a `Date`
  * becomes an ISO 8601 string because that is the only form SQLite's own date
- * functions read.
+ * functions read. A STRING carrying the digits of a past-2^53 integer goes back as
+ * the integer it was read as, for the reason above; every other string is text.
  */
 function encodeValue(param: unknown): HranaValue {
   if (param === null || param === undefined) return { type: "null" };
@@ -216,6 +293,9 @@ function encodeValue(param: unknown): HranaValue {
   }
   if (param instanceof Uint8Array) return { type: "blob", base64: Buffer.from(param).toString("base64") };
   if (param instanceof Date) return { type: "text", value: param.toISOString() };
+  // Only a real string, never `String(param)` of some other object: the read side
+  // hands out strings and nothing else, so nothing else can be a value it emitted.
+  if (typeof param === "string" && isDecodedInteger(param)) return { type: "integer", value: param };
   return { type: "text", value: String(param) };
 }
 
