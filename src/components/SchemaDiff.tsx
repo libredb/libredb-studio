@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Clock,
   Database,
+  RefreshCw,
   TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
+import { newLocalId } from "@/lib/ids";
 import { logger } from "@/lib/logger";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
@@ -103,6 +105,14 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    * left is not a failure of the one they are looking at, and a banner about the other
    * database over a working panel is its own small lie. Derived rather than cleared by an
    * effect, so there is no render where the wrong one is on screen.
+   *
+   * THREE things clear it and no read is among them: a new attempt (`takeSnapshot` clears it
+   * before it begins, so the report always describes the latest press of Save), a snapshot
+   * that succeeds, and the Dismiss on the banner. A read of the connection that works used to
+   * clear it as well, which is how the message the whole fix existed for lasted one tick -
+   * the read that overtakes a snapshot IS such a read. What a read may say is whether Current
+   * Schema is fresh; that is `liveRead.error`, a different fact on its own line, and the two
+   * never write each other.
    */
   const [snapshotFailure, setSnapshotFailure] = useState<{ connectionId: string; reason: string } | null>(null);
 
@@ -122,6 +132,61 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    * changed - the snapshot silently not saved, with nothing on screen.
    */
   const reads = useReadGeneration();
+
+  /**
+   * The same rule for the OTHER connection's reads, on a counter of its own.
+   *
+   * `fetchRemoteSchema` was outside any counter, so two of them in a row raced: whichever
+   * landed LAST wrote its snapshot and made itself the target, which is the connection the
+   * user asked for FIRST, and whichever landed first cleared "Fetching..." while the other
+   * was still out. It gets its own counter rather than sharing `reads`, because the two
+   * sequence different things: a remote read is a read of a DIFFERENT database, and
+   * putting them on one counter would have the panel's own read of the connection on screen
+   * discarded because someone fetched a schema from somewhere else - Current Schema then
+   * silently falling back to the explorer's copy, which is the defect this panel exists to
+   * have stopped doing.
+   */
+  const remoteReads = useReadGeneration();
+
+  /**
+   * Nothing this panel started may write after the panel is gone.
+   *
+   * `BottomPanel` mounts one view at a time, so LEAVING the Diff tab unmounts this. The
+   * label input and Cancel are locked while a snapshot's read is in flight, to stop the save
+   * being closed out from under it - and changing tabs walked straight past that lock: the
+   * read settled afterwards and the snapshot was written for a panel that was gone, with no
+   * banner, no refreshed list and nothing on screen that it had happened. Superseding both
+   * counters on the way out makes every write those reads still intend to perform ask a
+   * question whose answer is already no.
+   *
+   * Both counters are stable for the life of the hook, so this cleanup runs on unmount and
+   * at no other time - it does not supersede reads on an ordinary re-render.
+   *
+   * The counters are not the whole answer, and `mounted` is the rest of it. A counter says
+   * whether a read is still the one that MATTERS; it cannot say whether anyone is left to
+   * be told, and those are different questions the moment a write runs WHATEVER the counter
+   * answers. Three do: a superseded snapshot reports "press Save again", and both `finally`
+   * blocks hand their button back deliberately unconditionally, because a read that loses
+   * the race still has to stop the panel reading "Reading..." for good. Every one of them is
+   * right while the panel is on screen and is a write to a dead component after it is gone.
+   * So the same cleanup that supersedes the reads also puts this down, and the three writes
+   * that do not ask the counter ask this instead - one bit, set in one place, rather than a
+   * second mechanism beside the first.
+   *
+   * Re-armed in the effect BODY, not just initialised: React's StrictMode mounts, runs this
+   * cleanup and mounts again, and a flag only ever set to false there would leave the panel
+   * unable to report anything for the rest of its life in development.
+   */
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      reads.supersede();
+      remoteReads.supersede();
+    };
+  }, [reads, remoteReads]);
 
   /**
    * The objects the database holds, and the connection they were read FROM.
@@ -168,9 +233,16 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       .then((objects) => {
         if (!isCurrent()) return;
         setLiveRead({ connection, objects, error: null });
-        // A reading of this database that worked settles the last one that did not: leaving
-        // it up meant a banner about a failure the user had already walked away from.
-        setSnapshotFailure((previous) => (previous?.connectionId === connection.id ? null : previous));
+        // The snapshot report is NOT touched here, and that is the whole of this fix. This
+        // write says one thing - Current Schema is fresh - and a snapshot that was not
+        // written stays not written however many reads land afterwards. Clearing it here put
+        // the silence straight back, because the read that OVERTAKES a snapshot is exactly a
+        // read of this connection that succeeds: in the ordinary order the overtaken one
+        // answers first and raises the banner, this one answers a tick later and wiped it.
+        // The stale banner this used to guard against is answered by the two things that
+        // really do spend the report - pressing Save again, which clears it at the start of
+        // the attempt, and the Dismiss on the banner itself - and by the connection it
+        // carries, which keeps it off a database the user is not looking at.
       })
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
@@ -202,9 +274,10 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       .then((objects) => {
         if (!isCurrent()) return;
         setLiveRead({ connection, objects, error: null });
-        // Same rule as the read when the panel opens: a reading of this database that worked
-        // settles the last one that did not.
-        setSnapshotFailure((previous) => (previous?.connectionId === connection.id ? null : previous));
+        // Same rule as the read when the panel opens, and this is the call site that did the
+        // damage: choosing a target is the commonest way a snapshot in flight gets overtaken,
+        // so this read and the snapshot it superseded are two halves of one gesture. It
+        // reports on Current Schema and on nothing else.
       })
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
@@ -213,6 +286,79 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         if (isCurrent()) setLiveRead({ connection, objects: null, error: reason });
       });
   }, [targetId, sourceId, connection, beginRead]);
+
+  /** True while the Refresh button's own read is in flight. State, because the button reads it. */
+  const [refreshing, setRefreshing] = useState(false);
+  /**
+   * The same fact as a ref, because the GUARD cannot read the state - exactly as
+   * `snapshotInFlight` cannot read `snapshotting`.
+   *
+   * Two clicks land in the same tick, before React has re-rendered, so both see the
+   * `refreshing` the callback closed over - `false` - and the `disabled` that would have
+   * stopped the second is not on the button yet. The counter keeps the older read from
+   * WRITING, so the data stays right; what breaks is the screen, and it is the thing
+   * `fetchRemoteSchema` was fixed for: the first read to settle runs the `finally` and hands
+   * the button back to "Refresh" while the read the user is waiting for is still out.
+   */
+  const refreshInFlight = useRef(false);
+
+  /**
+   * Read the database again on demand.
+   *
+   * The effect above reads when a target is CHOSEN, and "chosen" is a value CHANGING: the
+   * Select reports a selection only when it lands on something else, so picking the target
+   * that is already picked re-renders nothing and re-reads nothing. Every other way of
+   * asking is worse - there is no target at all to re-pick before one is chosen, and when
+   * the target is a snapshot the only way to make the value change is to select something
+   * else and come back, which reads the database twice to answer one question. So the panel
+   * shipped with exactly one way to see a change: leave the Diff tab and return, because
+   * `BottomPanel` mounts one view at a time and returning is a remount. That is the step
+   * this whole piece of work exists to remove, and it was still the only one.
+   *
+   * A button, therefore, rather than a cleverer rule about the Select. It works from any
+   * state the panel can be in, it says what it does, and it is the one affordance a person
+   * does not have to be told about. It goes through the same counter as every other read of
+   * this connection, so a refresh and a snapshot in flight cannot both decide what Current
+   * Schema means - the newer one wins and the older says so, exactly as choosing a target
+   * already does.
+   *
+   * Pressed TWICE in one tick it reads once: `disabled` is a re-render behind the second
+   * click, so the ref is what actually makes a second read impossible rather than unlikely.
+   */
+  const refreshCurrentSchema = useCallback(() => {
+    if (!connection || refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    const { read, isCurrent } = beginRead(connection);
+    setRefreshing(true);
+    read
+      .then((objects) => {
+        if (isCurrent()) setLiveRead({ connection, objects, error: null });
+      })
+      .catch((err) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        // Same fallback as the other two reads: the last copy rather than an empty side,
+        // which would report every object as removed, and a banner saying why.
+        if (isCurrent()) setLiveRead({ connection, objects: null, error: reason });
+        logger.warn("Failed to re-read the current schema for a diff", {
+          route: "SchemaDiff",
+          error: reason,
+        });
+      })
+      .finally(() => {
+        // Unconditional: a refresh that is superseded still has to give the button back,
+        // and the button is disabled while it is true. Asking `isCurrent()` here instead
+        // would leave it disabled for good, because a snapshot or a target being chosen
+        // supersedes this read on the SAME counter - and the guard above means the read
+        // running this `finally` is the only refresh there is.
+        //
+        // Unconditional on the COUNTER, that is. There is no button to give back once the
+        // panel has left the screen, so the state write asks `mounted` - the one question
+        // the counter cannot answer. The ref beside it stays unguarded on purpose: it dies
+        // with the component, and a remount builds a fresh one.
+        refreshInFlight.current = false;
+        if (mounted.current) setRefreshing(false);
+      });
+  }, [connection, beginRead]);
 
   /** What "Current Schema" means on both sides of the diff, and in a new snapshot. */
   const currentSchema = liveSchema ?? schema;
@@ -251,19 +397,38 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       const objects = await read;
       if (!isCurrent()) {
         // Something asked for a newer read while this one was in flight - choosing a target
-        // does, on this same connection. Returning quietly here saved nothing and said
-        // nothing, so the button came back to "Save" and the user believed it had. The
-        // banner stays until the next attempt: a later read landing is not a snapshot, and
-        // clearing it on one put the silence straight back.
-        setSnapshotFailure({
-          connectionId: connection.id,
-          reason: "the schema was read again before this finished. Press Save again",
-        });
+        // does, and so does the embedded host handing over a fresh connection object with the
+        // same id. Returning quietly here saved nothing and said nothing, so the button came
+        // back to "Save" and the user believed it had. The banner stays until the user acts:
+        // a later read landing is not a snapshot, and clearing it on one put the silence
+        // straight back. Pressing Save again is the retry, Dismiss is the way out.
+        //
+        // Unless the panel is what superseded it. Leaving the Diff tab supersedes both
+        // counters on the way out, so an unmount arrives here looking exactly like a target
+        // being chosen - and "Press Save again" is addressed to somebody standing in front
+        // of a panel that no longer exists. There is no banner to raise and no Save to press;
+        // the write is a write to a dead component, so it is not made.
+        if (mounted.current) {
+          setSnapshotFailure({
+            connectionId: connection.id,
+            reason: "the schema was read again before this finished. Press Save again",
+          });
+        }
         return;
       }
       setLiveRead({ connection, objects, error: null });
       const snapshot: SchemaSnapshot = {
-        id: Date.now().toString(),
+        // Random, not the clock. `Date.now()` is the id two snapshots taken in the same
+        // millisecond SHARE, and every use of a snapshot id keys on it being one snapshot:
+        // React lists the two Selects by it and complains about duplicate keys, Delete on
+        // either one removes BOTH because `deleteSchemaSnapshot` filters by id, and the
+        // store keeps only the last 50 - so when the twin that is still selected falls off
+        // that end, `?.schema || []` hands the diff an empty side and the panel reports the
+        // WHOLE database as removed. Same millisecond is not exotic here: Save twice, or a
+        // remote fetch beside a snapshot, and the clock has not moved. `newLocalId` is the
+        // generator this repository already uses for the things a browser names for itself,
+        // and it works on the plain-HTTP channels where `crypto.randomUUID` is undefined.
+        id: newLocalId(),
         connectionId: connection.id,
         connectionName: connection.name,
         databaseType: connection.type,
@@ -286,14 +451,23 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       setShowLabelInput(false);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      setSnapshotFailure({ connectionId: connection.id, reason });
+      // A read can fail AFTER the panel has gone - the tab is changed, the request then
+      // times out - and the banner it would raise has no screen to be raised on. The log
+      // below is made either way: a log is a record of what the database said, which is the
+      // rule `fetchRemoteSchema` already states, and it is the only trace left of a read
+      // that failed for a panel nobody was watching.
+      if (mounted.current) setSnapshotFailure({ connectionId: connection.id, reason });
       logger.warn("Nothing was saved for this snapshot", { route: "SchemaDiff", error: reason });
     } finally {
       // In `finally`, not at the end of each branch: a throw between them would otherwise
       // leave the button reading "Reading..." for the life of the panel, with nothing on
       // screen saying why, and `snapshotInFlight` stuck true so no later press does anything.
+      //
+      // Which is a reason to run it whatever the COUNTER says, not whatever is left of the
+      // panel: the button it hands back is gone once the panel is, so the state write asks
+      // `mounted` first. The ref is left alone for the reason the refresh one is.
       snapshotInFlight.current = false;
-      setSnapshotting(false);
+      if (mounted.current) setSnapshotting(false);
     }
   }, [connection, snapshotLabel, beginRead]);
 
@@ -308,20 +482,55 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     [sourceId, targetId],
   );
 
+  /**
+   * The snapshot a side names that the store cannot produce, if there is one.
+   *
+   * `?.schema || []` used to stand in the memo below, and that empty array is a second
+   * defect wearing the id's clothes: "this snapshot is gone" and "this schema was empty"
+   * are different statements, and the fallback quietly turned the first into the second.
+   * The panel then answered with every table and every column listed as REMOVED - a
+   * catastrophe that never happened, on the one screen a user consults to find out whether
+   * one did. An id that cannot collide stops two snapshots sharing a row; it does not stop
+   * a lookup from failing, so it cannot be the whole of this.
+   *
+   * A side goes missing for reasons that have nothing to do with a colliding id, which is
+   * why this is not the id fix repeated: the store keeps the last 50 snapshots, so a
+   * selected one falls off that end once 50 more are taken; localStorage is shared between
+   * tabs, so another tab can delete the one this panel is pointing at; and clearing site
+   * data empties the store under a panel that is still open. `deleteSnapshot` puts both
+   * Selects back when it is the one doing the deleting, and that was the only route ever
+   * covered - it cannot see any of the three above.
+   *
+   * "current" is never looked up: it is not a stored record, and the live side has its own
+   * fallback to the explorer's copy and its own banner when a read fails.
+   */
+  const missingSnapshotId = useMemo(() => {
+    if (!targetId) return null;
+    const absent = (id: string) => id !== "current" && !snapshots.some((s) => s.id === id);
+    if (absent(sourceId)) return sourceId;
+    if (absent(targetId)) return targetId;
+    return null;
+  }, [sourceId, targetId, snapshots]);
+
   // Compute diff
   const diff = useMemo<SchemaDiffType | null>(() => {
     if (!targetId) return null;
-
-    const sourceSchema =
-      sourceId === "current" ? currentSchema : snapshots.find((s) => s.id === sourceId)?.schema || [];
-
-    const targetSchema =
-      targetId === "current" ? currentSchema : snapshots.find((s) => s.id === targetId)?.schema || [];
-
     if (sourceId === targetId) return null;
+    // A side that does not exist ends the comparison. The diff engine is not asked a
+    // question whose only possible answer is a fiction; the panel says what is actually
+    // wrong instead, rendered from `missingSnapshotId`.
+    if (missingSnapshotId) return null;
+
+    const side = (id: string) => (id === "current" ? currentSchema : snapshots.find((s) => s.id === id)?.schema);
+    const sourceSchema = side(sourceId);
+    const targetSchema = side(targetId);
+    // The same fact as the guard above, said again in the one place that would otherwise
+    // need a `[]` to satisfy the types. Not a second mechanism: a resolution that fails
+    // ends the comparison here too, rather than standing an empty array in for a schema.
+    if (!sourceSchema || !targetSchema) return null;
 
     return diffSchemas(sourceSchema, targetSchema);
-  }, [sourceId, targetId, currentSchema, snapshots]);
+  }, [sourceId, targetId, currentSchema, snapshots, missingSnapshotId]);
 
   // Generate migration SQL
   const migrationSQL = useMemo(() => {
@@ -340,13 +549,25 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       const conn = allConnections.find((c) => c.id === connId);
       if (!conn) return;
 
+      // Sequenced like every other read in this panel, and it was the one that was not.
+      // Pick one connection, change your mind, pick another: two reads are out, and the
+      // one that answers LAST wrote its snapshot and made itself the target - so the
+      // target ended up being the database asked for first, chosen by network timing. The
+      // one that answered first cleared "Fetching..." while the other was still running,
+      // so the panel also said it had finished when it had not.
+      const isCurrent = remoteReads.begin();
       setFetchingRemote(true);
       try {
         const objects = await readLiveSchema(conn);
+        // A superseded fetch writes NOTHING: not the snapshot, which would litter the list
+        // with a database the user turned away from, and above all not the target.
+        if (!isCurrent()) return;
 
         // Auto-save as snapshot
         const snapshot: SchemaSnapshot = {
-          id: `remote-${Date.now()}`,
+          // Random for the reason the snapshot above is: `remote-${Date.now()}` collides
+          // with a second fetch in the same millisecond exactly as the clock id did.
+          id: `remote-${newLocalId()}`,
           connectionId: conn.id,
           connectionName: conn.name,
           databaseType: conn.type,
@@ -358,15 +579,56 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         setSnapshots(storage.getSchemaSnapshots());
         setTargetId(snapshot.id);
       } catch (err) {
+        // Logged whether or not it is still the current read: a log is a record of what the
+        // database said, not a claim on the screen.
         logger.warn("Failed to fetch the remote schema for a diff", {
           route: "SchemaDiff",
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
-        setFetchingRemote(false);
+        // Only the current read may say the fetching is over. A stale one clearing this is
+        // the spinner disappearing while a fetch the user is waiting for is still out.
+        if (isCurrent()) setFetchingRemote(false);
       }
     },
-    [allConnections],
+    [allConnections, remoteReads],
+  );
+
+  /**
+   * The user choosing a target that is already stored - which SUPERSEDES the remote side.
+   *
+   * The counter above sequences remote reads against each other and was never the whole
+   * race, because a remote read is not the only thing that sets the target and the other
+   * thing is instant: this writes it in the same tick as the click. So pick a connection,
+   * change your mind, pick a snapshot from the list, and the read you turned away from
+   * landed afterwards and made ITSELF the target - the panel showing a comparison nobody
+   * asked for, and the choice the user actually made gone from under them (#45).
+   *
+   * `supersede()` rather than a third mechanism, and rather than a flag the fetch consults:
+   * it is the counter that is already there, saying the one thing that has to be true - a
+   * read that was running when the user chose something else is no longer the read that
+   * matters, so every write it still intends to perform asks a question whose answer is now
+   * no. That covers the snapshot as well as the target, because `fetchRemoteSchema` asks
+   * once, before either.
+   *
+   * The busy indicator is put down HERE and nowhere else, and it has to be: superseding is
+   * what stops the abandoned read running `setFetchingRemote(false)` in its `finally`, so
+   * leaving it would hang "Fetching..." on screen for the life of the panel with nothing
+   * outstanding behind it. It is also the honest reading - nothing the user is waiting for
+   * is out any more. A LATER fetch raises it again on its own `begin()`, and only that
+   * newest read may clear it, which is the rule the counter held before this and still does.
+   *
+   * Both ways of choosing a stored target go through here - the Target select and the
+   * timeline's Compare, which is on screen precisely while a remote fetch has not landed -
+   * so the defect is closed at the choice rather than at one of its two buttons.
+   */
+  const chooseTarget = useCallback(
+    (id: string) => {
+      remoteReads.supersede();
+      setFetchingRemote(false);
+      setTargetId(id);
+    },
+    [remoteReads],
   );
 
   const getActionBadge = (action: string) => {
@@ -446,7 +708,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               if (v.startsWith("conn:")) {
                 fetchRemoteSchema(v.replace("conn:", ""));
               } else {
-                setTargetId(v);
+                chooseTarget(v);
               }
             }}
           >
@@ -491,6 +753,20 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         </div>
 
         <div className="flex-1" />
+
+        {/* Read the database again on demand. The only way to see a change used to be
+            leaving the tab and coming back, because that remounts the panel - a step nobody
+            would guess and the one this work exists to remove. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
+          onClick={refreshCurrentSchema}
+          disabled={!connection || refreshing}
+        >
+          <RefreshCw strokeWidth={1.5} className={cn("w-3 h-3", refreshing && "animate-spin")} />{" "}
+          {refreshing ? "Refreshing..." : "Refresh"}
+        </Button>
 
         {/* Snapshot controls */}
         {showLabelInput ? (
@@ -566,6 +842,21 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-hairline bg-warning-tint/10 text-warning">
           <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
           <span className="text-xs">{`No snapshot was saved: ${snapshotError}`}</span>
+          {/* The way out, and it is a button rather than a rule about which reads clear the
+              report - a rule is what wiped the message in the first place. Nothing else here
+              is an exit a user could rely on: pressing Save again is a retry that can fail
+              again, leaving the connection only hides the report until they come back, and
+              "it goes away when you reopen the panel" is something they would have to guess.
+              This clears the report and nothing else; the panel's own warning above is
+              derived from the last read and has its own way out, the next read that works. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 ml-auto text-xs text-warning hover:text-fg-bright"
+            onClick={() => setSnapshotFailure(null)}
+          >
+            {"Dismiss"}
+          </Button>
         </div>
       )}
 
@@ -584,12 +875,25 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   snapshots={snapshots}
                   onCompare={(sourceId, targetId) => {
                     setSourceId(sourceId);
-                    setTargetId(targetId);
+                    chooseTarget(targetId);
                   }}
                   onDelete={deleteSnapshot}
                 />
               </div>
             )}
+          </div>
+        ) : missingSnapshotId ? (
+          /* The snapshot a side names is not in the store any more. What stood here was a
+             full diff computed against an empty array - the whole database reported as
+             removed - which is the loudest thing this panel can say and was not true. It
+             says what is actually the matter instead, and offers the only move there is:
+             pick something else. */
+          <div className="flex-1 flex flex-col items-center justify-center text-fg-subtle gap-2 px-6 text-center">
+            <TriangleAlert strokeWidth={1.5} className="w-5 h-5 text-warning" />
+            <span className="text-xs">{"This snapshot is no longer stored, so there is nothing to compare"}</span>
+            <span className="text-xs text-fg-faint">
+              {"Only the last 50 snapshots are kept, and another tab may have deleted it. Choose a different one."}
+            </span>
           </div>
         ) : showMigration && migrationSQL ? (
           <div className="flex-1 overflow-auto p-4">
