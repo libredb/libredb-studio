@@ -241,7 +241,8 @@ covering `TINYINT(1)`, `INT`, `BIGINT` past 2^53, `BIGINT UNSIGNED`, `DECIMAL(20
 - every value identical by `typeof` and by `JSON.stringify` — including the `Buffer` for `BLOB` and
   both `BIT` widths ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)), the `Date` for the
   three temporal types, the string for `DECIMAL` and `TIME`, the parsed object for `JSON`, and the
-  same `9007199254740992` for a `BIGINT` written as `9007199254740993`;
+  same `"9007199254740993"` for a `BIGINT` written as `9007199254740993` — a STRING on both
+  protocols, because the pool asks mysql2 not to round it ([§3.7](#37-a-bigint-past-253-arrives-as-a-string));
 - every `FieldPacket` identical in `columnType`, `flags`, `characterSet`, `columnLength` and
   `decimals`, so `columnTypes` ([§5.4](#54-declared-column-types)) names the same types either way;
 - a statement with no result set answers the same `ResultSetHeader` object, which is what the envelope
@@ -288,6 +289,62 @@ auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-
 (`getAllTablesForMaintenance()`, capped at **50** tables, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)),
 each name quoted via `escapeIdentifier()`. With a target, the single quoted table is used.
 
+### 3.7 A `BIGINT` past 2^53 arrives as a string
+
+The pool asks mysql2 for **`supportBigNumbers: true`** (`buildPoolConfig()`,
+[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Without it the driver hands every integer back
+as a JavaScript `number`, and a `number` cannot hold a 64-bit id: **two rows whose ids differ only in
+the last digit reach the browser as the same number**. The grid's inline editor then asks its key
+guard about the number it was shown, is told one row matches, `UPDATE`s the NEIGHBOURING row and
+reports success.
+
+Measured 2026-09-18 against a live MySQL 8.4.11 through `mysql2` 3.24.4 — the same `SELECT` over one
+server with the option off and on, printed with `typeof` beside each value:
+
+| Column / expression | Stored | Option off | Option on |
+|---|---|---|---|
+| `BIGINT` | `9007199254740992` | `9007199254740992` (number) | `"9007199254740992"` |
+| `BIGINT` | `9007199254740993` | `9007199254740992` (number) — **the row beside it** | `"9007199254740993"` |
+| `BIGINT UNSIGNED` | `18446744073709551615` | `18446744073709552000` (number) | `"18446744073709551615"` |
+| `BIGINT` | `42` | `42` (number) | `42` (number) |
+| `BIGINT AUTO_INCREMENT` | `1` | `1` (number) | `1` (number) |
+| `INT` | `7` | `7` (number) | `7` (number) |
+| `DECIMAL(20,4)` | `19.99` | `"19.9900"` | `"19.9900"` |
+| `COUNT(*)` | — | `3` (number) | `3` (number) |
+| `SUM(<INT column>)` | — | `"24"` | `"24"` |
+| `CAST(9007199254740991 AS SIGNED)` | — | `9007199254740991` (number) | `9007199254740991` (number) |
+
+**Only what a `number` cannot hold changes type.** mysql2's threshold sits ABOVE
+`Number.MAX_SAFE_INTEGER`, so 2^53 - 1 is still a number and **2^53 exactly is already a string** even
+though that value survives a `number` intact — the boundary is the widest exact integer, not the
+widest correct one. Everything narrower is untouched, which is what the lower half of the table is
+for: a small `INT`, a `BIGINT` holding a small value, an `AUTO_INCREMENT` id and `COUNT(*)` are all
+still numbers. `DECIMAL` and `SUM` over an `INT` column were strings before the change and are strings
+after it — MySQL answers `SUM` as `DECIMAL`, and mysql2 has always spelled `DECIMAL` as a string to
+keep its precision ([§5.4](#54-declared-column-types)).
+
+**One shape was not merely rounded, it was impossible.** `BIGINT UNSIGNED` at the top of its range
+read back as `18446744073709552000`, which is larger than the column's own maximum — no row could
+hold it, so it could never match one either.
+
+**`bigNumberStrings` is deliberately NOT set.** It is mysql2's other big-number flag, and it turns
+EVERY integer into a string — `SELECT 5` becomes `"5"`, `COUNT(*)` becomes `"3"` — changing types that
+were never wrong.
+
+**The option is the FIRST entry in `baseConfig`, which is what makes it cover both connection forms.**
+The connection-string branch returns `{ ...baseConfig, uri }` and takes the discrete-fields branch not
+at all ([§4.2](#42-connection-pooling)), so an option added beside `timezone` or the SSL config would
+apply to a host/port connection and silently not to a pasted URI.
+
+**Both wire protocols answer the same shape.** Re-measured in the same pass with the option on: the
+text protocol (`conn.query`) and the prepared protocol (`conn.execute`) each return
+`"9007199254740993"` and `"18446744073709551614"` for the same row, so
+[§3.4](#34-which-wire-protocol-a-statement-takes)'s equivalence holds unchanged.
+
+The declared type is unaffected — `columnTypes` still names the column `bigint`
+([§5.4](#54-declared-column-types)) — so the SQL-DDL export writes `BIGINT` for a column whose values
+now arrive as strings, rather than the `TEXT` a value-shaped guess would produce.
+
 ---
 
 ## 4. Connection
@@ -316,6 +373,7 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 
 | mysql2 option | Value | Source |
 |---------------|-------|--------|
+| `supportBigNumbers` | `true` | fixed — the first entry, so it survives the `connectionString` branch ([§3.7](#37-a-bigint-past-253-arrives-as-a-string)) |
 | `connectionLimit` | pool `max` (default 10) | `ProviderOptions.pool.max` |
 | `waitForConnections` | `true` | fixed |
 | `queueLimit` | `0` (unbounded queue) | fixed |
@@ -512,7 +570,9 @@ table - the same source the schema tree shows - **38 of 39 match exactly**; the 
 column declared a type. Its consumers are the results grid's column labels, the SQL-DDL export
 (which prefers a declared type over its own value-shaped guess) and the agent's state summary. This
 matters most for the types whose values arrive as strings: a `DECIMAL` reaches the browser as
-`"19.99"`, so before this the DDL export wrote it as `TEXT`.
+`"19.99"` and a `BIGINT` past 2^53 as `"9007199254740993"`
+([§3.7](#37-a-bigint-past-253-arrives-as-a-string)), so before this the DDL export wrote them as
+`TEXT`.
 
 ### 5.5 The EXPLAIN grammar is measured at connect
 
@@ -1619,7 +1679,9 @@ types + kill validation), the full transaction lifecycle, `queryInTransaction`, 
 overview, performance metrics, slow queries, active sessions, table/index/storage stats, every SSL
 branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), the non-SELECT envelope
 (DDL, `INSERT`, `UPDATE`, `DELETE`, and the transaction path) driven from real `ResultSetHeader`
-literals, and the wire protocol each statement takes.
+literals, the wire protocol each statement takes, and wide integers (the pool option on both
+connection forms, and two ids differing only past 2^53 staying two values through `query()` and
+through the JSON the API response is made of).
 
 It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
 surface` holds the seven conformance tests: the declared kinds and roles on each server, the

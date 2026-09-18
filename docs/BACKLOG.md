@@ -1437,7 +1437,8 @@ it was not mixed into a correctness PR.
 
 ### X9. What `columnTypes` still cannot name, measured
 
-The four string-returning drivers fill `QueryResult.columnTypes` since 2026-08-23. Four bounds were
+The four string-returning drivers fill `QueryResult.columnTypes` since 2026-08-23, and
+SQLite joined them on 2026-09-18 by reading its own declarations through the driver bridge. Four bounds were
 measured while doing it, and each is a small residue rather than a defect:
 
 - **A user-defined type has no name.** Postgres's built-in OIDs are a generated static table (they are
