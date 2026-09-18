@@ -3132,6 +3132,201 @@ describe("SchemaDiff", () => {
         }
       });
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // A fetch that FAILS (#46)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Nested here rather than in a block of its own, because it is the same path and these
+     * are the same reads: the queue, `twoFetchesOut`, `targetValue`, `savedFrom` and `busy`
+     * above are exactly what a failure has to be measured against.
+     */
+    describe("a failure the user can see", () => {
+      /** Mount, answer the panel's own read, then ask ONE remote connection for its schema. */
+      async function oneFetchOut(q: ReturnType<typeof queuedReads>) {
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = renderDiff();
+        });
+        await q.flush();
+        await q.settle(0, { ok: true, objects: ["users"] });
+        await act(async () => {
+          getTargetCallback()?.("conn:remote-1");
+        });
+        await q.flush();
+        expect(q.pending.length).toBe(2);
+        return view;
+      }
+
+      /** What "Current Schema" was worth the last time the diff was computed. */
+      function currentSideNames() {
+        const latest = (mockDiffSchemas.mock.calls as unknown[][]).at(-1)!;
+        return (latest[0] as Array<{ name: string }>).map((o) => o.name);
+      }
+
+      test("a fetch that fails says so, and says the comparison is not the one asked for", async () => {
+        // The defect. The fetch failed, the spinner went down, the target stayed where it
+        // was - and the only trace was a log line nobody standing in front of the panel can
+        // read. The user is looking at the comparison they had BEFORE and believes it is the
+        // database they just picked.
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        const q = queuedReads();
+        try {
+          const view = await oneFetchOut(q);
+          await q.settle(1, { ok: false, error: "password authentication failed" });
+
+          const text = view.container.textContent ?? "";
+          // What the database said...
+          expect(text).toContain("password authentication failed");
+          // ...which database did not answer...
+          expect(text).toContain("Remote PG");
+          // ...and what is on screen instead of it. Phrased so it stays true for as long as
+          // the banner is up: choosing a stored target afterwards changes the comparison,
+          // and a message that said "unchanged" would quietly become a lie.
+          expect(text).toMatch(/comparison on screen is not that database/i);
+
+          // Nothing was written, which is why the message has to exist at all.
+          expect(targetValue(view.container)).toBe("");
+          expect(savedFrom()).toEqual([]);
+          expect(busy(view)).toBe(false);
+          // Still logged: the log is the record of what the database said, and it stays.
+          expect(warn).toHaveBeenCalled();
+        } finally {
+          q.restore();
+          warn.mockRestore();
+        }
+      });
+
+      test("Dismiss is the way out, exactly as it is for a snapshot that was not saved", async () => {
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        const q = queuedReads();
+        try {
+          const view = await oneFetchOut(q);
+          await q.settle(1, { ok: false, error: "password authentication failed" });
+          expect(view.container.textContent).toContain("password authentication failed");
+
+          const dismiss = Array.from(view.container.querySelectorAll("button")).find(
+            (b) => b.textContent?.trim() === "Dismiss",
+          );
+          expect(dismiss).toBeTruthy();
+          await act(async () => {
+            fireEvent.click(dismiss!);
+          });
+
+          expect(view.container.textContent).not.toContain("password authentication failed");
+        } finally {
+          q.restore();
+          warn.mockRestore();
+        }
+      });
+
+      test("an older fetch failing while the newer one is still out says nothing", async () => {
+        // The message belongs to the read the user is WAITING on. A connection they turned
+        // away from failing afterwards is not their question being answered, and a banner
+        // about it would be a report on a database nobody asked about any more.
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        const q = queuedReads();
+        try {
+          const view = await twoFetchesOut(q);
+
+          await q.settle(1, { ok: false, error: "the connection you left is gone" });
+
+          expect(view.container.textContent).not.toContain("the connection you left is gone");
+          expect(busy(view)).toBe(true);
+
+          await q.settle(2, { ok: true, objects: ["prod_table"] });
+
+          expect(view.container.textContent).not.toContain("the connection you left is gone");
+          expect(savedFrom()).toEqual(["remote-2"]);
+          // Logged all the same, whichever read it was.
+          expect(warn).toHaveBeenCalled();
+        } finally {
+          q.restore();
+          warn.mockRestore();
+        }
+      });
+
+      test("an older fetch failing AFTER the newer one landed says nothing either", async () => {
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        const q = queuedReads();
+        try {
+          const view = await twoFetchesOut(q);
+
+          await q.settle(2, { ok: true, objects: ["prod_table"] });
+          const chosen = lastSavedId();
+
+          await q.settle(1, { ok: false, error: "the connection you left is gone" });
+
+          expect(view.container.textContent).not.toContain("the connection you left is gone");
+          // The comparison the user DID ask for is untouched by the other one's failure.
+          expect(targetValue(view.container)).toBe(chosen!);
+          expect(busy(view)).toBe(false);
+        } finally {
+          q.restore();
+          warn.mockRestore();
+        }
+      });
+
+      test("a fetch that works clears the message the failed one left", async () => {
+        // Spent by the next attempt, like the snapshot report: a fetch that arrives is the
+        // answer to the one that did not.
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        const q = queuedReads();
+        try {
+          const view = await oneFetchOut(q);
+          await q.settle(1, { ok: false, error: "password authentication failed" });
+          expect(view.container.textContent).toContain("password authentication failed");
+
+          await act(async () => {
+            getTargetCallback()?.("conn:remote-2");
+          });
+          await q.flush();
+          await q.settle(2, { ok: true, objects: ["prod_table"] });
+
+          expect(view.container.textContent).not.toContain("password authentication failed");
+          expect(targetValue(view.container)).toBe(lastSavedId()!);
+        } finally {
+          q.restore();
+          warn.mockRestore();
+        }
+      });
+
+      test("the panel's own read, overtaken while it was still out, does not become Current Schema", async () => {
+        // Not the remote path: the read the panel makes on the way IN. It is guarded like
+        // every other read here, and nothing measured that guard - it was removed while this
+        // defect was being reported and the whole suite stayed green. A read from the moment
+        // the panel opened winning over a newer one puts a stale "Current Schema" on screen,
+        // which is the defect this panel exists to have stopped.
+        const q = queuedReads();
+        try {
+          let view!: ReturnType<typeof render>;
+          await act(async () => {
+            view = renderDiff();
+          });
+          await q.flush();
+          expect(q.pending.length).toBe(1);
+
+          // A target is chosen while that read is still out: a newer read of the SAME
+          // connection, on the same counter, which supersedes it.
+          await act(async () => {
+            changeTarget("snap-1");
+          });
+          await q.flush();
+          expect(q.pending.length).toBe(2);
+
+          await q.settle(1, { ok: true, objects: ["what_the_database_holds_now"] });
+          // The read from the panel opening answers last, with what the database held before.
+          await q.settle(0, { ok: true, objects: ["stale_from_the_panel_opening"] });
+
+          expect(currentSideNames()).toEqual(["what_the_database_holds_now"]);
+          expect(currentSideNames()).not.toContain("stale_from_the_panel_opening");
+          expect(view.container.textContent).toContain("Schema Diff");
+        } finally {
+          q.restore();
+        }
+      });
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

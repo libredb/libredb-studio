@@ -542,6 +542,25 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   // Get all connections for cross-connection comparison
   const { connections: allConnections } = useAllConnections();
   const [fetchingRemote, setFetchingRemote] = useState(false);
+  /**
+   * Why the last remote fetch brought nothing back, and which database was asked.
+   *
+   * The failure reached the log and nowhere else: the spinner went down, the target stayed
+   * where it was, and the panel went on showing the comparison the user had just asked to
+   * replace - so the screen says "this is that database" when it is not, which is the
+   * silent-stale-side defect this panel exists to have stopped, entered by another door.
+   *
+   * Its own state rather than `snapshotFailure`, though the banner below is deliberately
+   * the same shape and the same Dismiss: that report is about the connection ON SCREEN and
+   * is keyed to it, this one is about ANOTHER database, and pressing Save must not spend a
+   * report about a fetch it has nothing to do with.
+   *
+   * Spent where the snapshot report is spent and nowhere else - at the start of the next
+   * attempt, which is also what a fetch that WORKS clears it with, and the Dismiss on the
+   * banner. No read clears it: a later read landing is not the fetch that failed, and
+   * clearing on one is how the snapshot message used to last a single tick.
+   */
+  const [remoteFailure, setRemoteFailure] = useState<{ connectionName: string; reason: string } | null>(null);
 
   // Fetch schema from a remote connection
   const fetchRemoteSchema = useCallback(
@@ -557,6 +576,10 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       // so the panel also said it had finished when it had not.
       const isCurrent = remoteReads.begin();
       setFetchingRemote(true);
+      // Cleared at the START of the attempt, exactly as `takeSnapshot` clears its own
+      // report: the message always describes the latest thing the user asked for, so a
+      // fetch that works leaves nothing of the one that failed behind it.
+      setRemoteFailure(null);
       try {
         const objects = await readLiveSchema(conn);
         // A superseded fetch writes NOTHING: not the snapshot, which would litter the list
@@ -579,12 +602,19 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         setSnapshots(storage.getSchemaSnapshots());
         setTargetId(snapshot.id);
       } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
         // Logged whether or not it is still the current read: a log is a record of what the
         // database said, not a claim on the screen.
         logger.warn("Failed to fetch the remote schema for a diff", {
           route: "SchemaDiff",
-          error: err instanceof Error ? err.message : String(err),
+          error: reason,
         });
+        // On screen only for the read the user is actually waiting on, and through the same
+        // counter that decides who may write the target - the one question a failure has to
+        // ask before it speaks. A connection turned away from, failing afterwards, is not
+        // the question being answered; and the unmount supersedes this counter too, so
+        // there is no banner raised on a panel that has left the screen.
+        if (isCurrent()) setRemoteFailure({ connectionName: conn.name, reason });
       } finally {
         // Only the current read may say the fetching is over. A stale one clearing this is
         // the spinner disappearing while a fetch the user is waiting for is still out.
@@ -854,6 +884,30 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             size="sm"
             className="h-5 px-1.5 ml-auto text-xs text-warning hover:text-fg-bright"
             onClick={() => setSnapshotFailure(null)}
+          >
+            {"Dismiss"}
+          </Button>
+        </div>
+      )}
+
+      {/* A third line, beside the two above, because it is a third fact: not what Current
+          Schema means, and not a snapshot that went unwritten, but a database the user asked
+          to compare AGAINST that never arrived - so the comparison on screen is still the
+          old one. It said nothing at all before this, which is the worst of the three: the
+          spinner stopped and the panel looked finished. Same shape and same Dismiss as the
+          snapshot report rather than a second style of error surface, because it is the same
+          kind of statement - something you asked for was not done, spent only by you. */}
+      {remoteFailure !== null && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-hairline bg-warning-tint/10 text-warning">
+          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+          <span className="text-xs">
+            {`Nothing was fetched from ${remoteFailure.connectionName}, so the comparison on screen is not that database: ${remoteFailure.reason}`}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 px-1.5 ml-auto text-xs text-warning hover:text-fg-bright"
+            onClick={() => setRemoteFailure(null)}
           >
             {"Dismiss"}
           </Button>
