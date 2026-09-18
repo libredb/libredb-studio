@@ -13,7 +13,7 @@ import {
   resolveVaultCredentials,
   resetPlaintextWarnings,
 } from "@/lib/seed/credential-resolver";
-import { resetVaultCache } from "@/lib/seed/vault-client";
+import { resetVaultCache, VaultError } from "@/lib/seed/vault-client";
 import type { SeedConnection } from "@/lib/seed/types";
 
 const REFERENCE = "${vault:secret/data/prod/postgres#password}";
@@ -142,18 +142,18 @@ describe("credential-resolver vault scheme", () => {
     process.env.VAULT_ADDR = "http://127.0.0.1:8200";
     process.env.VAULT_TOKEN = "root";
 
-    await expect(
-      resolveVaultCredentials({ ...baseConn, password: "${vault:secret/data/prod/postgres}" }),
-    ).rejects.toThrow(/Invalid Vault reference.*#<key>/);
+    const failure = resolveVaultCredentials({ ...baseConn, password: "${vault:secret/data/prod/postgres}" });
+    await expect(failure).rejects.toBeInstanceOf(VaultError);
+    await expect(failure).rejects.toThrow(/Invalid Vault reference.*#<key>/);
   });
 
   it("raises on a ${vault:...} reference with an empty key", async () => {
     process.env.VAULT_ADDR = "http://127.0.0.1:8200";
     process.env.VAULT_TOKEN = "root";
 
-    await expect(
-      resolveVaultCredentials({ ...baseConn, password: "${vault:secret/data/prod/postgres#}" }),
-    ).rejects.toThrow(/Invalid Vault reference/);
+    const failure = resolveVaultCredentials({ ...baseConn, password: "${vault:secret/data/prod/postgres#}" });
+    await expect(failure).rejects.toBeInstanceOf(VaultError);
+    await expect(failure).rejects.toThrow(/Invalid Vault reference/);
   });
 
   it("fails with VAULT_ADDR named when the scheme is used but not configured", async () => {

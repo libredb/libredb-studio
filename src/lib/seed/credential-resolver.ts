@@ -1,6 +1,6 @@
 import { logger } from "@/lib/logger";
 import type { SeedConnection } from "./types";
-import { readVaultSecret, type VaultDeps } from "./vault-client";
+import { readVaultSecret, VaultError, type VaultDeps } from "./vault-client";
 
 const ENV_VAR_PATTERN = /^\$\{([A-Z_][A-Z0-9_]*)\}$/;
 const VAULT_PREFIX = "${vault:";
@@ -90,7 +90,10 @@ export function resolveAllCredentials(connections: SeedConnection[]): SeedConnec
 function parseVaultReference(value: string, connId: string, fieldName: ResolvableField): { path: string; key: string } {
   const match = value.match(VAULT_REF_PATTERN);
   if (!match) {
-    throw new Error(
+    // A VaultError, not a bare Error, so the API layer classifies a typo in the
+    // reference the same way it classifies every other failed reference (see
+    // `createErrorResponse`).
+    throw new VaultError(
       `Invalid Vault reference "${value}" (seed connection "${connId}" field "${fieldName}"): expected \${vault:<mount>/data/<path>#<key>}`,
     );
   }

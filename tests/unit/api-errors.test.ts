@@ -23,6 +23,7 @@ import {
   LLMSafetyError,
   LLMStreamError,
 } from "@/lib/llm/types";
+import { VaultError } from "@/lib/seed/vault-client";
 
 describe("createErrorResponse", () => {
   // Suppress logger output during tests
@@ -218,6 +219,34 @@ describe("createErrorResponse", () => {
     const body = await res.json();
     expect(body.code).toBe("LLM_ERROR");
     expect(body.statusCode).toBe(500);
+  });
+
+  // ─── Seed Connections: Vault ──────────────────────────────────────────────
+  // A `${vault:...}` reference fails on operator configuration - an unset
+  // VAULT_ADDR, a path or key that is not there, a policy that does not grant it.
+  // None of those is the product failing, so a reference is the CONFIG_ERROR class
+  // rather than the generic 500, and the message names it so an operator reading
+  // the response can tell what to fix.
+  test("VaultError returns 400 with code CONFIG_ERROR and names the Vault reference", async () => {
+    const err = new VaultError(
+      'Vault address is not configured: set VAULT_ADDR to resolve "${vault:secret/data/prod/postgres#password}"',
+    );
+    const res = createErrorResponse(err);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("CONFIG_ERROR");
+    expect(body.statusCode).toBe(400);
+    expect(body.error).toContain("Vault");
+    expect(body.error).toContain("secret/data/prod/postgres");
+  });
+
+  test("an unreachable Vault is the same configuration class, not an internal error", async () => {
+    const res = createErrorResponse(new VaultError('Vault is unreachable for "secret/data/prod/postgres"'));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("CONFIG_ERROR");
+    expect(body.error).toContain("Vault");
   });
 
   // ─── Generic Errors ───────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ import {
 } from "@/lib/llm/types";
 import { RateLimitError } from "@/lib/api/rate-limit";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { VaultError } from "@/lib/seed/vault-client";
 
 // ============================================================================
 // Types
@@ -60,6 +61,21 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
     return NextResponse.json(
       { error: error.message, ...(code ? { code } : {}), statusCode: error.statusCode },
       { status: error.statusCode },
+    );
+  }
+
+  // --- Seed Connection: Vault reference ---
+  // Every way a `${vault:...}` reference fails is an operator configuration fault: an
+  // unset VAULT_ADDR, a v1-shaped path, a key that is not in the secret, a policy that
+  // does not grant the path, or a Vault this deployment cannot reach. None of those is
+  // the product failing, so it takes the same class as DatabaseConfigError rather than
+  // the generic 500, and the message - which names the variable or the path - is what
+  // an operator reads to fix it.
+  if (error instanceof VaultError) {
+    logger.warn("Vault reference error", { route });
+    return NextResponse.json(
+      { error: error.message, code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
+      { status: 400 },
     );
   }
 
