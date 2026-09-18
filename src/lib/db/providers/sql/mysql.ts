@@ -1972,6 +1972,21 @@ export class MySQLProvider extends SQLBaseProvider {
 
   private buildPoolConfig(): mysql.PoolOptions {
     const baseConfig: mysql.PoolOptions = {
+      // Without this, mysql2 hands a BIGINT past 2^53 back as a rounded Number. Measured on
+      // MySQL 8.4.11 through the inline-edit hook: a table holding 9007199254740992 and
+      // 9007199254740993 sent BOTH rows to the browser as ...992, the guard asked about
+      // ...992 and was told one row matched, and the UPDATE then wrote the NEIGHBOUR's row
+      // and reported success. With it, the driver returns a string for the values a Number
+      // cannot hold and the edit writes the row the user opened.
+      //
+      // First entry so it covers both paths below - the structured config and the pasted
+      // connection string, which share nothing else.
+      //
+      // Nothing narrower changes type - measured on the same server with this on, `SELECT 5`
+      // is still the number 5 and `COUNT(*)` is still a number; only the values a Number
+      // cannot hold arrive as strings. `bigNumberStrings` is deliberately NOT set: it would
+      // turn both of those into strings too, changing types that were never wrong.
+      supportBigNumbers: true,
       connectionLimit: this.poolConfig.max,
       waitForConnections: true,
       queueLimit: 0,

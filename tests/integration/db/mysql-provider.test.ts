@@ -2298,6 +2298,88 @@ describe("MySQLProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Wide integers (BIGINT past 2^53)
+  // --------------------------------------------------------------------------
+
+  describe("wide integers", () => {
+    /**
+     * Measured end to end through the real hook before the fix: a table holding
+     * 9007199254740992 and 9007199254740993 sent BOTH rows to the browser as ...992. An
+     * inline edit of the row showing ...992 then asked the guard about ...992, was told
+     * one row matched, UPDATEd the NEIGHBOUR and reported success. `supportBigNumbers` is
+     * what stops the driver rounding; the pool config is the only place it is observable,
+     * because `buildPoolConfig` is private.
+     */
+    test("the structured configuration asks mysql2 not to round a BIGINT", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(lastPoolConfig.supportBigNumbers).toBe(true);
+      // Deliberately NOT set: `bigNumberStrings` would turn `SELECT 5` into `"5"` and
+      // `COUNT(*)` into a string, changing types that were never wrong.
+      expect(lastPoolConfig.bigNumberStrings).toBeUndefined();
+    });
+
+    test("a pasted connection string asks for the same thing", async () => {
+      provider = new MySQLProvider(makeMySQLConfig({ connectionString: "mysql://root:secret@localhost:3306/testdb" }));
+      await provider.connect();
+      expect(lastPoolConfig.supportBigNumbers).toBe(true);
+      expect(lastPoolConfig.bigNumberStrings).toBeUndefined();
+    });
+
+    /**
+     * The two tests above assert the OPTION; this one asserts the CONSEQUENCE, which is
+     * the part a caller can see. The rows below are what mysql2 actually hands back with
+     * `supportBigNumbers` on - measured 2026-09-18 against MySQL 8.4.11 through this very
+     * provider: a `BIGINT` past 2^53 arrives as a STRING, so two ids one apart stay two
+     * values. With the option off the same server sent BOTH rows as the number
+     * 9007199254740992, the key guard counted one match for the id the browser showed, and
+     * the UPDATE landed on the neighbour.
+     *
+     * It is here rather than left to the option assertion because the option only settles
+     * what the DRIVER does. A `Number()` anywhere on the provider's row path would round
+     * the string straight back and undo the repair with both option tests still green -
+     * this is the test that would go red for it.
+     */
+    test("two ids that differ only past 2^53 reach the caller as two values", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      mockExecuteFn = () =>
+        Promise.resolve([
+          [
+            { id: "9007199254740992", label: "row-992" },
+            { id: "9007199254740993", label: "row-993" },
+          ],
+          [{ name: "id" }, { name: "label" }],
+        ]);
+
+      const result = await provider.query("SELECT id, label FROM wide_ids ORDER BY id");
+      const ids = result.rows.map((row) => (row as Record<string, unknown>).id);
+
+      expect(ids).toEqual(["9007199254740992", "9007199254740993"]);
+      expect(new Set(ids.map(String)).size).toBe(2);
+    });
+
+    /**
+     * The same two ids across the API boundary. The browser never sees the driver's value,
+     * it sees what came through `JSON.stringify`, and that is where the rounded NUMBER did
+     * its damage: `JSON.stringify(9007199254740993)` is `9007199254740992` and the two rows
+     * arrive identical. A string crosses unchanged, which is what makes the editor's guard
+     * able to tell the rows apart at all.
+     */
+    test("both ids survive the JSON the API response is made of", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      mockExecuteFn = () =>
+        Promise.resolve([[{ id: "9007199254740992" }, { id: "9007199254740993" }], [{ name: "id" }]]);
+
+      const result = await provider.query("SELECT id FROM wide_ids ORDER BY id");
+      const overTheWire = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+
+      expect(overTheWire.map((row) => row.id)).toEqual(["9007199254740992", "9007199254740993"]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // queryInTransaction()
   // --------------------------------------------------------------------------
 
