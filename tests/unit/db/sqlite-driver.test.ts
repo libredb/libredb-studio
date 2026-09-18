@@ -8,9 +8,11 @@ import {
   normalizeSQLiteBigInt,
   resolveSQLiteDriverName,
   toSQLiteBindValue,
+  type BunSQLiteConstructor,
   type BunSQLiteOpenOptions,
   type NodeDatabaseSyncLike,
   type NodeSQLiteModule,
+  type SQLiteConstructor,
   type SQLiteDatabase,
   type SQLiteStatement,
 } from "@/lib/db/providers/sql/sqlite-driver";
@@ -579,5 +581,90 @@ describe("toSQLiteBindValue()", () => {
     for (const value of [7, -7, 1.5, true, false, null, undefined, blob, date, named, BigInt("1")]) {
       expect(toSQLiteBindValue(value)).toBe(value);
     }
+  });
+});
+
+// ============================================================================
+// The two record guards at the row seam
+// ============================================================================
+// Every row, every single-row read and every write result crosses the same private
+// normalizer inside the driver, and the seam it crosses is typed `unknown` on purpose:
+// `SQLiteStatement` declares `all(): unknown[]` and `get(): unknown`, so what arrives is
+// whatever the injected driver hands back.
+//
+// Measured 2026-09-18 against both shipped drivers (bun:sqlite on Bun 1.4.0, node:sqlite
+// on Node 24), for all(), get(), run(), a miss and a PRAGMA read: every one of them
+// answers with a row OBJECT, a null/undefined miss, or run()'s info object. A BLOB is a
+// Uint8Array CELL inside a row, never the record itself. So neither guard below is on a
+// path those two drivers take today - they are what keeps a driver that answers with a
+// bare cell (a raw/values mode, or the "future row-returning driver method" the module
+// warns about) from being handed on as a BigInt or walked index by index. They are
+// pinned through the injectable constructor, which is the seam this module already
+// exposes so its semantics can be driven without the real driver.
+
+/** A statement stand-in whose every read answers with one fixed record. */
+function statementReturning(record: unknown): SQLiteStatement {
+  return {
+    all: () => [record],
+    get: () => record,
+    run: () => ({ changes: 1 }),
+  };
+}
+
+/** The bun adapter, wired to a driver whose every read answers with `record`. */
+function driverReturning(record: unknown): SQLiteConstructor {
+  class RecordDatabase implements SQLiteDatabase {
+    exec(): void {}
+    prepare(): SQLiteStatement {
+      return statementReturning(record);
+    }
+    close(): void {}
+    readonly inTransaction = false;
+  }
+  return createBunSQLiteDriver(RecordDatabase as BunSQLiteConstructor);
+}
+
+describe("the record seam's guards", () => {
+  // Kills "hand a bare integer straight on": without this branch the record falls
+  // through to the object guard, which sends a BigInt out of the provider whole.
+  // Reached through get(), which is the entry point that USES the returned value;
+  // all() normalizes its rows in place and discards what the normalizer returns, so a
+  // bare cell can only be corrected on the single-row path.
+  test("a bare 64-bit integer is converted at the seam, not handed on as a BigInt", () => {
+    // Outside the safe range: every digit kept, as the decimal string the rest of this
+    // provider already answers with.
+    const huge = new (driverReturning(BigInt("9007199254740993")))(":memory:").prepare("SELECT id FROM t");
+    expect(huge.get()).toBe("9007199254740993");
+
+    // Inside it: the same value as a number, so a COUNT(*) or a `1` is unchanged.
+    const small = new (driverReturning(BigInt("1")))(":memory:").prepare("SELECT 1");
+    expect(small.get()).toBe(1);
+
+    // Why the conversion has to happen HERE: rows are sent to the browser with
+    // JSON.stringify, which refuses a BigInt outright. A record that skipped this
+    // branch would throw on the way out instead of reaching the grid.
+    expect(() => JSON.stringify(huge.get())).not.toThrow();
+    expect(() => JSON.stringify(small.get())).not.toThrow();
+  });
+
+  // Kills "walk it like a row": the loop the guard skips writes converted cells BACK
+  // into the record, which a typed array of 64-bit integers refuses.
+  test("a typed array is handed back untouched, not walked cell by cell", () => {
+    // The shape the driver names: a BLOB. The same object comes back, bytes intact.
+    const blob = new Uint8Array([0, 1, 254, 255]);
+    const blobStmt = new (driverReturning(blob))(":memory:").prepare("SELECT data FROM t");
+    expect(blobStmt.get()).toBe(blob);
+    expect(Array.from(blob)).toEqual([0, 1, 254, 255]);
+
+    // And the shape that proves it is the GUARD doing the work rather than the loop
+    // simply finding no BigInt cell: a typed array whose cells ARE 64-bit integers.
+    // Walking it converts cell 0 to the number 1 and writes it back, and a
+    // BigInt64Array cell cannot take a number - so an unguarded walk throws here.
+    const cells = new BigInt64Array([BigInt(1), BigInt("9007199254740993")]);
+    const cellStmt = new (driverReturning(cells))(":memory:").prepare("SELECT ids FROM t");
+    expect(cellStmt.get()).toBe(cells);
+    expect(Array.from(cells).map(String)).toEqual(["1", "9007199254740993"]);
+    // The multi-row path walks each row through the same normalizer, so it is guarded too.
+    expect(cellStmt.all()).toEqual([cells]);
   });
 });
