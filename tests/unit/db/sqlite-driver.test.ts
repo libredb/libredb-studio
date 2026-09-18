@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+// The raw driver, for the one test that measures bun:sqlite's own two fields rather
+// than the bridge over them.
+import { Database as BunDatabase } from "bun:sqlite";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   createBunSQLiteDriver,
@@ -8,13 +11,13 @@ import {
   normalizeSQLiteBigInt,
   resolveSQLiteDriverName,
   toSQLiteBindValue,
+  type BunDatabaseLike,
   type BunSQLiteConstructor,
   type BunSQLiteOpenOptions,
   type NodeDatabaseSyncLike,
   type NodeSQLiteModule,
   type SQLiteConstructor,
-  type SQLiteDatabase,
-  type SQLiteStatement,
+  type SQLiteDeclaredColumn,
 } from "@/lib/db/providers/sql/sqlite-driver";
 
 /** In-memory stand-in for node:sqlite's DatabaseSync (Bun cannot import the real one). */
@@ -36,15 +39,21 @@ class StubDatabaseSync implements NodeDatabaseSyncLike {
     this.calls.push(`exec:${sql}`);
   }
 
-  prepare(sql: string) {
+  prepare(sql: string): ReturnType<NodeDatabaseSyncLike["prepare"]> {
     this.calls.push(`prepare:${sql}`);
     if (sql === "SELECT bigints") {
-      return bigIntStatement();
+      return bigIntStatement() as unknown as ReturnType<NodeDatabaseSyncLike["prepare"]>;
     }
     return {
       all: (...params: unknown[]) => [{ sql, params }],
       get: (...params: unknown[]) => (params[0] === "miss" ? undefined : { sql, first: params[0] }),
       run: (...params: unknown[]) => ({ changes: params[0] === "bigint" ? BigInt(3) : 1 }),
+      // node:sqlite answers both halves in one call, and `null` is its word for a column
+      // SQLite declared nothing for.
+      columns: () => [
+        { name: "sql", type: "TEXT" },
+        { name: "params", type: null },
+      ],
     };
   }
 
@@ -67,11 +76,23 @@ function bigIntStatement() {
     all: () => [row()],
     get: () => row(),
     run: () => ({ changes: BigInt("2"), lastInsertRowid: BigInt("9007199254740993") }),
+    // The declared columns in BOTH drivers' spellings, so the one stand-in can stand in
+    // for either: bun publishes two parallel arrays, node one `columns()` call. `null` is
+    // each driver's word for a column SQLite declared nothing for - here `nothing`, which
+    // is why the same stand-in proves the undeclared case on both adapters.
+    columnNames: ["small", "huge", "text", "nothing"],
+    declaredTypes: ["INTEGER", "INTEGER", "TEXT", null],
+    columns: () => [
+      { name: "small", type: "INTEGER" },
+      { name: "huge", type: "INTEGER" },
+      { name: "text", type: "TEXT" },
+      { name: "nothing", type: null },
+    ],
   };
 }
 
 /** In-memory stand-in for bun:sqlite's Database. */
-class StubBunDatabase implements SQLiteDatabase {
+class StubBunDatabase implements BunDatabaseLike {
   static lastInstance: StubBunDatabase | undefined;
   readonly path: string;
   readonly options: BunSQLiteOpenOptions | undefined;
@@ -88,9 +109,9 @@ class StubBunDatabase implements SQLiteDatabase {
     this.calls.push(`exec:${sql}`);
   }
 
-  prepare(sql: string): SQLiteStatement {
+  prepare(sql: string): ReturnType<BunDatabaseLike["prepare"]> {
     this.calls.push(`prepare:${sql}`);
-    return bigIntStatement() as unknown as SQLiteStatement;
+    return bigIntStatement() as unknown as ReturnType<BunDatabaseLike["prepare"]>;
   }
 
   close(throwOnError?: boolean): void {
@@ -603,19 +624,21 @@ describe("toSQLiteBindValue()", () => {
 // exposes so its semantics can be driven without the real driver.
 
 /** A statement stand-in whose every read answers with one fixed record. */
-function statementReturning(record: unknown): SQLiteStatement {
+function statementReturning(record: unknown): ReturnType<BunDatabaseLike["prepare"]> {
   return {
     all: () => [record],
     get: () => record,
     run: () => ({ changes: 1 }),
+    columnNames: [],
+    declaredTypes: [],
   };
 }
 
 /** The bun adapter, wired to a driver whose every read answers with `record`. */
 function driverReturning(record: unknown): SQLiteConstructor {
-  class RecordDatabase implements SQLiteDatabase {
+  class RecordDatabase implements BunDatabaseLike {
     exec(): void {}
-    prepare(): SQLiteStatement {
+    prepare(): ReturnType<BunDatabaseLike["prepare"]> {
       return statementReturning(record);
     }
     close(): void {}
@@ -666,5 +689,295 @@ describe("the record seam's guards", () => {
     expect(Array.from(cells).map(String)).toEqual(["1", "9007199254740993"]);
     // The multi-row path walks each row through the same normalizer, so it is guarded too.
     expect(cellStmt.all()).toEqual([cells]);
+  });
+});
+
+// ============================================================================
+// The declared-type bridge (#273)
+// ============================================================================
+// A result carries the type each of its columns was DECLARED with. Both drivers
+// publish it and neither publishes it the same way, so it is bridged at the same seam
+// `inTransaction` and the big-integer flag already are:
+//
+//   bun:sqlite   `stmt.columnNames` + `stmt.declaredTypes`, two parallel arrays
+//   node:sqlite  `stmt.columns()`, one array of `{ name, type }`
+//
+// Both spell "nothing was declared" as `null`; the bridge answers `undefined`, which is
+// what `declaredColumnTypes()` in `column-types.ts` drops a column for.
+
+/** The pairs one adapter answers, read back as a plain array so the two can be compared. */
+function declaredPairs(stmt: { declaredColumns(): readonly SQLiteDeclaredColumn[] }): [string, string | undefined][] {
+  return stmt.declaredColumns().map(([name, type]) => [name, type]);
+}
+
+describe("declaredColumns() bridges the two spellings (#273)", () => {
+  test("the bun adapter reads columnNames beside declaredTypes", () => {
+    const stmt = new (createBunSQLiteDriver(StubBunDatabase))(":memory:").prepare("SELECT bigints");
+
+    expect(declaredPairs(stmt)).toEqual([
+      ["small", "INTEGER"],
+      ["huge", "INTEGER"],
+      ["text", "TEXT"],
+      ["nothing", undefined],
+    ]);
+  });
+
+  test("the node adapter reads columns()", () => {
+    const stmt = new (createNodeSQLiteDriver(StubDatabaseSync))(":memory:").prepare("SELECT bigints");
+
+    expect(declaredPairs(stmt)).toEqual([
+      ["small", "INTEGER"],
+      ["huge", "INTEGER"],
+      ["text", "TEXT"],
+      ["nothing", undefined],
+    ]);
+  });
+
+  // The whole point of a bridge: one stand-in, two adapters, ONE answer. A mapping that
+  // drifted on either side would show up here rather than on whichever runtime shipped.
+  test("both adapters answer the same pairs for the same statement", () => {
+    const fromBun = declaredPairs(new (createBunSQLiteDriver(StubBunDatabase))(":memory:").prepare("SELECT bigints"));
+    const fromNode = declaredPairs(
+      new (createNodeSQLiteDriver(StubDatabaseSync))(":memory:").prepare("SELECT bigints"),
+    );
+
+    expect(fromBun).toEqual(fromNode);
+  });
+
+  // `null` and `undefined` are not the same answer downstream: `declaredColumnTypes()`
+  // keeps a column whose type is `null` and drops one whose type is `undefined`, so a
+  // bridge that forwarded the driver's null would publish `{ nothing: null }` and every
+  // consumer reading the map with `Object.hasOwn` would believe a type was declared.
+  test.each([
+    ["bun", () => createBunSQLiteDriver(StubBunDatabase)],
+    ["node", () => createNodeSQLiteDriver(StubDatabaseSync)],
+  ] as const)("the %s adapter answers undefined, not null, for an undeclared column", (_name, makeDriver) => {
+    const pairs = declaredPairs(new (makeDriver())(":memory:").prepare("SELECT bigints"));
+
+    expect(pairs[3][1]).toBeUndefined();
+    expect(Object.is(pairs[3][1], null)).toBe(false);
+  });
+});
+
+// ============================================================================
+// What the two drivers actually do (measured, not assumed)
+// ============================================================================
+
+describe("the real drivers' declared types (#273)", () => {
+  let savedDriver: string | undefined;
+
+  // The same save/restore the suite above keeps: these tests force the driver NAME, and
+  // a leaked override would decide which driver a later file's provider opened.
+  beforeEach(() => {
+    savedDriver = process.env.LIBREDB_SQLITE_DRIVER;
+  });
+
+  afterEach(() => {
+    if (savedDriver === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+    else process.env.LIBREDB_SQLITE_DRIVER = savedDriver;
+  });
+
+  /** The declarations of one statement, read through whichever REAL driver is handed in. */
+  function declarationsOf(Driver: SQLiteConstructor, sql: string): [string, string | undefined][] {
+    const db = new Driver(":memory:", { create: true, readwrite: true });
+    try {
+      db.exec("CREATE TABLE d (id INTEGER PRIMARY KEY, price REAL, label TEXT, flag BOOLEAN, bare)");
+      db.exec("INSERT INTO d VALUES (1, 1.5, 'first', 1, 'anything')");
+      db.exec("CREATE VIEW dv AS SELECT id, price FROM d");
+      const stmt = db.prepare(sql);
+      stmt.all();
+      return declaredPairs(stmt);
+    } finally {
+      db.close(true);
+    }
+  }
+
+  /**
+   * The same nine shapes the provider's integration tests assert, one level lower: this
+   * is the driver's answer, before anything turns it into a map.
+   */
+  const SHAPES: [string, string, [string, string | undefined][]][] = [
+    [
+      "a plain column",
+      "SELECT id, price, label, flag, bare FROM d",
+      [
+        ["id", "INTEGER"],
+        ["price", "REAL"],
+        ["label", "TEXT"],
+        ["flag", "BOOLEAN"],
+        ["bare", undefined],
+      ],
+    ],
+    [
+      "an alias",
+      "SELECT id AS ident, price AS ratio FROM d",
+      [
+        ["ident", "INTEGER"],
+        ["ratio", "REAL"],
+      ],
+    ],
+    [
+      "a view column",
+      "SELECT id, price FROM dv",
+      [
+        ["id", "INTEGER"],
+        ["price", "REAL"],
+      ],
+    ],
+    [
+      "an expression",
+      "SELECT id + 1 AS e, price * 2 AS e2 FROM d",
+      [
+        ["e", undefined],
+        ["e2", undefined],
+      ],
+    ],
+    [
+      "a literal",
+      "SELECT 1 AS one, 'x' AS ex",
+      [
+        ["one", undefined],
+        ["ex", undefined],
+      ],
+    ],
+    [
+      "an aggregate",
+      "SELECT COUNT(*) AS c, SUM(id) AS s FROM d",
+      [
+        ["c", undefined],
+        ["s", undefined],
+      ],
+    ],
+    ["a function call", "SELECT upper(label) AS u FROM d", [["u", undefined]]],
+    [
+      "a PRAGMA column",
+      "PRAGMA journal_mode",
+      // One column, declared nothing - and the statement bun:sqlite's `columnTypes`
+      // refuses outright, which is why the bridge does not read that field.
+      [["journal_mode", undefined]],
+    ],
+    [
+      "a statement that matched no rows",
+      "SELECT id, price FROM d WHERE id = -1",
+      [
+        ["id", "INTEGER"],
+        ["price", "REAL"],
+      ],
+    ],
+  ];
+
+  test.each(SHAPES)("bun:sqlite declares %s", async (_shape, sql, expected) => {
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    expect(declarationsOf(await loadSQLiteDriver(), sql)).toEqual(expected);
+  });
+
+  test.each(SHAPES)("node:sqlite declares %s", async (_shape, sql, expected) => {
+    expect(declarationsOf(await loadNodeSQLiteDriver(), sql)).toEqual(expected);
+  });
+
+  test("a write declares nothing on either driver", async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    for (const Driver of [await loadSQLiteDriver(), await loadNodeSQLiteDriver()]) {
+      const db = new Driver(":memory:", { create: true, readwrite: true });
+      try {
+        db.exec("CREATE TABLE w (id INTEGER)");
+        const stmt = db.prepare("INSERT INTO w VALUES (?)");
+        stmt.run(1);
+        expect(declaredPairs(stmt)).toEqual([]);
+      } finally {
+        db.close(true);
+      }
+    }
+  });
+
+  /**
+   * The ORDER the bridge is documented to need, asserted rather than trusted.
+   *
+   * bun:sqlite refuses `declaredTypes` until the statement has run, so a bridge that
+   * read it at `prepare()` would throw on every query. The wrapper reads it lazily, so
+   * preparing is safe and asking before the rows raises the driver's own message.
+   */
+  test("bun:sqlite answers only after the rows, and the bridge is lazy enough for that", async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    const db = new (await loadSQLiteDriver())(":memory:", { create: true, readwrite: true });
+    try {
+      db.exec("CREATE TABLE d (id INTEGER PRIMARY KEY, price REAL)");
+      // Preparing must not read it: this is the line that would throw on every SELECT.
+      const stmt = db.prepare("SELECT id, price FROM d");
+      expect(() => stmt.declaredColumns()).toThrow(/executed/);
+
+      stmt.all();
+      expect(declaredPairs(stmt)).toEqual([
+        ["id", "INTEGER"],
+        ["price", "REAL"],
+      ]);
+    } finally {
+      db.close(true);
+    }
+  });
+
+  /**
+   * node:sqlite has no such restriction, so the rule costs it nothing. Asserted because
+   * it is the other half of "after the rows is the one order BOTH drivers accept".
+   */
+  test("node:sqlite answers before the rows as readily as after them", async () => {
+    const db = new (await loadNodeSQLiteDriver())(":memory:", { create: true, readwrite: true });
+    try {
+      db.exec("CREATE TABLE d (id INTEGER PRIMARY KEY, price REAL)");
+      const stmt = db.prepare("SELECT id, price FROM d");
+      const before = declaredPairs(stmt);
+      stmt.all();
+
+      expect(before).toEqual([
+        ["id", "INTEGER"],
+        ["price", "REAL"],
+      ]);
+      expect(declaredPairs(stmt)).toEqual(before);
+    } finally {
+      db.close(true);
+    }
+  });
+
+  /**
+   * The trap this bridge exists NOT to fall into.
+   *
+   * bun:sqlite publishes a second field called `columnTypes`, and it answers a different
+   * question: the storage class of the row just read. Measured here rather than asserted
+   * from memory, because the two names are one word apart and the wrong one is wrong
+   * quietly - a `REAL` column would be renamed `FLOAT`, a `BOOLEAN` column `INTEGER`, and
+   * every PRAGMA the provider runs would throw.
+   */
+  test("bun:sqlite's columnTypes is the runtime storage class and refuses a non-read-only statement", () => {
+    const raw = new BunDatabase(":memory:");
+    try {
+      raw.exec("CREATE TABLE d (id INTEGER PRIMARY KEY, price REAL, flag BOOLEAN, bare)");
+      raw.exec("INSERT INTO d VALUES (1, 1.5, 1, 'anything')");
+      const read = raw.prepare("SELECT id, price, flag, bare FROM d") as unknown as {
+        all(): unknown[];
+        columnTypes: string[];
+        declaredTypes: (string | null)[];
+      };
+      read.all();
+
+      // What the SCHEMA says, which is what the bridge publishes...
+      expect(read.declaredTypes).toEqual(["INTEGER", "REAL", "BOOLEAN", null]);
+      // ...and what the ROW happened to hold, which is not the same answer for three of
+      // the four columns.
+      expect(read.columnTypes).toEqual(["INTEGER", "FLOAT", "INTEGER", "TEXT"]);
+
+      // And it is not merely different - it is unavailable exactly where the provider
+      // reads plenty of results: `PRAGMA journal_mode` is not a read-only statement to
+      // bun, while `declaredTypes` answers for it.
+      const pragma = raw.prepare("PRAGMA journal_mode") as unknown as {
+        all(): unknown[];
+        columnTypes: string[];
+        declaredTypes: (string | null)[];
+      };
+      pragma.all();
+      expect(pragma.declaredTypes).toEqual([null]);
+      expect(() => pragma.columnTypes).toThrow(/non-read-only/);
+    } finally {
+      raw.close(true);
+    }
   });
 });
