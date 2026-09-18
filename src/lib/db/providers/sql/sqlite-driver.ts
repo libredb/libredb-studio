@@ -20,11 +20,48 @@
 
 import { DatabaseConfigError } from "../../errors";
 
+/**
+ * One result column's name and the type it was DECLARED with — `undefined` where SQLite
+ * declared none.
+ *
+ * A PAIR rather than a map, because that is exactly what `declaredColumnTypes()` in
+ * `column-types.ts` already consumes from the four other drivers that answer this
+ * question, duplicate column names and all: `SELECT 1 AS c, name AS c` really does
+ * declare two columns called `c`, the row object keeps the last one, and the shared
+ * helper is where last-wins is decided.
+ */
+export type SQLiteDeclaredColumn = readonly [name: string, declaredType: string | undefined];
+
 // The exact driver surface the SQLite provider uses (bun:sqlite-shaped).
 export type SQLiteStatement = {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
   run(...params: unknown[]): { changes: number };
+  /**
+   * What the schema DECLARED each result column to be (`sqlite3_column_decltype`), in
+   * column order. Both drivers publish it and spell it differently — bun:sqlite
+   * `columnNames` beside `declaredTypes`, node:sqlite one `columns()` answering both — so
+   * the two are bridged here, exactly as `inTransaction` and the big-integer flag are.
+   *
+   * CALL IT AFTER THE ROWS. Measured 2026-09-18 on bun:sqlite (Bun 1.4.0) and node:sqlite
+   * (Node 24.14.0): bun THROWS "Statement must be executed before accessing declaredTypes"
+   * until the statement has run, while node answers either way — so after the rows is the
+   * one order both drivers accept. A statement that matched NO rows still answers
+   * (`SELECT id, r FROM t WHERE id = -1` → `INTEGER`, `REAL`), so an empty result is
+   * described rather than guessed at, and a write answers an EMPTY list on both.
+   *
+   * `undefined` is an ordinary answer and not a failure: an expression, a literal, an
+   * aggregate, a function call, every PRAGMA column and a column declared with no type at
+   * all have no declaration for SQLite to report, and both drivers say so with `null`.
+   *
+   * NOT bun:sqlite's `columnTypes`, which is a different question wearing a similar name.
+   * Measured the same day: it reports the RUNTIME storage class of the row just read — a
+   * `REAL` column answers `FLOAT`, an undeclared column answers whatever that row happens
+   * to hold — and it throws outright on anything that is not a read-only statement,
+   * `PRAGMA journal_mode` included. Reading it here would have typed every float column
+   * wrong and broken every PRAGMA the provider runs.
+   */
+  declaredColumns(): readonly SQLiteDeclaredColumn[];
 };
 
 export type SQLiteDatabase = {
@@ -227,6 +264,13 @@ function normalizeRecordInPlace(record: unknown): unknown {
 }
 
 /**
+ * A driver's OWN statement: the three row methods, before the bridge below adds the
+ * declarations. Neither driver publishes `declaredColumns` — it is this module's name for
+ * a question each of them answers its own way.
+ */
+type RawSQLiteStatement = Omit<SQLiteStatement, "declaredColumns">;
+
+/**
  * Wrap one prepared statement so every row it returns, and every parameter it is given,
  * crosses the conversions above.
  *
@@ -239,9 +283,20 @@ function normalizeRecordInPlace(record: unknown): unknown {
  * PRAGMA read go through it alike, and a future row-returning driver method cannot
  * quietly bypass it. The parameters travel the same three methods, so the two
  * directions are inverses at ONE seam rather than at two that can drift apart.
+ *
+ * `declaredColumns` is handed in rather than read off `stmt`, because it is the one part
+ * of the surface the two drivers do not already spell the same way; each adapter below
+ * passes its own spelling and both come out of here as one method on one object. Keeping
+ * it on the SAME object as the rows is what makes "after the rows" checkable: a caller
+ * holds the statement that produced them and asks it, rather than holding a second handle
+ * whose order nothing constrains.
  */
-function withoutBigInts(stmt: SQLiteStatement): SQLiteStatement {
+function withoutBigInts(
+  stmt: RawSQLiteStatement,
+  declaredColumns: SQLiteStatement["declaredColumns"],
+): SQLiteStatement {
   return {
+    declaredColumns,
     all: (...params: unknown[]): unknown[] => {
       const rows = stmt.all(...toSQLiteBindValues(params));
       for (const row of rows) {
@@ -270,7 +325,22 @@ function withoutBigInts(stmt: SQLiteStatement): SQLiteStatement {
  * and no new option reaches any shared surface.
  */
 export type BunSQLiteOpenOptions = SQLiteOpenOptions & { safeIntegers?: boolean };
-export type BunSQLiteConstructor = new (path: string, options?: BunSQLiteOpenOptions) => SQLiteDatabase;
+
+/**
+ * Minimal structural view of bun:sqlite's own Statement and Database, kept local for the
+ * reason `NodeDatabaseSyncLike` below is: the adapter then says exactly which of the
+ * driver's members it uses, and a stand-in can satisfy that and nothing more.
+ *
+ * `columnNames` and `declaredTypes` are bun's two halves of the answer node:sqlite gives
+ * in one `columns()` call, and the only reason this type exists at all - the rest of the
+ * surface was already bun-shaped.
+ */
+type BunStatementLike = RawSQLiteStatement & {
+  readonly columnNames: string[];
+  readonly declaredTypes: (string | null)[];
+};
+export type BunDatabaseLike = Omit<SQLiteDatabase, "prepare"> & { prepare(sql: string): BunStatementLike };
+export type BunSQLiteConstructor = new (path: string, options?: BunSQLiteOpenOptions) => BunDatabaseLike;
 
 /**
  * Adapt bun:sqlite's Database: open it with `safeIntegers`, and convert what the
@@ -280,7 +350,7 @@ export type BunSQLiteConstructor = new (path: string, options?: BunSQLiteOpenOpt
  */
 export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLiteConstructor {
   class BunSQLiteDatabase implements SQLiteDatabase {
-    private readonly db: SQLiteDatabase;
+    private readonly db: BunDatabaseLike;
 
     constructor(dbPath: string, options?: SQLiteOpenOptions) {
       this.db = new DatabaseCtor(dbPath, { ...options, safeIntegers: true });
@@ -291,7 +361,13 @@ export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLit
     }
 
     prepare(sql: string): SQLiteStatement {
-      return withoutBigInts(this.db.prepare(sql));
+      const stmt = this.db.prepare(sql);
+      // Read lazily, never here: bun refuses `declaredTypes` until the statement has run
+      // (measured - see `SQLiteStatement.declaredColumns`), so reading it at `prepare()`
+      // would throw on every query the provider makes.
+      return withoutBigInts(stmt, () =>
+        stmt.columnNames.map((name, index) => [name, stmt.declaredTypes[index] ?? undefined] as const),
+      );
     }
 
     close(throwOnError?: boolean): void {
@@ -312,6 +388,13 @@ type NodeStatementLike = {
   all(...params: unknown[]): unknown;
   get(...params: unknown[]): unknown;
   run(...params: unknown[]): { changes: number | bigint };
+  /**
+   * node:sqlite's spelling of bun:sqlite's `columnNames` + `declaredTypes`: one call
+   * answering both, with `type` null where the column was declared with none. It carries
+   * `column`, `database` and `table` as well; the bridge reads neither, because the name
+   * the ROW object uses is `name` (the alias, where there is one).
+   */
+  columns(): { name: string; type: string | null }[];
 };
 export type NodeDatabaseSyncLike = {
   exec(sql: string): void;
@@ -371,6 +454,12 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  * - the big-integer flag is `readBigInts` here and `safeIntegers` on bun:sqlite; both
  *   adapters set their own spelling and both send `prepare()` through the same
  *   conversion, so the two drivers answer a 64-bit id identically (#39).
+ * - the DECLARED column types are `columns()[].name`/`.type` here and `columnNames` +
+ *   `declaredTypes` on bun:sqlite; both adapters hand their own spelling to
+ *   `withoutBigInts`, which republishes one `declaredColumns()` (#273). A handle that
+ *   dropped it would leave the result carrying no types at all, which is the state this
+ *   provider was in: the SQL export then names a column by the JavaScript type of its
+ *   value, and the inline editor has nothing to read a key's width from.
  * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
@@ -392,14 +481,19 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
 
     prepare(sql: string): SQLiteStatement {
       const stmt = this.db.prepare(sql);
-      return withoutBigInts({
-        all: (...params: unknown[]): unknown[] => stmt.all(...params) as unknown[],
-        get: (...params: unknown[]): unknown => stmt.get(...params) ?? null,
-        run: (...params: unknown[]): { changes: number } => {
-          const info = stmt.run(...params);
-          return { changes: Number(info.changes) };
+      return withoutBigInts(
+        {
+          all: (...params: unknown[]): unknown[] => stmt.all(...params) as unknown[],
+          get: (...params: unknown[]): unknown => stmt.get(...params) ?? null,
+          run: (...params: unknown[]): { changes: number } => {
+            const info = stmt.run(...params);
+            return { changes: Number(info.changes) };
+          },
         },
-      });
+        // node answers this before the statement has run as readily as after it, so the
+        // "after the rows" rule the bun half needs costs this half nothing.
+        () => stmt.columns().map((column) => [column.name, column.type ?? undefined] as const),
+      );
     }
 
     // Takes no `throwOnError`, and needs none: node:sqlite's own close already finalizes

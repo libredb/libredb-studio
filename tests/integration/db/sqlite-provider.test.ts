@@ -54,6 +54,7 @@ import {
   QueryError,
 } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { buildResultExport } from "@/lib/export/result-export";
 import { comparePaths } from "@/lib/db/object-path";
 import { readFixtureStatements } from "../../../docker/sqlite-init/build-fixture";
 
@@ -747,6 +748,7 @@ describe("SQLiteProvider", () => {
           all: () => (sql.includes("dbstat") ? dbstat : owners),
           get: () => null,
           run: () => ({ changes: 0 }),
+          declaredColumns: () => [],
         }),
       };
 
@@ -1297,6 +1299,7 @@ function answerReadsMatching(provider: SQLiteProvider, match: string, rows: read
     all: () => [...rows],
     get: () => rows[0] ?? null,
     run: () => ({ changes: 0 }),
+    declaredColumns: () => [],
   }));
 }
 
@@ -1323,6 +1326,7 @@ function captureReadsMatching(
       },
       get: () => rows[0] ?? null,
       run: () => ({ changes: 0 }),
+      declaredColumns: () => [],
     };
   });
   return captured;
@@ -3880,5 +3884,362 @@ describe("64-bit integers past 2^53, independently verified", () => {
       }
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ============================================================================
+// Declared column types (#273)
+// ============================================================================
+//
+// Every other provider family fills `QueryResult.columnTypes`; the local SQLite one
+// did not, and two things downstream read it and decide with it:
+//
+//  - `src/lib/export/result-export.ts` falls back to the JAVASCRIPT TYPE of a value
+//    when no declaration came with the result. Since the 64-bit seam (#39) hands a
+//    key past 2^53 over as its digits, a SQLite `INTEGER PRIMARY KEY` holding
+//    9007199254740993 was exported as `"id" TEXT` - measured below, by replaying the
+//    generated file into SQLite, where the column came back with the `text` storage
+//    class and the table was no longer keyed by an integer.
+//  - `src/hooks/use-inline-editing.ts` reads the declared type to decide whether a
+//    key can be sent back as the row that holds it, and with nothing declared it has
+//    to fail closed.
+//
+// The declarations themselves are SQLite's own `sqlite3_column_decltype`, bridged in
+// `sqlite-driver.ts` because the two drivers spell the question differently. What is
+// asserted HERE is the provider's half, on the bun driver these tests run under - the
+// split this file has kept since it was written. The OTHER driver's half is asserted
+// against the real node:sqlite module at the seam itself, in
+// tests/unit/db/sqlite-driver.test.ts, over the same nine shapes; it is not repeated
+// in-process here, because `loadSQLiteDriver` caches per driver NAME and the unit file
+// deliberately caches a FAILURE under "node", which a second file sharing one bun
+// process would then inherit.
+
+const DECLARATION_FIXTURE = [
+  "CREATE TABLE decl (id INTEGER PRIMARY KEY, price REAL, label TEXT, payload BLOB, flag BOOLEAN, bare)",
+  "INSERT INTO decl VALUES (1, 1.5, 'first', x'0011', 1, 'anything')",
+  "CREATE VIEW decl_view AS SELECT id, price, label FROM decl",
+];
+
+describe("declared column types (#273)", () => {
+  let declared: SQLiteProvider;
+
+  beforeAll(async () => {
+    declared = new SQLiteProvider(makeSQLiteConfig());
+    await declared.connect();
+    for (const statement of DECLARATION_FIXTURE) await declared.query(statement);
+  });
+
+  afterAll(async () => {
+    await declared.disconnect();
+  });
+
+  test("the driver under test is the bun one, as this file's design assumes", () => {
+    expect(resolveSQLiteDriverName()).toBe("bun");
+  });
+
+  /**
+   * What SQLite declares for each shape a result column can have.
+   *
+   * The `undefined` rows are the point of the table rather than gaps in it: SQLite
+   * declares a type for a column that came out of a TABLE and for nothing else, so a
+   * computed column, a literal, an aggregate, a function call, every PRAGMA column and
+   * a column created with no type at all have no declaration to carry, and the key is
+   * left OFF the result rather than filled with a guess.
+   */
+  test.each([
+    ["a plain column", "SELECT id, price, label FROM decl", { id: "INTEGER", price: "REAL", label: "TEXT" }],
+    ["an alias", "SELECT id AS ident, price AS ratio FROM decl", { ident: "INTEGER", ratio: "REAL" }],
+    ["a view column", "SELECT id, label FROM decl_view", { id: "INTEGER", label: "TEXT" }],
+    ["an expression", "SELECT id + 1 AS e, price * 2 AS e2 FROM decl", undefined],
+    ["a literal", "SELECT 1 AS one, 'x' AS ex", undefined],
+    ["an aggregate", "SELECT COUNT(*) AS c, SUM(id) AS s FROM decl", undefined],
+    ["a function call", "SELECT upper(label) AS u, sqlite_version() AS v FROM decl", undefined],
+    ["a PRAGMA column", "PRAGMA table_info(decl)", undefined],
+    ["an undeclared column", "SELECT bare FROM decl", undefined],
+  ])("%s", async (_shape, sql, expected) => {
+    const result = await declared.query(sql);
+
+    expect(result.columnTypes).toEqual(expected);
+    // ABSENT rather than `{}` when nothing was declared, which is the contract every
+    // other provider already answers to: a consumer decides from the field's presence.
+    expect(Object.hasOwn(result, "columnTypes")).toBe(expected !== undefined);
+    // and the names are the result's own, so every declared key is a field on the row
+    for (const name of Object.keys(result.columnTypes ?? {})) expect(result.fields).toContain(name);
+  });
+
+  test("a result mixing a table column with a computed one declares only the table column", async () => {
+    const result = await declared.query("SELECT id, COUNT(*) AS n FROM decl GROUP BY id");
+
+    // Not all-or-nothing: `n` has no declaration and `id` does, and dropping the map
+    // because one column was undeclared would lose the one type that exists.
+    expect(result.fields).toEqual(["id", "n"]);
+    expect(result.columnTypes).toEqual({ id: "INTEGER" });
+  });
+
+  test("a result that matched no rows is still described", async () => {
+    const result = await declared.query("SELECT id, price FROM decl WHERE id = -1");
+
+    // `fields` comes from row 0 and there is none, so this is the one case where the
+    // declaration says more than the rows do. It is also the case a value-shaped guess
+    // could never answer at all.
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.columnTypes).toEqual({ id: "INTEGER", price: "REAL" });
+  });
+
+  test("a write declares nothing, because it has no result columns", async () => {
+    const result = await declared.query("UPDATE decl SET label = 'first' WHERE id = 1");
+
+    expect(result.rowCount).toBe(1);
+    expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+  });
+
+  test("two result columns of one name keep the type of the one the row kept", async () => {
+    const result = await declared.query("SELECT 1 AS c, label AS c FROM decl");
+
+    // SQLite really does answer two columns called `c`; the row object keeps the LAST,
+    // so the type that describes what the grid shows is the last one's too.
+    expect(result.rows).toEqual([{ c: "first" }]);
+    expect(result.columnTypes).toEqual({ c: "TEXT" });
+  });
+
+  /**
+   * The spelling is the SCHEMA's, not the storage class of the row that was read.
+   *
+   * This is the whole reason bun:sqlite's `columnTypes` is not what the bridge reads.
+   * Measured 2026-09-18 on Bun 1.4.0, `columnTypes` for this very statement answers
+   * `["INTEGER", "FLOAT", "TEXT", "BLOB", "INTEGER", "TEXT"]`: the `REAL` column comes
+   * back as `FLOAT`, the `BOOLEAN` column as `INTEGER`, and the undeclared column as
+   * whatever that row happened to hold. Reading it would have renamed half the schema.
+   */
+  test("the types are the ones the schema declares, not the storage classes of the values", async () => {
+    const result = await declared.query("SELECT id, price, label, payload, flag, bare FROM decl");
+
+    expect(result.columnTypes).toEqual({
+      id: "INTEGER",
+      price: "REAL",
+      label: "TEXT",
+      payload: "BLOB",
+      flag: "BOOLEAN",
+    });
+    // `bare` was created with no type, so it is the one column of the six with no entry.
+    expect(Object.hasOwn(result.columnTypes!, "bare")).toBe(false);
+  });
+
+  test("a 64-bit id that left the provider as digits is still declared INTEGER", async () => {
+    await declared.query("CREATE TABLE IF NOT EXISTS big_decl (id INTEGER PRIMARY KEY, label TEXT)");
+    await declared.query("DELETE FROM big_decl");
+    await declared.query("INSERT INTO big_decl VALUES (9007199254740993, 'target')");
+
+    const result = await declared.query("SELECT id, label FROM big_decl");
+
+    // The value is a string by the time it leaves the 64-bit seam (#39) and the column
+    // is an INTEGER all the same. Anything inferring the type from the value answers
+    // TEXT here, which is exactly the export defect below.
+    expect(result.rows).toEqual([{ id: "9007199254740993", label: "target" }]);
+    expect(result.columnTypes).toEqual({ id: "INTEGER", label: "TEXT" });
+  });
+});
+
+describe("declared column types on the read-only profile (#273 + #328)", () => {
+  let profileDir: string;
+
+  beforeAll(() => {
+    profileDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-decl-"));
+  });
+
+  afterAll(() => {
+    rmSync(profileDir, { recursive: true, force: true });
+  });
+
+  test("the agent's read-only path carries them exactly as the ordinary path does", async () => {
+    const dbPath = join(profileDir, "profile.db");
+    const seed = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+    await seed.connect();
+    await seed.query("CREATE TABLE t (id INTEGER PRIMARY KEY, price REAL, v TEXT)");
+    await seed.query("INSERT INTO t VALUES (1, 1.5, 'seeded')");
+    await seed.disconnect();
+
+    const profile = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }), {}, { readOnly: true });
+    await profile.connect();
+    try {
+      // The agent reads the same result shape the user does; a snapshot that described
+      // its columns on one path and not the other would be two answers to one question.
+      const result = await profile.queryReadOnly("SELECT id, price, v FROM t", AGENT_BUDGET);
+      expect(result.rows).toEqual([{ id: 1, price: 1.5, v: "seeded" }]);
+      expect(result.columnTypes).toEqual({ id: "INTEGER", price: "REAL", v: "TEXT" });
+
+      // and the same absence, on the same path
+      const computed = await profile.queryReadOnly("SELECT COUNT(*) AS n FROM t", AGENT_BUDGET);
+      expect(Object.hasOwn(computed, "columnTypes")).toBe(false);
+    } finally {
+      await profile.disconnect();
+    }
+  });
+});
+
+/**
+ * The consequence the missing declarations had on the file a user keeps (#273).
+ *
+ * `result-export.ts` writes the declared type when the result carries one and falls
+ * back to the JavaScript type of a value when it does not. Nothing here edits that
+ * file - it was already right; it was being handed nothing to read.
+ */
+describe("SQL export of a SQLite result (#273)", () => {
+  let exportDir: string;
+
+  beforeAll(() => {
+    exportDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-export-"));
+  });
+
+  afterAll(() => {
+    rmSync(exportDir, { recursive: true, force: true });
+  });
+
+  test("a 64-bit key is exported as the INTEGER column it is, and replays as one", async () => {
+    const db = new SQLiteProvider(makeSQLiteConfig());
+    await db.connect();
+    let file: string;
+    try {
+      await db.query("CREATE TABLE zz (id INTEGER PRIMARY KEY, price REAL, label TEXT)");
+      await db.query("INSERT INTO zz VALUES (9007199254740993, 1.5, 'target')");
+      const result = await db.query("SELECT id, price, label FROM zz");
+
+      // The value really is a string here - that is the 64-bit seam doing its job - so
+      // the declaration is the only thing standing between it and a TEXT column.
+      expect(typeof result.rows[0].id).toBe("string");
+
+      const source = {
+        rows: result.rows,
+        fields: result.fields,
+        tabName: "zz",
+        dialect: "sqlite" as const,
+        ...(result.columnTypes === undefined ? {} : { columnTypes: result.columnTypes }),
+      };
+      const ddl = buildResultExport("sql-ddl", source).content;
+      // MEASURED before this: `"id" TEXT` and `"price" DOUBLE PRECISION`, because
+      // `inferKind` saw a string and a fractional number. Both are now the schema's.
+      expect(ddl).toContain('"id" INTEGER');
+      expect(ddl).toContain('"price" REAL');
+      expect(ddl).not.toContain('"id" TEXT');
+
+      file = `${ddl}\n${buildResultExport("sql-insert", source).content}`;
+    } finally {
+      await db.disconnect();
+    }
+
+    // The file is meant to be RUN somewhere else, so it is run: replayed into a fresh
+    // database, the key has to come back as an integer holding every digit. Before
+    // this it came back with the `text` storage class, and the table a user moved to
+    // another engine was no longer keyed by a number.
+    const replayPath = join(exportDir, "replayed.db");
+    const replay = new SQLiteProvider(makeSQLiteConfig({ database: replayPath }));
+    await replay.connect();
+    try {
+      for (const statement of file.split(";\n").filter((part) => part.trim().length > 0)) {
+        await replay.query(statement);
+      }
+      expect(await replay.query("SELECT typeof(id) AS kind FROM zz")).toMatchObject({ rows: [{ kind: "integer" }] });
+      expect(await replay.query("SELECT id FROM zz")).toMatchObject({ rows: [{ id: "9007199254740993" }] });
+      // and the column the replayed schema declares is the one the source declared
+      expect((await replay.query("SELECT id, price FROM zz")).columnTypes).toEqual({ id: "INTEGER", price: "REAL" });
+    } finally {
+      await replay.disconnect();
+    }
+  });
+
+  test("a computed column still falls back to the value's shape, because nothing declared it", async () => {
+    const db = new SQLiteProvider(makeSQLiteConfig());
+    await db.connect();
+    try {
+      await db.query("CREATE TABLE zc (id INTEGER PRIMARY KEY)");
+      await db.query("INSERT INTO zc VALUES (1)");
+      const result = await db.query("SELECT COUNT(*) AS n FROM zc");
+
+      expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+      // The fallback is the RIGHT answer here rather than a leftover: SQLite declares
+      // nothing for `COUNT(*)`, so the value is the only witness there has ever been.
+      const ddl = buildResultExport("sql-ddl", {
+        rows: result.rows,
+        fields: result.fields,
+        tabName: "zc",
+        dialect: "sqlite",
+      }).content;
+      expect(ddl).toContain('"n" BIGINT');
+    } finally {
+      await db.disconnect();
+    }
+  });
+});
+
+/**
+ * The consequence the missing declarations had on the row editor (#273).
+ *
+ * `src/hooks/use-inline-editing.ts` decides whether a key can be sent back as the row
+ * that holds it by reading `QueryResult.columnTypes`, and with nothing declared it has
+ * to fail closed - so on this provider it refused keys the engine answers about
+ * perfectly. What the provider owes that decision is the declaration itself, spelled
+ * the way SQLite spells it, which is what these pin. The rule that reads them lives in
+ * the hook and is tested there; neither file is touched here.
+ *
+ * MEASURED end to end on 2026-09-18, rendering that hook over rows read through this
+ * provider, before and after the declarations existed:
+ *
+ *   key column, holding 1.5  | before      | after
+ *   DOUBLE                   | refused     | 1 UPDATE accepted
+ *   REAL                     | refused     | refused  (see below)
+ *   TEXT holding an ISO-shaped string      | refused | 1 UPDATE accepted
+ *
+ * The REAL row is the one case that does NOT close, and the reason is entirely inside
+ * the hook: its `FLOAT64_TYPE_NAMES` deliberately omits `real`, because PostgreSQL's
+ * and Trino's `real` is 32 bits wide even though SQLite's is 64. Closing it means
+ * teaching that set which engine it is reading, in a file this change does not own.
+ */
+describe("what the row editor reads off a SQLite result (#273)", () => {
+  let editing: SQLiteProvider;
+
+  beforeAll(async () => {
+    editing = new SQLiteProvider(makeSQLiteConfig());
+    await editing.connect();
+    await editing.query("CREATE TABLE dbl (id DOUBLE, note TEXT)");
+    await editing.query("INSERT INTO dbl VALUES (1.5, 'first')");
+    await editing.query("CREATE TABLE rl (id REAL, note TEXT)");
+    await editing.query("INSERT INTO rl VALUES (1.5, 'first'), (2.5, 'second')");
+    await editing.query("CREATE TABLE txt (id TEXT, note TEXT)");
+    await editing.query("INSERT INTO txt VALUES ('2026-01-01T10:00:00.123Z', 'first')");
+  });
+
+  afterAll(async () => {
+    await editing.disconnect();
+  });
+
+  test("a 64-bit float key arrives declared, so the editor's float64 rule can see it", async () => {
+    const result = await editing.query("SELECT id, note FROM dbl");
+
+    // `double` is the first word of the type, which is what the hook matches on. With no
+    // declaration the same 1.5 was refused as "a fractional number", and the engine was
+    // never asked about a key it answers for exactly.
+    expect(result.rows).toEqual([{ id: 1.5, note: "first" }]);
+    expect(result.columnTypes).toEqual({ id: "DOUBLE", note: "TEXT" });
+  });
+
+  test("a text key that merely LOOKS like an instant arrives declared TEXT", async () => {
+    const result = await editing.query("SELECT id, note FROM txt");
+
+    // The hook reads a serialized-date SHAPE as a date only where nothing was declared,
+    // because a `Date` through JSON is exactly that string. SQLite has no date type, so
+    // this key is text and the declaration is what says so.
+    expect(result.rows).toEqual([{ id: "2026-01-01T10:00:00.123Z", note: "first" }]);
+    expect(result.columnTypes).toEqual({ id: "TEXT", note: "TEXT" });
+  });
+
+  test("a REAL key is declared REAL, and the engine really does answer for it", async () => {
+    const result = await editing.query("SELECT id, note FROM rl");
+    expect(result.columnTypes).toEqual({ id: "REAL", note: "TEXT" });
+
+    // The other half of the measurement, so the remaining refusal is recorded against a
+    // fact rather than an assumption: SQLite matches this key exactly, once.
+    const matched = await editing.query("SELECT note FROM rl WHERE id = ?", [1.5]);
+    expect(matched.rows).toEqual([{ note: "first" }]);
   });
 });
