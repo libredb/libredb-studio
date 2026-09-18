@@ -38,10 +38,7 @@ by hand. URL-encode every special character (`@` → `%40`, `:` → `%3A`,
   `JWT_SECRET is too short` instead of coming up on a secret that is printed in
   a public README. Keep it that way — a placeholder that clears the minimum is a
   published working secret.
-- **No prefilled passwords.** The button carries none. A placeholder password is
-  still a password: `set_a_real_password` was the previous spelling and it signed
-  in, so a deploy where only the administrator field was replaced left the
-  standard user account open on a credential anyone could read here. The two
+- **No prefilled passwords.** The button carries none. The two
   fields behave differently when unset, and both answers are safe ones:
   `ADMIN_PASSWORD` is generated on first run and printed to the Koyeb runtime
   log, the same as a bare `docker run`; `USER_PASSWORD` is never generated, and

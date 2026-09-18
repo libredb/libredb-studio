@@ -4,10 +4,14 @@ import { join } from "node:path";
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 
 // A copy-and-run example that carries a password IS a published credential, whatever the
-// value is called. `set_a_real_password` read as a placeholder and signed in; LibreDB.2026
-// was repeated underneath as the login to use; change-me-to-a-random-32-char-string is 36
-// characters, so it clears the minimum and the server accepts it - and with
-// STORAGE_ENCRYPTION_KEY unset it is also what saved connection passwords are sealed with.
+// value is called. Of the three removed by hand, the first told the reader in its own name
+// to set a real password and signed in as it stood; the second was the admin login, written
+// underneath as the one to use; the third was a change-me placeholder 36 characters long,
+// so it cleared the minimum and the server accepted it - and with STORAGE_ENCRYPTION_KEY
+// unset that one is also what saved connection passwords are sealed with.
+//
+// None of the three is spelled out here, and no fixture below is a value anyone could sign
+// in with: every fixture in this file names itself as an example on sight.
 //
 // The rule these files follow instead: set no password, and say where the generated one is
 // printed. This guard exists because each of those three was removed by hand and nothing
@@ -106,7 +110,7 @@ function documentationFiles(): string[] {
  * This applies to `NAME: value` only. `NAME=value` needs none of it: a sentence does not
  * write an equals sign, so whatever follows the value is the rest of a command line - the
  * image name of a `docker run`, an `&& echo`, a second statement. Requiring one of these
- * four after an `=` is what let `docker run -e ADMIN_PASSWORD=Secret123 img` publish a
+ * four after an `=` is what let `docker run -e ADMIN_PASSWORD=example-fake-password img` publish a
  * working login, measured.
  */
 const VALUE_ENDS = /^\s*(?:#|$)|^\s*\||^\s+-{1,2}[A-Za-z]|^\s+[A-Za-z_][A-Za-z_0-9.]*\s*=/;
@@ -154,7 +158,7 @@ function usableValue(raw: string): string | null {
 
 /**
  * The other way a deployment file writes an environment variable: the name on one line and
- * the value on the next. A Render Blueprint (`- key: ADMIN_PASSWORD` / `value: Secret123`)
+ * the value on the next. A Render Blueprint (`- key: ADMIN_PASSWORD` / `value: example-fake-password`)
  * and a Kubernetes manifest (`- name: ...` / `value: ...`) both do it, and to a reader that
  * takes one line at a time the name and the value are two unrelated lines.
  *
@@ -183,7 +187,7 @@ function pairedAssignments(lines: string[], name: string): string[] {
  * A Markdown table row, which is how a README lists its variables: the name in one cell and
  * the value somewhere else in the row. It assigns nothing in the `NAME=value` sense and a
  * reader still reads a working login out of it, which is how
- * `| `ADMIN_PASSWORD` | `LibreDB.2026` |` passed this guard - measured, on the most common
+ * `| `ADMIN_PASSWORD` | `example-not-a-real-password` |` passed this guard - measured, on the most common
  * table shape in these files.
  *
  * WHICH cell holds the value is not answerable by position. The tables actually written here
@@ -345,7 +349,7 @@ function assignments(text: string, name: string): string[] {
     const rest = line.slice(at + name.length).replace(/\\\s*$/, "");
     // A quoted value is taken whole. Reading up to the first space instead stopped at the
     // first word, and a value with a space in it then looked like a value followed by prose,
-    // which the check below reads as a sentence: `ADMIN_PASSWORD="LibreDB Admin 2026"` was
+    // which the check below reads as a sentence: `ADMIN_PASSWORD="example fake admin password"` was
     // published that way, measured, and so was a 42-character JWT_SECRET.
     const assigned = /^\s*([=:])\s*("[^"]*"|'[^']*'|\S+)([\s\S]*)$/.exec(rest);
     if (assigned === null) continue;
@@ -365,7 +369,7 @@ const JSON_PASSWORD_STANDINS = new Set(["string", "password", "secret", "null", 
 
 /**
  * A login example's JSON body, which names no environment variable at all and so was read
- * by none of the rules above: `-d '{"email": "...", "password": "admin123"}'` published a
+ * by none of the rules above: `-d '{"email": "...", "password": "example-fake-login"}'` published a
  * working login in docs/API_DOCS.md twice, in a cURL block and a fetch() block, and the
  * same string had already been removed from CONTRIBUTING.md by hand.
  *
@@ -377,7 +381,7 @@ const JSON_PASSWORD_STANDINS = new Set(["string", "password", "secret", "null", 
  *
  * Of what is left, only a QUOTED literal that reads as a value counts: a space in it makes it
  * an instruction, and a `your-` prefix makes it a placeholder. Single quotes and a bare key
- * count as much as double ones - `{ email: 'a@b.c', password: 'admin123' }` is how a
+ * count as much as double ones - `{ email: 'a@b.c', password: 'example-fake-login' }` is how a
  * JavaScript object literal is written and how docs/API_DOCS.md wrote the second of its two,
  * so requiring double quotes read one of that file's two published logins and walked past the
  * other, measured. What stays unquoted is an expression, not a literal: the fetch() example
@@ -448,15 +452,21 @@ describe("the documentation publishes no credential that works", () => {
     // line 1685 and the fetch() body at line 1769. The second is a JavaScript object literal
     // - bare key, single quotes - and a rule that required double quotes read the first and
     // walked past the second, which is how that file published two logins and reported one.
-    expect(caught(`  -d '{"email": "admin@libredb.org", "password": "admin123"}' \\`)).toEqual(["admin123"]);
-    expect(caught(`    body: JSON.stringify({ email: 'admin@libredb.org', password: 'admin123' }),`)).toEqual([
-      "admin123",
+    expect(caught(`  -d '{"email": "admin@libredb.org", "password": "example-fake-login"}' \\`)).toEqual([
+      "example-fake-login",
     ]);
+    expect(caught(`    body: JSON.stringify({ email: 'admin@libredb.org', password: 'example-fake-login' }),`)).toEqual(
+      ["example-fake-login"],
+    );
     // The same fetch() body written as JSON throughout, which is the other way it gets typed.
-    expect(caught(`body: JSON.stringify({ "email": "a@b.c", "password": "LibreDB.2026" })`)).toEqual(["LibreDB.2026"]);
+    expect(caught(`body: JSON.stringify({ "email": "a@b.c", "password": "example-not-a-real-password" })`)).toEqual([
+      "example-not-a-real-password",
+    ]);
     // The password before the email reads the same way, in either quoting.
-    expect(caught(`{\n  "password": "admin123",\n  "email": "admin@libredb.org"\n}`)).toEqual(["admin123"]);
-    expect(caught(`{ password: 'admin123', email: 'admin@libredb.org' }`)).toEqual(["admin123"]);
+    expect(caught(`{\n  "password": "example-fake-login",\n  "email": "admin@libredb.org"\n}`)).toEqual([
+      "example-fake-login",
+    ]);
+    expect(caught(`{ password: 'example-fake-login', email: 'admin@libredb.org' }`)).toEqual(["example-fake-login"]);
 
     // An unquoted value is an expression, not a literal: this is what docs/API_DOCS.md:1773
     // reads now, and it publishes nothing.
@@ -498,14 +508,22 @@ describe("the documentation publishes no credential that works", () => {
   test("reads a value that is not the last thing on its line, and still not prose", () => {
     const caught = (text: string, name: string) => assignments(text, name);
     // The shapes that got past the old "value must end the line" rule.
-    expect(caught("docker run -e ADMIN_PASSWORD=Secret123 -e HOSTNAME=db \\", "ADMIN_PASSWORD")).toEqual(["Secret123"]);
-    expect(caught("      ADMIN_PASSWORD: Secret123  # the login", "ADMIN_PASSWORD")).toEqual(["Secret123"]);
-    expect(caught("| `ADMIN_PASSWORD=Secret123` | the admin login |", "ADMIN_PASSWORD")).toEqual(["Secret123"]);
-    expect(caught("  adminPassword: Secret123", "adminPassword")).toEqual(["Secret123"]);
-    expect(caught("      - key: ADMIN_PASSWORD\n        value: Secret123", "ADMIN_PASSWORD")).toEqual(["Secret123"]);
-    expect(caught("            - name: ADMIN_PASSWORD\n              value: Secret123", "ADMIN_PASSWORD")).toEqual([
-      "Secret123",
+    expect(caught("docker run -e ADMIN_PASSWORD=example-fake-password -e HOSTNAME=db \\", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
     ]);
+    expect(caught("      ADMIN_PASSWORD: example-fake-password  # the login", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
+    ]);
+    expect(caught("| `ADMIN_PASSWORD=example-fake-password` | the admin login |", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
+    ]);
+    expect(caught("  adminPassword: example-fake-password", "adminPassword")).toEqual(["example-fake-password"]);
+    expect(caught("      - key: ADMIN_PASSWORD\n        value: example-fake-password", "ADMIN_PASSWORD")).toEqual([
+      "example-fake-password",
+    ]);
+    expect(
+      caught("            - name: ADMIN_PASSWORD\n              value: example-fake-password", "ADMIN_PASSWORD"),
+    ).toEqual(["example-fake-password"]);
     // ...and the shapes that must stay quiet, or a maintainer deletes this guard.
     expect(caught("ADMIN_PASSWORD: generated on first run", "ADMIN_PASSWORD")).toEqual([]);
     expect(caught('  adminPassword: "{{ .Values.secrets.adminPassword }}"', "adminPassword")).toEqual([]);
@@ -515,7 +533,7 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught("      KC_BOOTSTRAP_ADMIN_PASSWORD: kcadmin", "ADMIN_PASSWORD")).toEqual([]);
     expect(caught("ADMIN_PASSWORD=<your-password>", "ADMIN_PASSWORD")).toEqual([]);
     expect(caught("ADMIN_PASSWORD=...", "ADMIN_PASSWORD")).toEqual([]);
-    expect(caught("  --set secrets.adminPassword=MyAdmin123", "adminPassword")).toEqual([]);
+    expect(caught("  --set secrets.adminPassword=example-fake-helm-password", "adminPassword")).toEqual([]);
     expect(caught("secrets:\n  existingSecretKeys:\n    adminPassword: admin-password", "adminPassword")).toEqual([]);
     expect(caught("      - key: ADMIN_PASSWORD\n        sync: false", "ADMIN_PASSWORD")).toEqual([]);
     expect(
@@ -531,17 +549,25 @@ describe("the documentation publishes no credential that works", () => {
 
     // 1. The variable table, which is how every README here lists its settings. The name and
     // the value are two cells of one row and nothing between them is an assignment.
-    expect(caught("| `ADMIN_PASSWORD` | `LibreDB.2026` | the admin login |", "ADMIN_PASSWORD")).toEqual([
-      "LibreDB.2026",
+    expect(caught("| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
     ]);
-    expect(caught("| ADMIN_PASSWORD | `LibreDB.2026` |", "ADMIN_PASSWORD")).toEqual(["LibreDB.2026"]);
+    expect(caught("| ADMIN_PASSWORD | `example-not-a-real-password` |", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // 2. A shell line that carries on after the value.
-    expect(caught("export ADMIN_PASSWORD=LibreDB.2026 && echo ok", "ADMIN_PASSWORD")).toEqual(["LibreDB.2026"]);
+    expect(caught("export ADMIN_PASSWORD=example-not-a-real-password && echo ok", "ADMIN_PASSWORD")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // 3. A value with a space in it, which used to be read as one word plus prose.
-    expect(caught('ADMIN_PASSWORD="LibreDB Admin 2026"', "ADMIN_PASSWORD")).toEqual(["LibreDB Admin 2026"]);
-    expect(caught("USER_PASSWORD='LibreDB User 2026'", "USER_PASSWORD")).toEqual(["LibreDB User 2026"]);
+    expect(caught('ADMIN_PASSWORD="example fake admin password"', "ADMIN_PASSWORD")).toEqual([
+      "example fake admin password",
+    ]);
+    expect(caught("USER_PASSWORD='example fake user password'", "USER_PASSWORD")).toEqual([
+      "example fake user password",
+    ]);
     // The same hole let a secret through, and a secret is judged by its LENGTH, so reading
     // one word of it hid a value the server would have accepted.
     const secret = caught('JWT_SECRET="a secret long enough to be accepted here"', "JWT_SECRET");
@@ -549,9 +575,9 @@ describe("the documentation publishes no credential that works", () => {
     expect(secret[0].length).toBeGreaterThanOrEqual(JWT_SECRET_MIN_LENGTH);
 
     // 4. `docker run` with the image name after the value, rather than another flag.
-    expect(caught("docker run -e ADMIN_PASSWORD=LibreDB.2026 libredb/libredb-studio", "ADMIN_PASSWORD")).toEqual([
-      "LibreDB.2026",
-    ]);
+    expect(
+      caught("docker run -e ADMIN_PASSWORD=example-not-a-real-password libredb/libredb-studio", "ADMIN_PASSWORD"),
+    ).toEqual(["example-not-a-real-password"]);
   });
 
   test("reads a value a table hides past the cell after the name", () => {
@@ -561,24 +587,30 @@ describe("the documentation publishes no credential that works", () => {
     // The cell after the name is a tick or a cross, and the value goes inside the description
     // - which is where the ADMIN_EMAIL row directly above already writes its own default.
     const required = "| Variable | Required | Description |\n|----------|----------|-------------|\n";
-    expect(caught(required + "| `ADMIN_PASSWORD` | Yes | Admin password (default: `LibreDB.2026`) |")).toEqual([
-      "LibreDB.2026",
-    ]);
-    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password, defaults to `LibreDB.2026` |")).toEqual([
-      "LibreDB.2026",
-    ]);
-    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: LibreDB.2026) |")).toEqual([
-      "LibreDB.2026",
-    ]);
-    expect(caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: **LibreDB.2026**) |")).toEqual([
-      "LibreDB.2026",
-    ]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | Yes | Admin password (default: `example-not-a-real-password`) |"),
+    ).toEqual(["example-not-a-real-password"]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | No | Admin password, defaults to `example-not-a-real-password` |"),
+    ).toEqual(["example-not-a-real-password"]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: example-not-a-real-password) |"),
+    ).toEqual(["example-not-a-real-password"]);
+    expect(
+      caught(required + "| `ADMIN_PASSWORD` | No | Admin password (default: **example-not-a-real-password**) |"),
+    ).toEqual(["example-not-a-real-password"]);
 
     // A column the header calls a value is one, wherever it sits and however it is marked up.
     const valued = "| Variable | Value | Description |\n|---|---|---|\n";
-    expect(caught(valued + "| `ADMIN_PASSWORD` | `LibreDB.2026` | the admin login |")).toEqual(["LibreDB.2026"]);
-    expect(caught(valued + "| `ADMIN_PASSWORD` | LibreDB.2026 | the admin login |")).toEqual(["LibreDB.2026"]);
-    expect(caught(valued + "| `ADMIN_PASSWORD` | **LibreDB.2026** | the admin login |")).toEqual(["LibreDB.2026"]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | `example-not-a-real-password` | the admin login |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | example-not-a-real-password | the admin login |")).toEqual([
+      "example-not-a-real-password",
+    ]);
+    expect(caught(valued + "| `ADMIN_PASSWORD` | **example-not-a-real-password** | the admin login |")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // A secret is judged by its length, so a table that hides one is the same hole twice.
     const table = "| Variable | Default |\n|---|---|\n| `JWT_SECRET` | `0123456789abcdef0123456789abcdef` |";
@@ -592,11 +624,13 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught(notes + "| `JWT_SECRET` | `0123456789abcdef0123456789abcdef` |", "JWT_SECRET")).toEqual([
       "0123456789abcdef0123456789abcdef",
     ]);
-    expect(caught(notes + "| `ADMIN_PASSWORD` | **LibreDB.2026** |")).toEqual(["LibreDB.2026"]);
+    expect(caught(notes + "| `ADMIN_PASSWORD` | **example-not-a-real-password** |")).toEqual([
+      "example-not-a-real-password",
+    ]);
 
     // With no header row the row is a fragment, and the cell after the name is all there is.
-    expect(caught("| `ADMIN_PASSWORD` | LibreDB.2026 |")).toEqual(["LibreDB.2026"]);
-    expect(caught("| `ADMIN_PASSWORD` | **LibreDB.2026** |")).toEqual(["LibreDB.2026"]);
+    expect(caught("| `ADMIN_PASSWORD` | example-not-a-real-password |")).toEqual(["example-not-a-real-password"]);
+    expect(caught("| `ADMIN_PASSWORD` | **example-not-a-real-password** |")).toEqual(["example-not-a-real-password"]);
   });
 
   test("leaves a table that names a source, a requirement or a note alone", () => {
