@@ -52,7 +52,6 @@ secret for you — create a manual entry and copy the key it shows.
 ```env
 NEXT_PUBLIC_AUTH_PROVIDER=local
 ADMIN_EMAIL=admin@libredb.org
-ADMIN_PASSWORD=your_secure_admin_password
 ADMIN_TOTP_SECRET=the_secret_you_generated_in_step_1
 ```
 
@@ -130,7 +129,6 @@ you configured there. Two ways to close it, and they compose:
 ```bash
 docker run -d -p 3000:3000 \
   -e JWT_SECRET="$(openssl rand -base64 32)" \
-  -e ADMIN_PASSWORD=your_secure_admin_password \
   -e ADMIN_TOTP_SECRET="$ADMIN_TOTP_SECRET" \
   ghcr.io/libredb/libredb-studio:latest
 ```

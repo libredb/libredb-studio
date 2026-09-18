@@ -391,8 +391,6 @@ docker run \
   -e SEED_CONFIG_PATH=/app/config/seed-connections.yaml \
   -e PG_PASSWORD=secret \
   -e JWT_SECRET=your-32-char-jwt-secret-here!! \
-  -e ADMIN_PASSWORD=MyAdmin123 \
-  -e USER_PASSWORD=MyUser123 \
   -p 3000:3000 \
   ghcr.io/libredb/libredb-studio:latest
 ```
@@ -410,8 +408,6 @@ services:
     environment:
       SEED_CONFIG_PATH: /app/config/seed-connections.yaml
       JWT_SECRET: your-32-char-jwt-secret-here!!
-      ADMIN_PASSWORD: MyAdmin123
-      USER_PASSWORD: MyUser123
       PG_PASSWORD: ${PG_PASSWORD}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     env_file:

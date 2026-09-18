@@ -263,9 +263,8 @@ Production (strict mode, explicit secrets):
 ```bash
 docker run --name libredb-studio -p 3000:3000 \
   -e AUTH_BOOTSTRAP=off \
-  -e JWT_SECRET=change-me-to-a-random-32-char-string \
+  -e JWT_SECRET=change-me \
   -e ADMIN_EMAIL=admin@libredb.org \
-  -e ADMIN_PASSWORD=your_secure_admin_password \
   ghcr.io/libredb/libredb-studio:latest
 ```
 
@@ -809,7 +808,7 @@ Example drop-in (uncomment and fill what you need):
 
 # Auth (optional; omit to keep zero-config bootstrap)
 #Environment=AUTH_BOOTSTRAP=off
-#Environment=JWT_SECRET=change-me-to-a-random-32-char-string
+#Environment=JWT_SECRET=change-me
 #Environment=ADMIN_EMAIL=admin@libredb.org
 #Environment=ADMIN_PASSWORD=
 

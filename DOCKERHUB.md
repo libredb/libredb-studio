@@ -31,14 +31,10 @@ docker run \
   --name libredb-studio \
   -p 3000:3000 \
   -e ADMIN_EMAIL=admin@libredb.org \
-  -e ADMIN_PASSWORD=change-me-admin \
-  -e USER_EMAIL=user@libredb.org \
-  -e USER_PASSWORD=change-me-user \
-  -e JWT_SECRET=change-me-to-a-random-32-char-string \
   libredb/libredb-studio:latest
 ```
 
-Open <http://localhost:3000> and log in with the `ADMIN_EMAIL` / `ADMIN_PASSWORD` you set above. **Use your own strong passwords and a random `JWT_SECRET`** — the values here are placeholders.
+Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` — the secret has to be at least 32 characters, and a value short enough to read as a placeholder is what stops a container coming up on a published one. `USER_EMAIL` / `USER_PASSWORD` are optional and create a second, lower-privilege account; without them there is no such account.
 
 > **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start and the admin password is printed once to the container log. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
@@ -54,10 +50,6 @@ services:
       - "3000:3000"
     environment:
       ADMIN_EMAIL: admin@libredb.org
-      ADMIN_PASSWORD: change-me
-      USER_EMAIL: user@libredb.org
-      USER_PASSWORD: change-me
-      JWT_SECRET: change-me-to-a-random-32-char-string
       STORAGE_PROVIDER: sqlite                 # persist on the volume below
       STORAGE_SQLITE_PATH: /app/data/libredb-storage.db
     volumes:
@@ -169,7 +161,7 @@ Details, probed versions and each caveat: [`docs/providers/README.md`](https://g
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode reads PostgreSQL, SQLite, DuckDB and SQL Server only** — they are the only engines with a database-native read-only execution profile, and on any other engine an Agent-mode run whose workflow sends statements is refused when it is started, with `engine-unsupported`; Plan mode is toolless, runs no statement of yours, and is **grounded in your own schema on every engine** — it reads the inventory before the model's first turn and asks for one statement in that engine's own language, or refuses with `NO STATEMENT:` and the question that would unblock it. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode reads PostgreSQL, SQLite and DuckDB only** — they are the only engines with a database-native read-only execution profile, and on any other engine an Agent-mode run ends `engine-unsupported`; Plan mode is toolless, runs no statement of yours, and is **grounded in your own schema on every engine** — it reads the inventory before the model's first turn and asks for one statement in that engine's own language, or refuses with `NO STATEMENT:` and the question that would unblock it. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
 - **Model-backed helpers** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no model configured — no `LLM_*` variables at all — no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one, which enables the AI features — and the agent too, once its ledger path is writable.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.

@@ -14,7 +14,7 @@
 # once to the journal: journalctl -u libredb-studio
 # Set AUTH_BOOTSTRAP=off to require explicit values instead.
 #AUTH_BOOTSTRAP=off
-#JWT_SECRET=change-me-to-a-random-32-char-string
+#JWT_SECRET=change-me
 #ADMIN_EMAIL=admin@libredb.org
 #ADMIN_PASSWORD=
 #USER_EMAIL=user@libredb.org
