@@ -49,6 +49,7 @@ import {
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
+import { declaredColumnTypes } from "./column-types";
 import {
   applySourceBound,
   callerBoundTruncationReason,
@@ -1254,6 +1255,13 @@ export class SQLiteProvider extends SQLBaseProvider {
               rows: (rows as unknown[]).map((row) => row as Record<string, unknown>) as Record<string, unknown>[],
               fields,
               changes: 0,
+              // Declared types travel with the result (#273), and are read AFTER the rows
+              // because bun:sqlite refuses the question until the statement has run - see
+              // `SQLiteStatement.declaredColumns`, where both drivers were measured.
+              // `declaredColumnTypes` omits the key entirely when nothing was declared,
+              // which is the common case here rather than a failure: SQLite declares
+              // nothing for a computed column, a literal, an aggregate or any PRAGMA.
+              declared: declaredColumnTypes(stmt.declaredColumns()),
             };
           } else {
             const stmt = this.db!.prepare(sql);
@@ -1262,6 +1270,10 @@ export class SQLiteProvider extends SQLBaseProvider {
               rows: [],
               fields: [],
               changes: info.changes,
+              // A write has no result columns at all - measured, both drivers answer an
+              // EMPTY column list after `run()` - so there is nothing to declare, and the
+              // key is left off exactly as `fields: []` leaves the names off.
+              declared: {},
             };
           }
         } catch (error) {
@@ -1274,6 +1286,7 @@ export class SQLiteProvider extends SQLBaseProvider {
         fields: result.fields,
         rowCount: result.rows.length || result.changes,
         executionTime,
+        ...result.declared,
       };
     });
   }
@@ -1356,22 +1369,32 @@ export class SQLiteProvider extends SQLBaseProvider {
     this.enforceQueryOnly();
 
     return this.trackQuery(async () => {
-      const { result, executionTime } = await this.measureExecution(async () => {
+      const {
+        result: { rows, declared },
+        executionTime,
+      } = await this.measureExecution(async () => {
         try {
-          return this.db!.prepare(sql).all() as Record<string, unknown>[];
+          const stmt = this.db!.prepare(sql);
+          // The rows first and the declarations second, for the reason `query()` above
+          // states: bun:sqlite answers the second question only once the first has been
+          // asked. The budgets below are checked on the rows either way, so a result
+          // refused for being too large carries its types no further than it carries its
+          // rows.
+          const all = stmt.all() as Record<string, unknown>[];
+          return { rows: all, declared: declaredColumnTypes(stmt.declaredColumns()) };
         } catch (error) {
           throw mapDatabaseError(error, "sqlite", sql);
         }
       });
 
-      if (result.length > budget.maxResultRows) {
+      if (rows.length > budget.maxResultRows) {
         throw new QueryError(
-          `Read-only execution exceeded the row budget: ${result.length} rows > ${budget.maxResultRows} allowed`,
+          `Read-only execution exceeded the row budget: ${rows.length} rows > ${budget.maxResultRows} allowed`,
           "sqlite",
           sql,
         );
       }
-      const resultBytes = measureResultBytes(result);
+      const resultBytes = measureResultBytes(rows);
       if (resultBytes > budget.maxResultBytes) {
         throw new QueryError(
           `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
@@ -1393,10 +1416,11 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
 
       return {
-        rows: result,
-        fields: result.length > 0 ? Object.keys(result[0]) : [],
-        rowCount: result.length,
+        rows,
+        fields: rows.length > 0 ? Object.keys(rows[0]) : [],
+        rowCount: rows.length,
         executionTime,
+        ...declared,
       };
     });
   }
