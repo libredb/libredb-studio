@@ -167,8 +167,7 @@ is refused.
 
 **1.4.** Marked Partial: sessions and origin failures are audited, and so is the proxy's `/admin`
 role check — but that line reaches stdout only, never the Admin Audit tab, for the reason under 3.2.
-Four in-handler admin checks return their denial with no audit line. Tracked in
-[`docs/BACKLOG.md`](./BACKLOG.md), entry H12.
+The rest of this note is stale and tracked separately in #991.
 
 **1.6.** Opt-in: a second factor exists for an account exactly when `ADMIN_TOTP_SECRET` /
 `USER_TOTP_SECRET` is set, so the row claims nothing about a deployment that sets neither.
@@ -207,9 +206,10 @@ would let an admin session forge an indistinguishable log line.
 The gap in the other direction is `src/proxy.ts`, and it is why stdout is the authoritative channel
 for boundary denials specifically. Next compiles the proxy as its own entry, which can run outside
 the application's main runtime, so the module-level ring buffer it pushes to is never the one
-`GET /api/admin/audit` reads. Measured in #851: every `origin_mismatch` and every proxy-level
-`insufficient_role` line reaches stdout, and none of them reaches the Admin Audit tab. The tab
-discloses that rather than presenting its buffer as the whole log.
+`GET /api/admin/audit` reads. Measured in #851: an `origin_mismatch` or a proxy-level
+`insufficient_role` line, when the anon rate limit under 1.2 lets it through, reaches stdout and
+never the Admin Audit tab. The tab discloses that rather than presenting its buffer as the whole
+log.
 
 **3.4.** WRITES are refused by the database itself, and each engine's boundary is its own. A
 PostgreSQL read-only transaction carrying exactly one statement, run by a role verified at open to
