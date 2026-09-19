@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D97, U17 · 43
+- [Drivers and connections](#drivers-and-connections) — D1–D96, U17 · 42
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R2 · 2
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
@@ -1334,20 +1334,6 @@ There is nothing to fix inside this repository: the queue that is dropped belong
 What can be done is to re-probe, and to stop the claim drifting back to "whole output" in the meantime.
 
 **Done when:** the focused repro has been run against a bun newer than 1.4.2 under the same load, and either it is whole 10 times out of 10 and this entry closes, or the entry names the newest version it still reproduces on and is reported upstream.
-
-### D97. A committed `.only` makes a file report PASS with the rest of its tests never run
-
-Measured 2026-09-15 on bun 1.4.2, while reviewing #837.
-bun honours `.only` by default, and nothing in the runner, the lint configuration or the required checks refuses one that reaches `main`.
-A fixture holding `it.only`, a failing `it`, a `describe.todo` and a `describe.concurrent` with two more tests wrote a junit report of `tests="1" failures="0"`, exited 0, and the runner printed `PASS 0.0s tests/unit/only.test.ts 1 pass`; the same file without the `.only` registers five tests.
-So four registered tests, one of them failing, are absent from the report, from the run's totals and from CI's verdict, and the run is green.
-
-The runner cannot close this from the report it reads, which is why `toOutcome`'s docblock now names `.only` as the shape the report cannot see.
-bun's report is honest about the one test it ran; the file that should have been refused is the one on disk.
-It has to be refused before the run, and there are two cheap shapes: an `eslint-plugin-no-only-tests` rule (or oxlint's `jest/no-focused-tests`) scoped to `tests/**` and `e2e/**`, or a grep over the same paths inside the required `Lint, Typecheck and Build` check, which costs one command and no new dependency.
-The coverage gate is not a reliable second line of defence either: whether it goes red depends on which lines the unrun tests were the only cover for, which is a property of the file rather than of the `.only` (reasoned, not measured).
-
-**Done when:** a file carrying `it.only`, `test.only` or `describe.only` under `tests/` or `e2e/` fails a required check, and a test pins that gate by driving it over a fixture that carries one, with a control fixture that does not and passes.
 
 
 ## Value interpolation

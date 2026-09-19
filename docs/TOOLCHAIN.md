@@ -225,6 +225,15 @@ check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typ
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 
+`bun run lint` ends with one more step, added after the phases above: `node scripts/only-check.mjs`, the
+focused-test guard from #979, also reachable on its own as `bun run only:check`. A committed `.only` makes bun
+run that one test in the file, report it honestly and exit 0, so every other test the file registers is absent
+from the report, the totals and the verdict alike - no report can show that, so it is refused from the source
+before the run. It sits beside the other `scripts/*-check.mjs` guards rather than in the lint pipeline for the
+reason its own docblock gives: a finding is printed as a file and a line for an editor to jump to, not as a
+rule id. Its scope is `tests/` and `e2e/`, enumerated with `git ls-files` rather than a glob, so an untracked
+draft cannot red a check that CI, which checks out tracked files only, cannot reproduce (#980).
+
 ### `bun run test` and the process-wide `mock.module()`, and where isolation has to sit
 
 `mock.module()` is process-wide with no undo, so a mock one layer installs reaches every file that
@@ -320,7 +329,8 @@ Both shapes defeat exactly the two guards that keep a red tree from turning gree
 `--bail` is the same defect from the other side: it prints no count line at all, while the report still carries the failure.
 A report that is absent and one the parser cannot read are told apart, and neither ever becomes zero counts: the file fails, its line reads "no test report" or "unreadable test report", and the summary says how many files left no readable report and that their tests are not in the totals above it.
 There is one shape no report can show, and the runner says so rather than pretending otherwise: bun honours a committed `.only`, so such a file writes an honest report naming that one test and exits 0, and the tests it never ran are absent from the report, the totals and the verdict alike (measured on 1.4.2).
-That has to be refused before the run rather than read out of what the run wrote, and nothing refuses it today: `docs/BACKLOG.md` D97.
+That has to be refused before the run rather than read out of what the run wrote, and `scripts/only-check.mjs`
+refuses it: see "CI and pre-commit integration" above.
 
 Forwarding a flag to `bun test` works only when the runner is invoked directly and a selector comes first.
 Measured on 1.4.2: `bun run test -- --bail` reaches the script as `["--bail"]`, because `bun run` removes the first `--`, and bun removes one that sits straight after the script path too, so `bun tests/run-tests.ts -- --bail` loses it as well.

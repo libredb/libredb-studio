@@ -143,7 +143,7 @@
     "format": "biome format .",
     "format:fix": "biome format --write .",
     "lint": "oxlint && eslint . && node scripts/only-check.mjs",
-    "lint:tests": "node scripts/only-check.mjs",
+    "only:check": "node scripts/only-check.mjs",
     "lint:oxc": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "bun tests/run-tests.ts",
