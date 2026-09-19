@@ -327,6 +327,49 @@ export function isThreadContextEnabled(): boolean {
   return true;
 }
 
+/** How often the resume sweep looks for runs a dead process left behind (B9). */
+const AGENT_RESUME_SWEEP_INTERVAL_ENV = "LIBREDB_AGENT_RESUME_SWEEP_INTERVAL_MS";
+
+/** How old a running run's last ledger activity must be before the sweep claims it (B9). */
+const AGENT_STALE_RUN_AFTER_ENV = "LIBREDB_AGENT_STALE_RUN_AFTER_MS";
+
+const DEFAULT_RESUME_SWEEP_INTERVAL_MS = 60_000;
+
+/**
+ * The default stale threshold: the longest run deadline any workflow admits,
+ * plus the claim grace and a margin. A run still inside its own deadline is
+ * therefore never swept; only one whose claim lapsed through a process death is.
+ */
+const DEFAULT_STALE_RUN_AFTER_MS =
+  Math.max(...Object.values(AGENT_WORKFLOW_BUDGETS).map((budget) => budget.runDeadlineMs)) + 120_000;
+
+/**
+ * How often the resume sweep runs (B9). Defaults to once a minute. A value that
+ * is not a positive whole number of milliseconds is ignored and the default
+ * stands, the same two-sided rule every other knob here follows.
+ */
+export function agentResumeSweepIntervalMs(): number {
+  const raw = process.env[AGENT_RESUME_SWEEP_INTERVAL_ENV];
+  if (raw === undefined) return DEFAULT_RESUME_SWEEP_INTERVAL_MS;
+  const asked = Number(raw.trim());
+  if (!Number.isSafeInteger(asked) || asked <= 0) return DEFAULT_RESUME_SWEEP_INTERVAL_MS;
+  return asked;
+}
+
+/**
+ * How old a running run's last ledger activity must be before the sweep will
+ * consider it abandoned (B9). Defaults to the longest run deadline plus the
+ * claim grace and a margin. A value that is not a positive whole number of
+ * milliseconds is ignored and the default stands.
+ */
+export function agentStaleRunAfterMs(): number {
+  const raw = process.env[AGENT_STALE_RUN_AFTER_ENV];
+  if (raw === undefined) return DEFAULT_STALE_RUN_AFTER_MS;
+  const asked = Number(raw.trim());
+  if (!Number.isSafeInteger(asked) || asked <= 0) return DEFAULT_STALE_RUN_AFTER_MS;
+  return asked;
+}
+
 function availabilityWithoutIO(): AgentAvailability {
   if (readAgentEnableFlag() === "off") {
     return { available: false, reason: "OPERATOR_DISABLED", detail: operatorDisabledMessage() };

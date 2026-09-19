@@ -87,7 +87,7 @@ import {
 } from "./types";
 
 /** Stream-name prefix, so one world may carry ledgers next to other streams. */
-const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
+export const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
 
 /**
  * Ids are `[A-Za-z0-9_]` and bounded: no `-` (see the module docblock), no `.` (the

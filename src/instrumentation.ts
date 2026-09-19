@@ -53,6 +53,12 @@ export async function register(): Promise<void> {
   const { printStartupBanner } = await import("@/lib/startup-banner");
   printStartupBanner();
 
+  // Agent resume sweep (#329 B9): pick up runs a dead process left `running`.
+  // The sweep itself checks whether the agent runtime is enabled, so wiring it
+  // here costs nothing when AI is off. Never throws, and never blocks boot.
+  const { startAgentResumeSweep } = await import("@/lib/agent/resume-sweep");
+  startAgentResumeSweep();
+
   if (!isSqliteSampleEnabled()) return;
 
   // "seeding" is set BEFORE the IIFE so no request can observe "idle" while a
