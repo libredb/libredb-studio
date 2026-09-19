@@ -19,6 +19,7 @@ import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { ConnectionError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -2278,6 +2279,35 @@ describe("the composed kind vocabulary cannot drift from the provider's declarat
     return Object.fromEntries([...(block ?? "").matchAll(/(\w+): "(\w+)"/g)].map((match) => [match[1], match[2]]));
   };
 
+  /**
+   * The provider's own sqlite kind ids (#981). Asking the constructed provider rather than
+   * reading `sqlite.ts` as text is what makes the guard independent of how the declaration
+   * is laid out: the scrape it replaced matched a single-line entry only.
+   *
+   * Capabilities are type-driven, so this needs no socket - the same reason the
+   * `provider-meta` route can read them off a provider it never connects.
+   */
+  const declaredSqliteKindIds = async (): Promise<string[]> => {
+    const provider = await createDatabaseProvider({
+      id: "kind-vocabulary-guard",
+      name: "kind-vocabulary-guard",
+      type: "sqlite",
+      // The provider validates its config in the constructor and wants a file path, even
+      // though capabilities are read without ever connecting. `:memory:` is the documented
+      // way to satisfy that without naming a file.
+      database: ":memory:",
+      createdAt: new Date(0),
+    } satisfies DatabaseConnection);
+    return (provider.getCapabilities().objectKinds ?? []).map((kind) => kind.id);
+  };
+
+  /**
+   * The guard's comparison, in one place so the failure it exists to produce can be
+   * exercised on its own: every declared kind id must be its own word in the agent side's map.
+   */
+  const unmappedKindIds = (declaredIds: readonly string[], composed: Record<string, string>): string[] =>
+    declaredIds.filter((id) => composed[id] !== id);
+
   test("PostgreSQL: every relkind is mapped exactly as the provider's own CASE maps it", () => {
     // `COUNTS_RELATION_ARM` is the CASE `postgres.ts` takes its own folder counts and
     // listings from, so a relation this path calls a view is one its object browser
@@ -2295,17 +2325,29 @@ describe("the composed kind vocabulary cannot drift from the provider's declarat
     expect(composedMap("postgres")).toEqual(providerMap);
   });
 
-  test("SQLite: the four words sqlite_schema types objects with are the four ids declared", () => {
-    const declaredIds = [
-      ...(
-        /const SQLITE_OBJECT_KINDS[\s\S]*?\n\];/.exec(readSource("src/lib/db/providers/sql/sqlite.ts"))?.[0] ?? ""
-      ).matchAll(/\{ id: "(\w+)"/g),
-    ].map((match) => match[1]);
+  test("SQLite: the four words sqlite_schema types objects with are the four ids declared", async () => {
+    // Read through the provider rather than this file's text (#981). The scrape this
+    // replaced matched a single-line `{ id: "..."` entry only, so a kind declared across
+    // two lines left BOTH sides one word shorter and the guard passed over a kind nothing
+    // maps. The provider answers the same question without caring how the array is laid out.
+    const declaredIds = await declaredSqliteKindIds();
 
     expect(declaredIds.length).toBeGreaterThan(0);
     // The identity map, which is the claim: `sqlite_schema.type` and the declared kind
     // ids are the same vocabulary, so neither side may gain a word alone.
     expect(composedMap("sqlite")).toEqual(Object.fromEntries(declaredIds.map((id) => [id, id])));
+  });
+
+  test("a kind declared but left unmapped is caught, and the declaration's formatting cannot hide it", () => {
+    const composed = composedMap("sqlite");
+
+    // The fifth kind that nothing maps. This is the case the source scrape could not see
+    // once its entry wrapped: absent from the guard's population AND from the agent side's
+    // map, so both sides shrank together and the guard passed (#981).
+    expect(unmappedKindIds([...Object.keys(composed), "fifth_kind"], composed)).toEqual(["fifth_kind"]);
+    // And the declared vocabulary it does carry stays clean, so the check above is not
+    // passing because it reports everything.
+    expect(unmappedKindIds(Object.keys(composed), composed)).toEqual([]);
   });
 });
 

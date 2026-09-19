@@ -335,22 +335,13 @@ const OBJECT_FOREIGN_KEYS_SQL = `
  * on this engine that declares nothing. `sql` is a Monaco language id the installed bundle
  * really registers, which `plsql`, `tsql` and `cql` are not.
  *
- * The name is short so each entry below stays ONE LINE, which is not cosmetic:
- * `tests/unit/lib/agent/context-snapshot.test.ts` reads the declared ids out of this array
- * with a `{ id: "..."` scrape that matches a SINGLE-LINE entry only.
- *
- * What that scrape does and does not notice, both measured on 2026-09-13 rather than argued.
- * Writing `hasSource: true, sourceLanguage: "sql"` inline pushes the `table` and `trigger`
- * entries past 120 columns and the formatter explodes them; the guard then holds two declared
- * ids against the agent side's four and FAILS LOUDLY (1 fail, "Expected - 0 / Received + 2",
- * `table` and `trigger` unmatched). So an exploded EXISTING entry is a red test and not a
- * silent loss. The silent case is the other one, and it is the reason these entries are kept
- * scrapable: a FIFTH kind written as a multi-line entry is missing from the guard's population
- * AND from the agent side's map, both sides shrink together, and the guard passes over a kind
- * nothing maps (measured: multi-line fifth kind 1 pass 0 fail, the same kind on one line
- * 1 fail). The durable fix is not here, because that file belongs to the agent side: the guard
- * should read the declaration through `createDatabaseProvider("sqlite").getCapabilities()`
- * instead of scraping this text. Filed in the backlog under #789.
+ * The layout of these entries is free: nothing reads them as text. The vocabulary is pinned to
+ * the agent side's `COMPOSED_KIND_WORDS` by `tests/unit/lib/agent/context-snapshot.test.ts`,
+ * which asks the constructed provider for `getCapabilities().objectKinds` rather than scraping
+ * this array (#981). An entry that wraps therefore cannot hide its kind from that guard, which
+ * is the hole the earlier `{ id: "..."` scrape left: a fifth kind written across two lines was
+ * missing from the guard's population AND from the agent side's map, so both sides shrank
+ * together and the guard passed over a kind nothing maps.
  */
 const SOURCE_SQL: Pick<ObjectKindSpec, "hasSource" | "sourceLanguage"> = { hasSource: true, sourceLanguage: "sql" };
 
