@@ -167,7 +167,10 @@ other half of that comparison).
 
 The affinity is not knowable at a bind — a bind is a value, and the protocol never names the column an
 operand belongs to — so `encodeValue` answers the question it CAN answer exactly: **it accepts back
-precisely what `decodeInteger` hands out**, and leaves every other string as text. Those digits are
+precisely what `decodeInteger` hands out**, and leaves every other string as text. The bound and the
+digit shape it tests against are read from
+[`sqlite-int64.ts`](../../src/lib/db/providers/sql/sqlite-int64.ts), which the SQLite driver reads
+too: both providers hand out the same shape, so they must accept the same shape back. Those digits are
 emitted for one input only, a 64-bit integer outside the safe range, so reading them back as that
 integer is the exact inverse:
 

@@ -359,9 +359,14 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   lets `mssql` **infer** the TDS type from the JS value. Inference is convenient but a known
   foot-gun: `null` params, very large integers, and `VARCHAR` vs `NVARCHAR` intent can be guessed
   wrong. Callers needing exact typing would have to bind explicitly (not currently exposed).
-- **Numeric precision.** `BIGINT`, `DECIMAL`/`NUMERIC`, and `MONEY` are surfaced as JavaScript
-  `number`s and can **lose precision** beyond 2^53 / at high scale (the same class of issue as
-  Oracle's `NUMBER`). Fetching them as strings would preserve fidelity.
+- **Numeric precision.** `DECIMAL`/`NUMERIC` and `MONEY` are surfaced as JavaScript `number`s and
+  can **lose precision** at high scale (the same class of issue as Oracle's `NUMBER`). `BIGINT` is
+  not among them: tedious hands it over as a **string**, so its digits survive.
+  MEASURED 2026-09-19 on SQL Server 2022 (16.0.4295.3) through tedious 20.0.0, one row:
+  `BIGINT` 9007199254740993 came back as the string `"9007199254740993"`; `DECIMAL(38,10)`
+  1234567890123456.7891234567 as the number 1234567890123456.8; `MONEY` 922337203685477.5807 as
+  922337203685477.6; `NUMERIC(20,4)` and `INT` as numbers of their own value. Fetching the three
+  that round as strings would preserve fidelity.
 - **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
@@ -398,9 +403,10 @@ left out of the name for the reason the `length` column above shows - they are r
 do not survive being spelled back (80 bytes for 40 characters, a sentinel for `MAX`).
 
 This is the only source of a type for a computed column or an ad-hoc projection. It matters here
-because `BIGINT` and `DECIMAL` reach the browser as strings (§5.3): measured before this existed, the
-probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exported as `NVARCHAR(MAX)` and its
-`DECIMAL(10,2)` as `FLOAT`. Both execution paths fill it from the same column map - including
+because `BIGINT` reaches the browser as a string and `DECIMAL` as a number (§5.3): measured before
+this existed, the probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exported as
+`NVARCHAR(MAX)` and its `DECIMAL(10,2)` as `FLOAT` - which is the same evidence read the right way
+round, a string exporting as text and a number as a float. Both execution paths fill it from the same column map - including
 `queryInTransaction()`, which had the map available all along and simply never read it.
 
 ---
@@ -1719,8 +1725,9 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   grid, the row detail sheet and the CSV export all classify that shape as binary and render `\x…`
   hex (`src/lib/export/binary.ts`), so what remains is the response size — about four bytes of JSON
   digits per byte of data.
-- **Numeric precision loss** — `BIGINT`/`DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and
-  can lose precision; they would need to be fetched as strings to stay exact ([§5.3](#53-data-type--parameter-handling)).
+- **Numeric precision loss** — `DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and can lose
+  precision; they would need to be fetched as strings to stay exact. `BIGINT` already arrives as one
+  ([§5.3](#53-data-type--parameter-handling)).
 - **Parameters bound without explicit types** — relies on `mssql` type inference, which can mis-type
   `null`/large-integer/`NVARCHAR` values ([§5.3](#53-data-type--parameter-handling)).
 - **A parameterised page is not recognised as one.** The already-bounded probes read a literal count,

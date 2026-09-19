@@ -307,7 +307,11 @@ not serve at all before, not a case it served wrongly.
 
 The affinity is not knowable at a bind — a bind is a value with no column attached — so
 `toSQLiteBindValue()` answers the question it CAN answer exactly: it accepts back precisely what the
-read hands out, and leaves every other string alone. Measured, string by string:
+read hands out, and leaves every other string alone. The bound and the digit shape it tests against
+live in [`sqlite-int64.ts`](../../src/lib/db/providers/sql/sqlite-int64.ts) rather than in this
+driver, because libsql must accept the same shape back and a rule written twice is a rule two copies
+can break silently; `tests/unit/db/sqlite-int64.test.ts` fails the build if a provider grows its own.
+Measured, string by string:
 
 | Bound string | Sent as | Why |
 |---|---|---|
@@ -1354,6 +1358,7 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 - Drivers: [`bun:sqlite`](https://bun.sh/docs/api/sqlite) (Bun built-in) · [`node:sqlite`](https://nodejs.org/api/sqlite.html) (Node built-in)
 - Driver adapter: [`src/lib/db/providers/sql/sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts)
+- 64-bit integer bound, shared with libsql: [`src/lib/db/providers/sql/sqlite-int64.ts`](../../src/lib/db/providers/sql/sqlite-int64.ts)
 - Source: [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)
 - SQL base: [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)
 - Query limiter: [`src/lib/db/utils/query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)
