@@ -51,6 +51,8 @@ import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -465,29 +467,13 @@ function assertContainerPath(capabilities: ProviderCapabilities, container: read
 }
 
 /**
- * Refuses a path no shape of this kind admits, naming the shape it does admit.
- *
- * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
- * the same question about the same path, and two copies of this derivation are two chances
- * for the detail pane and the Source tab to disagree about what a trigger's address is.
- *
- * Derived, never counted. The depth comes from `containerDepth()` through `declaredLevels()`,
- * so absent and empty cannot be answered differently here than anywhere else, and the segment
- * NAMES are the declared level labels, so the message and the check are the same array. There
- * is ONE shape per kind rather than MySQL's two, because every SQLite trigger has a parent:
- * `sqlite_schema.tbl_name` is never null for one.
+ * SQLite: an attached kind requires its parent segment, so the error names one shape.
  */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  kind: string,
-  path: readonly string[],
-): void {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-  if (path.length === shape.length) return;
-  throw new QueryError(`A SQLite "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`, "sqlite");
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "sqlite",
+  label: "A SQLite",
+  attachedSegment: "required",
+};
 
 /**
  * Every declared kind seeded at zero, before any row is read.
@@ -1545,7 +1531,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
     }
 
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1748,7 +1734,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     const spec = requireSourceKind(capabilities, kind, { displayName: "SQLite", type: "sqlite" });
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
       throw new QueryError(
         `SQLite declares readable source for the kind "${kind}" but has no catalog type that reads it`,

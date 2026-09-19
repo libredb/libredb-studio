@@ -87,6 +87,8 @@
 import { QueryError } from "@/lib/db/errors";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -591,29 +593,13 @@ function containerKeyspace(capabilities: ProviderCapabilities, container: readon
 }
 
 /**
- * How many segments a path of one KIND has, checked against the declaration (#789).
- *
- * ONE writer for two readers: `describeObject` and `readObjectSource` ask the same question
- * about the same path, and two copies of this derivation are two chances for the detail pane
- * and the Source tab to disagree about what an object's address is.
- *
- * Derived, not counted. One segment per declared container level plus the name, and a nesting
- * segment for a kind that declares `attachedTo` - which is the ONLY thing that changes the
- * depth, so both shapes come from the declaration rather than from a kind id written out here.
+ * Cassandra: an attached kind is addressed through its table, so the segment is required.
  */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  path: readonly string[],
-): void {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-  if (path.length === shape.length) return;
-  throw new QueryError(
-    `A Cassandra "${spec.id}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-    PROVIDER,
-  );
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: PROVIDER,
+  label: "A Cassandra",
+  attachedSegment: "required",
+};
 
 /**
  * The server's own sentence, verbatim, for ONE kind whose read was refused.
@@ -983,7 +969,7 @@ export async function describeObject(
     throw new QueryError(`Cassandra declares no object kind "${kind}"`, PROVIDER);
   }
 
-  assertObjectPathShape(capabilities, spec, path);
+  assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
   const catalog = objectCatalog(kind);
   if (catalog === undefined) {
@@ -1351,7 +1337,7 @@ export async function readObjectSource(
   limit?: number,
 ): Promise<ObjectSourceDocument> {
   const spec = requireSourceKind(capabilities, kind, { displayName: "Cassandra", type: PROVIDER });
-  assertObjectPathShape(capabilities, spec, path);
+  assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
   const catalog = objectCatalog(kind);
   if (catalog?.describeTarget === undefined || catalog.describeType === undefined) {
     throw new QueryError(
