@@ -77,7 +77,16 @@ export const STATUSES = new Set(["Implemented", "Partial", "Not implemented"]);
  * rule is the repository's definition of "this test runs", so the gate asks it.
  */
 function discoveredTestFiles(root) {
-  const listed = spawnSync("bun", [TEST_RUNNER, "--list"], { cwd: root, encoding: "utf8" });
+  // Windows installs bun either as `bun.exe` (the setup action) or as a `bun.cmd`
+  // npm shim; a bare name only resolves through the shell's PATHEXT lookup, so the
+  // shell is enabled on win32 and the name stays `bun`. Arguments are fixed string
+  // literals, so the shell expands nothing attacker-controlled.
+  const onWindows = process.platform === "win32";
+  const listed = spawnSync("bun", [TEST_RUNNER, "--list"], {
+    cwd: root,
+    encoding: "utf8",
+    shell: onWindows,
+  });
   if (listed.status !== 0) {
     console.error(`ERROR: could not ask ${TEST_RUNNER} what it runs: ${listed.stderr || listed.error}`);
     process.exit(1);
