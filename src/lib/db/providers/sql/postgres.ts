@@ -47,6 +47,8 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -1365,41 +1367,14 @@ function containerSchema(capabilities: ProviderCapabilities, container: readonly
 }
 
 /**
- * The shape one kind's object path has, refused rather than read from the wrong segment.
- *
- * Derived, not counted. `2` and `3` are right for a one-level engine and wrong for the five
- * two-level ones in this epic, and a provider copying this file must not inherit a literal
- * that refuses every valid path on a catalog-plus-schema engine. The segment names come from
- * the declared level labels, so the message and the depth cannot disagree: they are the same
- * array.
- *
- * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
- * the same question about the same path, and two copies of this derivation is two chances for
- * the detail pane and the Source tab to disagree about what a trigger's address is.
- *
- * The levels come from `declaredLevels()` and never from `containerLevels.length`, which is
- * what this function counted when the hoist inherited it from `describeObject`. The two agree
- * at every depth `ContainerLevels` admits, and they disagree past it: `containerDepth()`
- * saturates at two, so a third declared level made this check demand four segments while
- * `readObjectSource` sliced the container at two and handed `containerSchema` a two-segment
- * path. One reader, which is what the `declaredLevels` docblock twelve lines up already said.
+ * PostgreSQL: an attached kind is addressed through its table, so the attached segment
+ * is required and the error names one shape.
  */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  kind: string,
-  path: readonly string[],
-): void {
-  const segments = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  if (spec.attachedTo !== undefined) segments.push(spec.attachedTo);
-  segments.push("name");
-  if (path.length !== segments.length) {
-    throw new QueryError(
-      `A PostgreSQL "${kind}" path is [${segments.join(", ")}], received ${JSON.stringify(path)}`,
-      "postgres",
-    );
-  }
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "postgres",
+  label: "A PostgreSQL",
+  attachedSegment: "required",
+};
 
 /**
  * Every declared kind seeded at zero, before any row is read.
@@ -2986,7 +2961,7 @@ export class PostgresProvider extends SQLBaseProvider {
       throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
     }
 
-    assertObjectPathShape(this.getCapabilities(), spec, kind, path);
+    assertObjectPathShape(this.getCapabilities(), spec, kind, path, PATH_SHAPE_ENGINE);
 
     if (RELKIND_BY_KIND[kind] === undefined) {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -3104,7 +3079,7 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     const spec = requireSourceKind(capabilities, kind, { displayName: "PostgreSQL", type: "postgres" });
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
     const depth = containerDepth(capabilities);
     const schema = containerSchema(capabilities, path.slice(0, depth));
@@ -3288,7 +3263,7 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     const spec = requireEditableKind(capabilities, request.kind, { displayName: "PostgreSQL", type: "postgres" });
-    assertObjectPathShape(capabilities, spec, request.kind, request.path);
+    assertObjectPathShape(capabilities, spec, request.kind, request.path, PATH_SHAPE_ENGINE);
     const { schema, prokind, name } = this.routineAddress(capabilities, request.kind, request.path);
     if (request.partId !== SOURCE_PART_ID) {
       // A part this provider never produced. It raises rather than refusing, because a refusal is

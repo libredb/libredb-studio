@@ -199,7 +199,7 @@ describe("QueriesTab", () => {
     // "Queries 0 / Avg Time 0.00ms / Slow 0" while the list below correctly said no
     // statistics were available. Cassandra keeps no query log at all
     // (cassandra/index.ts:573-575), and neither do Druid (index.ts:486-488) or SQLite
-    // (sqlite.ts:734-737) - they answer `[]` by design. An average over an empty set is
+    // (sqlite.ts:720-723) - they answer `[]` by design. An average over an empty set is
     // not 0.00ms, and "Queries 0" claims a call total against the database rather than
     // counting visible rows, so all three figures render as absence instead.
     const { queryAllByText, queryByText } = render(

@@ -369,12 +369,12 @@ Found 2026-08-27 by the audit that closed the curated health projection's cap-as
 removed MySQL's fabricated "Performance schema not available" row; three providers still ship the
 same shape, in the same field:
 
-- `src/lib/db/providers/sql/postgres.ts:1239` - a database without `pg_stat_statements` answers
+- `src/lib/db/providers/sql/postgres.ts:1241` - a database without `pg_stat_statements` answers
   `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
-- `src/lib/db/providers/document/mongodb.ts:791` - a database whose profiler is off answers
+- `src/lib/db/providers/document/mongodb.ts:785` - a database whose profiler is off answers
   `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch
   at `:830` answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
-- `src/lib/db/providers/sql/sqlite.ts:721-731` - EVERY SQLite database answers two synthetic rows,
+- `src/lib/db/providers/sql/sqlite.ts:707-717` - EVERY SQLite database answers two synthetic rows,
   `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
 
 A sentence wearing a row's clothes is the fabrication the absence rule (#477) forbids, and here it is
@@ -392,8 +392,8 @@ file, and falsifies `src/lib/db/compatibility.ts:267`, `docs/providers/postgres.
 and `tests/helpers/sqlite-node-harness.ts:104`, all of which pin the current sentences.
 
 **The other path swallows instead of fabricating, and that is not better.** On the `slow-queries`
-reading the agent actually uses, `src/lib/db/providers/keyvalue/redis.ts:635-637` and
-`src/lib/db/providers/document/mongodb.ts:1047-1049` `return []` from their catch where MySQL now
+reading the agent actually uses, `src/lib/db/providers/keyvalue/redis.ts:622-624` and
+`src/lib/db/providers/document/mongodb.ts:1041-1043` `return []` from their catch where MySQL now
 rejects. So a denied grant reaches the model as an empty reading, and the run prompt tells it
 `"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query,
 no unused index is what a healthy server looks like"` (`src/lib/agent/investigation.ts:1485`). It
@@ -424,12 +424,12 @@ MongoDB's `getOverview()` catch now omits it too.
   `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts:849` pairs `sizeBytes ?? 0` with
   `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
 - Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts:1111`,
-  `sql/oracle.ts:1178`, `sql/sqlite.ts:808`.
+  `sql/oracle.ts:1154`, `sql/sqlite.ts:794`.
 - Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts:578` and
   `sql/clickhouse/index.ts:833` through their local `asNumber`.
-- Coerced inline: `sql/postgres.ts:1397` and `sql/mysql.ts:1156` (`parseInt(... || "0")`),
+- Coerced inline: `sql/postgres.ts:1360` and `sql/mysql.ts:1158` (`parseInt(... || "0")`),
   `sql/libsql/introspect.ts:399` and `document/couchbase/index.ts:606` (`?? 0`),
-  `keyvalue/redis.ts:603`, and `embedded/libredb.ts:709`, whose `fileSizeBytes()` returns 0 when the
+  `keyvalue/redis.ts:590`, and `embedded/libredb.ts:709`, whose `fileSizeBytes()` returns 0 when the
   `statSync` throws.
 
 **The consumer makes it visible.** `src/components/monitoring/tabs/StorageTab.tsx` keys its entire
@@ -510,7 +510,7 @@ correct in isolation and only the running product puts them together.
 `TablesTab.tsx:390` calls `handleMaintenance(type, table.tableName)` - the BARE table name - from a
 row whose very next line (`:350`) renders `table.schemaName` beside it. Every provider's
 `qualifyMaintenanceTarget` then supplies a default schema for an unqualified target:
-`postgres.ts:1285` returns `"public." + escapeIdentifier(target)`, and
+`postgres.ts:1287` returns `"public." + escapeIdentifier(target)`, and
 `duckdb/index.ts:712` returns `"main"."<target>"`. So the statement names a table that is not there.
 
 Measured on DuckDB v1.5.5, clicking **Analyze Table** on the `analytics.events` row:
@@ -1226,12 +1226,12 @@ Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample 
 
 | Citation | Cited in | Anchor actually at |
 |---|---|---|
-| `postgres.ts:915` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
-| `postgres.ts:889` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` | 2415 |
-| `postgres.ts:892` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
-| `postgres.ts:2095-2099` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
-| `postgres.ts:1239` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
-| `postgres.ts:1285` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
+| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
+| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` | 2415 |
+| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
+| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
+| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
+| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
 | `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
 | `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
 | `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |

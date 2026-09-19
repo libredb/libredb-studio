@@ -194,7 +194,7 @@ describe("PerformanceTab", () => {
 
   // Trino "holds no buffer pool" and "takes no locks, so there are no deadlocks to
   // count" (providers/sql/trino/introspect.ts:622-639), Cassandra and Druid omit the
-  // same two fields, and sqlite.ts:729 sets bufferPoolUsage undefined outright. The
+  // same two fields, and sqlite.ts:715 sets bufferPoolUsage undefined outright. The
   // panel used to answer those absences with "0 %"/"Poor" and "0"/"None
   // detected"/"Healthy" - a rating and a clean bill of health for measurements nobody
   // made. Same rule as the cache hit ratio card three lines above it.
@@ -234,8 +234,8 @@ describe("PerformanceTab", () => {
     expect(card.className).not.toContain("warning");
   });
 
-  // The pin that keeps absence and zero from being collapsed back together: mongodb.ts:856,
-  // mysql.ts:855 and sqlite.ts:729 report a real measured 0, and that measurement must keep
+  // The pin that keeps absence and zero from being collapsed back together: mongodb.ts:850,
+  // mysql.ts:857 and sqlite.ts:715 report a real measured 0, and that measurement must keep
   // exactly the rendering it has today.
   test("keeps a measured zero rendering as a measured zero", () => {
     const { queryByText } = render(
