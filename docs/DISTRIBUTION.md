@@ -263,10 +263,17 @@ Production (strict mode, explicit secrets):
 ```bash
 docker run --name libredb-studio -p 3000:3000 \
   -e AUTH_BOOTSTRAP=off \
-  -e JWT_SECRET=change-me \
+  -e JWT_SECRET="$(openssl rand -base64 32)" \
   -e ADMIN_EMAIL=admin@libredb.org \
   ghcr.io/libredb/libredb-studio:latest
 ```
+
+Your shell expands `$(openssl rand -base64 32)` before `docker run` sees it, so the secret is a
+real 44-character one and no secret is written down here - it is the same fix line the startup
+banner prints when `JWT_SECRET` is too short, and a placeholder that cleared the 32-character
+minimum would be a published working secret. It is a NEW secret on each run, though: recreate the
+container and every existing session is invalidated, so pass a value you keep (from your own
+secret store) for a container that is meant to be replaceable.
 
 All environment variables are documented in [`.env.example`](../.env.example); a ready-to-use
 compose file is [`docker-compose.example.yml`](../docker-compose.example.yml). The container
@@ -807,8 +814,12 @@ Example drop-in (uncomment and fill what you need):
 #Environment=HOSTNAME=0.0.0.0
 
 # Auth (optional; omit to keep zero-config bootstrap)
+# JWT_SECRET must be 32+ chars: generate one with `openssl rand -base64 32` and
+# paste the output. systemd does not expand a command here, and Environment= is
+# split on whitespace, so a `$(...)` value is refused as an invalid environment
+# block - the service then fails to start at all.
 #Environment=AUTH_BOOTSTRAP=off
-#Environment=JWT_SECRET=change-me
+#Environment=JWT_SECRET=
 #Environment=ADMIN_EMAIL=admin@libredb.org
 #Environment=ADMIN_PASSWORD=
 

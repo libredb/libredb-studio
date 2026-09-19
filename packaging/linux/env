@@ -12,9 +12,13 @@
 # and ADMIN_PASSWORD, persists them in
 # /var/lib/libredb-studio/auth-bootstrap.json, and prints the admin password
 # once to the journal: journalctl -u libredb-studio
-# Set AUTH_BOOTSTRAP=off to require explicit values instead.
+# Set AUTH_BOOTSTRAP=off to require explicit values instead. JWT_SECRET must
+# then be at least 32 characters; generate one with: openssl rand -base64 32
+# Paste the OUTPUT, not the command: systemd reads this file literally (see the
+# format note above), so a $(...) would reach the service as those 26 characters
+# and stop the boot with "JWT_SECRET is too short".
 #AUTH_BOOTSTRAP=off
-#JWT_SECRET=change-me
+#JWT_SECRET=
 #ADMIN_EMAIL=admin@libredb.org
 #ADMIN_PASSWORD=
 #USER_EMAIL=user@libredb.org

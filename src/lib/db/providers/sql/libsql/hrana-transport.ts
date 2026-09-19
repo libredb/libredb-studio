@@ -206,7 +206,7 @@ function decodeValue(raw: unknown): unknown {
  * same JavaScript string, so a value arriving in a bind carries no clue which it
  * was. SQLite settles it by the COLUMN's affinity, and only for a column that HAS
  * one: measured 2026-09-18 against sqld 0.24.33
- * (`ghcr.io/tursodatabase/libsql-server:v0.24.33`, SQLite 3.47.0), on a row whose
+ * (`ghcr.io/tursodatabase/libsql-server:v0.24.33`, SQLite 3.45.1), on a row whose
  * key is 9007199254740993 -
  *
  *   column declared   | bound as text | bound as an integer
