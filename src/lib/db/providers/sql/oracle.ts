@@ -41,6 +41,8 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -985,40 +987,14 @@ function ownerSegment(capabilities: ProviderCapabilities, path: readonly string[
 }
 
 /**
- * That `path` has a shape this kind can legally take, refused by NAME when it does not.
- *
- * Derived, not counted. The depth is read through `containerDepth()` so absent and empty
- * cannot be answered differently here than anywhere else, and the segment NAMES are the
- * declared labels sliced to that same depth, so the message and the check cannot disagree.
- * An attached kind takes EITHER depth, because a trigger's base object may be a table, a
- * view, or - for a SCHEMA or DATABASE trigger - nothing at all, and standing ruling 5f
- * settles that the listing wins and the path shape gives way (#789).
- *
- * ONE writer for `describeObject` and `readObjectSource` both. Two copies of a rule about
- * path shape is how the two methods come to disagree about one engine, and the second copy
- * would have been written the day the source read landed.
+ * Oracle: an attached kind takes either depth, so the error names both shapes, and the
+ * subject the message opens with is "An Oracle".
  */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  path: readonly string[],
-): void {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  const shapes =
-    spec.attachedTo === undefined
-      ? [[...levels, "name"]]
-      : [
-          [...levels, spec.attachedTo, "name"],
-          [...levels, "name"],
-        ];
-  if (!shapes.some((shape) => shape.length === path.length)) {
-    throw new QueryError(
-      `An Oracle "${spec.id}" path is ${shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ")}, ` +
-        `received ${JSON.stringify(path)}`,
-      "oracle",
-    );
-  }
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "oracle",
+  label: "An Oracle",
+  attachedSegment: "optional",
+};
 
 /**
  * Every declared kind seeded at zero, before any row is read.
@@ -2016,7 +1992,7 @@ export class OracleProvider extends SQLBaseProvider {
       throw new QueryError(`Oracle declares no object kind "${kind}"`, "oracle");
     }
 
-    assertObjectPathShape(capabilities, spec, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -2208,7 +2184,7 @@ export class OracleProvider extends SQLBaseProvider {
         "oracle",
       );
     }
-    assertObjectPathShape(capabilities, spec, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     const owner = ownerSegment(capabilities, path);
     const name = path[path.length - 1];
     const [head, ...rest] = sourcePartPlans(kind);

@@ -43,6 +43,8 @@ import {
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -1329,43 +1331,16 @@ function unavailableCounts(ids: readonly string[], error: unknown): Record<strin
 }
 
 /**
- * The path shapes ONE kind admits, outermost segment first.
- *
- * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
- * the same question about the same path, and two copies of this derivation are two chances for
- * the detail pane and the Source tab to disagree about what a trigger's address is.
- *
- * Derived, never counted. The depth comes from `containerDepth()` through `declaredLevels()`,
- * so absent and empty cannot be answered differently here than anywhere else, and the segment
- * NAMES are the declared level labels, so the message and the check are the same array. An
- * attached kind takes EITHER depth, because `objectPath()` collapses a parentless trigger onto
- * the container-level address (standing ruling 5f: the listing must contain exactly what the
- * count counted, and the count wins).
+ * MySQL: an attached kind takes EITHER depth, because `objectPath()` collapses a
+ * parentless trigger onto the container-level address (standing ruling 5f: the listing
+ * must contain exactly what the count counted, and the count wins), so the error names
+ * both shapes.
  */
-function objectPathShapes(capabilities: ProviderCapabilities, spec: ObjectKindSpec): string[][] {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  if (spec.attachedTo === undefined) return [[...levels, "name"]];
-  return [
-    [...levels, spec.attachedTo, "name"],
-    [...levels, "name"],
-  ];
-}
-
-/** Refuses a path no shape of this kind admits, naming every shape it does admit. */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  kind: string,
-  path: readonly string[],
-): void {
-  const shapes = objectPathShapes(capabilities, spec);
-  if (shapes.some((shape) => shape.length === path.length)) return;
-  throw new QueryError(
-    `A MySQL "${kind}" path is ${shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ")}, ` +
-      `received ${JSON.stringify(path)}`,
-    "mysql",
-  );
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "mysql",
+  label: "A MySQL",
+  attachedSegment: "optional",
+};
 
 // ----------------------------------------------------------------------------
 // Object source reading (#789 Phase 2)
@@ -2392,7 +2367,7 @@ export class MySQLProvider extends SQLBaseProvider {
     // Derived, not counted, and derived in ONE place: `assertObjectPathShape()` is the same
     // writer `readObjectSource` reads, so the detail pane and the Source tab cannot disagree
     // about what a trigger's address is.
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
     if (!hasColumns(kind)) {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -2605,7 +2580,7 @@ export class MySQLProvider extends SQLBaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     const spec = requireSourceKind(capabilities, kind, { displayName: "MySQL", type: "mysql" });
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     if (!Object.hasOwn(MYSQL_SOURCE_PART_PLANS, kind)) {
       throw new QueryError(
         `MySQL declares readable source for the kind "${kind}" but has no statement that reads it`,

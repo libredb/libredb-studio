@@ -61,6 +61,8 @@
 import { QueryError } from "@/lib/db/errors";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -530,25 +532,14 @@ function containerDatabase(capabilities: ProviderCapabilities, container: readon
 }
 
 /**
- * Refuses an object path of the wrong shape, naming the shape it does admit.
- *
- * ONE writer for two readers since #789 Phase 2: `describeObject` and `readObjectSource` ask
- * the same question about the same path, and two copies of this derivation are two chances
- * for the detail pane and the Source tab to disagree about what an object's address is.
- *
- * Derived, not counted. One segment per declared container level plus the name, and the
- * segment NAMES are the declared level labels sliced to the same depth, so the message and
- * the check cannot disagree. No kind here declares `attachedTo`, so there is a single shape
- * rather than the two MySQL accepts.
+ * ClickHouse: no kind declares `attachedTo`, so the policy is inert and the shape is
+ * always the declared levels plus the name.
  */
-function assertObjectPathShape(capabilities: ProviderCapabilities, kind: string, path: readonly string[]): void {
-  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
-  if (path.length === shape.length) return;
-  throw new QueryError(
-    `A ClickHouse "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-    PROVIDER,
-  );
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: PROVIDER,
+  label: "A ClickHouse",
+  attachedSegment: "required",
+};
 
 /**
  * Every declared kind seeded at zero, before any row is read.
@@ -865,7 +856,7 @@ export async function describeObject(
     throw new QueryError(`ClickHouse declares no object kind "${kind}"`, PROVIDER);
   }
 
-  assertObjectPathShape(capabilities, kind, path);
+  assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
   // The same two questions `listObjects` asks, in the same order: the DECLARATION
   // decides whether the kind exists, then the catalog map decides whether anything can
@@ -1354,7 +1345,7 @@ export async function readObjectSource(
   limit?: number,
 ): Promise<ObjectSourceDocument> {
   const spec = requireSourceKind(capabilities, kind, { displayName: "ClickHouse", type: PROVIDER });
-  assertObjectPathShape(capabilities, kind, path);
+  assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
   const catalog = objectCatalog(kind);
   if (catalog === undefined) {
     throw new QueryError(

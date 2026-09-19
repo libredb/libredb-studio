@@ -44,6 +44,8 @@ import type {
 import { QueryError } from "@/lib/db/errors";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -415,30 +417,13 @@ function assertContainerPath(capabilities: ProviderCapabilities, container: read
 }
 
 /**
- * Refuses a path no shape of this kind admits, naming the shape it does admit.
- *
- * ONE writer for two readers since #789 Phase 2. `describeLibSQLObject` and
- * `readLibSQLObjectSource` ask the same question about the same path, and two copies of this
- * derivation are two chances for the detail pane and the Source tab to disagree about what a
- * trigger's address is.
- *
- * Derived, never counted. The depth comes from `containerDepth()` through `declaredLevels()`,
- * so absent and empty cannot be answered differently here than anywhere else, and the segment
- * NAMES are the declared level labels, so the message and the check are the same array. There
- * is ONE shape per kind rather than MySQL's two, because every trigger on this engine has a
- * parent: `sqlite_schema.tbl_name` is never null for one.
+ * libSQL: an attached kind requires its parent segment, so the error names one shape.
  */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  kind: string,
-  path: readonly string[],
-): void {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-  if (path.length === shape.length) return;
-  throw new QueryError(`A libSQL "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`, "libsql");
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "libsql",
+  label: "A libSQL",
+  attachedSegment: "required",
+};
 
 /**
  * Every declared kind seeded at zero, before any row is read.
@@ -779,7 +764,7 @@ export async function describeLibSQLObject(
     throw new QueryError(`libSQL declares no object kind "${kind}"`, "libsql");
   }
 
-  assertObjectPathShape(reader.capabilities, spec, kind, path);
+  assertObjectPathShape(reader.capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
   if (spec.role !== "relation") {
     return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1106,7 +1091,7 @@ export async function readLibSQLObjectSource(
   limit?: number,
 ): Promise<ObjectSourceDocument> {
   const spec = requireSourceKind(reader.capabilities, kind, { displayName: "libSQL", type: "libsql" });
-  assertObjectPathShape(reader.capabilities, spec, kind, path);
+  assertObjectPathShape(reader.capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
   if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
     throw new QueryError(
       `libSQL declares readable source for the kind "${kind}" but has no catalog type that reads it`,
