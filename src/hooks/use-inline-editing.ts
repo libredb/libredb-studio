@@ -314,8 +314,27 @@ function keyColumnKind(declaredType: string | undefined, dialect: DatabaseConnec
   const first = name.split("(")[0].trim().split(/\s+/)[0];
   if (!NO_INSTANT_TYPE_DIALECTS.has(dialect) && INSTANT_TYPE_NAMES.has(first)) return "date-time";
   if (FLOAT64_TYPE_NAMES.has(first)) return "float64";
-  if (!NO_EXACT_DECIMAL_DIALECTS.has(dialect) && EXACT_DECIMAL_TYPE_NAMES.has(first)) return "decimal";
-  return FLOAT64_ONLY_DIALECTS.has(dialect) && FLOAT64_ONLY_NAMES.has(first) ? "float64" : "declared";
+  if (!NO_EXACT_DECIMAL_DIALECTS.has(dialect) && EXACT_DECIMAL_TYPE_NAMES.has(first)) {
+    // `float64` and not `declared`: the kind means "the declaration settles it", and a
+    // declared width a double carries settles it as surely as the word `double` does. Left
+    // as `declared` the value would fall to the 32-bit-float length rule below and a
+    // `Decimal(9, 2)` would be refused for maybe being a float it is declared not to be.
+    return declaredPrecision(name) <= DOUBLE_EXACT_DIGITS ? "float64" : "decimal";
+  }
+  // On an engine with no 32-bit float, the DECLARATION does not narrow anything: whatever a
+  // column is called, a fractional value in it is the 8-byte double the file holds, so it is
+  // its own identity and the length rule below - which exists to catch the printed form of a
+  // 32-bit float - has nothing to catch.
+  //
+  // MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0), one row per declaration: `DATE` holding
+  // `julianday('2024-01-15 06:00:00')` (2460324.75, `typeof` real), `REAL`, `INTEGER`, `TEXT`,
+  // `BLOB`, no declaration at all, and `NUMERIC` holding 0.30000000000000004. Every one came
+  // back as the value the file holds and `WHERE k = <value>` matched ONE row, its own.
+  //
+  // Reading only `FLOAT64_ONLY_NAMES` here refused the rest of them: a `DATE` column holding a
+  // julian day is nine digits, which the length rule reads as "could be a 32-bit float", and
+  // the sentence it showed was the one this set exists to say is false on SQLite.
+  return FLOAT64_ONLY_DIALECTS.has(dialect) ? "float64" : "declared";
 }
 
 /**
@@ -341,6 +360,40 @@ const FRACTIONAL = "a fractional number";
  * for what each engine hands over.
  */
 const ROUNDED_DECIMAL = "a fractional number the driver rounded to fit";
+
+/**
+ * The most significant decimal digits a 64-bit IEEE double carries exactly — fifteen.
+ *
+ * Beyond it two decimals that differ can land on one double, and a key that lands on
+ * another row's double addresses that row.
+ */
+const DOUBLE_EXACT_DIGITS = 15;
+
+/**
+ * The PRECISION an exact-decimal declaration names, or `Infinity` when it names none.
+ *
+ * `decimal` alone is the dangerous case and the one `ROUNDED_DECIMAL` was written for: Oracle
+ * `NUMBER` carries 38 digits and says so nowhere the driver passes on, so nothing in front of
+ * the editor tells a decimal that is its own row's from one the driver rounded.
+ *
+ * A declaration that NAMES its precision answers that question outright, and ClickHouse is the
+ * engine that does. MEASURED 2026-09-19 on ClickHouse 26.8.6.5, two rows one unit apart in the
+ * last place, read back over JSON as `JSON.parse` leaves them:
+ *
+ *  - `Decimal(15, 6)`: 123456789.012345 and ...346 stay two doubles, `WHERE k = ...345` matched
+ *    ONE row, its own, and the grouped guard saw two groups of one.
+ *  - `Decimal(18, 6)`: 123456789012.345678 and ...679 both become 123456789012.34567, and that
+ *    value matched BOTH rows. Refusing it is right.
+ *  - `Decimal(38, 10)`: the same, at 26 digits.
+ *
+ * So the width the column declares settles it, and fifteen or fewer cannot round. Scale is not
+ * read: it moves the point, not the number of digits. A precision this cannot parse reads as
+ * `Infinity` and stays refused, which is the closed side.
+ */
+function declaredPrecision(name: string): number {
+  const parameters = /\(\s*(\d+)\s*(?:,\s*\d+\s*)?\)\s*$/.exec(name);
+  return parameters === null ? Number.POSITIVE_INFINITY : Number(parameters[1]);
+}
 
 /**
  * The most significant decimal digits any 32-bit IEEE float needs to round-trip — nine.

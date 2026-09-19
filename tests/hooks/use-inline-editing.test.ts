@@ -2555,15 +2555,40 @@ describe("useInlineEditing", () => {
 
   test.each([
     ["sqlite", "TEXT"],
-    ["sqlite", undefined],
+    ["sqlite", "DATE"],
     ["libsql", "NUMERIC"],
-  ] as const)("a %s key declared %s is refused like any other, dialect or no dialect", async (type, declared) => {
-    // The dialect widens WHICH WORDS state 64 bits; it does not wave a column through that
-    // declared something else, or nothing at all. A SQLite column is dynamically typed, so
-    // a `TEXT` or `NUMERIC` one really can be holding 1.5, and neither word says at what
-    // width the engine will read the decimal back.
+  ] as const)(
+    "a %s key declared %s is carried back, because the engine has one float width",
+    async (type, declared) => {
+      // This asserted the opposite until it was measured. The reasoning was that a SQLite
+      // column is dynamically typed, so `TEXT` or `NUMERIC` or nothing at all says nothing
+      // about the width the decimal is read back at - true of the WORD, and not true of the
+      // engine, which has exactly one float width and stores every REAL as eight bytes.
+      //
+      // MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0), one table per declaration, two rows
+      // apart in the last place. `REAL`, `NUMERIC`, `INTEGER`, `BLOB`, `DATE` holding a
+      // julian day and a column declared nothing all hand the value over as the double the
+      // file holds, and `WHERE k = <value>` matched ONE row, its own, in every one.
+      //
+      // `TEXT` is here for the opposite reason: it hands the value over as the STRING "1.5",
+      // so a fractional NUMBER never reaches this rule from such a column at all. The old
+      // case drove a number into it, which is a shape the engine does not produce.
+      const seen = countAsks();
+      await applyKeyedBy(1.5, type, declared);
+
+      expect(seen).toHaveLength(1);
+      expect(updateCalls()).toHaveLength(1);
+      expect(mockToastError).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a sqlite key from a column the result declares nothing about is still refused", async () => {
+    // The dialect settles what a DECLARATION means; it cannot settle what an absent one
+    // means. No entry in `columnTypes` is not "a column declared nothing" - it is an
+    // expression, a function call, an aggregate, something the result could not name - and
+    // none of those is a column whose width the engine could be asked about.
     const seen = countAsks();
-    await applyKeyedBy(1.5, type, declared);
+    await applyKeyedBy(1.5, "sqlite", undefined);
 
     expect(seen).toHaveLength(0);
     expect(updateCalls()).toHaveLength(0);
@@ -2617,6 +2642,84 @@ describe("useInlineEditing", () => {
     // what it is, and what it is holds digits the number in front of the user cannot carry.
     expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
       description: expect.stringContaining("holds more digits than a 64-bit float carries"),
+    });
+  });
+
+  test("a ClickHouse Decimal key is written when the column declares a width a double carries", async () => {
+    // MEASURED 2026-09-19 on ClickHouse 26.8.6.5. `zz_s(k Decimal(15,6))` holding
+    // 123456789.012345 and ...346: the two stay two doubles through JSON.parse, the grouped
+    // check answered two groups of one, `WHERE k = 123456789.012345` matched ONE row - its
+    // own - and the UPDATE changed that row alone.
+    //
+    // ClickHouse is the engine that NAMES its precision, which is the fact Oracle withholds:
+    // fifteen digits or fewer cannot round, so nothing here is a rounding of another row's
+    // key and refusing it would take away an edit the engine performs correctly.
+    const seen = countAsks();
+    await applyKeyedBy(123456789.012345, "clickhouse", "Decimal(15, 6)");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a narrow ClickHouse Decimal is written, and the old message would have been false about it", async () => {
+    // `Decimal(9, 2)` cannot hold a value a double rounds, so the refusal's own sentence -
+    // that the column holds more digits than a 64-bit float carries - was untrue of it.
+    const seen = countAsks();
+    await applyKeyedBy(1234567.89, "clickhouse", "Decimal(9, 2)");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a ClickHouse Decimal wider than a double is still refused, because two rows land on one number", async () => {
+    // Same session, `zz_f(k Decimal(18,6))` holding 123456789012.345678 and ...679: both
+    // arrive as the double 123456789012.34567, and that value matched BOTH rows. The
+    // declared width is what tells this case from the one above.
+    const seen = countAsks();
+    await applyKeyedBy(123456789012.34567, "clickhouse", "Decimal(18, 6)");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number the driver rounded to fit"),
+    });
+  });
+
+  test("a ClickHouse Decimal(16, 6) is refused, which is where two decimals first land on one double", async () => {
+    // MEASURED 2026-09-19 on ClickHouse 26.8.6.5, `zzn16(k Decimal(16,6)) ENGINE=MergeTree
+    // ORDER BY tuple()` holding 9999999999.999998 and 9999999999.999999. The JSON body spells
+    // both out in full, `JSON.parse` lands BOTH on the double 9999999999.999998, and
+    // `SELECT count(), groupArray(toString(k)) FROM zzn16 WHERE k = 9999999999.999998`
+    // answered `1 ['9999999999.999998']` - the NEIGHBOUR of the row whose last digit was
+    // rounded away. The grouped guard sees its one row, the UPDATE lands on the wrong row and
+    // reports success: the Oracle defect, on a second engine, at precision SIXTEEN.
+    //
+    // Sixteen is exactly where it starts. Measured over the same shape at scale 6, precisions
+    // 10 to 15 keep their two doubles apart and 16 to 20 do not, so fifteen is the last width
+    // that cannot round and this pins the UPPER edge of `DOUBLE_EXACT_DIGITS`. Without this
+    // case, raising that constant from 15 to 16 leaves every other test in this file green.
+    const seen = countAsks();
+    await applyKeyedBy(9999999999.999998, "clickhouse", "Decimal(16, 6)");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number the driver rounded to fit"),
+    });
+  });
+
+  test("a decimal that declares no width is still refused, which is the Oracle case", async () => {
+    // A declaration with no parameters answers nothing, so it stays on the closed side. This
+    // is what keeps Oracle NUMBER refused now that a parameterised declaration can pass.
+    const seen = countAsks();
+    await applyKeyedBy(1234567890123456.8, "oracle", "NUMBER");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number the driver rounded to fit"),
     });
   });
 
@@ -2807,7 +2910,7 @@ describe("useInlineEditing", () => {
     });
   });
 
-  // ── The COLUMN's declared type, not the value's shape (#4) ────────────────
+  // ── The COLUMN's declared type, not the value's shape ────────────────
   //
   // MEASURED 2026-09-18 against PostgreSQL 16.15 (`guide-pg`) and MySQL 8.4.11
   // (`guide-my`), reading the rows through the real provider and then through
