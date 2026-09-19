@@ -2266,8 +2266,9 @@ describe("captureContextSnapshot — the kind, composed on the catalog path", ()
  * id, or the run and the tree disagree about what a thing is. The right-hand side of
  * `COMPOSED_KIND_WORDS` is therefore a copy of each provider's own mapping, and a copy
  * that nothing checks is a copy that drifts - which is why `POSTGRES_SYSTEM_SCHEMAS` is
- * pinned the same way in `composed-sql.test.ts`. Source-level, because the agent side
- * must not import a provider module.
+ * pinned the same way in `composed-sql.test.ts`. The postgres arm stays source-level,
+ * because the agent side must not import a provider module; the sqlite arm asks the
+ * constructed provider instead (#981).
  */
 describe("the composed kind vocabulary cannot drift from the provider's declaration", () => {
   const readSource = (relativePath: string): string => readFileSync(join(process.cwd(), relativePath), "utf8");
@@ -2301,13 +2302,6 @@ describe("the composed kind vocabulary cannot drift from the provider's declarat
     return (provider.getCapabilities().objectKinds ?? []).map((kind) => kind.id);
   };
 
-  /**
-   * The guard's comparison, in one place so the failure it exists to produce can be
-   * exercised on its own: every declared kind id must be its own word in the agent side's map.
-   */
-  const unmappedKindIds = (declaredIds: readonly string[], composed: Record<string, string>): string[] =>
-    declaredIds.filter((id) => composed[id] !== id);
-
   test("PostgreSQL: every relkind is mapped exactly as the provider's own CASE maps it", () => {
     // `COUNTS_RELATION_ARM` is the CASE `postgres.ts` takes its own folder counts and
     // listings from, so a relation this path calls a view is one its object browser
@@ -2338,16 +2332,14 @@ describe("the composed kind vocabulary cannot drift from the provider's declarat
     expect(composedMap("sqlite")).toEqual(Object.fromEntries(declaredIds.map((id) => [id, id])));
   });
 
-  test("a kind declared but left unmapped is caught, and the declaration's formatting cannot hide it", () => {
+  test("a fifth declared kind that nothing maps fails the guard, however its entry is laid out", async () => {
     const composed = composedMap("sqlite");
+    const declaredIds = await declaredSqliteKindIds();
 
-    // The fifth kind that nothing maps. This is the case the source scrape could not see
-    // once its entry wrapped: absent from the guard's population AND from the agent side's
-    // map, so both sides shrank together and the guard passed (#981).
-    expect(unmappedKindIds([...Object.keys(composed), "fifth_kind"], composed)).toEqual(["fifth_kind"]);
-    // And the declared vocabulary it does carry stays clean, so the check above is not
-    // passing because it reports everything.
-    expect(unmappedKindIds(Object.keys(composed), composed)).toEqual([]);
+    // Control: the real declaration agrees, so the mutant below is the only difference.
+    expect(composed).toEqual(Object.fromEntries(declaredIds.map((id) => [id, id])));
+    // Mutant: one more declared kind, and the SAME comparison must stop holding.
+    expect(composed).not.toEqual(Object.fromEntries([...declaredIds, "fifth_kind"].map((id) => [id, id])));
   });
 });
 
