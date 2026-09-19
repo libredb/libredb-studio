@@ -269,7 +269,7 @@ describe("sqlite-driver", () => {
   });
 
   // ==========================================================================
-  // 64-bit integers (#39)
+  // 64-bit integers
   // ==========================================================================
 
   describe("64-bit integers", () => {
@@ -511,7 +511,7 @@ describe("normalizeSQLiteBigInt() boundary, independently", () => {
 });
 
 // ============================================================================
-// The bind boundary (#42)
+// The bind boundary
 //
 // `toSQLiteBindValue` is the inverse of `normalizeSQLiteBigInt`, so the property that
 // matters is not an example: it is that the two compose to the identity over every

@@ -1,5 +1,5 @@
 /**
- * SQLite's 64-bit integer boundary, for the two providers that share it (#42, #44)
+ * SQLite's 64-bit integer boundary, shared by the SQLite driver and the libsql transport
  *
  * An integer past 2^53 cannot be held exactly by a JavaScript number, so both SQLite
  * providers read one out as its decimal STRING and hand the caller every digit. The

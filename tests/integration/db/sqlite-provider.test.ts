@@ -3003,7 +3003,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
 });
 
 // ============================================================================
-// 64-bit integers (#39)
+// 64-bit integers
 //
 // SQLite's INTEGER is signed 64-bit, so an id past 2^53 has no exact JavaScript
 // `number`. Measured on the two drivers with their defaults: bun:sqlite (the
@@ -3310,7 +3310,7 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.updateRowCount).toBe(1);
     expect(report.deleteRowCount).toBe(1);
 
-    // 64-bit ids (#39): the same answer the bun driver gives in-process above.
+    // 64-bit ids: the same answer the bun driver gives in-process above.
     // Before the fix this run did not reach here at all - node:sqlite threw
     // ERR_OUT_OF_RANGE on the first read of 9007199254740993.
     expect(report.bigIds).toEqual(["9007199254740992", "9007199254740993"]);
@@ -3594,7 +3594,7 @@ describe("64-bit integers past 2^53, independently verified", () => {
   });
 
   /**
-   * The other half of the round trip (#42).
+   * The other half of the round trip.
    *
    * SQLite settles `column = ?` by the COLUMN's affinity, and a column declared BLOB or
    * declared NOTHING has none: it compares a text to an integer as they stand, they are
@@ -3895,7 +3895,7 @@ describe("64-bit integers past 2^53, independently verified", () => {
 // did not, and two things downstream read it and decide with it:
 //
 //  - `src/lib/export/result-export.ts` falls back to the JAVASCRIPT TYPE of a value
-//    when no declaration came with the result. Since the 64-bit seam (#39) hands a
+//    when no declaration came with the result. Since the 64-bit seam hands a
 //    key past 2^53 over as its digits, a SQLite `INTEGER PRIMARY KEY` holding
 //    9007199254740993 was exported as `"id" TEXT` - measured below, by replaying the
 //    generated file into SQLite, where the column came back with the `text` storage
@@ -4033,7 +4033,7 @@ describe("declared column types (#273)", () => {
 
     const result = await declared.query("SELECT id, label FROM big_decl");
 
-    // The value is a string by the time it leaves the 64-bit seam (#39) and the column
+    // The value is a string by the time it leaves the 64-bit seam and the column
     // is an INTEGER all the same. Anything inferring the type from the value answers
     // TEXT here, which is exactly the export defect below.
     expect(result.rows).toEqual([{ id: "9007199254740993", label: "target" }]);

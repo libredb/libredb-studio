@@ -441,7 +441,7 @@ describe("LibSQLProvider query", () => {
     await provider.disconnect();
   });
 
-  test("hands a past-2^53 key back as its exact digits and binds those digits back as the integer (#44)", async () => {
+  test("hands a past-2^53 key back as its exact digits and binds those digits back as the integer", async () => {
     // The whole inline-grid round trip through the real provider: read the key out
     // of a row, then send that very value back in the WHERE clause. Measured against
     // sqld 0.24.33 on 2026-09-18: bound as TEXT this matched 0 rows on a column with
@@ -465,7 +465,7 @@ describe("LibSQLProvider query", () => {
     await provider.disconnect();
   });
 
-  test("still binds an ordinary key that happens to be all digits as text (#44)", async () => {
+  test("still binds an ordinary key that happens to be all digits as text", async () => {
     const provider = await connected();
 
     await provider.query('UPDATE "probe_customers" SET country = ? WHERE code = ?', ["tr", "007"]);

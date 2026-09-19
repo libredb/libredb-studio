@@ -337,7 +337,7 @@ describe("LibSQLHranaTransport parameter encoding", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Sending one back (#44)
+  // Sending one back
   // --------------------------------------------------------------------------
   //
   // `decodeInteger` hands a past-2^53 integer back as its decimal STRING, so the

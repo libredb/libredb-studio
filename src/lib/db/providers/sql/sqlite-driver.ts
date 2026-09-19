@@ -114,7 +114,7 @@ export type SQLiteConstructor = new (path: string, options?: SQLiteOpenOptions) 
 export type SQLiteDriverName = "bun" | "node";
 
 // ============================================================================
-// Big integers at the provider boundary (#39)
+// Big integers at the provider boundary
 // ============================================================================
 
 /**
@@ -160,8 +160,8 @@ export function normalizeSQLiteBigInt(value: bigint): number | string {
 }
 
 /**
- * Sending one back (#42)
- * ----------------------
+ * Sending one back
+ * ----------------
  * The conversion above is lossy in ONE direction that matters: `9007199254740993`
  * the integer and `'9007199254740993'` the text both leave this provider as the same
  * JavaScript string, so a value coming back in a bind carries no clue which it was.
@@ -443,7 +443,7 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  *   the measurement on `SQLiteDatabase.close` above.
  * - the big-integer flag is `readBigInts` here and `safeIntegers` on bun:sqlite; both
  *   adapters set their own spelling and both send `prepare()` through the same
- *   conversion, so the two drivers answer a 64-bit id identically (#39).
+ *   conversion, so the two drivers answer a 64-bit id identically.
  * - the DECLARED column types are `columns()[].name`/`.type` here and `columnNames` +
  *   `declaredTypes` on bun:sqlite; both adapters hand their own spelling to
  *   `withoutBigInts`, which republishes one `declaredColumns()` (#273). A handle that

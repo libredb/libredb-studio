@@ -200,8 +200,8 @@ function decodeValue(raw: unknown): unknown {
 }
 
 /**
- * Sending one back (#44)
- * ----------------------
+ * Sending one back
+ * ----------------
  * `decodeInteger` above is lossy in ONE direction that matters: `9007199254740993`
  * the integer and `'9007199254740993'` the text both leave this transport as the
  * same JavaScript string, so a value arriving in a bind carries no clue which it
@@ -246,7 +246,7 @@ function decodeValue(raw: unknown): unknown {
  * TEXT-declared column is NOT affected - TEXT affinity converts the bind back to
  * text - so an ordinary textual key still matches as text.
  *
- * This is the same rule `toSQLiteBindValue` applies in the SQLite driver (#42), by
+ * This is the same rule `toSQLiteBindValue` applies in `sqlite-driver.ts`, by
  * design: the two providers hand out the same shape, so they must accept the same
  * shape back. It is one rule in one file now rather than a rule and its copy -
  * `tests/unit/db/sqlite-int64.test.ts` fails the build if a provider grows its own.

@@ -29,10 +29,15 @@
  * duplication itself is visible, and only in the source. The guard reads the directory
  * from disk rather than from a list, so it covers a provider that does not exist yet.
  *
- * What the guard cannot see, stated plainly: a copy that spells the same bounds some
- * other way (`2n ** 63n - 1n`) passes it. The pair of import assertions below is the
- * cheap complement - the two known consumers must read the rule from the module, so
- * inlining a replacement is red even when the replacement is spelled freshly.
+ * What the guard sees and what it does not, stated plainly. It reads the digits and it
+ * reads `2n ** 63n` and `2n ** 53n`, which is the one rewrite anyone reaches for first
+ * and was measured passing before it was added. It cannot see a bound assembled some
+ * third way - read from a constant elsewhere, computed at run time, spelled in a string
+ * and parsed. The pair of import assertions below is the cheap complement for the two
+ * known consumers: they must read the rule from the module, so inlining a replacement is
+ * red even when the replacement is spelled freshly. A driver that does not exist yet is
+ * covered by the source guard alone, which is why the source guard is worth the digits
+ * and the powers both.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -352,7 +357,34 @@ function spelledTokens(node: ts.Node): string[] {
     ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "BigInt";
   if (isBigIntCall && node.arguments.length === 1 && namesSafeBound(node.arguments[0])) return [TOKEN_SAFE];
 
+  const power = bigIntPowerOfTwo(node);
+  if (power === 63) return [TOKEN_INT64];
+  if (power === 53) return [TOKEN_SAFE];
+
   return [];
+}
+
+/**
+ * The exponent of `2n ** <n>n`, or null when the node is not that.
+ *
+ * The one rewrite that gets past the literals above and is the FIRST thing anyone
+ * reaches for: `2n ** 63n - 1n` is the INTEGER ceiling and `2n ** 53n - 1n` the safe
+ * one, written as what they are rather than as their digits. MEASURED here by planting
+ * such a copy in a new provider directory: spelled with digits the guard reported it,
+ * spelled as powers it passed 109 of 109.
+ *
+ * Only base two and only those two exponents, because any other power of two is
+ * ordinary arithmetic - a page size, a mask, a buffer bound - and a guard that reported
+ * those is a guard the next contributor deletes. The subtraction is not required: `2n **
+ * 63n` is the exclusive bound and names the same limit as the inclusive one, which is
+ * why `INT64_BOUND_DIGITS` already carries both spellings.
+ */
+function bigIntPowerOfTwo(node: ts.Node): number | null {
+  if (!ts.isBinaryExpression(node) || node.operatorToken.kind !== ts.SyntaxKind.AsteriskAsteriskToken) return null;
+  if (!ts.isBigIntLiteral(node.left) || literalDigits(node.left) !== "2") return null;
+  if (!ts.isBigIntLiteral(node.right)) return null;
+  const exponent = Number(literalDigits(node.right));
+  return Number.isFinite(exponent) ? exponent : null;
 }
 
 function findDuplications(file: string, source: string): Duplication[] {

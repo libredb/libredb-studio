@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   const del = await provider.query("DELETE FROM users WHERE id = ?", [2]);
   report.deleteRowCount = del.rowCount;
 
-  // 64-bit ids (#39). With node:sqlite's defaults this read threw ERR_OUT_OF_RANGE
+  // 64-bit ids. With node:sqlite's defaults this read threw ERR_OUT_OF_RANGE
   // outright, where bun:sqlite silently answered the NEIGHBOURING row's id; both
   // drivers now read them as BigInt and the driver seam converts them back the same
   // way. Read here against the real node:sqlite build, because an in-process bun run
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   report.bigCount = (await provider.query("SELECT COUNT(*) AS count FROM big")).rows;
   await provider.query("DROP TABLE big");
 
-  // The same round trip on a column with NO affinity and on a BLOB one (#42). SQLite
+  // The same round trip on a column with NO affinity and on a BLOB one. SQLite
   // compares those operands as they stand, so the decimal string the read prints used to
   // match NOTHING and the row could not be edited at all. Read here against the real
   // node:sqlite build, because the bind is the driver's own call and an in-process bun
