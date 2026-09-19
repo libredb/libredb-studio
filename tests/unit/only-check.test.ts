@@ -78,7 +78,7 @@ describe("a clean file", () => {
 const FOCUSED_SOURCE = focused(`import { describe, expect, test } from "bun:test";
 
 describe("a focused file", () => {
-  testSENTINEL"runs, and its siblings are hidden", () => {
+  test${SENTINEL}"runs, and its siblings are hidden", () => {
     expect(1).toBe(1);
   });
   test("this one is registered and never run", () => {
@@ -103,19 +103,19 @@ describe("findFocusedTests", () => {
   });
 
   test("reports a describe-level focus too, not only an it-level one", () => {
-    const source = focused(`describeSENTINEL"a suite", () => {\n  test("a", () => {});\n});\n`);
+    const source = focused(`describe${SENTINEL}"a suite", () => {\n  test("a", () => {});\n});\n`);
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(1);
   });
 
   test("finds a call whose receiver and parenthesis a formatter split across lines", () => {
-    const source = focused(`testSENTINEL\n  "wrapped by a formatter",\n  () => {},\n);\n`);
+    const source = focused(`test${SENTINEL}\n  "wrapped by a formatter",\n  () => {},\n);\n`);
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(1);
   });
 
   test("counts once per call, so three focuses are three findings", () => {
-    const source = focused(`testSENTINEL"a", () => {});\ntestSENTINEL"b", () => {});\ntestSENTINEL"c", () => {});\n`);
+    const source = focused(`test${SENTINEL}"a", () => {});\ntest${SENTINEL}"b", () => {});\ntest${SENTINEL}"c", () => {});\n`);
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(3);
   });
@@ -230,7 +230,7 @@ describe("runOnlyCheck", () => {
   });
 
   test("the gate refuses a focus in an e2e spec as well as a unit test", () => {
-    const root = repo({ "e2e/login.spec.ts": focused(`import { test } from "@playwright/test";\ntestSENTINEL"logs in", async () => {});\n`) });
+    const root = repo({ "e2e/login.spec.ts": focused(`import { test } from "@playwright/test";\ntest${SENTINEL}"logs in", async () => {});\n`) });
 
     expect(runOnlyCheck(root).code).toBe(1);
   });
