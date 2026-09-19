@@ -28,9 +28,9 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D97, U17 · 43
+- [Drivers and connections](#drivers-and-connections) — D1–D99, U17 · 45
 - [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1–R2 · 2
+- [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
@@ -206,6 +206,48 @@ own pass over every consumer.
 
 **Done when:** a value one of these engines cannot represent as a JS number reaches the grid with its
 digits intact, and every consumer of a numeric cell has been checked against the new shape.
+
+---
+
+### D98. What the other five drivers hand back for a 64-bit integer, measured
+
+D18 names two engines that lose digits and three that keep them as strings. Which side the rest of
+the family falls on was never measured, and the gap read as the same defect, unrecorded, on five
+more engines. Measured 2026-09-19, each through the seam the product itself uses - the ClickHouse
+HTTP transport, the Cassandra driver transport, `openDuckDBClient`, `mssql` under the options
+`buildConfig` sets, and `oracledb` with the only settings `oracle.ts` applies
+(`OUT_FORMAT_OBJECT`, and no `fetchAsString` for a NUMBER) - over a table holding 9007199254740993
+beside its neighbour 9007199254740992:
+
+| Engine | Declared | What the driver hands over for 9007199254740993 |
+| --- | --- | --- |
+| Oracle AI Database 26ai Free 23.26.3.0.0, oracledb 6.10.0 | `NUMBER(19,0)` | `9007199254740992`, a JS number - the NEIGHBOURING row's key |
+| SQL Server 2022 CU27 (16.0.4295.3), mssql 12.7.2 | `bigint` | `"9007199254740993"`, a string |
+| the same | `numeric(38,0)` | `1.2345678901234568e+37`, a JS number |
+| DuckDB v1.5.5, @duckdb/node-api 1.5.5-r.4 | `BIGINT` | `"9007199254740993"`, a string |
+| ClickHouse 26.8.6.5 | `Int64` / `UInt64` | `"9007199254740993"` / `"18446744073709551615"`, strings |
+| Apache Cassandra 5.0.9, cassandra-driver 4.9.0 | `bigint` / `varint` | `"9007199254740993"`, strings |
+
+Three of the five hand every 64-bit integer back as its digits, and each by a deliberate setting
+rather than by luck: the ClickHouse transport sends `output_format_json_quote_64bit_integers=1` and
+its comment says what happens without it, DuckDB is read with `getRowObjectsJson()`, which prints
+BIGINT, HUGEINT and DECIMAL as decimal strings, and the Cassandra adapter stringifies `Long`,
+`Integer` and `BigDecimal` for fidelity. SQL Server loses nothing on `bigint` either - tedious hands
+one over as text of its own accord - and rounds only its decimal family. Oracle's `NUMBER` is the one integer key of the
+five that reaches the grid already wrong, and that is D18, not a sixth thing. What the rounding
+costs the row editor is R3.
+
+**What is new is that one sentence in the tree is false.** `docs/providers/mssql.md` §5.3 says
+`BIGINT`, `DECIMAL`/`NUMERIC` and `MONEY` "are surfaced as JavaScript `number`s and can **lose
+precision** beyond 2^53". §5.4 of the same document says the opposite about the first of them -
+"`BIGINT` and `DECIMAL` reach the browser as strings" - and the measurement agrees with §5.4 for
+`bigint` and with §5.3 for `numeric`. D18 repeats §5.3's reading in its own second paragraph. One
+driver described two ways in one document is how a defect SQL Server does not have came to be
+expected of it.
+
+**Done when:** `docs/providers/mssql.md` states what tedious really hands over for each of those
+four types, D18's `BIGINT` mention is corrected to match, and the three string-returning drivers are
+recorded where a reader meets them rather than re-derived by the next sweep.
 
 ---
 
@@ -1349,6 +1391,35 @@ The coverage gate is not a reliable second line of defence either: whether it go
 
 **Done when:** a file carrying `it.only`, `test.only` or `describe.only` under `tests/` or `e2e/` fails a required check, and a test pins that gate by driving it over a fixture that carries one, with a control fixture that does not and passes.
 
+### D99. The SQLite bind-side invariant is written twice
+
+`MAX_INT64_BIGINT`, `MIN_INT64_BIGINT`, `MAX_SAFE_BIGINT`, `MIN_SAFE_BIGINT`, the 19-digit shape
+`/^-?[1-9][0-9]{0,18}$/` and the predicate over them exist in both
+`src/lib/db/providers/sql/sqlite-driver.ts` (`toSQLiteBindValue`) and
+`src/lib/db/providers/sql/libsql/hrana-transport.ts` (`isDecodedInteger`):
+`grep -rl 'MAX_INT64_BIGINT' src/` returns exactly 2 hits. The second file states the coupling out
+loud - "the two providers hand out the same shape, so they must accept the same shape back" - which
+is exactly the kind of invariant two copies break silently. Nothing holds them to each other:
+`toSQLiteBindValue` is exported and pinned in `tests/unit/db/sqlite-driver.test.ts`, while the
+libsql half is private to its transport, so no test can put the two rules side by side.
+
+They have already drifted in the half that is prose. The libsql docblock lists `'9e15'` among the
+shapes the rule cannot emit and names exponent form beside the decimal point; the SQLite one lists
+neither. The rest of that paragraph is duplicated all but word for word.
+
+`src/hooks/use-read-generation.ts` is this repository's own precedent for the alternative - "Stated
+once and used by three, deliberately", with the three callers named in the docblock and the reason
+recorded beside them: the third shipped without the guard "because the rule lived inside the other
+hook rather than beside all of them".
+
+Left out of #969 on the reviewer's own reckoning, because that branch already carries four
+independent subjects.
+
+**Done when:** the bounds, the digit shape and the predicate are stated once, in the shape
+`use-read-generation.ts` set, both drivers read them from there, and one test drives the shared rule
+over the cases the two docblocks list between them - so the next divergence fails instead of
+drifting.
+
 
 ## Value interpolation
 
@@ -1404,6 +1475,41 @@ is the direction that module chooses everywhere, so it is recorded rather than r
 Done looks like: the hint is read and dropped, the table resolves, and a hint naming a second table
 (there is no such form on MySQL, which is what makes this safe) stays refused. Tests belong beside
 the LIMIT case in `tests/unit/sql/update-target.test.ts`, with the engine each shape was measured on.
+
+### R3. A fractional Oracle `NUMBER` key writes the neighbouring row
+
+The editor refuses a key that is a whole number outside the range it carries exactly -
+`describeUncarriableKey` in `src/hooks/use-inline-editing.ts`, which answers "a whole number past
+the range this editor carries exactly" for every column kind but a declared 64-bit float - and #969
+measured that on PostgreSQL, MySQL and SQLite. Of the five engines D98 measures, three declare
+`supportsInlineRowEdit` and so can reach this rule at all - Oracle, SQL Server and DuckDB - while
+ClickHouse and Cassandra declare it false and never reach it. Measured 2026-09-19 on those three,
+the whole-number half holds. Driven through this hook: an Oracle `NUMBER` key handed over as
+9007199254740992 and a SQL Server `numeric(38,0)` key handed over as 1.2345678901234568e+37 are both
+refused, nothing is asked of the engine and no UPDATE goes out; two EDITED Oracle rows arriving under
+one rounded key are refused by the dedup instead, with "2 rows on screen carry one value between
+them". A key that arrives as a STRING - SQL Server's `bigint` and DuckDB's, D98 - is let through, and
+rightly: the digits are the row's own, and against both live engines the check's `GROUP BY` answered
+one row and the UPDATE that followed changed that row and no other. So for a whole number the write
+path is closed on all five, and what D18 describes stays a display defect.
+
+**The fractional half is open, and it writes.** `carriesFraction` admits a decimal spelling longer
+than nine significant digits, because no 32-bit column could print one, and its docblock says a
+driver handing a `DECIMAL` back as a number "lands in the refused half unless its digits prove
+otherwise". On Oracle the digits prove the wrong thing. Measured on Oracle AI Database 26ai Free
+23.26.3.0.0, `zz969_frac(f_id NUMBER(20,4) PRIMARY KEY)` holding 1234567890123456.7891 and
+1234567890123456.8000: oracledb hands BOTH rows over as 1234567890123456.8, seventeen significant
+digits, so the length rule waves it through. With only the first row edited, the editor asked the
+engine about that number, Oracle answered ONE group holding ONE row, the key check passed, and
+`UPDATE ... SET "note" = :1 WHERE "id" = :2` went out - against `the-neighbour`, the row nobody
+edited, reported as success. The length rule is a bound on what a 32-bit BINARY float can print;
+Oracle's `NUMBER` is decimal, and a rendering of one proves nothing about the value the row holds.
+
+**Done when:** a fractional key from a driver that rounds is refused like the whole-number one and
+with a sentence about the value in front of the user; what decides it reads the declaration - on
+these engines `NUMBER`, `numeric` and `decimal` are the names that round - rather than the decimal's
+length alone; and a test carries the Oracle pair above, named with the engine it was measured on,
+beside the `double precision` cases #969 added.
 
 ---
 
