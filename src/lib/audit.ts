@@ -503,8 +503,10 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
  *
  * 1. Pushes to the ring buffer the admin UI reads. That buffer is per process and holds 1000
  *    events, oldest dropped. It is a CONVENIENCE VIEW, not the durable record - an event emitted
- *    from proxy() may land in a different instance than the admin API reads, because the proxy is
- *    a separately compiled entry and instance sharing is unverified.
+ *    from proxy() ALWAYS lands in a different instance than the admin API reads, measured in #851:
+ *    Next compiles proxy.ts as its own entry which can run outside the main runtime, so the two
+ *    have separate module graphs and therefore separate buffers. Every denial proxy() records is
+ *    absent from the Admin Audit tab, which discloses that; the stdout channel below carries them.
  * 2. Writes one JSON line to stdout. This is the authoritative channel: it works identically in
  *    all 27 distribution channels with no dependency, and it is what a log pipeline consumes.
  *

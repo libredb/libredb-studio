@@ -132,6 +132,23 @@ describe("AuditTab", () => {
     expect(queryByText("Stats")).not.toBeNull();
   });
 
+  // #851: the buffer this tab reads is per process, and proxy() is a separately compiled entry,
+  // so every denial src/proxy.ts records lands in a different buffer than the admin API reads.
+  // The tab must not present that partial view as the whole audit log.
+  test("discloses that proxy-recorded boundary denials are absent from this view", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<AuditTab />);
+    });
+    const { queryByTestId } = renderResult!;
+
+    const disclosure = queryByTestId("audit-proxy-disclosure");
+    expect(disclosure).not.toBeNull();
+    // Names the gap, and points at the channel that does carry those events.
+    expect(disclosure!.textContent).toContain("boundary denials recorded by the proxy");
+    expect(disclosure!.textContent).toContain("libredb.audit.v1");
+  });
+
   test.each(["csv", "json"])("exports only the filtered operations as %s", async (format) => {
     const event = {
       id: "audit-export",

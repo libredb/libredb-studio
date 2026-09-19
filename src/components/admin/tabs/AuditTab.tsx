@@ -277,6 +277,17 @@ function OperationsAudit() {
         </span>
       </div>
 
+      {/* Scope disclosure (#851). Unconditional on purpose: the gap is a property of how the
+          process is compiled, not of the current filter or of whether any event happens to be
+          loaded, so there is no state in which this view is complete and the notice would lie. */}
+      <p data-testid="audit-proxy-disclosure" className="text-xs text-fg-muted">
+        Shows events recorded by the application; boundary denials recorded by the proxy — an unauthenticated or
+        cross-origin request rejected at the boundary, and a non-admin session reaching for{" "}
+        <code className="text-fg-secondary">/admin</code> — are not in this buffer. The{" "}
+        <code className="text-fg-secondary">libredb.audit.v1</code> JSON lines on the process log are the authoritative
+        record of those.
+      </p>
+
       {/* Events Table */}
       <div className="rounded-xl border border-hairline bg-panel overflow-hidden">
         {loading && events.length === 0 ? (
