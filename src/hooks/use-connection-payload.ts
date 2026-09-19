@@ -167,6 +167,38 @@ function sameContainer(a: unknown, b: unknown, keys: readonly string[]): boolean
   return sameFields(a as object, b as object, keys);
 }
 
+/**
+ * Which DATABASE a read of this connection would reach, as a string two renders can compare.
+ *
+ * The same question `reachesSameDatabase` asks of a served copy, asked of one connection at
+ * two moments instead. It lives here because the answer is `CONNECTION_RELEVANCE` and that
+ * table is here: a caller that wrote its own list would be the fifth in this repository, and
+ * the fourth one - five field names typed into `SchemaDiff.tsx` - is what let a `queryTimeout`
+ * change destroy a snapshot whose read was still in flight.
+ *
+ * A POSITIVE list, which the caller it replaces deliberately avoided: it argued that a field
+ * a positive list forgot would match a read to a database it was not taken from, silently.
+ * True of a list someone types, and not true of this one. `CONNECTION_RELEVANCE` is typed
+ * `Record<keyof DatabaseConnection, FieldRelevance>`, so a field added to the connection
+ * fails the BUILD until it is classified, and nothing can be forgotten into the dangerous
+ * direction.
+ *
+ * Key order follows the tables rather than the object, so two connections carrying the same
+ * fields in a different insertion order key the same.
+ */
+export function connectionResolutionKey(conn: DatabaseConnection): string {
+  const fields = (source: unknown, keys: readonly string[]): unknown[] => {
+    if (source === undefined || source === null) return [source];
+    const record = source as Record<string, unknown>;
+    return keys.map((key) => record[key]);
+  };
+  return JSON.stringify([
+    fields(conn, CONNECTION_RESOLUTION_KEYS),
+    fields(conn.ssl, SSL_RESOLUTION_KEYS),
+    fields(conn.sshTunnel, SSH_TUNNEL_RESOLUTION_KEYS),
+  ]);
+}
+
 function reachesSameDatabase(conn: DatabaseConnection, served: ManagedConnectionPayload): boolean {
   return (
     sameFields(conn, served, CONNECTION_RESOLUTION_KEYS) &&

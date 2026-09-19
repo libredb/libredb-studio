@@ -3,6 +3,7 @@
 import { appFetch } from "@/lib/config/base-path";
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useReadGeneration } from "@/hooks/use-read-generation";
+import { connectionResolutionKey } from "@/hooks/use-connection-payload";
 import {
   GitCompare,
   Plus,
@@ -63,23 +64,6 @@ function readPayload(conn: DatabaseConnection): { connectionId: string } | { con
 }
 
 /**
- * The fields a read is SENT but cannot be reached by. Everything else addresses a database.
- *
- * A denylist rather than a list of the fields that DO address one, because the two fail in
- * opposite directions. An addressing field this list forgot would be counted, costing one
- * round trip nobody needed - said out loud, on screen, and cheap. A cosmetic field wrongly
- * counted as addressing is the same. But an addressing field a positive list forgot would
- * match a read to a database it was not taken from, which is #884 in silence. Only that one
- * is worth guarding against, so the default for anything unlisted is "this changes the read".
- *
- * `createdAt` is here for a measured reason rather than a cosmetic one:
- * `use-connection-adapter.ts` builds it as `new Date()` INSIDE the memo, so a host that hands
- * over a fresh array produces a fresh timestamp - and a key that moves on every render is
- * exactly the churn this exists to stop.
- */
-const notAddressing = ["name", "color", "group", "environment", "createdAt"] as const;
-
-/**
  * Which DATABASE a read of this connection would reach, as a string two renders can compare.
  *
  * The connection OBJECT cannot answer this and neither can its id, and they fail in opposite
@@ -103,9 +87,7 @@ function readTargetKey(conn: DatabaseConnection): string {
   // other end and is sent nothing else, so nothing else about the object can change what
   // comes back - not even a host field a caller has filled in beside it.
   if (!("connection" in payload)) return payload.connectionId;
-  const addressing: Record<string, unknown> = { ...payload.connection };
-  for (const field of notAddressing) delete addressing[field];
-  return JSON.stringify(addressing);
+  return connectionResolutionKey(payload.connection);
 }
 
 async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[]> {
@@ -738,7 +720,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    * thing is instant: this writes it in the same tick as the click. So pick a connection,
    * change your mind, pick a snapshot from the list, and the read you turned away from
    * landed afterwards and made ITSELF the target - the panel showing a comparison nobody
-   * asked for, and the choice the user actually made gone from under them (#45).
+   * asked for, and the choice the user actually made gone from under them.
    *
    * `supersede()` rather than a third mechanism, and rather than a flag the fetch consults:
    * it is the counter that is already there, saying the one thing that has to be true - a

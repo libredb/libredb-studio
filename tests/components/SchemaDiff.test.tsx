@@ -1295,6 +1295,88 @@ describe("SchemaDiff", () => {
       }
     });
 
+    test("a cosmetic field changing mid-read does not destroy a snapshot either", async () => {
+      // The same defect through a field the hand-written list never named. `queryTimeout`
+      // changes no host, no database and no principal - this repository's own
+      // CONNECTION_RELEVANCE classifies it `cosmetic` - and changing it while a snapshot's
+      // read was in flight superseded that read: nothing written, and "the schema was read
+      // again before this finished. Press Save again" on screen.
+      //
+      // The five names typed into this file could not have covered it, which is why the key
+      // is derived from that table now: it is typed over every field of the connection, so a
+      // field nobody classified fails the build rather than reaching here unnoticed.
+      const q = queuedSchemaReads();
+      try {
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = renderDiff();
+        });
+        await q.flush();
+        await q.settle(0, { ok: true, objects: [{ name: "users" }] });
+
+        fireEvent.click(view.getByText("Snapshot"));
+        changeInput(view.getByPlaceholderText("Label (optional)...") as HTMLInputElement, "before the migration");
+        await act(async () => {
+          fireEvent.click(view.getByText("Save"));
+        });
+        await q.flush();
+
+        await act(async () => {
+          view.rerender(
+            <SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection, queryTimeout: 60_000 }} />,
+          );
+        });
+        await q.flush();
+
+        mockSaveSchemaSnapshot.mockClear();
+        await q.settle(1, { ok: true, objects: [{ name: "users" }] });
+
+        expect({ snapshots: mockSaveSchemaSnapshot.mock.calls.length, panel: snapshotBanner(view) }).toEqual({
+          snapshots: 1,
+          panel: "",
+        });
+        expect(q.pending.length).toBe(2);
+      } finally {
+        q.restore();
+      }
+    });
+
+    test("pointing the same entry at another database still supersedes the read", async () => {
+      // The other half, and the one a positive list could get wrong: a change that DOES move
+      // the database must still win. Same id, same object shape, different host.
+      const q = queuedSchemaReads();
+      try {
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = renderDiff();
+        });
+        await q.flush();
+        await q.settle(0, { ok: true, objects: [{ name: "users" }] });
+
+        fireEvent.click(view.getByText("Snapshot"));
+        await act(async () => {
+          fireEvent.click(view.getByText("Save"));
+        });
+        await q.flush();
+
+        await act(async () => {
+          view.rerender(
+            <SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection, host: "another-host" }} />,
+          );
+        });
+        await q.flush();
+
+        mockSaveSchemaSnapshot.mockClear();
+        await q.settle(1, { ok: true, objects: [{ name: "users" }] });
+
+        // Nothing written from the abandoned read, and the panel says why rather than going
+        // quiet - which is the behaviour the counter exists for.
+        expect(mockSaveSchemaSnapshot).not.toHaveBeenCalled();
+      } finally {
+        q.restore();
+      }
+    });
+
     test("the report follows the connection by id, which an in-place edit keeps and another does not", async () => {
       // What the id is still exactly right for, and it is not "which database". A report is
       // about an ENTRY in the user's connection list: editing that entry - pointing it at
@@ -1596,7 +1678,7 @@ describe("SchemaDiff", () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Reading the database again without leaving the tab (#35)
+  // Reading the database again without leaving the tab
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("refreshing the current schema", () => {
@@ -2003,7 +2085,7 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Writing after the panel is gone (#36)
+  // Writing after the panel is gone
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("writing after the panel is gone", () => {
@@ -3018,7 +3100,7 @@ describe("SchemaDiff", () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Two remote fetches in a row (#38)
+  // Two remote fetches in a row
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("remote fetch sequencing", () => {
@@ -3287,7 +3369,7 @@ describe("SchemaDiff", () => {
      * So the two were in a race the counter did not cover. Pick a connection, change your
      * mind, pick a snapshot from the list - and the read you turned away from lands
      * afterwards and makes ITSELF the target. The panel then shows a comparison nobody
-     * asked for, and the choice the user actually made is gone from under them (#45).
+     * asked for, and the choice the user actually made is gone from under them.
      *
      * The rule these hold is one sentence: the most recent thing the USER chose is what the
      * panel shows, and a read that was already running when they chose something else may
@@ -3449,7 +3531,7 @@ describe("SchemaDiff", () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // A fetch that FAILS (#46)
+    // A fetch that FAILS
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
@@ -3700,7 +3782,7 @@ describe("SchemaDiff", () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Snapshot identity, and a snapshot that is gone (#37)
+  // Snapshot identity, and a snapshot that is gone
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("snapshot identity", () => {
