@@ -1411,10 +1411,67 @@ describe("OperationsTab", () => {
     // Both rows are listed - the filter is by label - and exactly ONE is marked.
     const selected = container.querySelectorAll('[data-selected="true"]');
     expect(selected.length).toBe(1);
-    // The row does not print its schema, so the row COUNT is what tells the two apart:
+    // The row prints its schema (#977), and the row COUNT is a second signal:
     // 20 rows is the `archive` one, 10 is `public`.
     expect(selected[0]?.textContent).toContain("20 rows");
     expect(selected[0]?.textContent).not.toContain("10 rows");
+  });
+
+  // ── The row names its schema, so two schemas holding one label are told apart (#977) ──
+  //
+  // Two tables that share a name in different schemas rendered as identical rows, so an
+  // operator choosing between them could not tell which was which. The deep link carries the
+  // whole address, but the ROW still has to say which address it is.
+
+  test("prints the schema on the row, so two schemas sharing a label are distinguishable", async () => {
+    const collidingTables = [
+      { tableName: "orders", schemaName: "public", rowCount: 10, tableSize: "1 MB", totalSize: "1 MB", bloatRatio: 0 },
+      { tableName: "orders", schemaName: "archive", rowCount: 20, tableSize: "2 MB", totalSize: "2 MB", bloatRatio: 0 },
+    ];
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: collidingTables } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryAllByText, queryByText } = renderResult!;
+
+    // The shared label is on both rows...
+    expect(queryAllByText("orders").length).toBe(2);
+    // ...and each row names its own schema, which is what tells them apart. This assertion
+    // goes red the moment the schema is dropped from the row again.
+    expect(queryByText("public")).not.toBeNull();
+    expect(queryByText("archive")).not.toBeNull();
+  });
+
+  test("keeps the long-name truncation on the table name", async () => {
+    const longName = "a".repeat(120);
+    monitoringOverride = {
+      data: {
+        activeSessions: defaultSessions,
+        tables: [
+          {
+            tableName: longName,
+            schemaName: "public",
+            rowCount: 1,
+            tableSize: "1 MB",
+            totalSize: "1 MB",
+            bloatRatio: 0,
+          },
+        ],
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    // The schema sits outside the truncating span, so it survives a long table name.
+    const nameSpan = queryByText(longName);
+    expect(nameSpan).not.toBeNull();
+    expect(nameSpan!.className).toContain("truncate");
+    expect(nameSpan!.className).toContain("max-w-[160px]");
+    expect(queryByText("public")).not.toBeNull();
   });
 
   test("a link naming a container this engine does not report marks nothing", async () => {
