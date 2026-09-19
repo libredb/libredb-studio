@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D99, U17 · 45
+- [Drivers and connections](#drivers-and-connections) — D1–D98, U17 · 44
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
@@ -1390,36 +1390,6 @@ It has to be refused before the run, and there are two cheap shapes: an `eslint-
 The coverage gate is not a reliable second line of defence either: whether it goes red depends on which lines the unrun tests were the only cover for, which is a property of the file rather than of the `.only` (reasoned, not measured).
 
 **Done when:** a file carrying `it.only`, `test.only` or `describe.only` under `tests/` or `e2e/` fails a required check, and a test pins that gate by driving it over a fixture that carries one, with a control fixture that does not and passes.
-
-### D99. The SQLite bind-side invariant is written twice
-
-`MAX_INT64_BIGINT`, `MIN_INT64_BIGINT`, `MAX_SAFE_BIGINT`, `MIN_SAFE_BIGINT`, the 19-digit shape
-`/^-?[1-9][0-9]{0,18}$/` and the predicate over them exist in both
-`src/lib/db/providers/sql/sqlite-driver.ts` (`toSQLiteBindValue`) and
-`src/lib/db/providers/sql/libsql/hrana-transport.ts` (`isDecodedInteger`):
-`grep -rl 'MAX_INT64_BIGINT' src/` returns exactly 2 hits. The second file states the coupling out
-loud - "the two providers hand out the same shape, so they must accept the same shape back" - which
-is exactly the kind of invariant two copies break silently. Nothing holds them to each other:
-`toSQLiteBindValue` is exported and pinned in `tests/unit/db/sqlite-driver.test.ts`, while the
-libsql half is private to its transport, so no test can put the two rules side by side.
-
-They have already drifted in the half that is prose. The libsql docblock lists `'9e15'` among the
-shapes the rule cannot emit and names exponent form beside the decimal point; the SQLite one lists
-neither. The rest of that paragraph is duplicated all but word for word.
-
-`src/hooks/use-read-generation.ts` is this repository's own precedent for the alternative - "Stated
-once and used by three, deliberately", with the three callers named in the docblock and the reason
-recorded beside them: the third shipped without the guard "because the rule lived inside the other
-hook rather than beside all of them".
-
-Left out of #969 on the reviewer's own reckoning, because that branch already carries four
-independent subjects.
-
-**Done when:** the bounds, the digit shape and the predicate are stated once, in the shape
-`use-read-generation.ts` set, both drivers read them from there, and one test drives the shared rule
-over the cases the two docblocks list between them - so the next divergence fails instead of
-drifting.
-
 
 ## Value interpolation
 

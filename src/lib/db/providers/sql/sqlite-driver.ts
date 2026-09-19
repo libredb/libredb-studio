@@ -19,6 +19,7 @@
  */
 
 import { DatabaseConfigError } from "../../errors";
+import { fitsJavaScriptNumber, isSQLiteInt64Digits } from "./sqlite-int64";
 
 /**
  * One result column's name and the type it was DECLARED with — `undefined` where SQLite
@@ -146,12 +147,16 @@ export type SQLiteDriverName = "bun" | "node";
  * two providers now answer the same shape. Nothing outside this module ever sees
  * a BigInt.
  */
-const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
-const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
 
-/** One 64-bit integer, as a number when that is lossless and as digits when it is not. */
+/**
+ * One 64-bit integer, as a number when that is lossless and as digits when it is not.
+ *
+ * The 2^53 boundary is `sqlite-int64.ts`' to state: the bind side below asks the same
+ * question from the other end, and the two must not be able to disagree about where it
+ * falls.
+ */
 export function normalizeSQLiteBigInt(value: bigint): number | string {
-  return value >= MIN_SAFE_BIGINT && value <= MAX_SAFE_BIGINT ? Number(value) : value.toString();
+  return fitsJavaScriptNumber(value) ? Number(value) : value.toString();
 }
 
 /**
@@ -181,13 +186,12 @@ export function normalizeSQLiteBigInt(value: bigint): number | string {
  * question it CAN answer exactly: it accepts back precisely what it handed out.
  * `normalizeSQLiteBigInt` emits these digits for one input only, a 64-bit integer
  * outside the safe range, so reading them back as that integer is its exact inverse
- * and every other string is left alone:
+ * and every other string is left alone.
  *
- * - inside the safe range (`'1'`, `'9007199254740991'`) the read hands out a NUMBER,
- *   never digits, so such a string is the caller's own text;
- * - `'007'`, `'+7'`, `''`, `' 7'`, `'7.0'` are not shapes it can emit at all;
- * - wider than 64 bits (`'99999999999999999999'`) is not a value SQLite's INTEGER can
- *   hold, so no row could match it as a number either.
+ * WHICH strings those are is not restated here: `sqlite-int64.ts` states it once, with
+ * the full list of shapes that stay text, and the libSQL transport asks the same
+ * function. Restating it in each provider is how the rule drifts - the two copies this
+ * replaced already disagreed in prose about exponent form.
  *
  * What that costs, measured and accepted: in a column with NO affinity that genuinely
  * stores this shape as TEXT, the bind now misses where it used to match. That is the
@@ -200,30 +204,16 @@ export function normalizeSQLiteBigInt(value: bigint): number | string {
  * storage class it is, which is the question this conversion answers.
  */
 
-/** SQLite's own INTEGER: signed 64-bit, and nothing wider can be stored in a row. */
-const MAX_INT64_BIGINT = BigInt("9223372036854775807");
-const MIN_INT64_BIGINT = BigInt("-9223372036854775808");
-
 /**
- * The exact shape `normalizeSQLiteBigInt` prints: an optional minus, a non-zero first
- * digit, at most 19 digits in all (INT64's own width). Leading zeros, a leading `+`,
- * surrounding space, a decimal point and the empty string all fall outside it.
+ * One bound parameter, with the digits of a 64-bit integer read back as that integer.
+ *
+ * WHICH strings those are is `sqlite-int64.ts`' to answer, shared with the libSQL
+ * transport: the two providers hand out the same shape, so they must accept the same
+ * shape back. What is local here is only the FORM the driver wants it in - both
+ * `bun:sqlite` and `node:sqlite` take a real `bigint`.
  */
-const SQLITE_INT64_DIGITS = /^-?[1-9][0-9]{0,18}$/;
-
-/** One bound parameter, with the digits of a 64-bit integer read back as that integer. */
 export function toSQLiteBindValue(param: unknown): unknown {
-  if (typeof param !== "string" || !SQLITE_INT64_DIGITS.test(param)) {
-    return param;
-  }
-  const parsed = BigInt(param);
-  if (parsed >= MIN_SAFE_BIGINT && parsed <= MAX_SAFE_BIGINT) {
-    return param;
-  }
-  if (parsed < MIN_INT64_BIGINT || parsed > MAX_INT64_BIGINT) {
-    return param;
-  }
-  return parsed;
+  return typeof param === "string" && isSQLiteInt64Digits(param) ? BigInt(param) : param;
 }
 
 /**

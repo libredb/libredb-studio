@@ -32,6 +32,7 @@
  */
 
 import type { DatabaseConnection } from "@/lib/db/types";
+import { isSQLiteInt64Digits } from "../sqlite-int64";
 import {
   type LibSQLBatchOutcome,
   type LibSQLExecuteOptions,
@@ -231,13 +232,12 @@ function decodeValue(raw: unknown): unknown {
  * answers the question it CAN answer exactly: it accepts back precisely what it
  * handed out. `decodeInteger` emits these digits for one input only, a 64-bit
  * integer outside the safe range, so reading them back as that integer is its exact
- * inverse and every other string is left alone:
+ * inverse and every other string is left alone.
  *
- * - inside the safe range (`'1'`, `'9007199254740991'`) the read hands out a NUMBER,
- *   never digits, so such a string is the caller's own text;
- * - `'007'`, `'+7'`, `''`, `' 7'`, `'7.0'`, `'9e15'` are not shapes it can emit;
- * - wider than 64 bits (`'99999999999999999999'`) is not a value SQLite's INTEGER
- *   can hold, so no row could match it as a number either.
+ * WHICH strings those are is not restated here: `../sqlite-int64.ts` states it once,
+ * with the full list of shapes that stay text, and the SQLite driver asks the same
+ * function. Restating it in each provider is how the rule drifts - the two copies this
+ * replaced already disagreed in prose about exponent form.
  *
  * What that costs, measured and accepted: in a column with NO affinity that
  * genuinely stores this shape as TEXT, the bind now misses where it used to match.
@@ -248,31 +248,9 @@ function decodeValue(raw: unknown): unknown {
  *
  * This is the same rule `toSQLiteBindValue` applies in the SQLite driver (#42), by
  * design: the two providers hand out the same shape, so they must accept the same
- * shape back.
+ * shape back. It is one rule in one file now rather than a rule and its copy -
+ * `tests/unit/db/sqlite-int64.test.ts` fails the build if a provider grows its own.
  */
-
-/** SQLite's own INTEGER: signed 64-bit, and nothing wider can be stored in a row. */
-const MAX_INT64_BIGINT = BigInt("9223372036854775807");
-const MIN_INT64_BIGINT = BigInt("-9223372036854775808");
-const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
-const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
-
-/**
- * The exact shape `decodeInteger` prints: an optional minus, a non-zero first digit,
- * at most 19 digits in all (INT64's own width). Leading zeros, a leading `+`,
- * surrounding space, a decimal point, exponent form and the empty string all fall
- * outside it.
- */
-const HRANA_INT64_DIGITS = /^-?[1-9][0-9]{0,18}$/;
-
-/** Whether these digits are ones `decodeInteger` could itself have handed out. */
-function isDecodedInteger(param: string): boolean {
-  if (!HRANA_INT64_DIGITS.test(param)) return false;
-  const parsed = BigInt(param);
-  // Inside the safe range the read hands out a number, so digits are the caller's text.
-  if (parsed >= MIN_SAFE_BIGINT && parsed <= MAX_SAFE_BIGINT) return false;
-  return parsed >= MIN_INT64_BIGINT && parsed <= MAX_INT64_BIGINT;
-}
 
 /**
  * One JavaScript parameter as a wire value.
@@ -295,7 +273,7 @@ function encodeValue(param: unknown): HranaValue {
   if (param instanceof Date) return { type: "text", value: param.toISOString() };
   // Only a real string, never `String(param)` of some other object: the read side
   // hands out strings and nothing else, so nothing else can be a value it emitted.
-  if (typeof param === "string" && isDecodedInteger(param)) return { type: "integer", value: param };
+  if (typeof param === "string" && isSQLiteInt64Digits(param)) return { type: "integer", value: param };
   return { type: "text", value: String(param) };
 }
 
