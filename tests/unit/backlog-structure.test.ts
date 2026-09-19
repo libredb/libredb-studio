@@ -274,6 +274,17 @@ describe("no citation outlives the entry it names", () => {
    * against. The two shapes that reach it were measured in `build-azure-package.test.ts`: an
    * absent binary makes `Bun.spawnSync` throw, and a git that runs but refuses exits non-zero.
    */
+  /**
+   * A repository path with forward slashes, whichever separator it arrived with.
+   *
+   * `path.sep` is not enough: it is this platform's separator, so a POSIX
+   * machine leaves a backslash path alone and the mismatch this guards against
+   * is invisible there. Both separators are normalised so the comparison is the
+   * same on every platform, which is also what lets the test below stand in for
+   * Windows on a POSIX machine.
+   */
+  const toPosix = (file: string): string => file.replace(/\\/g, "/");
+
   const gitTrackedFiles = (
     run: (args: string[]) => {
       readonly exitCode: number | null;
@@ -283,7 +294,15 @@ describe("no citation outlives the entry it names", () => {
     try {
       const proc = run(["ls-files", "-z"]);
       if (proc.exitCode !== 0) return null;
-      return new Set(proc.stdout.toString().split("\0").filter(Boolean));
+      return new Set(
+        proc.stdout
+          .toString()
+          .split("\0")
+          .filter(Boolean)
+          // git reports POSIX separators on every platform; a glob reports the
+          // platform's own, so on Windows nothing would ever match.
+          .map(toPosix),
+      );
     } catch {
       return null;
     }
@@ -291,7 +310,7 @@ describe("no citation outlives the entry it names", () => {
 
   /** Restrict a glob's output to the index's answer; `null` keeps the glob's own population. */
   const trackedOnly = (files: readonly string[], tracked: ReadonlySet<string> | null): string[] =>
-    tracked === null ? [...files] : files.filter((file) => tracked.has(file));
+    tracked === null ? [...files] : files.map(toPosix).filter((file) => tracked.has(file));
 
   const SCAN_ROOTS = [
     "src/**/*.{ts,tsx}",
@@ -398,6 +417,31 @@ describe("no citation outlives the entry it names", () => {
     expect(live).not.toBeNull();
     expect(live?.has(BACKLOG_PATH)).toBe(true);
     expect(live?.has("tests/unit/backlog-structure.test.ts")).toBe(true);
+  });
+
+  test("a Windows-shaped index still matches, and so does a Windows-shaped glob", () => {
+    // The failure this guards: git reports POSIX separators on every platform
+    // and a glob reports the platform's own, so on Windows `tracked.has(file)`
+    // was false for every file and the scan came back empty. CI's Windows leg
+    // caught it as `Expected: > 200, Received: 0`, and nothing on a POSIX
+    // machine could see it, which is what this case is for: the injected run
+    // stands in for the platform rather than for git.
+    const NUL = String.fromCharCode(0);
+    const windowsIndex = gitTrackedFiles(() => ({
+      exitCode: 0,
+      stdout: Buffer.from(["src\\a.ts", "tests\\unit\\b.ts", ""].join(NUL)),
+    }));
+    expect(windowsIndex).toEqual(new Set(["src/a.ts", "tests/unit/b.ts"]));
+    expect(trackedOnly(["src/a.ts", "tests/unit/b.ts"], windowsIndex)).toEqual(["src/a.ts", "tests/unit/b.ts"]);
+    // And a backslash-shaped glob against a POSIX index, the other half of the
+    // same mismatch.
+    const posixIndex = gitTrackedFiles(() => ({
+      exitCode: 0,
+      stdout: Buffer.from(["tests/b.ts", ""].join(NUL)),
+    }));
+    expect(trackedOnly(["tests\\b.ts"], posixIndex)).toEqual(["tests/b.ts"]);
+    expect(toPosix("tests\\unit\\b.ts")).toBe("tests/unit/b.ts");
+    expect(toPosix("tests/unit/b.ts")).toBe("tests/unit/b.ts");
   });
 });
 
