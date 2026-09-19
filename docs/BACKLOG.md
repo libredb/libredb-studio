@@ -235,7 +235,11 @@ BIGINT, HUGEINT and DECIMAL as decimal strings, and the Cassandra adapter string
 `Integer` and `BigDecimal` for fidelity. SQL Server loses nothing on `bigint` either - tedious hands
 one over as text of its own accord - and rounds only its decimal family. Oracle's `NUMBER` is the one integer key of the
 five that reaches the grid already wrong, and that is D18, not a sixth thing. What the rounding
-costs the row editor is R3.
+costs the row editor is now one case rather than two: a FRACTIONAL key out of a column declared
+`NUMBER`, `decimal`, `numeric` or `money` is refused before the engine is asked, because the
+declaration says the driver rounded it - `describeFraction` and `EXACT_DECIMAL_TYPE_NAMES` in
+`src/hooks/use-inline-editing.ts`, measured 2026-09-19 on Oracle 26ai Free and SQL Server 2022 CU27.
+The key whose digits round to a WHOLE number is still open, and that is R3.
 
 **What is new is that one sentence in the tree is false.** `docs/providers/mssql.md` §5.3 says
 `BIGINT`, `DECIMAL`/`NUMERIC` and `MONEY` "are surfaced as JavaScript `number`s and can **lose
@@ -1446,40 +1450,40 @@ Done looks like: the hint is read and dropped, the table resolves, and a hint na
 (there is no such form on MySQL, which is what makes this safe) stays refused. Tests belong beside
 the LIMIT case in `tests/unit/sql/update-target.test.ts`, with the engine each shape was measured on.
 
-### R3. A fractional Oracle `NUMBER` key writes the neighbouring row
+---
 
-The editor refuses a key that is a whole number outside the range it carries exactly -
-`describeUncarriableKey` in `src/hooks/use-inline-editing.ts`, which answers "a whole number past
-the range this editor carries exactly" for every column kind but a declared 64-bit float - and #969
-measured that on PostgreSQL, MySQL and SQLite. Of the five engines D98 measures, three declare
-`supportsInlineRowEdit` and so can reach this rule at all - Oracle, SQL Server and DuckDB - while
-ClickHouse and Cassandra declare it false and never reach it. Measured 2026-09-19 on those three,
-the whole-number half holds. Driven through this hook: an Oracle `NUMBER` key handed over as
-9007199254740992 and a SQL Server `numeric(38,0)` key handed over as 1.2345678901234568e+37 are both
-refused, nothing is asked of the engine and no UPDATE goes out; two EDITED Oracle rows arriving under
-one rounded key are refused by the dedup instead, with "2 rows on screen carry one value between
-them". A key that arrives as a STRING - SQL Server's `bigint` and DuckDB's, D98 - is let through, and
-rightly: the digits are the row's own, and against both live engines the check's `GROUP BY` answered
-one row and the UPDATE that followed changed that row and no other. So for a whole number the write
-path is closed on all five, and what D18 describes stays a display defect.
+### R3. A whole-LOOKING key out of a scaled decimal column writes the neighbouring row
 
-**The fractional half is open, and it writes.** `carriesFraction` admits a decimal spelling longer
-than nine significant digits, because no 32-bit column could print one, and its docblock says a
-driver handing a `DECIMAL` back as a number "lands in the refused half unless its digits prove
-otherwise". On Oracle the digits prove the wrong thing. Measured on Oracle AI Database 26ai Free
-23.26.3.0.0, `zz969_frac(f_id NUMBER(20,4) PRIMARY KEY)` holding 1234567890123456.7891 and
-1234567890123456.8000: oracledb hands BOTH rows over as 1234567890123456.8, seventeen significant
-digits, so the length rule waves it through. With only the first row edited, the editor asked the
-engine about that number, Oracle answered ONE group holding ONE row, the key check passed, and
-`UPDATE ... SET "note" = :1 WHERE "id" = :2` went out - against `the-neighbour`, the row nobody
-edited, reported as success. The length rule is a bound on what a 32-bit BINARY float can print;
-Oracle's `NUMBER` is decimal, and a rendering of one proves nothing about the value the row holds.
+#969 closed the fractional half of this: a number read out of a column the engine declares `NUMBER`,
+`decimal`, `numeric` or `money` is refused before the engine is asked, because the declaration says
+the driver rounded it - `describeFraction` and `EXACT_DECIMAL_TYPE_NAMES` in
+`src/hooks/use-inline-editing.ts`. Measured 2026-09-19 on Oracle AI Database 26ai Free 23.26.3.0.0
+and SQL Server 2022 CU27: the `NUMBER(20,4)` pair that used to write to `the-neighbour` is refused
+with nothing asked of the engine, while `BINARY_DOUBLE`, a whole `NUMBER(10)` key, a SQLite
+`DECIMAL` (that engine has no exact decimal - it stores a double) and the STRING a `numeric` takes
+over `pg`, mysql2 and DuckDB all still write.
 
-**Done when:** a fractional key from a driver that rounds is refused like the whole-number one and
-with a sentence about the value in front of the user; what decides it reads the declaration - on
-these engines `NUMBER`, `numeric` and `decimal` are the names that round - rather than the decimal's
-length alone; and a test carries the Oracle pair above, named with the engine it was measured on,
-beside the `double precision` cases #969 added.
+**What is left is the value that arrives WHOLE.** A decimal whose digits round to an exact integer
+double reaches `describeUncarriableKey` as a safe integer and is let through - which is right for
+every ordinary Oracle key and wrong for this one. MEASURED 2026-09-19 through this hook, after the
+fix above: Oracle `zz969_intx(id NUMBER(38,20) PRIMARY KEY)` holding 5.00000000000000000001 and 5
+hands BOTH rows over as 5; with only the first row edited, the check asked about 5, Oracle answered
+ONE group holding ONE row, and `UPDATE ... WHERE "ID" = :2` wrote to the row holding exactly 5 -
+the row nobody edited - reported as "Changes Applied". SQL Server `decimal(38,20)` over the same
+pair does the same thing, the parameter bound as an integer this time rather than a float.
+
+It could not be closed where the fractional half was. The only thing that separates `NUMBER(38,20)`
+from the `NUMBER(10)` that is every second Oracle primary key is the SCALE, and the declared type
+this hook reads carries the word alone: `oracleColumnTypes` and `mssqlColumnTypes` in
+`src/lib/db/providers/sql/column-types.ts` drop precision and scale deliberately, because a computed
+column reports precision 0 (`COUNT(*)`) or scale -127 (`1/3`). Refusing every whole number out of a
+decimal column instead would refuse every Oracle key there is - measured, `NUMBER(10)` holding 42
+writes correctly and must keep doing so.
+
+**Done when:** the type that reaches this hook says whether the column can hold digits under the
+point on the engines whose drivers round - the scale beside the word, or a second field that says
+it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
+above beside the fractional ones #969 added.
 
 ---
 

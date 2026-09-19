@@ -55,10 +55,13 @@ const updates = (count: number) => `${count} UPDATE statement${count === 1 ? "" 
  * - `date-time`: a column declared as a date or a timestamp.
  * - `float64`: a column declared as a 64-bit IEEE float, the one width a JavaScript number
  *   is. A value read out of such a column IS the value the row holds, exactly.
+ * - `decimal`: a column declared as an EXACT DECIMAL — Oracle's `NUMBER`, T-SQL's
+ *   `decimal`, `numeric` and `money` — which holds more digits than a double carries. A
+ *   number read out of one is a ROUNDING of the value the row holds, not that value.
  * - `declared`: a column declared as something else. Its values are what they look like.
  * - `undeclared`: the result carried no type for this column at all.
  */
-type KeyColumnKind = "date-time" | "float64" | "declared" | "undeclared";
+type KeyColumnKind = "date-time" | "float64" | "decimal" | "declared" | "undeclared";
 
 /**
  * The declared types whose value is an INSTANT, matched on the type's own first word.
@@ -202,6 +205,90 @@ const FLOAT64_ONLY_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set([
 const FLOAT64_ONLY_NAMES: ReadonlySet<string> = new Set(["real", "float"]);
 
 /**
+ * The declared types that are an EXACT DECIMAL, matched on the type's own first word.
+ *
+ * A column of one of these holds a decimal of up to 38 digits, and the two drivers that
+ * reach this hook with one hand it over as a JavaScript number — a 64-bit IEEE float, which
+ * carries 15 to 17 significant decimal digits. So the number in front of the user is a
+ * RENDERING of the row's value, the same way a `Date` string is a rendering of an instant,
+ * and the decimal it prints can be the key of a DIFFERENT row.
+ *
+ * MEASURED 2026-09-19 through this hook's own path, on Oracle AI Database 26ai Free
+ * 23.26.3.0.0 and SQL Server 2022 CU27 (16.0.4295.3):
+ *  - Oracle `zz969_frac(id NUMBER(20,4) PRIMARY KEY)` holding 1234567890123456.7891 and
+ *    1234567890123456.8: oracledb hands BOTH rows over as 1234567890123456.8. With only
+ *    the first row edited, the check asked the engine, Oracle answered ONE group holding
+ *    ONE row, `UPDATE ... WHERE "ID" = :2` went out against `the-neighbour` — the row
+ *    nobody edited — and the apply reported "Changes Applied".
+ *  - Oracle `NUMBER` with no precision holding .10000000000000000001 and .1: both arrive as
+ *    the ONE-digit 0.1, and the UPDATE lands on the row holding .1. So the wrong-row write
+ *    happens at one printed digit as readily as at seventeen, which is why no count of
+ *    digits can separate these from a value that is its own, and the declaration decides.
+ *  - SQL Server `zz969_num(id decimal(20,4) PRIMARY KEY, cash money)` over the same pair:
+ *    both rows arrive as 1234567890123456.8, and `922337203685477.5807` in the `money`
+ *    column arrives as 922337203685477.6. tedious computes every `decimal`/`numeric` as
+ *    `value / 10^scale` and every `money` as an int64 over 10000 (`readNumeric`,
+ *    `readMoney`), so the rounding is the driver's arithmetic, not one column's width.
+ *    Sent back, that one key UPDATEd BOTH rows: `float` outranks `decimal` in T-SQL, so the
+ *    column is widened to meet the parameter `mssql` infers for a fractional number, and
+ *    both rows are equal to it. Driven through this hook the count check SAW those two
+ *    groups and refused, so SQL Server was not writing a wrong row — it was writing the
+ *    right one wherever a rounding happened to be unique, and this rule costs it those
+ *    writes. They go anyway: which of the two cases is in front of the user cannot be read
+ *    off the value, the safety rests on a type `mssql` infers rather than on anything the
+ *    engine promises, and the closed side is the safe side here as in the two sets above.
+ *
+ * The words are the engines' own, which is what `QueryResult.columnTypes` carries. Oracle
+ * spells all of `NUMBER`, `DECIMAL`, `NUMERIC`, `DEC` and `FLOAT` as `NUMBER` in
+ * `dbTypeName` — measured on the five declarations in one table — so the one word covers
+ * that engine. T-SQL reports `decimal`, `numeric`, `money` and `smallmoney` as themselves.
+ *
+ * A driver that hands the same column back as a STRING is untouched by this: the string is
+ * its own digits and takes the string path above. MEASURED the same day — PostgreSQL 16.15
+ * `numeric(20,4)` over `pg`, MySQL 8.4.11 `DECIMAL(20,4)` over mysql2's text AND binary
+ * protocols, and DuckDB 1.5.5 `DECIMAL(20,4)` through the `getRowObjectsJson()` the
+ * provider reads — all four hand "1234567890123456.7891" over as text, exact to the digit.
+ *
+ * AND THE COST IS REAL, so it is written down rather than implied: a fractional key that
+ * happens to be exactly what the row holds is refused with the rest. MEASURED on the same
+ * Oracle, `zz969_ten(id NUMBER(20,4))` holding 123456.7891 and 123456.7892 — two values a
+ * double carries exactly — used to be asked about and written to its own row, and now is
+ * not. It is refused because nothing in front of the editor tells it apart from the case
+ * above: the same column, the same driver, the same shape of decimal, and the difference
+ * lives only in digits that never left the engine. A key the editor cannot tell apart from
+ * a wrong-row write is the one this file has always closed, and the whole-number rule two
+ * screens down refuses a `bigint` past 2^53 for exactly the same reason.
+ */
+const EXACT_DECIMAL_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "number",
+  "numeric",
+  "decimal",
+  "dec",
+  "money",
+  "smallmoney",
+]);
+
+/**
+ * The engines where those words are an AFFINITY and not an exact decimal type at all.
+ *
+ * SQLITE HAS NO DECIMAL TYPE, the way it has no date type (`NO_INSTANT_TYPE_DIALECTS`) and
+ * no 32-bit float (`FLOAT64_ONLY_DIALECTS`). A column declared `DECIMAL(20,4)` or
+ * `NUMERIC(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double — so
+ * what the driver hands over IS the value the row holds, and "the driver rounded it to fit"
+ * would be false about it.
+ *
+ * MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0), `zz(k DECIMAL(20,4), n NUMERIC(20,4))`:
+ * `pragma_table_info` reports both declarations back verbatim, `typeof()` answers `real`
+ * for both, 1234567890123456.7891 comes back as the double 1234567890123456.8 — which is
+ * exactly what the file now holds, not a rounding of it — and `WHERE k = 1234567890123456.8`
+ * matched ONE row, its own.
+ *
+ * `libsql` is here for the reason it is in the other two sets: it embeds the same engine and
+ * reports the same `sqlite3_column_decltype` declarations.
+ */
+const NO_EXACT_DECIMAL_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set(["sqlite", "libsql"]);
+
+/**
  * Reads one declared type down to its first word.
  *
  * ClickHouse spells a nullable or dictionary-encoded column by WRAPPING the real type —
@@ -227,6 +314,7 @@ function keyColumnKind(declaredType: string | undefined, dialect: DatabaseConnec
   const first = name.split("(")[0].trim().split(/\s+/)[0];
   if (!NO_INSTANT_TYPE_DIALECTS.has(dialect) && INSTANT_TYPE_NAMES.has(first)) return "date-time";
   if (FLOAT64_TYPE_NAMES.has(first)) return "float64";
+  if (!NO_EXACT_DECIMAL_DIALECTS.has(dialect) && EXACT_DECIMAL_TYPE_NAMES.has(first)) return "decimal";
   return FLOAT64_ONLY_DIALECTS.has(dialect) && FLOAT64_ONLY_NAMES.has(first) ? "float64" : "declared";
 }
 
@@ -241,6 +329,18 @@ function keyColumnKind(declaredType: string | undefined, dialect: DatabaseConnec
  * exactly, and `WHERE f_id = 0.30000000000000004` found the row — so it gets its own reason.
  */
 const FRACTIONAL = "a fractional number";
+
+/**
+ * The fractional key that was mangled on the way out after all.
+ *
+ * `FRACTIONAL` is about a WIDTH nothing states: the decimal is the row's own and what is
+ * missing is any statement of how the engine will read it back. This one is the opposite
+ * fact — the column says exactly what it is, an exact decimal, and says at the same time
+ * that the number in front of the user is a rounding of digits it can hold and a double
+ * cannot. Two different reasons, so two different sentences: see `EXACT_DECIMAL_TYPE_NAMES`
+ * for what each engine hands over.
+ */
+const ROUNDED_DECIMAL = "a fractional number the driver rounded to fit";
 
 /**
  * The most significant decimal digits any 32-bit IEEE float needs to round-trip — nine.
@@ -260,7 +360,8 @@ function significantDigits(value: number): number {
 }
 
 /**
- * Whether a fractional number can be sent back as the row that holds it.
+ * Why a fractional number cannot be sent back as the row that holds it — or `null` when it
+ * can.
  *
  * The decimal `String()` writes always parses back to the same double — that is what
  * "shortest round-trip" means — so the only question is at what precision the ENGINE reads
@@ -279,12 +380,19 @@ function significantDigits(value: number): number {
  *    produce, so it is refused; more than nine is one no 32-bit column can produce.
  *
  * Fail closed, in other words: allowed only where the value is provably the one the row
- * holds. A `numeric`/`DECIMAL` never reaches here at all — `pg` and `mysql2` both hand those
- * back as STRINGS, exactly so nothing rounds them — and a driver configured to hand one back
- * as a number lands in the refused half unless its digits prove otherwise.
+ * holds. A `numeric`/`DECIMAL` over `pg` or mysql2 never reaches here at all — both hand
+ * those back as STRINGS, exactly so nothing rounds them — and a driver that hands one back
+ * as a NUMBER, which oracledb and tedious both do, is the first case below.
  */
-function carriesFraction(value: number, column: KeyColumnKind): boolean {
-  return column === "float64" || significantDigits(value) > FLOAT32_MAX_DIGITS;
+function describeFraction(value: number, column: KeyColumnKind): string | null {
+  // An exact decimal is settled by the DECLARATION and by nothing else. The digits printed
+  // here are the driver's rounding of the row's, and one row's rounding is another row's
+  // key: Oracle handed .10000000000000000001 over as the one-digit 0.1 and
+  // 1234567890123456.7891 over as the seventeen-digit 1234567890123456.8, and wrote to the
+  // neighbour both times. No length rule separates those two from a decimal that is its
+  // own, which is why this asks the column and not the number.
+  if (column === "decimal") return ROUNDED_DECIMAL;
+  return column === "float64" || significantDigits(value) > FLOAT32_MAX_DIGITS ? null : FRACTIONAL;
 }
 
 /**
@@ -367,7 +475,7 @@ function describeUncarriableKey(value: unknown, column: KeyColumnKind): string |
     if (column === "date-time") return "a date and time";
     if (Number.isSafeInteger(value)) return null;
     if (!Number.isFinite(value)) return "not a number";
-    if (!Number.isInteger(value)) return carriesFraction(value, column) ? null : FRACTIONAL;
+    if (!Number.isInteger(value)) return describeFraction(value, column);
     // Whole, and past the range a double spells every integer in. WHAT THE COLUMN IS
     // decides this one, not how big the number is, and the two halves were measured
     // 2026-09-18 on PostgreSQL 16.15 and MySQL 8.4.11 through this hook's own path:
@@ -421,7 +529,10 @@ const uncarriableReason = (keyColumn: string, found: { readonly count: number; r
   (found.what === FRACTIONAL
     ? "and nothing here says the column holds it as a 64-bit float, so the engine may read that decimal back as a " +
       "different number"
-    : "which does not reach the table as the row holds it") +
+    : found.what === ROUNDED_DECIMAL
+      ? "and the column it came out of holds more digits than a 64-bit float carries, so this decimal may be a " +
+        "rounding of the row's own — and a rounding matches another row as readily as yours"
+      : "which does not reach the table as the row holds it") +
   ". Put a column that identifies a row as text or a whole number in the query and run it again, or edit the SQL " +
   "by hand";
 

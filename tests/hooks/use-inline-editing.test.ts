@@ -2572,6 +2572,115 @@ describe("useInlineEditing", () => {
     });
   });
 
+  // ── An exact decimal reaches the grid as a value the driver ROUNDED ──────
+  //
+  // MEASURED 2026-09-19 through this hook, on Oracle AI Database 26ai Free 23.26.3.0.0 and
+  // SQL Server 2022 CU27 (16.0.4295.3):
+  //
+  //   oracle  zz969_frac(id NUMBER(20,4) PRIMARY KEY, note VARCHAR2(30)) holding
+  //           1234567890123456.7891 and 1234567890123456.8. oracledb hands BOTH rows over
+  //           as 1234567890123456.8, and `columnTypes` carries `NUMBER` for the key. With
+  //           only the first row's note edited, the check asked `SELECT "ID", COUNT(*) ...
+  //           WHERE "ID" IN (:1) GROUP BY "ID"`, Oracle answered ONE group holding ONE row,
+  //           and `UPDATE ZZ969_FRAC SET "NOTE" = :1 WHERE "ID" = :2` wrote to
+  //           `the-neighbour` - the row nobody edited - reported as "1 UPDATE statement
+  //           accepted. The results are up to date."
+  //   oracle  the same table declared NUMBER, holding .10000000000000000001 and .1: both
+  //           rows arrive as the ONE-digit 0.1 and the UPDATE lands on the .1 row. One
+  //           printed digit, the same wrong row - so the LENGTH of the decimal proves
+  //           nothing here, and the declaration is what decides.
+  //   mssql   zz969_num(id decimal(20,4) PRIMARY KEY, cash money) over the same pair: both
+  //           rows arrive as 1234567890123456.8 and money's 922337203685477.5807 arrives as
+  //           922337203685477.6. Sending that key back UPDATEd BOTH rows at once, because
+  //           T-SQL widens the column to compare it with the float parameter.
+  //
+  // The rounding is the DRIVER's arithmetic and not one column's width: tedious computes
+  // every decimal as `value / 10^scale` and every money as an int64 over 10000, and oracledb
+  // reads NUMBER into a double.
+  test.each([
+    ["oracle", "NUMBER", 1234567890123456.8],
+    ["oracle", "NUMBER", 0.1],
+    ["oracle", "NUMBER", 1234.56],
+    ["mssql", "decimal", 1234567890123456.8],
+    ["mssql", "numeric", 1234.56],
+    ["mssql", "money", 922337203685477.6],
+  ] as const)("a %s %s key the driver rounded is refused before the engine is asked", async (type, declared, key) => {
+    const seen = countAsks();
+    await applyKeyedBy(key, type, declared);
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("it is a fractional number the driver rounded to fit"),
+    });
+    // The fact that is true of THIS value, and is not the 64-bit-float one: the column says
+    // what it is, and what it is holds digits the number in front of the user cannot carry.
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("holds more digits than a 64-bit float carries"),
+    });
+  });
+
+  test("an Oracle BINARY_DOUBLE key still carries its own fraction back", async () => {
+    // The other half of the same Oracle session. `zz969_bd(id BINARY_DOUBLE PRIMARY KEY)`
+    // holding 3.0000000000000004E-001 and 1.5E+000: oracledb hands the first over as
+    // 0.30000000000000004, the check answered one group of one row, and the UPDATE changed
+    // that row and no other. BINARY_DOUBLE is the one Oracle type that IS the width of a
+    // JavaScript number, so the refusal above would be false about it.
+    const seen = countAsks();
+    await applyKeyedBy(0.30000000000000004, "oracle", "BINARY_DOUBLE");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("an Oracle NUMBER key that is a whole number is written, which is what an Oracle key is", async () => {
+    // Oracle's ordinary primary key is a NUMBER, and a whole one is not a rounding of
+    // anything a double cannot hold. Measured on `zz969_int(id NUMBER(10) PRIMARY KEY)`
+    // holding 42 and 43: the check answered one group of one row and the UPDATE changed the
+    // 42 row alone. A rule that refused every NUMBER would take away every Oracle edit.
+    const seen = countAsks();
+    await applyKeyedBy(42, "oracle", "NUMBER");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a SQLite DECIMAL key is still written, because that engine has no exact decimal", async () => {
+    // MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0), `zz(k DECIMAL(20,4), n NUMERIC(20,4))`:
+    // `pragma_table_info` reports both declarations back verbatim, `typeof()` answers `real`
+    // for both, 1234567890123456.7891 comes back as the double 1234567890123456.8 - which is
+    // what the file now holds rather than a rounding of it - and `WHERE k =
+    // 1234567890123456.8` matched ONE row, its own. The word is an affinity there and states
+    // nothing about digits the value does not carry.
+    const seen = countAsks();
+    await applyKeyedBy(1234567890123456.8, "sqlite", "DECIMAL(20,4)");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["postgres", "numeric"],
+    ["mysql", "decimal"],
+    ["duckdb", "DECIMAL(20,4)"],
+  ] as const)("a %s %s key arrives as its own digits and is written", async (type, declared) => {
+    // What those three drivers really hand over, measured 2026-09-19 on PostgreSQL 16.15
+    // (`pg`), MySQL 8.4.11 (mysql2, over the text AND the binary protocol) and DuckDB 1.5.5
+    // (`getRowObjectsJson()`, the call this provider reads): the STRING
+    // "1234567890123456.7891", exact to the last digit, for a column declared
+    // `numeric(20,4)` / `DECIMAL(20,4)`. Nothing rounded it, so the text is the row's own
+    // identity and the rule above has nothing to say about it.
+    const seen = countAsks();
+    await applyKeyedBy("1234567890123456.7891", type, declared);
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
   test.each([
     ["postgres", "double precision", 1e21],
     ["postgres", "double precision", 1e300],
