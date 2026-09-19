@@ -2748,6 +2748,86 @@ describe("useInlineEditing", () => {
       description: expect.stringContaining("no longer in the table"),
     });
   });
+  // ── One word, two engines: an instant on SQLite and libsql is what the row holds ──
+  //
+  // MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0) and on libSQL server v0.24.33 over its
+  // HTTP pipeline, with `zz_<decl>(k <decl> PRIMARY KEY, note TEXT)` built for each of
+  // DATE, DATETIME and TIMESTAMP against each value shape below and the ISO text the next
+  // test covers - 24 combinations across the two engines, every one the same.
+  //
+  // SQLite HAS NO DATE TYPE. The declaration picks no storage class, so `typeof(k)`
+  // answered `text` for the two text forms and `integer` for the epoch;
+  // `sqlite3_column_decltype` reported the declaration back verbatim, which is exactly
+  // what reaches `columnTypes` here; and both drivers handed the value over UNCHANGED - a
+  // string for the text forms, a JavaScript number for the epoch. Sending that same value
+  // back answered ONE group holding ONE row every time, and the `UPDATE ... WHERE k = ?`
+  // that followed changed exactly one row.
+  //
+  // So the value IS its own identity on these two, and the refusal's sentence - "it is a
+  // date and time, which does not reach the table as the row holds it" - was false about
+  // them. It was a regression as well as a falsehood: before `columnTypes` reached SQLite
+  // at all the column read as `undeclared`, `'2024-01-15'` is not the shape a `Date` takes
+  // through JSON, and the apply went through.
+  test.each([
+    ["sqlite", "DATE", "the text 2024-01-15", "2024-01-15"],
+    ["sqlite", "DATE", "the text 2026-01-01 10:00:00.123", "2026-01-01 10:00:00.123"],
+    ["sqlite", "DATE", "the integer epoch 1705276800", 1705276800],
+    ["sqlite", "DATETIME", "the text 2024-01-15", "2024-01-15"],
+    ["sqlite", "DATETIME", "the text 2026-01-01 10:00:00.123", "2026-01-01 10:00:00.123"],
+    ["sqlite", "DATETIME", "the integer epoch 1705276800", 1705276800],
+    ["sqlite", "TIMESTAMP", "the text 2024-01-15", "2024-01-15"],
+    ["sqlite", "TIMESTAMP", "the text 2026-01-01 10:00:00.123", "2026-01-01 10:00:00.123"],
+    ["sqlite", "TIMESTAMP", "the integer epoch 1705276800", 1705276800],
+    ["libsql", "DATE", "the text 2024-01-15", "2024-01-15"],
+    ["libsql", "DATE", "the text 2026-01-01 10:00:00.123", "2026-01-01 10:00:00.123"],
+    ["libsql", "DATE", "the integer epoch 1705276800", 1705276800],
+    ["libsql", "DATETIME", "the text 2024-01-15", "2024-01-15"],
+    ["libsql", "DATETIME", "the text 2026-01-01 10:00:00.123", "2026-01-01 10:00:00.123"],
+    ["libsql", "DATETIME", "the integer epoch 1705276800", 1705276800],
+    ["libsql", "TIMESTAMP", "the text 2024-01-15", "2024-01-15"],
+    ["libsql", "TIMESTAMP", "the text 2026-01-01 10:00:00.123", "2026-01-01 10:00:00.123"],
+    ["libsql", "TIMESTAMP", "the integer epoch 1705276800", 1705276800],
+  ] as const)(
+    "a %s %s key holding %s is carried back, because that engine hands back what it stores",
+    async (type, declared, _shape, key) => {
+      const seen = countAsks();
+      await applyKeyedBy(key, type, declared);
+
+      expect(seen).toHaveLength(1);
+      expect(updateCalls()).toHaveLength(1);
+      expect(mockToastError).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a SQLite DATE column really holding ISO text is a key, declaration and all", async () => {
+    // The shape that `isSerializedDate` exists to catch, in the one place it is not
+    // evidence of anything: a SQLite `DATE` column holding the text
+    // `2026-01-01T07:00:00.123Z`. Measured on bun:sqlite and on libSQL v0.24.33 -
+    // `typeof(k)` answered `text`, the driver handed that string back character for
+    // character, `WHERE k IN (?)` answered one group of one, and the UPDATE changed one
+    // row. The declaration is read first, so the shape test is never reached here.
+    const seen = countAsks();
+    await applyKeyedBy("2026-01-01T07:00:00.123Z", "sqlite", "DATE");
+
+    expect(seen).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a Date object is still refused on SQLite, dialect or no dialect", async () => {
+    // The dialect widens nothing about a value whose text is a RENDERING. Neither
+    // bun:sqlite nor libsql ever hands a `Date` back - they answer text, integer, real,
+    // blob or null - so this is the embeddable shell's host handing one in, and
+    // `String(date)` has no fractional seconds at all. The closed side stays closed.
+    const seen = countAsks();
+    await applyKeyedBy(new Date("2026-01-01T07:00:00.123Z"), "sqlite", "DATE");
+
+    expect(seen).toHaveLength(0);
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("in 1 row you edited it is a date and time"),
+    });
+  });
 
   test("a date key declared by the engine is refused whatever shape the driver chose", async () => {
     // The declaration is the fact; the value's shape is only ever evidence. `mysql2` run

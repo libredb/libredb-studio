@@ -68,7 +68,12 @@ type KeyColumnKind = "date-time" | "float64" | "declared" | "undeclared";
  * with time zone` (`pg`), `datetime`/`timestamp`/`date` (mysql2), `DATE` and `TIMESTAMP
  * WITH TIME ZONE` (oracledb, uppercase), `datetime2`/`smalldatetime`/`datetimeoffset`
  * (mssql), `DateTime64(6, 'UTC')` and `Date32` (ClickHouse), `timestamp(3) with time zone`
- * (Trino), `DATETIME` (a SQLite/libsql decltype).
+ * (Trino).
+ *
+ * The SQLite and libsql spellings — `DATE`, `DATETIME`, `TIMESTAMP` — are in this set too,
+ * and are read only on the dialects where they mean an instant. See
+ * `NO_INSTANT_TYPE_DIALECTS` below, which is the same shape, and the same reason, as
+ * `FLOAT64_ONLY_DIALECTS`.
  *
  * The FIRST WORD of the type and not a substring of it, which is the whole reason this is
  * a set rather than a `.includes("date")`: PostgreSQL's `daterange`, `tsrange` and
@@ -93,6 +98,43 @@ const INSTANT_TYPE_NAMES: ReadonlySet<string> = new Set([
   "timestamp",
   "timestamptz",
 ]);
+
+/**
+ * The engines with NO instant type at all, where those same words therefore state nothing.
+ *
+ * SQLITE HAS NO DATE TYPE. A column declared `DATE`, `DATETIME` or `TIMESTAMP` picks no
+ * storage class from its declaration: it holds the TEXT somebody put in it, or the integer,
+ * and `sqlite3_column_decltype` reports the declaration back verbatim beside it. So the
+ * value the driver hands over IS the value the row holds, it is its own identity, and it
+ * matches when it is sent back — which is the opposite of what the word means everywhere
+ * else, where the driver hands over a `Date` or a rendering of one.
+ *
+ * MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0) and on libSQL server v0.24.33 over its HTTP
+ * pipeline, `zz_<decl>(k <decl> PRIMARY KEY, note TEXT)` for each of `DATE`, `DATETIME` and
+ * `TIMESTAMP` against `'2024-01-15'`, `'2026-01-01 10:00:00.123'`, the ISO text
+ * `'2026-01-01T07:00:00.123Z'` and the integer epoch 1705276800 — three declarations by
+ * four value shapes by two engines, 24 combinations. Every one reported the declaration
+ * back verbatim, answered `text` (or `integer`, for the epoch) to `typeof()`, handed the
+ * value back unchanged, matched ONE group holding ONE row for `WHERE k IN (?)`, and changed
+ * exactly one row on the `UPDATE` that followed.
+ *
+ * `libsql` is here for the reason it is in `FLOAT64_ONLY_DIALECTS`: it embeds the same
+ * engine and reports the same declarations — measured over the wire rather than reasoned
+ * from that, and identical to bun:sqlite on all twelve of its combinations.
+ *
+ * NO OTHER DIALECT IS, and the closed side is the safe side here as everywhere else in this
+ * file. MEASURED the same day: PostgreSQL 16.15 `zz_m1_ts(ts_id timestamp PRIMARY KEY)`
+ * holding 10:00:00.123456 and .654321 answered ZERO rows for the
+ * `'2026-01-01T07:00:00.123Z'` the browser holds and zero for `'2026-01-01 10:00:00.123'`,
+ * with both rows still in the table; MySQL 8.4.11 `zz_m1_dt(d_id DATETIME(6) PRIMARY KEY)`
+ * answered zero for both of the same two. Those engines really do store something the value
+ * in front of us is only a rendering of, so they keep the refusal.
+ *
+ * A `Date` is refused on every dialect including these two, because `String(date)` is a
+ * rendering whatever holds it: neither driver ever produces one, so it can only have come
+ * from the host application the embeddable shell runs inside.
+ */
+const NO_INSTANT_TYPE_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set(["sqlite", "libsql"]);
 
 /**
  * The declared types that ARE a 64-bit IEEE float, matched on the type's own first word.
@@ -183,7 +225,7 @@ function keyColumnKind(declaredType: string | undefined, dialect: DatabaseConnec
     name = wrapper[1].trim();
   }
   const first = name.split("(")[0].trim().split(/\s+/)[0];
-  if (INSTANT_TYPE_NAMES.has(first)) return "date-time";
+  if (!NO_INSTANT_TYPE_DIALECTS.has(dialect) && INSTANT_TYPE_NAMES.has(first)) return "date-time";
   if (FLOAT64_TYPE_NAMES.has(first)) return "float64";
   return FLOAT64_ONLY_DIALECTS.has(dialect) && FLOAT64_ONLY_NAMES.has(first) ? "float64" : "declared";
 }
