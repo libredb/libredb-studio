@@ -851,6 +851,26 @@ channels:
         There is no pin to read, because the listed version lives in the AWS Marketplace Management
         Portal the way Azure's lives in Partner Center; it is checked by hand against the portal.
 
+  - id: civo-marketplace
+    name: Civo Kubernetes Marketplace
+    status: pending
+    category: cloud-marketplaces
+    platforms: [kubernetes]
+    runtime: channel_supplied
+    tier: 3
+    kind: marketplace
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/975
+      first_pr: https://github.com/civo/kubernetes-marketplace/pull/1076
+      upstream_repo: https://github.com/civo/kubernetes-marketplace
+    pin:
+      strategy: none
+      note: The version lives in `libredb-studio/manifest.yaml` in the upstream repository, so there
+        is nothing to pin here. The row flips to `live` when civo/kubernetes-marketplace#1076 merges.
+
   - id: winget
     name: winget community repository (LibreDB.Studio)
     short_name: winget
