@@ -228,6 +228,11 @@ describe("every index line is derived from the entries it summarises", () => {
  * number of citations: that number falls every time an entry closes, and a floor under it would
  * become a floor under the backlog itself.
  *
+ * **The scan reads the index, not the disk** (#980). Drafts under the gitignored
+ * `docs/superpowers/` cite ids freely, and globbing the working tree turned them into failures on
+ * a maintainer's machine while CI, which checks out tracked files only, stayed green on the same
+ * commit. `gitTrackedFiles` carries the answer for the two shapes a missing git produces.
+ *
  * **The limit, stated rather than implied.** A THIRD form is not checked here and cannot be: the
  * bare parenthesised id, `(U22)`. 232 of those are in the tree and 47 distinct ids among them
  * name no live entry, but the shape is not the backlog's alone - `(S256)` is a PKCE
@@ -256,6 +261,38 @@ describe("no citation outlives the entry it names", () => {
   /** Which line a match index falls on, since a citation may not start on the line it names. */
   const lineOf = (text: string, index: number): number => text.slice(0, index).split("\n").length;
 
+  /**
+   * The index's answer, or `null` when git cannot give one (#980).
+   *
+   * The scan globbed the WORKING TREE, and `docs/superpowers/` is gitignored (`.gitignore:133`):
+   * a session's drafts sit on disk, cite ids freely, and are never in CI's checkout, so the same
+   * commit was red on a maintainer's machine and green in CI. The scan asks a question about the
+   * repository, so it enumerates the repository's files.
+   *
+   * Without git the previous, wider population is kept rather than an empty one: a wider scan can
+   * fail loudly, and an empty one passes vacuously, which is the failure this file exists
+   * against. The two shapes that reach it were measured in `build-azure-package.test.ts`: an
+   * absent binary makes `Bun.spawnSync` throw, and a git that runs but refuses exits non-zero.
+   */
+  const gitTrackedFiles = (
+    run: (args: string[]) => {
+      readonly exitCode: number | null;
+      readonly stdout: { toString(): string };
+    } = (args) => Bun.spawnSync(["git", ...args], { cwd: ROOT, stdout: "pipe" }),
+  ): Set<string> | null => {
+    try {
+      const proc = run(["ls-files", "-z"]);
+      if (proc.exitCode !== 0) return null;
+      return new Set(proc.stdout.toString().split("\0").filter(Boolean));
+    } catch {
+      return null;
+    }
+  };
+
+  /** Restrict a glob's output to the index's answer; `null` keeps the glob's own population. */
+  const trackedOnly = (files: readonly string[], tracked: ReadonlySet<string> | null): string[] =>
+    tracked === null ? [...files] : files.filter((file) => tracked.has(file));
+
   const SCAN_ROOTS = [
     "src/**/*.{ts,tsx}",
     "tests/**/*.{ts,tsx}",
@@ -263,9 +300,11 @@ describe("no citation outlives the entry it names", () => {
     "scripts/**/*.mjs",
     ".github/**/*.yml",
   ];
-  const scanned = SCAN_ROOTS.flatMap((pattern) => [...new Bun.Glob(pattern).scanSync(ROOT)]).filter(
+  const globbed = SCAN_ROOTS.flatMap((pattern) => [...new Bun.Glob(pattern).scanSync(ROOT)]).filter(
     (file) => file !== BACKLOG_PATH,
   );
+  const tracked = gitTrackedFiles();
+  const scanned = trackedOnly(globbed, tracked);
 
   const present = new Set(sections.flatMap((section) => section.ids.map((entry) => entry.id)));
 
@@ -303,7 +342,8 @@ describe("no citation outlives the entry it names", () => {
 
   test("the scan reached the tree", () => {
     // A mistyped glob returns nothing, and an empty scan makes the assertion below pass for the
-    // wrong reason. The floor is on files in the repo, which does not shrink when an entry closes.
+    // wrong reason. The floor is on files in the repo, which does not shrink when an entry
+    // closes, and since #980 it counts the tracked population the scan actually reads.
     expect(scanned.length).toBeGreaterThan(200);
     expect(present.size).toBeGreaterThan(0);
   });
@@ -324,6 +364,40 @@ describe("no citation outlives the entry it names", () => {
         .map((hit) => `${file}:${lineOf(text, hit.index)} cites ${hit.id} as if it were a PR`);
     });
     expect([...dangling, ...asPr]).toEqual([]);
+  });
+
+  test("a draft the index does not carry cannot reach the verdict", () => {
+    // #980: `docs/superpowers/` is gitignored, so a session's drafts sit on disk and are never in
+    // CI's checkout. Control first: the glob alone is what the old scan read...
+    const globbed = ["docs/AGENT.md", "docs/superpowers/draft.md"];
+    expect(globbed).toContain("docs/superpowers/draft.md");
+    // ...and the tracked answer drops it, without touching the file the index does carry.
+    expect(trackedOnly(globbed, new Set(["docs/AGENT.md"]))).toEqual(["docs/AGENT.md"]);
+  });
+
+  test("without git the scan keeps its previous population", () => {
+    // A courtesy for machines with no git. A wider population can fail loudly; an empty one
+    // passes vacuously, which is the failure this file exists against.
+    const globbed = ["docs/AGENT.md", "docs/superpowers/draft.md"];
+    expect(trackedOnly(globbed, null)).toEqual(globbed);
+  });
+
+  test("gitTrackedFiles answers both failure shapes with null, and reads the live index otherwise", () => {
+    expect(
+      gitTrackedFiles(() => {
+        throw new Error("git is not on PATH");
+      }),
+    ).toBeNull();
+    expect(gitTrackedFiles(() => ({ exitCode: 1, stdout: Buffer.from("") }))).toBeNull();
+    expect(gitTrackedFiles(() => ({ exitCode: 0, stdout: Buffer.from("src/a.ts\0tests/b.ts\0") }))).toEqual(
+      new Set(["src/a.ts", "tests/b.ts"]),
+    );
+    // The live answer: this file and the backlog are in the index, which is exactly what the
+    // without-git fallback would be missing on a machine that cannot ask.
+    const live = gitTrackedFiles();
+    expect(live).not.toBeNull();
+    expect(live?.has(BACKLOG_PATH)).toBe(true);
+    expect(live?.has("tests/unit/backlog-structure.test.ts")).toBe(true);
   });
 });
 
