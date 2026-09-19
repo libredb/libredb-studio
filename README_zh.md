@@ -21,6 +21,8 @@
   已列入 PostgreSQL 项目：
   <a href="https://www.postgresql.org/about/news/libredb-studio-an-open-source-self-hosted-sql-ide-for-postgresql-in-the-browser-3368/">News</a>
   ·
+  <a href="https://wiki.postgresql.org/wiki/PostgreSQL_Clients#LibreDB_Studio">PostgreSQL Clients</a>
+  ·
   <a href="https://www.postgresql.org/download/products/1/">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
@@ -113,11 +115,11 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **Apache Druid** | 无驱动，纯 HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
 | **Elasticsearch** | 无驱动，纯 HTTP（`POST /_sql?format=json`，9200 端口） | 只读 SQL IDE、基于 mapping 的索引/字段浏览器、集群健康与每个索引的文档数和存储大小。没有 EXPLAIN、没有维护操作、没有慢查询和会话面板；Elasticsearch SQL 也没有 `OFFSET`，因此无法请求第二页结果 |
 | **OpenSearch** | 无驱动，纯 HTTP（`POST /_plugins/_sql`，9200 端口） | 与 Elasticsearch 同一个 provider 模块，同样的只读 SQL IDE 与浏览器。这里 `LIMIT n OFFSET m` 可用，所以分页可用 |
-| **Apache Trino** | 无驱动，纯 HTTP（客户端协议，`POST /v1/statement`，8080 端口） | 面向全部已配置 catalog 的完整 SQL IDE、连接所固定 catalog 的 `information_schema` schema 树、`system.runtime` 与 `jmx` 监控、`SHOW STATS` 提供的真实行数、查询取消与 `kill_query` 维护。Trino 是查询引擎、自身不存储数据，因此在任何地方都不声明主键、外键和索引：ER 图只有方框没有连线，行内编辑被关闭，容量面板列出的是 catalog 而不是臆造的占用量。失败的语句同样以 HTTP 200 返回；即使集群关闭了认证，明文 HTTP 上的密码仍会被拒绝 |
+| **Apache Trino** | 无驱动，纯 HTTP（客户端协议，`POST /v1/statement`，8080 端口） | 面向全部已配置 catalog 的完整 SQL IDE、连接所固定的 catalog `information_schema` schema 树、`system.runtime` 与 `jmx` 监控、`SHOW STATS` 提供的真实行数、查询取消与 `kill_query` 维护。Trino 是查询引擎、自身不存储数据，因此在任何地方都不声明主键、外键和索引：ER 图只有方框没有连线，行内编辑被关闭，容量面板列出的是 catalog 而不是臆造的占用量。失败的语句同样以 HTTP 200 返回；即使集群关闭了认证，明文 HTTP 上的密码仍会被拒绝 |
 | **Apache Cassandra** | `cassandra-driver`（纯 JavaScript，无原生模块） | 基于原生协议（9042 端口）的 CQL IDE、标注分区键与聚簇键的 keyspace 浏览器、来自 `system_views` 的概览、运行时长与正在执行的语句。连接**必须填写 `localDataCenter`**：驱动没有它就拒绝连接。没有 EXPLAIN（CQL 文法中根本没有这个关键字），没有查询取消（协议没有取消帧），也没有维护操作（compaction、repair、flush 全是 `nodetool` 的 JMX 操作）。并且**不显示任何行数与容量**：Cassandra 能给出的只有基于已刷盘文件的分区估算（实测 500 行的聚簇表读作 143）和整数 MiB（19,476 字节的表读作 `1 MiB`），因此宁可不显示，也不显示错的数字 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
-> **传输层安全是横向能力，不是逐引擎的。** SSH 隧道在 provider 建连之前就已建立，连接会被改写到本地端点，因此与具体引擎无关：只要连接配置了 host 和 port 就适用。改用连接串填写的连接（MongoDB、Couchbase、ClickHouse 支持这种方式）没有 host/port，因此不会走隧道；SQLite 和 DuckDB 同样两者都没有。SSL/TLS 面板目前在 PostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch 和 Trino 上生效；在 Trino 上它并非可选项，因为 coordinator 会拒绝明文 HTTP 上的密码。Oracle、MongoDB 和 Redis 会忽略这个设置，所以这三个引擎是否加密，取决于连接串本身怎么写，而不是对话框里选了什么。
+> **传输层安全是横向能力，不是逐引擎的。** SSH 隧道在 provider 建连之前就已建立，连接会被改写到本地端点，因此与具体引擎无关：只要连接配置了 host 和 port 就适用。改用连接串填写的连接（MongoDB、Couchbase、ClickHouse 和 libSQL 支持这种方式）没有 host/port，因此不会走隧道；SQLite 和 DuckDB 同样两者都没有。SSL/TLS 面板被所有会显示它的引擎遵守——也就是除三个文件型引擎（SQLite、DuckDB 和嵌入式 LibreDB，它们没有可加固的传输层，也不提供该面板）之外的全部引擎。在 Trino 上它并非可选项，而是硬性前提，因为 coordinator 会拒绝明文 HTTP 上的密码。Oracle 是唯一需要事先说明注意项的引擎：它的 Thin 驱动总是校验证书链，因此当服务器证书为自签名时，`require` 需要一并提供该 CA；整条粘贴的连接串则保留它所写明的协议。
 
 > Redis 之所以能套进这套面向 SQL 的接口，靠的是一层约定。`getSchema()` 用非阻塞的 `SCAN`（**绝不用 `KEYS *`**）把键前缀归类成“表”，健康与指标来自 `INFO`，慢查询和会话来自 `SLOWLOG GET` / `CLIENT LIST`。
 
@@ -143,13 +145,13 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 
 - **只读，而且由数据库本身来保证**：Agent 执行的每条语句都走 **Agent 自己的受审计管线**——在碰到驱动
   之前先做策略判定、写审计事件、记账预算（`executeAuditedOperation`，
-  `src/lib/db/operations/execution.ts:129`）——并使用只读执行档案（PostgreSQL 上是只读事务，SQLite 上
+  `src/lib/db/operations/execution.ts:129`）——并使用只读执行配置（PostgreSQL 上是只读事务，SQLite 上
   每条语句都重新声明 `PRAGMA query_only`，DuckDB 上是 `READ_ONLY` 引擎句柄外加一层 SQL 守卫，因为仅靠该标志仍然放行 `COPY … TO`、`EXPORT DATABASE` 和读取本地文件的表函数；SQL Server 上没有任何形式的只读事务，因此改由四层保证：开启连接时先核验会话主体确实无法写入，再由优化器只编译不执行地放行每条语句，并在服务端限定返回行数，最后把语句放进一个总是回滚的事务里）。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE`
   因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的
   （`src/app/api/db/query/route.ts:44`），不会经过这里的策略判定，也不会产生这类审计记录。
-- **Agent 模式只支持 PostgreSQL、SQLite、DuckDB 和 SQL Server**：只读档案由数据库原生保证，因此只在实现了它的
+- **Agent 模式只支持 PostgreSQL、SQLite、DuckDB 和 SQL Server**：只读配置由数据库原生保证，因此只在实现了它的
   provider 上存在——只有 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts` 和 `mssql.ts` 上的 `queryReadOnly`，别无其他。
-  在其他引擎上，会发送语句的 Agent 模式工作流在启动时就被拒绝，运行还没有建立；万一有请求走到 provider 工厂，
+  在其他引擎上，会发送语句的 Agent 模式工作流在启动时就被拒绝，根本不会创建运行；万一有请求走到 provider 工厂，
   也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用——那里的模型不使用任何工具，不执行你的任何语句，
   不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端
   自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema——也就是侧边栏本来就在做的那次读取——这不需要
@@ -166,7 +168,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
   工具，也从不做探测（`src/lib/agent/capability-gate.ts:74`），所以被 Agent 模式拒绝的模型仍然可以用在
   Plan 模式里，这也正是面板会向你提议的做法。
 - **不配置模型就没有 AI**：完全没有 `LLM_*` 配置时，面板根本不会出现，也不会有任何数据离开你的网络。
-  注意开关不是密钥：Ollama 和自定义端点无需密钥也算配置了模型，此时 AI 就是启用的。具体外发内容见
+  注意，密钥并不是开关：Ollama 和自定义端点无需密钥也算配置了模型，此时 AI 就是启用的。具体外发内容见
   [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md)。
 
 仅限独立部署：嵌入式 `@libredb/studio` 包不包含任何 Agent 界面。
@@ -201,7 +203,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 
 ### 认证与单点登录：全部在 MIT 版本里
 
-- **两种模式**：本地邮箱密码，或 OIDC 单点登录，通过环境变量切换。
+- **两种模式**：本地邮箱/密码登录，或 OIDC 单点登录，通过环境变量切换。
 - **不挑厂商**：Auth0、Keycloak、Okta、Azure AD、Zitadel、Google，任何符合 OIDC 规范的提供方。
 - **PKCE**：Authorization Code Flow + S256。
 - **角色映射**：基于 claim 配置，支持 `realm_access.roles` 这样的嵌套路径。
@@ -273,9 +275,9 @@ export default {
 };
 ```
 
-可选项：`reportOnly` 发送 `Content-Security-Policy-Report-Only` 而不是强制生效的那个头；`hsts: false` 关闭 HSTS（传对象则是自定义）；`allowEval` 加上 `'unsafe-eval'`，React 的**开发**构建需要它；`monacoVsPath` 在 Monaco 的产物不同源时把那个 origin 加进来；`extra` 按指令合并你自己的来源。另外还导出了 `studioCspDirectives()` 和 `HSTS_MAX_AGE_SECONDS`，供需要自己拼装策略而不是直接下发的配置使用。
+可选项：`reportOnly` 发送 `Content-Security-Policy-Report-Only` 而不是强制生效的那个头；`hsts: false` 关闭 HSTS（传对象则是自定义）；`allowEval` 加上 `'unsafe-eval'`，React 的**开发**构建需要它；`monacoVsPath` 在 Monaco 的 bundle 与站点不同源时把那个 origin 加进来；`extra` 按指令合并你自己的来源。另外还导出了 `studioCspDirectives()` 和 `HSTS_MAX_AGE_SECONDS`，供需要自己拼装策略而不是直接下发的配置使用。
 
-继承之前请先读一遍这套策略：CSP 是允许内联脚本的，因为每个文档路由都是静态预渲染的、水合脚本没有 nonce。所以它约束的是被注入的脚本能把数据**发到哪里**，而不是能不能跑起来。这个取舍，以及 Next.js 应用下发这些头的两条路径，都写在 [`docs/SECURITY.md`](docs/SECURITY.md) 里。
+继承之前请先读一遍这套策略：CSP 允许内联脚本，因为每个文档路由都是静态预渲染的、水合脚本没有 nonce。所以它约束的是被注入的脚本能把数据**发到哪里**，而不是能不能跑起来。这个取舍，以及 Next.js 应用下发这些头的两条路径，都写在 [`docs/SECURITY.md`](docs/SECURITY.md) 里。
 
 ## 关于收费的那条线
 
