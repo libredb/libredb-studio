@@ -113,7 +113,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **Apache Druid** | 无驱动，纯 HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
 | **Elasticsearch** | 无驱动，纯 HTTP（`POST /_sql?format=json`，9200 端口） | 只读 SQL IDE、基于 mapping 的索引/字段浏览器、集群健康与每个索引的文档数和存储大小。没有 EXPLAIN、没有维护操作、没有慢查询和会话面板；Elasticsearch SQL 也没有 `OFFSET`，因此无法请求第二页结果 |
 | **OpenSearch** | 无驱动，纯 HTTP（`POST /_plugins/_sql`，9200 端口） | 与 Elasticsearch 同一个 provider 模块，同样的只读 SQL IDE 与浏览器。这里 `LIMIT n OFFSET m` 可用，所以分页可用 |
-| **Apache Trino** | 无驱动，纯 HTTP（客户端协议，`POST /v1/statement`，8080 端口） | 面向全部已配置 catalog 的完整 SQL IDE、连接所固定 catalog 的 `information_schema` schema 树、`system.runtime` 与 `jmx` 监控、`SHOW STATS` 提供的真实行数、查询取消与 `kill_query` 维护。Trino 是查询引擎、自身不存储数据，因此在任何地方都不声明主键、外键和索引：ER 图只有方框没有连线，行内编辑被关闭，容量面板列出的是 catalog 而不是臆造的占用量。失败的语句同样以 HTTP 200 返回；即使集群关闭了认证，明文 HTTP 上的密码仍会被拒绝 |
+| **Apache Trino** | 无驱动，纯 HTTP（客户端协议，`POST /v1/statement`，8080 端口） | 面向全部已配置 catalog 的完整 SQL IDE、连接所固定的 catalog `information_schema` schema 树、`system.runtime` 与 `jmx` 监控、`SHOW STATS` 提供的真实行数、查询取消与 `kill_query` 维护。Trino 是查询引擎、自身不存储数据，因此在任何地方都不声明主键、外键和索引：ER 图只有方框没有连线，行内编辑被关闭，容量面板列出的是 catalog 而不是臆造的占用量。失败的语句同样以 HTTP 200 返回；即使集群关闭了认证，明文 HTTP 上的密码仍会被拒绝 |
 | **Apache Cassandra** | `cassandra-driver`（纯 JavaScript，无原生模块） | 基于原生协议（9042 端口）的 CQL IDE、标注分区键与聚簇键的 keyspace 浏览器、来自 `system_views` 的概览、运行时长与正在执行的语句。连接**必须填写 `localDataCenter`**：驱动没有它就拒绝连接。没有 EXPLAIN（CQL 文法中根本没有这个关键字），没有查询取消（协议没有取消帧），也没有维护操作（compaction、repair、flush 全是 `nodetool` 的 JMX 操作）。并且**不显示任何行数与容量**：Cassandra 能给出的只有基于已刷盘文件的分区估算（实测 500 行的聚簇表读作 143）和整数 MiB（19,476 字节的表读作 `1 MiB`），因此宁可不显示，也不显示错的数字 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
@@ -149,7 +149,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
   （`src/app/api/db/query/route.ts:44`），不会经过这里的策略判定，也不会产生这类审计记录。
 - **Agent 模式只支持 PostgreSQL、SQLite、DuckDB 和 SQL Server**：只读档案由数据库原生保证，因此只在实现了它的
   provider 上存在——只有 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts` 和 `mssql.ts` 上的 `queryReadOnly`，别无其他。
-  在其他引擎上，会发送语句的 Agent 模式工作流在启动时就被拒绝，运行还没有建立；万一有请求走到 provider 工厂，
+  在其他引擎上，会发送语句的 Agent 模式工作流在启动时就被拒绝，根本不会创建运行；万一有请求走到 provider 工厂，
   也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用——那里的模型不使用任何工具，不执行你的任何语句，
   不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端
   自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema——也就是侧边栏本来就在做的那次读取——这不需要
