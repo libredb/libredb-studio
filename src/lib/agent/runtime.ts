@@ -38,6 +38,7 @@ import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
 import { AgentRunDeadline } from "./deadline";
+import { deriveDriveCeilings } from "./drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentInvestigationResult, runInvestigation } from "./investigation";
 import { createAgentModel } from "./model-adapter";
@@ -180,6 +181,16 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     const capabilities = provider.getCapabilities();
     const labels = provider.getLabels();
 
+    // The ceilings a drive begins with are folded from the run's ledger, so a
+    // resumed drive inherits the spend its earlier drives recorded rather than
+    // starting each ceiling again (`docs/BACKLOG.md` B6).
+    const ceilings = deriveDriveCeilings(report.record, Date.now());
+    runResources().tracker.seedUsage(runId, {
+      executedStatements: ceilings.executedStatements,
+      totalElapsedMs: ceilings.executedMs,
+    });
+    runResources().artifacts.setRunAllowance(runId, ceilings.artifactAllowance);
+
     return await runInvestigation(runId, {
       service,
       model: await createAgentModel(),
@@ -194,7 +205,7 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
         // The run's own workflow decides its wall clock, the same way it decides its
         // statement budget and its turn ceiling. Read from the record the ledger
         // returned, so a resumed drive is bounded by what the run was opened as.
-        deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[report.record.workflowType].runDeadlineMs),
+        deadline: new AgentRunDeadline(ceilings.deadlineMs),
         repairs: new AgentRepairLedger(),
         acquireProvider: acquireExecutionProfileProvider,
       },

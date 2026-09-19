@@ -83,6 +83,31 @@ function assertRunId(runId: string): string {
 export class ExecutionBudgetTracker {
   private readonly runs = new Map<string, RunAccount>();
 
+  /**
+   * Seeds a run's accounting with what a PREVIOUS drive already spent, so a
+   * resumed run's ceilings continue from its ledger rather than from zero
+   * (`docs/BACKLOG.md` B6). Seeds only when this process has no account for the
+   * run yet: the tracker's own `beginExecution`/`endExecution` pair is the
+   * authority once a drive starts in THIS process, so re-seeding would
+   * double-count a spend the ledger and the tracker both recorded.
+   */
+  seedUsage(runId: string, seed: { readonly executedStatements: number; readonly totalElapsedMs: number }): void {
+    const id = assertRunId(runId);
+    const { executedStatements, totalElapsedMs } = seed;
+    if (!Number.isInteger(executedStatements) || executedStatements < 0) {
+      throw new BudgetAccountingError(
+        `executedStatements must be a non-negative integer, got ${String(executedStatements)}`,
+      );
+    }
+    if (typeof totalElapsedMs !== "number" || !Number.isFinite(totalElapsedMs) || totalElapsedMs < 0) {
+      throw new BudgetAccountingError(
+        `totalElapsedMs must be a non-negative finite number, got ${String(totalElapsedMs)}`,
+      );
+    }
+    if (this.runs.has(id)) return;
+    this.runs.set(id, { activeExecutions: 0, executedStatements, totalElapsedMs });
+  }
+
   beginExecution(runId: string): void {
     const id = assertRunId(runId);
     const account = this.runs.get(id) ?? { activeExecutions: 0, executedStatements: 0, totalElapsedMs: 0 };

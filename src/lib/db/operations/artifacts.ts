@@ -80,6 +80,8 @@ export class ExecutionArtifactStore<T = unknown> {
   private readonly artifacts = new Map<string, ExecutionArtifact<T>>();
   private readonly ttlMs: number;
   private readonly maxArtifacts: number;
+  /** Per-run entry allowances, set by the drive from the run's own ceiling. */
+  private readonly runAllowances = new Map<string, number>();
 
   constructor(options: ExecutionArtifactStoreOptions) {
     this.ttlMs = assertPositiveInteger(options.ttlMs, "ttlMs");
@@ -104,7 +106,20 @@ export class ExecutionArtifactStore<T = unknown> {
     if (this.artifacts.size >= this.maxArtifacts) {
       this.evictOldestOf(artifact.runId);
     }
+    this.enforceRunAllowance(artifact.runId);
     this.artifacts.set(artifact.correlationId, artifact);
+  }
+
+  /**
+   * Sets how many artifacts ONE run may hold at once, across drives. Derived
+   * from the run's own workflow ceiling rather than from a per-drive constant,
+   * so a resumed run never evicts the evidence an earlier drive cited
+   * (`docs/BACKLOG.md` B35). A run without an allowance is bounded only by the
+   * global cap, which is the pre-existing behaviour.
+   */
+  setRunAllowance(runId: string, allowance: number): void {
+    const id = assertIdentifier(runId, "runId");
+    this.runAllowances.set(id, assertPositiveInteger(allowance, "allowance"));
   }
 
   /** Pure read: an expired artifact is invisible here and reclaimed by `sweep`. */
@@ -124,6 +139,7 @@ export class ExecutionArtifactStore<T = unknown> {
         released += 1;
       }
     }
+    this.runAllowances.delete(id);
     return released;
   }
 
@@ -157,6 +173,24 @@ export class ExecutionArtifactStore<T = unknown> {
    * once the size has reached a cap of at least one, so the guard is a type
    * narrowing rather than a case that occurs.
    */
+  /**
+   * Enforces the run's per-run allowance, when one is set. The run has at least
+   * one entry here whenever it has reached its allowance (an allowance is at
+   * least one), so `evictOldestOf` always finds the run's own oldest and never
+   * falls through to the store-wide oldest.
+   */
+  private enforceRunAllowance(runId: string): void {
+    const allowance = this.runAllowances.get(runId);
+    if (allowance === undefined) return;
+    let held = 0;
+    for (const artifact of this.artifacts.values()) {
+      if (artifact.runId === runId) held += 1;
+    }
+    if (held >= allowance) {
+      this.evictOldestOf(runId);
+    }
+  }
+
   private evictOldestOf(runId: string): void {
     for (const [correlationId, held] of this.artifacts) {
       if (held.runId === runId) {
