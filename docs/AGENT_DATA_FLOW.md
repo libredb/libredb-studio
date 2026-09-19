@@ -23,19 +23,30 @@ if it only lists the good news.
 
 ## Contents
 
-- [The short version](#the-short-version)
-- [Where a request goes](#where-a-request-goes)
-- [When nothing leaves at all](#when-nothing-leaves-at-all)
-- [The classification, before any run](#the-classification-before-any-run)
-- [One agent run, message by message](#one-agent-run-message-by-message)
-- [What comes back, and what is done with it](#what-comes-back-and-what-is-done-with-it)
-- [What #352 added to the boundary](#what-352-added-to-the-boundary)
-- [The fence, and what it does not do](#the-fence-and-what-it-does-not-do)
-- [B29: the open unfenced path](#b29-the-open-unfenced-path)
-- [How much can leave](#how-much-can-leave)
-- [What never leaves](#what-never-leaves)
-- [The other AI surfaces](#the-other-ai-surfaces)
-- [Where prompts do not go](#where-prompts-do-not-go)
+- [What leaves the machine](#what-leaves-the-machine)
+  - [Contents](#contents)
+  - [The short version](#the-short-version)
+  - [Where a request goes](#where-a-request-goes)
+  - [When nothing leaves at all](#when-nothing-leaves-at-all)
+  - [The classification, before any run](#the-classification-before-any-run)
+  - [One agent run, message by message](#one-agent-run-message-by-message)
+    - [1. The system instructions — server text only](#1-the-system-instructions--server-text-only)
+    - [2. Your objective, verbatim](#2-your-objective-verbatim)
+    - [2a. The conversation, when a run continues one — fenced](#2a-the-conversation-when-a-run-continues-one--fenced)
+    - [3. The schema inventory — identifiers and types, fenced](#3-the-schema-inventory--identifiers-and-types-fenced)
+    - [4. The relations block — identifiers only, quoted and escaped](#4-the-relations-block--identifiers-only-quoted-and-escaped)
+    - [5. Each tool result](#5-each-tool-result)
+    - [5a. The operations workflow: what a curated reading sends](#5a-the-operations-workflow-what-a-curated-reading-sends)
+    - [6. On a resumed run, what the ledger already holds](#6-on-a-resumed-run-what-the-ledger-already-holds)
+  - [What comes back, and what is done with it](#what-comes-back-and-what-is-done-with-it)
+  - [What #352 added to the boundary](#what-352-added-to-the-boundary)
+  - [The fence, and what it does not do](#the-fence-and-what-it-does-not-do)
+  - [B29: the open unfenced path](#b29-the-open-unfenced-path)
+  - [How much can leave](#how-much-can-leave)
+  - [What never leaves](#what-never-leaves)
+  - [Where prompts do not go](#where-prompts-do-not-go)
+  - [The other AI surfaces](#the-other-ai-surfaces)
+  - [Verifying this page yourself](#verifying-this-page-yourself)
 
 ---
 
@@ -555,8 +566,8 @@ An oversized read is **refused, not truncated**, so a result that reached the mo
 one. Note the honest edge: the comparison happens after the driver has materialised the rows, so an
 oversized read is refused but still paid for at the database.
 
-Every one of these is **per drive**. A run resumed after a restart starts each of them again
-(`docs/BACKLOG.md` B6).
+Every one of these is derived across drives: a run resumed after a restart keeps the spend its
+ledger already recorded (#999).
 
 **The classification is outside all of it**, by construction: it happens before a run exists, so
 there is no budget to charge it to. Its own bounds are its 8-second ceiling and its 16-token

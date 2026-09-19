@@ -4468,9 +4468,8 @@ describe("the run reads its schema context through the catalog tool", () => {
    * THE refresh assertion (#329 T8): a drive whose run already recorded an
    * inventory reaches no database for it at all. The ledger carries the inventory
    * itself, so the fingerprint is checked against the rows it summarises rather
-   * than against a catalog read — which is the whole point, since a resumed run
-   * starts every cost ceiling again (`docs/BACKLOG.md` B6) and would otherwise
-   * spend three of its twenty statements re-reading rows it already has.
+   * than against a catalog read — which is the whole point: a resumed run would
+   * otherwise spend three of its twenty statements re-reading rows it already has.
    */
   test("a drive whose run already recorded its inventory performs NO database operation for it", async () => {
     const dataDir = freshDataDir();

@@ -506,9 +506,8 @@ export async function POST(req: Request) {
     // same middleware. The run's durability does not depend on this call
     // surviving: everything it does is written to the ledger first, so a drive
     // that dies leaves a run that CAN be resumed — POST /api/agent/drive does
-    // exactly that. What does not exist yet is anything that asks for one, so a
-    // process that dies mid-run leaves it running until something calls that
-    // route (`docs/BACKLOG.md` B9).
+    // exactly that, and the sweep asks for it: a process that dies mid-run leaves
+    // it running until the sweep drives it again.
     void driveAgentRun(record.runId).catch((error: unknown) => {
       logger.error("Agent run drive ended in failure", error, { route: "api/agent/runs", runId: record.runId });
     });

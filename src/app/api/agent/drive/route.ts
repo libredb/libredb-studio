@@ -14,11 +14,10 @@ import { logger } from "@/lib/logger";
  * machine rather than a person.
  *
  * Stated plainly because the name suggests otherwise: **nothing calls this yet.**
- * The workflow runtime is used as the ledger's durable substrate only, so no queue
- * delivery arrives here, and a run whose process died stays running until something
- * asks. `docs/BACKLOG.md` B9 records what a producer has to bring with it (a sweep,
- * and single-flight per run). What this route establishes now is the authenticated
- * seam that producer will use, and the property that seam must never lose.
+ * The in-process sweep drives a run directly rather than through this route, so no
+ * delivery arrives here, and a run whose process died is picked up by that sweep.
+ * What this route establishes now is the authenticated seam a future queue producer
+ * would use, and the property that seam must never lose.
  *
  * The only route in the application a caller reaches without a user session, so
  * three things are true of it and each is deliberate:

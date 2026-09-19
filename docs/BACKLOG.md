@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B81 · 24
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B82 · 21
 
 ---
 
@@ -2536,127 +2536,25 @@ the new signal — and when classification no longer depends on a substring a ta
 satisfy. Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not
 collide, and each provider already has access to its own.
 
-### B5. The agent run ledger assumes one writer per run, and cannot enforce it
+### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 
 `run-store.ts` and `run-service.ts` are append-only over the durable world's stream primitives, which
 offer no compare-and-append: a writer cannot say "append this only if the stream is still at index N".
-Every operation is read-then-append. Two consequences follow that a single-writer run never meets:
+Two consequences follow, and only one is closed:
 
 - **Two concurrent opens on one caller-supplied run id write two headers.** The fold refuses a ledger
   with a second header (`MALFORMED_LEDGER`), permanently, for every later read. The race does not
-  resolve in one side's favour — it bricks the run. Nothing minted internally can collide (UUIDv4, 122
-  random bits), so reaching this needs a caller that supplies its own id, which is what the
-  workflow-run-id path does.
-- **Two loops driving one running run would both perform the same step.** `runStep` reads the ledger,
-  sees the step neither settled nor invoked, and appends its invocation. Two readers of the same state
-  both pass that check. The write-ahead ordering makes a step at-most-once *per loop*, not *per run*.
-  The milestone's "no tool execution performed twice" criterion is about a restart, where the dead
-  process is gone by construction, and that case is genuinely covered.
-
-Not defended at the storage layer because every cross-process defence available is worse than the
-constraint: a lock file is single-instance only (which the Postgres backend exists to escape), and a
-lease in the ledger is a distributed-lock design with its own expiry semantics. Single ownership of a
-running workflow belongs to the layer above.
-
-How strong the guarantee is depends on the backend. On the zero-config local world it holds by
-construction: the queue awaits each delivery before attempting the next, so retries are sequential. On
-the opt-in Postgres backend a visibility-timeout redelivery can overlap a handler that is still alive,
-which is where the second bullet would bite.
-
-**Severity is a function of B9.** Nothing delivers an agent drive today: `mintAgentDriveToken` has no
-production caller, there is no `"use workflow"` function and no queue producer, so a run is driven
-exactly once, in the process that opened it. A second drive is not reachable through the product on
-either backend. Producing one takes a caller that mints its own drive credential from `JWT_SECRET`,
-which is how the fence below was exercised against a live run rather than only in a test. Closing B9 is
-what makes this live — and in that order, because a producer without the fence is a redelivery that runs
-the user's statement a second time.
-
-The process-local half of the fence exists (2026-08). `claimDrive`/`releaseDrive` refuse a second
-concurrent drive of one run inside a single process, and `AgentRunStore.append` refuses an append once
-the run's stream has been closed (`RUN_ALREADY_CLOSED`), turning the silent-loss mode into a loud
-refusal. The cross-process half is open: two replicas would still both pass the read-then-append check.
+  resolve in one side's favour — it bricks the run. Run creation still has to be serialized by its
+  caller.
+- **Two loops driving one running run would both perform the same step.** The process-local half is
+  now defended: the drive claim is a DURABLE ledger record (`drive-claimed`/`drive-released`), not a
+  memory-only set, and `tryClaimDrive` serializes check-then-append per store instance (#998, pinned by
+  a fifty-claim concurrency test). The cross-process half is open: two replicas would still both pass
+  the read-then-append check, because the durable world offers no tail-index conditional append (B16).
 
 **Done when:** the ledger can append conditionally on the stream's tail index, or the single-ownership
-guarantee the runtime provides is asserted by a test rather than assumed by prose. The process-local
-claim is asserted in `tests/unit/lib/agent/run-service.test.ts`, the append-after-close guard in
-`tests/unit/lib/agent/run-store.test.ts`.
-
-### B6. Every agent cost ceiling is per-drive, so N resumes cost up to N times one drive's budget
-
-The three things that bound what a run may spend — `ExecutionBudgetTracker` (`maxStatementsPerRun`,
-`maxTotalRunMs`), `AgentRepairLedger` and `AgentRunDeadline` — are all constructed by the process that
-drives a run and live only in its memory. `runInvestigation` takes them as injected resources, so a run
-resumed after a process death is handed a fresh set and starts each ceiling again.
-
-A run that dies and resumes ten times may perform ten times `maxStatementsPerRun` statements and spend
-ten times its workflow's `runDeadlineMs`, even though each drive stayed honestly inside its bounds.
-
-Nothing claims otherwise: `AGENT_WORKFLOW_BUDGETS`'s docblock states the per-drive scope explicitly. It
-matters for two later tasks — a budget meter must not present a per-drive figure as a run total, and any
-retry policy that resumes automatically would multiply the ceiling without a user asking.
-
-The data needed is already persisted. `AgentRunRecord` carries `createdAtMs`, and the ledger holds
-every settled step, so a drive could fold the run's own history into the ceilings it starts with: a
-deadline measured from `createdAtMs`, a statement count folded from `tool-completed` entries.
-
-**Done when:** the ceilings a drive enforces are derived from the run's ledger rather than from the
-drive's own construction, with a test that resumes a run twice and shows the second drive inheriting
-the first's spend.
-
-### B9. Nothing enqueues an agent drive, so an interrupted run is resumable but never resumed
-
-Opened by #329 T9. `POST /api/agent/drive` exists, authenticates a server-minted single-purpose
-credential and resumes the run it names, and `src/lib/agent/runtime.ts` re-derives everything that run
-needs from its own ledger. So a resume WORKS. What does not exist is anything that asks for one.
-
-A run is driven exactly once, in the process that opened it. If that process dies mid-run the run stays
-`running` in the ledger with nobody to pick it up: `mintAgentDriveToken` has no production caller, and
-the workflow runtime is used only as the ledger's durable substrate — no `"use workflow"` function, no
-queue producer, so the backend's own re-enqueue-on-start never sees an agent run.
-
-Distinct from a drive that *fails*, which is recorded: a throw anywhere in `driveAgentRun` ends the run
-as `failed` with a classified reason, so an unconfigured model no longer leaves a run at `queued`
-forever. This entry is the case where the process is GONE — nothing threw, nothing can record.
-
-**Adopting the SDK's Next.js integration was refused deliberately.** Its documented setup asks for
-`/.well-known/workflow/*` to be excluded from the proxy matcher, and warns that a proxy on that path
-detaches the request body, so the callback could not authenticate its way through the middleware
-either. Worse than the requested edit: **this matcher already excludes it**, because the dot rule
-(`.*\..*`) skips every path containing a dot and `.well-known` contains one (AU2 records the same
-consequence). That route would sit outside `src/proxy.ts` entirely, unauthenticated, the moment it
-existed — with no matcher edit to review. The pinned decision for this case says driving in-process
-without a loopback hop is strictly better, which is what the start route does. The drive path is one
-the matcher DOES route, guarded by a credential rather than a path rule, and `tests/api/proxy.test.ts`
-pins both halves.
-
-Two things have to land together whenever a producer arrives, and neither is safe alone:
-
-- **A sweep that finds runs left `running`** and drives each one, at boot or on a timer, with the same
-  credential the callback already verifies.
-- **Single-flight per run.** Today no two drives of one run can overlap, because there is only ever one.
-  A producer removes that accident, and the ledger is read-then-append with no fencing (B5), so two
-  drives would both read "not invoked" for the same step and both perform it.
-
-**Done when:** a run whose process died is picked up without a person asking, no step is performed
-twice while that happens, and B6's per-drive ceilings are accounted for across the resumes it causes.
-
-### B11. The rail can stop a run but cannot pause or resume one
-
-Opened by #329 T10b. `AgentRunService` has no pause: a run holds a provider and a budget while it is
-running, and nothing in this milestone can put those down and pick them up again.
-
-Resuming exists (`POST /api/agent/drive`, `driveAgentRun`) but is authenticated by a server-minted
-single-purpose credential a browser never holds. It is the seam a machine producer will use (B9), not a
-user control. The rail therefore offers stop and nothing else, and does not render a disabled pause or
-resume, because a disabled control reads as a capability that is merely unavailable right now.
-
-Resume becomes offerable the moment B9's producer exists — a user-visible "pick this run up" is then
-just asking for a delivery. Pause is larger: it needs a run state between running and terminal that
-releases the run's resources without ending it, and a resumed run would have to re-acquire them, which
-is the path B6 already complicates.
-
-**Done when:** either control exists in the service with its own ledger record, and the rail renders it
-because the service can honour it.
+guarantee is asserted for every backend a deployment can reach. The process-local durable claim is
+asserted in `tests/unit/lib/agent/run-store.test.ts`.
 
 ### B16. The opt-in multi-replica backend cannot load in the container image or the npx payload
 
@@ -2807,34 +2705,6 @@ depends on it and no user is waiting on it.
 
 **Done when:** the event model has settled and somebody is running Studio beside a stack that wants
 agent runs in it. #332 holds the full scope.
-
-### B35. A resumed run can evict its own still-cited results: the artifact cap is per drive
-
-`AGENT_MAX_ARTIFACTS` (`src/lib/agent/runtime.ts`) is `45 × 4 = 180`: the largest per-workflow statement
-ceiling times the four concurrent runs one agent process is sized for. Its justification used to be that
-"a run cannot produce more artifacts than it is allowed statements", which is true of a DRIVE and not of
-a run — every ceiling is per drive (B6), while a resumed run keeps its `runId` and its artifacts are
-keyed by it. A run driven three times may hold up to three times its statement ceiling, and one
-long-lived run can pass 180 with no concurrency at all.
-
-`ExecutionArtifactStore.put` spends the cap run-fairly: a store at the cap evicts the oldest artifact of
-the run that is STORING, which stops a busy run making "Show result" fail on a quieter one. Applied to a
-run past the cap, the same rule means the run evicts its own earliest evidence — the results its first
-drive read, which its report may still cite.
-
-Nothing about the ledger is wrong afterwards: a claim and its citation are durable, and the artifact
-route already answers "the rows are not here" for the run-ended and TTL-expired cases (B15). This is a
-third way to reach that answer, and the only one that can happen while the run is still live and the
-rail is still offering the control.
-
-Not closed with an artifact-only bound, deliberately. A ceiling that holds ACROSS drives is exactly what
-B6 describes as missing, and the run record already carries what it needs, so a second answer invented
-for artifacts alone would have to be unpicked when B6 lands. Raising the number cannot close it either:
-a run resumed often enough passes any constant.
-
-**Done when:** a drive's artifact allowance is derived from the run's own history rather than from a
-per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap and
-shows the first drive's cited results still readable, or the surface stating that they are not.
 
 ### B59. Per-model instructions have nowhere to go, and the mechanism that held them is gone
 
@@ -3072,3 +2942,18 @@ value are the same object shape, which is the same defect one level up.
 **Done when:** an unasked seed list is distinguishable from a measured empty one, a non-OK the
 server did not attribute leaves the browser in the unasked state rather than the empty one, and the
 two tests above wait on a fact that a hook which never fetched cannot satisfy.
+
+### B82. The resume sweep keeps re-driving a run that dies again at the same point
+
+The sweep that #1000 added finds a run a dead process left `running` and drives it again, once per
+interval. A run whose process dies WITHOUT recording a failure — a hard crash, `kill -9`, a host
+reboot — stays `running`, so after its claim expires the sweep picks it up again. If it dies again at
+the same point, the sweep repeats this at every interval, forever.
+
+`driveAgentRun` turns a THROW into a terminal `failed` run, so an ordinary failure does not loop; this
+entry is only the case where the process is gone before it can write anything. There is no attempt
+counter, no max-retry and no dead-letter, because the sweep cannot tell "crashed again" from "never
+attempted": neither writes a record.
+
+**Done when:** the sweep stops re-driving a run after a bounded number of consecutive unrecorded
+deaths and says so — in the run's ledger or in the operator log.

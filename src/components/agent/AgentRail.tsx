@@ -1611,7 +1611,7 @@ export function AgentRail({
         indefinitely" is not a capability this milestone built.
       - RESUME exists (`POST /api/agent/drive`) but is authenticated by a
         server-minted, single-purpose credential a browser never holds — it is the
-        seam for a machine producer (`docs/BACKLOG.md` B9), not a user control.
+        seam for a machine producer, not a user control.
 
     Neither is rendered even as a disabled button: a disabled control reads as a
     capability that happens to be unavailable right now, which would be a claim

@@ -20,16 +20,25 @@ needs the mechanism behind it, it links there instead of restating it.
 
 ## Contents
 
-- [Where the agent is](#where-the-agent-is)
-- [What a run is](#what-a-run-is)
-- [The four workflows](#the-four-workflows)
-- [What you see while a run goes](#what-you-see-while-a-run-goes)
-- [What "answered" means](#what-answered-means)
-- [The budget meter's numbers](#the-budget-meters-numbers)
-- [When the model is refused](#when-the-model-is-refused)
-- [Running the agent on a local model (Ollama)](#running-the-agent-on-a-local-model-ollama)
-- [Returning to earlier conversations](#returning-to-earlier-conversations)
-- [What the agent does not do](#what-the-agent-does-not-do)
+- [The agent, for the person using it](#the-agent-for-the-person-using-it)
+  - [Contents](#contents)
+  - [Where the agent is](#where-the-agent-is)
+  - [What a run is](#what-a-run-is)
+    - [What a Plan run knows about your database](#what-a-plan-run-knows-about-your-database)
+  - [The four workflows](#the-four-workflows)
+    - [Investigate](#investigate)
+    - [Optimize](#optimize)
+    - [Assess](#assess)
+    - [Operate](#operate)
+  - [What you see while a run goes](#what-you-see-while-a-run-goes)
+  - [Auto-execute: when the run runs the answer in your editor](#auto-execute-when-the-run-runs-the-answer-in-your-editor)
+  - [What "answered" means](#what-answered-means)
+  - [The budget meter's numbers](#the-budget-meters-numbers)
+  - [When the model is refused](#when-the-model-is-refused)
+  - [Running the agent on a local model (Ollama)](#running-the-agent-on-a-local-model-ollama)
+    - [What was measured](#what-was-measured)
+  - [Returning to earlier conversations](#returning-to-earlier-conversations)
+  - [What the agent does not do](#what-the-agent-does-not-do)
 
 ## Where the agent is
 
@@ -969,8 +978,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
 - **It never executes a recommendation**, and never applies one to your editor by itself. The single
   exception anywhere in the rail is auto-execute, which is off unless the run was opened with it, and
   which covers only the answer's own statement under the three conditions above.
-- **It cannot be paused or resumed from the rail.** There is a Stop control and nothing standing in
-  for a capability this build does not have (`docs/BACKLOG.md` B11).
+- **It can be paused and resumed from the rail.** Pause lands only on a live run; Resume continues a
+  paused one. A paused run is not terminal — its report and stored rows stay reachable, and resuming
+  continues the same run with its remaining ceilings.
 - **A stopped run stops at its next checkpoint**, not instantly: cancellation is enforced by the run
   loop's own persisted state, and the checkpoint sits in the step that reaches a database. A run that
   was already composing its report therefore finishes it and answers — twice on 2026-08-12 it did,
@@ -981,8 +991,10 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   A result opens in the grid, the explain view or the charts view — whichever
   the run's own record names — and cannot be exported from any of them, because Export writes the
   tab's own rows (B34).
-- **An interrupted run is resumable but is not resumed on its own** — nothing enqueues a drive yet
-  (`docs/BACKLOG.md` B9).
+- **An interrupted run is picked up on its own, eventually.** A sweep finds runs a dead process left
+  `running` and drives each one again — but only AFTER its claim expires, so this is eventual resume,
+  not immediate. It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
+  of scope until B16 lands.
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement
   guard and the role's own grants are the whole boundary on out-of-scope reads
   (`docs/BACKLOG.md`, "Agent M1 deferrals", A3).

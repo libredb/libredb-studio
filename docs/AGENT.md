@@ -91,21 +91,38 @@ Two companion pages carry what this one deliberately does not:
 
 ## Table of Contents
 
-- [Turning it on](#turning-it-on)
-- [What a run is](#what-a-run-is)
-- [Durability and resume](#durability-and-resume)
-- [The tool set](#the-tool-set)
-- [What bounds a run](#what-bounds-a-run)
-- [Supported models](#supported-models)
-- [The model side](#the-model-side)
-- [Whether the run answered](#whether-the-run-answered)
-- [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
-- [HTTP surface](#http-surface)
-- [The surface in the app](#the-surface-in-the-app)
-- [Deployment](#deployment)
-- [Package boundary](#package-boundary)
-- [Module map](#module-map)
-- [Known limitations](#known-limitations)
+- [Agent Runtime — LibreDB Studio](#agent-runtime--libredb-studio)
+  - [Table of Contents](#table-of-contents)
+  - [Turning it on](#turning-it-on)
+  - [What a run is](#what-a-run-is)
+    - [The conversation a run belongs to](#the-conversation-a-run-belongs-to)
+    - [What a plan run knows](#what-a-plan-run-knows)
+    - [What the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of)
+    - [The statement a plan run drafts](#the-statement-a-plan-run-drafts)
+  - [Durability and resume](#durability-and-resume)
+    - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
+  - [The tool set](#the-tool-set)
+    - [The query-optimization template](#the-query-optimization-template)
+    - [The database-assessment template](#the-database-assessment-template)
+    - [The operations template](#the-operations-template)
+    - [The data-analysis template](#the-data-analysis-template)
+    - [Presenting an answer](#presenting-an-answer)
+    - [Handing the answer to the editor (auto-execute)](#handing-the-answer-to-the-editor-auto-execute)
+    - [What the fence is proved to hold against](#what-the-fence-is-proved-to-hold-against)
+  - [What bounds a run](#what-bounds-a-run)
+  - [Supported models](#supported-models)
+  - [The model side](#the-model-side)
+    - [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app)
+  - [Whether the run answered](#whether-the-run-answered)
+    - [The eval harness](#the-eval-harness)
+  - [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
+  - [HTTP surface](#http-surface)
+  - [The surface in the app](#the-surface-in-the-app)
+  - [Deployment](#deployment)
+  - [Package boundary](#package-boundary)
+  - [Module map](#module-map)
+  - [Known limitations](#known-limitations)
+  - [Related documentation](#related-documentation)
 
 ## Turning it on
 
@@ -832,8 +849,10 @@ A separate resume path would be a second implementation of "what has already hap
 would drift.
 
 Two honest qualifiers: the ledger check is read-then-append with no compare-and-append fencing, so
-two loops driving one run concurrently would both execute (B5); and nothing currently *asks* for a
-resume, so an interrupted run is resumable but is not resumed on its own (B9).
+two loops driving one run concurrently would still both execute across processes (B5; the durable
+drive claim serializes them inside one process). The local sweep asks for a resume — a run a dead
+process left behind is picked up and driven again, eventually — and keeps retrying one that dies
+again, without a bound (B82).
 
 ### A drive that dies before the loop
 
@@ -841,8 +860,7 @@ resume, so an interrupted run is resumable but is not resumed on its own (B9).
 ledger. Everything *before* it is not part of the loop: the run's connection is resolved, its
 capabilities are read and its model is built first, and a failure there — an unconfigured model
 provider is the common one — used to unwind past the ledger entirely. The run stayed `queued` with
-an empty timeline, its cause readable only in the server log, and with no drive producer (B9)
-nothing would come back to it.
+an empty timeline, its cause readable only in the server log, and nothing would come back to it.
 
 A drive that fails anywhere now records `run-finished` with status `failed` and a **classified
 reason**:
@@ -1714,8 +1732,7 @@ not a catalog read, and 900 s is what makes 60 turns reachable rather than decor
 of database time is 720 s of model time, which is 60 turns at the slow end of this workload's
 latency). **A 900 s run outlives the default idle timeout of most reverse proxies** — nginx's
 `proxy_read_timeout` is 60 s — so a deployment in front of a container must raise its own timeout to
-at least the longest deadline it wants to serve, and there is no re-attach path for a stream cut
-mid-run (B9).
+at least the longest deadline it wants to serve, and a stream cut mid-run has no re-attach path.
 
 **What every row shares:**
 
@@ -2156,7 +2173,8 @@ session, carries no user and no role, and its signing key is *derived* from `JWT
 being it, so a drive token cannot be presented as a session cookie. A run driven through it still
 acts as the actor its own ledger records.
 
-Nothing produces a drive delivery yet (B9), so the route's callers today are its tests. The seam
+Nothing produces a drive delivery through this route yet, so the route's callers today are its
+tests. The seam
 exists now because it had to be designed with the boundary rather than bolted on afterwards.
 
 ## The surface in the app
@@ -2324,8 +2342,8 @@ figure it qualifies and still in the accessibility tree whether or not that popo
 Two further rules govern it:
 
 - **A control the service cannot honour is not rendered at all.** There is no disabled-looking button
-  standing in for a capability, which is why the rail stops a run but does not offer pause/resume
-  (B11).
+  standing in for a capability. Pause is offered only while a run is live, and resume only while it
+  is paused — never a control the ledger says the service cannot honour.
 - **The meter reports only what is actually enforced** — statements, database time, the run deadline,
   repair attempts — and states the SQLite non-preemption caveat rather than implying that an
   overrunning statement is cut short. It reports no token budget because none is enforced. A statement that
@@ -2360,14 +2378,10 @@ oldest artifact rather than the store's, so a run that executes a lot cannot mak
 on a quieter run that is still live. The store is per process, which is consistent with the
 zero-config backend below being single-instance.
 
-**What that product bounds is four *drives*, not four runs.** Every ceiling in the decision table is
-per drive (B6), while a resumed run keeps its `runId` and its artifacts are keyed by it — so a run
-driven three times may hold up to three times its statement ceiling here, and a long-lived run can
-pass 180 on its own. Run-fair eviction then takes that run's *own* earliest results, which its report
-may still cite: a third way to reach the "the rows are not here" answer a released result gives, this time while
-the run is still live. The ledger is unaffected — the claim and its citation are durable — and the
-gap is recorded as **B35** rather than closed with an artifact-only bound, because a ceiling that
-holds across drives is the mechanism B6 already names.
+**What that product bounds is four *drives*, not four runs.** A resumed drive's ceilings are derived
+from the run's own ledger rather than handed to it fresh (#999), and its artifact allowance is derived
+the same way and released with the run. So a run driven three times no longer gets three fresh
+statement budgets, and its earliest still-cited results stay readable.
 
 ## Deployment
 
@@ -2394,8 +2408,8 @@ line per ledger event, so an active run keeps the socket warm by itself — but 
 turn *inside one model call*, writing nothing, and one model call may take up to 90 s. A proxy whose
 idle timeout is under that will cut a perfectly healthy run mid-turn, and what the user sees is the
 rail losing its stream rather than a run that failed. The run itself survives — it is durable and
-resumable — but nothing today re-attaches the rail to it (`docs/BACKLOG.md` B9), so in practice the
-user watches a run disappear. Emitting a periodic keep-alive on the stream is the alternative fix and
+resumable — but nothing re-attaches the rail to the new stream, so in practice the user watches a run
+disappear. Emitting a periodic keep-alive on the stream is the alternative fix and
 is not implemented; the required timeout is documented instead.
 
 **The zero-config backend is single-instance.** `local` keeps run state in a directory on local disk
@@ -2596,9 +2610,6 @@ the role's own grants are the whole boundary (A3).
 - **B4** — a mapped database error discards the text distinguishing a timeout cancel from an operator
   cancel.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
-- **B6** — every cost ceiling is per-drive, so N resumes can cost up to N times one drive's budget.
-- **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
-- **B11** — the rail can stop a run but cannot pause or resume one.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
 - **B29** — an identifier the model quotes back into its own tool arguments reaches the transcript

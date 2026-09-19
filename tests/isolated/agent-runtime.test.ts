@@ -233,9 +233,8 @@ describe("driveAgentRun", () => {
  * already recorded. What was missing is everything BEFORE it: resolving the
  * connection, reading capabilities and building the model all happen first, and a
  * throw there used to unwind past the ledger entirely. The run stayed `queued` with
- * an empty timeline, the reason readable only in the server log, and — because
- * nothing produces a drive delivery yet (`docs/BACKLOG.md` B9) — nothing would ever
- * come back to it.
+ * an empty timeline, the reason readable only in the server log, and nothing would
+ * ever come back to it.
  *
  * The reason is classified from the error's TYPE and never from its message, which
  * is written by a model provider or a connection resolver and promises nothing about

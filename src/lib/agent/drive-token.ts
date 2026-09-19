@@ -3,9 +3,10 @@
  * (#329 T9, epic #325) — the resume seam, verified by `src/proxy.ts` and again by
  * the route itself.
  *
- * Nothing mints one in production yet: no queue produces a drive delivery, so the
- * only callers today are the tests that pin these properties (`docs/BACKLOG.md` B9).
- * The credential exists now because the seam it guards had to be designed with the
+ * Nothing mints one in production yet: the in-process sweep drives a run directly
+ * rather than through this credential, so the only callers today are the tests that
+ * pin these properties. The credential exists now because the seam it guards had to
+ * be designed with the
  * boundary, not bolted onto it afterwards.
  *
  * `src/proxy.ts` exempts exactly four things — the auth paths, static assets, the

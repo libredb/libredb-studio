@@ -2986,9 +2986,8 @@ export async function runInvestigation(
      * drive has already read and performs no database operation at all. That is what
      * the fingerprint is for — it is checked against the inventory it summarises, so
      * reuse is a verification rather than a hope — and it matters most on the path
-     * that pays for a re-read twice: a run resumed after a process death starts every
-     * cost ceiling again (`docs/BACKLOG.md` B6), so three catalog statements out of
-     * twenty would be spent per resume on rows the run already had.
+     * that pays for a re-read twice: a run resumed after a process death would otherwise
+     * spend three catalog statements out of twenty per resume on rows the run already had.
      *
      * A run whose catalog cannot be read is told so and continues: the tools are
      * still there, and a narrowed `inspect_schema` is exactly what an overflowing

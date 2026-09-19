@@ -70,7 +70,7 @@ const AGENT_ARTIFACT_TTL_MS =
  * What that product bounds is FOUR DRIVES, not four runs, and the distinction was
  * stated wrongly here until #373: this comment said "a run cannot produce more
  * artifacts than it is allowed statements", which is not true of a run. Every
- * ceiling in `AGENT_WORKFLOW_BUDGETS` is per drive (`docs/BACKLOG.md` B6) — the
+ * ceiling in `AGENT_WORKFLOW_BUDGETS` used to be per drive — the
  * budget tracker is built by the process that drives a run — while a resumed run
  * keeps its `runId` and its artifacts are keyed by it. So a run that is driven
  * three times may hold up to three times its statement ceiling in this store,
@@ -84,11 +84,9 @@ const AGENT_ARTIFACT_TTL_MS =
  * drive read, which its report may still cite. Nothing about the ledger is wrong
  * afterwards: the claim and its citation are durable, and the artifact route
  * already answers "the rows are not here" for the run-ended and TTL-expired cases.
- * This just adds a third way to reach that answer while
- * the run is still live. Recorded as `docs/BACKLOG.md` B35 rather than fixed
- * here: a bound that holds ACROSS drives is the same missing mechanism B6 names,
- * and inventing a second one for artifacts alone would be a second answer to one
- * question.
+ * This just adds a third way to reach that answer while the run is still live.
+ * A resumed drive's artifact allowance is now derived from the run's own history
+ * (#999), so the cap no longer multiplies per resume.
  *
  * Sized for the ceiling rather than for what a policy enforces at any one moment,
  * so a statement budget lower than 45 leaves the cap correct and merely slack.
@@ -218,8 +216,8 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
  * `runInvestigation` ends a run it entered, so this covers the window before and
  * around it: resolving the connection, reading capabilities, building the model.
  * A throw there used to unwind past the ledger completely, leaving a run at
- * `queued` with an empty timeline whose reason existed only in the server log —
- * and with no drive producer yet (`docs/BACKLOG.md` B9), nothing would return to it.
+ * `queued` with an empty timeline whose reason existed only in the server log, and
+ * nothing would return to it.
  *
  * Every failure of the recording itself is swallowed, on purpose. The run may have
  * ended between the throw and this call, or have an execution still in flight; both
