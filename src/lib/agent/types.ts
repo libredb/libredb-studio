@@ -282,7 +282,7 @@ export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
  */
 export type AgentToolProtocol = "native" | "prompted";
 
-export type AgentRunStatus = "queued" | "running" | AgentRunTerminalStatus;
+export type AgentRunStatus = "queued" | "running" | "paused" | AgentRunTerminalStatus;
 
 /**
  * The terminal statuses as a set, EXHAUSTIVE by construction.
@@ -820,6 +820,8 @@ export type AgentGuidanceNotice =
  */
 export type AgentRunEvent =
   | (AgentRunEventBase & { readonly kind: "run-started"; readonly mode: AgentRunMode })
+  | (AgentRunEventBase & { readonly kind: "run-paused" })
+  | (AgentRunEventBase & { readonly kind: "run-resumed" })
   | (AgentRunEventBase & {
       /**
        * What drove this stretch of the run: the model, and where its settings came from.

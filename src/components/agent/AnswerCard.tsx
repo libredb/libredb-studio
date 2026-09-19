@@ -98,6 +98,7 @@ const EYEBROWS: Readonly<Record<AnswerState, string>> = Object.freeze({
 const STATUS_TONES: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
   queued: "bg-brand-tint/10 text-brand-bright",
   running: "bg-brand-tint/10 text-brand-bright",
+  paused: "bg-brand-tint/10 text-brand-bright",
   succeeded: "bg-success-tint/10 text-success-bright",
   failed: "bg-hue-rose-tint/10 text-hue-rose-alt",
   cancelled: "bg-warning-tint/10 text-warning-bright",

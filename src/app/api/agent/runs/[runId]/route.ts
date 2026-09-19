@@ -39,3 +39,29 @@ export async function DELETE(req: Request, { params }: RunParams) {
     return createErrorResponse(error, { route: "api/agent/runs/[runId]" });
   }
 }
+
+/**
+ * Pauses or resumes the run. Pause lands only on a
+ * RUNNING run; resume only on a PAUSED one — the service refuses anything else,
+ * so the rail renders whichever control the ledger says the service can honour.
+ */
+export async function PATCH(req: Request, { params }: RunParams) {
+  const { runId } = await params;
+  const access = await accessAgentRun({ route: "PATCH /api/agent/runs/[runId]", request: req, runId });
+  if ("response" in access) return access.response;
+
+  let action: unknown;
+  try {
+    action = ((await req.json()) as Record<string, unknown>).action;
+  } catch {
+    return NextResponse.json({ error: "A JSON body with an action is required" }, { status: 400 });
+  }
+
+  try {
+    if (action === "pause") return NextResponse.json(await access.service.pauseRun(runId));
+    if (action === "resume") return NextResponse.json(await access.service.resumeRun(runId));
+    return NextResponse.json({ error: `Unknown action: ${String(action)}` }, { status: 400 });
+  } catch (error) {
+    return createErrorResponse(error, { route: "api/agent/runs/[runId]" });
+  }
+}

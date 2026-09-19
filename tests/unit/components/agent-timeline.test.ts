@@ -131,6 +131,25 @@ describe("foldLedgerEntries", () => {
     expect(finished.items.at(-1)?.tone).toBe("refused");
   });
 
+  test("a paused run folds to paused, and a resumed one back to running", () => {
+    const paused = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "agent" } }),
+      event({ kind: "event", event: { kind: "run-paused", atMs: 3 } }),
+    ]);
+    expect(paused.status).toBe("paused");
+    expect(paused.items.at(-1)?.headline).toBe("Paused");
+
+    const resumed = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "agent" } }),
+      event({ kind: "event", event: { kind: "run-paused", atMs: 3 } }),
+      event({ kind: "event", event: { kind: "run-resumed", atMs: 4 } }),
+    ]);
+    expect(resumed.status).toBe("running");
+    expect(resumed.items.at(-1)?.headline).toBe("Resumed");
+  });
+
   test("a run that failed before it could start carries why, in the entry's own words", () => {
     // The reason is the difference between a rail that says "failed" and one a user
     // can act on: an unconfigured model provider and a transient fault look

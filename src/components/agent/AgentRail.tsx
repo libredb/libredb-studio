@@ -1619,6 +1619,11 @@ export function AgentRail({
   */
   const canStop =
     run.runId !== null && LIVE_STATUSES.has(run.timeline.status) && !run.timeline.stopRequested && !run.isStopping;
+  // Pause and resume are offered only where the service can honour them: pause on
+  // a live, running run; resume on a paused one.
+  const canPause =
+    run.runId !== null && run.timeline.status === "running" && !run.timeline.stopRequested && !run.isStopping;
+  const canResume = run.runId !== null && run.timeline.status === "paused";
 
   /*
     A verdict about the model is a verdict about ONE mode (#331 T4).
@@ -2531,6 +2536,26 @@ export function AgentRail({
             </span>
           )}
           <div className="flex items-center gap-1">
+            {canPause && (
+              <button
+                type="button"
+                data-testid="agent-pause"
+                onClick={() => void run.pause()}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-brand-tint/15 text-brand-bright hover:bg-brand-tint/25 transition-colors"
+              >
+                Pause
+              </button>
+            )}
+            {canResume && (
+              <button
+                type="button"
+                data-testid="agent-resume"
+                onClick={() => void run.resume()}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-brand-tint/15 text-brand-bright hover:bg-brand-tint/25 transition-colors"
+              >
+                Resume
+              </button>
+            )}
             {canStop && (
               <button
                 type="button"

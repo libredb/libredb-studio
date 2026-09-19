@@ -83,6 +83,8 @@ const openedFor = (workflowType: AgentRunWorkflowType): string =>
 
 const STARTED_LINE = `${JSON.stringify({ kind: "event", event: { kind: "run-started", atMs: 1_001, mode: "planning" } })}\n`;
 
+const PAUSED_LINE = `${JSON.stringify({ kind: "event", event: { kind: "run-paused", atMs: 1_002 } })}\n`;
+
 /**
  * The same event for a run the server opened in AGENT mode.
  *
@@ -2261,20 +2263,25 @@ describe("AgentRail", () => {
     });
 
     /**
-     * Pausing and resuming are not offered, and that is the bar rather than an
-     * omission: `AgentRunService` has no pause at all, and the resume path
-     * (`POST /api/agent/drive`) is authenticated by a server-minted machine
-     * credential a browser never holds. A control the service cannot honour is not
-     * rendered — not even disabled, which would read as a capability that is merely
-     * unavailable right now.
+     * Pause and resume are offered only where the service can honour them:
+     * pause on a live running run, resume on a paused one. A control the service
+     * cannot honour is not rendered — not even disabled, which would read as a
+     * capability that is merely unavailable right now.
      */
-    test("no pause or resume control is offered, because the service can honour neither", async () => {
+    test("pause is offered while a run is running, and resume is not", async () => {
       const view = await startRun([OPENED_LINE, STARTED_LINE]);
-      const { queryByTestId } = view;
 
       await findAllEntries(view);
-      expect(queryByTestId("agent-pause")).toBeNull();
-      expect(queryByTestId("agent-resume")).toBeNull();
+      expect(view.queryByTestId("agent-pause")).not.toBeNull();
+      expect(view.queryByTestId("agent-resume")).toBeNull();
+    });
+
+    test("resume is offered while a run is paused, and pause is not", async () => {
+      const view = await startRun([OPENED_LINE, STARTED_LINE, PAUSED_LINE]);
+
+      await findAllEntries(view);
+      expect(view.queryByTestId("agent-resume")).not.toBeNull();
+      expect(view.queryByTestId("agent-pause")).toBeNull();
     });
   });
 

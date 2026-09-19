@@ -1081,3 +1081,76 @@ describe("AgentRunService — run history", () => {
     }
   });
 });
+
+// ─── pause and resume ─────────────────────────────────────────────────────
+
+describe("AgentRunService — pause and resume", () => {
+  test("pauses a running run and records the pause in the ledger", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    const record = await h.service.pauseRun(runId);
+
+    expect(record.status).toBe("paused");
+    expect(record.events.map((entry) => entry.kind)).toEqual(["run-started", "run-paused"]);
+  });
+
+  test("a paused run refuses further narrative events", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+    await h.service.pauseRun(runId);
+
+    const error = await captureServiceError(() =>
+      h.service.recordEvent(runId, { kind: "statement-drafted", stepId: "s1", sql: "SELECT 1", rationale: "inspect" }),
+    );
+
+    expect(error.reasonCode).toBe("RUN_NOT_RUNNING");
+  });
+
+  test("resumes a paused run back to running", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+    await h.service.pauseRun(runId);
+
+    const record = await h.service.resumeRun(runId);
+
+    expect(record.status).toBe("running");
+    expect(record.events.map((entry) => entry.kind)).toEqual(["run-started", "run-paused", "run-resumed"]);
+  });
+
+  test("pausing a queued run refuses", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    expect((await captureServiceError(() => h.service.pauseRun(runId))).reasonCode).toBe("RUN_NOT_RUNNING");
+  });
+
+  test("resuming a run that is not paused refuses", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    expect((await captureServiceError(() => h.service.resumeRun(runId))).reasonCode).toBe("RUN_NOT_PAUSED");
+  });
+
+  test("a paused run is not terminal, and a step refuses while it is paused", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+    await h.service.pauseRun(runId);
+
+    const report = await h.service.status(runId);
+    expect(report?.record.status).toBe("paused");
+
+    const error = await captureServiceError(async () =>
+      h.service.runStep(runId, { stepId: "s2", tool: "run_read_query" }, async () => ({
+        kind: "completed",
+        artifact: artifactReference(runId, "corr_2"),
+      })),
+    );
+    expect(error.reasonCode).toBe("RUN_NOT_RUNNING");
+  });
+});

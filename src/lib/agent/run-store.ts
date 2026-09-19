@@ -110,6 +110,8 @@ export const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 const EVENT_KINDS: ReadonlySet<string> = new Set(
   Object.keys({
     "run-started": true,
+    "run-paused": true,
+    "run-resumed": true,
     "driver-resolved": true,
     "context-captured": true,
     "context-reused": true,
@@ -354,6 +356,8 @@ function entryAtMs(entry: AgentLedgerEntry): number {
 
 function nextStatus(current: AgentRunStatus, event: AgentRunEvent): AgentRunStatus {
   if (event.kind === "run-started") return "running";
+  if (event.kind === "run-paused") return "paused";
+  if (event.kind === "run-resumed") return "running";
   if (event.kind === "run-finished") return event.status;
   return current;
 }
@@ -415,7 +419,7 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       updatedAtMs: entryAtMs(lastEntry),
       events,
     },
-    terminal: status !== "queued" && status !== "running",
+    terminal: status !== "queued" && status !== "running" && status !== "paused",
     cancellationRequestedAtMs,
     settledSteps,
     unsettledStepIds: invokedStepIds.filter((stepId) => !settledSteps.has(stepId)),

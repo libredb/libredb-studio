@@ -241,6 +241,7 @@ export type AgentRunServiceReason =
   | "RUN_NOT_RESUMABLE"
   | "RUN_NOT_STARTABLE"
   | "RUN_NOT_RUNNING"
+  | "RUN_NOT_PAUSED"
   | "RUN_HAS_LIVE_EXECUTION"
   /** The caller's target scope is not the connection the run was opened for. */
   | "RUN_CONNECTION_MISMATCH"
@@ -465,6 +466,35 @@ export class AgentRunService {
    * settled, and which steps are beyond re-deriving. A resumed run re-derives
    * from this; it does not repeat work.
    */
+  /**
+   * Pauses a RUNNING run: its ledger records `run-paused`, and the run holds no
+   * further steps until it is resumed. A paused run is not terminal — it keeps
+   * its artifacts, and a resume continues the same run with its remaining
+   * ceilings.
+   */
+  async pauseRun(runId: string): Promise<AgentRunRecord> {
+    const view = await this.readOrThrow(runId);
+    if (view.record.status !== "running") {
+      throw new AgentRunServiceError("RUN_NOT_RUNNING", `agent run "${runId}" is ${view.record.status}, not running`);
+    }
+    await this.store.appendEvent(runId, { kind: "run-paused", atMs: this.clock() });
+    return (await this.readOrThrow(runId)).record;
+  }
+
+  /**
+   * Resumes a PAUSED run: its ledger records `run-resumed` and it is `running`
+   * again, claimable and drivable by the next drive. The user-visible resume is
+   * a drive request — the B9 sweep producer picks it up.
+   */
+  async resumeRun(runId: string): Promise<AgentRunRecord> {
+    const view = await this.readOrThrow(runId);
+    if (view.record.status !== "paused") {
+      throw new AgentRunServiceError("RUN_NOT_PAUSED", `agent run "${runId}" is ${view.record.status}, not paused`);
+    }
+    await this.store.appendEvent(runId, { kind: "run-resumed", atMs: this.clock() });
+    return (await this.readOrThrow(runId)).record;
+  }
+
   async resume(runId: string): Promise<AgentRunResumeReport> {
     const view = await this.readOrThrow(runId);
     if (view.terminal) {

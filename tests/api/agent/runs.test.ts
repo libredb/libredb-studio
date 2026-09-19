@@ -120,6 +120,18 @@ const mockCancel = mock(async (runId: string) => {
   return { record, cancellationRequested: true };
 });
 
+const mockPauseRun = mock(async (runId: string) => {
+  const record = runs.get(runId);
+  if (record === undefined) return null;
+  return { ...record, status: "paused" };
+});
+
+const mockResumeRun = mock(async (runId: string) => {
+  const record = runs.get(runId);
+  if (record === undefined) return null;
+  return { ...record, status: "running" };
+});
+
 const mockStream = mock(
   async () =>
     new ReadableStream({
@@ -153,6 +165,8 @@ function installMocks(): void {
       status: mockStatus,
       cancel: mockCancel,
       stream: mockStream,
+      pauseRun: mockPauseRun,
+      resumeRun: mockResumeRun,
     })),
     driveAgentRun: mockDriveAgentRun,
     // Listed although this file's routes never call it: the replacement is
@@ -164,7 +178,7 @@ function installMocks(): void {
 installMocks();
 
 const { POST } = await import("@/app/api/agent/runs/route");
-const { GET, DELETE } = await import("@/app/api/agent/runs/[runId]/route");
+const { GET, DELETE, PATCH } = await import("@/app/api/agent/runs/[runId]/route");
 const { GET: STREAM } = await import("@/app/api/agent/runs/[runId]/stream/route");
 
 function params(runId: string): { params: Promise<{ runId: string }> } {
@@ -192,6 +206,8 @@ beforeEach(() => {
   mockAdmitAgentModel.mockImplementation(async () => ({ kind: "allowed", protocol: "native" }));
   mockStart.mockClear();
   mockResolveConnection.mockClear();
+  mockPauseRun.mockClear();
+  mockResumeRun.mockClear();
 });
 
 afterEach(() => {
@@ -1144,6 +1160,76 @@ describe("DELETE /api/agent/runs/[runId]", () => {
 
     expect(res.status).toBe(404);
     expect(mockCancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /api/agent/runs/[runId]", () => {
+  test("pauses a run", async () => {
+    const res = await PATCH(
+      createMockRequest("/api/agent/runs/arun_1", { method: "PATCH", body: { action: "pause" } }),
+      params("arun_1"),
+    );
+    const body = await parseResponseJSON<{ status: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("paused");
+    expect(mockPauseRun).toHaveBeenCalledWith("arun_1");
+  });
+
+  test("resumes a run", async () => {
+    const res = await PATCH(
+      createMockRequest("/api/agent/runs/arun_1", { method: "PATCH", body: { action: "resume" } }),
+      params("arun_1"),
+    );
+    const body = await parseResponseJSON<{ status: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("running");
+    expect(mockResumeRun).toHaveBeenCalledWith("arun_1");
+  });
+
+  test("refuses an action the service has no words for", async () => {
+    const res = await PATCH(
+      createMockRequest("/api/agent/runs/arun_1", { method: "PATCH", body: { action: "explode" } }),
+      params("arun_1"),
+    );
+
+    expect(res.status).toBe(400);
+  });
+
+  test("refuses a body that is not JSON", async () => {
+    const req = new Request("http://localhost:3000/api/agent/runs/arun_1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: "not-json",
+    });
+
+    const res = await PATCH(req, params("arun_1"));
+
+    expect(res.status).toBe(400);
+  });
+
+  test("reports a service refusal instead of a bare 500", async () => {
+    mockPauseRun.mockRejectedValueOnce(new AgentRunServiceError("RUN_NOT_RUNNING", "the run is not running"));
+
+    const res = await PATCH(
+      createMockRequest("/api/agent/runs/arun_1", { method: "PATCH", body: { action: "pause" } }),
+      params("arun_1"),
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test("another session cannot pause the run", async () => {
+    mockGetSession.mockResolvedValue({ role: "user", username: "grace" });
+
+    const res = await PATCH(
+      createMockRequest("/api/agent/runs/arun_1", { method: "PATCH", body: { action: "pause" } }),
+      params("arun_1"),
+    );
+
+    expect(res.status).toBe(404);
+    expect(mockPauseRun).not.toHaveBeenCalled();
   });
 });
 

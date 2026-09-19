@@ -153,6 +153,10 @@ export interface AgentRunFollower {
    *          caller leave two runs executing against the same connection (#407 review).
    */
   readonly cancel: () => Promise<boolean>;
+  /** Asks the run to pause; the server accepts only a RUNNING run. */
+  readonly pause: () => Promise<boolean>;
+  /** Asks the run to resume; the server accepts only a PAUSED run. */
+  readonly resume: () => Promise<boolean>;
 }
 
 interface StartResponse {
@@ -602,6 +606,42 @@ export function useAgentRun(): AgentRunFollower {
     }
   }, [runId]);
 
+  const patchRun = useCallback(
+    async (action: "pause" | "resume"): Promise<boolean> => {
+      // Nothing is open, so there was nothing to ask. Answered `false` for the
+      // same reason `cancel` does: a caller deciding whether the run moved.
+      if (runId === null) return false;
+
+      setError(null);
+      try {
+        const res = await appFetch(`/api/agent/runs/${encodeURIComponent(runId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+          signal: abortRef.current?.signal,
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as StartResponse;
+          throw new Error(
+            typeof body.error === "string" ? body.error : `The run could not be ${action}d (${res.status})`,
+          );
+        }
+        // Nothing is set on success: the stream delivers the ledger entry, so the
+        // rail shows what the durable record says rather than what this call hoped.
+        return true;
+      } catch (patchError) {
+        if (abortRef.current?.signal.aborted !== true) {
+          setError(messageFor(patchError));
+        }
+        return false;
+      }
+    },
+    [runId],
+  );
+
+  const pause = useCallback(async (): Promise<boolean> => patchRun("pause"), [patchRun]);
+  const resume = useCallback(async (): Promise<boolean> => patchRun("resume"), [patchRun]);
+
   /*
     Memoised on the entries alone, which is the whole of the fold's input. Without
     it the fold re-walked the entire accumulated ledger on every render of the rail
@@ -635,5 +675,19 @@ export function useAgentRun(): AgentRunFollower {
   */
   const interrupted = runId === null && !isBusy ? storedThread : null;
 
-  return { runId, thread, interrupted, isBusy, isStopping, timeline, error, errorCode, refusal, start, cancel };
+  return {
+    runId,
+    thread,
+    interrupted,
+    isBusy,
+    isStopping,
+    timeline,
+    error,
+    errorCode,
+    refusal,
+    start,
+    cancel,
+    pause,
+    resume,
+  };
 }

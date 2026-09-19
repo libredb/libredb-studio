@@ -76,6 +76,8 @@ const DATABASE_ERROR: AgentToolRefusal = {
  */
 const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   "run-started": { kind: "run-started", atMs: 1, mode: "agent" },
+  "run-paused": { kind: "run-paused", atMs: 1 },
+  "run-resumed": { kind: "run-resumed", atMs: 1 },
   // What drove a stretch of the run. The `operator` provenance is the fixture rather than
   // `bundled` because it is the shape with fields to get wrong, and the one an operator's
   // deployment actually writes.

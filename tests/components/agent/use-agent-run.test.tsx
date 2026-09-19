@@ -144,3 +144,115 @@ describe("useAgentRun — the conversation a reload interrupted", () => {
     }
   });
 });
+
+describe("useAgentRun — pause and resume", () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  }
+
+  function routeFetch(handler: (url: string, method: string) => Response | Promise<Response>): () => void {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? "GET";
+      return handler(url, method);
+    }) as unknown as typeof fetch;
+    return () => {
+      globalThis.fetch = original;
+    };
+  }
+
+  test("without a run there is nothing to pause or resume", async () => {
+    const { result } = renderHook(() => useAgentRun());
+
+    let paused = true;
+    let resumed = true;
+    await act(async () => {
+      paused = await result.current.pause();
+      resumed = await result.current.resume();
+    });
+
+    expect(paused).toBe(false);
+    expect(resumed).toBe(false);
+  });
+
+  test("pause asks the server and reports success", async () => {
+    const restore = routeFetch((url, method) => {
+      if (method === "GET" && url.includes("/stream")) return new Response(null, { status: 200 });
+      if (method === "POST") return json({ runId: "arun_1", thread: null });
+      if (method === "PATCH") return json({ status: "paused" });
+      return json({ error: "no route" }, 404);
+    });
+    try {
+      const { result } = renderHook(() => useAgentRun());
+      await act(async () => {
+        await result.current.start({ mode: "agent", objective: "count the rows", connectionId: "conn-1" });
+      });
+
+      let ok = false;
+      await act(async () => {
+        ok = await result.current.pause();
+      });
+
+      expect(ok).toBe(true);
+      expect(result.current.error).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a refusal from the server is reported and answered false", async () => {
+    const restore = routeFetch((url, method) => {
+      if (method === "GET" && url.includes("/stream")) return new Response(null, { status: 200 });
+      if (method === "POST") return json({ runId: "arun_1", thread: null });
+      if (method === "PATCH") return json({ error: "The run is not running" }, 409);
+      return json({ error: "no route" }, 404);
+    });
+    try {
+      const { result } = renderHook(() => useAgentRun());
+      await act(async () => {
+        await result.current.start({ mode: "agent", objective: "count the rows", connectionId: "conn-1" });
+      });
+
+      let ok = true;
+      await act(async () => {
+        ok = await result.current.resume();
+      });
+
+      expect(ok).toBe(false);
+      expect(result.current.error).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a request that never reaches the server reports failure rather than success", async () => {
+    const restore = routeFetch((url, method) => {
+      if (method === "GET" && url.includes("/stream")) return new Response(null, { status: 200 });
+      if (method === "POST") return json({ runId: "arun_1", thread: null });
+      if (method === "PATCH") throw new Error("network down");
+      return json({ error: "no route" }, 404);
+    });
+    try {
+      const { result } = renderHook(() => useAgentRun());
+      await act(async () => {
+        await result.current.start({ mode: "agent", objective: "count the rows", connectionId: "conn-1" });
+      });
+
+      let ok = true;
+      await act(async () => {
+        ok = await result.current.pause();
+      });
+
+      expect(ok).toBe(false);
+      expect(result.current.error).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+});
