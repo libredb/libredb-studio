@@ -58,8 +58,58 @@ interface SchemaDiffProps {
  * change compared the database against a copy of itself from before the change and reported
  * no differences (#884).
  */
+function readPayload(conn: DatabaseConnection): { connectionId: string } | { connection: DatabaseConnection } {
+  return conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
+}
+
+/**
+ * The fields a read is SENT but cannot be reached by. Everything else addresses a database.
+ *
+ * A denylist rather than a list of the fields that DO address one, because the two fail in
+ * opposite directions. An addressing field this list forgot would be counted, costing one
+ * round trip nobody needed - said out loud, on screen, and cheap. A cosmetic field wrongly
+ * counted as addressing is the same. But an addressing field a positive list forgot would
+ * match a read to a database it was not taken from, which is #884 in silence. Only that one
+ * is worth guarding against, so the default for anything unlisted is "this changes the read".
+ *
+ * `createdAt` is here for a measured reason rather than a cosmetic one:
+ * `use-connection-adapter.ts` builds it as `new Date()` INSIDE the memo, so a host that hands
+ * over a fresh array produces a fresh timestamp - and a key that moves on every render is
+ * exactly the churn this exists to stop.
+ */
+const notAddressing = ["name", "color", "group", "environment", "createdAt"] as const;
+
+/**
+ * Which DATABASE a read of this connection would reach, as a string two renders can compare.
+ *
+ * The connection OBJECT cannot answer this and neither can its id, and they fail in opposite
+ * directions. The object is rebuilt per render by the embedded host, so identity says "a
+ * different database" about one that never moved. The id SURVIVES being pointed somewhere
+ * else - a connection edited in place keeps it - so the id says "the same database" about a
+ * different host. Between them sits the only question a read has: what would I be sent, and
+ * would it reach the same place.
+ *
+ * So the key is derived from the payload `readLiveSchema` actually posts, through the same
+ * function, which is what keeps the two from drifting: a field that starts or stops
+ * addressing a database changes both answers at once.
+ *
+ * Key ORDER is not normalised. Two objects carrying the same fields in a different insertion
+ * order key differently, and the cost of that is one extra read - the safe direction - so it
+ * is not worth the recursion; within one panel the object comes from one builder.
+ */
+function readTargetKey(conn: DatabaseConnection): string {
+  const payload = readPayload(conn);
+  // A managed connection is read BY ITS SEED: the route resolves the credentials at the
+  // other end and is sent nothing else, so nothing else about the object can change what
+  // comes back - not even a host field a caller has filled in beside it.
+  if (!("connection" in payload)) return payload.connectionId;
+  const addressing: Record<string, unknown> = { ...payload.connection };
+  for (const field of notAddressing) delete addressing[field];
+  return JSON.stringify(addressing);
+}
+
 async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[]> {
-  const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
+  const payload = readPayload(conn);
   const post = (path: string, body: unknown) =>
     appFetch(path, {
       method: "POST",
@@ -189,23 +239,63 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   }, [reads, remoteReads]);
 
   /**
-   * The objects the database holds, and the connection they were read FROM.
+   * The objects the database holds, and WHICH DATABASE they were read from.
    *
    * Carried together rather than cleared on a switch, because the panel outlives one:
    * holding the previous database's objects made "Current Schema" mean the OTHER connection
    * until the new read landed, and for good if that read failed.
+   *
+   * The target is `readTargetKey`'s answer and not the connection object, because the object
+   * is the wrong keepsake twice over: held, it is a captured copy of something the host
+   * rebuilds, and compared, its identity moves when nothing about the database did.
    *
    * `error` is the other half. The panel falls back to the explorer's copy, and that copy is
    * precisely what #884 is about, so the reason is state that reaches the screen rather than
    * a log line that reaches nobody standing in front of the panel.
    */
   const [liveRead, setLiveRead] = useState<{
-    connection: DatabaseConnection;
+    target: string;
     objects: readonly DetailedObject[] | null;
     error: string | null;
   } | null>(null);
 
-  const readForThisConnection = liveRead?.connection.id === connection?.id ? liveRead : null;
+  /**
+   * What every read of this panel's own connection is keyed on, and what every read of it is
+   * matched against. The empty string is "no connection", which no real key can be.
+   *
+   * It is one value for both because they are one question asked twice - "would a read reach
+   * the same database?" - and answering it two different ways is what the two findings this
+   * closes were. The effect asked it by OBJECT IDENTITY, so a host handing over a rebuilt
+   * object read again and destroyed the snapshot in flight. The guard asked it by ID, so a
+   * connection edited to point at another host matched the previous database's read and
+   * showed it as Current Schema.
+   *
+   * The id is still exactly right for a different question, and both remaining uses ask that
+   * one: WHICH CONNECTION, as the user's list names it, not which database it reaches.
+   * `snapshotFailure` carries the id so a report is not shown over a connection the user has
+   * moved to, and a stored snapshot is stamped with it so the list can say where it came
+   * from. An in-place edit is the same entry in that list and keeps its report; choosing
+   * another connection is a different entry and does not. What the id cannot answer is
+   * whether the objects in hand came from where this connection now points.
+   */
+  const readTarget = connection ? readTargetKey(connection) : "";
+
+  /**
+   * The connection object itself, for the two effects below that are keyed on `readTarget`.
+   *
+   * They need the object to read with and must not re-run when only its identity changes, and
+   * those two cannot both be served by the dependency list. A ref serves the first. It is
+   * written in an effect rather than during render - a render-phase write is impure, and this
+   * is declared ABOVE both readers so React has already run it by the time either fires on
+   * the same commit - and it is read rather than captured, so a read always goes out with the
+   * host's CURRENT object and never a stale copy of it.
+   */
+  const latestConnection = useRef(connection);
+  useEffect(() => {
+    latestConnection.current = connection;
+  }, [connection]);
+
+  const readForThisConnection = liveRead?.target === readTarget ? liveRead : null;
   const liveSchema = readForThisConnection?.objects ?? null;
   const liveSchemaError = readForThisConnection?.error ?? null;
   const snapshotError =
@@ -226,13 +316,21 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     [reads],
   );
 
+  // Keyed on `readTarget`, not on the connection object. A host that rebuilds the object
+  // without moving it re-rendered this panel into a read it had no reason to make, and that
+  // read went through the same counter as everything else - so it superseded a snapshot the
+  // user had pressed Save on, which saved nothing and blamed them for a race they did not
+  // cause. Keyed on the ID instead it would never re-read a connection edited in place, and
+  // the previous database's objects would stand as Current Schema for good rather than for a
+  // moment. The key is what asks neither of those wrong questions.
   useEffect(() => {
-    if (!connection) return;
-    const { read, isCurrent } = beginRead(connection);
+    const conn = latestConnection.current;
+    if (!conn) return;
+    const { read, isCurrent } = beginRead(conn);
     read
       .then((objects) => {
         if (!isCurrent()) return;
-        setLiveRead({ connection, objects, error: null });
+        setLiveRead({ target: readTarget, objects, error: null });
         // The snapshot report is NOT touched here, and that is the whole of this fix. This
         // write says one thing - Current Schema is fresh - and a snapshot that was not
         // written stays not written however many reads land afterwards. Clearing it here put
@@ -246,13 +344,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       })
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
-        if (isCurrent()) setLiveRead({ connection, objects: null, error: reason });
+        if (isCurrent()) setLiveRead({ target: readTarget, objects: null, error: reason });
         logger.warn("Failed to read the current schema for a diff; falling back to the explorer's copy", {
           route: "SchemaDiff",
           error: reason,
         });
       });
-  }, [connection, beginRead]);
+  }, [readTarget, beginRead]);
 
   /**
    * A comparison reads the database again.
@@ -267,13 +365,14 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     // Only when one side of the comparison IS the database. Two snapshots against each
     // other are two files; reading the connection for them is a round trip that changes
     // nothing either side shows.
-    if (!connection || !targetId) return;
+    const conn = latestConnection.current;
+    if (!conn || !targetId) return;
     if (sourceId !== "current" && targetId !== "current") return;
-    const { read, isCurrent } = beginRead(connection);
+    const { read, isCurrent } = beginRead(conn);
     read
       .then((objects) => {
         if (!isCurrent()) return;
-        setLiveRead({ connection, objects, error: null });
+        setLiveRead({ target: readTarget, objects, error: null });
         // Same rule as the read when the panel opens, and this is the call site that did the
         // damage: choosing a target is the commonest way a snapshot in flight gets overtaken,
         // so this read and the snapshot it superseded are two halves of one gesture. It
@@ -283,9 +382,12 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         const reason = err instanceof Error ? err.message : String(err);
         // Falling back to the last copy rather than emptying the side, which would report
         // every object as removed; the banner says why it may be out of date.
-        if (isCurrent()) setLiveRead({ connection, objects: null, error: reason });
+        if (isCurrent()) setLiveRead({ target: readTarget, objects: null, error: reason });
       });
-  }, [targetId, sourceId, connection, beginRead]);
+    // On `readTarget` for the reason the effect above is, and it matters here too: a chosen
+    // target is the commonest way a snapshot gets overtaken, so a rebuilt object re-running
+    // THIS one destroys a snapshot just as surely.
+  }, [targetId, sourceId, readTarget, beginRead]);
 
   /** True while the Refresh button's own read is in flight. State, because the button reads it. */
   const [refreshing, setRefreshing] = useState(false);
@@ -332,13 +434,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     setRefreshing(true);
     read
       .then((objects) => {
-        if (isCurrent()) setLiveRead({ connection, objects, error: null });
+        if (isCurrent()) setLiveRead({ target: readTarget, objects, error: null });
       })
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
         // Same fallback as the other two reads: the last copy rather than an empty side,
         // which would report every object as removed, and a banner saying why.
-        if (isCurrent()) setLiveRead({ connection, objects: null, error: reason });
+        if (isCurrent()) setLiveRead({ target: readTarget, objects: null, error: reason });
         logger.warn("Failed to re-read the current schema for a diff", {
           route: "SchemaDiff",
           error: reason,
@@ -358,7 +460,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         refreshInFlight.current = false;
         if (mounted.current) setRefreshing(false);
       });
-  }, [connection, beginRead]);
+  }, [connection, readTarget, beginRead]);
 
   /** What "Current Schema" means on both sides of the diff, and in a new snapshot. */
   const currentSchema = liveSchema ?? schema;
@@ -397,8 +499,12 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       const objects = await read;
       if (!isCurrent()) {
         // Something asked for a newer read while this one was in flight - choosing a target
-        // does, and so does the embedded host handing over a fresh connection object with the
-        // same id. Returning quietly here saved nothing and said nothing, so the button came
+        // does, and so does this connection being pointed at another database while the read
+        // is out. What no longer reaches here is the embedded host handing over a fresh
+        // connection OBJECT for the same database: that re-rendered the panel into a read it
+        // had no reason to make, and this branch then blamed the user for a race nothing in
+        // the world had caused. The two things left are both somebody asking for something
+        // newer. Returning quietly here saved nothing and said nothing, so the button came
         // back to "Save" and the user believed it had. The banner stays until the user acts:
         // a later read landing is not a snapshot, and clearing it on one put the silence
         // straight back. Pressing Save again is the retry, Dismiss is the way out.
@@ -416,7 +522,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         }
         return;
       }
-      setLiveRead({ connection, objects, error: null });
+      setLiveRead({ target: readTarget, objects, error: null });
       const snapshot: SchemaSnapshot = {
         // Random, not the clock. `Date.now()` is the id two snapshots taken in the same
         // millisecond SHARE, and every use of a snapshot id keys on it being one snapshot:
@@ -469,7 +575,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       snapshotInFlight.current = false;
       if (mounted.current) setSnapshotting(false);
     }
-  }, [connection, snapshotLabel, beginRead]);
+  }, [connection, readTarget, snapshotLabel, beginRead]);
 
   // Delete snapshot
   const deleteSnapshot = useCallback(
@@ -786,13 +892,21 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
         {/* Read the database again on demand. The only way to see a change used to be
             leaving the tab and coming back, because that remounts the panel - a step nobody
-            would guess and the one this work exists to remove. */}
+            would guess and the one this work exists to remove.
+
+            Locked while a SNAPSHOT is reading too, for the reason the label input, Save and
+            Cancel are: this goes through the same counter, so a refresh pressed before the
+            snapshot's read lands supersedes it, and the user who typed a label and pressed
+            Save gets nothing saved and "Press Save again" for their trouble. The lock is one
+            way round on purpose - Save is not locked while a refresh is out - because only
+            one of the two produces something the user asked to keep, and a refresh that
+            loses the race costs a round trip and says so on the button. */}
         <Button
           variant="ghost"
           size="sm"
           className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
           onClick={refreshCurrentSchema}
-          disabled={!connection || refreshing}
+          disabled={!connection || refreshing || snapshotting}
         >
           <RefreshCw strokeWidth={1.5} className={cn("w-3 h-3", refreshing && "animate-spin")} />{" "}
           {refreshing ? "Refreshing..." : "Refresh"}

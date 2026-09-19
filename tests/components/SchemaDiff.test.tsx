@@ -299,6 +299,26 @@ function changeInput(input: HTMLInputElement, value: string) {
   fireEvent.change(input, { target: { value } });
 }
 
+/** The Refresh control by its label, which is also its accessible name. */
+function refreshButton(view: ReturnType<typeof render>) {
+  const buttons = Array.from(view.container.querySelectorAll("button"));
+  return buttons.find((b) => /refresh/i.test(b.textContent ?? ""));
+}
+
+/**
+ * The "No snapshot was saved" banner's own sentence, or "" when there is none.
+ *
+ * Read back as TEXT rather than asserted present/absent, so a failure prints what the user was
+ * actually told. That sentence is most of what these findings cost: a snapshot they pressed
+ * Save on, not written, and a line blaming them for a race nothing in the world caused.
+ */
+function snapshotBanner(view: ReturnType<typeof render>) {
+  const span = Array.from(view.container.querySelectorAll("span")).find((el) =>
+    el.textContent?.startsWith("No snapshot was saved:"),
+  );
+  return span?.textContent ?? "";
+}
+
 describe("SchemaDiff", () => {
   beforeEach(() => {
     mockDiffSchemas.mockClear();
@@ -1179,11 +1199,14 @@ describe("SchemaDiff", () => {
     });
 
     test("an overtaken snapshot survives the panel's OWN re-read of the same connection", async () => {
-      // The other way a newer read starts, and nothing the user did. The embedded host hands
-      // over a fresh connection OBJECT with the same id - `use-connection-adapter.ts` builds
-      // it with a `useMemo` over a prop - so the mount effect runs again and reads the same
-      // database. The snapshot in flight is overtaken all the same, and the banner has to
-      // outlive that read too, not just a target selection.
+      // The other way a newer read starts. The panel's own effect runs again when the
+      // connection it is looking at is POINTED SOMEWHERE ELSE - edited in place, which keeps
+      // the id and changes the database - and the snapshot in flight is overtaken all the
+      // same, so the banner has to outlive that read too, not just a target selection.
+      //
+      // It used to be provoked here by a fresh connection object for the same database, which
+      // is what the embedded host hands over on an ordinary re-render. That is finding 2's
+      // second trigger and no longer reads at all; the test below holds it.
       const q = queuedSchemaReads();
       try {
         let view!: ReturnType<typeof render>;
@@ -1199,9 +1222,14 @@ describe("SchemaDiff", () => {
         });
         await q.flush();
 
-        // Same id, different object.
+        // Same id, same entry in the user's list, different database.
         await act(async () => {
-          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection }} />);
+          view.rerender(
+            <SchemaDiff
+              schema={mockSchema}
+              connection={{ ...mockPostgresConnection, database: "pointed_elsewhere" }}
+            />,
+          );
         });
         await q.flush();
 
@@ -1214,6 +1242,106 @@ describe("SchemaDiff", () => {
         expect(view.queryByText(/read again before this finished/)).not.toBeNull();
       } finally {
         q.restore();
+      }
+    });
+
+    test("a rebuilt connection object for the SAME database does not destroy a snapshot", async () => {
+      // Finding 2, second trigger, and nothing a user did. This panel is rendered from the
+      // embedded shell too (`studio/BottomPanel.tsx`, via `StudioWorkspace`), and
+      // `use-connection-adapter.ts` builds `activeConnection` with a `useMemo` over a prop the
+      // host supplies - so a host handing over a fresh array produces a fresh connection
+      // OBJECT with the same id, pointing at the same database. Keyed on that object the panel
+      // read again, that read went through the same counter as everything else, and the
+      // snapshot the user had pressed Save on was superseded: nothing written, and the panel
+      // saying "the schema was read again before this finished. Press Save again".
+      const q = queuedSchemaReads();
+      try {
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = renderDiff();
+        });
+        await q.flush();
+        await q.settle(0, { ok: true, objects: [{ name: "users" }] });
+
+        fireEvent.click(view.getByText("Snapshot"));
+        changeInput(view.getByPlaceholderText("Label (optional)...") as HTMLInputElement, "before the migration");
+        await act(async () => {
+          fireEvent.click(view.getByText("Save"));
+        });
+        await q.flush();
+
+        // A re-render, not a choice: same id, same host, same database, new object.
+        await act(async () => {
+          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection }} />);
+        });
+        await q.flush();
+
+        mockSaveSchemaSnapshot.mockClear();
+        await q.settle(1, { ok: true, objects: [{ name: "users" }] });
+
+        // Both halves of what the user gets, in one assertion, so a failure prints both: the
+        // snapshot they asked for, and whatever the panel told them about it.
+        expect({ snapshots: mockSaveSchemaSnapshot.mock.calls.length, panel: snapshotBanner(view) }).toEqual({
+          snapshots: 1,
+          panel: "",
+        });
+        const saved = (mockSaveSchemaSnapshot.mock.calls as unknown[][])[0][0] as { label?: string };
+        expect(saved.label).toBe("before the migration");
+        // And no read was made for it: the wasted round trip is the other half of the cost,
+        // and it is what made the snapshot unsaveable in the first place.
+        expect(q.pending.length).toBe(2);
+      } finally {
+        q.restore();
+      }
+    });
+
+    test("the report follows the connection by id, which an in-place edit keeps and another does not", async () => {
+      // What the id is still exactly right for, and it is not "which database". A report is
+      // about an ENTRY in the user's connection list: editing that entry - pointing it at
+      // another database - leaves the report theirs to answer, and moving to a different entry
+      // takes it off a panel it is not about. The read asks the other question, by what it
+      // would reach, and this is the proof that closing finding 3 did not take the first
+      // question with it.
+      const origFetch = globalThis.fetch;
+      try {
+        const a = answerSchemaReads([{ name: "users" }]);
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = renderDiff();
+        });
+        a.restore();
+
+        globalThis.fetch = mock(() =>
+          Promise.resolve({ ok: false, json: () => Promise.resolve({ error: "the database blinked" }) }),
+        ) as unknown as typeof fetch;
+        fireEvent.click(view.getByText("Snapshot"));
+        await act(async () => {
+          fireEvent.click(view.getByText("Save"));
+        });
+        expect(await view.findByText(/No snapshot was saved: the database blinked/)).toBeTruthy();
+
+        // Same entry, pointed at another database. The read this provokes is a different
+        // database's, and the report is still about the connection the user is looking at.
+        const b = answerSchemaReads([{ name: "elsewhere" }]);
+        await act(async () => {
+          view.rerender(
+            <SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection, database: "another_db" }} />,
+          );
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        b.restore();
+        expect(snapshotBanner(view)).toContain("the database blinked");
+
+        // A different entry, and it is not their report to answer.
+        const c = answerSchemaReads([{ name: "mysql_table" }]);
+        await act(async () => {
+          view.rerender(<SchemaDiff schema={mockSchema} connection={mockMySQLConnection} />);
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        c.restore();
+        expect(snapshotBanner(view)).toBe("");
+      } finally {
+        globalThis.fetch = origFetch;
       }
     });
 
@@ -1285,9 +1413,13 @@ describe("SchemaDiff", () => {
 
         // The panel reads this same connection again and it WORKS. That refreshes Current
         // Schema. It does not write the snapshot, so it does not answer the report.
+        //
+        // Refresh is what asks for that read. A re-render handing over a rebuilt connection
+        // object used to do it and no longer does, which is the whole of finding 2's second
+        // trigger: a read nobody asked for is a read that can destroy a snapshot.
         const b = answerSchemaReads([{ name: "users" }]);
         await act(async () => {
-          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection }} />);
+          fireEvent.click(refreshButton(view)!);
           await new Promise((r) => setTimeout(r, 0));
         });
         b.restore();
@@ -1297,7 +1429,7 @@ describe("SchemaDiff", () => {
           Promise.resolve({ ok: false, json: () => Promise.resolve({ error: "the catalog is gone" }) }),
         ) as unknown as typeof fetch;
         await act(async () => {
-          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection }} />);
+          fireEvent.click(refreshButton(view)!);
           await new Promise((r) => setTimeout(r, 0));
         });
 
@@ -1330,9 +1462,10 @@ describe("SchemaDiff", () => {
         });
         expect(await view.findByText(/No snapshot was saved: the database blinked/)).toBeTruthy();
 
-        // The panel's own read of this connection is failing at the same time.
+        // The panel's own read of this connection is failing at the same time. Asked for with
+        // Refresh: a rebuilt connection object no longer reads, so it cannot be the trigger.
         await act(async () => {
-          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection }} />);
+          fireEvent.click(refreshButton(view)!);
           await new Promise((r) => setTimeout(r, 0));
         });
         expect(view.queryByText(/which may be out of date: the database blinked/)).not.toBeNull();
@@ -1529,12 +1662,6 @@ describe("SchemaDiff", () => {
       return { pending, flush, settle, restore: () => void (globalThis.fetch = orig) };
     }
 
-    /** The control by its label, which is also its accessible name. */
-    function refreshButton(view: ReturnType<typeof render>) {
-      const buttons = Array.from(view.container.querySelectorAll("button"));
-      return buttons.find((b) => /refresh/i.test(b.textContent ?? ""));
-    }
-
     /** Mount, answer the panel's own read, choose a target, answer that read too. */
     async function openOnADiff(q: ReturnType<typeof schemaReads>) {
       let view!: ReturnType<typeof render>;
@@ -1686,6 +1813,132 @@ describe("SchemaDiff", () => {
 
         expect(refreshButton(view)!.disabled).toBe(false);
         expect(refreshButton(view)!.textContent?.trim()).toBe("Refresh");
+      } finally {
+        q.restore();
+      }
+    });
+
+    test("Refresh is locked while a snapshot is reading, so it cannot destroy one", async () => {
+      // Finding 2, first trigger. `disabled` was `!connection || refreshing`, and Refresh goes
+      // through the same counter as the snapshot - so type a label, press Save, press Refresh
+      // before the read lands, and the snapshot's `isCurrent()` is false: nothing is written
+      // and the panel says "the schema was read again before this finished. Press Save again".
+      // The label input, Save and Cancel are all locked during `snapshotting` for exactly this
+      // reason, and this control was not.
+      const q = schemaReads();
+      try {
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = renderDiff();
+        });
+        await q.flush();
+        await q.settle(0, { ok: true, objects: ["users"] });
+
+        fireEvent.click(view.getByText("Snapshot"));
+        changeInput(view.getByPlaceholderText("Label (optional)...") as HTMLInputElement, "before the migration");
+        await act(async () => {
+          fireEvent.click(view.getByText("Save"));
+        });
+        await q.flush();
+
+        // Pressed while the snapshot's read is still out.
+        await act(async () => {
+          fireEvent.click(refreshButton(view)!);
+        });
+        await q.flush();
+
+        mockSaveSchemaSnapshot.mockClear();
+        await q.settle(1, { ok: true, objects: ["users"] });
+
+        // Both halves of what the user gets, in one assertion, so a failure prints both.
+        expect({ snapshots: mockSaveSchemaSnapshot.mock.calls.length, panel: snapshotBanner(view) }).toEqual({
+          snapshots: 1,
+          panel: "",
+        });
+        const saved = (mockSaveSchemaSnapshot.mock.calls as unknown[][])[0][0] as { label?: string };
+        expect(saved.label).toBe("before the migration");
+        // The press read nothing: mount and the snapshot, and no third read to supersede it.
+        expect(q.pending.length).toBe(2);
+        // And the lock lifts with the snapshot, so the control is not left dead behind it.
+        expect(refreshButton(view)!.disabled).toBe(false);
+      } finally {
+        q.restore();
+      }
+    });
+
+    test("re-pointing the connection reads the NEW database, which keying on the id would not", async () => {
+      // The two findings pulling against each other, measured. Keying the panel's read on
+      // `connection?.id` closes finding 2's second trigger and opens finding 3 wider: a
+      // connection edited to point elsewhere would then never read again, so the previous
+      // database's objects would stand as Current Schema for good instead of for a moment.
+      // The key is neither identity nor id - same database, no read; same id and a different
+      // database, a read - and a rename is not a database either.
+      const q = schemaReads();
+      try {
+        const view = await openOnADiff(q);
+        expect(currentSideNames()).toEqual(["users"]);
+
+        // A rebuilt object for the same database reads nothing.
+        await act(async () => {
+          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection }} />);
+        });
+        await q.flush();
+        expect(q.pending.length).toBe(2);
+
+        // Neither does a rename. It is what the entry is CALLED, not where it points.
+        await act(async () => {
+          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection, name: "Renamed" }} />);
+        });
+        await q.flush();
+        expect(q.pending.length).toBe(2);
+
+        // The same entry pointed at another database does read it, and that read is what
+        // Current Schema becomes.
+        await act(async () => {
+          view.rerender(
+            <SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection, database: "another_db" }} />,
+          );
+        });
+        await q.flush();
+        // TWO reads, because two effects are keyed on the answer and both of their questions
+        // changed: the panel's own read of Current Schema, and the read a chosen target asks
+        // for. They share the counter, so only the newer of them may write - which is the
+        // one settled here.
+        expect(q.pending.length).toBe(4);
+        await q.settle(3, { ok: true, objects: ["only_in_another_db"] });
+        expect(currentSideNames()).toEqual(["only_in_another_db"]);
+      } finally {
+        q.restore();
+      }
+    });
+
+    test("a managed connection is keyed by the seed it names, which is all its read is sent", async () => {
+      // A managed connection's read posts `seed:<id>` and nothing else - the route resolves the
+      // credentials at the other end - so no other field on the object can change what comes
+      // back, and one that differs must not provoke a read. The seed itself is a different
+      // database and does.
+      const managed = { ...mockPostgresConnection, managed: true, seedId: "seed-1" };
+      const q = schemaReads();
+      try {
+        let view!: ReturnType<typeof render>;
+        await act(async () => {
+          view = render(<SchemaDiff schema={mockSchema} connection={managed} />);
+        });
+        await q.flush();
+        await q.settle(0, { ok: true, objects: ["users"] });
+        expect(q.pending.length).toBe(1);
+
+        await act(async () => {
+          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...managed, host: "somewhere-else" }} />);
+        });
+        await q.flush();
+        expect(q.pending.length).toBe(1);
+
+        await act(async () => {
+          view.rerender(<SchemaDiff schema={mockSchema} connection={{ ...managed, seedId: "seed-2" }} />);
+        });
+        await q.flush();
+        expect(q.pending.length).toBe(2);
       } finally {
         q.restore();
       }
@@ -2597,6 +2850,68 @@ describe("SchemaDiff", () => {
         const names = (latest[0] as { name: string }[]).map((o) => o.name);
         expect(names).not.toContain("only_on_the_first_connection");
         expect(names).toEqual(mockSchema.map((o) => o.name));
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    test("a connection re-pointed at another database is not matched by its id", async () => {
+      // Finding 3. The match was `liveRead.connection.id === connection?.id`, and a connection
+      // edited in place KEEPS its id - so after pointing an existing connection at a different
+      // host or database the panel matched the PREVIOUS read and presented the old database's
+      // objects as "Current Schema" until the new read landed. What the user sees is a diff
+      // computed against a database they are no longer pointed at: #884's stale copy, entering
+      // through the comparison rather than through the effect. Falling back to the explorer's
+      // copy is what it did before the comparison was by id, and it is what it does again.
+      const origFetch = globalThis.fetch;
+      let holdInventory = false;
+      const inventory = (name: string) => ({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            objects: [{ name, kind: "table", path: ["public", name] }],
+            details: [{ path: ["public", name], columns: [], indexes: [], foreignKeys: [] }],
+          }),
+      });
+      globalThis.fetch = mock((url: string) =>
+        url.includes("provider-meta")
+          ? Promise.resolve({
+              ok: true,
+              json: () =>
+                Promise.resolve({
+                  capabilities: {
+                    queryLanguage: "sql",
+                    objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+                  },
+                }),
+            })
+          : holdInventory
+            ? new Promise(() => {})
+            : Promise.resolve(inventory("only_in_the_first_database")),
+      ) as unknown as typeof fetch;
+
+      try {
+        let rendered!: ReturnType<typeof render>;
+        await act(async () => {
+          rendered = renderDiff();
+        });
+        changeTarget("snap-1");
+        const first = (mockDiffSchemas.mock.calls as unknown[][]).at(-1)!;
+        expect((first[0] as Array<{ name: string }>)[0].name).toBe("only_in_the_first_database");
+
+        // The same entry in the user's list, now pointed at another database, and ITS read
+        // never lands - which is the window the defect lives in.
+        holdInventory = true;
+        await act(async () => {
+          rendered.rerender(
+            <SchemaDiff schema={mockSchema} connection={{ ...mockPostgresConnection, database: "another_db" }} />,
+          );
+        });
+
+        const latest = (mockDiffSchemas.mock.calls as unknown[][]).at(-1)!;
+        const names = (latest[0] as Array<{ name: string }>).map((o) => o.name);
+        expect(names).toEqual(mockSchema.map((o) => o.name));
+        expect(names).not.toContain("only_in_the_first_database");
       } finally {
         globalThis.fetch = origFetch;
       }
