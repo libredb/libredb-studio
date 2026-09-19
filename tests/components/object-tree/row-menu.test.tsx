@@ -147,6 +147,29 @@ afterEach(() => {
 });
 
 describe("the row menu is driven by the declaration", () => {
+  test("the count action reaches its handler from the context menu without activating data", async () => {
+    const onGenerateCount = mock(() => {});
+    const onObjectClick = mock(() => {});
+    await openTree([], { onGenerateCount }, onObjectClick);
+    fireEvent.contextMenu(row(/orders/));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Generate Count Query" }));
+    expect(onGenerateCount).toHaveBeenCalledWith(objects.table[0]);
+    expect(onObjectClick).not.toHaveBeenCalled();
+  });
+
+  test("a million-row badge carries the complete reported figure in its title", async () => {
+    const previous = objects.table[0];
+    objects.table[0] = { ...previous, rowCount: 1553900 };
+    try {
+      await openTree();
+      const badge = within(row(/orders/)).getByTestId("tree-row-count");
+      expect(badge.textContent).toBe("1.6M");
+      expect(badge.title).toContain("1,553,900");
+      expect(badge.title).toContain("estimate");
+    } finally {
+      objects.table[0] = previous;
+    }
+  });
   test("a writable relation is offered every action the shell handed over", async () => {
     await openTree();
     // `false` means the page took the gesture: the browser's own menu must not open on top
@@ -602,7 +625,9 @@ describe("the row menu has a visible trigger", () => {
   test("the row count is still there, and still where it was, while the trigger is showing", async () => {
     await openTree();
     const orders = row(/orders/);
-    expect(within(orders).getByTestId("tree-row-count").textContent).toBe("1,234");
+    expect(within(orders).getByTestId("tree-row-count").textContent).toBe("1.2K");
+    expect(within(orders).getByTestId("tree-row-count").title).toContain("1,234");
+    expect(within(orders).getByTestId("tree-row-count").title).toContain("estimate");
     // The flat explorer's defect, pinned: the count must not be tied to the hover state that
     // reveals the trigger, in either direction - hidden, or pushed leftward under the pointer.
     expect(within(orders).getByTestId("tree-row-count").className).not.toContain("group-hover");
@@ -682,7 +707,7 @@ describe("the row names itself, and never the control inside it", () => {
     expect(within(orders).getByTestId("tree-row-menu-trigger")).toBeTruthy();
     expect(nameSourceIds(orders)).toEqual(["tree-row-label", "tree-row-count"]);
     expect(nameSources(orders).some((element) => element.tagName === "BUTTON")).toBe(false);
-    expect(screen.getByRole("treeitem", { name: "orders 1,234" })).toBe(orders);
+    expect(screen.getByRole("treeitem", { name: "orders 1.2K" })).toBe(orders);
   });
 
   test("a folder row's name is its label and its badge, with the trigger left out", async () => {

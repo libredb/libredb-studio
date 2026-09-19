@@ -163,7 +163,7 @@ describe("the embedded workspace's object tree", () => {
     const items = within(screen.getByRole("menu"))
       .getAllByRole("menuitem")
       .map((item) => item.textContent ?? "");
-    expect(items).toEqual(["Generate Query", "Profile Table", "Generate Code"]);
+    expect(items).toEqual(["Generate Query", "Generate Count Query", "Profile Table", "Generate Code"]);
   });
 
   test("refuses a host answer the tree cannot render, rather than unmounting on it", async () => {

@@ -601,6 +601,28 @@ export function generateSelectQuery(
   return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nLIMIT 100${terminator(capabilities)}`;
 }
 
+/** SQL and MongoDB have a count grammar; custom key dialects and derived groupings do not. */
+export function canGenerateCountQuery(capabilities: ProviderCapabilities | undefined): boolean {
+  return (
+    capabilities !== undefined &&
+    capabilities.tablesAreDerivedGroupings !== true &&
+    capabilities.queryDialect === undefined &&
+    (capabilities.queryLanguage === "sql" || capabilities.queryLanguage === "json")
+  );
+}
+
+/** Prepare an editable count statement, without a row limit or any execution (#702). */
+export function generateCountQuery(path: readonly string[], capabilities: ProviderCapabilities): string | null {
+  if (!canGenerateCountQuery(capabilities)) return null;
+  const name = objectSegment(path);
+  if (capabilities.queryLanguage === "json") {
+    return JSON.stringify({ collection: name, operation: "count", filter: {} }, null, 2);
+  }
+  // COUNT returns an int on SQL Server; COUNT_BIG preserves billion-row counts.
+  const count = capabilities.defaultPort === 1433 ? "COUNT_BIG(*)" : "COUNT(*)";
+  return `SELECT ${count} AS row_count\nFROM ${quoteObjectPath(path, capabilities)}${terminator(capabilities)}`;
+}
+
 export function shouldRefreshSchema(query: string, schemaRefreshPattern: string): boolean {
   return new RegExp(schemaRefreshPattern, "i").test(query);
 }

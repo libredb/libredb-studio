@@ -211,8 +211,63 @@ describe("TableItem", () => {
     const { queryByText } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,
     );
-    expect(queryByText("1.5k")).not.toBeNull();
+    expect(queryByText("1.5K")).not.toBeNull();
   });
+
+  test("compacts millions while the title carries the full reported count and its caveat", () => {
+    const { getByText } = render(
+      <TableItem
+        table={{ ...largeTable, rowCount: 1553900 }}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin={false}
+      />,
+    );
+    expect(getByText("1.6M").title).toContain("1,553,900");
+    expect(getByText("1.6M").title).toContain("estimate");
+    // The count itself ignores pointer events; the slot under its menu button must
+    // carry the title too, otherwise a real pointer can never reach that tooltip.
+    expect(getByText("1.6M").parentElement?.title).toBe(getByText("1.6M").title);
+  });
+
+  test.each(["dropdown", "context-menu"])(
+    "the %s count action passes the address, without selecting rows",
+    (surface) => {
+      const onGenerateCount = mock(() => {});
+      const onTableClick = mock(() => {});
+      const { getByTestId } = render(
+        <TableItem
+          table={qualifiedTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={caps({ queryLanguage: "sql" })}
+          onGenerateCount={onGenerateCount}
+          onTableClick={onTableClick}
+        />,
+      );
+      fireEvent.click(within(getByTestId(surface)).getByText("Generate Count Query"));
+      expect(onGenerateCount).toHaveBeenCalledWith(["app", "users"]);
+      expect(onTableClick).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([undefined, redisCaps, libredbCaps])(
+    "withholds count for unresolved or unsupported capabilities (%#)",
+    (capabilities) => {
+      const { queryAllByText } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={capabilities}
+          onGenerateCount={mock(() => {})}
+        />,
+      );
+      expect(queryAllByText("Generate Count Query")).toHaveLength(0);
+    },
+  );
 
   test("renders raw row count for < 1000", () => {
     const { queryByText } = render(

@@ -744,6 +744,10 @@ export function StudioWorkspace({
       if (refuseWhileApplying()) return;
       tabMgr.handleGenerateSelect(object.path);
     },
+    onGenerateCount: (object) => {
+      if (refuseWhileApplying()) return;
+      tabMgr.handleGenerateCount(object.path);
+    },
     onProfileObject: features.codeGenerator ? (object) => setProfilerPath(object.path) : undefined,
     onGenerateCode: features.codeGenerator ? (object) => setCodeGenPath(object.path) : undefined,
     onGenerateTestData: features.testDataGenerator ? (object) => setTestDataPath(object.path) : undefined,
