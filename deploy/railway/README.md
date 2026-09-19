@@ -31,7 +31,7 @@ Or browse the Railway template marketplace and search **LibreDB Studio**.
 ## Deploy (manual — works today, before publishing)
 
 Railway dashboard → **New Project**, then in the project view click **+ New → Docker Image** →
-enter `ghcr.io/libredb/libredb-studio:0.16.0`, then configure the service to
+enter `ghcr.io/libredb/libredb-studio:0.16.1`, then configure the service to
 match [`template.json`](./template.json):
 
 - **Networking:** enable a public domain, target port `3000`.

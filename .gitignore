@@ -89,6 +89,8 @@ Thumbs.db
 !.claude/skills
 .orchids/
 .codegraph/
+.claude/
+
 
 testdb
 testdb-shm
