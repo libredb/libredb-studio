@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { EXCLUDED, findFocusedTests, isScannedFile, runOnlyCheck } from "../../scripts/only-check.mjs";
+import { findFocusedTests, isScannedFile, runOnlyCheck } from "../../scripts/only-check.mjs";
 
 /**
  * The guard's own guard.
@@ -11,21 +11,27 @@ import { EXCLUDED, findFocusedTests, isScannedFile, runOnlyCheck } from "../../s
  * A check that refuses a committed `.only` is only worth having if it can fail, so
  * every case here either produces a finding or pins the absence of one. The
  * fixtures are written into a throwaway repository under the OS temp directory
- * rather than committed beside this file: a fixture carrying a real `.only` that
- * lived in this tree would red the very gate it tests, so generating it at run time
- * keeps the tree clean without a path carve-out for a committed fixture.
+ * rather than committed beside this file: a fixture carrying a real focus that lived
+ * in this tree would red the very gate it tests, so generating it at run time keeps
+ * the tree clean.
  *
- * The focused call is composed through a sentinel rather than written out at each
- * use, so the fixture below still reads as the plain test file it is meant to be.
- * It does not hide the string from the guard, and nothing here pretends otherwise:
- * line 25 spells it out, which is exactly why this file is on `EXCLUDED`.
+ * The guard reads this file like every other one, and nothing here needs a carve-out
+ * to allow that. The focus is assembled from a sentinel instead of being written out,
+ * and each fixture names the tail of its own call after that sentinel, so no line here
+ * carries the member and an opening parenthesis next to each other - the one spelling
+ * that would make the gate report the file that tests it.
  */
 
 const SENTINEL = "__FOCUSED_SENTINEL__";
-const FOCUSED_CALL: string = SENTINEL.replace("__FOCUSED_SENTINEL__", ".only(");
+
+/**
+ * The member a focused call hangs off `test` or `describe`, kept apart from its own
+ * parenthesis for the reason above: this file is scanned by the guard it tests.
+ */
+const ONLY: string = `${".only"}`;
 
 function focused(script: string): string {
-  return script.split(SENTINEL).join(FOCUSED_CALL);
+  return script.split(SENTINEL).join(ONLY);
 }
 
 /** A git repository holding the given files, with a commit so `git ls-files` answers. */
@@ -78,12 +84,35 @@ describe("a clean file", () => {
 const FOCUSED_SOURCE = focused(`import { describe, expect, test } from "bun:test";
 
 describe("a focused file", () => {
-  test${SENTINEL}"runs, and its siblings are hidden", () => {
+  test${SENTINEL}("runs, and its siblings are hidden", () => {
     expect(1).toBe(1);
   });
   test("this one is registered and never run", () => {
     expect(2).toBe(2);
   });
+});
+`);
+
+/**
+ * The chained form, carrying a member between the focus and the call. bun honours it
+ * as it honours a plain focus - the file reports the rows it ran and exits 0 while the
+ * sibling that must fail never runs - so the guard has to refuse this too.
+ */
+const FOCUSED_EACH_SOURCE = focused(`import { describe, expect, test } from "bun:test";
+
+test${SENTINEL}.each([1, 2])("runs one row, and its siblings are hidden", (row) => {
+  expect(row).toBeGreaterThan(0);
+});
+test("this one is registered and never run", () => {
+  expect(2).toBe(2);
+});
+`);
+
+/** The same chain on a suite, which bun honours the same way. */
+const FOCUSED_EACH_SUITE_SOURCE = focused(`import { describe, test } from "bun:test";
+
+describe${SENTINEL}.each([["a"]])("a suite", () => {
+  test("runs alone", () => {});
 });
 `);
 
@@ -103,27 +132,79 @@ describe("findFocusedTests", () => {
   });
 
   test("reports a describe-level focus too, not only an it-level one", () => {
-    const source = focused(`describe${SENTINEL}"a suite", () => {\n  test("a", () => {});\n});\n`);
+    const source = focused(`describe${SENTINEL}("a suite", () => {\n  test("a", () => {});\n});\n`);
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(1);
   });
 
   test("finds a call whose receiver and parenthesis a formatter split across lines", () => {
-    const source = focused(`test${SENTINEL}\n  "wrapped by a formatter",\n  () => {},\n);\n`);
+    const source = focused(`test${SENTINEL}(\n  "wrapped by a formatter",\n  () => {},\n);\n`);
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(1);
   });
 
+  test("finds a chained member between the focus and the call, the row form", () => {
+    const found = findFocusedTests([{ path: "tests/unit/x.test.ts", content: FOCUSED_EACH_SOURCE }]);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]?.line).toBe(3);
+    expect(found[0]?.text).toContain(".each");
+  });
+
+  test("finds the suite form of the same chain, which bun honours the same way", () => {
+    const found = findFocusedTests([{ path: "tests/unit/x.test.ts", content: FOCUSED_EACH_SUITE_SOURCE }]);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]?.line).toBe(3);
+    expect(found[0]?.text).toContain("describe");
+  });
+
+  test("finds a chain the runtime reads as one expression but a line-break splits", () => {
+    // `test.only` and its `.each(...)` on separate lines are the same focused call to
+    // bun, and a pattern that only admitted them adjacent read this file as clean. It is
+    // reported at the line the match starts on.
+    const source = focused(`test${SENTINEL}\n  .each([1, 2])("runs per row", () => {});\n`);
+
+    const found = findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }]);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]?.line).toBe(1);
+    expect(found[0]?.text).toContain(".only");
+  });
+
+  test("does not join a focus that ends a line to a parenthesis on the next one", () => {
+    // The other side of that boundary: a comment may end a line with a focus and open
+    // the next one with a parenthesis, and no call is written there.
+    const prose = "// never commit a .only\n(it hides the rest of the file)\n";
+
+    expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: prose }])).toEqual([]);
+  });
+
   test("counts once per call, so three focuses are three findings", () => {
     const source = focused(
-      `test${SENTINEL}"a", () => {});\ntest${SENTINEL}"b", () => {});\ntest${SENTINEL}"c", () => {});\n`,
+      `test${SENTINEL}("a", () => {});\ntest${SENTINEL}("b", () => {});\ntest${SENTINEL}("c", () => {});\n`,
     );
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(3);
   });
 
+  test("counts two calls on one line as two, which is the unit a whole-file match gives", () => {
+    const source = focused(`test${SENTINEL}("a", () => {}); test${SENTINEL}("b", () => {});\n`);
+
+    const found = findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }]);
+
+    expect(found).toHaveLength(2);
+    expect(found.map((entry) => entry.line)).toEqual([1, 1]);
+  });
+
   test("a clean file produces nothing", () => {
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: CLEAN_SOURCE }])).toEqual([]);
+  });
+
+  test("a chained call without a focus is not a finding", () => {
+    const source = `test.each([1, 2])("runs per row", (row) => {\n  expect(row).toBeGreaterThan(0);\n});\n`;
+
+    expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toEqual([]);
   });
 
   test("the prose this repository is full of is not a call", () => {
@@ -139,6 +220,20 @@ describe("findFocusedTests", () => {
     ].join("\n");
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: prose }])).toEqual([]);
+  });
+
+  test("reads spellings rather than a program, and that is where its edge sits", () => {
+    // All measured on bun 1.4.2. The first two are focused calls this cannot see: each runs
+    // alone, leaves the sibling that must fail unrun and exits 0, and neither carries the
+    // spelling being searched for. The third is the other direction - prose that looks like
+    // a chain, reported while bun runs every test in the file.
+    const bracketLookup = `import { expect, test } from "bun:test";\ntest["only"]("runs", () => {});\ntest("sibling", () => {\n  expect(1).toBe(2);\n});\n`;
+    const commentInside = `import { expect, test } from "bun:test";\ntest.only /* why */ ("runs", () => {});\ntest("sibling", () => {\n  expect(1).toBe(2);\n});\n`;
+    const proseThatLooksLikeAChain = "/*\n  never commit .only\n  .each(...) hides the rest of the file\n*/\n";
+
+    expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: bracketLookup }])).toEqual([]);
+    expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: commentInside }])).toEqual([]);
+    expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: proseThatLooksLikeAChain }])).toHaveLength(1);
   });
 
   test("a path that cannot be read is named rather than skipped", () => {
@@ -168,11 +263,11 @@ describe("isScannedFile", () => {
     expect(isScannedFile("docs/AGENT.md")).toBe(false);
   });
 
-  test("skips its own test, which has to hold the string it searches for", () => {
-    // Not an oversight: this file cannot be scanned by the gate it tests, because
-    // the fixture that proves the gate can fail is itself a match. See EXCLUDED.
-    expect(EXCLUDED).toEqual(["tests/unit/only-check.test.ts"]);
-    expect(isScannedFile("tests/unit/only-check.test.ts")).toBe(false);
+  test("reads its own test, which needs no carve-out to be scanned", () => {
+    // This file holds the fixtures the gate is tested with and is read like every other
+    // one: the focus is assembled from pieces, so no line here matches the pattern the
+    // gate searches for.
+    expect(isScannedFile("tests/unit/only-check.test.ts")).toBe(true);
   });
 });
 
@@ -231,10 +326,19 @@ describe("runOnlyCheck", () => {
     expect(lines.join("\n")).toContain("ENOENT");
   });
 
+  test("a chained focus fails the gate end to end, named with its line", () => {
+    const root = repo({ "tests/unit/only-each.test.ts": FOCUSED_EACH_SOURCE });
+
+    const { code, lines } = runOnlyCheck(root);
+
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toContain("tests/unit/only-each.test.ts:3");
+  });
+
   test("the gate refuses a focus in an e2e spec as well as a unit test", () => {
     const root = repo({
       "e2e/login.spec.ts": focused(
-        `import { test } from "@playwright/test";\ntest${SENTINEL}"logs in", async () => {});\n`,
+        `import { test } from "@playwright/test";\ntest${SENTINEL}("logs in", async () => {});\n`,
       ),
     });
 

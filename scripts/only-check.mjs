@@ -35,8 +35,10 @@
  * matches `only` in every sentence of every comment. Either would red the whole
  * gate on a clean checkout. A call has a parenthesis and the prose does not.
  *
- * The one path it does not read is its own test, for the reason recorded on
- * `EXCLUDED` below.
+ * Nothing is excluded: the guard reads every tracked file under `tests/` and `e2e/`,
+ * its own test included. That test has to hold the string this guard searches for, so
+ * it assembles the call from pieces rather than spelling one out beside its own
+ * parenthesis.
  */
 
 import { execFileSync } from "node:child_process";
@@ -57,41 +59,49 @@ export const TEST_FILE = /\.(?:[cm]?js|tsx?)$/;
 /**
  * A focused test call, and only that.
  *
- * The trailing `(` is what separates a call from the prose. A newline between the
- * receiver and the opening parenthesis is admitted because a formatter is entitled
- * to put one there: Biome at lineWidth 120 will wrap a long
- * `it.only("a title that runs long", () => { ... })`.
+ * The trailing `(` is what separates a call from the prose, and between the member and
+ * that parenthesis only a space or a tab is admitted - not a newline. A line ending in
+ * a focus with a parenthetical on the next one is a comment far more often than it is a
+ * call, and no formatter puts a break there either: measured against biome 2.5.13 (the
+ * version `bun.lock` pins), a long `it.only("a title that runs long", () => {})` at
+ * lineWidth 120 wraps inside its arguments.
+ *
+ * A chained member between `.only` and the call is admitted, and so is whitespace
+ * around it including newlines, because the runtime reads every one of these as the
+ * same focused call. Measured on bun 1.4.2, one file per form, each ran its own tests,
+ * left the sibling that must fail unrun, and exited 0: `test.only.each([1, 2])(...)`,
+ * `describe.only.each(...)(...)`, `test.each([...]).only(...)`,
+ * `test.concurrent.only(...)`, and `test.only` with `.each([1, 2])(...)` on the next
+ * line - one expression to the runtime, and the form an earlier pattern that kept the
+ * member adjacent read as clean. It is why `findFocusedTests` matches a whole file
+ * rather than one line at a time.
+ *
+ * The one shape this admits by mistake is prose spelled exactly that way: a line ending
+ * in a focus whose next line opens with `.member(`. No file in the tree is written that
+ * way, the guard reads the tree clean, and a pattern that refused it could not admit the
+ * call above.
+ *
+ * Both sides of that trade are measured rather than assumed. Prose that only looks like
+ * the call - a block comment holding `never commit .only` with `.each(...)` on the next
+ * line - is reported while bun runs every test in the file, so the finding is noise a
+ * reader dismisses in a second. What this cannot see runs the other way:
+ * `test["only"](...)`, and a call with a comment written between the member and its
+ * parenthesis, each write their own report and exit 0 on bun 1.4.2 with the sibling that
+ * must fail unrun, and neither carries the spelling being searched for. This reads
+ * spellings, not a program: a focus reached through a bracket lookup, an alias, or a
+ * comment is out of its reach, and no text pattern reaches it.
  */
-export const FOCUSED = /\.only\s*\(/;
+export const FOCUSED = /\.only(?:\s*\.\s*[A-Za-z_$][\w$]*)*[ \t]*\(/;
 
 /**
- * Paths this guard does not read, each with the reason it cannot.
- *
- * Its own test is the whole list, and it has to be. A guard that reads source text
- * cannot both scan a file and be tested by that file: the test has to hold the
- * string it is looking for, so the fixture that proves the gate can fail is itself
- * a string the gate reports. Spelling the call out of concatenated pieces does not
- * help - the literal still has to exist somewhere in the file - and neither does a
- * regex character class, which is simply a second spelling of the same problem.
- *
- * This is the shape every linter that refuses focused tests arrives at, and the
- * cost of it here is bounded and stated rather than hidden: a `.only` committed in
- * this one file would not be refused. It would also not run alone, because that
- * file is a single test file among 643 and is executed in full; the failure mode
- * this guard exists for - a file reporting PASS while its siblings never run -
- * needs the file to be selected, and nothing selects this one.
- *
- * `tests/runner/discover.ts` keeps the same kind of list, with the same kind of
- * docblock, for the two files it runs without coverage.
+ * The same pattern, global, for walking a whole file rather than one line. `matchAll`
+ * needs the flag, and `FOCUSED` stays unflagged so that reading it stays stateless.
  */
-export const EXCLUDED = ["tests/unit/only-check.test.ts"];
+const EVERY_FOCUS = new RegExp(FOCUSED.source, "g");
 
 /** Whether a tracked path is one this guard reads. */
 export function isScannedFile(file) {
   if (file.endsWith(".d.ts")) {
-    return false;
-  }
-  if (EXCLUDED.includes(file)) {
     return false;
   }
   if (!SCAN_ROOTS.some((root) => file.startsWith(`${root}/`))) {
@@ -102,6 +112,10 @@ export function isScannedFile(file) {
 
 /**
  * Every focused test in the given sources, one finding per call.
+ *
+ * A file is matched as a whole rather than a line at a time, because the runtime reads
+ * a focus and a chained member on separate lines as one call and a per-line scan cannot
+ * see one. Each match is reported at the line it starts on, with that line as its text.
  *
  * `entries` is a list of `{ path, content? }`. When `content` is absent the file
  * is read through `readFile`, which is defaulted to a filesystem read so the CLI
@@ -126,10 +140,11 @@ export function findFocusedTests(entries, readFile = (file) => fs.readFileSync(f
       }
     }
     const lines = content.split(/\r?\n/);
-    for (const [index, line] of lines.entries()) {
-      if (FOCUSED.test(line)) {
-        found.push({ path: entry.path, line: index + 1, text: line.trim() });
-      }
+    for (const match of content.matchAll(EVERY_FOCUS)) {
+      // Counting the newlines before the match rather than after it: a match may span
+      // several lines, and the line a reader has to open is the one it starts on.
+      const line = content.slice(0, match.index).split("\n").length;
+      found.push({ path: entry.path, line, text: lines[line - 1].trim() });
     }
   }
   return found;
