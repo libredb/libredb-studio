@@ -33,7 +33,8 @@ channel count.
 <!-- BEGIN:CHANNEL-SCORECARD -->
 
 ## Coverage snapshot
-**37 channels · 32 live · 5 pending · 1 deprecated**
+
+**38 channels · 32 live · 5 pending · 1 deprecated**
 
 Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 6 · Kubernetes 4 · Cloud 13**
 
