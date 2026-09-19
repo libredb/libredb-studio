@@ -161,9 +161,19 @@ attempt succeeds. An error no fallback recognizes, or one that survives every ap
 mapped through `mapDatabaseError()` and rethrown rather than left raw.
 
 **What still doesn't work.** On Materialize, foreign keys and indexes come back empty (see gap #4);
-sizes are unmeasured (gap #2). RisingWave's object browser remains unavailable for a different,
-unrelated reason: its query binder fails on the `LEFT JOIN pg_class ON (...)::regclass` pattern
-itself (`missing FROM-clause entry for table c`), which none of the four fallbacks above address.
+sizes are unmeasured (gap #2).
+
+RisingWave's object browser was unavailable until 2026-09-19 and this paragraph named the wrong
+cause, which is worth keeping rather than quietly replacing. It said the binder fails on the
+`LEFT JOIN pg_class ON (...)::regclass` pattern itself. Measured against a live 3.0.4, that pattern
+is fine: `LEFT JOIN pg_class ON c.relnamespace = n.oid` binds, a bare `::regclass` cast evaluates,
+and joining two `information_schema` relations binds. The one thing that does not bind is
+`c.reltuples`, because RisingWave's `pg_class` has no such column - it carries oid, relname,
+relnamespace, relowner, relpersistence, relkind, relpages, relam, reltablespace, reloptions,
+relispartition and relpartbound. The engine reports an unbindable column on its first line and
+`missing FROM-clause entry for table "c"` on its second, and reading the second line first is what
+produced the wrong diagnosis. The repair is in the object listing rather than in this chain: see
+`withoutRowCountColumn()`.
 
 A statement that never joined the catalog a fallback repairs is *not* retried blind:
 `withoutForeignKeyCatalog()` returns the SQL untouched when there is no `fk_info` CTE to empty

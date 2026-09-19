@@ -120,7 +120,11 @@ When using LibreDB Studio, please follow these security best practices:
   that fetched the rows on screen, read under the connection's own dialect, and is refused
   whenever that statement's rows have no single table or the reader cannot settle the name. An
   unquoted name is validated as a bare identifier rather than quoted, because quoting changes its
-  case semantics; a quoted one is copied exactly as the query spells it
+  case semantics; a quoted one is copied exactly as the query spells it. The key column the
+  `WHERE` is built on is inferred as well, from the result's own field names, so the apply asks
+  the engine whether that column addresses one row per value and refuses the whole apply when it
+  does not: a result carrying a foreign key instead of the table's own key made one cell edit
+  rewrite every row sharing that value
 - Login attempts, the AI endpoints and every database-reaching route (query execution, schema
   browsing, maintenance operations, and the admin fleet-health check) are rate limited in the
   application. The counters live in the application process, so with more than one replica the

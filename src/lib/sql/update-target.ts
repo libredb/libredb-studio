@@ -368,6 +368,121 @@ function opensASubquery(pieces: Piece[], fromOffset: number, type?: DatabaseType
  * Only the shape is read. The statement is not executed and no part of it other than the
  * table reference is copied anywhere.
  */
+/**
+ * Whether `column` reaches the grid straight off the base table, rather than through an
+ * expression or a rename.
+ *
+ * The key an inline edit writes against is picked by NAME off the result's field list, and
+ * a name is not a provenance. `SELECT ROW_NUMBER() OVER (ORDER BY product_name) AS
+ * product_id, product_name FROM products` puts 1, 2, 3 in a column called `product_id`;
+ * `products` really has a `product_id`; and the `UPDATE ... WHERE product_id = 1` that
+ * follows lands on whichever product that is, not on the row anybody was looking at.
+ * Measured against PostgreSQL 16: two cells edited, two rows written, neither of them the
+ * ones on screen, and the apply reported both as accepted. `SELECT sku AS product_id`
+ * is the same defect spelled shorter.
+ *
+ * `*` is the safe case and the common one: every field is the table's own. Otherwise the
+ * item that produces this name has to BE the column - one identifier, or a qualified one,
+ * and any `AS` on it has to name the column it already names.
+ *
+ * Refusing when the shape cannot be read, like everything else here: a key this reader
+ * cannot vouch for is one it should not let a write aim with.
+ */
+export function selectsPlainColumn(sql: string, column: string, type?: DatabaseType): boolean {
+  const pieces = readPieces(sql, type);
+  if (typeof pieces === "string") return false;
+  const top = pieces.filter((piece) => piece.depth === 0);
+
+  const select = top.findIndex((piece) => isWord(piece, "SELECT"));
+  const from = top.findIndex((piece) => isWord(piece, "FROM"));
+  if (select === -1 || from === -1 || from < select) return false;
+
+  // `DISTINCT`, `ALL`, and DuckDB's and PostgreSQL's `DISTINCT ON (...)` sit between the
+  // keyword and the list. They say how many rows come back, not where a field comes from.
+  let start = select + 1;
+  if (isWord(top[start], "ALL") || isWord(top[start], "DISTINCT")) {
+    const distinct = isWord(top[start], "DISTINCT");
+    start++;
+    if (distinct && isWord(top[start], "ON")) {
+      start++;
+      // The parenthesised list is one `(` and one `)` at this level; its contents are deeper.
+      if (top[start]?.kind === "other" && top[start].text === "(") {
+        start++;
+        while (start < from && !(top[start].kind === "other" && top[start].text === ")")) start++;
+        start++;
+      }
+    }
+  }
+
+  // The select list, split on its own commas. A comma inside parens belongs to a function's
+  // arguments, and those pieces are not at this depth to begin with.
+  const items: Piece[][] = [[]];
+  for (const piece of top.slice(start, from)) {
+    if (piece.kind === "other" && piece.text === ",") items.push([]);
+    else items[items.length - 1].push(piece);
+  }
+
+  const named = (piece: Piece) => (piece.kind === "quoted" ? sql.slice(piece.start + 1, piece.end - 1) : piece.text);
+  const sameName = (a: string, b: string) => a === b || a.toLowerCase() === b.toLowerCase();
+  const isName = (piece: Piece | undefined) =>
+    piece !== undefined && (piece.kind === "name" || piece.kind === "quoted");
+
+  /**
+   * `*` on its own, or `t.*`. Not any `*` anywhere in the item: `ROW_NUMBER() OVER (...) * 1`
+   * multiplies, and reading that as a star let a computed field pass as the table's own -
+   * measured, and it is the whole defect this function exists to stop.
+   */
+  const isStar = (item: Piece[]) => {
+    const star = (piece: Piece | undefined) => piece?.kind === "other" && piece.text === "*";
+    if (item.length === 1) return star(item[0]);
+    return item.length === 3 && isName(item[0]) && item[1].kind === "other" && item[1].text === "." && star(item[2]);
+  };
+
+  // The LAST item that produces this name is the one the grid reads. Drivers build a row
+  // object keyed by field name, so `SELECT product_id, sku AS product_id` hands over sku's
+  // value under that name - measured on node-postgres - and deciding on the first match
+  // would vouch for a column the user never sees.
+  let answer = false;
+  for (const item of items) {
+    if (item.length === 0) continue;
+
+    if (isStar(item)) {
+      // Every one of the table's columns, this one included, unless a later item renames
+      // over it.
+      answer = true;
+      continue;
+    }
+
+    // Strip a trailing alias, with or without the keyword.
+    let body = item;
+    let alias: string | null = null;
+    const last = item[item.length - 1];
+    if (item.length >= 2 && isName(last)) {
+      if (isWord(item[item.length - 2], "AS")) {
+        alias = named(last);
+        body = item.slice(0, item.length - 2);
+      } else if (isName(item[item.length - 2])) {
+        // Two identifiers side by side is an alias with the keyword left out.
+        alias = named(last);
+        body = item.slice(0, item.length - 1);
+      }
+    }
+
+    // A plain reference is a chain of identifiers joined by dots: `c`, `t.c`, `s.t.c`.
+    const isReference =
+      body.length > 0 &&
+      body.length % 2 === 1 &&
+      body.every((piece, index) => (index % 2 === 0 ? isName(piece) : piece.kind === "other" && piece.text === "."));
+
+    const source = isReference ? named(body[body.length - 1]) : null;
+    const output = alias ?? source;
+    if (output === null || !sameName(output, column)) continue;
+    // An alias that renames is a different column wearing this name.
+    answer = source !== null && sameName(source, column);
+  }
+  return answer;
+}
+
 export function resolveUpdateTarget(sql: string, type?: DatabaseType): UpdateTarget {
   const pieces = readPieces(sql, type);
   if (pieces === "unterminated") {

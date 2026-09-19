@@ -31,14 +31,10 @@ docker run \
   --name libredb-studio \
   -p 3000:3000 \
   -e ADMIN_EMAIL=admin@libredb.org \
-  -e ADMIN_PASSWORD=change-me-admin \
-  -e USER_EMAIL=user@libredb.org \
-  -e USER_PASSWORD=change-me-user \
-  -e JWT_SECRET=change-me-to-a-random-32-char-string \
   libredb/libredb-studio:latest
 ```
 
-Open <http://localhost:3000> and log in with the `ADMIN_EMAIL` / `ADMIN_PASSWORD` you set above. **Use your own strong passwords and a random `JWT_SECRET`** — the values here are placeholders.
+Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` — the secret has to be at least 32 characters, and a value short enough to read as a placeholder is what stops a container coming up on a published one. `USER_EMAIL` / `USER_PASSWORD` are optional and create a second, lower-privilege account; without them there is no such account.
 
 > **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start and the admin password is printed once to the container log. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
@@ -54,10 +50,6 @@ services:
       - "3000:3000"
     environment:
       ADMIN_EMAIL: admin@libredb.org
-      ADMIN_PASSWORD: change-me
-      USER_EMAIL: user@libredb.org
-      USER_PASSWORD: change-me
-      JWT_SECRET: change-me-to-a-random-32-char-string
       STORAGE_PROVIDER: sqlite                 # persist on the volume below
       STORAGE_SQLITE_PATH: /app/data/libredb-storage.db
     volumes:

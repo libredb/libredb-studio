@@ -11,12 +11,25 @@ import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 
 const README = readFileSync("README.md", "utf8");
 
+/**
+ * Every environment variable EVERY Koyeb button in the file sets.
+ *
+ * Every, twice over, and both halves were holes a previous version of this guard had. It
+ * read only the FIRST matching line, so a second button lower down was unguarded; and it
+ * picked the pairs apart with a regular expression over one spelling of the encoding, so
+ * `env[ADMIN_PASSWORD]=` unencoded, or `%5b` in lower case, walked straight past it. Both
+ * are the same URL to Koyeb. Parsing with `URL` asks the question the reader's browser
+ * asks rather than the question the author happened to type.
+ */
 function koyebEnv(): Map<string, string> {
-  const line = README.split("\n").find((l) => l.includes("app.koyeb.com/deploy"));
-  if (line === undefined) throw new Error("the Koyeb deploy button is no longer in README.md");
+  const urls = README.match(/https:\/\/app\.koyeb\.com\/deploy\?[^)\s]+/g);
+  if (urls === null) throw new Error("the Koyeb deploy button is no longer in README.md");
   const env = new Map<string, string>();
-  for (const [, key, value] of line.matchAll(/env%5B([A-Z_]+)%5D=([^&)\s]+)/g)) {
-    env.set(key, decodeURIComponent(value));
+  for (const href of urls) {
+    for (const [key, value] of new URL(href).searchParams) {
+      const named = /^env\[([A-Z_]+)\]$/.exec(key);
+      if (named !== null) env.set(named[1], value);
+    }
   }
   return env;
 }
@@ -28,14 +41,15 @@ describe("the Koyeb deploy button", () => {
     expect(secret!.length).toBeLessThan(JWT_SECRET_MIN_LENGTH);
   });
 
-  test("prefills no password anyone could sign in with", () => {
+  test("prefills no password at all", () => {
     const env = koyebEnv();
+    // A placeholder password is still a password. There is no placeholder
+    // that fixes that, so the button carries neither. Unset, the two behave differently and
+    // both answers are safe: `ADMIN_PASSWORD` is generated on first run and printed to the
+    // log, while `USER_PASSWORD` is never generated — `getAuthUsers` adds that account only
+    // when it is set, so without it there is no second account to sign into.
     for (const key of ["ADMIN_PASSWORD", "USER_PASSWORD"]) {
-      const value = env.get(key);
-      expect(value).toBeDefined();
-      // Not a password: a sentence telling the operator to replace it. Anything that reads
-      // as a credential is one, once it is in a public file.
-      expect(value).toMatch(/^set_a_real_/);
+      expect(env.has(key)).toBe(false);
     }
   });
 

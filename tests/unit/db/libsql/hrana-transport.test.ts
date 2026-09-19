@@ -336,6 +336,132 @@ describe("LibSQLHranaTransport parameter encoding", () => {
     expect(sentArgs()).toEqual([{ type: "text", value: "2026-08-27T00:00:00.000Z" }]);
   });
 
+  // --------------------------------------------------------------------------
+  // Sending one back
+  // --------------------------------------------------------------------------
+  //
+  // `decodeInteger` hands a past-2^53 integer back as its decimal STRING, so the
+  // grid's next `UPDATE ... WHERE id = ?` binds that string. Measured 2026-09-18
+  // against sqld 0.24.33 (`ghcr.io/tursodatabase/libsql-server:v0.24.33`), against
+  // a row whose key is 9007199254740993:
+  //
+  //   column declared   | bound as text | bound as an integer
+  //   INTEGER / TEXT    |       matches |             matches
+  //   BLOB / undeclared |   NO MATCH    |             matches
+  //
+  // A column declared BLOB or declared NOTHING has no affinity, so SQLite compares
+  // the operands as they stand and a text never equals an integer - the row the
+  // grid just read reports 0 rows changed. The encoder therefore accepts back
+  // precisely the shape the decoder emits, and nothing else.
+
+  test("encodes the digits of a past-2^53 integer as an integer, the shape the decoder handed out", async () => {
+    await transport().execute("UPDATE t SET a = 1 WHERE id = ?", { params: ["9007199254740993"] });
+
+    expect(sentArgs()).toEqual([{ type: "integer", value: "9007199254740993" }]);
+  });
+
+  test("encodes the digits of a negative past-2^53 integer as an integer too", async () => {
+    await transport().execute("UPDATE t SET a = 1 WHERE id = ?", { params: ["-9007199254740993"] });
+
+    expect(sentArgs()).toEqual([{ type: "integer", value: "-9007199254740993" }]);
+  });
+
+  test("encodes INT64's own limits as integers, the widest row value SQLite can hold", async () => {
+    await transport().execute("SELECT ?, ?", {
+      params: ["9223372036854775807", "-9223372036854775808"],
+    });
+
+    expect(sentArgs()).toEqual([
+      { type: "integer", value: "9223372036854775807" },
+      { type: "integer", value: "-9223372036854775808" },
+    ]);
+  });
+
+  test("leaves a string inside the safe range as text, because the decoder hands those out as numbers", async () => {
+    await transport().execute("SELECT ?, ?", { params: ["7", "9007199254740991"] });
+
+    expect(sentArgs()).toEqual([
+      { type: "text", value: "7" },
+      { type: "text", value: "9007199254740991" },
+    ]);
+  });
+
+  test("leaves leading zeros as text, a shape the decoder cannot emit", async () => {
+    await transport().execute("SELECT ?, ?", { params: ["007", "09007199254740993"] });
+
+    expect(sentArgs()).toEqual([
+      { type: "text", value: "007" },
+      { type: "text", value: "09007199254740993" },
+    ]);
+  });
+
+  test("leaves a leading plus, surrounding space and a trailing .0 as text", async () => {
+    await transport().execute("SELECT ?, ?, ?", {
+      params: ["+9007199254740993", " 9007199254740993", "9007199254740993.0"],
+    });
+
+    expect(sentArgs()).toEqual([
+      { type: "text", value: "+9007199254740993" },
+      { type: "text", value: " 9007199254740993" },
+      { type: "text", value: "9007199254740993.0" },
+    ]);
+  });
+
+  test("leaves exponent form and the empty string as text", async () => {
+    await transport().execute("SELECT ?, ?", { params: ["9e15", ""] });
+
+    expect(sentArgs()).toEqual([
+      { type: "text", value: "9e15" },
+      { type: "text", value: "" },
+    ]);
+  });
+
+  test("leaves digits wider than 64 bits as text, since no row value could match them as a number", async () => {
+    await transport().execute("SELECT ?, ?", {
+      params: ["99999999999999999999", "9223372036854775808"],
+    });
+
+    expect(sentArgs()).toEqual([
+      { type: "text", value: "99999999999999999999" },
+      { type: "text", value: "9223372036854775808" },
+    ]);
+  });
+
+  test("leaves an ordinary textual key alone even when every character is a digit", async () => {
+    await transport().execute("SELECT ?, ?", { params: ["42", "0"] });
+
+    expect(sentArgs()).toEqual([
+      { type: "text", value: "42" },
+      { type: "text", value: "0" },
+    ]);
+  });
+
+  test("is the exact inverse of the decoder: what it reads back is what it sends", async () => {
+    // The one round trip the grid performs, both halves in a single test: read the
+    // key out of a row, then bind that very value back in the WHERE clause.
+    handler = () =>
+      respond(
+        pipeline(
+          okStep({
+            cols: [{ name: "id", decltype: null }],
+            rows: [[{ type: "integer", value: "9007199254740993" }]],
+            affected_row_count: 0,
+            last_insert_rowid: null,
+            rows_read: 1,
+            rows_written: 0,
+            query_duration_ms: 0.01,
+          }),
+        ),
+      );
+
+    const read = await transport().execute("SELECT id FROM t");
+    const key = read.rows[0]?.id;
+    expect(key).toBe("9007199254740993");
+
+    await transport().execute("UPDATE t SET a = 1 WHERE id = ?", { params: [key] });
+    expect(sentArgs(1)).toEqual([{ type: "integer", value: "9007199254740993" }]);
+  });
+
   test("sends no args member when the statement has no parameters", async () => {
     await transport().execute("SELECT 1");
 

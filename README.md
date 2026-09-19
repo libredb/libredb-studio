@@ -349,10 +349,6 @@ docker run \
   --name libredb-studio \
   -p 3000:3000 \
   -e ADMIN_EMAIL=admin@libredb.org \
-  -e ADMIN_PASSWORD=LibreDB.2026 \
-  -e USER_EMAIL=user@libredb.org \
-  -e USER_PASSWORD=LibreDB.2026 \
-  -e JWT_SECRET=change-me-to-a-random-32-char-string \
   ghcr.io/libredb/libredb-studio:latest
 ```
 
@@ -362,7 +358,7 @@ docker run \
 
   > **IPv6**: the container picks its own bind address at startup and prefers `::`, which serves IPv4 and IPv6 through one socket — so an IPv6-only host needs no flags. It falls back to `0.0.0.0` where the namespace has no usable IPv6, and logs which it chose. Add `-e HOSTNAME=0.0.0.0` to pin it to IPv4 — details, and the Kubernetes equivalent, in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md#network-exposure-bind-address).
 
-  Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
+  Open [http://localhost:3000](http://localhost:3000). The command above sets no password, so the first start generates one and prints it to the container log with `docker logs libredb-studio` — sign in as `admin@libredb.org` with the password it printed, or set `ADMIN_PASSWORD` yourself.
 
   > **Auth env vars (local provider):** `ADMIN_PASSWORD` and `JWT_SECRET` are only required when `AUTH_BOOTSTRAP=off`; otherwise both are generated on first start (see [Zero-config first run](#zero-config-first-run) below). `USER_EMAIL` / `USER_PASSWORD` are optional; omit them to run admin-only (no default user password is ever assumed). `ADMIN_EMAIL` defaults to `admin@libredb.org`. Using OIDC (`NEXT_PUBLIC_AUTH_PROVIDER=oidc`)? None of these are needed.
 
@@ -421,9 +417,7 @@ journalctl -u libredb-studio
        ```env
        # Authentication (email/password)
        ADMIN_EMAIL=admin@libredb.org
-       ADMIN_PASSWORD=your_admin_password
        USER_EMAIL=user@libredb.org
-       USER_PASSWORD=your_user_password
        JWT_SECRET=your_32_character_random_string
 
        # Optional: OIDC Single Sign-On (Auth0, Keycloak, Okta, Azure AD, etc.)
@@ -618,7 +612,7 @@ The nineteenth spec in `e2e/`, `base-path.spec.ts`, is not in that 18: it needs 
 
 Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, Koyeb, Render, Railway, Sealos, CapRover, or Dokploy:
 
- [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=libredb-studio&type=docker&image=ghcr.io%2Flibredb%2Flibredb-studio%3Alatest&instance_type=free&regions=fra&instances_min=0&autoscaling_sleep_idle_delay=3900&env%5BADMIN_EMAIL%5D=admin%40libredb.org&env%5BADMIN_PASSWORD%5D=set_a_real_password&env%5BJWT_SECRET%5D=set_a_real_secret&env%5BLLM_API_KEY%5D=your_GEMINI_API_KEY&env%5BLLM_MODEL%5D=gemini-2.5-flash&env%5BLLM_PROVIDER%5D=gemini&env%5BNEXT_PUBLIC_AUTH_PROVIDER%5D=local&env%5BSTORAGE_PROVIDER%5D=local&env%5BUSER_EMAIL%5D=user%40libredb.org&env%5BUSER_PASSWORD%5D=set_a_real_password&ports=3000%3Bhttp%3B%2F&hc_protocol%5B3000%5D=tcp&hc_grace_period%5B3000%5D=5&hc_interval%5B3000%5D=30&hc_restart_limit%5B3000%5D=3&hc_timeout%5B3000%5D=5&hc_path%5B3000%5D=%2F&hc_method%5B3000%5D=get)  
+ [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=libredb-studio&type=docker&image=ghcr.io%2Flibredb%2Flibredb-studio%3Alatest&instance_type=free&regions=fra&instances_min=0&autoscaling_sleep_idle_delay=3900&env%5BADMIN_EMAIL%5D=admin%40libredb.org&env%5BJWT_SECRET%5D=set_a_real_secret&env%5BLLM_API_KEY%5D=your_GEMINI_API_KEY&env%5BLLM_MODEL%5D=gemini-2.5-flash&env%5BLLM_PROVIDER%5D=gemini&env%5BNEXT_PUBLIC_AUTH_PROVIDER%5D=local&env%5BSTORAGE_PROVIDER%5D=local&ports=3000%3Bhttp%3B%2F&hc_protocol%5B3000%5D=tcp&hc_grace_period%5B3000%5D=5&hc_interval%5B3000%5D=30&hc_restart_limit%5B3000%5D=3&hc_timeout%5B3000%5D=5&hc_path%5B3000%5D=%2F&hc_method%5B3000%5D=get)  
  [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio)  
  [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/libredb-studio?referralCode=libredb&utm_medium=integration&utm_source=template&utm_campaign=generic)  
  [![Deploy on Sealos](https://sealos.io/Deploy-on-Sealos.svg)](https://sealos.io/products/app-store/libredb-studio)  
@@ -685,7 +679,7 @@ For a reverse-proxy path such as `/tools/libredb`, build with `BASE_PATH` and fo
 ### Koyeb
 
 1. Use the **Deploy to Koyeb** button under [One-Click Deploy](#one-click-deploy) to run the prebuilt `ghcr.io/libredb/libredb-studio:latest` image.
-2. Set a strong `JWT_SECRET` (32+ characters) and real `ADMIN_PASSWORD` / `USER_PASSWORD` in the deploy form before launching. Koyeb cannot auto-generate secrets; the prefilled values are placeholders.
+2. Set a strong `JWT_SECRET` (32+ characters) in the deploy form before launching. Koyeb cannot auto-generate secrets, and the prefilled one is shorter than the 32-character minimum on purpose, so a deployment left as it stands stops at boot and says why. No password is prefilled: leave `ADMIN_PASSWORD` unset and the app generates one on first run and prints it to the Koyeb runtime log, or set your own. `USER_PASSWORD` is not generated — without it the lower-privilege account does not exist at all, which is the safer default for a public URL.
 3. For connections to survive redeploys, set `STORAGE_PROVIDER=postgres` and `STORAGE_POSTGRES_URL` to a Koyeb managed Postgres or Neon connection string. The button defaults to `STORAGE_PROVIDER=local`, which keeps connection metadata in the browser.
 
 See [`deploy/koyeb/`](deploy/koyeb/) for the complete setup and storage options.

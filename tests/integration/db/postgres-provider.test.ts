@@ -4303,6 +4303,40 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  test("a server whose pg_class has no reltuples loses the count, not the folder", async () => {
+    // RisingWave 3.0.4, measured: its pg_class carries oid, relname, relnamespace,
+    // relowner, relpersistence, relkind, relpages, relam, reltablespace, reloptions,
+    // relispartition and relpartbound - no reltuples, and no pg_total_relation_size()
+    // either, so this listing is refused twice for two different reasons. The engine
+    // reports an unbindable column as a missing FROM-clause entry for the alias, which
+    // reads like a join defect and is not one: the join binds, the column does not.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      asked.push(sql);
+      if (sql.includes("pg_total_relation_size")) {
+        throw new Error("Failed to bind expression: pg_total_relation_size(c.oid)");
+      }
+      if (sql.includes("reltuples")) {
+        throw new Error(
+          'Failed to bind expression: c.reltuples: Item not found: missing FROM-clause entry for table "c"',
+        );
+      }
+      return { rows: [{ name: "orders" }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listObjects(["app"], "table")).toEqual([
+      // Neither number was measured, so neither is claimed. The folder still lists.
+      { path: ["app", "orders"], name: "orders", kind: "table", rowCount: undefined, sizeBytes: undefined },
+    ]);
+    expect(asked).toHaveLength(3);
+    expect(asked[2]).not.toContain("reltuples");
+    expect(asked[2]).not.toContain("pg_total_relation_size");
+    await provider.disconnect();
+  });
+
   test("the size retry's own failure leaves by the same door, quoting what the server received", async () => {
     mockQueryFn = async (sql) => {
       if (!sql.includes("relkind")) return { rows: [] };

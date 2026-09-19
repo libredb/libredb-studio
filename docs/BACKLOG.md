@@ -28,9 +28,9 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D96, U17 · 42
+- [Drivers and connections](#drivers-and-connections) — D1–D98, U17 · 43
 - [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1–R2 · 2
+- [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U21 · 12
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
@@ -206,6 +206,52 @@ own pass over every consumer.
 
 **Done when:** a value one of these engines cannot represent as a JS number reaches the grid with its
 digits intact, and every consumer of a numeric cell has been checked against the new shape.
+
+---
+
+### D98. What the other five drivers hand back for a 64-bit integer, measured
+
+D18 names two engines that lose digits and three that keep them as strings. Which side the rest of
+the family falls on was never measured, and the gap read as the same defect, unrecorded, on five
+more engines. Measured 2026-09-19, each through the seam the product itself uses - the ClickHouse
+HTTP transport, the Cassandra driver transport, `openDuckDBClient`, `mssql` under the options
+`buildConfig` sets, and `oracledb` with the only settings `oracle.ts` applies
+(`OUT_FORMAT_OBJECT`, and no `fetchAsString` for a NUMBER) - over a table holding 9007199254740993
+beside its neighbour 9007199254740992:
+
+| Engine | Declared | What the driver hands over for 9007199254740993 |
+| --- | --- | --- |
+| Oracle AI Database 26ai Free 23.26.3.0.0, oracledb 6.10.0 | `NUMBER(19,0)` | `9007199254740992`, a JS number - the NEIGHBOURING row's key |
+| SQL Server 2022 CU27 (16.0.4295.3), mssql 12.7.2 | `bigint` | `"9007199254740993"`, a string |
+| the same | `numeric(38,0)` | `1.2345678901234568e+37`, a JS number |
+| DuckDB v1.5.5, @duckdb/node-api 1.5.5-r.4 | `BIGINT` | `"9007199254740993"`, a string |
+| ClickHouse 26.8.6.5 | `Int64` / `UInt64` | `"9007199254740993"` / `"18446744073709551615"`, strings |
+| Apache Cassandra 5.0.9, cassandra-driver 4.9.0 | `bigint` / `varint` | `"9007199254740993"`, strings |
+
+Three of the five hand every 64-bit integer back as its digits, and each by a deliberate setting
+rather than by luck: the ClickHouse transport sends `output_format_json_quote_64bit_integers=1` and
+its comment says what happens without it, DuckDB is read with `getRowObjectsJson()`, which prints
+BIGINT, HUGEINT and DECIMAL as decimal strings, and the Cassandra adapter stringifies `Long`,
+`Integer` and `BigDecimal` for fidelity. SQL Server loses nothing on `bigint` either - tedious hands
+one over as text of its own accord - and rounds only its decimal family. Oracle's `NUMBER` is the one integer key of the
+five that reaches the grid already wrong, and that is D18, not a sixth thing. What the rounding
+costs the row editor is now one case rather than two: a FRACTIONAL key out of a column declared
+`NUMBER`, `decimal`, `numeric` or `money` is refused before the engine is asked, because the
+declaration says the driver rounded it - `describeFraction` and `EXACT_DECIMAL_TYPE_NAMES` in
+`src/hooks/use-inline-editing.ts`, measured 2026-09-19 on Oracle 26ai Free and SQL Server 2022 CU27.
+The key whose digits round to a WHOLE number is still open, and that is R3.
+
+**What is new is that one sentence in the tree is false.** `docs/providers/mssql.md` §5.3 says
+`BIGINT`, `DECIMAL`/`NUMERIC` and `MONEY` "are surfaced as JavaScript `number`s and can **lose
+precision** beyond 2^53". §5.4 of the same document says the opposite about the first of them -
+"`BIGINT` and `DECIMAL` reach the browser as strings" - and the measurement agrees with §5.4 for
+`bigint` and with §5.3 for `numeric`. D18 repeats §5.3's reading in its own second paragraph. One
+driver described two ways in one document is how a defect SQL Server does not have came to be
+expected of it.
+
+**Done when:** `docs/providers/mssql.md` states what tedious really hands over for each of those
+four types, D18's `BIGINT` mention is corrected to match, and the three string-returning drivers are
+recorded where a reader meets them rather than re-derived by the next sweep.
 
 ---
 
@@ -1335,7 +1381,6 @@ What can be done is to re-probe, and to stop the claim drifting back to "whole o
 
 **Done when:** the focused repro has been run against a bun newer than 1.4.2 under the same load, and either it is whole 10 times out of 10 and this entry closes, or the entry names the newest version it still reproduces on and is reported upstream.
 
-
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -1393,6 +1438,41 @@ the LIMIT case in `tests/unit/sql/update-target.test.ts`, with the engine each s
 
 ---
 
+### R3. A whole-LOOKING key out of a scaled decimal column writes the neighbouring row
+
+#969 closed the fractional half of this: a number read out of a column the engine declares `NUMBER`,
+`decimal`, `numeric` or `money` is refused before the engine is asked, because the declaration says
+the driver rounded it - `describeFraction` and `EXACT_DECIMAL_TYPE_NAMES` in
+`src/hooks/use-inline-editing.ts`. Measured 2026-09-19 on Oracle AI Database 26ai Free 23.26.3.0.0
+and SQL Server 2022 CU27: the `NUMBER(20,4)` pair that used to write to `the-neighbour` is refused
+with nothing asked of the engine, while `BINARY_DOUBLE`, a whole `NUMBER(10)` key, a SQLite
+`DECIMAL` (that engine has no exact decimal - it stores a double) and the STRING a `numeric` takes
+over `pg`, mysql2 and DuckDB all still write.
+
+**What is left is the value that arrives WHOLE.** A decimal whose digits round to an exact integer
+double reaches `describeUncarriableKey` as a safe integer and is let through - which is right for
+every ordinary Oracle key and wrong for this one. MEASURED 2026-09-19 through this hook, after the
+fix above: Oracle `zz969_intx(id NUMBER(38,20) PRIMARY KEY)` holding 5.00000000000000000001 and 5
+hands BOTH rows over as 5; with only the first row edited, the check asked about 5, Oracle answered
+ONE group holding ONE row, and `UPDATE ... WHERE "ID" = :2` wrote to the row holding exactly 5 -
+the row nobody edited - reported as "Changes Applied". SQL Server `decimal(38,20)` over the same
+pair does the same thing, the parameter bound as an integer this time rather than a float.
+
+It could not be closed where the fractional half was. The only thing that separates `NUMBER(38,20)`
+from the `NUMBER(10)` that is every second Oracle primary key is the SCALE, and the declared type
+this hook reads carries the word alone: `oracleColumnTypes` and `mssqlColumnTypes` in
+`src/lib/db/providers/sql/column-types.ts` drop precision and scale deliberately, because a computed
+column reports precision 0 (`COUNT(*)`) or scale -127 (`1/3`). Refusing every whole number out of a
+decimal column instead would refuse every Oracle key there is - measured, `NUMBER(10)` holding 42
+writes correctly and must keep doing so.
+
+**Done when:** the type that reaches this hook says whether the column can hold digits under the
+point on the engines whose drivers round - the scale beside the word, or a second field that says
+it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
+above beside the fractional ones #969 added.
+
+---
+
 ## Studio UI and query execution
 
 `U2` came out of the #384 review. `X2` to `X13` came out of the #422 export review: each was
@@ -1423,7 +1503,8 @@ it was not mixed into a correctness PR.
 
 ### X9. What `columnTypes` still cannot name, measured
 
-The four string-returning drivers fill `QueryResult.columnTypes` since 2026-08-23. Four bounds were
+The four string-returning drivers fill `QueryResult.columnTypes` since 2026-08-23, and
+SQLite joined them on 2026-09-18 by reading its own declarations through the driver bridge. Four bounds were
 measured while doing it, and each is a small residue rather than a defect:
 
 - **A user-defined type has no name.** Postgres's built-in OIDs are a generated static table (they are

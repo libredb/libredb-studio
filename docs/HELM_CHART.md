@@ -348,6 +348,22 @@ everywhere it matters: the `APP VERSION` column in `helm search repo`, ArtifactH
 the `artifacthub.io/images` annotation. Revisit lockstep if the chart reaches 1.0 and
 chart-only churn drops.
 
+**Two tag series means some third-party catalogs read the wrong version, and that is their
+bug rather than ours.** `helm-release.yml` publishes every chart release with
+`gh release edit --latest=false`, so GitHub's own answer stays correct: the repository page,
+the REST `releases/latest` endpoint and the GraphQL `latestRelease` field all name the
+application release. A consumer that instead takes the first element of the unordered
+releases list gets whichever release was published most recently, which is a chart release
+about half the time. Measured on 2026-09-19: `releases(first: 1)` returned
+`libredb-studio-0.1.65` while `latestRelease` returned `0.16.0`, which is why
+awesome-selfhosted listed our current release as `0.1.65`. Reported upstream as
+[nodiscc/hecat#163](https://github.com/nodiscc/hecat/issues/163), with the measurement that
+51 of 435 sampled entries in that data set are wrong for the same reason, mostly
+prereleases and nightlies rather than second tag series. **When a catalog shows a chart
+version as the application version, send the catalog's maintainer to `latestRelease`;
+do not "fix" it by marking chart releases as prereleases, which would be false and would
+hide them from `helm search` consumers.**
+
 ## Deployment Examples
 
 ### Minimal (port-forward)

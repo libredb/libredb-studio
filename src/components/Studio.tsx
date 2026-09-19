@@ -409,6 +409,7 @@ export default function Studio() {
     activeConnection: conn.activeConnection,
     currentTab: tabMgr.currentTab,
     executeQuery: queryExec.executeQuery,
+    transactionActive: txn.transactionActive,
   });
 
   // Inline row editing is offered only where the provider declares the row-update

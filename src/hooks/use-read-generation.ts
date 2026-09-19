@@ -17,10 +17,11 @@ import { useMemo, useRef } from "react";
  * deferred connection issues no request at all and still supersedes a read in flight, which
  * is what `supersede()` is for. What is being sequenced is the READ, not the socket.
  *
- * Stated once and used twice, deliberately. `src/hooks/use-connection-manager.ts` reads this
- * application's own routes and `src/workspace/hooks/use-connection-adapter.ts` calls back
- * into an embedded host whose latency is not ours to bound, and the embedded one shipped
- * without the guard because the rule lived inside the other hook rather than beside both.
+ * Stated once and used by three, deliberately. `src/hooks/use-connection-manager.ts` reads
+ * this application's own routes, `src/workspace/hooks/use-connection-adapter.ts` calls back
+ * into an embedded host whose latency is not ours to bound, and `src/components/SchemaDiff.tsx`
+ * has three reads of its own that can be in flight at once. The embedded one shipped without
+ * the guard because the rule lived inside the other hook rather than beside all of them.
  */
 export interface ReadGeneration {
   /**

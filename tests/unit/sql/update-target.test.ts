@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveUpdateTarget } from "@/lib/sql/update-target";
+import { resolveUpdateTarget, selectsPlainColumn } from "@/lib/sql/update-target";
 
 // Inline grid editing writes `UPDATE <table> SET ...`, and this decides what `<table>`
 // may be. It used to be the tab's title, which is free text and outlives the query it was
@@ -557,5 +557,94 @@ describe("resolveUpdateTarget", () => {
       expect(target.reason).not.toMatch(/[.]$/);
       expect(target.reason.length).toBeGreaterThan(20);
     }
+  });
+});
+
+describe("selectsPlainColumn", () => {
+  // The key an inline edit writes against is picked by NAME off the result's field list, and
+  // a name is not a provenance. Measured against PostgreSQL 16: `SELECT ROW_NUMBER() OVER
+  // (ORDER BY product_name) AS product_id, product_name FROM products` puts 1, 2, 3 in a
+  // column called `product_id`, `products` really has a `product_id`, and the two UPDATEs
+  // that followed wrote to two rows that were never on screen - reported as accepted.
+
+  test("a star means every field is the table's own", () => {
+    expect(selectsPlainColumn("SELECT * FROM products", "product_id")).toBe(true);
+    expect(selectsPlainColumn("SELECT p.* FROM products p", "product_id")).toBe(true);
+  });
+
+  test("a plain reference is the column, qualified or not", () => {
+    expect(selectsPlainColumn("SELECT product_id, sku FROM products", "product_id")).toBe(true);
+    expect(selectsPlainColumn("SELECT p.product_id, p.sku FROM products p", "product_id")).toBe(true);
+    expect(selectsPlainColumn('SELECT "Id", name FROM users', "Id")).toBe(true);
+    // An alias that names the column it already names changes nothing.
+    expect(selectsPlainColumn("SELECT product_id AS product_id FROM products", "product_id")).toBe(true);
+  });
+
+  test("an expression wearing the column's name is not the column", () => {
+    expect(
+      selectsPlainColumn(
+        "SELECT ROW_NUMBER() OVER (ORDER BY product_name) AS product_id, product_name FROM products",
+        "product_id",
+      ),
+    ).toBe(false);
+    expect(selectsPlainColumn("SELECT 1 AS id, name FROM users", "id")).toBe(false);
+    expect(selectsPlainColumn("SELECT count(*) AS id FROM users", "id")).toBe(false);
+  });
+
+  test("an alias that renames another column is not the column either", () => {
+    // Shorter to write and the same defect: the WHERE would carry sku's value.
+    expect(selectsPlainColumn("SELECT sku AS product_id, product_name FROM products", "product_id")).toBe(false);
+    expect(selectsPlainColumn("SELECT p.sku AS product_id FROM products p", "product_id")).toBe(false);
+  });
+
+  test("an alias without the word AS is still an alias", () => {
+    // `SELECT sku product_id FROM products` is the same rename with the keyword left out,
+    // and every engine that offers inline editing accepts it.
+    expect(selectsPlainColumn("SELECT sku product_id, product_name FROM products", "product_id")).toBe(false);
+    expect(selectsPlainColumn("SELECT product_id product_id FROM products", "product_id")).toBe(true);
+  });
+
+  test("a multiplication is not a star", () => {
+    // The hole an adversarial review found: reading any `*` in the item as a star let the
+    // whole check be skipped by writing `* 1`. Measured live - the UPDATEs then wrote two
+    // products that were never on screen.
+    expect(
+      selectsPlainColumn(
+        "SELECT ROW_NUMBER() OVER (ORDER BY product_name) * 1 AS product_id, product_name FROM products",
+        "product_id",
+      ),
+    ).toBe(false);
+    expect(selectsPlainColumn("SELECT product_name, 2 * 1 AS product_id FROM products", "product_id")).toBe(false);
+  });
+
+  test("a later item renaming over a star wins, because that is what the driver hands over", () => {
+    // Two fields of the same name reach the row object as one, and the LAST one written is
+    // the value the grid reads - measured on node-postgres.
+    expect(
+      selectsPlainColumn("SELECT p.*, ROW_NUMBER() OVER (ORDER BY x) AS product_id FROM products p", "product_id"),
+    ).toBe(false);
+    expect(selectsPlainColumn("SELECT product_id, sku AS product_id FROM products", "product_id")).toBe(false);
+    // And the other way round: the rename comes first, the real column last.
+    expect(selectsPlainColumn("SELECT sku AS product_id, product_id FROM products", "product_id")).toBe(true);
+  });
+
+  test("row-count keywords are not part of the list", () => {
+    expect(selectsPlainColumn("SELECT DISTINCT product_id, sku FROM products", "product_id")).toBe(true);
+    expect(selectsPlainColumn("SELECT ALL product_id, sku FROM products", "product_id")).toBe(true);
+    expect(selectsPlainColumn("SELECT DISTINCT ON (sku) product_id, sku FROM products", "product_id")).toBe(true);
+  });
+
+  test("a reference can carry its schema as well as its table", () => {
+    expect(selectsPlainColumn("SELECT public.products.product_id FROM public.products", "product_id")).toBe(true);
+    expect(selectsPlainColumn("SELECT p.product_id product_id FROM products p", "product_id")).toBe(true);
+  });
+
+  test("a column the select list does not produce at all is refused", () => {
+    expect(selectsPlainColumn("SELECT sku, product_name FROM products", "product_id")).toBe(false);
+  });
+
+  test("a statement this reader cannot take apart is refused rather than guessed at", () => {
+    expect(selectsPlainColumn("SELECT id FROM users /* unclosed", "id")).toBe(false);
+    expect(selectsPlainColumn("UPDATE products SET sku = 'x'", "product_id")).toBe(false);
   });
 });

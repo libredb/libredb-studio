@@ -544,8 +544,10 @@ export function OperationsTab() {
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="text-sm font-medium text-fg-secondary truncate max-w-[160px]">
-                          {table.tableName}
+                        <div className="flex items-baseline min-w-0 text-sm font-medium text-fg-secondary">
+                          <span className="shrink-0 text-fg-muted">{table.schemaName}</span>
+                          <span className="shrink-0 text-fg-subtle">.</span>
+                          <span className="truncate max-w-[160px]">{table.tableName}</span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-fg-muted">
                           <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>

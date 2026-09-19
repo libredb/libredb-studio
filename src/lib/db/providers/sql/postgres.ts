@@ -454,6 +454,37 @@ function isMissingToRegclassError(error: unknown): boolean {
   return error.message.toLowerCase().includes("to_regclass");
 }
 
+// `pg_class.reltuples` is not universal. RisingWave 3.0.4's pg_class carries oid, relname,
+// relnamespace, relowner, relpersistence, relkind, relpages, relam, reltablespace,
+// reloptions, relispartition and relpartbound, and nothing else - measured against a live
+// instance, where every other part of the listing binds and only this column does not.
+//
+// Dropping the column is the whole repair: `estimatedRowCount()` already reads an absent
+// value as "not measured" and the object browser draws no badge, which is the truth here.
+// Substituting a 0 would be the defect that function exists to prevent.
+//
+// A regex over whatever statement is current, rather than a fourth precomputed variant,
+// because this composes with the size repair in either order: an engine can refuse both,
+// and RisingWave does.
+function withoutSizeColumn(sql: string): string {
+  return sql.replace(/,\s*\n\s*pg_total_relation_size\(c\.oid\) AS size_bytes/, "");
+}
+
+function withoutRowCountColumn(sql: string): string {
+  return sql.replace(/,\s*\n\s*c\.reltuples::bigint AS row_count/, "");
+}
+
+// RisingWave answers an unbindable column with two lines, and the second one names the
+// alias rather than the column: `Failed to bind expression: c.reltuples` followed by
+// `missing FROM-clause entry for table "c"`. That second line reads like a join defect
+// and is not one - the join binds, the column does not - and it is what sent the first
+// diagnosis of this after the schema query's regclass join. Match on the column name,
+// which is the part that is actually about the column.
+function isMissingRowCountColumnError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes("reltuples");
+}
+
 function isMissingExtensionCatalogError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
@@ -568,23 +599,19 @@ const RELKIND_BY_KIND: Record<string, string> = {
 // `measuredSizeBytes()` reads absence. Nothing else in this statement is repairable by
 // that chain: it has no `AS MATERIALIZED`, no `json_agg`, no `to_regclass` and no
 // `pg_depend`.
-function listRelationsSql(relkinds: string, withSize: boolean): string {
-  const size = withSize ? ",\n          pg_total_relation_size(c.oid) AS size_bytes" : "";
+function listRelationsSql(relkinds: string): string {
   return `
         SELECT
           c.relname AS name,
-          c.reltuples::bigint AS row_count${size}
+          c.reltuples::bigint AS row_count,
+          pg_total_relation_size(c.oid) AS size_bytes
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = $1 AND c.relkind IN (${relkinds})`;
 }
 
 const LIST_RELATIONS_SQL: Record<string, string> = Object.fromEntries(
-  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, listRelationsSql(relkinds, true)]),
-);
-
-const LIST_RELATIONS_SQL_WITHOUT_SIZE: Record<string, string> = Object.fromEntries(
-  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, listRelationsSql(relkinds, false)]),
+  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, listRelationsSql(relkinds)]),
 );
 
 // The prokind character each routine kind id is spelled with on the wire.
@@ -1411,16 +1438,14 @@ function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindC
 /**
  * Which statement answers for one kind, or nothing when this engine has no such kind.
  *
- * `withoutSize` is present only for the relation kinds, and only they can be refused for
- * a missing `pg_total_relation_size()`.
+ * Only the relation kinds read `pg_class`, so only they carry the two columns
+ * `queryListing()` can be asked to drop; every other statement here is refused or
+ * answered whole.
  */
-function objectListingStatement(
-  schema: string,
-  kind: string,
-): { sql: string; params: unknown[]; withoutSize?: string } | undefined {
+function objectListingStatement(schema: string, kind: string): { sql: string; params: unknown[] } | undefined {
   const relations = LIST_RELATIONS_SQL[kind];
   if (relations !== undefined) {
-    return { sql: relations, params: [schema], withoutSize: LIST_RELATIONS_SQL_WITHOUT_SIZE[kind] };
+    return { sql: relations, params: [schema] };
   }
   const prokind = PROKIND_BY_KIND[kind];
   if (prokind !== undefined) return { sql: LIST_ROUTINES_SQL, params: [schema, prokind] };
@@ -2844,21 +2869,33 @@ export class PostgresProvider extends SQLBaseProvider {
     }
   }
 
-  /** One listing read, retried without the size column when the builtin is not there. */
-  private async queryListing(client: PoolClient, statement: { sql: string; params: unknown[]; withoutSize?: string }) {
-    try {
-      return await client.query(statement.sql, statement.params);
-    } catch (error) {
-      if (statement.withoutSize === undefined || !isMissingTotalRelationSizeError(error)) {
-        throw mapDatabaseError(error, "postgres", statement.sql);
-      }
+  /**
+   * One listing read, retried without whichever column the engine refuses.
+   *
+   * Two are optional for two different reasons: `pg_total_relation_size()` is a builtin
+   * CockroachDB and Materialize do not have, and `pg_class.reltuples` is a column
+   * RisingWave does not have. They are independent, an engine can refuse both, and each
+   * repair is applied to whatever statement is current rather than to the original, so
+   * the order the refusals arrive in does not matter.
+   *
+   * Every failure leaves by the same door quoting the statement the server actually
+   * received, which after a repair is the rewritten one: quoting the original would
+   * point a reader at text that never left this process.
+   */
+  private async queryListing(client: PoolClient, statement: { sql: string; params: unknown[] }) {
+    const remainingFallbacks = [
+      { matches: isMissingTotalRelationSizeError, apply: withoutSizeColumn },
+      { matches: isMissingRowCountColumnError, apply: withoutRowCountColumn },
+    ];
+    let currentSql = statement.sql;
+    for (;;) {
       try {
-        return await client.query(statement.withoutSize, statement.params);
-      } catch (retryError) {
-        // The retry is the last thing tried, so its failure is this method's failure and
-        // leaves by the same door as the first one. It quotes the statement the server
-        // actually received, which is the rewritten one.
-        throw mapDatabaseError(retryError, "postgres", statement.withoutSize);
+        return await client.query(currentSql, statement.params);
+      } catch (error) {
+        const index = remainingFallbacks.findIndex((fallback) => fallback.matches(error));
+        if (index === -1) throw mapDatabaseError(error, "postgres", currentSql);
+        currentSql = remainingFallbacks[index].apply(currentSql);
+        remainingFallbacks.splice(index, 1);
       }
     }
   }

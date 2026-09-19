@@ -285,9 +285,9 @@ the password once to the dev-server output. Set them to pin known values instead
 (`USER_PASSWORD` additionally creates the optional non-admin account, which is
 never generated):
 ```env
-ADMIN_PASSWORD=admin123
-USER_PASSWORD=user123
-JWT_SECRET=your_32_character_random_string_here
+ADMIN_PASSWORD=
+USER_PASSWORD=
+JWT_SECRET=
 ```
 
 Optional (for AI features):

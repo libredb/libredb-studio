@@ -31,13 +31,20 @@ by hand. URL-encode every special character (`@` → `%40`, `:` → `%3A`,
 ## Important Koyeb specifics
 
 - **No secret generation.** Unlike Railway's `${{ secret(48) }}`, Koyeb cannot
-  auto-generate values. The user **must** set a strong `JWT_SECRET` (32+ chars)
-  and real `ADMIN_PASSWORD` / `USER_PASSWORD` in the deploy form before
-  launching. The prefilled values are deliberately unusable rather than merely
-  nominal: the secret is **shorter than the 32-character minimum**, so a deploy
-  left as-is stops at boot with `JWT_SECRET is too short` instead of coming up
-  on a secret that is printed in a public README. Keep it that way — a
-  placeholder that clears the minimum is a published working secret.
+  auto-generate values, so the user **must** set a strong `JWT_SECRET` (32+
+  chars) in the deploy form before launching. The prefilled secret is
+  deliberately unusable rather than merely nominal: it is **shorter than the
+  32-character minimum**, so a deploy left as-is stops at boot with
+  `JWT_SECRET is too short` instead of coming up on a secret that is printed in
+  a public README. Keep it that way — a placeholder that clears the minimum is a
+  published working secret.
+- **No prefilled passwords.** The button carries none. The two
+  fields behave differently when unset, and both answers are safe ones:
+  `ADMIN_PASSWORD` is generated on first run and printed to the Koyeb runtime
+  log, the same as a bare `docker run`; `USER_PASSWORD` is never generated, and
+  without it the lower-privilege account does not exist at all. Set your own in
+  the deploy form if you want to choose them, or if you want that second account;
+  do not put a placeholder back.
 - **Ephemeral filesystem.** Koyeb instances do not have a persistent disk in the
   button flow, so SQLite-on-disk storage (`STORAGE_PROVIDER=sqlite`) will reset
   on every redeploy/sleep. The button therefore defaults to
@@ -56,8 +63,8 @@ for the full list. Minimum required for a working Koyeb deploy:
 | Variable | Notes |
 |----------|-------|
 | `JWT_SECRET` | 32+ chars, set your own |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | admin login |
-| `USER_EMAIL` / `USER_PASSWORD` | standard user login |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | admin login; password not prefilled, generated and logged when unset |
+| `USER_EMAIL` / `USER_PASSWORD` | optional second account; no password means no account |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `local` (default) or `oidc` |
 | `STORAGE_PROVIDER` | `local` (default); `postgres` for persistence |
 

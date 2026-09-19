@@ -441,6 +441,43 @@ describe("LibSQLProvider query", () => {
     await provider.disconnect();
   });
 
+  test("hands a past-2^53 key back as its exact digits and binds those digits back as the integer", async () => {
+    // The whole inline-grid round trip through the real provider: read the key out
+    // of a row, then send that very value back in the WHERE clause. Measured against
+    // sqld 0.24.33 on 2026-09-18: bound as TEXT this matched 0 rows on a column with
+    // no affinity (BLOB or undeclared), so the editor reported nothing changed;
+    // bound as an integer it matches the one row, on every column declaration.
+    server = () => result([["id", null]], [[int("9007199254740993")]]);
+    const provider = await connected();
+
+    const read = await provider.query('SELECT id FROM "probe_orders"');
+    const key = read.rows[0]?.id;
+    expect(key).toBe("9007199254740993");
+
+    server = () => result([], [], { affected_row_count: 1 });
+    await provider.query('UPDATE "probe_orders" SET note = ? WHERE id = ?', ["duzenlendi", key]);
+
+    const sent = JSON.parse(calls.at(-1)?.body ?? "{}") as { requests: { stmt?: { args?: unknown[] } }[] };
+    expect(sent.requests[0]?.stmt?.args).toEqual([
+      { type: "text", value: "duzenlendi" },
+      { type: "integer", value: "9007199254740993" },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("still binds an ordinary key that happens to be all digits as text", async () => {
+    const provider = await connected();
+
+    await provider.query('UPDATE "probe_customers" SET country = ? WHERE code = ?', ["tr", "007"]);
+
+    const sent = JSON.parse(calls.at(-1)?.body ?? "{}") as { requests: { stmt?: { args?: unknown[] } }[] };
+    expect(sent.requests[0]?.stmt?.args).toEqual([
+      { type: "text", value: "tr" },
+      { type: "text", value: "007" },
+    ]);
+    await provider.disconnect();
+  });
+
   test("surfaces SQLite's own wording for a statement the engine rejected", async () => {
     const provider = await connected();
     server = () => failure("SQLite error: no such table: nope", "SQLITE_UNKNOWN");

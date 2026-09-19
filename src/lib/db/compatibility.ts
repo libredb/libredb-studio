@@ -224,10 +224,11 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
   {
     name: "RisingWave",
     via: "postgres",
-    tier: "query-only",
-    probedVersion: "RisingWave 3.0.3 (advertises PostgreSQL 13.14.0)",
+    tier: "partial",
+    probedVersion: "RisingWave 3.0.4 (advertises PostgreSQL 13.14.0)",
     caveats: [
-      'The object browser is unavailable: the schema query\'s LEFT JOIN pg_class ON (...)::regclass fails to bind ("missing FROM-clause entry for table c") - a different gap than the MATERIALIZED keyword collision Materialize hits, and not yet worked around.',
+      'The object browser lists tables and materialized views. It was unavailable until the listing learned to drop pg_class.reltuples, which RisingWave has no column for. The earlier reading of this blamed the schema query\'s LEFT JOIN pg_class ON (...)::regclass, which measurement refuted: that join binds, and RisingWave simply reports an unbindable column as "missing FROM-clause entry for table c", so a column defect reads as a join defect.',
+      "Row counts and sizes are blank rather than zero: neither pg_class.reltuples nor pg_total_relation_size() exists to answer, and an unmeasured number is shown as absent rather than as 0.",
       "The monitoring dashboard now loads with every statistic marked unavailable rather than erroring the whole page: RisingWave has no pg statistics catalog at all. Slow-query and active-session panels stay empty (not merely unavailable) because RisingWave also rejects a parameterised LIMIT.",
     ],
   },
