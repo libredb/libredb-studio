@@ -364,6 +364,28 @@ disabled and a bogus `Basic` header is *ignored* there (HTTP 200, measured), so 
 be captured — and rather than invent one, the code uses the one signal whose meaning HTTP itself fixes
 ([http-transport.ts:64-68](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
+### 3.7a API key auth (#708)
+
+An `apiKeyId`/`apiKeySecret` pair on the connection is sent as `Authorization: ApiKey
+base64(apiKeyId:apiKeySecret)`, Elasticsearch's own published scheme for its REST API
+([elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys](https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys)).
+That is stated as documentation, not as something measured against a probe cluster: unlike a response
+envelope's shape, a product's own published wire contract for its auth header is not a claim this
+provider needs a live server to verify, the same status the `Basic` header construction already had
+before this pair existed.
+
+**Elasticsearch only — `SearchDialectSpec.supportsApiKeyAuth` gates it, `true` there and `false` on
+OpenSearch** ([http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)), because
+nothing here has measured whether OpenSearch's security plugin accepts the same scheme, and the form
+never offers the fields for that type-id ([db-ui-config.ts](../../src/lib/db-ui-config.ts)) — so there
+is no reachable state on that product needing a guessed answer.
+
+**Precedence: the key pair wins when both it and `user`/`password` are set.** It is the scheme
+operators prefer, and a connection edited to add one without clearing the other should use the one
+added on purpose. **Either half missing falls back to `user`/`password`** (or to no credentials) rather
+than sending `ApiKey base64("id:")` for a secret that was never actually configured — a half-filled
+pair is not a shorter key, it is a leftover from switching schemes.
+
 ### 3.8 The deadline is the client's, and only the client's
 
 `deadline()` ([index.ts:609](../../src/lib/db/providers/sql/search/index.ts)) is one
@@ -439,14 +461,16 @@ shared generator emits a `?` this provider would then decline to fill.
 
 ### 4.1 Configuration fields
 
-The form offers exactly four fields
-([`db-ui-config.ts:138`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`.
+The form offers six fields
+([`db-ui-config.ts:138`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`,
+`apiKeyId`, `apiKeySecret`.
 
 | Field | Required | Notes |
 |---|---|---|
 | `host` | **Yes** | `validate()` ([index.ts:529](../../src/lib/db/providers/sql/search/index.ts)) throws `DatabaseConfigError` — "Elasticsearch requires a host". There is no connection string to substitute for it |
 | `port` | No | Defaults to `9200` ([index.ts:151](../../src/lib/db/providers/sql/search/index.ts), and the transport applies the same floor at [http-transport.ts:99](../../src/lib/db/providers/sql/search/http-transport.ts)). One number for both schemes — see [§4.3](#43-tls) |
-| `user` / `password` | No | Sent as HTTP Basic **only when `user` is set**, for the security plugin. Measured on a node with security disabled: a bogus `Basic` header is *ignored* (HTTP 200), so credentials are genuinely optional |
+| `user` / `password` | No | Sent as HTTP Basic **only when `user` is set** and no complete API key pair is, for the security plugin. Measured on a node with security disabled: a bogus `Basic` header is *ignored* (HTTP 200), so credentials are genuinely optional |
+| `apiKeyId` / `apiKeySecret` | No | Sent as `Authorization: ApiKey base64(id:secret)` when **both** are set, in preference to `user`/`password` (#708) — see [§3.7a](#37a-api-key-auth-708). Elasticsearch only; OpenSearch keeps `user`/`password` |
 | `ssl` | No | Any mode but `disable` switches the transport to `https` ([§4.3](#43-tls)) |
 | `database` | — | **Not offered, and ignored if set** — see below |
 

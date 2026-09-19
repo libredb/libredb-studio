@@ -76,3 +76,9 @@ dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-
 # credential in source. Matched twice on the same line, once per half.
 5135a9c606e9e42c1b4ae0bdc31725718758f2b4:database-compose.yml:curl-auth-user:83
 5135a9c606e9e42c1b4ae0bdc31725718758f2b4:database-compose.yml:curl-auth-user:122
+
+# #708's ApiKey-header test: fabricated apiKeyId/apiKeySecret pair
+# ("EWkMhKACjF5eHMlg6Car" / "y9cTq7AQ4u16CO_sKM0Knp") asserting the transport
+# builds `ApiKey base64(id:secret)`. Neither value has ever authenticated
+# against a real Elasticsearch cluster.
+5d7f7a2a6745dfae0ca58f908303feed4b690839:tests/integration/db/elasticsearch-provider.test.ts:generic-api-key:1239

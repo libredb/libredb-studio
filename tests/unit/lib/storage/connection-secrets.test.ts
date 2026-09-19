@@ -43,6 +43,8 @@ function fullConnection(): DatabaseConnection {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     agentUser: "agent-ro",
     agentPassword: "CANARY-AGENT-PASSWORD",
+    apiKeyId: "CANARY-API-KEY-ID",
+    apiKeySecret: "CANARY-API-KEY-SECRET",
     ssl: {
       mode: "verify-full",
       caCert: "-----BEGIN CERTIFICATE-----CA-----END CERTIFICATE-----",
@@ -71,6 +73,8 @@ const CANARIES = [
   "CANARY-SSH-PRIVATE-KEY",
   "CANARY-SSH-PASSPHRASE",
   "CANARY-AGENT-PASSWORD",
+  "CANARY-API-KEY-ID",
+  "CANARY-API-KEY-SECRET",
 ];
 
 describe("the classification is exhaustive by construction", () => {
@@ -85,6 +89,11 @@ describe("the classification is exhaustive by construction", () => {
       [
         "agentPassword",
         "agentUser",
+        // Elasticsearch's API key pair (#708). Unlike `user`, an id is one generated,
+        // opaque half of a credential pair rather than a name an operator chose, so
+        // both halves are classified secret below.
+        "apiKeyId",
+        "apiKeySecret",
         // MongoDB's auth database. A database NAME, so `public`; the password
         // checked against it is the secret and is classified below.
         "authSource",
@@ -119,7 +128,7 @@ describe("the classification is exhaustive by construction", () => {
     );
   });
 
-  test("exactly the seven credential-bearing fields are classified secret", () => {
+  test("exactly the nine credential-bearing fields are classified secret", () => {
     const secrets = [
       ...Object.keys(CONNECTION_FIELDS).filter((k) => CONNECTION_FIELDS[k as never] === "secret"),
       ...Object.keys(SSL_FIELDS)
@@ -133,6 +142,8 @@ describe("the classification is exhaustive by construction", () => {
     expect(secrets).toEqual(
       [
         "agentPassword",
+        "apiKeyId",
+        "apiKeySecret",
         "connectionString",
         "password",
         "ssl.clientKey",
@@ -169,6 +180,8 @@ describe("encryptConnections", () => {
     expect(encrypted.sshTunnel?.password?.startsWith(prefix)).toBe(true);
     expect(encrypted.sshTunnel?.privateKey?.startsWith(prefix)).toBe(true);
     expect(encrypted.sshTunnel?.passphrase?.startsWith(prefix)).toBe(true);
+    expect(encrypted.apiKeyId?.startsWith(prefix)).toBe(true);
+    expect(encrypted.apiKeySecret?.startsWith(prefix)).toBe(true);
   });
 
   test("leaves the fields an operator needs to identify the deployment readable", () => {
@@ -271,8 +284,8 @@ describe("decryptConnections", () => {
     resetStorageEncryptionKey();
     const result = decryptConnections(encrypted);
 
-    // Seven unreadable fields on one record.
-    expect(result.undecryptable).toBe(7);
+    // Nine unreadable fields on one record.
+    expect(result.undecryptable).toBe(9);
     // The record SURVIVES. Dropping it would be persisted as a deletion by the write-through
     // cache on the next sync, destroying ciphertext a restored key could still have opened.
     expect(result.connections).toHaveLength(1);
@@ -290,7 +303,7 @@ describe("decryptConnections", () => {
     process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
     resetStorageEncryptionKey();
 
-    expect(decryptConnections(encrypted).undecryptable).toBe(14);
+    expect(decryptConnections(encrypted).undecryptable).toBe(18);
   });
 
   test("an empty list is not an error", () => {

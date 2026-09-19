@@ -46,6 +46,9 @@ export interface DatabaseUIConfig {
     // MongoDB only: the database its credentials live in, which the driver otherwise
     // assumes is the one being opened.
     | "authSource"
+    // Elasticsearch only (#708): an API key pair, sent in preference to user/password.
+    | "apiKeyId"
+    | "apiKeySecret"
   )[];
 }
 
@@ -220,7 +223,12 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // database selector would be a control with no effect. Credentials stay offered
     // because a cluster running the security plugin needs them; a stock node ignores
     // the Authorization header entirely (measured).
-    connectionFields: ["host", "port", "user", "password"],
+    //
+    // apiKeyId/apiKeySecret here and not on opensearch below (#708): the transport
+    // sends them only when its dialect spec says the product accepts the ApiKey wire
+    // scheme, which nothing has measured for OpenSearch. Offering the fields there
+    // would let an operator fill in a pair the transport can never send.
+    connectionFields: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   },
   opensearch: {
     icon: OpenSearchIcon,

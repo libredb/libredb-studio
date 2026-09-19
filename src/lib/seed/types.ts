@@ -84,6 +84,10 @@ export const SeedConnectionSchema = z.object({
   // deployment). Optional because the driver falls back to the database being opened,
   // which is right only when the two are the same.
   authSource: z.string().optional(),
+  // Elasticsearch only (#708): an API key pair, preferred over user/password when both
+  // are set. Same silent-strip risk as every field on this schema - see the note below.
+  apiKeyId: z.string().optional(),
+  apiKeySecret: z.string().optional(),
   schema: z.string().optional(),
   // Read no catalog when this connection opens (#765). Declarable in the seed file
   // because the deployment that ships a 40,000-object owner is the one that knows, and

@@ -32,8 +32,8 @@ const FINGERPRINT = /^[0-9a-f]{40}:[^:\s]+:[a-z0-9-]+:[0-9]+$/;
 const contentLines = lines.map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
 
 describe(".gitleaksignore", () => {
-  test("has fingerprint entries - the sweep found 24 fabricated matches to classify", () => {
-    expect(contentLines).toHaveLength(24);
+  test("has fingerprint entries - the sweep found 24 fabricated matches, plus #708's ApiKey fixture", () => {
+    expect(contentLines).toHaveLength(25);
   });
 
   test("every non-comment, non-blank line is a well-formed fingerprint", () => {

@@ -472,6 +472,18 @@ interface SearchDialectSpec {
   readonly totalKey: string | null;
   /** The error member holding text specific to this failure, if any. */
   readonly detailKey: string | null;
+  /**
+   * Whether this product accepts `Authorization: ApiKey base64(id:secret)` (#708).
+   *
+   * `true` for Elasticsearch on the strength of its own published REST auth docs
+   * (elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys) - a wire contract
+   * the product states about itself, not a claim this file measured against a live
+   * cluster the way a response envelope is. `false` for OpenSearch because nothing
+   * here has measured whether its security plugin accepts the same scheme, and a
+   * silent guess is not this file's convention. The constructor reads this flag rather
+   * than `this.dialect`, per the header's rule.
+   */
+  readonly supportsApiKeyAuth: boolean;
   /** Fault name -> category, exact match. Only measured names appear. */
   readonly faults: Readonly<Record<string, SearchErrorCategory>>;
   /**
@@ -495,6 +507,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     sqlPath: "/_sql",
     sqlQuery: "format=json",
     fieldMultiValueLeniency: true,
+    supportsApiKeyAuth: true,
     columnsKey: "columns",
     // Elasticsearch folds the alias into `name`, so there is no separate member.
     aliasKey: null,
@@ -533,6 +546,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     sqlPath: "/_plugins/_sql",
     sqlQuery: "",
     fieldMultiValueLeniency: false,
+    supportsApiKeyAuth: false,
     columnsKey: "schema",
     aliasKey: "alias",
     rowsKey: "datarows",
@@ -1100,9 +1114,19 @@ export class SearchHttpTransport implements SearchTransport {
     // `Basic` header is IGNORED (HTTP 200), so credentials are optional and sending
     // none is the normal local case. When they are configured they are for the
     // product's security plugin, whose refusal this transport reads off the status.
-    this.authorization = config.user
-      ? `Basic ${Buffer.from(`${config.user}:${config.password ?? ""}`).toString("base64")}`
-      : undefined;
+    //
+    // The API key pair (#708) wins when both it and user/password are configured: it
+    // is the scheme the issue exists because operators prefer over Basic, so a
+    // connection edited to add one and never scrubbed of the other should use the one
+    // that was added on purpose. A HALF-configured pair is not a shorter key - it is
+    // one field left over from switching schemes - so it falls through to Basic/none
+    // exactly as if it were never set, rather than sending `ApiKey base64("id:")`.
+    this.authorization =
+      this.spec.supportsApiKeyAuth && config.apiKeyId && config.apiKeySecret
+        ? `ApiKey ${Buffer.from(`${config.apiKeyId}:${config.apiKeySecret}`).toString("base64")}`
+        : config.user
+          ? `Basic ${Buffer.from(`${config.user}:${config.password ?? ""}`).toString("base64")}`
+          : undefined;
   }
 
   /**

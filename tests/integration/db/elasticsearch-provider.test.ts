@@ -1226,6 +1226,45 @@ describe("ElasticsearchProvider validation", () => {
     await provider.disconnect();
   });
 
+  // #708. Not a live-cluster measurement: `Authorization: ApiKey base64(id:secret)` is
+  // Elasticsearch's published wire contract for its own auth scheme (elastic.co/docs/
+  // deploy-manage/api-keys/elasticsearch-api-keys), the same status the Basic-auth
+  // tests above are in - they assert what THIS CODE sends, not what a server does with
+  // it. OpenSearch is out of scope: nothing here has measured whether its security
+  // plugin accepts the same scheme, and the UI never offers these fields for it (see
+  // db-ui-config.ts), so there is no reachable state that would need one.
+  test("sends an API key pair as an ApiKey header, in preference to user/password", async () => {
+    const provider = await connectProvider({
+      apiKeyId: "EWkMhKACjF5eHMlg6Car",
+      apiKeySecret: "y9cTq7AQ4u16CO_sKM0Knp",
+      user: "reader",
+      password: "s3cret",
+    });
+
+    const header = sent[0].auth ?? "";
+    expect(header.startsWith("ApiKey ")).toBe(true);
+    expect(Buffer.from(header.replace("ApiKey ", ""), "base64").toString()).toBe(
+      "EWkMhKACjF5eHMlg6Car:y9cTq7AQ4u16CO_sKM0Knp",
+    );
+    await provider.disconnect();
+  });
+
+  // A half-configured pair is not a shorter key, it is a broken one - falls back to
+  // Basic/none exactly as a plain `user`/`password` connection would, rather than
+  // sending `ApiKey base64("id:")` for a secret that was never actually set.
+  test("falls back to user/password when the API key pair is only half set", async () => {
+    const provider = await connectProvider({
+      apiKeyId: "EWkMhKACjF5eHMlg6Car",
+      user: "reader",
+      password: "s3cret",
+    });
+
+    const header = sent[0].auth ?? "";
+    expect(header.startsWith("Basic ")).toBe(true);
+    expect(Buffer.from(header.replace("Basic ", ""), "base64").toString()).toBe("reader:s3cret");
+    await provider.disconnect();
+  });
+
   test("brackets a bare IPv6 host, which is otherwise not a legal URL authority", async () => {
     const provider = new ElasticsearchProvider(makeConnection({ host: "::1" }));
     await provider.connect();

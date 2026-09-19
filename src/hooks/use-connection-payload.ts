@@ -116,6 +116,12 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // profile even when it points at the same database (#328).
   agentUser: "resolution",
   agentPassword: "resolution",
+  // The key ID carries its own role descriptors on the cluster, so two connections
+  // differing only here can see different indices - the same "changes which catalog
+  // it reaches" test `authSource` is classified by above, not an analogy to `user`.
+  // The secret half authenticates but does not itself decide the catalog view.
+  apiKeyId: "resolution",
+  apiKeySecret: "resolution",
   ssl: "nested",
   sshTunnel: "nested",
 };

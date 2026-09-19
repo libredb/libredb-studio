@@ -278,6 +278,18 @@ export interface DatabaseConnection {
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)
   agentPassword?: string; // password for agentUser; secret-classified, sealed at rest by connection-secrets
+  /**
+   * Elasticsearch only (#708): an API key pair, sent as `Authorization: ApiKey
+   * base64(apiKeyId:apiKeySecret)` in preference to `user`/`password` when both halves
+   * are set. Half a pair (one field with no other) is not a shorter key, so it falls
+   * back to `user`/`password` rather than sending a key built from an empty secret.
+   *
+   * `apiKeyId` is classified `secret` in connection-secrets.ts, not `public` the way
+   * `user` is: unlike a name an operator chose, it is one generated, opaque half of a
+   * credential pair, and leaving it readable narrows what a leak has to guess.
+   */
+  apiKeyId?: string;
+  apiKeySecret?: string;
 }
 
 export interface ForeignKeySchema {

@@ -41,6 +41,12 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
       // MongoDB's auth database. Dropping it here would list a seeded connection that
       // authenticates against the wrong database and reports a credentials error.
       authSource: conn.authSource,
+      // Elasticsearch's API key pair (#708). Dropping either half here would seed a
+      // connection that falls back to user/password silently, which is the exact "a
+      // field validated above and not copied here" failure this comment block warns
+      // about for skipObjectScan below.
+      apiKeyId: conn.apiKeyId,
+      apiKeySecret: conn.apiKeySecret,
       schema: conn.schema,
       // The second half of the seed round-trip, and the half a zod field cannot cover:
       // this mapper is a hand-written field list, so a field validated above and not

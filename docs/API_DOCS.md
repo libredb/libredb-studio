@@ -1380,7 +1380,8 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `queryTimeout`, `agentUser`, and `agentPassword`. `color`, `environment`, `group`,
+`authSource` (MongoDB), `queryTimeout`, `agentUser`, `agentPassword`, and `apiKeyId`/`apiKeySecret`
+(Elasticsearch, #708). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
 ```typescript
@@ -1411,6 +1412,8 @@ interface DatabaseConnection {
   seedId?: string;         // stable reference to seed config ID
   agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
   agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
+  apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set. Secret-classified like agentPassword, not public like user
+  apiKeySecret?: string;   // the pair's secret half; either alone falls back to user/password rather than sending a key built from an empty half
 }
 
 type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';

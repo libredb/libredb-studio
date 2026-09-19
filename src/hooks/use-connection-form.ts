@@ -69,6 +69,8 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   seedId: "preserved",
   agentUser: "preserved",
   agentPassword: "preserved",
+  apiKeyId: "edited",
+  apiKeySecret: "edited",
 };
 
 const SSL_OWNERSHIP: Record<keyof SSLConfig, FieldOwnership> = {
@@ -193,6 +195,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // MongoDB's auth database. In the open for the same reason as the field above: it is
   // what the ordinary deployment (users in `admin`) cannot connect without.
   const [authSource, setAuthSource] = useState("");
+  // Elasticsearch's API key pair (#708). Two fields, not one: an id and a secret are a
+  // generated pair, never typed together as one string, and Kibana itself shows them
+  // that way under its "Beats"/"Logstash" format.
+  const [apiKeyId, setApiKeyId] = useState("");
+  const [apiKeySecret, setApiKeySecret] = useState("");
   /**
    * Read no catalog when this connection opens (#765).
    *
@@ -259,6 +266,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten for the same reason: a connection that names no auth database must
       // show an empty field, not the last one edited.
       setAuthSource(editConnection.authSource || "");
+      // Overwritten for the same reason: a connection carrying no API key pair must
+      // show empty fields, not the last one edited.
+      setApiKeyId(editConnection.apiKeyId || "");
+      setApiKeySecret(editConnection.apiKeySecret || "");
       // Overwritten, not set only when true: a connection that reads its catalog has to
       // show an unticked box, or the previously edited connection's choice is saved onto
       // it and the catalog silently stops being read.
@@ -332,6 +343,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // A leftover auth database sends the next connection's credentials to a
         // database that may not hold them, which reads as a wrong password.
         setAuthSource("");
+        // A leftover key pair would authenticate the next connection - a different
+        // cluster, possibly a different owner's - as a principal nobody chose for it.
+        setApiKeyId("");
+        setApiKeySecret("");
         // A leftover choice would open the next connection with no object list and no
         // explanation, which reads as an engine that answered nothing.
         setSkipObjectScan(false);
@@ -418,6 +433,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(type === "mssql" && instanceName ? { instanceName } : {}),
       ...(type === "cassandra" && localDataCenter ? { localDataCenter } : {}),
       ...(type === "mongodb" && authSource ? { authSource } : {}),
+      ...(type === "elasticsearch" && apiKeyId ? { apiKeyId } : {}),
+      ...(type === "elasticsearch" && apiKeySecret ? { apiKeySecret } : {}),
       // Written only when it says something, like every other optional field here: a
       // stored `false` is noise on every connection ever saved.
       ...(skipObjectScan ? { skipObjectScan } : {}),
@@ -452,6 +469,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     instanceName,
     localDataCenter,
     authSource,
+    apiKeyId,
+    apiKeySecret,
     skipObjectScan,
   ]);
 
@@ -748,6 +767,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setLocalDataCenter,
     authSource,
     setAuthSource,
+    apiKeyId,
+    setApiKeyId,
+    apiKeySecret,
+    setApiKeySecret,
     skipObjectScan,
     setSkipObjectScan,
 
