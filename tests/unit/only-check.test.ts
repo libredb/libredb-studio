@@ -115,7 +115,9 @@ describe("findFocusedTests", () => {
   });
 
   test("counts once per call, so three focuses are three findings", () => {
-    const source = focused(`test${SENTINEL}"a", () => {});\ntest${SENTINEL}"b", () => {});\ntest${SENTINEL}"c", () => {});\n`);
+    const source = focused(
+      `test${SENTINEL}"a", () => {});\ntest${SENTINEL}"b", () => {});\ntest${SENTINEL}"c", () => {});\n`,
+    );
 
     expect(findFocusedTests([{ path: "tests/unit/x.test.ts", content: source }])).toHaveLength(3);
   });
@@ -230,7 +232,11 @@ describe("runOnlyCheck", () => {
   });
 
   test("the gate refuses a focus in an e2e spec as well as a unit test", () => {
-    const root = repo({ "e2e/login.spec.ts": focused(`import { test } from "@playwright/test";\ntest${SENTINEL}"logs in", async () => {});\n`) });
+    const root = repo({
+      "e2e/login.spec.ts": focused(
+        `import { test } from "@playwright/test";\ntest${SENTINEL}"logs in", async () => {});\n`,
+      ),
+    });
 
     expect(runOnlyCheck(root).code).toBe(1);
   });
