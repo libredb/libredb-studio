@@ -925,6 +925,33 @@ describe("clearProviderCache", () => {
     expect(prov2.isConnected()).toBe(false);
   });
 
+  /*
+   * `connection.id` is a string the caller typed - that is this file's other security group and
+   * the whole of GHSA-3wh2-8x78-jfw4 - so every log line that INTERPOLATES one is a place a
+   * caller writes into the log. A newline forges a whole entry; `createDatabaseProvider` has
+   * sanitized `type` and `name` for that reason since long before this.
+   */
+  test("a connection id cannot forge a log line when a disconnect rejects", async () => {
+    const forged = 'evil\n[DB] Creating admin provider for "prod"';
+    const provider = await getOrCreateProvider(makeConnection("sqlite", { id: forged, database: ":memory:" }));
+    provider.disconnect = async () => {
+      throw new Error("disconnect failed");
+    };
+
+    const written: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => void written.push(args.map(String).join(" "));
+    try {
+      await clearProviderCache();
+    } finally {
+      console.error = realError;
+    }
+
+    // The control: the line was written, and it named this connection.
+    expect(written.some((line) => line.includes("evil"))).toBe(true);
+    expect(written.every((line) => !line.includes("\n"))).toBe(true);
+  });
+
   test("logs and continues when a provider disconnect rejects during clear", async () => {
     const conn = makeConnection("sqlite", { id: "clear-disconnect-err", database: ":memory:" });
     const provider = await getOrCreateProvider(conn);

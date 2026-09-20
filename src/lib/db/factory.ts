@@ -63,13 +63,23 @@ import * as path from "path";
  * const result = await provider.query('SELECT * FROM users');
  * await provider.disconnect();
  */
+/**
+ * Strip the control characters a log line's framing is made of, so a caller-supplied value
+ * cannot write a line of its own.
+ *
+ * Hoisted out of `createDatabaseProvider`, where it guarded `type` and `name`, once
+ * `connection.id` was established to be caller-supplied too (GHSA-3wh2-8x78-jfw4 - see
+ * {@link providerCacheKey}). Every site below that INTERPOLATES an id into a message uses it;
+ * the ids passed as structured logger FIELDS do not need it, because a field is never parsed
+ * as part of the line.
+ */
+const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  // Sanitize user-controlled values to prevent log injection
-  const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
@@ -441,11 +451,16 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
   for (const [key, entry] of providerCache) {
     if (now - entry.lastUsed >= maxIdleMs) {
       const id = entry.connectionId;
-      logger.info(`[DB] Evicting idle provider: ${id} (idle ${Math.round((now - entry.lastUsed) / 60000)}min)`);
+      logger.info(
+        `[DB] Evicting idle provider: ${sanitize(id)} (idle ${Math.round((now - entry.lastUsed) / 60000)}min)`,
+      );
       try {
         await entry.provider.disconnect();
       } catch (error) {
-        logger.warn(`[DB] Error disconnecting idle provider ${id}`, { connectionId: id, error: String(error) });
+        logger.warn(`[DB] Error disconnecting idle provider ${sanitize(id)}`, {
+          connectionId: id,
+          error: String(error),
+        });
       }
       providerCache.delete(key);
       // Close the shared tunnel only when nothing serves the connection
@@ -466,11 +481,11 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
   // connection id, so it is closed only once nothing serves that connection.
   for (const [key, entry] of profiledProviderCache) {
     if (now - entry.lastUsed >= maxIdleMs) {
-      logger.info(`[DB] Evicting idle profiled provider: ${key}`);
+      logger.info(`[DB] Evicting idle profiled provider: ${sanitize(entry.connectionId)}`);
       try {
         await entry.provider.disconnect();
       } catch (error) {
-        logger.warn(`[DB] Error disconnecting idle profiled provider ${key}`, {
+        logger.warn(`[DB] Error disconnecting idle profiled provider ${sanitize(entry.connectionId)}`, {
           connectionId: entry.connectionId,
           error: String(error),
         });
@@ -798,7 +813,7 @@ export async function removeProvider(connectionId: string): Promise<void> {
     try {
       await entry.provider.disconnect();
     } catch (error) {
-      logger.warn(`Error disconnecting provider ${connectionId}`, { connectionId, error: String(error) });
+      logger.warn(`Error disconnecting provider ${sanitize(connectionId)}`, { connectionId, error: String(error) });
     }
     providerCache.delete(key);
   }
@@ -808,7 +823,10 @@ export async function removeProvider(connectionId: string): Promise<void> {
     try {
       await entry.provider.disconnect();
     } catch (error) {
-      logger.warn(`Error disconnecting profiled provider ${key}`, { connectionId, error: String(error) });
+      logger.warn(`Error disconnecting profiled provider ${sanitize(connectionId)}`, {
+        connectionId,
+        error: String(error),
+      });
     }
     profiledProviderCache.delete(key);
   }
@@ -817,7 +835,7 @@ export async function removeProvider(connectionId: string): Promise<void> {
   try {
     await closeSSHTunnel(connectionId);
   } catch (error) {
-    logger.warn(`Error closing SSH tunnel for ${connectionId}`, { connectionId, error: String(error) });
+    logger.warn(`Error closing SSH tunnel for ${sanitize(connectionId)}`, { connectionId, error: String(error) });
   }
 }
 
@@ -836,14 +854,14 @@ export async function clearProviderCache(): Promise<void> {
   for (const entry of providerCache.values()) {
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
-        console.error(`[DB] Error disconnecting provider ${entry.connectionId}:`, error);
+        console.error(`[DB] Error disconnecting provider ${sanitize(entry.connectionId)}:`, error);
       }),
     );
   }
   for (const [key, entry] of profiledProviderCache) {
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
-        console.error(`[DB] Error disconnecting profiled provider ${key}:`, error);
+        console.error(`[DB] Error disconnecting profiled provider ${sanitize(entry.connectionId)}:`, error);
       }),
     );
   }
