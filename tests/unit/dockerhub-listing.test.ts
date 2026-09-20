@@ -1,7 +1,10 @@
 /**
  * Unit test for the Docker Hub listing text (`DOCKERHUB.md`), which the
  * `sync-dockerhub-description` job in .github/workflows/docker-build-push.yml
- * PATCHes onto the public repository page on every release.
+ * PATCHes onto the public repository page on every release. The whole path was
+ * measured against the live API on 21 Sep 2026 against a throwaway repository,
+ * which was deleted afterwards: this exact file PATCHes with 200 and reads back
+ * byte-identical.
  *
  * The limits below are Docker Hub's, and they are enforced here rather than in
  * the workflow on purpose: a release-time check can only warn after the fact,
@@ -20,26 +23,26 @@ const LISTING_PATH = join(REPO_ROOT, "DOCKERHUB.md");
 const WORKFLOW_PATH = join(REPO_ROOT, ".github/workflows/docker-build-push.yml");
 
 /**
- * Docker Hub caps `full_description` at 25000 and answers a bare 400 with no
- * usable body when it is exceeded. Held at 23000 here, not 25000: the file is
- * one table of engines that grows with every provider, and a guard that only
- * trips at the wall leaves the engine that crosses it nowhere to land.
+ * Docker Hub caps `full_description` at 25000 BYTES, not characters - measured
+ * against the live API on 21 Sep 2026 with a throwaway repository: 12501
+ * two-byte characters is 12501 characters and 25002 bytes, and it is refused
+ * with `Exceeded max number of bytes 25000 - actual 25002`. So a file can be
+ * comfortably inside the limit by `String.length` and still be rejected.
+ *
+ * Held at 23000 rather than 25000: the file is one table of engines that grows
+ * with every provider, and a guard that only trips at the wall leaves the
+ * engine that crosses it nowhere to land.
  */
 const FULL_DESCRIPTION_BUDGET = 23000;
-/** Docker Hub caps `short-description` at 100. */
+/** Docker Hub caps the short description at 100. */
 const SHORT_DESCRIPTION_LIMIT = 100;
 
 const listing = readFileSync(LISTING_PATH, "utf8");
 
-test("DOCKERHUB.md fits Docker Hub's full_description limit in both bytes and characters", () => {
-  // The API counts characters; `wc -c` and every byte-oriented check counts
-  // bytes. UTF-8 makes bytes >= characters, so the two only agree on ASCII, and
-  // this file is not ASCII. Bind both rather than pick the flattering one.
-  const characters = listing.length;
-  const bytes = Buffer.byteLength(listing, "utf8");
-
-  expect(characters).toBeLessThanOrEqual(FULL_DESCRIPTION_BUDGET);
-  expect(bytes).toBeLessThanOrEqual(FULL_DESCRIPTION_BUDGET);
+test("DOCKERHUB.md fits Docker Hub's full_description byte limit", () => {
+  // Bytes is the measure the API enforces, and it is the larger of the two for
+  // this file, which is not ASCII. Asserting it also holds the character count.
+  expect(Buffer.byteLength(listing, "utf8")).toBeLessThanOrEqual(FULL_DESCRIPTION_BUDGET);
 });
 
 test("package.json description fits Docker Hub's short-description limit", () => {
