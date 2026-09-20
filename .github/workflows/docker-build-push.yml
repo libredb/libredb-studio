@@ -469,3 +469,73 @@ jobs:
           set -euo pipefail
           gh workflow run helm-release.yml --ref "$REF"
           echo "Dispatched helm-release on ${REF}."
+
+  # DOCKERHUB.md is the Docker Hub listing text. The repo keeps it current - the
+  # release checklist asks for the engine list to be checked in it alongside
+  # README.md - but nothing ever pushed it to the registry, so the listing sat on
+  # whatever was there when the repository was created. It advertised
+  # `docker pull libredb/libredb-studio:0.12.0` as the pin-an-exact-version
+  # example on 20 Sep 2026, nine releases after that tag.
+  #
+  # Same two gates as the mirror push itself: the token says CI *can* reach Docker
+  # Hub, update.ci_enabled in distribution/channels.yaml says it *should*. Release
+  # context only, so a branch build never rewrites the public listing. A failure
+  # here must not fail the run: the images are already published and correct, and
+  # a stale description is worth a warning, not a red release.
+  sync-dockerhub-description:
+    name: Sync Docker Hub description
+    needs: [prepare, build-and-push]
+    if: >-
+      needs.prepare.outputs.dockerhub == 'true' &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Push DOCKERHUB.md to the listing
+        continue-on-error: true
+        env:
+          DH_USERNAME: ${{ vars.DOCKER_HUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+          DH_ORGANIZATION: ${{ vars.DOCKER_HUB_ORGANIZATION }}
+          DH_REPOSITORY: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          if [ ! -f DOCKERHUB.md ]; then
+            echo "::warning::DOCKERHUB.md not found - nothing to sync"
+            exit 0
+          fi
+          ns="${DH_ORGANIZATION:-$DH_USERNAME}"
+          # Docker Hub caps full_description at 25000 characters and answers 400
+          # with no useful body when it is exceeded, so say so here instead.
+          bytes=$(wc -c < DOCKERHUB.md | tr -d ' ')
+          if [ "$bytes" -gt 25000 ]; then
+            echo "::warning::DOCKERHUB.md is ${bytes} bytes, over Docker Hub's 25000 limit - not syncing"
+            exit 0
+          fi
+          jwt=$(curl -sf -X POST https://hub.docker.com/v2/users/login/ \
+                  -H 'Content-Type: application/json' \
+                  -d "$(jq -nc --arg u "$DH_USERNAME" --arg p "$DH_TOKEN" '{username:$u,password:$p}')" \
+                | jq -r '.token // empty')
+          if [ -z "$jwt" ]; then
+            echo "::warning::Docker Hub login did not return a token - listing left unchanged"
+            exit 0
+          fi
+          code=$(jq -Rs --arg full "$(cat DOCKERHUB.md)" -n '{full_description:$full}' \
+                 | curl -s -o /tmp/dh-resp.json -w '%{http_code}' \
+                     -X PATCH "https://hub.docker.com/v2/repositories/${ns}/${DH_REPOSITORY}/" \
+                     -H "Authorization: JWT ${jwt}" \
+                     -H 'Content-Type: application/json' \
+                     --data-binary @-)
+          if [ "$code" = "200" ]; then
+            echo "Docker Hub description updated for ${ns}/${DH_REPOSITORY} (${bytes} bytes)."
+          else
+            echo "::warning::Docker Hub description PATCH returned ${code}"
+            head -c 300 /tmp/dh-resp.json || true
+          fi
