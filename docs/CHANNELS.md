@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**38 channels · 32 live · 5 pending · 1 deprecated**
+**39 channels · 33 live · 5 pending · 1 deprecated**
 
-Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 6 · Kubernetes 4 · Cloud 13**
+Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · Kubernetes 4 · Cloud 13**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -45,7 +45,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 6 · K
 | Kubernetes & operators | 3 | 0 | 0 |
 | Package managers | 5 | 0 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
-| PaaS catalogs (listed) | 10 | 3 | 0 |
+| PaaS catalogs (listed) | 11 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
 | Cloud marketplaces | 4 | 2 | 0 |
 
@@ -83,6 +83,7 @@ Live channels by platform: **Linux 8 · macOS 3 · Windows 4 · Container 6 · K
 | [Sealos App Store template](https://sealos.io/products/app-store/libredb-studio) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [TrueNAS SCALE apps](https://apps.truenas.com/catalog/libredb-studio_community/) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Unraid Community Apps](https://ca.unraid.net/apps/libredb-studio-0a5x41a1cy1kay) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [YunoHost](https://apps.yunohost.org/app/libredb_studio) | PaaS catalogs (listed) | Linux | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Easypanel template catalog](https://easypanel.io/templates) | PaaS catalogs (listed) | Cloud | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Portainer app templates](https://github.com/portainer/templates) | PaaS catalogs (listed) | Container | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Umbrel App Store](https://github.com/getumbrel/umbrel-apps) | PaaS catalogs (listed) | Container | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |

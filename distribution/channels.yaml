@@ -737,6 +737,38 @@ channels:
         PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the
         bundle version directory ships a release-config.yaml, which submit-catalogs writes.
 
+  - id: yunohost
+    name: YunoHost app catalog
+    short_name: YunoHost
+    status: live
+    category: paas-catalogs
+    platforms: [linux]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      first_pr: https://github.com/YunoHost/apps/pull/3618
+      catalog: https://apps.yunohost.org/app/libredb_studio
+      upstream_repo: https://github.com/YunoHost-Apps/libredb_studio_ynh
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/YunoHost-Apps/libredb_studio_ynh/master/manifest.toml
+      extract: 'version = "(\d+\.\d+\.\d+)~ynh\d+"'
+      note: Listed by YunoHost/apps#3618, merged 2026-09-20. Unlike the other self-hosting catalogs here, the
+        package installs no container; it unpacks the standalone Linux tarball under systemd and fetches its
+        own Node 24 through YunoHost's `n`, which is why platforms is linux and the runtime is
+        channel_supplied. The catalog entry points at a repository in the YunoHost-Apps organization - the
+        package was written for this release, opened under libredb, and transferred on the maintainer's
+        invitation, which is the route that repository's CI and packagers come with. A bump is therefore a
+        pull request against THAT repository, and their autoupdate cron opens one when a release asset
+        matching the manifest pattern appears. The pin reads past the `~ynh` packaging suffix and captures
+        the application version, so a packaging-only change does not read as drift. apps.yunohost.org serves
+        what its own periodic catalog build picked up, so the catalog link lags a merge by up to one build.
+
   # ---- Tier 4: partner and curated catalogs (not self-serve) --------------
 
   - id: rancher-partner
