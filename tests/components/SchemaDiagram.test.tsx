@@ -371,6 +371,22 @@ const singleTableFixture: DetailedObject[] = [
   },
 ];
 
+// One column per state of a default: the empty string, a value, and no default at all (#1030).
+const defaultsProbeFixture: DetailedObject[] = [
+  {
+    name: "defaults_probe",
+    kind: "table",
+    path: ["defaults_probe"],
+    columns: [
+      { name: "k", type: "text", nullable: true, isPrimary: false, defaultValue: "" },
+      { name: "d", type: "text", nullable: true, isPrimary: false, defaultValue: "abc" },
+      { name: "n", type: "text", nullable: true, isPrimary: false, defaultValue: undefined },
+    ],
+    indexes: [],
+    foreignKeys: [],
+  },
+];
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -946,6 +962,19 @@ describe("SchemaDiagram", () => {
       const nnElements = container.querySelectorAll("span");
       const nnTexts = Array.from(nnElements).map((el) => el.textContent);
       expect(nnTexts).toContain("NN");
+    });
+
+    test("tooltip tells an empty-string default apart from no default (#1030)", () => {
+      const props = createDefaultProps({ schema: defaultsProbeFixture });
+      const { container } = render(<SchemaDiagram {...props} />);
+
+      // Assert the title ATTRIBUTE, not getByRole(name): a role-name query falls back to `title`.
+      const rowTitle = (column: string) => container.querySelector(`[title^="${column}: "]`)?.getAttribute("title");
+
+      expect(rowTitle("k")).toBe("k: text\nDefault: '' (empty string)");
+      expect(rowTitle("d")).toBe("d: text\nDefault: abc");
+      expect(rowTitle("n")).toBe("n: text");
+      expect(container.querySelectorAll('[title*="Default"]').length).toBe(2);
     });
 
     test("compact mode hides column details", () => {

@@ -22,7 +22,11 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
     column.isPrimary ? "PRIMARY KEY" : null,
     isFk ? "FOREIGN KEY" : null,
     column.nullable === false ? "NOT NULL" : null,
-    column.defaultValue ? `Default: ${column.defaultValue}` : null,
+    // `undefined` is how a column says it has no default; the empty string IS a default and
+    // needs a spelling a reader can tell apart from "none", so the test is not truthiness (#1030).
+    column.defaultValue !== undefined
+      ? `Default: ${column.defaultValue === "" ? "'' (empty string)" : column.defaultValue}`
+      : null,
   ]
     .filter(Boolean)
     .join("\n");
