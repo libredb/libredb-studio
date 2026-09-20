@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 2
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H12 · 3
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7

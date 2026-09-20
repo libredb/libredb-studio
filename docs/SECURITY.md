@@ -166,11 +166,11 @@ bucket bounds how often a refusal is written to the audit log; it never changes 
 is refused.
 
 Still **Partial**, for the one reason that survives: the proxy's `jwtVerify` failure arm is logged, not
-audited. A forged, tampered or truncated `auth-token` reaches the trailing `catch` at
-[`src/proxy.ts`](../src/proxy.ts) `:173-176`, which writes
+audited. A forged, tampered or truncated `auth-token` reaches the trailing `catch` in
+[`src/proxy.ts`](../src/proxy.ts) that covers the whole `verifyToken` call, which writes
 `logger.warn("JWT verification failed, redirecting to login")` and redirects without an
 `emitAuditEvent` call, so the attempt lands in stdout and never in `GET /api/admin/audit`. The proxy's
-other two refusals both emit: `origin_mismatch` at `:65` and `insufficient_role` at `:156`. See
+other two refusals both emit: `origin_mismatch` and `insufficient_role`. See
 [`docs/BACKLOG.md`](./BACKLOG.md) H12.
 
 Everything the row once described short of that is audited. Role failures are recorded at all five
@@ -179,16 +179,16 @@ ones the Admin Audit tab can read:
 
 | site | call |
 |---|---|
-| `src/app/api/admin/audit/route.ts:12` | `auditRoleDenial`, GET |
-| `src/app/api/admin/audit/route.ts:32` | `auditRoleDenial`, POST |
-| `src/app/api/db/maintenance/route.ts:21` | `auditRoleDenial` |
-| `src/app/api/admin/fleet-health/route.ts:47` | `auditRoleDenial` |
-| `src/proxy.ts:156` | `emitAuditEvent`, `insufficient_role` |
+| `GET` in `src/app/api/admin/audit/route.ts` | `auditRoleDenial` |
+| `POST` in `src/app/api/admin/audit/route.ts` | `auditRoleDenial` |
+| `src/app/api/db/maintenance/route.ts` | `auditRoleDenial` |
+| `src/app/api/admin/fleet-health/route.ts` | `auditRoleDenial` |
+| `src/proxy.ts` | `emitAuditEvent`, `insufficient_role` |
 
-`auditRoleDenial` ([`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts) `:107-123`,
-emitting at `:111`) emits `permission_denied` with `reason: "insufficient_role"`, so those four reach
-the tab. An earlier version of this note claimed the opposite and pointed at an `H12` that did not
-exist.
+`auditRoleDenial`
+([`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts)) emits `permission_denied`
+with `reason: "insufficient_role"`, so those four reach the tab. An earlier version of this note
+claimed the opposite and pointed at an `H12` that did not exist.
 
 Two qualifiers the grade rests on, both deliberate and documented at each call site:
 
