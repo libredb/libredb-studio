@@ -15,7 +15,7 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
  * `hostKeyFingerprint`, which records what this connection TRUSTS rather than where it goes.
  *
  * `enabled` is in because the tunnel branch in `getOrCreateProvider`
- * (`src/lib/db/factory.ts:533`) tests exactly that flag: a switched-off tunnel is not a route at
+ * (`src/lib/db/factory.ts:550`) tests exactly that flag: a switched-off tunnel is not a route at
  * all, and an absent `sshTunnel` frames to the empty string, which no present tunnel can produce.
  *
  * EXPORTED FOR THE TUNNEL POOL, which keys a forward on this exact string (`poolKey` in
@@ -79,7 +79,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * - `serviceName` is Oracle's connect-string tail, `oracle.ts:1527-1536` building
  *   `host:port/serviceName`, so it selects WHICH DATABASE on that listener.
  * - `sshTunnel` is the ROUTE and not a credential. `getOrCreateProvider`
- *   (`src/lib/db/factory.ts:533-540`) REWRITES `host` and `port` to the tunnel's local endpoint
+ *   (`src/lib/db/factory.ts:550-557`) REWRITES `host` and `port` to the tunnel's local endpoint
  *   before the provider is constructed, so with a tunnel enabled the bastion, and not the record's
  *   own `host`, decides which machine the sealed statement reaches. Only the four route values are
  *   framed, by `tunnelRoute` above. Live under the day-one editable set: any of the three engines

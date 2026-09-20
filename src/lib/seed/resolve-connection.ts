@@ -19,16 +19,33 @@ export async function resolveConnection(
 ): Promise<DatabaseConnection> {
   const { connection, connectionId } = body;
 
-  if (connection && !connectionId) {
+  /*
+   * THE `seed:` NAMESPACE IS THE OPERATOR'S, AND A CALLER MAY NOT CLAIM INTO IT
+   * (GHSA-3wh2-8x78-jfw4 root cause 2).
+   *
+   * An inline `connection` used to be returned verbatim, id included, while the role filter
+   * below guarded only the `connectionId` path. So the same managed connection was reachable
+   * two ways and only one of them was checked: a `user` account posting a connection object
+   * that CLAIMED `seed:admin-only` skipped the filter entirely. It is one namespace with one
+   * gate now - a claimed seed id is resolved from the operator's config, exactly as if it had
+   * arrived as `connectionId`, and the caller's own copy of the record is discarded.
+   *
+   * An id outside the namespace is a user's own saved connection and stays untouched: those
+   * carry the caller's own credentials and are not what the role filter is about.
+   */
+  const claimedSeedId = connection?.id?.startsWith("seed:") ? connection.id : undefined;
+  const effectiveId = connectionId ?? claimedSeedId;
+
+  if (connection && !effectiveId) {
     return connection;
   }
 
-  if (connectionId) {
-    if (!connectionId.startsWith("seed:")) {
+  if (effectiveId) {
+    if (!effectiveId.startsWith("seed:")) {
       throw new SeedConnectionError("Invalid connection ID format", 400);
     }
 
-    const seedId = connectionId.slice(5);
+    const seedId = effectiveId.slice(5);
     const seedConn = await getSeedConnectionById(seedId, [session.role]);
 
     if (!seedConn) {

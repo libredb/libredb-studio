@@ -750,6 +750,117 @@ describe("getOrCreateProvider", () => {
   });
 });
 
+// ─── The cache key may not be a string the caller typed (GHSA-3wh2-8x78-jfw4) ──
+//
+// Reported privately 2026-09-20 and reproduced here before anything was changed.
+//
+// `getOrCreateProvider` keyed `providerCache` on `connection.id`, and that id arrives in the
+// request body: `resolveConnection` (`src/lib/seed/resolve-connection.ts:22-24`) hands an inline
+// `connection` back verbatim, id included, so any signed-in caller can name any id. Naming one
+// another session already opened returned THAT session's live provider, still authenticated as
+// them, without ever comparing the credentials the caller sent. A `seed:` id is an operator-chosen
+// slug like `prod`, so it is guessable, and the role filter that guards the `connectionId` path
+// is not on the inline one.
+//
+// `connection.id` was already known here to be caller-typed: `connectionFingerprint`'s docblock
+// (`src/lib/db/connection-fingerprint.ts`) records the same measurement as its reason for NOT
+// sealing a plan to the id. The provider cache was the other half of that lesson.
+//
+// These run on the real sqlite driver, against two real files. The victim's row is the whole
+// assertion: reading it through the attacker's call is the vulnerability, and no bookkeeping
+// count can stand in for it.
+
+describe("getOrCreateProvider cache isolation", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "libredb-factory-hijack-"));
+  });
+
+  afterAll(async () => {
+    await clearProviderCache();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The connection the victim opened: a real file holding one secret row. */
+  async function openVictim(id: string): Promise<DatabaseProvider> {
+    const victim = await getOrCreateProvider(
+      makeConnection("sqlite", { id, database: join(dir, `${id.replace(/\W/g, "_")}-victim.db`) }),
+    );
+    await victim.query("CREATE TABLE customers (card TEXT)");
+    await victim.query("INSERT INTO customers (card) VALUES ('4111-1111-1111-1111')");
+    return victim;
+  }
+
+  test("a caller naming another session's connection id never reaches that session's provider", async () => {
+    const victim = await openVictim("seed:prod");
+
+    // The attacker's request: the victim's id, their own empty file, unrelated credentials.
+    const attacker = await getOrCreateProvider(
+      makeConnection("sqlite", {
+        id: "seed:prod",
+        database: join(dir, "attacker.db"),
+        user: "attacker",
+        password: "attacker",
+      }),
+    );
+
+    expect(attacker).not.toBe(victim);
+    // Their own file is empty, so the victim's table must not exist on it.
+    await expect(attacker.query("SELECT card FROM customers")).rejects.toThrow();
+  });
+
+  test("the execution-profile cache is keyed the same way, not on the id alone", async () => {
+    const victim = await getOrCreateProvider(
+      makeConnection("sqlite", { id: "seed:agent", database: join(dir, "agent-victim.db") }),
+    );
+    await victim.query("CREATE TABLE customers (card TEXT)");
+    await victim.query("INSERT INTO customers (card) VALUES ('4111-1111-1111-1111')");
+
+    // The same forgery on the agent path: `profiledCacheKey` framed the id straight from the
+    // request too, so an attacker naming it reached whatever that profile had already opened.
+    const seeded = await acquireExecutionProfileProvider(
+      makeConnection("sqlite", { id: "seed:agent", database: join(dir, "agent-victim.db") }),
+      "agent-read-only",
+    );
+    // Give the attacker a real but unrelated database. The read-only profile opens sqlite
+    // read-only and so cannot create one, and a provider that never opened would pass the
+    // assertion below for the wrong reason - it must reach ITS OWN file and find no such table.
+    const attackerFile = join(dir, "agent-attacker.db");
+    const own = await getOrCreateProvider(makeConnection("sqlite", { id: "attacker-own", database: attackerFile }));
+    await own.query("CREATE TABLE unrelated (x TEXT)");
+    await removeProvider("attacker-own");
+
+    const attacker = await acquireExecutionProfileProvider(
+      makeConnection("sqlite", { id: "seed:agent", database: attackerFile, password: "wrong" }),
+      "agent-read-only",
+    );
+
+    expect(attacker).not.toBe(seeded);
+    // The control: the attacker's provider really is open and serving its own file.
+    expect(await attacker.queryReadOnly!("SELECT x FROM unrelated", { ...AGENT_BUDGET })).toMatchObject({ rows: [] });
+    await expect(attacker.queryReadOnly!("SELECT card FROM customers", { ...AGENT_BUDGET })).rejects.toThrow();
+  });
+
+  test("a caller naming another session's connection id cannot evict that session's provider", async () => {
+    const victim = await openVictim("seed:reports");
+
+    // Under the old key, a differing queryTimeout disconnected and deleted the entry the
+    // victim was using: denial of service on the same forgeable id.
+    await getOrCreateProvider(
+      makeConnection("sqlite", {
+        id: "seed:reports",
+        database: join(dir, "reports-attacker.db"),
+        queryTimeout: 1_234,
+      }),
+    );
+
+    expect(victim.isConnected()).toBe(true);
+    const rows = await victim.query("SELECT card FROM customers");
+    expect(rows.rows).toHaveLength(1);
+  });
+});
+
 // ─── removeProvider ────────────────────────────────────────────────────────
 
 describe("removeProvider", () => {
