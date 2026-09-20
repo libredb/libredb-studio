@@ -854,14 +854,16 @@ export async function clearProviderCache(): Promise<void> {
   for (const entry of providerCache.values()) {
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
-        console.error(`[DB] Error disconnecting provider ${sanitize(entry.connectionId)}:`, error);
+        // The id is an argument, never part of the first one: `console.error`'s first argument
+        // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
+        console.error("[DB] Error disconnecting provider", sanitize(entry.connectionId), error);
       }),
     );
   }
   for (const [key, entry] of profiledProviderCache) {
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
-        console.error(`[DB] Error disconnecting profiled provider ${sanitize(entry.connectionId)}:`, error);
+        console.error("[DB] Error disconnecting profiled provider", sanitize(entry.connectionId), error);
       }),
     );
   }

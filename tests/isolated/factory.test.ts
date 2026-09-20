@@ -932,15 +932,15 @@ describe("clearProviderCache", () => {
    * sanitized `type` and `name` for that reason since long before this.
    */
   test("a connection id cannot forge a log line when a disconnect rejects", async () => {
-    const forged = 'evil\n[DB] Creating admin provider for "prod"';
+    const forged = 'evil%s\n[DB] Creating admin provider for "prod"';
     const provider = await getOrCreateProvider(makeConnection("sqlite", { id: forged, database: ":memory:" }));
     provider.disconnect = async () => {
       throw new Error("disconnect failed");
     };
 
-    const written: string[] = [];
+    const calls: unknown[][] = [];
     const realError = console.error;
-    console.error = (...args: unknown[]) => void written.push(args.map(String).join(" "));
+    console.error = (...args: unknown[]) => void calls.push(args);
     try {
       await clearProviderCache();
     } finally {
@@ -948,8 +948,17 @@ describe("clearProviderCache", () => {
     }
 
     // The control: the line was written, and it named this connection.
-    expect(written.some((line) => line.includes("evil"))).toBe(true);
-    expect(written.every((line) => !line.includes("\n"))).toBe(true);
+    const mine = calls.filter((args) => args.some((arg) => String(arg).includes("evil")));
+    expect(mine).toHaveLength(1);
+    expect(mine.flat().every((arg) => !String(arg).includes("\n"))).toBe(true);
+
+    /*
+     * The id is an ARGUMENT, never part of the first one. `console.error`'s first argument is a
+     * format string, so an id carrying `%s` would otherwise consume the error beside it - which
+     * is what `js/tainted-format-string` names, and what stripping control characters does not
+     * address. A constant first argument cannot be a format attack at all.
+     */
+    expect(String(mine[0]![0])).not.toContain("evil");
   });
 
   test("logs and continues when a provider disconnect rejects during clear", async () => {
