@@ -25,7 +25,7 @@ describe("build-time base path", () => {
       process.env.NEXT_PUBLIC_BASE_PATH = prefix;
       expect(getBasePath()).toBe(prefix);
       expect(withBasePath("/api/agent/runs/x/stream?after=1")).toBe(`${prefix}/api/agent/runs/x/stream?after=1`);
-      expect(withBasePath("/logo.svg?v=2")).toBe(`${prefix}/logo.svg?v=2`);
+      expect(withBasePath("/logo.svg?v=3")).toBe(`${prefix}/logo.svg?v=3`);
       expect(withBasePath("/login?error=oidc_failed")).toBe(`${prefix}/login?error=oidc_failed`);
       expect(withBasePath("/")).toBe(`${prefix}/`);
     });

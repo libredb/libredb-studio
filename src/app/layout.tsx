@@ -42,10 +42,10 @@ export const metadata: Metadata = {
   manifest: withBasePath("/site.webmanifest"),
   icons: {
     icon: [
-      { url: withBasePath("/favicon.ico?v=2"), sizes: "any" },
-      { url: withBasePath("/logo.svg?v=2"), type: "image/svg+xml" },
+      { url: withBasePath("/favicon.ico?v=3"), sizes: "any" },
+      { url: withBasePath("/logo.svg?v=3"), type: "image/svg+xml" },
     ],
-    shortcut: withBasePath("/favicon.ico?v=2"),
+    shortcut: withBasePath("/favicon.ico?v=3"),
     apple: [{ url: withBasePath("/apple-touch-icon.png"), sizes: "180x180", type: "image/png" }],
   },
 };

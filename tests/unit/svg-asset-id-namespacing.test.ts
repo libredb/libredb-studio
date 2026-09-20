@@ -12,6 +12,14 @@
  * equivalent is a fixed product prefix. This test holds both halves: the ids are
  * namespaced, and every `url(#...)` still resolves inside its own file, since a rename
  * that misses a reference produces an invisible logo rather than a failure.
+ *
+ * A `<style>` block is the same hazard one level worse, which is why it is refused
+ * outright rather than namespaced. Inlined, its selectors are not scoped to the SVG at
+ * all: they become a document-wide stylesheet that restyles anything else on the page
+ * matching them. Illustrator emits exactly this, as `.cls-1` through `.cls-N`, and that
+ * is the single most common class name in the world's SVG files. Presentation attributes
+ * say the same thing and cannot leak, so an exported asset gets its stylesheet dissolved
+ * on the way in.
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -34,6 +42,16 @@ function definedIds(markup: string): string[] {
 function referencedIds(markup: string): string[] {
   return [...markup.matchAll(/url\(#([^)]+)\)/g)].map((match) => match[1]);
 }
+
+/** What an Illustrator export leaks into the host page when it is inlined. */
+function leakedStyling(markup: string): string[] {
+  return [
+    ...[...markup.matchAll(/<style\b/g)].map(() => "<style> block"),
+    ...[...markup.matchAll(/\bclass="([^"]+)"/g)].map((match) => `class="${match[1]}"`),
+  ];
+}
+
+const ILLUSTRATOR_EXPORT = '<svg><defs><style>.cls-1{fill:red;}</style></defs><g class="cls-1"/></svg>';
 
 const svgPaths = committedSvgPaths();
 
@@ -58,5 +76,15 @@ describe("static SVG asset id namespacing", () => {
 
     expect(references.length).toBeGreaterThan(0);
     expect(references.filter((reference) => !ids.has(reference))).toEqual([]);
+  });
+
+  test("the stylesheet detector recognises an Illustrator export", () => {
+    // The control for the assertion below, which would otherwise pass on markup it
+    // cannot read at all rather than on markup that is clean.
+    expect(leakedStyling(ILLUSTRATOR_EXPORT)).toEqual(["<style> block", 'class="cls-1"']);
+  });
+
+  test.each(svgPaths)("%s carries no styling that escapes the file", (relativePath) => {
+    expect(leakedStyling(readFileSync(join(ROOT, relativePath), "utf8"))).toEqual([]);
   });
 });
