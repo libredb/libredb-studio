@@ -40,7 +40,9 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
 
     ports:
-      - "5432:5432"
+      # Loopback only: postgres/postgres is committed in this file, so keep the
+      # dev database off the host's LAN address.
+      - "127.0.0.1:5432:5432"
 
     volumes:
       # Persistent data volume

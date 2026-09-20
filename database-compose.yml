@@ -44,7 +44,9 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      # Loopback only: postgres/postgres is committed in this file, so keep this
+      # database off the host's LAN address.
+      - "127.0.0.1:5432:5432"
     volumes:
       # The seed this file's postgres is for. Without it the service came up with an
       # empty `postgres` database and no `libredb_dev` at all, so the object-tree

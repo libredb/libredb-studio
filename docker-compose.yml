@@ -46,7 +46,9 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: libredb_storage
     ports:
-      - "5432:5432"
+      # Loopback only: this database ships with postgres/postgres committed in this file,
+      # so it must not answer on the host's LAN address.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
