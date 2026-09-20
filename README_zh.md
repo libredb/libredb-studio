@@ -115,7 +115,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **Apache Druid** | 无驱动，纯 HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
 | **Elasticsearch** | 无驱动，纯 HTTP（`POST /_sql?format=json`，9200 端口） | 只读 SQL IDE、基于 mapping 的索引/字段浏览器、集群健康与每个索引的文档数和存储大小。没有 EXPLAIN、没有维护操作、没有慢查询和会话面板；Elasticsearch SQL 也没有 `OFFSET`，因此无法请求第二页结果 |
 | **OpenSearch** | 无驱动，纯 HTTP（`POST /_plugins/_sql`，9200 端口） | 与 Elasticsearch 同一个 provider 模块，同样的只读 SQL IDE 与浏览器。这里 `LIMIT n OFFSET m` 可用，所以分页可用 |
-| **Apache Trino** | 无驱动，纯 HTTP（客户端协议，`POST /v1/statement`，8080 端口） | 面向全部已配置 catalog 的完整 SQL IDE、连接所固定的 catalog `information_schema` schema 树、`system.runtime` 与 `jmx` 监控、`SHOW STATS` 提供的真实行数、查询取消与 `kill_query` 维护。Trino 是查询引擎、自身不存储数据，因此在任何地方都不声明主键、外键和索引：ER 图只有方框没有连线，行内编辑被关闭，容量面板列出的是 catalog 而不是臆造的占用量。失败的语句同样以 HTTP 200 返回；即使集群关闭了认证，明文 HTTP 上的密码仍会被拒绝 |
+| **Apache Trino** | 无驱动，纯 HTTP（客户端协议，`POST /v1/statement`，8080 端口） | 面向全部已配置 catalog 的完整 SQL IDE、`EXPLAIN (FORMAT JSON)` 计划树、连接所固定的 catalog 的 `information_schema` schema 树、`system.runtime` 与 `jmx` 监控、`SHOW STATS` 提供的真实行数、查询取消与 `kill_query` 维护。Trino 是查询引擎、自身不存储数据，因此在任何地方都不声明主键、外键和索引：ER 图只有方框没有连线，行内编辑被关闭，容量面板列出的是 catalog 而不是臆造的占用量。失败的语句同样以 HTTP 200 返回；即使集群关闭了认证，明文 HTTP 上的密码仍会被拒绝 |
 | **Apache Cassandra** | `cassandra-driver`（纯 JavaScript，无原生模块） | 基于原生协议（9042 端口）的 CQL IDE、标注分区键与聚簇键的 keyspace 浏览器、来自 `system_views` 的概览、运行时长与正在执行的语句。连接**必须填写 `localDataCenter`**：驱动没有它就拒绝连接。没有 EXPLAIN（CQL 文法中根本没有这个关键字），没有查询取消（协议没有取消帧），也没有维护操作（compaction、repair、flush 全是 `nodetool` 的 JMX 操作）。并且**不显示任何行数与容量**：Cassandra 能给出的只有基于已刷盘文件的分区估算（实测 500 行的聚簇表读作 143）和整数 MiB（19,476 字节的表读作 `1 MiB`），因此宁可不显示，也不显示错的数字 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
