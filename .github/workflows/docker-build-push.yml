@@ -469,3 +469,61 @@ jobs:
           set -euo pipefail
           gh workflow run helm-release.yml --ref "$REF"
           echo "Dispatched helm-release on ${REF}."
+
+  # DOCKERHUB.md is the Docker Hub listing text. The repo keeps it current - the
+  # release checklist asks for the engine list to be checked in it alongside
+  # README.md - but nothing ever pushed it to the registry, so the listing sat
+  # on whatever was there when the repository was created: on 20 Sep 2026 it
+  # still advertised `docker pull libredb/libredb-studio:0.12.0` as the
+  # pin-an-exact-version example, nine releases after that tag.
+  #
+  # Same two gates as the mirror push itself: the token says CI *can* reach
+  # Docker Hub, update.ci_enabled in distribution/channels.yaml says it
+  # *should*. Release context only, so a branch build never rewrites the public
+  # page. Not continue-on-error: by the time this runs the images are published
+  # and a red job unpublishes nothing, so the only thing a swallowed failure
+  # buys is another listing that silently falls behind. The 25000-character cap
+  # is held by tests/unit/dockerhub-listing.test.ts, which fails the PR that
+  # crosses it rather than the release that follows it.
+  sync-dockerhub-description:
+    name: Sync Docker Hub description
+    needs: [prepare, build-and-push]
+    if: >-
+      needs.prepare.outputs.dockerhub == 'true' &&
+      vars.DOCKER_HUB_ORGANIZATION != '' &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      # The npm package headline, so the listing's one-liner and the package's
+      # cannot drift apart. Docker Hub caps it at 100 characters; the same test
+      # holds that end.
+      - name: Read the short description
+        id: short
+        run: |
+          set -euo pipefail
+          {
+            echo "description<<EOF"
+            jq -r '.description' package.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push DOCKERHUB.md to the listing
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ vars.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+          repository: ${{ vars.DOCKER_HUB_ORGANIZATION }}/${{ github.event.repository.name }}
+          readme-filepath: ./DOCKERHUB.md
+          short-description: ${{ steps.short.outputs.description }}
+          # Every link in DOCKERHUB.md is already absolute, and the test above
+          # keeps it that way, so there is nothing for url completion to rewrite
+          # - and its known failure modes on code spans cannot bite.
+          enable-url-completion: false

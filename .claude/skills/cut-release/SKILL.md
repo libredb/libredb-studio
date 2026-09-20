@@ -59,7 +59,10 @@ packaged-file edit once the current version is released - so **here** is where i
 step moves `version:` anyway. The chart `keywords` are the same check: ArtifactHub search matches on
 them, and an engine missing there is an engine nobody finds. Read the engine count from `SHIPPED` in `src/lib/db/compatibility.ts` (minus the embedded
 `libredb`) rather than from any prose, and check the same list in `README.md`, `DOCKERHUB.md` and
-`deploy/rancher/CATALOG_LISTING.md` while you are here.
+`deploy/rancher/CATALOG_LISTING.md` while you are here. `DOCKERHUB.md` is the one of the three that
+publishes itself: the tag's `sync-dockerhub-description` job pushes it onto the Docker Hub listing, so
+what lands there is whatever this step left on `main`. Confirm that job went green after the tag - a
+red one means the public page still shows the previous release.
 
 **Rewrite `artifacthub.io/changes` by hand, every release.** `chart:bump` *does* rewrite it, but only
 to the single generic line `Track app release <version> (appVersion bump; default image tag follows)`
