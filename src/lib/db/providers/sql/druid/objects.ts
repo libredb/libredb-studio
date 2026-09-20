@@ -72,7 +72,14 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "@/lib/db/object-kinds";
+import {
+  assertObjectPathShape,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+  type ObjectPathShapeEngine,
+} from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   Container,
@@ -89,6 +96,19 @@ import { DRUID_CLIENT_DEADLINE_GRACE_MS, type DruidRow, type DruidTransport } fr
 import { DRUID_SCHEMA_NAME, DRUID_SYSTEM_READ_TIMEOUT_MS, readColumn, readIdentifier } from "./introspect";
 
 const PROVIDER = "druid" as const;
+
+/**
+ * Druid's identity for the shared path-shape renderer.
+ *
+ * `attachedSegment` is inert here: no kind this engine declares carries `attachedTo`, so
+ * the renderer emits one shape, the declared levels plus the name, and never consults the
+ * attached policy.
+ */
+const DRUID_PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "druid",
+  label: "A Druid",
+  attachedSegment: "required",
+};
 
 /** Narrower than the whole transport: this module never opens or closes anything. */
 type DruidQueryRunner = Pick<DruidTransport, "query">;
@@ -582,18 +602,12 @@ export async function describeObject(
   path: readonly string[],
   kind: string,
 ): Promise<ObjectDetail> {
-  if (findKind(capabilities, kind) === undefined) {
+  const spec = findKind(capabilities, kind);
+  if (spec === undefined) {
     throw new QueryError(`Druid declares no object kind "${kind}"`, PROVIDER);
   }
 
-  // Derived, not counted: one segment per declared container level plus the name, and
-  // the segment NAMES are the declared level labels sliced to the same depth, so the
-  // message and the check cannot disagree. No kind here declares `attachedTo`, so there
-  // is a single shape rather than the two MySQL accepts.
-  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
-  if (path.length !== shape.length) {
-    throw new QueryError(`A Druid "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`, PROVIDER);
-  }
+  assertObjectPathShape(capabilities, spec, kind, path, DRUID_PATH_SHAPE_ENGINE);
 
   // Neither bind is positional. The schema comes from the segment the DECLARATION
   // assigns to the `schema` level, and the object's own name is the LAST segment, which

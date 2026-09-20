@@ -47,7 +47,14 @@ import {
   type ObjectDetailBatch,
   type ObjectKindSpec,
 } from "../../types";
-import { callerBoundTruncationReason, containerDepth, declaredKinds, findKind } from "../../object-kinds";
+import {
+  assertObjectPathShape,
+  callerBoundTruncationReason,
+  containerDepth,
+  declaredKinds,
+  findKind,
+  type ObjectPathShapeEngine,
+} from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
@@ -250,6 +257,20 @@ const KEY_SCAN_SAMPLE_SENTENCE = `the first ${LIBREDB_MAX_KEY_SCAN.toLocaleStrin
  * wording.
  */
 const SCAN_BOUND_SENTENCE = `the key walk stopped at ${KEY_SCAN_SAMPLE_SENTENCE}`;
+
+/**
+ * LibreDB's identity for the shared path-shape renderer.
+ *
+ * `attachedSegment` is inert here: no kind this provider declares carries `attachedTo`, so
+ * the renderer produces the single declared-levels-plus-name shape and never consults the
+ * attached policy. `"required"` is what every engine that declares no attached kind passes,
+ * since the arm is unreachable either way.
+ */
+const LIBREDB_PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "libredb",
+  label: "A LibreDB",
+  attachedSegment: "required",
+};
 
 /**
  * The container levels this provider declares, sliced to the depth `containerDepth()`
@@ -973,23 +994,16 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     this.assertDeclaredKind(capabilities, kind);
-
-    // Derived, not counted: the depth comes from `containerDepth()` through
-    // `declaredLevels`, and the names in the message are the declared labels, so the
-    // check and its message cannot disagree. No kind declares `attachedTo`, so there is
-    // one shape rather than two.
-    const levels = declaredLevels(capabilities);
-    if (path.length !== levels.length + 1) {
-      throw new QueryError(
-        `A LibreDB "${kind}" path is [${[...levels.map((level) => level.label.toLowerCase()), "name"].join(", ")}], ` +
-          `received ${JSON.stringify(path)}`,
-        "libredb",
-      );
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`LibreDB declares no object kind "${kind}"`, "libredb");
     }
+
+    assertObjectPathShape(capabilities, spec, kind, path, LIBREDB_PATH_SHAPE_ENGINE);
 
     // The LAST segment and never `path[0]`: at depth 2 the first segment is a container.
     const name = path[path.length - 1];
-    const found = this.enumerate(path.slice(0, levels.length)).byKind[kind].find(
+    const found = this.enumerate(path.slice(0, declaredLevels(capabilities).length)).byKind[kind].find(
       (enumerated) => enumerated.object.path[enumerated.object.path.length - 1] === name,
     );
     if (found === undefined) {

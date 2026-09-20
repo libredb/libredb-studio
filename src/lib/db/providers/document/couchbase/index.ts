@@ -799,7 +799,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       throw new QueryError(`Couchbase declares no object kind "${kind}"`, this.type);
     }
 
-    checkObjectPath(capabilities, spec, path);
+    checkObjectPath(capabilities, spec, kind, path);
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
     }
@@ -961,7 +961,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     }
     // The same shape check `describeObject` makes, in the same words, so a caller cannot be
     // told two different things about one path.
-    checkObjectPath(capabilities, spec, path);
+    checkObjectPath(capabilities, spec, kind, path);
     const address = functionAddress(capabilities, path);
 
     const rows = await this.objectRows<CouchbaseFunctionRow>(FUNCTIONS_SQL);
