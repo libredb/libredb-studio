@@ -1566,7 +1566,7 @@ function auditDeadlineRefusal(
  *   on: a credential failure happens while connecting, a grant failure while running.
  * - **`QueryCancelledError`** is what a PostgreSQL statement timeout arrives as, and
  *   this layer is what CAUSES it: the clamped budget becomes `SET LOCAL
- *   statement_timeout` (`postgres.ts:892`), the engine says `canceling statement due
+ *   statement_timeout` (`postgres.ts:894`), the engine says `canceling statement due
  *   to statement timeout`, and `mapDatabaseError` matches `canceling statement`
  *   BEFORE its timeout branch (`errors.ts:280-293`) — so the timeout never arrives as
  *   `TimeoutError` on this engine at all. Narrowing the read is the repair that helps.

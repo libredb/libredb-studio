@@ -19,6 +19,7 @@ import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { ConnectionError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -2265,8 +2266,9 @@ describe("captureContextSnapshot — the kind, composed on the catalog path", ()
  * id, or the run and the tree disagree about what a thing is. The right-hand side of
  * `COMPOSED_KIND_WORDS` is therefore a copy of each provider's own mapping, and a copy
  * that nothing checks is a copy that drifts - which is why `POSTGRES_SYSTEM_SCHEMAS` is
- * pinned the same way in `composed-sql.test.ts`. Source-level, because the agent side
- * must not import a provider module.
+ * pinned the same way in `composed-sql.test.ts`. The postgres arm stays source-level,
+ * because the agent side must not import a provider module; the sqlite arm asks the
+ * constructed provider instead (#981).
  */
 describe("the composed kind vocabulary cannot drift from the provider's declaration", () => {
   const readSource = (relativePath: string): string => readFileSync(join(process.cwd(), relativePath), "utf8");
@@ -2276,6 +2278,28 @@ describe("the composed kind vocabulary cannot drift from the provider's declarat
       readSource("src/lib/agent/context-snapshot.ts"),
     )?.[1];
     return Object.fromEntries([...(block ?? "").matchAll(/(\w+): "(\w+)"/g)].map((match) => [match[1], match[2]]));
+  };
+
+  /**
+   * The provider's own sqlite kind ids (#981). Asking the constructed provider rather than
+   * reading `sqlite.ts` as text is what makes the guard independent of how the declaration
+   * is laid out: the scrape it replaced matched a single-line entry only.
+   *
+   * Capabilities are type-driven, so this needs no socket - the same reason the
+   * `provider-meta` route can read them off a provider it never connects.
+   */
+  const declaredSqliteKindIds = async (): Promise<string[]> => {
+    const provider = await createDatabaseProvider({
+      id: "kind-vocabulary-guard",
+      name: "kind-vocabulary-guard",
+      type: "sqlite",
+      // The provider validates its config in the constructor and wants a file path, even
+      // though capabilities are read without ever connecting. `:memory:` is the documented
+      // way to satisfy that without naming a file.
+      database: ":memory:",
+      createdAt: new Date(0),
+    } satisfies DatabaseConnection);
+    return (provider.getCapabilities().objectKinds ?? []).map((kind) => kind.id);
   };
 
   test("PostgreSQL: every relkind is mapped exactly as the provider's own CASE maps it", () => {
@@ -2295,17 +2319,27 @@ describe("the composed kind vocabulary cannot drift from the provider's declarat
     expect(composedMap("postgres")).toEqual(providerMap);
   });
 
-  test("SQLite: the four words sqlite_schema types objects with are the four ids declared", () => {
-    const declaredIds = [
-      ...(
-        /const SQLITE_OBJECT_KINDS[\s\S]*?\n\];/.exec(readSource("src/lib/db/providers/sql/sqlite.ts"))?.[0] ?? ""
-      ).matchAll(/\{ id: "(\w+)"/g),
-    ].map((match) => match[1]);
+  test("SQLite: the four words sqlite_schema types objects with are the four ids declared", async () => {
+    // Read through the provider rather than this file's text (#981). The scrape this
+    // replaced matched a single-line `{ id: "..."` entry only, so a kind declared across
+    // two lines left BOTH sides one word shorter and the guard passed over a kind nothing
+    // maps. The provider answers the same question without caring how the array is laid out.
+    const declaredIds = await declaredSqliteKindIds();
 
     expect(declaredIds.length).toBeGreaterThan(0);
     // The identity map, which is the claim: `sqlite_schema.type` and the declared kind
     // ids are the same vocabulary, so neither side may gain a word alone.
     expect(composedMap("sqlite")).toEqual(Object.fromEntries(declaredIds.map((id) => [id, id])));
+  });
+
+  test("a fifth declared kind that nothing maps fails the guard, however its entry is laid out", async () => {
+    const composed = composedMap("sqlite");
+    const declaredIds = await declaredSqliteKindIds();
+
+    // Control: the real declaration agrees, so the mutant below is the only difference.
+    expect(composed).toEqual(Object.fromEntries(declaredIds.map((id) => [id, id])));
+    // Mutant: one more declared kind, and the SAME comparison must stop holding.
+    expect(composed).not.toEqual(Object.fromEntries([...declaredIds, "fifth_kind"].map((id) => [id, id])));
   });
 });
 

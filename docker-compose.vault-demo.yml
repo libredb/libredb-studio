@@ -47,7 +47,10 @@ services:
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
       VAULT_ADDR: http://127.0.0.1:8200
     ports:
-      - "8200:8200"
+      # Loopback only. This Vault is unsealed with the root token published above,
+      # so publishing on every interface would hand every secret to anything that
+      # can reach the host. The walkthrough drives it from this machine.
+      - "127.0.0.1:8200:8200"
     healthcheck:
       test: ["CMD", "vault", "status"]
       interval: 3s
@@ -125,7 +128,9 @@ services:
       vault-init:
         condition: service_completed_successfully
     ports:
-      - "3000:3000"
+      # Loopback only, like Vault above: the zero-config bootstrap prints this
+      # demo's admin credentials to the container log.
+      - "127.0.0.1:3000:3000"
     environment:
       SEED_CONFIG_PATH: /app/config/seed-connections.yaml
       VAULT_ADDR: http://vault:8200

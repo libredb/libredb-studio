@@ -588,6 +588,37 @@ channels:
         reads the image tag in Apps/LibreDBStudio/docker-compose.yml, the file a bump PR touches. Installs a
         Docker container on the user's own device, so the platform is container.
 
+  - id: okxlin-appstore
+    name: 1Panel community app store (okxlin/appstore)
+    short_name: 1Panel community store
+    status: live
+    category: paas-catalogs
+    platforms: [container]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      first_pr: https://github.com/okxlin/appstore/pull/6552
+      last_bump_pr: https://github.com/okxlin/appstore/pull/6938
+      catalog: https://github.com/okxlin/appstore/tree/localApps/apps/libredb-studio
+      upstream_repo: https://github.com/okxlin/appstore
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: probe
+      probe: github-dir-max-version
+      urls:
+        catalog: https://api.github.com/repos/okxlin/appstore/contents/apps/libredb-studio
+      note: The community-maintained app store for 1Panel, merged in okxlin/appstore#6552 (normalized by
+        okxlin/appstore#6591) and bumped by the store's own Renovate, which carried it to 0.16.0 in
+        okxlin/appstore#6938. The OFFICIAL 1Panel store declined us in 1Panel-dev/appstore#9398 - the
+        maintainer keeps that catalog to projects above 10,000 stars and pointed at this one - so this row
+        is the whole 1Panel presence, not a staging step. Measured as a directory listing rather than as a
+        file, because the store publishes one directory per version under apps/libredb-studio and a fixed
+        file URL would keep reporting a superseded version forever.
+
   - id: umbrel
     name: Umbrel App Store
     status: pending
@@ -850,6 +881,26 @@ channels:
         dispatches it, so an ordinary release still builds no AMI.
         There is no pin to read, because the listed version lives in the AWS Marketplace Management
         Portal the way Azure's lives in Partner Center; it is checked by hand against the portal.
+
+  - id: civo-marketplace
+    name: Civo Kubernetes Marketplace
+    status: pending
+    category: cloud-marketplaces
+    platforms: [kubernetes]
+    runtime: channel_supplied
+    tier: 3
+    kind: marketplace
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/975
+      first_pr: https://github.com/civo/kubernetes-marketplace/pull/1076
+      upstream_repo: https://github.com/civo/kubernetes-marketplace
+    pin:
+      strategy: none
+      note: The version lives in `libredb-studio/manifest.yaml` in the upstream repository, so there
+        is nothing to pin here. The row flips to `live` when civo/kubernetes-marketplace#1076 merges.
 
   - id: winget
     name: winget community repository (LibreDB.Studio)

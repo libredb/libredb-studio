@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting sixteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
 type: application
-version: 0.1.65
-appVersion: "0.16.0"
+version: 0.1.66
+appVersion: "0.16.1"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -105,10 +105,18 @@ annotations:
   # gains an optional TOTP second factor, asserted as control 1.6 in docs/SECURITY.md. The first
   # is a cross-account authorization defect an operator running a shared connection needs to know
   # about, which is what this flag exists to tell them.
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False: 0.1.66 tracks app release 0.16.1, which fixes correctness and startup
+  # behaviour rather than a weakness. The one an operator should still read before
+  # upgrading is the boot refusal: with AUTH_BOOTSTRAP off and no JWT secret the
+  # container used to start, report itself healthy and answer every login with a 503,
+  # and it now prints what is missing and exits. A chart install that set
+  # secrets.jwtSecret (or secrets.existingSecret) is unaffected, because the chart has
+  # always required it; an install that reached that state some other way now stops at
+  # boot instead of serving a login nobody can pass.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.16.0
+      image: ghcr.io/libredb/libredb-studio:0.16.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -120,17 +128,16 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Use absolute GitHub URL for docs/MFA.md in chart README so mirrored operator copy resolves correctly"
-    - "A transaction now belongs to the session that opened it. Until this release every account reaching one connection id drove a single provider-level transaction, so a second Studio user could roll back the first one's uncommitted work; measured through the product's own route on PostgreSQL 18.4. Ownership is a five-minute idle lease, so an abandoned transaction still frees the connection"
-    - "secrets.adminTotpSecret and secrets.userTotpSecret add an optional TOTP second factor to the local auth provider. Each is written into the chart Secret and referenced as an optional env ref, so a secret nobody set can never keep the pod from starting, and values.schema.json applies the app's own base32 and 128-bit test at install time rather than at the login screen"
-    - "secrets.existingSecretKeys gains admin-totp-secret and user-totp-secret, so an external Secret can carry the second factor too. Both refs stay optional in every mode, strict included"
-    - "Those two TOTP values shipped in chart 0.1.63, whose changelog repeated the previous version's entry instead of describing them. 0.1.63 is published and frozen under issue 167, so they are recorded here"
-    - "The object browser is a lazy tree of containers and kinds on all seventeen shipped type-ids, an object's definition text reads on fifteen of them, and an edit applies the DDL on three. This is a breaking change in the application, not in the chart: the old schema API routes are gone. No template, value or default moves in this chart version; config.basePath arrived in 0.1.62 and the two TOTP values in 0.1.63, and all three default to empty"
-    - "Monitoring reads checkpoint timings from pg_stat_checkpointer on PostgreSQL 17 and newer, where PostgreSQL moved them out of pg_stat_bgwriter. Those servers used to report N/A and log a column error on every refresh. Measured on PostgreSQL 14 through 18"
-    - "Table and database sizes on the MySQL wire no longer read 0 B when the engine answers a NULL INDEX_LENGTH, which is what StarRocks does for every base table. A view still reads as unmeasured, which is correct"
-    - "Storage provider initialization is shared across concurrent first calls, so a burst of requests against a cold pod initializes the configured store once rather than racing"
-    - "The image is built on node 26.8.2-trixie-slim and accepts a BASE_PATH build argument, which is the build-time prefix config.basePath expects a custom image to carry"
-    - "Track app release 0.16.0 (appVersion bump; default image tag follows)"
+    - "Every tag now ships on three bases, published for the first time with this release. `0.16.1`, `0.16.1-alpine` and `0.16.1-alpine-slim` are the same build on Debian, on Alpine, and on Alpine with its own nodejs package; set image.tag to a suffixed tag to pin one. The chart default stays the Debian tag, which is the only one Oracle Thick mode can be layered onto"
+    - "The two Alpine tags exist for their OS posture: measured with Trivy 0.73.0 on 2026-09-15, the Debian base carried 3 CRITICAL and 52 HIGH distro findings against 0 and 2 for the Alpine base. `-alpine` is the same product as the default image; `-alpine-slim` is the only variant that trades a feature for size, dropping the DuckDB driver, and a DuckDB connection on it answers with a message naming the tags that do carry it"
+    - "With AUTH_BOOTSTRAP off and no JWT secret, the container started, passed its own liveness probe and answered every login with a 503. It now prints the missing variable and exits, so a pod that cannot serve a login says so at boot rather than reading as healthy"
+    - "An inline cell edit is written to the row it was made on. Until this release the grid keyed a revealed cell to the position it sat at rather than to its row, so an edit made after a sort or a refresh could land on a different row; measured on live engines alongside eight further defects in the SQLite, libSQL and MySQL paths"
+    - "GET /health and GET /api/health answer beside /api/db/health, so a platform whose probe path is not configurable has one to reach. The chart probes are unchanged and still use /api/db/health"
+    - "Agent mode runs on SQL Server, which is the fourth engine it executes statements on. Seed connection credentials can now be resolved from HashiCorp Vault instead of being written into the seed file"
+    - "Schema diff compares against the live schema rather than the cached copy, and drops the previous connection objects when the connection changes, so a diff can no longer describe a schema that is no longer there"
+    - "The object browser lists tables on a PostgreSQL-wire engine whose pg_class reports no reltuples, where the row previously read as an empty table rather than as an uncounted one"
+    - "Icon-only buttons in the sidebar and the grid toolbars carry accessible names, and the Admin Audit tab states that it shows application-recorded denials only, not the ones the proxy records"
+    - "Track app release 0.16.1 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

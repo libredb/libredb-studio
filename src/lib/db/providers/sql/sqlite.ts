@@ -52,6 +52,8 @@ import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
 import { declaredColumnTypes } from "./column-types";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -336,22 +338,13 @@ const OBJECT_FOREIGN_KEYS_SQL = `
  * on this engine that declares nothing. `sql` is a Monaco language id the installed bundle
  * really registers, which `plsql`, `tsql` and `cql` are not.
  *
- * The name is short so each entry below stays ONE LINE, which is not cosmetic:
- * `tests/unit/lib/agent/context-snapshot.test.ts` reads the declared ids out of this array
- * with a `{ id: "..."` scrape that matches a SINGLE-LINE entry only.
- *
- * What that scrape does and does not notice, both measured on 2026-09-13 rather than argued.
- * Writing `hasSource: true, sourceLanguage: "sql"` inline pushes the `table` and `trigger`
- * entries past 120 columns and the formatter explodes them; the guard then holds two declared
- * ids against the agent side's four and FAILS LOUDLY (1 fail, "Expected - 0 / Received + 2",
- * `table` and `trigger` unmatched). So an exploded EXISTING entry is a red test and not a
- * silent loss. The silent case is the other one, and it is the reason these entries are kept
- * scrapable: a FIFTH kind written as a multi-line entry is missing from the guard's population
- * AND from the agent side's map, both sides shrink together, and the guard passes over a kind
- * nothing maps (measured: multi-line fifth kind 1 pass 0 fail, the same kind on one line
- * 1 fail). The durable fix is not here, because that file belongs to the agent side: the guard
- * should read the declaration through `createDatabaseProvider("sqlite").getCapabilities()`
- * instead of scraping this text. Filed in the backlog under #789.
+ * The layout of these entries is free: nothing reads them as text. The vocabulary is pinned to
+ * the agent side's `COMPOSED_KIND_WORDS` by `tests/unit/lib/agent/context-snapshot.test.ts`,
+ * which asks the constructed provider for `getCapabilities().objectKinds` rather than scraping
+ * this array (#981). An entry that wraps therefore cannot hide its kind from that guard, which
+ * is the hole the earlier `{ id: "..."` scrape left: a fifth kind written across two lines was
+ * missing from the guard's population AND from the agent side's map, so both sides shrank
+ * together and the guard passed over a kind nothing maps.
  */
 const SOURCE_SQL: Pick<ObjectKindSpec, "hasSource" | "sourceLanguage"> = { hasSource: true, sourceLanguage: "sql" };
 
@@ -466,29 +459,13 @@ function assertContainerPath(capabilities: ProviderCapabilities, container: read
 }
 
 /**
- * Refuses a path no shape of this kind admits, naming the shape it does admit.
- *
- * ONE writer for two readers since #789 Phase 2. `describeObject` and `readObjectSource` ask
- * the same question about the same path, and two copies of this derivation are two chances
- * for the detail pane and the Source tab to disagree about what a trigger's address is.
- *
- * Derived, never counted. The depth comes from `containerDepth()` through `declaredLevels()`,
- * so absent and empty cannot be answered differently here than anywhere else, and the segment
- * NAMES are the declared level labels, so the message and the check are the same array. There
- * is ONE shape per kind rather than MySQL's two, because every SQLite trigger has a parent:
- * `sqlite_schema.tbl_name` is never null for one.
+ * SQLite: an attached kind requires its parent segment, so the error names one shape.
  */
-function assertObjectPathShape(
-  capabilities: ProviderCapabilities,
-  spec: ObjectKindSpec,
-  kind: string,
-  path: readonly string[],
-): void {
-  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  const shape = spec.attachedTo === undefined ? [...levels, "name"] : [...levels, spec.attachedTo, "name"];
-  if (path.length === shape.length) return;
-  throw new QueryError(`A SQLite "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`, "sqlite");
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "sqlite",
+  label: "A SQLite",
+  attachedSegment: "required",
+};
 
 /**
  * Every declared kind seeded at zero, before any row is read.
@@ -1569,7 +1546,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new QueryError(`SQLite declares no object kind "${kind}"`, "sqlite");
     }
 
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
     if (spec.role !== "relation") {
       return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1772,7 +1749,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     const spec = requireSourceKind(capabilities, kind, { displayName: "SQLite", type: "sqlite" });
-    assertObjectPathShape(capabilities, spec, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     if (!Object.hasOwn(SOURCE_CATALOG_TYPES, kind)) {
       throw new QueryError(
         `SQLite declares readable source for the kind "${kind}" but has no catalog type that reads it`,

@@ -16,6 +16,9 @@ below:
    receive a missing asset.
 2. **Events created with `GITHUB_TOKEN` never trigger workflows.** Every edge in the chain is an
    explicit ref-pinned `gh workflow run`, not a `release: published` trigger.
+3. **A green chain is not a working release.** The chain builds and ships the image, so it can never
+   be the thing that catches an image that does not run. Phase 7 pulls the published tag and drives
+   it in a browser against real engines; it is part of the release, not an optional extra.
 
 ```
 bump commit on main -> all main workflows green -> draft release (hand-written notes)
@@ -24,6 +27,8 @@ bump commit on main -> all main workflows green -> draft release (hand-written n
      -> dispatch docker-build-push (--ref tag, publish_latest=true) -> dispatch helm-release (tag ref)
      -> dispatch operator-release (--ref tag)
      -> npm-publish dispatches npx-engine-smoke with the published version
+  -> verify the registry rows moved (Phase 6)
+  -> pull `latest`, run it, drive it in a browser on two engines, read the logs (Phase 7)
 ```
 
 Tags carry **no `v` prefix**: `0.9.65`, not `v0.9.65`.
@@ -211,11 +216,120 @@ Reading `distribution:check` after a release - what "clean" looks like:
 | Rows | Expected |
 |---|---|
 | `every_release` tier 0/1: github-release, docker-ghcr, docker-hub-mirror, npm, helm, homebrew, snap | **all OK at the new version.** Anything else here is a real chain failure |
-| `winget` | DRIFT at the previous version until the auto-submitted manifest PR merges upstream (see Phase 7) |
+| `winget` | DRIFT at the previous version until the auto-submitted manifest PR merges upstream (see Phase 8) |
 | tier 2/3 PaaS: caprover x3, railway, dokploy, cosmos, kubero, fly-io | DRIFT is normal - `on_demand` SLA |
 | linux-deb-rpm, appimage, flatpark, chocolatey, render, koyeb | SKIP by design, not a gap |
 
-## Phase 7 - Post-release follow-ups
+## Phase 7 - Smoke the published image
+
+Phase 6 proves the registry rows moved. It does not prove the thing they point at runs, and every
+check before this one is satisfied by an image that boots to a stack trace. Run the published
+artifact, drive it in a real browser against two engines, and read its logs. Do this on every
+release, and do not skip it because the chain was green: the chain builds the image, so it cannot be
+the thing that catches an image that does not work.
+
+Use `latest`, not `<version>`, and assert it resolves to the version's digest. That is the tag
+almost every user pulls, and pulling it is also the last check that `latest` really moved.
+
+```bash
+docker rmi -f ghcr.io/libredb/libredb-studio:latest 2>/dev/null   # a stale local copy passes every test below
+docker pull ghcr.io/libredb/libredb-studio:latest
+docker image inspect ghcr.io/libredb/libredb-studio:latest --format '{{index .RepoDigests 0}}'
+# ^ must equal the <version> digest Phase 6 printed. If it does not, latest did not move and
+#   everything below measures the PREVIOUS release.
+
+docker network create libredb-verify
+docker run -d --name lv-pg --network libredb-verify \
+  -e POSTGRES_PASSWORD=verifypass -e POSTGRES_USER=verifier -e POSTGRES_DB=shopdb postgres:18-alpine
+# seed two tables, a view and a handful of rows, so counts and values are known in advance
+
+docker run -d --name lv-studio --network libredb-verify -p 3399:3000 \
+  -e JWT_SECRET="$(openssl rand -base64 32)" \
+  -e ADMIN_PASSWORD='VerifyAdmin123!' -e USER_PASSWORD='VerifyUser123!' \
+  -e AUTH_COOKIE_SECURE=false \
+  -v "$PWD/verify-data:/data" \
+  ghcr.io/libredb/libredb-studio:latest
+```
+
+`JWT_SECRET` is generated rather than written out: a credential-shaped literal in this file is a
+`generic-api-key` hit in `Secret Scan`, which scans all of history, so pasting a fixed one here
+costs a `.gitleaksignore` fingerprint that can never be removed. Nothing in this phase needs to know
+it. The two passwords are literals because the browser step has to log in with them.
+
+`AUTH_COOKIE_SECURE=false` is required, not optional: over plain HTTP the cookie is dropped and
+login fails in a way that looks like bad credentials. Port 3399 rather than 3000 because another
+agent's dev server or Playwright run may already hold 3000, and testing someone else's app is the
+one failure this phase cannot detect. The default `ADMIN_EMAIL` is `admin@libredb.org`
+(`.env.example`), not the password variable's name.
+
+What to assert, in order, stopping at the first failure:
+
+| Check | What passing looks like |
+|---|---|
+| Container state | `status=running restarts=0 oom=false`. A restart count above 0 is a crash loop that a later `curl` would still answer |
+| Startup banner | `LibreDB Studio <version>` in `docker logs`. This is the only place the running code states its own version; the tag can lie, the banner cannot |
+| `/health`, `/api/health`, `/api/db/health` | all 200. Three paths since 0.16.1, and a platform with a fixed probe path depends on the first two |
+| Login through the browser | lands on `/admin/overview`, and the login page footer shows `v<version>` |
+| PostgreSQL connection | Test Connection reports connected; the object tree counts the tables and views you seeded, exactly |
+| SQLite connection | same, against a file mounted into `/data`, which also proves the volume path works |
+| A query on each | row count, values and column types match what the engine itself returns. Run the same SQL through `psql` and compare, rather than eyeballing the grid |
+| **A row-identity edit on each** | see below. This is the check worth the most |
+| Container logs | no `[ERROR`, no stack trace, no unhandled rejection |
+| Browser console | zero errors |
+
+**The row-identity edit is the probe that earns this phase.** Everything above passes on an app that
+renders correctly and writes to the wrong place, which is exactly the defect 0.16.1 shipped to fix
+(#969) and the kind of defect a released IDE must never have. Drive it as a user does:
+
+1. Query a table so the grid shows a column you can sort on, and note which id sits at which position.
+2. Sort by a column so that the visual order differs from the row order. Confirm it differs: with
+   ids 1..4 sorted descending by a text column, position 0 must now hold something other than id 1.
+3. Click `EDIT`, change a cell in a row whose position no longer matches its id, and apply
+   (`Apply changes`, an icon-only button - find it by accessible name, not by its glyph).
+4. Read the table back **from the engine**, not from the grid. The edited row must be the one you
+   edited, and every other row must be byte-identical to before.
+
+A grid that repaints correctly while writing elsewhere passes step 3 and fails step 4, which is why
+step 4 is not optional and why the comparison is against the engine.
+
+Driving the browser, the three traps that cost the most time:
+
+- Monaco intercepts clicks on its own hidden textarea. Click `.monaco-editor .view-line` and then
+  type with the keyboard; clicking the textarea times out against a `view-line` pointer interception.
+- A click that opens a dialog often returns a snapshot taken before the dialog mounts. Take a fresh
+  snapshot rather than concluding the click did nothing, and see
+  `playwright-react-click-and-monaco-typing` for the case where the React handler really did not fire.
+- Grepping logs for `error|fatal|stack` matches the startup line `dual-stack verified`. Read the
+  matches rather than counting them.
+
+When a release introduces a NEW image variant, smoke every variant, not just the default. The
+variants share no base layers and the Channel E2E job proves each one browses, but only a local run
+proves the tag a user types resolves and boots:
+
+```bash
+for v in alpine alpine-slim; do
+  docker run -d --name lv-$v --network libredb-verify -p 0:3000 \
+    -e JWT_SECRET="$(openssl rand -base64 32)" \
+    -e ADMIN_PASSWORD='VerifyAdmin123!' -e AUTH_COOKIE_SECURE=false \
+    ghcr.io/libredb/libredb-studio:<version>-$v
+done
+# then per variant: the startup banner's version, /health, and `docker image inspect --format '{{.Size}}'`
+```
+
+Sizes are a claim the docs make, so they are a claim to check: 0.16.1 measured 651 MB debian,
+372 MB alpine, 182 MB alpine-slim.
+
+**Clean up when you are done**, always, including after a failure:
+
+```bash
+docker rm -f lv-studio lv-pg lv-alpine lv-alpine-slim; docker network rm libredb-verify
+```
+
+A failure here does not unpublish anything - see Recovery below, and remember the release is already
+immutable. What it buys is knowing before the users do, and a next-patch decision made on measured
+behaviour rather than on a guess.
+
+## Phase 8 - Post-release follow-ups
 
 None of these belong in the bump commit or the chain; each needs the release to exist first.
 
@@ -270,6 +384,9 @@ true on a tag ref.
 | Reusing a failed release's version after Snap published | Snap store revisions are immutable per version; bump the patch instead |
 | Renaming or removing the `test` script | `npm-publish.yml` validates with `bun run test`, which is `bun tests/run-tests.ts` (one bun process per test file). Losing that script breaks every release and every re-dispatch |
 | Recreating a draft after a failed run | The hand-written notes are gone with it. Keep the notes file in the scratchpad and re-apply with `gh release edit <version> --notes-file <f>` |
+| Calling the release verified because `distribution:check` is clean | Every row there reads a registry or a catalog. They all go green for an image that boots to a stack trace, because nothing in the chain ever runs the artifact it publishes. Phase 7 is what closes that, and it is the only phase whose failure the users would otherwise find first |
+| Smoke-testing `<version>` instead of `latest` | `<version>` can be correct while `latest` still points at the previous release, which is what almost every user pulls. Pull `latest` and assert its digest equals the version's. A stale LOCAL copy does the same damage, so `docker rmi -f` before the pull |
+| Reading the grid to confirm an edit landed | A grid that repaints correctly while writing to another row passes every on-screen check. Read the table back from the engine, and compare the rows you did NOT edit as well as the one you did |
 | A release that touches `packaging/`, the Dockerfile or the payload scripts | The chain builds channels you cannot see locally. Validate them locally first (tarball/npx/docker build+run, deb/rpm with the CI-pinned nfpm) - that local pass is what separated the clean one-attempt releases from the four-attempt one |
 
 ## Red flags - stop and re-read this skill
@@ -280,3 +397,5 @@ true on a tag ref.
 - About to dispatch a chain workflow without `--ref refs/tags/<version>`
 - About to merge or push `charts/**` without bumping the chart version
 - About to declare the release done because no check is red - count the runs by name instead
+- About to close out a release without ever having RUN the published image (Phase 7)
+- About to report an edit as correct from the grid rather than from the engine

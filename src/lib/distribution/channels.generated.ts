@@ -38,6 +38,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "sealos", label: "Sealos App Store template", group: "paas" },
   { id: "truenas-scale", label: "TrueNAS SCALE apps", group: "paas" },
   { id: "casaos", label: "CasaOS App Store", group: "paas" },
+  { id: "okxlin-appstore", label: "1Panel community store", group: "paas" },
   { id: "operatorhub-community", label: "OperatorHub / OpenShift", group: "kubernetes" },
   { id: "rancher-partner", label: "Rancher Partner Charts", group: "kubernetes" },
   { id: "digitalocean", label: "DigitalOcean Marketplace", group: "paas" },

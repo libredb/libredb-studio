@@ -2870,7 +2870,7 @@ describe("object surface", () => {
       //
       // The rows are the DRIVER'S rows and the naming is left to `oracle.ts`, which spells
       // a flat name BARE: the read is scoped to the connection owner by `WHERE OWNER = :1`
-      // (`oracle.ts:1516`), so the owner is a fact about the statement rather than a
+      // (`oracle.ts:1492`), so the owner is a fact about the statement rather than a
       // qualifier on the answer, and every name comes back unqualified against a
       // `[owner, name]` path. A fixture that returned `APP.APP_ORDERS` would assert a
       // spelling this provider never produces.

@@ -19,6 +19,8 @@ import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -251,29 +253,14 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
 }
 
 /**
- * The path SHAPE both object reads share, with ONE writer for the rule and its sentence.
- *
- * Derived, not counted: the depth comes from `containerDepth()` through `declaredLevels`,
- * and the names in the message are the declared labels, so the check and its message cannot
- * disagree. Neither kind declares `attachedTo`, so there is one shape rather than two.
- *
- * `describeObject` has checked this since Phase 1 and `readObjectSource` did not, which the
- * external review of PR #820 found (#789). The HTTP route bounds an empty path, but both
- * methods are published through `@libredb/studio`, are reached by the embedded host seam and
- * by the conformance helper, and none of those three sees the route. Measured on the
- * unchecked method: an empty path made `path[path.length - 1]` `undefined`, and ioredis then
- * threw `undefined is not an object (evaluating 'arg.toUpperCase')` out of the command
- * encoder, which is this file's defect arriving as the driver's.
+ * Redis: neither kind declares `attachedTo`, so there is one shape: the declared level
+ * plus the name.
  */
-function assertObjectPathShape(capabilities: ProviderCapabilities, kind: string, path: readonly string[]): void {
-  const levels = declaredLevels(capabilities);
-  if (path.length === levels.length + 1) return;
-  throw new QueryError(
-    `A Redis "${kind}" path is [${[...levels.map((level) => level.label.toLowerCase()), "name"].join(", ")}], ` +
-      `received ${JSON.stringify(path)}`,
-    "redis",
-  );
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "redis",
+  label: "A Redis",
+  attachedSegment: "required",
+};
 
 /**
  * The segment of `path` belonging to the declared container level `id`.
@@ -1622,11 +1609,12 @@ export class RedisProvider extends BaseDatabaseProvider {
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    if (findKind(capabilities, kind) === undefined) {
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
       throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
     }
 
-    assertObjectPathShape(capabilities, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     const levels = declaredLevels(capabilities);
 
     if (kind !== "keyspace") return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -1718,7 +1706,7 @@ export class RedisProvider extends BaseDatabaseProvider {
         "redis",
       );
     }
-    assertObjectPathShape(capabilities, kind, path);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     const name = path[path.length - 1];
     let reply: unknown;
     try {
@@ -1840,7 +1828,7 @@ export class RedisProvider extends BaseDatabaseProvider {
         "redis",
       );
     }
-    assertObjectPathShape(capabilities, request.kind, request.path);
+    assertObjectPathShape(capabilities, spec, request.kind, request.path, PATH_SHAPE_ENGINE);
     // The LAST segment and never `path[1]`: at depth 2 the second segment is a container, and
     // the suite drives this by spying a two-level declaration in.
     const name = request.path[request.path.length - 1];
@@ -1989,8 +1977,8 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
     const unit = plan.unit;
     const capabilities = this.getCapabilities();
-    requireEditableKind(capabilities, plan.kind, REDIS_ENGINE);
-    assertObjectPathShape(capabilities, plan.kind, plan.path);
+    const spec = requireEditableKind(capabilities, plan.kind, REDIS_ENGINE);
+    assertObjectPathShape(capabilities, spec, plan.kind, plan.path, PATH_SHAPE_ENGINE);
     if (plan.revision.check === "unavailable") {
       // H3's three states stay three. A revision that says "this provider could not produce a
       // token" says NOTHING about whether the object moved, so answering `conflict` /

@@ -119,7 +119,7 @@ The sizes, read off the code rather than guessed:
 | Packed schema inventory | 6 000 chars, fenced whole | `context-snapshot.ts:348` |
 | Relations block | 2 000 chars | `er-diagram.ts` (`MAX_ER_CHARS`) |
 | Tool declarations, resent each turn | ~3 k chars for 7 descriptions + schemas | `investigation.ts:557-566` |
-| **One completed read** | **200 rows and 256 KiB, whichever binds first** | `execution-policy.ts:54-55`, enforced at `postgres.ts:917-931` and `sqlite.ts:429` |
+| **One completed read** | **200 rows and 256 KiB, whichever binds first** | `execution-policy.ts:54-55`, enforced at `postgres.ts:919-933` and `sqlite.ts:431` |
 
 So `B ≈ 16 k chars ≈ 4 k tokens` (at a conservative four characters per token; the ratio is the
 model's tokeniser's, which this layer deliberately does not know — `context-snapshot.ts:340-347`
@@ -397,7 +397,7 @@ selected by workflow — not a variable.
 
 **What raising the wall clock costs, stated:** the artifact TTL is derived from the deadline
 (`runtime.ts:55`), so it scales with it automatically and correctly. PostgreSQL opens and rolls back
-its own read-only transaction *per statement* (`postgres.ts:889,903`), so a longer run does not hold
+its own read-only transaction *per statement* (`postgres.ts:891,905`), so a longer run does not hold
 a longer transaction — the run's life and a transaction's life are unrelated on that engine. What a
 longer deadline does cost is heap: the transcript and the artifacts stay resident for longer on a
 single replica. At the numbers above that is tens of megabytes, not hundreds.
@@ -426,7 +426,7 @@ snapshot — anywhere in the database, not only in the tables the query touches.
 cluster that is bloat, and over a long enough read it is transaction-ID wraparound pressure. It is
 not a lock; a writer is not blocked. It is slower, quieter and harder to attribute, which arguably
 makes it worse. The agent's own path is safe from this by construction (each statement gets its own
-`BEGIN READ ONLY` … `ROLLBACK`, bounded to 10 s, `postgres.ts:889-914`). The editor path is not.
+`BEGIN READ ONLY` … `ROLLBACK`, bounded to 10 s, `postgres.ts:891-916`). The editor path is not.
 
 **On SQLite the risk is worse than the owner said.** A long read genuinely does block writers, and
 the driver is synchronous, so it also **blocks the studio process itself** — `deadline.ts:20-26` and
@@ -570,7 +570,7 @@ means warning plus "Apply to editor", never a silent skip.
 1. **The run executed this exact statement itself.** A model may compose a final statement wider than
    anything it ran; that one is never auto-executed. This condition is close to free and it removes
    most of the risk class on its own, because the agent path *refuses rather than truncates*
-   (`postgres.ts:917`, `sqlite.ts:421`): an artifact exists only for a statement that provably
+   (`postgres.ts:919`, `sqlite.ts:423`): an artifact exists only for a statement that provably
    returned 200 rows or fewer inside the 10 s statement ceiling. Row explosion is therefore already
    excluded by the artifact's existence, not by any estimate.
 2. **The plan gate the owner asked for**, read per engine, with unknown resolving to risky:
@@ -715,8 +715,8 @@ limit and must **not** inherit a tab's `unlimited` flag (§2.1). Beyond that, no
 > user "writes and DDL are refused either way". Those two sentences cannot both be true of the
 > implementation they describe. The editor's execution goes to `POST /api/db/query`, a plain
 > read-WRITE session whose only protection is `isDangerousQuery` — a check on the statement's TEXT —
-> while the agent's own read is enforced by the ENGINE (`BEGIN READ ONLY` at `postgres.ts:889`,
-> `PRAGMA query_only` at `sqlite.ts:410`). Text is not where the difference lives: a `SELECT` may
+> while the agent's own read is enforced by the ENGINE (`BEGIN READ ONLY` at `postgres.ts:891`,
+> `PRAGMA query_only` at `sqlite.ts:412`). Text is not where the difference lives: a `SELECT` may
 > invoke a VOLATILE function that performs an `INSERT`, which the read-only transaction refuses
 > (SQLSTATE 25006) and the read-write session performs. The same statement was therefore harmless
 > where the run proved it and harmful where it was replayed — and this repository already treats

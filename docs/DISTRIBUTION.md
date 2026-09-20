@@ -299,8 +299,8 @@ Use `<version>` or `sha-<commit>` for reproducible deployments; `main` / `dev` a
 unreleased code.
 
 **Variants.** Every tag above is published three times, once per base image (#840). The suffix is
-appended to whatever the tag would otherwise be, so `0.16.0`, `0.16.0-alpine` and
-`0.16.0-alpine-slim` are the same release on three bases, and `latest-alpine` and `dev-alpine` exist
+appended to whatever the tag would otherwise be, so `0.16.1`, `0.16.1-alpine` and
+`0.16.1-alpine-slim` are the same release on three bases, and `latest-alpine` and `dev-alpine` exist
 for the same reason `latest` and `dev` do.
 
 | Suffix | Dockerfile | Base | Engines | Use |

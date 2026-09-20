@@ -76,3 +76,13 @@ dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-
 # credential in source. Matched twice on the same line, once per half.
 5135a9c606e9e42c1b4ae0bdc31725718758f2b4:database-compose.yml:curl-auth-user:83
 5135a9c606e9e42c1b4ae0bdc31725718758f2b4:database-compose.yml:curl-auth-user:122
+
+# A placeholder JWT secret written twice into the release runbook's smoke phase
+# ("verify-jwt-secret-at-least-32-characters-long"), which is the literal naming
+# its own role, not a credential: it was typed to start a throwaway container
+# against a throwaway PostgreSQL and nothing ever read it again. Added in
+# 2ff08e3a and removed in the commit carrying these lines, where the runbook now
+# generates the value with `openssl rand -base64 32` instead, since the phase
+# never needs to know it. History keeps the commit, so the two findings stay.
+2ff08e3ac284bfbd9e3275f6b6c04b5dcf3081f6:.claude/skills/cut-release/SKILL.md:generic-api-key:247
+2ff08e3ac284bfbd9e3275f6b6c04b5dcf3081f6:.claude/skills/cut-release/SKILL.md:generic-api-key:307

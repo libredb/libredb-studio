@@ -47,6 +47,8 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertObjectPathShape,
+  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
@@ -541,23 +543,15 @@ const MONGODB_SOURCE_PART_LABEL = "Definition";
 const MONGODB_SOURCE_INDENT = 2;
 
 /**
- * The path shape one object of one kind takes, checked before anything is read.
- *
- * DERIVED from the declaration and never from a literal: one segment per declared container
- * level, then the object's own name. No kind here declares `attachedTo`, so there is exactly
- * one shape. Shared by `describeObject` and `readObjectSource` so the two cannot come to
- * disagree about what a path of the wrong length is, and so the sentence a caller reads is
- * written once.
+ * MongoDB: no kind declares `attachedTo`, so the shape is always the declared level plus
+ * the name, shared by `describeObject` and `readObjectSource` so both refuse the same
+ * shape in the same words.
  */
-function assertObjectPathShape(capabilities: ProviderCapabilities, path: readonly string[], kind: string): void {
-  const shape = [...declaredLevels(capabilities).map((level) => level.label.toLowerCase()), "name"];
-  if (path.length !== shape.length) {
-    throw new QueryError(
-      `A MongoDB "${kind}" path is [${shape.join(", ")}], received ${JSON.stringify(path)}`,
-      "mongodb",
-    );
-  }
-}
+const PATH_SHAPE_ENGINE: ObjectPathShapeEngine = {
+  code: "mongodb",
+  label: "A MongoDB",
+  attachedSegment: "required",
+};
 
 /**
  * One catalog row's definition, rendered as MongoDB Extended JSON, or `undefined` when the
@@ -1804,7 +1798,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
     // Derived, not counted. One segment per declared container level plus the name, and
     // shared with `readObjectSource` so both refuse the same shape in the same words.
-    assertObjectPathShape(capabilities, path, kind);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
 
     // Neither read is positional. The database comes from the segment the DECLARATION
     // assigns to the `schema` level, and the object's own name is the LAST segment.
@@ -1889,7 +1883,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         "mongodb",
       );
     }
-    assertObjectPathShape(capabilities, path, kind);
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
     const database = containerSegment(capabilities, path, "schema");
     const name = path[path.length - 1];
 

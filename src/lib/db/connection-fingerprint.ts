@@ -64,10 +64,10 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * `2dedca1a0ad45abdfb01427f0e1df3130e59617c5658058cbcf4852297f888c7` on both sides.
  *
  * - `connectionString` OVERRIDES the field-by-field form outright and is not merged with it.
- *   `src/lib/db/providers/sql/postgres.ts:2095-2099` returns `{ ...baseConfig, connectionString }`
+ *   `src/lib/db/providers/sql/postgres.ts:2070-2074` returns `{ ...baseConfig, connectionString }`
  *   and never reaches the `host`/`port`/`user`/`database` branch below it. The same shape is at
- *   `mysql.ts:1973-1976` (`uri`), `oracle.ts:1545-1546`, `sqlite.ts:1189-1192`,
- *   `document/mongodb.ts:800-801`, `libsql/index.ts:116-120`, `clickhouse/index.ts:402-422` and
+ *   `mysql.ts:1948-1951` (`uri`), `oracle.ts:1521-1522`, `sqlite.ts:1175-1178`,
+ *   `document/mongodb.ts:794-795`, `libsql/index.ts:116-120`, `clickhouse/index.ts:402-422` and
  *   `document/couchbase/index.ts:478`. PostgreSQL is the LIVE population: it declares two editable
  *   kinds.
  * - `schema` is Trino's session schema and is sent as the `X-Trino-Schema` submission header
@@ -76,7 +76,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   The normal path is qualified: measured on Trino 476, `SHOW CREATE FUNCTION` answers
  *   `memory.app.plus_one`, so the case needs a user edit that drops the qualification, which the
  *   pane cannot stop and the seal is not entitled to assume away.
- * - `serviceName` is Oracle's connect-string tail, `oracle.ts:1551-1560` building
+ * - `serviceName` is Oracle's connect-string tail, `oracle.ts:1527-1536` building
  *   `host:port/serviceName`, so it selects WHICH DATABASE on that listener.
  * - `sshTunnel` is the ROUTE and not a credential. `getOrCreateProvider`
  *   (`src/lib/db/factory.ts:533-540`) REWRITES `host` and `port` to the tunnel's local endpoint

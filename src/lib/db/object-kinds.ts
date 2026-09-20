@@ -6,7 +6,14 @@
  * `acceptsRowWrites` reads as false in every caller because there is only one caller.
  */
 import { QueryError } from "@/lib/db/errors";
-import type { DatabaseType, KindCount, ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  ContainerLevelSpec,
+  DatabaseType,
+  KindCount,
+  ObjectKindSpec,
+  ObjectSourcePart,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 
 /**
  * How many container levels this engine declares, as the tree models them.
@@ -30,6 +37,74 @@ export function declaredKinds(capabilities: ProviderCapabilities): readonly Obje
 
 export function findKind(capabilities: ProviderCapabilities, id: string): ObjectKindSpec | undefined {
   return declaredKinds(capabilities).find((kind) => kind.id === id);
+}
+
+/**
+ * The engine half of `assertObjectPathShape`: the identity its error carries, and the one
+ * policy the nine hoisted copies disagreed on.
+ */
+export type ObjectPathShapeEngine = {
+  /** The engine code the thrown `QueryError` is stamped with. */
+  code: DatabaseType;
+  /** The message's opening subject, article included: "A PostgreSQL", "An Oracle". */
+  label: string;
+  /**
+   * Whether a kind that declares `attachedTo` also admits the bare shape. MySQL and
+   * Oracle answer yes; every other engine requires the attached segment.
+   */
+  attachedSegment: "required" | "optional";
+};
+
+/**
+ * The container levels this engine declares, sliced to the depth `containerDepth()`
+ * reports. The same derivation every provider kept locally; hoisted with the assert so
+ * the depth rule and the level list cannot be taken by two different rules.
+ */
+function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
+  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
+}
+
+/**
+ * Refuses a path no shape of this kind admits, naming every shape it does admit.
+ *
+ * Hoisted from nine provider-local copies (#978) that had drifted apart in more than the
+ * signature. MySQL and Oracle read an attached kind by EITHER address, so they name both
+ * shapes in the error and carry `attachedSegment: "optional"`; PostgreSQL, SQLite,
+ * libSQL and Cassandra require the attached segment; ClickHouse, Redis and MongoDB
+ * declare no attached kind, so the policy never fires for them. The engine descriptor
+ * keeps those behaviours exactly as they were, because a hoist that quietly picked one
+ * would change what a bare-shaped path means on four engines.
+ *
+ * `kind` - not `spec.id` - stays in the message because that is what seven of the nine
+ * copies printed. Callers resolve the kind before this call (findKind, requireSourceKind
+ * or requireEditableKind), so the spec is always in hand and this function is not the
+ * kind-existence check: refusing an undeclared kind stays the caller's job, in the
+ * caller's own words.
+ */
+export function assertObjectPathShape(
+  capabilities: ProviderCapabilities,
+  spec: ObjectKindSpec,
+  kind: string,
+  path: readonly string[],
+  engine: ObjectPathShapeEngine,
+): void {
+  const levels = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
+  const attachedTo = spec.attachedTo;
+  const shapes: string[][] =
+    attachedTo === undefined
+      ? [[...levels, "name"]]
+      : engine.attachedSegment === "optional"
+        ? [
+            [...levels, attachedTo, "name"],
+            [...levels, "name"],
+          ]
+        : [[...levels, attachedTo, "name"]];
+  if (shapes.some((shape) => shape.length === path.length)) return;
+  throw new QueryError(
+    `${engine.label} "${kind}" path is ${shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ")}, ` +
+      `received ${JSON.stringify(path)}`,
+    engine.code,
+  );
 }
 
 /**
