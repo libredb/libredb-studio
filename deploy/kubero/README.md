@@ -17,7 +17,7 @@ source of truth.
 ## Install
 
 From a running Kubero instance (see the
-[Kubero install docs](https://docs.kubero.dev/docs/Getting-Started/Installation/)
+[Kubero install docs](https://docs.kubero.dev/docs/category/getting-started/)
 to set one up):
 
 1. **Open your Kubero dashboard** → create or pick a pipeline/app, then browse
