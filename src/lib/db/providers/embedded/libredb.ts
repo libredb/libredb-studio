@@ -993,17 +993,14 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
-    this.assertDeclaredKind(capabilities, kind);
-    const spec = findKind(capabilities, kind);
-    if (spec === undefined) {
-      throw new QueryError(`LibreDB declares no object kind "${kind}"`, "libredb");
-    }
+    const spec = this.assertDeclaredKind(capabilities, kind);
+    const levels = declaredLevels(capabilities);
 
     assertObjectPathShape(capabilities, spec, kind, path, LIBREDB_PATH_SHAPE_ENGINE);
 
     // The LAST segment and never `path[0]`: at depth 2 the first segment is a container.
     const name = path[path.length - 1];
-    const found = this.enumerate(path.slice(0, declaredLevels(capabilities).length)).byKind[kind].find(
+    const found = this.enumerate(path.slice(0, levels.length)).byKind[kind].find(
       (enumerated) => enumerated.object.path[enumerated.object.path.length - 1] === name,
     );
     if (found === undefined) {
@@ -1118,11 +1115,17 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return { details, truncated: { limit: bounded ? limit! : details.length, reason: reasons.join(", and ") } };
   }
 
-  /** One spelling of the declaration check, so two methods cannot refuse by two rules. */
-  private assertDeclaredKind(capabilities: ProviderCapabilities, kind: string): void {
-    if (findKind(capabilities, kind) === undefined) {
+  /** One spelling of the declaration check, so two methods cannot refuse by two rules.
+   *
+   * Returns the spec it resolved: the callers need the resolved kind next, and resolving it
+   * twice in the same method means one lookup decides the refusal and a second decides the
+   * shape. */
+  private assertDeclaredKind(capabilities: ProviderCapabilities, kind: string): ObjectKindSpec {
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
       throw new QueryError(`LibreDB declares no object kind "${kind}"`, "libredb");
     }
+    return spec;
   }
 
   // --------------------------------------------------------------------------
