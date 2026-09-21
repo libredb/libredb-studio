@@ -289,7 +289,7 @@ jobs:
           images: ${{ steps.images.outputs.list }}
           # The variant suffix is written into each tag rather than set through
           # the action's `flavor`, which would have to carry an empty suffix for
-          # the default image. `:0.16.1`, `:0.16.1-alpine`, `:0.16.1-alpine-slim`
+          # the default image. `:0.16.2`, `:0.16.2-alpine`, `:0.16.2-alpine-slim`
           # and the same three for latest/main/dev and the immutable sha- tag.
           tags: |
             type=raw,value=${{ needs.prepare.outputs.version }}${{ matrix.suffix }},enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
