@@ -600,19 +600,36 @@ describe("startupUrl", () => {
 
 describe("resolveBindAddress (issue #813)", () => {
   /*
-    Rows 3 and 4 are the shape the issue is about: an inherited HOSTNAME equal to
-    the machine's own hostname is what Docker's <container-id> and a kubelet's
-    <pod-name> both look like from inside, and it is the value the launcher used to
-    bind verbatim. Rows 5 and 6 are the same shape from the other side - the
-    documented opt-in has to keep working, or the fix trades a dead port for a
-    server that cannot be exposed at all.
+    Named rather than numbered, because the rows move: the pair carrying the issue
+    is "an inherited value equal to the machine name" - what Docker's
+    <container-id> and a kubelet's <pod-name> look like from inside, and the value
+    the launcher used to bind verbatim. The rows after it are the other side of
+    the contract: the documented opt-ins have to keep working, or the fix trades a
+    dead port for a server that cannot be exposed at all. "a named container
+    escapes that ambiguity" is the case @cevheri raised on #813 - the one shape
+    step 3 costs - and LIBREDB_BIND is the way out of it.
   */
   test.each([
-    ["--host wins over an injected HOSTNAME", "0.0.0.0", "46db4676bb04", "46db4676bb04", "0.0.0.0"],
-    ["--host wins over a deliberate HOSTNAME", "::", "0.0.0.0", "laptop", "::"],
+    ["--host wins over LIBREDB_BIND", "::", "0.0.0.0", "46db4676bb04", "46db4676bb04", "::"],
+    ["--host wins over an injected HOSTNAME", "0.0.0.0", undefined, "46db4676bb04", "46db4676bb04", "0.0.0.0"],
+    ["--host wins over a deliberate HOSTNAME", "::", undefined, "0.0.0.0", "laptop", "::"],
+    ["LIBREDB_BIND wins over an injected HOSTNAME", null, "0.0.0.0", "46db4676bb04", "46db4676bb04", "0.0.0.0"],
+    ["LIBREDB_BIND wins over a deliberate HOSTNAME", null, "::", "0.0.0.0", "laptop", "::"],
+    ["LIBREDB_BIND on its own is the address", null, "0.0.0.0", undefined, "laptop", "0.0.0.0"],
+    [
+      "a LIBREDB_BIND with surrounding whitespace is returned trimmed",
+      null,
+      "  0.0.0.0  ",
+      undefined,
+      "laptop",
+      "0.0.0.0",
+    ],
+    ["an empty LIBREDB_BIND falls through to HOSTNAME", null, "", "0.0.0.0", "laptop", "0.0.0.0"],
+    ["a whitespace-only LIBREDB_BIND falls through to HOSTNAME", null, "   ", "0.0.0.0", "laptop", "0.0.0.0"],
     [
       "an inherited value equal to the machine name is not a choice (container id)",
       null,
+      undefined,
       "46db4676bb04",
       "46db4676bb04",
       "127.0.0.1",
@@ -620,34 +637,38 @@ describe("resolveBindAddress (issue #813)", () => {
     [
       "an inherited value equal to the machine name is not a choice (pod name)",
       null,
+      undefined,
       "studio-7d9f",
       "studio-7d9f",
       "127.0.0.1",
     ],
-    ["a value differing from the machine name is the operator's", null, "0.0.0.0", "laptop", "0.0.0.0"],
-    ["an IPv6 literal differing from the machine name is honoured", null, "::", "laptop", "::"],
-    ["an unset HOSTNAME falls back to loopback", null, undefined, "laptop", "127.0.0.1"],
-    ["an empty HOSTNAME falls back to loopback", null, "", "laptop", "127.0.0.1"],
-    ["a whitespace-only HOSTNAME falls back to loopback", null, "   ", "laptop", "127.0.0.1"],
-    ["whitespace is trimmed before the comparison", null, " laptop ", "laptop", "127.0.0.1"],
-    ["a deliberate value is returned trimmed", null, "  0.0.0.0  ", "laptop", "0.0.0.0"],
+    ["a value differing from the machine name is the operator's", null, undefined, "0.0.0.0", "laptop", "0.0.0.0"],
+    ["an IPv6 literal differing from the machine name is honoured", null, undefined, "::", "laptop", "::"],
+    ["an unset HOSTNAME falls back to loopback", null, undefined, undefined, "laptop", "127.0.0.1"],
+    ["an empty HOSTNAME falls back to loopback", null, undefined, "", "laptop", "127.0.0.1"],
+    ["a whitespace-only HOSTNAME falls back to loopback", null, undefined, "   ", "laptop", "127.0.0.1"],
+    ["whitespace is trimmed before the comparison", null, undefined, " laptop ", "laptop", "127.0.0.1"],
+    ["a deliberate value is returned trimmed", null, undefined, "  0.0.0.0  ", "laptop", "0.0.0.0"],
     [
       "a host named after the address it also pins is indistinguishable, and documentedly so",
       null,
+      undefined,
       "0.0.0.0",
       "0.0.0.0",
       "127.0.0.1",
     ],
-    ["an unreadable machine hostname keeps the inherited value", null, "0.0.0.0", undefined, "0.0.0.0"],
+    ["a named container escapes that ambiguity through LIBREDB_BIND", null, "0.0.0.0", "studio", "studio", "0.0.0.0"],
+    ["an unreadable machine hostname keeps the inherited value", null, undefined, "0.0.0.0", undefined, "0.0.0.0"],
     [
       "an unreadable machine hostname with no HOSTNAME still lands on loopback",
       null,
       undefined,
       undefined,
+      undefined,
       "127.0.0.1",
     ],
-  ])("%s", (_name, host, hostnameEnv, systemHostname, expected) => {
-    expect(resolveBindAddress({ host, hostnameEnv, systemHostname })).toBe(expected);
+  ])("%s", (_name, host, libredbBind, hostnameEnv, systemHostname, expected) => {
+    expect(resolveBindAddress({ host, libredbBind, hostnameEnv, systemHostname })).toBe(expected);
   });
 });
 
@@ -726,16 +747,27 @@ describe("launcher startup URL", () => {
  * The bind address the launcher hands the server (issue #813), read back from a
  * real launcher process rather than from a mock.
  *
- * Same harness as `launcher startup URL` above, with `--host` left off and
- * `HOSTNAME` set on the child explicitly, because the inherited value is the
- * thing under test: the first case reproduces the container shape on any host by
- * exporting this machine's own hostname, which is what a container runtime
- * injects. The second is the other half of the contract - a value nobody else
- * would write still reaches the server untouched.
+ * Same harness as `launcher startup URL` above, with `--host` left off, because
+ * the inherited environment is the thing under test: the first case reproduces
+ * the container shape on any host by exporting this machine's own hostname, which
+ * is what a container runtime injects. The second is the other half of the
+ * contract - a value nobody else would write still reaches the server untouched.
+ * The third is the override @cevheri asked for on #813, asserted where it has to
+ * hold: on the process, not only in the pure table.
  */
 describe("launcher bind address", () => {
-  /** @param {string} hostnameEnv value exported as HOSTNAME to the launcher */
-  function startWithHostname(hostnameEnv: string) {
+  /**
+   * Run the real launcher against a stub payload that prints the address it was
+   * given, and return its stdout.
+   *
+   * `PORT`, `LIBREDB_STUDIO_ARCHIVE` and `LIBREDB_BIND` are dropped from the
+   * ambient environment before `overrides` is applied: the launcher reads all
+   * three, so a contributor who exports one would otherwise watch this file decide
+   * something the test never asked it to.
+   *
+   * @param {{ HOSTNAME: string, LIBREDB_BIND?: string }} overrides
+   */
+  function startWith(overrides: { HOSTNAME: string; LIBREDB_BIND?: string }) {
     const node = Bun.which("node");
     expect(node).not.toBeNull();
     // Below the floor the launcher refuses and exits 1 with its own sentence on
@@ -759,7 +791,9 @@ describe("launcher bind address", () => {
     const env = { ...process.env };
     delete env.PORT;
     delete env.LIBREDB_STUDIO_ARCHIVE;
-    env.HOSTNAME = hostnameEnv;
+    delete env.LIBREDB_BIND;
+    delete env.HOSTNAME;
+    Object.assign(env, overrides);
     const run = Bun.spawnSync([node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js")], {
       env,
       stdout: "pipe",
@@ -770,10 +804,16 @@ describe("launcher bind address", () => {
   }
 
   test("an inherited HOSTNAME equal to this machine's own hostname never becomes the bind address", () => {
-    expect(startWithHostname(os.hostname())).toContain("BIND=127.0.0.1\n");
+    expect(startWith({ HOSTNAME: os.hostname() })).toContain("BIND=127.0.0.1\n");
   });
 
   test("a HOSTNAME differing from this machine's own hostname still reaches the server", () => {
-    expect(startWithHostname("0.0.0.0")).toContain("BIND=0.0.0.0\n");
+    expect(startWith({ HOSTNAME: "0.0.0.0" })).toContain("BIND=0.0.0.0\n");
+  });
+
+  test("LIBREDB_BIND reaches the server and outranks a container-shaped HOSTNAME", () => {
+    // The container named after itself, which is the one shape the HOSTNAME rule
+    // costs (#813, @cevheri).
+    expect(startWith({ HOSTNAME: os.hostname(), LIBREDB_BIND: "0.0.0.0" })).toContain("BIND=0.0.0.0\n");
   });
 });

@@ -71,11 +71,11 @@ rejected stops the launcher (override: LIBREDB_STUDIO_SKIP_PROVENANCE=1).
 
 Options:
   --port <n>        Port to listen on (default: $PORT or ${DEFAULT_PORT})
-  --host <addr>     Address to bind (default: 127.0.0.1). $HOSTNAME is
-                    honoured only when it differs from this machine's own
-                    name, so a value inherited from a shell or injected by a
-                    container runtime is ignored; use --host 0.0.0.0 to
-                    expose on the network
+  --host <addr>     Address to bind (default: 127.0.0.1). --host wins, then
+                    $LIBREDB_BIND; $HOSTNAME counts only when it differs from
+                    this machine's own name, so a value inherited from a shell
+                    or injected by a container runtime is ignored; use
+                    --host 0.0.0.0 to expose on the network
   --archive <path>  Start from a local standalone archive instead of
                     downloading (env: LIBREDB_STUDIO_ARCHIVE). WARNING:
                     local archives skip checksum verification unless
@@ -89,8 +89,8 @@ Options:
   --help, -h        Show this help
 
 The server binds to 127.0.0.1 by default; exposing it on the network is an
-explicit opt-in (--host, or a HOSTNAME that differs from this machine's own
-name). All environment variables are forwarded to the server
+explicit opt-in (--host, LIBREDB_BIND, or a HOSTNAME that differs from this
+machine's own name). All environment variables are forwarded to the server
 (PORT, HOSTNAME, JWT_SECRET, ADMIN_PASSWORD, STORAGE_PROVIDER,
 STORAGE_SQLITE_PATH, ...). When JWT_SECRET or ADMIN_PASSWORD are not set, the
 server generates them on first run and prints the admin credentials once.
@@ -301,10 +301,10 @@ function verifyProvenance(archivePath, name) {
 
 /**
  * Spawn `node server.js` from the payload, forwarding the full environment.
- * Local-first: the server binds to loopback unless `--host` or a `HOSTNAME` that
- * differs from this machine's own name says otherwise (resolveBindAddress owns
- * that rule and the reasoning - issue #813; the standalone Next server would
- * otherwise default to 0.0.0.0).
+ * Local-first: the server binds to loopback unless `--host`, `LIBREDB_BIND` or a
+ * `HOSTNAME` that differs from this machine's own name says otherwise
+ * (resolveBindAddress owns that rule and the reasoning - issue #813; the
+ * standalone Next server would otherwise default to 0.0.0.0).
  *
  * @param {string} payloadDir
  * @param {number | null} port
@@ -315,6 +315,7 @@ function startServer(payloadDir, port, host) {
   if (port !== null) env.PORT = String(port);
   env.HOSTNAME = resolveBindAddress({
     host,
+    libredbBind: process.env.LIBREDB_BIND,
     hostnameEnv: process.env.HOSTNAME,
     systemHostname: os.hostname(),
   });

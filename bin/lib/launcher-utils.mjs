@@ -42,8 +42,15 @@ function envText(value) {
  *
  * Precedence, and the reason for each step:
  *
- * 1. `--host` wins outright. It is the one signal nothing else writes.
- * 2. `HOSTNAME` counts only when it differs from this machine's own hostname.
+ * 1. `--host` wins outright. It is the argument on THIS invocation, and an
+ *    exported variable cannot know which command is running - so the flag the
+ *    operator just typed outranks anything ambient.
+ * 2. `LIBREDB_BIND` is the unambiguous override, and reading it here is what
+ *    makes the native channels uniform: the `.deb`/`.rpm` and Homebrew wrappers
+ *    resolve it (`packaging/linux/libredb-studio`, the Homebrew template) and
+ *    `docker/bind-address.mjs` reads it before `HOSTNAME`. It is also the way
+ *    out of the one case step 3 costs - a container named after itself, below.
+ * 3. `HOSTNAME` counts only when it differs from this machine's own hostname.
  *    Shells export `HOSTNAME=<machine name>`, and a container runtime injects the
  *    container id (Docker) or the pod name (a kubelet) - all three are, from
  *    inside, equal to `os.hostname()`. So an inherited value is nearly always
@@ -51,25 +58,24 @@ function envText(value) {
  *    cannot reach it: measured in `node:24-alpine` on Docker 29.2.1,
  *    `curl http://localhost:3000/login` answered 000 while the container address
  *    answered 200 (issue #813). This is the rule `docker/bind-address.mjs`
- *    already applies to the image (#432), and the wrappers apply through
- *    `LIBREDB_BIND` (#134); the launcher was the one path left without it.
- * 3. Otherwise loopback - the local-first default every native channel states.
+ *    already applies to the image (#432).
+ * 4. Otherwise loopback - the local-first default every native channel states.
  *
- * Two costs, stated rather than hidden. A host named after the address it also
+ * One cost, stated rather than hidden: a host named after the address it also
  * pins (`--hostname 0.0.0.0` together with `HOSTNAME=0.0.0.0`) is
- * indistinguishable from an injected value, so the pin is dropped; `--host` is
- * unambiguous and is what the help text points at. And when `os.hostname()`
- * cannot be read there is nothing to compare against, so the inherited value is
- * kept - for a machine whose own name is unknown, today's behaviour is the
- * conservative fallback rather than a second guess.
+ * indistinguishable from an injected value at step 3, so that pin is dropped.
+ * Step 2 is the answer - `LIBREDB_BIND` carries no second meaning - and `--host`
+ * is unambiguous for a single run.
  *
  * Pure: the machine hostname is passed in, never read here.
  *
- * @param {{ host?: string | null, hostnameEnv?: string | undefined, systemHostname?: string | undefined }} [options]
+ * @param {{ host?: string | null, libredbBind?: string | undefined, hostnameEnv?: string | undefined, systemHostname?: string | undefined }} [options]
  * @returns {string}
  */
-export function resolveBindAddress({ host, hostnameEnv, systemHostname } = {}) {
+export function resolveBindAddress({ host, libredbBind, hostnameEnv, systemHostname } = {}) {
   if (host) return host;
+  const chosen = envText(libredbBind);
+  if (chosen !== "") return chosen;
   const inherited = envText(hostnameEnv);
   if (inherited !== "" && inherited !== envText(systemHostname)) return inherited;
   return "127.0.0.1";
