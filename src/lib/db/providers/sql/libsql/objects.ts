@@ -53,6 +53,7 @@ import {
   requireSourceKind,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
+import { unquoteLiteral } from "@/lib/sql/values";
 import { readNumber, readText } from "./introspect";
 import type { LibSQLBatchOutcome, LibSQLRow, LibSQLStatement, LibSQLTransport } from "./transport";
 
@@ -649,6 +650,19 @@ export async function listLibSQLObjects(
     .sort((left, right) => comparePaths(left.path, right.path));
 }
 
+/**
+ * The VALUE a column defaults to, read out of the catalog text (#1029). libSQL reports a
+ * default as the expression AS WRITTEN, so a string default arrives as the quoted literal
+ * `'abc'`. `unquoteLiteral` decodes exactly one complete literal with this dialect's
+ * escaping and answers `undefined` for anything else, which is what lets a number such as
+ * `42` or an expression such as `CURRENT_TIMESTAMP` through unchanged. The text itself is
+ * kept alongside as `defaultExpression`, because once decoded this is no longer something
+ * that can be pasted after the word DEFAULT.
+ */
+function readCatalogDefault(raw: string | null | undefined): string | undefined {
+  return raw === null || raw === undefined ? undefined : (unquoteLiteral(raw, "libsql") ?? raw);
+}
+
 /** One column of an object, as `pragma_table_xinfo` publishes it. */
 function toColumn(row: LibSQLRow, sql: string): ColumnSchema {
   const defaultValue = row.dflt_value;
@@ -664,7 +678,9 @@ function toColumn(row: LibSQLRow, sql: string): ColumnSchema {
     // `=== 1` reports the second key column as ordinary. Measured on
     // `PRIMARY KEY (region, year)`.
     isPrimary: (readNumber(row.pk) ?? 0) > 0,
-    ...(defaultValue === null || defaultValue === undefined ? {} : { defaultValue: String(defaultValue) }),
+    ...(defaultValue === null || defaultValue === undefined
+      ? {}
+      : { defaultValue: readCatalogDefault(String(defaultValue)), defaultExpression: String(defaultValue) }),
   };
 }
 

@@ -61,6 +61,7 @@ import {
   requireSourceKind,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
+import { unquoteLiteral } from "@/lib/sql/values";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
@@ -796,6 +797,19 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
 }
 
 /**
+ * The VALUE a column defaults to, read out of the catalog text (#1029). SQLite reports a
+ * default as the expression AS WRITTEN, so a string default arrives as the quoted literal
+ * `'abc'`. `unquoteLiteral` decodes exactly one complete literal with this dialect's
+ * escaping and answers `undefined` for anything else, which is what lets a number such as
+ * `42` or an expression such as `CURRENT_TIMESTAMP` through unchanged. The text itself is
+ * kept alongside as `defaultExpression`, because once decoded this is no longer something
+ * that can be pasted after the word DEFAULT.
+ */
+function readCatalogDefault(raw: string | null | undefined): string | undefined {
+  return raw === null || raw === undefined ? undefined : (unquoteLiteral(raw, "sqlite") ?? raw);
+}
+
+/**
  * ONE object's detail, from rows, for BOTH the single read and the bulk read (#789).
  *
  * One mapper and not two, because two are two chances for `describeObjects` to spell a
@@ -831,7 +845,8 @@ function objectDetailFromRows(path: readonly string[], rows: ObjectDetailRows): 
       // so `=== 1` reports the second key column as ordinary. Measured on
       // `PRIMARY KEY (region, year)`.
       isPrimary: row.pk > 0,
-      defaultValue: row.dflt_value ?? undefined,
+      defaultValue: readCatalogDefault(row.dflt_value),
+      defaultExpression: row.dflt_value ?? undefined,
     })),
     indexes: rows.indexes.map((row) => ({
       name: row.name,

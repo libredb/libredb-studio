@@ -1819,7 +1819,15 @@ describe("DuckDB object containers, listings and detail", () => {
         columns: [
           { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
           { name: "name", type: "VARCHAR", nullable: false, isPrimary: false },
-          { name: "note", type: "VARCHAR", nullable: true, isPrimary: false, defaultValue: "'none'" },
+          // The catalog reports `'none'`; the value is `none`, and the text is kept (#1029).
+          {
+            name: "note",
+            type: "VARCHAR",
+            nullable: true,
+            isPrimary: false,
+            defaultValue: "none",
+            defaultExpression: "'none'",
+          },
         ],
         indexes: [],
         foreignKeys: [],
@@ -3148,5 +3156,76 @@ describe("DuckDB object statements: what the fixture cannot show", () => {
       (value) => (typeof value === "string" ? Number(value) : undefined),
     );
     expect(counts).toEqual({ table: { count: 7 }, macro: { count: 0 } });
+  });
+});
+
+/**
+ * Column defaults as DuckDB's catalog reports them (#1029).
+ *
+ * `information_schema.columns.column_default` is the expression AS WRITTEN, with SQL
+ * standard quote doubling, identical to SQLite on every string, number and expression
+ * row. A generated column reports its expression there too. Measured on DuckDB v1.5.5
+ * through `@duckdb/node-api`:
+ *
+ *   DEFAULT 'abc'                         -> 'abc'
+ *   DEFAULT 'it''s'                       -> 'it''s'
+ *   DEFAULT ''                            -> ''
+ *   DEFAULT 42                            -> 42
+ *   DEFAULT CURRENT_TIMESTAMP             -> CURRENT_TIMESTAMP
+ *   GENERATED ALWAYS AS (id * 2) VIRTUAL  -> CAST((id * 2) AS INTEGER)
+ */
+describe("DuckDBProvider column defaults (#1029)", () => {
+  const DDL = `CREATE TABLE column_defaults (
+    id INTEGER PRIMARY KEY,
+    def_null_string VARCHAR DEFAULT 'NULL',
+    def_text VARCHAR DEFAULT 'abc',
+    def_empty VARCHAR DEFAULT '',
+    def_quote VARCHAR DEFAULT 'it''s',
+    def_backslash VARCHAR DEFAULT 'a\\b',
+    def_number INTEGER DEFAULT 42,
+    def_expression TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    def_generated INTEGER GENERATED ALWAYS AS (id * 2) VIRTUAL
+  )`;
+
+  const EXPECTED: Record<string, { defaultValue?: string; defaultExpression?: string }> = {
+    id: {},
+    def_null_string: { defaultValue: "NULL", defaultExpression: "'NULL'" },
+    def_text: { defaultValue: "abc", defaultExpression: "'abc'" },
+    def_empty: { defaultValue: "", defaultExpression: "''" },
+    def_quote: { defaultValue: "it's", defaultExpression: "'it''s'" },
+    def_backslash: { defaultValue: "a\\b", defaultExpression: "'a\\b'" },
+    def_number: { defaultValue: "42", defaultExpression: "42" },
+    def_expression: { defaultValue: "CURRENT_TIMESTAMP", defaultExpression: "CURRENT_TIMESTAMP" },
+    def_generated: { defaultValue: "CAST((id * 2) AS INTEGER)", defaultExpression: "CAST((id * 2) AS INTEGER)" },
+  };
+
+  const defaultsOf = (columns: readonly { name: string; defaultValue?: string; defaultExpression?: string }[]) =>
+    Object.fromEntries(
+      columns.map((column) => [
+        column.name,
+        {
+          ...(column.defaultValue === undefined ? {} : { defaultValue: column.defaultValue }),
+          ...(column.defaultExpression === undefined ? {} : { defaultExpression: column.defaultExpression }),
+        },
+      ]),
+    );
+
+  test("a string default is reported as its value, with the catalog text kept alongside", async () => {
+    const provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    try {
+      await provider.query(DDL);
+
+      const single = await provider.describeObject(["memory", "main", "column_defaults"], "table");
+      expect(defaultsOf(single.columns)).toEqual(EXPECTED);
+
+      // The bulk read goes through the same mapper; asserting it too is what catches a fix
+      // applied to one read and not the other, the mistake #795 had to correct.
+      const batch = await provider.describeObjects(["memory", "main"], "table");
+      const bulk = batch.details.find((detail) => detail.path.at(-1) === "column_defaults")!;
+      expect(defaultsOf(bulk.columns)).toEqual(EXPECTED);
+    } finally {
+      await provider.disconnect();
+    }
   });
 });

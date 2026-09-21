@@ -935,7 +935,7 @@ A generated column is absence on both, recognised by `EXTRA` being exactly `STOR
 On MariaDB the remaining text is decoded by `unquoteLiteral()` (`src/lib/sql/values.ts`), the inverse of the `quoteLiteral()` this repo already uses for this family, so the doubled quote and the escaping backslash are both undone; text that is not exactly one literal, such as `current_timestamp()` or `concat('x','y')`, passes through as written.
 
 **Each column carries both readings, and only where they were measured.**
-`defaultValue` is the value the column defaults to, which is what the object browser shows, and this family is the only one that decodes it.
+`defaultValue` is the value the column defaults to, which is what the object browser shows, and this family decodes it, as SQLite, libSQL and DuckDB do for the same reason (#1029).
 Most other providers leave the engine's catalog text in that field; ClickHouse is the exception either way, because it builds a clause-naming string such as `MATERIALIZED a + b` that is neither (issue #1032).
 `defaultExpression` is the SQL text that produces it, which is what a reader emitting DDL, the schema-diff migration generator above all, must write after the word `DEFAULT`, and a provider carries it exactly where it decoded the value out of it.
 On MariaDB both are set: the catalog text is always valid SQL there, every form in the table above included, so the expression is the raw text unchanged.

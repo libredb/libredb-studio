@@ -328,10 +328,11 @@ export interface ColumnSchema {
    * across the fleet.
    *
    * On most providers it is the engine's own catalog TEXT, copied out unchanged: PostgreSQL
-   * reports `nextval('app.orders_id_seq'::regclass)` here, SQL Server `((0))`, DuckDB and
-   * libSQL and SQLite the quoted literal. On MySQL and MariaDB it is the DECODED value,
-   * `abc` rather than `'abc'`, because MariaDB reports the default as the expression its
-   * author wrote and showing that to a reader showed a default nobody wrote (#795).
+   * reports `nextval('app.orders_id_seq'::regclass)` here, SQL Server `((0))`. On MySQL and
+   * MariaDB it is the DECODED value, `abc` rather than `'abc'`, because MariaDB reports the
+   * default as the expression its author wrote and showing that to a reader showed a default
+   * nobody wrote (#795). SQLite, libSQL and DuckDB report it the same way MariaDB does and
+   * decode it the same way (#1029).
    *
    * ClickHouse is neither. `readDefault` in `clickhouse/introspect.ts` answers the bare
    * expression for kind `DEFAULT` and CONSTRUCTS `MATERIALIZED a + b` for the other kinds,
