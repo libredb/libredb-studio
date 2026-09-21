@@ -20,6 +20,7 @@ import {
   parseSha256Sums,
   preservePayloadData,
   releaseDownloadUrl,
+  resolveBindAddress,
   resolveCacheDir,
   resolveLedgerDir,
   sha256File,
@@ -597,6 +598,59 @@ describe("startupUrl", () => {
   });
 });
 
+describe("resolveBindAddress (issue #813)", () => {
+  /*
+    Rows 3 and 4 are the shape the issue is about: an inherited HOSTNAME equal to
+    the machine's own hostname is what Docker's <container-id> and a kubelet's
+    <pod-name> both look like from inside, and it is the value the launcher used to
+    bind verbatim. Rows 5 and 6 are the same shape from the other side - the
+    documented opt-in has to keep working, or the fix trades a dead port for a
+    server that cannot be exposed at all.
+  */
+  test.each([
+    ["--host wins over an injected HOSTNAME", "0.0.0.0", "46db4676bb04", "46db4676bb04", "0.0.0.0"],
+    ["--host wins over a deliberate HOSTNAME", "::", "0.0.0.0", "laptop", "::"],
+    [
+      "an inherited value equal to the machine name is not a choice (container id)",
+      null,
+      "46db4676bb04",
+      "46db4676bb04",
+      "127.0.0.1",
+    ],
+    [
+      "an inherited value equal to the machine name is not a choice (pod name)",
+      null,
+      "studio-7d9f",
+      "studio-7d9f",
+      "127.0.0.1",
+    ],
+    ["a value differing from the machine name is the operator's", null, "0.0.0.0", "laptop", "0.0.0.0"],
+    ["an IPv6 literal differing from the machine name is honoured", null, "::", "laptop", "::"],
+    ["an unset HOSTNAME falls back to loopback", null, undefined, "laptop", "127.0.0.1"],
+    ["an empty HOSTNAME falls back to loopback", null, "", "laptop", "127.0.0.1"],
+    ["a whitespace-only HOSTNAME falls back to loopback", null, "   ", "laptop", "127.0.0.1"],
+    ["whitespace is trimmed before the comparison", null, " laptop ", "laptop", "127.0.0.1"],
+    ["a deliberate value is returned trimmed", null, "  0.0.0.0  ", "laptop", "0.0.0.0"],
+    [
+      "a host named after the address it also pins is indistinguishable, and documentedly so",
+      null,
+      "0.0.0.0",
+      "0.0.0.0",
+      "127.0.0.1",
+    ],
+    ["an unreadable machine hostname keeps the inherited value", null, "0.0.0.0", undefined, "0.0.0.0"],
+    [
+      "an unreadable machine hostname with no HOSTNAME still lands on loopback",
+      null,
+      undefined,
+      undefined,
+      "127.0.0.1",
+    ],
+  ])("%s", (_name, host, hostnameEnv, systemHostname, expected) => {
+    expect(resolveBindAddress({ host, hostnameEnv, systemHostname })).toBe(expected);
+  });
+});
+
 /**
  * The pure table above covers every formatting rule; these three cases cover the
  * wiring, that `bin/studio.js` passes the real HOSTNAME and PORT through the helper
@@ -665,5 +719,61 @@ describe("launcher startup URL", () => {
     expect(output).toContain(`Starting LibreDB Studio ${version} on ${url}\n`);
     expect(output).toContain(`BIND=${host}\n`);
     expect(output.match(/^Starting LibreDB Studio ([0-9][0-9.]*) /m)?.[1]).toBe(version);
+  });
+});
+
+/**
+ * The bind address the launcher hands the server (issue #813), read back from a
+ * real launcher process rather than from a mock.
+ *
+ * Same harness as `launcher startup URL` above, with `--host` left off and
+ * `HOSTNAME` set on the child explicitly, because the inherited value is the
+ * thing under test: the first case reproduces the container shape on any host by
+ * exporting this machine's own hostname, which is what a container runtime
+ * injects. The second is the other half of the contract - a value nobody else
+ * would write still reaches the server untouched.
+ */
+describe("launcher bind address", () => {
+  /** @param {string} hostnameEnv value exported as HOSTNAME to the launcher */
+  function startWithHostname(hostnameEnv: string) {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    // Below the floor the launcher refuses and exits 1 with its own sentence on
+    // stderr, which is asserted below; ask its own check first so the failure
+    // arrives as that sentence rather than as a bare exit code.
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+
+    const home = fs.mkdtempSync(path.join(tempDir, "bind-"));
+    const root = path.resolve(import.meta.dir, "../..");
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), 'console.log("BIND=" + process.env.HOSTNAME);');
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const env = { ...process.env };
+    delete env.PORT;
+    delete env.LIBREDB_STUDIO_ARCHIVE;
+    env.HOSTNAME = hostnameEnv;
+    const run = Bun.spawnSync([node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js")], {
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
+    return run.stdout.toString();
+  }
+
+  test("an inherited HOSTNAME equal to this machine's own hostname never becomes the bind address", () => {
+    expect(startWithHostname(os.hostname())).toContain("BIND=127.0.0.1\n");
+  });
+
+  test("a HOSTNAME differing from this machine's own hostname still reaches the server", () => {
+    expect(startWithHostname("0.0.0.0")).toContain("BIND=0.0.0.0\n");
   });
 });

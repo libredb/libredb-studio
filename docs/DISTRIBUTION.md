@@ -80,15 +80,17 @@ sharing a user's machine, and it has not changed. (The Docker image and the Helm
 exception - a container binds all of its own addresses and is isolated by container networking
 instead. Since chart 0.1.42 and the image that ships with it, that set is not hardcoded: the container's
 entrypoint resolves a bind address at startup and prefers `::`, all addresses of both families.)
-`HOSTNAME` is the bind address wherever the server is started directly - Docker, Helm, npx and the
-systemd units, the Snap daemon included; the `.deb`/`.rpm` and Homebrew wrappers, a direct
-`snap run` and the Windows launcher take `LIBREDB_BIND` instead and discard an inherited
-`HOSTNAME`. The note below the table covers the
-address family either one selects.
+`HOSTNAME` is the bind address wherever the server is started directly and the value was chosen -
+Docker, Helm and the systemd units, the Snap daemon included; the `.deb`/`.rpm` and Homebrew
+wrappers, a direct `snap run` and the Windows launcher take `LIBREDB_BIND` instead and discard an
+inherited `HOSTNAME`. The npx launcher reads `HOSTNAME` too, but honours it only when it differs
+from the machine's own hostname, so a value a shell or a container runtime exported is ignored
+rather than bound (#813); `--host` is the unambiguous way to expose it. The note below the table
+covers the address family either one selects.
 
 | Channel | Default bind | How to expose |
 |---|---|---|
-| npx | `127.0.0.1` | `npx @libredb/studio --host 0.0.0.0` (or set `HOSTNAME`) |
+| npx | `127.0.0.1` | `npx @libredb/studio --host 0.0.0.0` (or export a `HOSTNAME` that differs from the machine's own name) |
 | .deb / .rpm (systemd) | `127.0.0.1` | `HOSTNAME=0.0.0.0` in `/etc/libredb-studio/env`, then restart |
 | .deb / .rpm (direct run) | `127.0.0.1` | `LIBREDB_BIND=0.0.0.0 libredb-studio` |
 | Homebrew service | `127.0.0.1` | run the binary manually with `LIBREDB_BIND=0.0.0.0`, or front it with a reverse proxy |
@@ -106,12 +108,18 @@ unit resolves it before the wrapper runs (detected via the systemd-set `INVOCATI
 wrapper leaves it untouched there). The
 Windows launcher rebuilds `HOSTNAME` from `LIBREDB_BIND` on every run, with no systemd exception.
 
+The npx launcher ignores an inherited `HOSTNAME` by the same rule and for the same reason: a value
+equal to the machine's own hostname is exactly what Docker's container id and a kubelet's pod name
+look like from inside, so it is not read as a choice (#813). Its opt-in is `--host`, which is never
+second-guessed.
+
 **Address family (IPv4, IPv6, dual-stack).** The bind address accepts an IPv6 literal in every
 channel, because whichever variable that channel reads ends up as the host argument of a plain
 `server.listen(port, hostname)` in the standalone Next.js server
 (`next/dist/server/lib/start-server.js`) - so it is Node, not Next, that gives `::` its meaning.
 (Next touches `[::]` only to format the URL it prints at startup.) Use `HOSTNAME` where the server is started directly
-(Docker, Helm, npx, the systemd units, Snap) and `LIBREDB_BIND` in the wrapper channels (a direct
+(Docker, Helm, the systemd units, Snap), `--host` on the npx launcher, and `LIBREDB_BIND` in the
+wrapper channels (a direct
 `.deb`/`.rpm` run, Homebrew, the Windows launcher), per the paragraph above. The values that
 matter:
 

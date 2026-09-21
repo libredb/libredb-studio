@@ -27,6 +27,56 @@ export function startupUrl(hostname, port) {
 }
 
 /**
+ * An environment value as a trimmed string, so `undefined`, an empty value and
+ * whitespace are one case rather than three at each call site.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function envText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * The address `node server.js` is bound to (issue #813).
+ *
+ * Precedence, and the reason for each step:
+ *
+ * 1. `--host` wins outright. It is the one signal nothing else writes.
+ * 2. `HOSTNAME` counts only when it differs from this machine's own hostname.
+ *    Shells export `HOSTNAME=<machine name>`, and a container runtime injects the
+ *    container id (Docker) or the pod name (a kubelet) - all three are, from
+ *    inside, equal to `os.hostname()`. So an inherited value is nearly always
+ *    "nobody chose", and honouring it binds the server where loopback clients
+ *    cannot reach it: measured in `node:24-alpine` on Docker 29.2.1,
+ *    `curl http://localhost:3000/login` answered 000 while the container address
+ *    answered 200 (issue #813). This is the rule `docker/bind-address.mjs`
+ *    already applies to the image (#432), and the wrappers apply through
+ *    `LIBREDB_BIND` (#134); the launcher was the one path left without it.
+ * 3. Otherwise loopback - the local-first default every native channel states.
+ *
+ * Two costs, stated rather than hidden. A host named after the address it also
+ * pins (`--hostname 0.0.0.0` together with `HOSTNAME=0.0.0.0`) is
+ * indistinguishable from an injected value, so the pin is dropped; `--host` is
+ * unambiguous and is what the help text points at. And when `os.hostname()`
+ * cannot be read there is nothing to compare against, so the inherited value is
+ * kept - for a machine whose own name is unknown, today's behaviour is the
+ * conservative fallback rather than a second guess.
+ *
+ * Pure: the machine hostname is passed in, never read here.
+ *
+ * @param {{ host?: string | null, hostnameEnv?: string | undefined, systemHostname?: string | undefined }} [options]
+ * @returns {string}
+ */
+export function resolveBindAddress({ host, hostnameEnv, systemHostname } = {}) {
+  if (host) return host;
+  const inherited = envText(hostnameEnv);
+  const own = envText(systemHostname);
+  if (inherited !== "" && (own === "" || inherited !== own)) return inherited;
+  return "127.0.0.1";
+}
+
+/**
  * Platform/arch pairs the release workflow builds standalone payloads for
  * (must mirror the build jobs in .github/workflows/release-artifacts.yml).
  */
