@@ -52,6 +52,8 @@
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
+> <span dir="rtl">یہ اردو README کمیونٹی کا ترجمہ ہے اور انگریزی نسخے سے پیچھے ہو سکتا ہے۔ فرق کی صورت میں [انگریزی نسخہ](README.md) معتبر ہے۔</span>
+
 <div dir="rtl" align="right">
 
 ## <span dir="rtl">فوری شروعات</span>

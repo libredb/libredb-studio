@@ -26,6 +26,14 @@
  *      A reader who follows the quickstart hits a silent login loop while the
  *      health check passes - the same failure four deployment channels have
  *      now shipped (#232, Unraid, #307, #901).
+ *   4. Every localized README carries a translation-lag banner: a blockquote
+ *      above its first heading that links back to README.md. This one is about
+ *      what the guard cannot check. Invariants 1 to 3 cover the engine set, the
+ *      install commands and one warning; feature lists, counts, dates and
+ *      measured numbers are outside its universe, so a localized file can be
+ *      stale in ways nothing here will catch (#1055). The banner tells the
+ *      reader that, and names the file that wins when the two disagree.
+ *      README.md is exempt: it is the one the banner points at.
  *
  * Tables are located structurally (the table holding the PostgreSQL row, the
  * table holding `docker run`) rather than by heading text, because the headings
@@ -46,6 +54,11 @@ const WARNING_VARIABLE = "AUTH_COOKIE_SECURE";
 
 /** Shared wording so the canonical and localized violations read identically. */
 const MISSING_WARNING = `no plain-HTTP login warning (expected a blockquote naming ${WARNING_VARIABLE} under the quickstart)`;
+
+/** The file a translation-lag banner has to point at. */
+const BANNER_TARGET = "(README.md)";
+
+const MISSING_BANNER = `no translation-lag banner (expected a blockquote above the first heading linking to ${CANONICAL})`;
 
 /** Splits a markdown row into trimmed cells, dropping the leading/trailing empties. */
 function cells(line) {
@@ -137,6 +150,21 @@ export function hasPlainHttpWarning(text) {
 }
 
 /**
+ * Whether a localized README carries a translation-lag banner.
+ *
+ * Keyed on the same two things that survive translation as its sibling above: the
+ * blockquote marker, and here a markdown link to README.md. The banner text itself is in
+ * Chinese, Japanese, Spanish, Urdu and Hindi, and the Urdu one wraps its text in a `<span
+ * dir="rtl">`, so nothing else is shared.
+ */
+export function hasTranslationBanner(text) {
+  const lines = text.split("\n");
+  const firstHeading = lines.findIndex((line) => line.startsWith("## "));
+  const head = firstHeading === -1 ? lines : lines.slice(0, firstHeading);
+  return head.some((line) => line.trimStart().startsWith(">") && line.includes(BANNER_TARGET));
+}
+
+/**
  * Returns violation messages (empty = in sync). `localized` is a list of
  * { name, text }; a file that could not be read is simply not passed in.
  */
@@ -171,6 +199,9 @@ export function checkReadmes({ canonical, localized }) {
     }
     if (!hasPlainHttpWarning(text)) {
       violations.push(`${name}: ${MISSING_WARNING}`);
+    }
+    if (!hasTranslationBanner(text)) {
+      violations.push(`${name}: ${MISSING_BANNER}`);
     }
     const engines = engineNames(engineTable);
     const missing = canonicalEngines.filter((e) => !engines.includes(e));
@@ -211,7 +242,7 @@ function main(argv) {
   const engineCount = engineNames(findEngineTable(parseTables(fs.readFileSync(canonicalPath, "utf8")))).length;
   const names = localized.map((l) => l.name).join(", ") || "none";
   console.log(
-    `OK: ${engineCount} engines and the install commands match ${CANONICAL} in ${names}; every README carries the plain-HTTP login warning`,
+    `OK: ${engineCount} engines and the install commands match ${CANONICAL} in ${names}; every README carries the plain-HTTP login warning and every localized one its translation-lag banner`,
   );
 }
 

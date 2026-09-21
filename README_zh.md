@@ -52,6 +52,8 @@
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
+> 这份中文 README 由社区翻译，可能落后于英文版。两者有出入时，以[英文版](README.md)为准。
+
 ## 快速开始
 
 一条命令启动完整的 SQL IDE，不用克隆，不用构建：

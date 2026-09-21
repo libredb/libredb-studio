@@ -9,6 +9,7 @@ import {
   findEngineTable,
   findInstallTable,
   hasPlainHttpWarning,
+  hasTranslationBanner,
   parseTables,
 } from "../../scripts/readme-check.mjs";
 
@@ -44,8 +45,20 @@ const COMMANDS = ["docker run -d ghcr.io/libredb/libredb-studio:latest", "sudo s
  */
 const WARNING = "> Reaching Studio at anything but localhost or HTTPS needs `AUTH_COOKIE_SECURE=false`.";
 
+/**
+ * The blockquote every localized README carries above its first heading. Only its shape
+ * matters to the guard - a blockquote linking to README.md - so the fixture need not be in
+ * any of the five languages.
+ */
+const BANNER = "> This translation may lag behind the [English version](README.md).";
+
 function readme(engines = ENGINES, commands = COMMANDS, indent = ""): string {
-  return `# Title\n\nprose\n\n${WARNING}\n\n${engineTable(engines, indent)}\n\nmore prose\n\n${installTable(commands, indent)}\n`;
+  return `# Title\n\n${BANNER}\n\nprose\n\n${WARNING}\n\n${engineTable(engines, indent)}\n\nmore prose\n\n${installTable(commands, indent)}\n`;
+}
+
+/** The same file with its banner removed, for the exemption and the negative case. */
+function withoutBanner(text: string): string {
+  return text.replace(`${BANNER}\n\n`, "");
 }
 
 /** The same file with its warning blockquote removed, for the negative cases. */
@@ -176,6 +189,42 @@ describe("hasPlainHttpWarning", () => {
   });
 });
 
+describe("hasTranslationBanner", () => {
+  // Invariants 1 to 3 cannot see feature lists, counts, dates or measured numbers, so a
+  // localized README can be stale in ways the guard never reports (#1055). The banner is
+  // how the reader learns that. It has to sit above the first heading, because a banner
+  // below the fold warns nobody, and it has to link to README.md, because naming the file
+  // that wins is the whole content of the warning.
+  test("accepts a blockquote above the first heading linking to README.md", () => {
+    expect(hasTranslationBanner(`# Title\n\n${BANNER}\n\n## Quick Start\n\nprose\n`)).toBe(true);
+  });
+
+  test("rejects a banner that sits below the first heading", () => {
+    expect(hasTranslationBanner(`# Title\n\n## Quick Start\n\n${BANNER}\n`)).toBe(false);
+  });
+
+  test("rejects a file with no banner at all", () => {
+    expect(hasTranslationBanner("# Title\n\nprose\n\n## Quick Start\n")).toBe(false);
+  });
+
+  test("rejects a blockquote that does not link to README.md", () => {
+    expect(hasTranslationBanner("> Need Helm, Homebrew, Snap, winget, or deb/rpm?\n\n## Quick Start\n")).toBe(false);
+  });
+
+  test("accepts the RTL span form README_ur.md uses", () => {
+    const rtl = '> <span dir="rtl">aa [bb](README.md) cc</span>';
+    expect(hasTranslationBanner(`# Title\n\n${rtl}\n\n## Quick Start\n`)).toBe(true);
+  });
+
+  test("accepts a file that has no heading at all", () => {
+    expect(hasTranslationBanner(`# Title\n\n${BANNER}\n`)).toBe(true);
+  });
+
+  test("rejects a prose line that links to README.md without the blockquote", () => {
+    expect(hasTranslationBanner("See the [English version](README.md).\n\n## Quick Start\n")).toBe(false);
+  });
+});
+
 describe("checkReadmes", () => {
   const canonical = readme();
 
@@ -252,6 +301,22 @@ describe("checkReadmes", () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain("README.md");
     expect(violations[0]).toContain("AUTH_COOKIE_SECURE");
+  });
+
+  test("reports a localized file missing its translation-lag banner", () => {
+    const localized = withoutBanner(readme());
+    const violations = checkReadmes({ canonical, localized: [{ name: "README_zh.md", text: localized }] });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain("README_zh.md");
+    expect(violations[0]).toContain("translation-lag banner");
+  });
+
+  test("exempts README.md from the banner: it is the file the banner points at", () => {
+    const violations = checkReadmes({
+      canonical: withoutBanner(canonical),
+      localized: [{ name: "README_zh.md", text: readme() }],
+    });
+    expect(violations).toEqual([]);
   });
 
   test("reports a localized file missing the plain-HTTP warning", () => {

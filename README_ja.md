@@ -50,6 +50,8 @@
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
+> この日本語 README はコミュニティによる翻訳で、英語版より古い場合があります。内容が食い違うときは[英語版](README.md)が正です。
+
 ## クイックスタート
 
 クローンもビルドも不要。1コマンドでフル機能のSQL IDEが立ち上がります。

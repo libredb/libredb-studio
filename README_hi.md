@@ -50,6 +50,8 @@
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
+> यह हिन्दी README समुदाय द्वारा किया गया अनुवाद है और अंग्रेज़ी से पीछे हो सकता है। अंतर होने पर [अंग्रेज़ी संस्करण](README.md) मान्य है।
+
 ## जल्दी शुरू करें
 
 एक ही command से पूरा SQL IDE चालू करें। न clone करना है, न build:
