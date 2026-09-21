@@ -50,7 +50,11 @@ services:
       # so it must not answer on the host's LAN address.
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # PostgreSQL 18+ images expect the mount at /var/lib/postgresql, not /var/lib/postgresql/data.
+      # A pgdata volume from the old layout has to be removed once: run docker compose down, then
+      # docker volume rm on the volume whose name ends in _pgdata (find it with docker volume ls).
+      # Do not use down -v here, because that would also delete storage-data.
+      - pgdata:/var/lib/postgresql
 
 volumes:
   storage-data:

@@ -45,8 +45,11 @@ services:
       - "127.0.0.1:5432:5432"
 
     volumes:
-      # Persistent data volume
-      - libredb_postgres_data:/var/lib/postgresql/data
+      # Persistent data volume. PostgreSQL 18+ images expect the mount at /var/lib/postgresql,
+      # not /var/lib/postgresql/data, and keep the cluster in a version subdirectory below it.
+      # A volume left over from the old layout must be removed once:
+      #   docker compose -f docker/postgres.yml down -v
+      - libredb_postgres_data:/var/lib/postgresql
       # Init scripts (executed in alphabetical order on first run)
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
 
