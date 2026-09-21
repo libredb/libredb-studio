@@ -46,7 +46,10 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: libredb_storage
     ports:
-      - "5432:5432"
+      # Loopback only: `app` reaches this database over the compose network, so the
+      # published port serves a `psql` on the host and nothing else. The credentials
+      # above are committed, so it must not be offered to the network the host is on.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
