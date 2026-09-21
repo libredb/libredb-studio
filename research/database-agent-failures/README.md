@@ -8,8 +8,8 @@ LibreDB Studio, and of how much of that failure was ours rather than theirs.
 | | |
 |---|---|
 | Dataset | published, [10.57967/hf/10485](https://doi.org/10.57967/hf/10485) |
-| Preprint | submitted to arXiv, cs.SE primary with cs.DB cross-list |
-| arXiv id | pending |
+| Preprint | announced 2026-09-21, cs.SE primary with cs.DB cross-list |
+| arXiv id | [2609.21341](https://arxiv.org/abs/2609.21341) |
 
 ## Layout
 
