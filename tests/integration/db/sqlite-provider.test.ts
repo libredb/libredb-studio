@@ -4245,3 +4245,82 @@ describe("what the row editor reads off a SQLite result (#273)", () => {
     expect(matched.rows).toEqual([{ note: "first" }]);
   });
 });
+
+/**
+ * Column defaults as SQLite's catalog reports them (#1029).
+ *
+ * `PRAGMA table_info` publishes `dflt_value` as the expression AS WRITTEN, so a string
+ * default arrives quoted with SQL standard doubling while a number or an expression arrives
+ * bare. Measured on SQLite 3.53.2 through `bun:sqlite`:
+ *
+ *   DEFAULT 'NULL'            -> 'NULL'
+ *   DEFAULT 'abc'             -> 'abc'
+ *   DEFAULT ''                -> ''
+ *   DEFAULT 'it''s'           -> 'it''s'
+ *   DEFAULT 'a\b'             -> 'a\b'
+ *   DEFAULT 42                -> 42
+ *   DEFAULT CURRENT_TIMESTAMP -> CURRENT_TIMESTAMP
+ *
+ * `defaultValue` is the VALUE the column defaults to; `defaultExpression` keeps the text as
+ * the engine wrote it, which is what goes after the word DEFAULT.
+ */
+describe("SQLiteProvider column defaults (#1029)", () => {
+  const DDL = `CREATE TABLE column_defaults (
+    id INTEGER PRIMARY KEY,
+    def_null_string TEXT DEFAULT 'NULL',
+    def_text TEXT DEFAULT 'abc',
+    def_empty TEXT DEFAULT '',
+    def_quote TEXT DEFAULT 'it''s',
+    def_backslash TEXT DEFAULT 'a\\b',
+    def_number INTEGER DEFAULT 42,
+    def_expression TEXT DEFAULT CURRENT_TIMESTAMP
+  )`;
+
+  const EXPECTED: Record<string, { defaultValue?: string; defaultExpression?: string }> = {
+    id: {},
+    def_null_string: { defaultValue: "NULL", defaultExpression: "'NULL'" },
+    def_text: { defaultValue: "abc", defaultExpression: "'abc'" },
+    def_empty: { defaultValue: "", defaultExpression: "''" },
+    def_quote: { defaultValue: "it's", defaultExpression: "'it''s'" },
+    def_backslash: { defaultValue: "a\\b", defaultExpression: "'a\\b'" },
+    def_number: { defaultValue: "42", defaultExpression: "42" },
+    def_expression: { defaultValue: "CURRENT_TIMESTAMP", defaultExpression: "CURRENT_TIMESTAMP" },
+  };
+
+  const defaultsOf = (columns: readonly { name: string; defaultValue?: string; defaultExpression?: string }[]) =>
+    Object.fromEntries(
+      columns.map((column) => [
+        column.name,
+        {
+          ...(column.defaultValue === undefined ? {} : { defaultValue: column.defaultValue }),
+          ...(column.defaultExpression === undefined ? {} : { defaultExpression: column.defaultExpression }),
+        },
+      ]),
+    );
+
+  test("a string default is reported as its value, with the catalog text kept alongside", async () => {
+    delete process.env.LIBREDB_SQLITE_DRIVER;
+    const dir = mkdtempSync(join(tmpdir(), "libredb-sqlite-defaults-"));
+    const db = new SQLiteProvider(makeSQLiteConfig({ database: join(dir, "defaults.db") }));
+    try {
+      await db.connect();
+      await db.query(DDL);
+
+      const single = await db.describeObject(["column_defaults"], "table");
+      expect(defaultsOf(single.columns)).toEqual(EXPECTED);
+
+      // The bulk read goes through the same mapper; asserting it too is what catches a fix
+      // applied to one read and not the other, the mistake #795 had to correct.
+      const batch = await db.describeObjects([], "table");
+      const bulk = batch.details.find((detail) => detail.path[0] === "column_defaults")!;
+      expect(defaultsOf(bulk.columns)).toEqual(EXPECTED);
+    } finally {
+      try {
+        await db.disconnect();
+      } catch {
+        // Ignore cleanup errors
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

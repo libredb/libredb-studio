@@ -93,12 +93,26 @@ Two companion pages carry what this one deliberately does not:
 
 - [Turning it on](#turning-it-on)
 - [What a run is](#what-a-run-is)
+  - [The conversation a run belongs to](#the-conversation-a-run-belongs-to)
+  - [What a plan run knows](#what-a-plan-run-knows)
+  - [What the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of)
+  - [The statement a plan run drafts](#the-statement-a-plan-run-drafts)
 - [Durability and resume](#durability-and-resume)
+  - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
 - [The tool set](#the-tool-set)
+  - [The query-optimization template](#the-query-optimization-template)
+  - [The database-assessment template](#the-database-assessment-template)
+  - [The operations template](#the-operations-template)
+  - [The data-analysis template](#the-data-analysis-template)
+  - [Presenting an answer](#presenting-an-answer)
+  - [Handing the answer to the editor (auto-execute)](#handing-the-answer-to-the-editor-auto-execute)
+  - [What the fence is proved to hold against](#what-the-fence-is-proved-to-hold-against)
 - [What bounds a run](#what-bounds-a-run)
 - [Supported models](#supported-models)
 - [The model side](#the-model-side)
+  - [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app)
 - [Whether the run answered](#whether-the-run-answered)
+  - [The eval harness](#the-eval-harness)
 - [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
 - [HTTP surface](#http-surface)
 - [The surface in the app](#the-surface-in-the-app)
@@ -106,6 +120,7 @@ Two companion pages carry what this one deliberately does not:
 - [Package boundary](#package-boundary)
 - [Module map](#module-map)
 - [Known limitations](#known-limitations)
+- [Related documentation](#related-documentation)
 
 ## Turning it on
 
@@ -154,6 +169,8 @@ run by asking `GET /api/agent/config`, the same way it discovers the storage mod
 | `AGENT_MODEL_TURN_TIMEOUT_MS` | unset (`90000`) | How long **one** model call may take before the drive stops waiting for it. Raise it for a LOCAL model: the default was chosen against hosted APIs, where a turn lands in seconds and a 90-second wait only ever means a request that is not coming back. Measured across 25 Ollama models on six surfaces, **nine** runs ended `model-timeout` with the model still working — one of them a reasoning model in plan mode, which holds no tools at all, cut 92 s into its **first** turn with a zero-event ledger. Those runs are scored as having answered nothing, which is a fact about this ceiling and not about the model. A value that is not a positive whole number is **ignored** and the default stands; a value is capped just under half the smallest workflow deadline, because a run has to be able to take two turns to finish. |
 | `AGENT_MODEL_TUNING_PATH` | unset | A JSON document of measured per-model settings, layered over the ones Studio ships with. Studio carries a document recording what specific models were measured under — turn limit, how many readings before it is asked to report, whether an empty turn is asked again — and a model not named in it is driven with the defaults, which is the honest treatment of a model nobody has measured — bar two settings whose gates are reachable only on a run that has already fallen short, where an absent entry is read as the absence it is rather than as a value somebody wrote. This is how a model Studio has never measured gets settings somebody else measured: mount a file in the same shape and restart, with no Studio release and no code change. Merged **per model and whole** — an entry here replaces the shipped entry for that model rather than contributing one field to it, because half of one measurement beside half of another is a configuration nobody has run. A file that is missing, unreadable or off-schema is **ignored** and the shipped measurements stand — which is the one setting here that fails **open**, so it is also the one that reports itself: `GET /api/agent/config` tells an **admin** session what became of the document (`{"modelTuning":{"state":"applied"\|"ignored"\|"unset",…}}`, with the path and the parser's reason), because an operator who mounts a file and is told nothing will believe it is in force. It carries numbers and switches only: the sentences the drive says to a model stay in Studio, so supplying this file cannot change what Studio tells a model. On Kubernetes the chart mounts it for you — see `agent.modelTuning.*` in [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md). The document's own contract — every setting, its bounds, what happens to a key this build does not implement, and the example to start from — is [`docs/llms/model-tuning.md`](llms/model-tuning.md). |
 | `WORKFLOW_LOCAL_DATA_DIR` | unset — but the packaged artifacts set it: `/app/data/workflow` from the Helm chart and (from an app version later than `0.11.0`) the container image, `~/.libredb-studio/workflow-data` under `npx`. The SDK's own fallback, which those replace, is `.workflow-data` relative to the working directory. | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the SDK's fallback is wrong in a container and wrong under `npx`, so no artifact leaves it in force. |
+| `LIBREDB_AGENT_RESUME_SWEEP_INTERVAL_MS` | unset (`60000`) | How often the resume sweep looks for runs a dead process left `running` and drives each one again, in-process (`docs/BACKLOG.md` B9). A value that is not a positive whole number is ignored and the default stands. |
+| `LIBREDB_AGENT_STALE_RUN_AFTER_MS` | unset (longest run deadline + 120 s) | How old a running run's last ledger **activity** must be before the sweep claims it (B9). Whether it is *unowned* is the claim's decision, not the staleness reading's: a still-live drive refuses the sweep at claim time. A value that is not a positive whole number is ignored and the default stands. |
 
 The refusal is not pedantry. The workflow runtime reads that variable itself and treats any value
 other than its own keywords as a **module specifier to `require()`**, so the allowlist in
@@ -832,8 +849,9 @@ A separate resume path would be a second implementation of "what has already hap
 would drift.
 
 Two honest qualifiers: the ledger check is read-then-append with no compare-and-append fencing, so
-two loops driving one run concurrently would both execute (B5); and nothing currently *asks* for a
-resume, so an interrupted run is resumable but is not resumed on its own (B9).
+two loops driving one run concurrently would still both execute across processes (B5); and the local
+sweep resumes an interrupted run only EVENTUALLY, and keeps retrying one that dies again without a
+bound (B82).
 
 ### A drive that dies before the loop
 
@@ -841,8 +859,7 @@ resume, so an interrupted run is resumable but is not resumed on its own (B9).
 ledger. Everything *before* it is not part of the loop: the run's connection is resolved, its
 capabilities are read and its model is built first, and a failure there — an unconfigured model
 provider is the common one — used to unwind past the ledger entirely. The run stayed `queued` with
-an empty timeline, its cause readable only in the server log, and with no drive producer (B9)
-nothing would come back to it.
+an empty timeline, its cause readable only in the server log, and nothing would come back to it.
 
 A drive that fails anywhere now records `run-finished` with status `failed` and a **classified
 reason**:
@@ -1714,8 +1731,7 @@ not a catalog read, and 900 s is what makes 60 turns reachable rather than decor
 of database time is 720 s of model time, which is 60 turns at the slow end of this workload's
 latency). **A 900 s run outlives the default idle timeout of most reverse proxies** — nginx's
 `proxy_read_timeout` is 60 s — so a deployment in front of a container must raise its own timeout to
-at least the longest deadline it wants to serve, and there is no re-attach path for a stream cut
-mid-run (B9).
+at least the longest deadline it wants to serve, and a stream cut mid-run has no re-attach path.
 
 **What every row shares:**
 
@@ -2156,7 +2172,8 @@ session, carries no user and no role, and its signing key is *derived* from `JWT
 being it, so a drive token cannot be presented as a session cookie. A run driven through it still
 acts as the actor its own ledger records.
 
-Nothing produces a drive delivery yet (B9), so the route's callers today are its tests. The seam
+Nothing produces a drive delivery through this route yet, so the route's callers today are its
+tests. The seam
 exists now because it had to be designed with the boundary rather than bolted on afterwards.
 
 ## The surface in the app
@@ -2360,14 +2377,11 @@ oldest artifact rather than the store's, so a run that executes a lot cannot mak
 on a quieter run that is still live. The store is per process, which is consistent with the
 zero-config backend below being single-instance.
 
-**What that product bounds is four *drives*, not four runs.** Every ceiling in the decision table is
-per drive (B6), while a resumed run keeps its `runId` and its artifacts are keyed by it — so a run
-driven three times may hold up to three times its statement ceiling here, and a long-lived run can
-pass 180 on its own. Run-fair eviction then takes that run's *own* earliest results, which its report
-may still cite: a third way to reach the "the rows are not here" answer a released result gives, this time while
-the run is still live. The ledger is unaffected — the claim and its citation are durable — and the
-gap is recorded as **B35** rather than closed with an artifact-only bound, because a ceiling that
-holds across drives is the mechanism B6 already names.
+**What that product bounds is four *drives*, not four runs.** A resumed drive's statement,
+elapsed-time and artifact ceilings are derived from the run's own ledger rather than handed to it
+fresh (#999), so a run driven three times no longer triples its statement budget or evicts the
+evidence an earlier drive cited. One ceiling is still per drive — the repair ledger is rebuilt by
+each drive (B6) — so repair attempts start over on resume.
 
 ## Deployment
 
@@ -2394,8 +2408,8 @@ line per ledger event, so an active run keeps the socket warm by itself — but 
 turn *inside one model call*, writing nothing, and one model call may take up to 90 s. A proxy whose
 idle timeout is under that will cut a perfectly healthy run mid-turn, and what the user sees is the
 rail losing its stream rather than a run that failed. The run itself survives — it is durable and
-resumable — but nothing today re-attaches the rail to it (`docs/BACKLOG.md` B9), so in practice the
-user watches a run disappear. Emitting a periodic keep-alive on the stream is the alternative fix and
+resumable — but nothing re-attaches the rail to the new stream, so in practice the user watches a run
+disappear. Emitting a periodic keep-alive on the stream is the alternative fix and
 is not implemented; the required timeout is documented instead.
 
 **The zero-config backend is single-instance.** `local` keeps run state in a directory on local disk
@@ -2596,7 +2610,7 @@ the role's own grants are the whole boundary (A3).
 - **B4** — a mapped database error discards the text distinguishing a timeout cancel from an operator
   cancel.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
-- **B6** — every cost ceiling is per-drive, so N resumes can cost up to N times one drive's budget.
+- **B6** — the repair ledger is rebuilt per drive, so a resumed run's repair attempts start over.
 - **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
 - **B11** — the rail can stop a run but cannot pause or resume one.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,

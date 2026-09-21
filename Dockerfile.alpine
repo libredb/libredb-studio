@@ -57,7 +57,7 @@ RUN bun install --frozen-lockfile
 # to use 70 MB of them. The choice is made at RUNTIME by @duckdb/node-bindings
 # through detect-libc. Keeping every stage on musl is what makes the prune below
 # safe: the package this image keeps is the package this image loads.
-FROM node:26.8.2-alpine3.23 AS builder
+FROM node:26.9.0-alpine3.23 AS builder
 WORKDIR /usr/src/app
 # bash for scripts/lib/prune-standalone-payload.sh below: it is the deny-list the
 # release artifacts share, and it is a bash script (arrays), not a POSIX one.
@@ -161,7 +161,7 @@ RUN set -eux; \
 # Production image.
 # alpine3.23: musl must match the stage where the native payload was selected
 # (see builder).
-FROM node:26.8.2-alpine3.23 AS runner
+FROM node:26.9.0-alpine3.23 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

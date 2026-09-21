@@ -912,6 +912,19 @@ const COLUMNS: Readonly<Record<string, ColumnRow[]>> = {
   order_summary: [column("name", "TEXT", 0, null, 0), column("total", "REAL", 0, null, 0)],
   legacy: [column("note", "TEXT", 0, null, 0)],
   legacy_ref: [column("id", "INTEGER", 0, null, 1), column("note", "TEXT", 0, null, 0)],
+  // #1029: one column per shape of catalog default. `dflt_value` is the expression AS
+  // WRITTEN, identical to SQLite's `PRAGMA table_info` on every row. Served only through
+  // `DEFAULTS_CATALOG`, so no FIXTURE-backed listing or count sees this table.
+  column_defaults: [
+    column("id", "INTEGER", 0, null, 1),
+    column("def_null_string", "TEXT", 0, "'NULL'", 0),
+    column("def_text", "TEXT", 0, "'abc'", 0),
+    column("def_empty", "TEXT", 0, "''", 0),
+    column("def_quote", "TEXT", 0, "'it''s'", 0),
+    column("def_backslash", "TEXT", 0, "'a\\b'", 0),
+    column("def_number", "INTEGER", 0, "42", 0),
+    column("def_expression", "TEXT", 0, "CURRENT_TIMESTAMP", 0),
+  ],
   archive: [column("id", "INTEGER", 0, null, 1), column("body", "TEXT", 0, null, 0)],
   sqliteXledger: [column("id", "INTEGER", 0, null, 1), column("note", "TEXT", 0, null, 0)],
   shipments: [
@@ -1669,13 +1682,18 @@ describe("LibSQLProvider object surface (#789)", () => {
     ]);
   });
 
-  test("a default value is the engine's own literal, and an absent one is absent", async () => {
+  test("a default value is the value the column defaults to, and an absent one is absent", async () => {
     objects = await connectedWithObjects();
 
     const customers = await objects.describeObject(["customers"], "table");
 
-    expect(customers.columns.find((column) => column.name === "country")?.defaultValue).toBe("'TR'");
-    expect(customers.columns.find((column) => column.name === "name")?.defaultValue).toBeUndefined();
+    // The catalog reports `'TR'`; the value is `TR`, and the text is kept as the expression (#1029).
+    const country = customers.columns.find((column) => column.name === "country");
+    expect(country?.defaultValue).toBe("TR");
+    expect(country?.defaultExpression).toBe("'TR'");
+    const name = customers.columns.find((column) => column.name === "name");
+    expect(name?.defaultValue).toBeUndefined();
+    expect(name?.defaultExpression).toBeUndefined();
   });
 
   test("describes a view, which has columns and neither indexes nor foreign keys", async () => {
@@ -2818,5 +2836,61 @@ describe("endOpenQueryTransaction()", () => {
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);
+  });
+});
+
+/**
+ * Column defaults as libSQL's catalog reports them (#1029).
+ *
+ * The provider reads `pragma_table_xinfo`, whose `dflt_value` is the expression AS WRITTEN,
+ * identical to SQLite's: a string default arrives quoted with SQL standard doubling, a
+ * number or an expression arrives bare. `defaultValue` is the VALUE the column defaults to;
+ * `defaultExpression` keeps the text as the engine wrote it.
+ */
+describe("LibSQLProvider column defaults (#1029)", () => {
+  const DEFAULTS_CATALOG: Catalog = {
+    tableList: [...TABLE_LIST_ROWS, { schema: "main", name: "column_defaults", type: "table" }],
+    sqliteSchema: [...SQLITE_SCHEMA_ROWS, { type: "table", name: "column_defaults", tbl_name: "column_defaults" }],
+  };
+
+  const EXPECTED: Record<string, { defaultValue?: string; defaultExpression?: string }> = {
+    id: {},
+    def_null_string: { defaultValue: "NULL", defaultExpression: "'NULL'" },
+    def_text: { defaultValue: "abc", defaultExpression: "'abc'" },
+    def_empty: { defaultValue: "", defaultExpression: "''" },
+    def_quote: { defaultValue: "it's", defaultExpression: "'it''s'" },
+    def_backslash: { defaultValue: "a\\b", defaultExpression: "'a\\b'" },
+    def_number: { defaultValue: "42", defaultExpression: "42" },
+    def_expression: { defaultValue: "CURRENT_TIMESTAMP", defaultExpression: "CURRENT_TIMESTAMP" },
+  };
+
+  const defaultsOf = (columns: readonly { name: string; defaultValue?: string; defaultExpression?: string }[]) =>
+    Object.fromEntries(
+      columns.map((column) => [
+        column.name,
+        {
+          ...(column.defaultValue === undefined ? {} : { defaultValue: column.defaultValue }),
+          ...(column.defaultExpression === undefined ? {} : { defaultExpression: column.defaultExpression }),
+        },
+      ]),
+    );
+
+  let objects: LibSQLProvider;
+
+  afterEach(async () => {
+    if (objects?.isConnected()) await objects.disconnect();
+  });
+
+  test("a string default is reported as its value, with the catalog text kept alongside", async () => {
+    objects = await connectedWithObjects(DEFAULTS_CATALOG);
+
+    const single = await objects.describeObject(["column_defaults"], "table");
+    expect(defaultsOf(single.columns)).toEqual(EXPECTED);
+
+    // The bulk read goes through the same mapper; asserting it too is what catches a fix
+    // applied to one read and not the other, the mistake #795 had to correct.
+    const batch = await objects.describeObjects([], "table");
+    const bulk = batch.details.find((detail) => detail.path[0] === "column_defaults")!;
+    expect(defaultsOf(bulk.columns)).toEqual(EXPECTED);
   });
 });

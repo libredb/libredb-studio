@@ -88,11 +88,11 @@ The network route is the one to prefer for a real deployment: put Studio and its
 | Tag | Pushed from | Use |
 |-----|-------------|-----|
 | `latest` | `main` | Latest stable build |
-| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.16.1` (recommended for production) |
+| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.16.2` (recommended for production) |
 | `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview (`linux/amd64` only) |
 | `sha-<commit>` | every build | Exact immutable commit |
 
-Every one of those tags is published on three bases, and the suffix is appended to the tag it would otherwise be (`0.16.1`, `0.16.1-alpine`, `0.16.1-alpine-slim`; likewise `latest-alpine`, `dev-alpine`):
+Every one of those tags is published on three bases, and the suffix is appended to the tag it would otherwise be (`0.16.2`, `0.16.2-alpine`, `0.16.2-alpine-slim`; likewise `latest-alpine`, `dev-alpine`):
 
 | Suffix | Base | Engines | Use |
 |-----|-------------|-----|-----|

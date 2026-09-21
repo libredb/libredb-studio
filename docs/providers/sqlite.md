@@ -51,7 +51,7 @@ for a web-based editor:
   connect time — see [Runtime & driver selection](#runtime--driver-selection). All packaged
   distribution channels — the official Docker image, `npx @libredb/studio`, the Homebrew tap, the
   `.deb`/`.rpm` packages, and the standalone tarballs — run the built app with `node server.js` (the
-  Docker image's runner stage is `node:26.8.2-trixie-slim`; the other channels bundle their own pinned
+  Docker image's runner stage is `node:26.9.0-trixie-slim`; the other channels bundle their own pinned
   Node 24 runtime), so they all use `node:sqlite`. `bun:sqlite` is used for local development
   (`bun dev`) and the test suite, where Next.js runs directly under Bun. Only on a runtime with
   neither driver does `connect()` throw a `DatabaseConfigError`.
@@ -714,6 +714,34 @@ CTE rather than joining a temporary of it, which is safe because a name is uniqu
 with columns and both are addressed `[name]` under a zero-level container; `trigger` is the one kind
 here that nests, and it has no columns.
 
+
+#### Column defaults: the value, with the catalog text kept alongside (#1029)
+
+SQLite reports a column default as the expression AS WRITTEN, through `PRAGMA table_info`'s `dflt_value`. A string
+default therefore arrives quoted, with SQL standard quote doubling, while a number and an
+expression arrive bare. Measured 2026-09-21 on SQLite 3.53.2 through `bun:sqlite`:
+
+| DDL | the value the column defaults to | catalog text |
+| --- | --- | --- |
+| `DEFAULT 'NULL'` | `NULL` | `'NULL'` |
+| `DEFAULT 'abc'` | `abc` | `'abc'` |
+| `DEFAULT ''` | the empty string | `''` |
+| `DEFAULT 'it''s'` | `it's` | `'it''s'` |
+| `DEFAULT 'a\b'` | `a\b` | `'a\b'` |
+| `DEFAULT 42` | `42` | `42` |
+| `DEFAULT CURRENT_TIMESTAMP` | the expression | `CURRENT_TIMESTAMP` |
+| no default | none | SQL NULL |
+
+Each column carries both readings. `defaultValue` is the value, decoded by `unquoteLiteral()`
+(`src/lib/sql/values.ts`) with this dialect's `"standard"` escaping, so `'it''s'` reads as
+`it's` and a backslash stays ordinary data. Text that is not exactly one complete literal,
+a number or an expression, passes through unchanged. `defaultExpression` is the
+catalog text itself, which is always valid SQL here and is what the schema-diff migration
+generator writes after the word `DEFAULT`; without it, a decoded `abc` would be emitted as
+`DEFAULT abc`. The empty string default stays the empty string, never `undefined`, and a
+column with no default carries neither field. `readCatalogDefault()` is local to this
+provider, the way per-provider normalization is everywhere else in this tree; the escape
+knowledge it relies on is the shared part.
 
 #### No `rowCount` and no `sizeBytes` on a listed object
 

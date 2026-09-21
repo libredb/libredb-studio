@@ -950,9 +950,9 @@ Open **http://localhost:3000** and log in with the admin credentials the first r
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
-| [Agent Guide](docs/AGENT_GUIDE.md) | Using the agent: a run, the three workflows, what "answered" means, the budget meter, and the Ollama path |
+| [Agent Guide](docs/AGENT_GUIDE.md) | Using the agent: a run, the five workflows, what "answered" means, the budget meter, and the Ollama path |
 | [Agent Data Flow](docs/AGENT_DATA_FLOW.md) | What leaves the machine, when, and to which model provider — written from call sites |
-| [Local models](docs/llms/README.md) | Which local model can actually drive an agent run, measured across three workflows, one page per model |
+| [Local models](docs/llms/README.md) | Which local model can actually drive an agent run, measured across six surfaces, one page per model |
 | [Agent Runtime](docs/AGENT.md) | Agent behaviour, bounds, deployment and known limitations |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
 | [Two-Factor Auth](docs/MFA.md) | TOTP on the local provider — generating a secret, enrolling an app, Docker/Helm wiring, and what it does not cover |

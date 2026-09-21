@@ -12,7 +12,7 @@ consecutive times. They are listed with their measured durations in the [index](
 
 ## A local model, through Ollama
 
-Twenty-nine of the thirty run locally, with no key and no traffic leaving the machine.
+Thirty-four of the thirty-five run locally, with no key and no traffic leaving the machine.
 
 ```bash
 # macOS
@@ -38,7 +38,7 @@ where is in [`../AGENT_DATA_FLOW.md`](../AGENT_DATA_FLOW.md).
 
 ## A hosted model
 
-One of the thirty is hosted, and it is configured the same way with one line more:
+One of the thirty-five is hosted, and it is configured the same way with one line more:
 
 ```bash
 LLM_PROVIDER=gemini

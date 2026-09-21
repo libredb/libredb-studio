@@ -2561,7 +2561,7 @@ export async function runInvestigation(
   // read-then-append check and execute the same step twice (`docs/BACKLOG.md` B5).
   // Released in the `finally` at the foot of this function, so a drive that throws
   // still leaves the run claimable by the next one.
-  service.claimDrive(runId);
+  await service.claimDrive(runId);
   try {
     // WHERE a run acts is as much the record's to decide as WHO it acts as. Driving a
     // run with another connection's resources would execute against that connection
@@ -3961,7 +3961,7 @@ export async function runInvestigation(
     }
     return result;
   } finally {
-    service.releaseDrive(runId);
+    await service.releaseDrive(runId);
   }
 }
 

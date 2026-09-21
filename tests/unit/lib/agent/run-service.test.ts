@@ -1037,12 +1037,35 @@ describe("AgentRunService — drive ownership", () => {
     const h = harness();
     const { runId } = await h.service.start(START_INPUT);
 
-    h.service.claimDrive(runId);
+    await h.service.claimDrive(runId);
     expect((await captureServiceError(async () => h.service.claimDrive(runId))).reasonCode).toBe("RUN_ALREADY_DRIVEN");
 
-    h.service.releaseDrive(runId);
-    h.service.claimDrive(runId);
-    h.service.releaseDrive(runId);
+    await h.service.releaseDrive(runId);
+    await h.service.claimDrive(runId);
+    await h.service.releaseDrive(runId);
+  });
+
+  test("a claim is durable: a second store over the same files folds it back", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    await h.service.claimDrive(runId);
+
+    // Observed through the ledger, not through the process-local guard: a fresh
+    // store over the same files folds the same claim back.
+    const view = await h.reader().read(runId);
+    expect(view?.driveClaim?.driveId).toBeTruthy();
+    expect(view?.driveClaim?.expiresAtMs).toEqual(expect.any(Number));
+  });
+
+  test("a release is durable too: the folded claim is gone", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    await h.service.claimDrive(runId);
+    await h.service.releaseDrive(runId);
+
+    expect((await h.reader().read(runId))?.driveClaim).toBeNull();
   });
 });
 

@@ -165,9 +165,40 @@ Setting a `*_MAX` to `0` disables that bucket. A window below one second is rais
 bucket bounds how often a refusal is written to the audit log; it never changes whether a request
 is refused.
 
-**1.4.** Marked Partial: sessions and origin failures are audited, and so is the proxy's `/admin`
-role check — but that line reaches stdout only, never the Admin Audit tab, for the reason under 3.2.
-The rest of this note is stale and tracked separately in #991.
+Still **Partial**, for the one reason that survives: the proxy's `jwtVerify` failure arm is logged, not
+audited. A forged, tampered or truncated `auth-token` reaches the trailing `catch` in
+[`src/proxy.ts`](../src/proxy.ts) that covers the whole `verifyToken` call, which writes
+`logger.warn("JWT verification failed, redirecting to login")` and redirects without an
+`emitAuditEvent` call, so the attempt lands in stdout and never in `GET /api/admin/audit`. The proxy's
+other two refusals both emit: `origin_mismatch` and `insufficient_role`. See
+[`docs/BACKLOG.md`](./BACKLOG.md) H12.
+
+Everything the row once described short of that is audited. Role failures are recorded at all five
+sites that refuse on role, four in handlers and one in the proxy, and the four handler sites are the
+ones the Admin Audit tab can read:
+
+| site | call |
+|---|---|
+| `GET` in `src/app/api/admin/audit/route.ts` | `auditRoleDenial` |
+| `POST` in `src/app/api/admin/audit/route.ts` | `auditRoleDenial` |
+| `src/app/api/db/maintenance/route.ts` | `auditRoleDenial` |
+| `src/app/api/admin/fleet-health/route.ts` | `auditRoleDenial` |
+| `src/proxy.ts` | `emitAuditEvent`, `insufficient_role` |
+
+`auditRoleDenial`
+([`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts)) emits `permission_denied`
+with `reason: "insufficient_role"`, so those four reach the tab. An earlier version of this note
+claimed the opposite and pointed at an `H12` that did not exist.
+
+Two qualifiers the grade rests on, both deliberate and documented at each call site:
+
+- **Recorded, not unlimited.** Every `permission_denied` emit is metered through the anon bucket (the
+  rate-limit table under 1.2), so a sustained denial is audited up to 5 lines per 300 s per key. The
+  refusals themselves are never metered, and a missing token redirecting to `/login` is ordinary
+  logged-out traffic, not a denial.
+- **The proxy's ring is its own.** [`src/proxy.ts`](../src/proxy.ts) compiles as a separate Next entry
+  with its own module graph, so its audit writes do not appear in what `GET /api/admin/audit` returns.
+  Mechanism and disclosure are 3.2's subject.
 
 **1.6.** Opt-in: a second factor exists for an account exactly when `ADMIN_TOTP_SECRET` /
 `USER_TOTP_SECRET` is set, so the row claims nothing about a deployment that sets neither.

@@ -172,7 +172,7 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 - **有证据才有结论。** 没有引用的结论无法被写出，运行结束时会给出自己的判定，*“Run answered”* 或 *“Run did not answer”*，并与结束方式并列显示。
 - **有上限，而且界面上就能看到**：根据工作流类型，每次运行 18 到 45 条语句、整轮时限 360 到 900 秒，单次读取 200 行。各工作流的具体数值见 [docs/AGENT.md](docs/AGENT.md)。
 - **用你自己的模型。** Gemini（默认）、OpenAI、Ollama，或任何兼容 OpenAI 的端点。**Agent** 模式需要一个能调用工具的模型，在 Ollama 上这要靠一次真实探测来确认，而不是照抄厂商文档，指南里写了怎么跑这次探测。**Plan** 模式不需要工具，也从不做探测（`src/lib/agent/capability-gate.ts:74`），所以被 Agent 模式拒绝的模型仍然可以用在 Plan 模式里，这也正是侧栏会向你提议的做法。
-- **不配置模型就没有 AI。** 完全没有 `LLM_*` 配置时，侧栏根本不会渲染，也不会有任何数据离开你的网络。注意开关不是密钥：Ollama 和自定义端点无需密钥也算配置了模型，此时 AI 就是启用的。Agent 会外发什么内容见 [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md)。
+- **不配置模型就没有 AI。** 完全没有 `LLM_*` 配置时，侧栏根本不会渲染，也不会有任何数据离开你的网络。注意，密钥并不是开关：Ollama 和自定义端点无需密钥也算配置了模型，此时 AI 就是启用的。Agent 会外发什么内容见 [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md)。
 
 仅限独立应用：嵌入式 `@libredb/studio` 包不包含任何 Agent 界面。
 **指南：**[`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) · **什么东西会离开本机：**

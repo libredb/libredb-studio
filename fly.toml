@@ -8,7 +8,7 @@ app = 'libredb-studio'
 primary_region = 'ams'
 
 [build]
-  image = 'ghcr.io/libredb/libredb-studio:0.16.1'
+  image = 'ghcr.io/libredb/libredb-studio:0.16.2'
 
 [env]
   NEXT_PUBLIC_AUTH_PROVIDER = 'local'

@@ -28,7 +28,7 @@ RUN bun install --frozen-lockfile
 # between whichever ones are present. Every stage here is glibc, so the glibc
 # package is the one installed and the one loaded; keeping the stages on the
 # same base is what makes that hold.
-FROM node:26.8.2-trixie-slim AS builder
+FROM node:26.9.0-trixie-slim AS builder
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
@@ -125,7 +125,7 @@ RUN set -eux; \
 
 # Production image - use Node.js slim for lower memory footprint
 # trixie-slim: glibc must match the stage where native modules were built (see builder).
-FROM node:26.8.2-trixie-slim AS runner
+FROM node:26.9.0-trixie-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

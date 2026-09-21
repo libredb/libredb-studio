@@ -26,8 +26,8 @@ starting with the first release that includes the release-artifacts workflow —
 have Docker images only.
 
 > **Runtime note:** every channel here runs the production server under Node (`node server.js`),
-> including the Docker image — the default tag's runner stage is `node:26.8.2-trixie-slim`, the
-> `-alpine` tag's is `node:26.8.2-alpine3.23` and the `-alpine-slim` tag's is Alpine's own `nodejs`
+> including the Docker image — the default tag's runner stage is `node:26.9.0-trixie-slim`, the
+> `-alpine` tag's is `node:26.9.0-alpine3.23` and the `-alpine-slim` tag's is Alpine's own `nodejs`
 > package (see [Image tag model](#image-tag-model)), and in all three `CMD` execs
 > `node server.js`; Bun is only used to install dependencies during the Docker build and for local
 > development (`bun dev`). The SQLite DB provider adapts to whichever runtime it finds
@@ -80,15 +80,18 @@ sharing a user's machine, and it has not changed. (The Docker image and the Helm
 exception - a container binds all of its own addresses and is isolated by container networking
 instead. Since chart 0.1.42 and the image that ships with it, that set is not hardcoded: the container's
 entrypoint resolves a bind address at startup and prefers `::`, all addresses of both families.)
-`HOSTNAME` is the bind address wherever the server is started directly - Docker, Helm, npx and the
-systemd units, the Snap daemon included; the `.deb`/`.rpm` and Homebrew wrappers, a direct
-`snap run` and the Windows launcher take `LIBREDB_BIND` instead and discard an inherited
-`HOSTNAME`. The note below the table covers the
-address family either one selects.
+`HOSTNAME` is the bind address wherever the server is started directly and the value was chosen -
+Docker, Helm and the systemd units, the Snap daemon included; the `.deb`/`.rpm` and Homebrew
+wrappers, a direct `snap run` and the Windows launcher take `LIBREDB_BIND` instead and discard an
+inherited `HOSTNAME`. The npx launcher reads both: `--host`, then `LIBREDB_BIND`, then `HOSTNAME`
+only when it differs
+from the machine's own hostname, so a value a shell or a container runtime exported is ignored
+rather than bound (#813). The note below the table
+covers the address family either one selects.
 
 | Channel | Default bind | How to expose |
 |---|---|---|
-| npx | `127.0.0.1` | `npx @libredb/studio --host 0.0.0.0` (or set `HOSTNAME`) |
+| npx | `127.0.0.1` | `npx @libredb/studio --host 0.0.0.0`, or `LIBREDB_BIND=0.0.0.0`, or a `HOSTNAME` that differs from the machine's own name |
 | .deb / .rpm (systemd) | `127.0.0.1` | `HOSTNAME=0.0.0.0` in `/etc/libredb-studio/env`, then restart |
 | .deb / .rpm (direct run) | `127.0.0.1` | `LIBREDB_BIND=0.0.0.0 libredb-studio` |
 | Homebrew service | `127.0.0.1` | run the binary manually with `LIBREDB_BIND=0.0.0.0`, or front it with a reverse proxy |
@@ -106,12 +109,20 @@ unit resolves it before the wrapper runs (detected via the systemd-set `INVOCATI
 wrapper leaves it untouched there). The
 Windows launcher rebuilds `HOSTNAME` from `LIBREDB_BIND` on every run, with no systemd exception.
 
+The npx launcher ignores an inherited `HOSTNAME` by the same rule and for the same reason: a value
+equal to the machine's own hostname is exactly what Docker's container id and a kubelet's pod name
+look like from inside, so it is not read as a choice (#813). Its overrides are `--host` first, then
+`LIBREDB_BIND` - which is also the way out of the one case the rule costs: a container started with
+`--hostname` naming itself, where that name and an injected one are indistinguishable.
+
 **Address family (IPv4, IPv6, dual-stack).** The bind address accepts an IPv6 literal in every
 channel, because whichever variable that channel reads ends up as the host argument of a plain
 `server.listen(port, hostname)` in the standalone Next.js server
 (`next/dist/server/lib/start-server.js`) - so it is Node, not Next, that gives `::` its meaning.
 (Next touches `[::]` only to format the URL it prints at startup.) Use `HOSTNAME` where the server is started directly
-(Docker, Helm, npx, the systemd units, Snap) and `LIBREDB_BIND` in the wrapper channels (a direct
+(Docker, Helm, the systemd units, Snap), `--host` or `LIBREDB_BIND` on the npx launcher, and
+`LIBREDB_BIND` in the
+wrapper channels (a direct
 `.deb`/`.rpm` run, Homebrew, the Windows launcher), per the paragraph above. The values that
 matter:
 
@@ -299,14 +310,14 @@ Use `<version>` or `sha-<commit>` for reproducible deployments; `main` / `dev` a
 unreleased code.
 
 **Variants.** Every tag above is published three times, once per base image (#840). The suffix is
-appended to whatever the tag would otherwise be, so `0.16.1`, `0.16.1-alpine` and
-`0.16.1-alpine-slim` are the same release on three bases, and `latest-alpine` and `dev-alpine` exist
+appended to whatever the tag would otherwise be, so `0.16.2`, `0.16.2-alpine` and
+`0.16.2-alpine-slim` are the same release on three bases, and `latest-alpine` and `dev-alpine` exist
 for the same reason `latest` and `dev` do.
 
 | Suffix | Dockerfile | Base | Engines | Use |
 |---|---|---|---|---|
-| none | `Dockerfile` | `node:26.8.2-trixie-slim` (glibc) | all, and the only one where Oracle **Thick** mode can be layered on | the default; unchanged, and what every example in this repository pulls |
-| `-alpine` | `Dockerfile.alpine` | `node:26.8.2-alpine3.23` (musl) | all, Oracle **Thin** only | a much smaller OS attack surface: measured with Trivy 0.73.0 on 2026-09-15, the Debian base carries 3 CRITICAL / 52 HIGH OS findings that belong to the distro (the newest `node:26-trixie-slim` scores identically) against 0 / 2 for `node:26-alpine` |
+| none | `Dockerfile` | `node:26.9.0-trixie-slim` (glibc) | all, and the only one where Oracle **Thick** mode can be layered on | the default; unchanged, and what every example in this repository pulls |
+| `-alpine` | `Dockerfile.alpine` | `node:26.9.0-alpine3.23` (musl) | all, Oracle **Thin** only | a much smaller OS attack surface: measured with Trivy 0.73.0 on 2026-09-15, the Debian base carries 3 CRITICAL / 52 HIGH OS findings that belong to the distro (the newest `node:26-trixie-slim` scores identically) against 0 / 2 for `node:26-alpine` |
 | `-alpine-slim` | `Dockerfile.alpine-slim` | `alpine:3.23` with Alpine's own `nodejs` package | all except **DuckDB** | smallest; see the trade below |
 
 `-alpine-slim` trades features for size and is the only variant that does. It drops the DuckDB

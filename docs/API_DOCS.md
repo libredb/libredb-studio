@@ -1,6 +1,6 @@
 # LibreDB Studio API Documentation
 
-> **Version:** 0.16.1
+> **Version:** 0.16.2
 > **Base URL:** `https://your-domain.com` or `http://localhost:3000`
 > **Content-Type:** `application/json`
 
@@ -983,7 +983,7 @@ LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
 
 ### Agent API
 
-Seven paths, eight handlers, under `src/app/api/agent/`. They drive the read-only agent runtime — full
+eight paths, ten handlers, under `src/app/api/agent/`. They drive the read-only agent runtime — full
 behaviour in [`docs/AGENT.md`](AGENT.md), the surface in [`docs/AGENT_GUIDE.md`](AGENT_GUIDE.md), and
 what a run sends to a model provider in [`docs/AGENT_DATA_FLOW.md`](AGENT_DATA_FLOW.md).
 

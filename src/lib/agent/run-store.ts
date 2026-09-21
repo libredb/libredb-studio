@@ -87,7 +87,7 @@ import {
 } from "./types";
 
 /** Stream-name prefix, so one world may carry ledgers next to other streams. */
-const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
+export const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
 
 /**
  * Ids are `[A-Za-z0-9_]` and bounded: no `-` (see the module docblock), no `.` (the
@@ -200,10 +200,21 @@ export type AgentLedgerEntry =
       readonly objective: string;
     }
   | { readonly kind: "event"; readonly event: AgentRunEvent }
-  | { readonly kind: "cancellation-requested"; readonly atMs: number; readonly bySessionId: string };
+  | { readonly kind: "cancellation-requested"; readonly atMs: number; readonly bySessionId: string }
+  | { readonly kind: "drive-claimed"; readonly atMs: number; readonly driveId: string; readonly expiresAtMs: number }
+  | { readonly kind: "drive-released"; readonly atMs: number; readonly driveId: string };
 
 /** The two events that settle a step: the run asked, and something answered. */
 export type AgentSettledStepEvent = Extract<AgentRunEvent, { kind: "tool-completed" | "tool-refused" }>;
+
+/**
+ * One drive's claim on a run, as the ledger records it. A control record rather
+ * than a run event: it decides who may drive, never what happened.
+ */
+export interface AgentDriveClaim {
+  readonly driveId: string;
+  readonly expiresAtMs: number;
+}
 
 /**
  * Everything a run's ledger says, folded once. `record` is the product contract;
@@ -215,6 +226,12 @@ export interface AgentRunLedgerView {
   readonly terminal: boolean;
   /** When a stop was asked for, or `null`. Not a run event; see `AgentLedgerEntry`. */
   readonly cancellationRequestedAtMs: number | null;
+  /**
+   * The run's current drive claim, or `null` when none is held or the one that was
+   * held has been released. Expiry is judged by the caller against its clock, never
+   * by this fold, so the fold stays pure.
+   */
+  readonly driveClaim: AgentDriveClaim | null;
   /** Step id → the event that settled it. A settled step is never re-performed. */
   readonly settledSteps: ReadonlyMap<string, AgentSettledStepEvent>;
   /**
@@ -227,6 +244,7 @@ export interface AgentRunLedgerView {
 
 export type AgentRunStoreReason =
   | "INVALID_RUN_ID"
+  | "RUN_NOT_FOUND"
   | "RUN_ALREADY_OPEN"
   | "RUN_ALREADY_CLOSED"
   | "MALFORMED_LEDGER"
@@ -342,6 +360,8 @@ function parseEntry(runId: string, line: string): AgentLedgerEntry {
     return parsed as unknown as AgentLedgerEntry;
   }
   if (parsed.kind === "cancellation-requested") return parsed as unknown as AgentLedgerEntry;
+  if (parsed.kind === "drive-claimed") return parsed as unknown as AgentLedgerEntry;
+  if (parsed.kind === "drive-released") return parsed as unknown as AgentLedgerEntry;
   if (parsed.kind === "event" && isRecord(parsed.event) && EVENT_KINDS.has(String(parsed.event.kind))) {
     return parsed as unknown as AgentLedgerEntry;
   }
@@ -367,10 +387,22 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
   const invokedStepIds: string[] = [];
   let status: AgentRunStatus = "queued";
   let cancellationRequestedAtMs: number | null = null;
+  let driveClaim: AgentDriveClaim | null = null;
 
   for (const entry of rest) {
     if (entry.kind === "cancellation-requested") {
       cancellationRequestedAtMs ??= entry.atMs;
+      continue;
+    }
+    // The drive claim is a control record, not a run event: it changes who may
+    // drive, never what happened. Released only by the drive that took it, so a
+    // stray `drive-released` from another drive cannot clear a live claim.
+    if (entry.kind === "drive-claimed") {
+      driveClaim = { driveId: entry.driveId, expiresAtMs: entry.expiresAtMs };
+      continue;
+    }
+    if (entry.kind === "drive-released") {
+      if (driveClaim?.driveId === entry.driveId) driveClaim = null;
       continue;
     }
     // A run is opened once. A second header means two writers believed they owned
@@ -417,6 +449,7 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
     },
     terminal: status !== "queued" && status !== "running",
     cancellationRequestedAtMs,
+    driveClaim,
     settledSteps,
     unsettledStepIds: invokedStepIds.filter((stepId) => !settledSteps.has(stepId)),
   };
@@ -497,6 +530,15 @@ async function withWindowsChunkProbeRetry(name: string, write: () => Promise<voi
 }
 
 /**
+ * The outcome of asking the ledger for the right to drive a run. The refusal
+ * reasons are the store's, not the service's: the service maps them onto
+ * `AgentRunServiceError` for callers that speak the service vocabulary.
+ */
+export type AgentDriveClaimResult =
+  | { readonly claimed: true; readonly driveId: string }
+  | { readonly claimed: false; readonly reason: "RUN_ALREADY_TERMINAL" | "RUN_ALREADY_DRIVEN" };
+
+/**
  * The run ledger. One instance per process is enough: it holds no run state of
  * its own, only the world it writes through.
  */
@@ -504,6 +546,8 @@ export class AgentRunStore {
   private readonly world: AgentLedgerWorld;
   private readonly clock: () => number;
   private readonly streamWrites = new Map<string, Promise<void>>();
+  /** Serializes claim checks against their appends, per store instance. */
+  private claimQueue: Promise<unknown> = Promise.resolve();
 
   constructor(options: { readonly world: AgentLedgerWorld; readonly clock?: () => number }) {
     this.world = options.world;
@@ -574,6 +618,58 @@ export class AgentRunStore {
       atMs: this.clock(),
       bySessionId: by.sessionId,
     });
+  }
+
+  /**
+   * Claims the right to drive a run, durably. The check-then-append is serialized
+   * per store instance, so two drives in ONE process cannot both read "no claim"
+   * and both append one.
+   *
+   * **Scope:** the local `AgentLedgerWorld` provides single-process claim
+   * serialization. Cross-process/distributed claim atomicity is outside this PR
+   * and depends on the future Postgres world implementation (B16); the local
+   * world is single-process by construction, and `docs/BACKLOG.md` B5 records
+   * the Postgres case.
+   *
+   * An expired claim is no claim. The expiry must outlive the run's own deadline,
+   * so a still-live drive is never mistaken for a stale one.
+   */
+  async tryClaimDrive(runId: string, driveId: string, expiresAtMs: number): Promise<AgentDriveClaimResult> {
+    const id = assertRunId(runId);
+    return this.withClaimLock(async () => {
+      const view = await this.read(id);
+      if (view === null) {
+        throw new AgentRunStoreError("RUN_NOT_FOUND", `agent run "${id}" does not exist`);
+      }
+      if (view.terminal) return { claimed: false, reason: "RUN_ALREADY_TERMINAL" };
+      if (view.driveClaim !== null && view.driveClaim.expiresAtMs > this.clock()) {
+        return { claimed: false, reason: "RUN_ALREADY_DRIVEN" };
+      }
+      await this.append(id, { kind: "drive-claimed", atMs: this.clock(), driveId, expiresAtMs });
+      return { claimed: true, driveId };
+    });
+  }
+
+  /**
+   * Records that the named drive has released its claim. Safe to repeat: the fold
+   * clears a claim only when the released drive id matches the one it holds, so a
+   * release that arrives after the claim was already cleared is ignored.
+   */
+  async releaseDrive(runId: string, driveId: string): Promise<void> {
+    const id = assertRunId(runId);
+    await this.withClaimLock(async () => {
+      await this.append(id, { kind: "drive-released", atMs: this.clock(), driveId });
+    });
+  }
+
+  private withClaimLock<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.claimQueue.then(operation, operation);
+    // A failed claim must not poison the queue for the next claimant.
+    this.claimQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   /** The whole run, folded. `null` when no such run was ever opened. */

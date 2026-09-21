@@ -821,3 +821,129 @@ describe("AgentRunStore — a closed run refuses further appends", () => {
     expect((await store.read(run.runId))?.record.runId).toBe(run.runId);
   });
 });
+
+// ─── drive claims (B5) ──────────────────────────────────────────────────────
+
+describe("AgentRunStore — drive claims", () => {
+  test("the first claim on a run succeeds and is folded back", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+
+    const result = await store.tryClaimDrive(run.runId, "drive_1", clock.read() + 300_000);
+
+    expect(result).toEqual({ claimed: true, driveId: "drive_1" });
+    expect((await store.read(run.runId))?.driveClaim).toEqual({
+      driveId: "drive_1",
+      expiresAtMs: 1_700_000_300_000,
+    });
+  });
+
+  test("a second, unexpired claim on the same run is refused", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+    await store.tryClaimDrive(run.runId, "drive_1", clock.read() + 300_000);
+
+    const second = await store.tryClaimDrive(run.runId, "drive_2", clock.read() + 300_000);
+
+    expect(second).toEqual({ claimed: false, reason: "RUN_ALREADY_DRIVEN" });
+  });
+
+  test("an expired claim is no claim, so a new drive takes over", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+    await store.tryClaimDrive(run.runId, "drive_1", clock.read() + 60_000);
+
+    clock.set(clock.read() + 60_001);
+    const second = await store.tryClaimDrive(run.runId, "drive_2", clock.read() + 60_000);
+
+    expect(second).toEqual({ claimed: true, driveId: "drive_2" });
+  });
+
+  test("releasing a claim lets the next drive take it", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+    await store.tryClaimDrive(run.runId, "drive_1", clock.read() + 300_000);
+
+    await store.releaseDrive(run.runId, "drive_1");
+
+    expect((await store.read(run.runId))?.driveClaim).toBeNull();
+    expect(await store.tryClaimDrive(run.runId, "drive_2", clock.read() + 300_000)).toEqual({
+      claimed: true,
+      driveId: "drive_2",
+    });
+  });
+
+  test("a release from a different drive does not clear the live claim", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+    await store.tryClaimDrive(run.runId, "drive_1", clock.read() + 300_000);
+
+    await store.releaseDrive(run.runId, "drive_other");
+
+    expect((await store.read(run.runId))?.driveClaim).toEqual({
+      driveId: "drive_1",
+      expiresAtMs: 1_700_000_300_000,
+    });
+  });
+
+  test("claiming a run that does not exist refuses with RUN_NOT_FOUND", async () => {
+    const { store } = storeAt();
+
+    const error = await captureStoreError(() => store.tryClaimDrive("arun_missing", "drive_1", 1));
+
+    expect(error.reasonCode).toBe("RUN_NOT_FOUND");
+  });
+
+  test("claiming a terminal run is refused with RUN_ALREADY_TERMINAL", async () => {
+    const { store } = storeAt();
+    const run = await store.openRun(OPEN_INPUT);
+    await store.appendEvent(run.runId, event("run-started", 2, { mode: "agent" }));
+    await store.appendEvent(run.runId, event("run-finished", 3, { status: "succeeded" }));
+
+    const result = await store.tryClaimDrive(run.runId, "drive_1", 4);
+
+    expect(result).toEqual({ claimed: false, reason: "RUN_ALREADY_TERMINAL" });
+  });
+
+  test("two concurrent claims in one process: exactly one wins", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+
+    const [a, b] = await Promise.all([
+      store.tryClaimDrive(run.runId, "drive_a", clock.read() + 300_000),
+      store.tryClaimDrive(run.runId, "drive_b", clock.read() + 300_000),
+    ]);
+
+    expect([a, b].filter((result) => result.claimed).length).toBe(1);
+  });
+
+  test("a ledger written before claims existed folds to no claim", async () => {
+    const { store } = storeAt();
+    const run = await store.openRun(OPEN_INPUT);
+    await store.appendEvent(run.runId, event("run-started", 2, { mode: "agent" }));
+
+    expect((await store.read(run.runId))?.driveClaim).toBeNull();
+  });
+
+  test("fifty concurrent claims in one process: exactly one wins", async () => {
+    const clock = fakeClock();
+    const { store } = storeAt(undefined, clock.read);
+    const run = await store.openRun(OPEN_INPUT);
+
+    const results = await Promise.all(
+      Array.from({ length: 50 }, (_, index) =>
+        store.tryClaimDrive(run.runId, `drive_${index}`, clock.read() + 300_000),
+      ),
+    );
+
+    const winners = results.filter((result) => result.claimed);
+    expect(winners).toHaveLength(1);
+    expect(winners[0]?.driveId).toBeTruthy();
+  });
+});

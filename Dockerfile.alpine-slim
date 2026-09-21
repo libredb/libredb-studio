@@ -86,7 +86,7 @@ RUN bun install --frozen-lockfile
 # step most sensitive to the toolchain, and pinning it keeps this file's output
 # a function of the lockfile rather than of Alpine's current package index.
 # The RUNTIME below is a different Node on purpose - see that stage.
-FROM node:26.8.2-alpine3.23 AS builder
+FROM node:26.9.0-alpine3.23 AS builder
 WORKDIR /usr/src/app
 RUN apk add --no-cache bash
 COPY --from=deps /usr/src/app/node_modules ./node_modules

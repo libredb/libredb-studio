@@ -641,6 +641,36 @@ file dispatches on statement text and never counted binds, so the suite was gree
 `describeObject()` foreign key read would have failed against a real server. The bind arity is now
 pinned by an assertion in that suite.
 
+#### Column defaults: the value, with the catalog text kept alongside (#1029)
+
+libSQL reports a column default as the expression AS WRITTEN, through `pragma_table_xinfo`'s `dflt_value`, identical to SQLite's on every row below. A string
+default therefore arrives quoted, with SQL standard quote doubling, while a number and an
+expression arrive bare. Measured 2026-09-21 on SQLite 3.53.2 through `bun:sqlite`, the engine libSQL forks. The payloads this suite
+replays, captured from sqld 0.24.33 (SQLite 3.47.0), carry `customers.country` as `'TR'`,
+quoted the same way, and #1029 measured `@libsql/client` identical on every row:
+
+| DDL | the value the column defaults to | catalog text |
+| --- | --- | --- |
+| `DEFAULT 'NULL'` | `NULL` | `'NULL'` |
+| `DEFAULT 'abc'` | `abc` | `'abc'` |
+| `DEFAULT ''` | the empty string | `''` |
+| `DEFAULT 'it''s'` | `it's` | `'it''s'` |
+| `DEFAULT 'a\b'` | `a\b` | `'a\b'` |
+| `DEFAULT 42` | `42` | `42` |
+| `DEFAULT CURRENT_TIMESTAMP` | the expression | `CURRENT_TIMESTAMP` |
+| no default | none | SQL NULL |
+
+Each column carries both readings. `defaultValue` is the value, decoded by `unquoteLiteral()`
+(`src/lib/sql/values.ts`) with this dialect's `"standard"` escaping, so `'it''s'` reads as
+`it's` and a backslash stays ordinary data. Text that is not exactly one complete literal,
+a number or an expression, passes through unchanged. `defaultExpression` is the
+catalog text itself, which is always valid SQL here and is what the schema-diff migration
+generator writes after the word `DEFAULT`; without it, a decoded `abc` would be emitted as
+`DEFAULT abc`. The empty string default stays the empty string, never `undefined`, and a
+column with no default carries neither field. `readCatalogDefault()` is local to this
+provider, the way per-provider normalization is everywhere else in this tree; the escape
+knowledge it relies on is the shared part.
+
 #### No `rowCount` and no `sizeBytes` on a listed object
 
 There is no catalog row estimate: `sqlite_stat1` exists only after an `ANALYZE` this server refuses

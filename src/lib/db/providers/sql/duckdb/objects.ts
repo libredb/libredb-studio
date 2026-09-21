@@ -39,6 +39,7 @@
 import { QueryError } from "../../../errors";
 import { containerDepth } from "../../../object-kinds";
 import { comparePaths } from "../../../object-path";
+import { unquoteLiteral } from "@/lib/sql/values";
 import { displayName } from "./introspect";
 import type {
   ContainerLevelSpec,
@@ -999,6 +1000,19 @@ export interface ObjectDetailRows {
 }
 
 /**
+ * The VALUE a column defaults to, read out of the catalog text (#1029). DuckDB reports a
+ * default as the expression AS WRITTEN, so a string default arrives as the quoted literal
+ * `'abc'`. `unquoteLiteral` decodes exactly one complete literal with this dialect's
+ * escaping and answers `undefined` for anything else, which is what lets a number such as
+ * `42` or an expression such as `CURRENT_TIMESTAMP` through unchanged. The text itself is
+ * kept alongside as `defaultExpression`, because once decoded this is no longer something
+ * that can be pasted after the word DEFAULT.
+ */
+function readCatalogDefault(raw: string | null | undefined): string | undefined {
+  return raw === null || raw === undefined ? undefined : (unquoteLiteral(raw, "duckdb") ?? raw);
+}
+
+/**
  * ONE object's detail, from rows, for BOTH the single read and the bulk read (#789).
  *
  * One mapper and not two, because two are two chances for `describeObjects` to spell a
@@ -1022,7 +1036,8 @@ export function objectDetailFromRows(path: readonly string[], schema: string, ro
       // `?? undefined` rather than a conditional spread: `ColumnSchema.defaultValue` is
       // optional and an absent key and an undefined one are the same fact to every
       // consumer, so the explicit form keeps the object shape constant across rows.
-      defaultValue: row.column_default ?? undefined,
+      defaultValue: readCatalogDefault(row.column_default),
+      defaultExpression: row.column_default ?? undefined,
     })),
     // A composite foreign key is ONE constraint over several columns and `ForeignKeySchema`
     // is per column, so the two aligned arrays are zipped out.
