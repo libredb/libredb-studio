@@ -71,8 +71,7 @@ function envText(value) {
 export function resolveBindAddress({ host, hostnameEnv, systemHostname } = {}) {
   if (host) return host;
   const inherited = envText(hostnameEnv);
-  const own = envText(systemHostname);
-  if (inherited !== "" && (own === "" || inherited !== own)) return inherited;
+  if (inherited !== "" && inherited !== envText(systemHostname)) return inherited;
   return "127.0.0.1";
 }
 
