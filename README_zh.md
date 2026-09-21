@@ -86,6 +86,28 @@ npx @libredb/studio
 
 > 需要 Helm、Homebrew、Snap、winget 或 deb/rpm？见[全部安装方式](#安装方式)。
 
+## 为什么要再做一个数据库工具
+
+你在托管平台上开一个 Postgres，四十秒就绪。
+
+然后你想看看里面有什么。于是你把端口暴露到公网，或者装一个桌面客户端再挖一条 SSH 隧道，或者干脆放弃、退回到命令行。数据库花了四十秒，而给它开一扇窗花掉了你一个下午。
+
+再乘上规模。应用用 Postgres，文档用 Mongo，缓存用 Redis，事件用 ClickHouse。四个数据库，四个客户端，四套凭据。周一来了个新人，在写下第一行代码之前，他要先搞清楚哪些数据在哪里，在 wiki 和三个私聊里翻连接串，等 VPN 权限，再给每种引擎装一个不同的工具。
+
+**数据库已经搬走了。** 它们搬进了 Kubernetes，搬进了托管云，搬进了要穿过跳板机才能到达的客户 VPC。**但读它们的工具没有跟着搬。** 它们仍然是桌面应用：笨重、按席位收费、必须先安装，并且假设你只有一个数据库、一台笔记本，以及一个永远不换设备的人。
+
+LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来找工具。**
+
+认真对待这句话，它就不再是一种偏好，而是一份规格说明。
+
+- 编辑器必须跑在浏览器里，因为数据不在你的机器上，你的同事也不在。
+- 它必须能在手机上打开，因为需要执行一条查询的故障，不会等你先开笔记本。
+- 它必须像基础设施那样部署（容器、Helm chart、Operator、一键模板），因为数据库旁边的东西都是这么装的。
+- 它必须可嵌入，因为编辑器最有用的位置，是在那个创建了数据库的产品内部。
+- 它必须毫无保留。你没法把一个按席位授权、功能分级的工具放进你拥有的每一个环境。**单点登录一旦要加钱，这个工具就不再是默认可部署的了。**
+
+> MIT 不是慷慨，而是这套架构的硬性要求。
+
 ## 在线试用
 
 > **不用安装，立刻试用 LibreDB Studio！**
@@ -98,8 +120,6 @@ npx @libredb/studio
 试用实例通过[种子连接](#种子连接预配置数据库)预置了一个 PostgreSQL 数据库，无需任何配置。
 
 ## 概览
-
-你在托管平台上开一个 Postgres，四十秒就绪。然后你想看看里面有什么，于是把端口开到公网、挖一条 SSH 隧道，或者给每台需要的机器都装一个桌面客户端。
 
 LibreDB Studio 走的是另一条路。它部署在数据旁边：一个容器、一个 Helm chart、一个 operator、一份 PaaS 一键模板，或者用 `npm i @libredb/studio` 嵌进你自己的产品。没有任何东西需要朝外暴露。
 
@@ -384,6 +404,23 @@ journalctl -u libredb-studio
    ```
    打开 [http://localhost:3000](http://localhost:3000)
 
+### 中国大陆网络下的拉取加速
+
+在部分国内网络下，从 GHCR 拉取镜像会很慢或超时。镜像只有一份，`ghcr.io/libredb/libredb-studio`，下面只是换一个拉取域名：
+
+```bash
+# 南京大学镜像：把 ghcr.io 换成 ghcr.nju.edu.cn
+docker pull ghcr.nju.edu.cn/libredb/libredb-studio:latest
+
+# DaoCloud 镜像：在完整镜像名前加 m.daocloud.io/
+docker pull m.daocloud.io/ghcr.io/libredb/libredb-studio:latest
+
+# npx / npm：使用 npmmirror 源
+npx --registry=https://registry.npmmirror.com @libredb/studio
+```
+
+镜像站会变动（上海交通大学镜像已于 2026 年 6 月停止服务），以上只是当前可用的例子。拉取失败时，请到 [dongyubin/DockerHub](https://github.com/dongyubin/DockerHub) 查看仍在服务的镜像列表。
+
 ### 嵌入到你自己的应用中（`@libredb/studio`）
 
 Studio 既作为服务端发布，也作为 npm 包发布，所以编辑器可以活在你自己的产品里：
@@ -423,6 +460,12 @@ React 的*开发*构建需要它；`monacoVsPath` 在 Monaco 的 bundle 不是�
 带的是没有 nonce 的水合脚本，所以它约束的是注入的脚本能把数据*发往*哪里，
 而不是脚本能不能运行。这一权衡，以及 Next.js 应用交付这些响应头的两条路径，
 在 [`docs/SECURITY.md`](docs/SECURITY.md) 里有论证。
+
+## 关于收费的那条线
+
+Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platform，它卖的是“别人替你运维”：托管、多租户、计费和支持，而不是某个被挪到付费墙后面的功能。
+
+**没有任何能力为了制造升级理由而被移到这条线的另一边。** 单点登录、RBAC、查询审计、ER 图、AI 功能、全部 NoSQL 引擎，都在 MIT 构建里。
 
 ## 开发用数据库
 
@@ -933,7 +976,17 @@ _成为第一个赞助 libredb-studio 的人！_
   计划，支撑着维护者访问数据库探针主机所用的私有网络，这样针对真实引擎做测试
   就不必把数据库端口暴露到公网。自 2026-08-30 起。
 
+## 文档
+
+深入内容目前只有英文版本：
+
+- [架构](docs/ARCHITECTURE.md) · [数据库提供方](docs/DATABASE_PROVIDERS.md) · [各引擎参考](docs/providers/README.md)
+- [API 文档](docs/API_DOCS.md) · [OIDC 配置](docs/OIDC.md) · [存储层](docs/STORAGE.md)
+- [Helm Chart](docs/HELM_CHART.md) · [分发渠道](docs/CHANNELS.md) · [新增一个数据库](docs/ADDING_A_PROVIDER.md)
+
 ## 贡献
+
+欢迎 issue 和 PR，中文提交完全没问题。请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 我们欢迎社区贡献！无论是修 bug、加新功能，还是改进文档：
 1. Fork 本项目。
