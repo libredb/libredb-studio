@@ -256,7 +256,10 @@ services:
       - POSTGRES_USER=libredb
       - POSTGRES_PASSWORD=secret
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # PostgreSQL 18+ images expect the mount at /var/lib/postgresql, not /var/lib/postgresql/data.
+      # A pgdata volume from the old layout has to be removed once: run docker compose down, then
+      # docker volume rm on the volume whose name ends in _pgdata (find it with docker volume ls).
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U libredb"]
       interval: 5s
