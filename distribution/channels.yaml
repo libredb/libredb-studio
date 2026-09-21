@@ -882,9 +882,10 @@ channels:
       docs: deploy/azure/README.md
     pin:
       strategy: none
-      note: Published 7 Sep 2026 as a free ("Get It Now") Azure Application solution template
-        (package 1.0.1). There is no pin to add, because the listed version lives in Partner
-        Center the way Google's lives in the Producer Portal.
+      note: Published 7 Sep 2026 as a free ("Get It Now") Azure Application solution template.
+        The package version is recorded once, in deploy/azure/package-version.txt; naming it
+        here as well is what let the two drift apart. There is no pin to add, because the
+        listed version lives in Partner Center the way Google's lives in the Producer Portal.
 
   - id: aws-marketplace
     name: AWS Marketplace (free AMI product)
