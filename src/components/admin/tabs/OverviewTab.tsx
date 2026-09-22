@@ -1003,6 +1003,19 @@ function AnalyticsSection({
             <Clock className="h-4 w-4 text-brand" />
             Recent Activity
           </h3>
+          {/* Scope disclosure (#992), the same per-process gap the Audit tab names (#851): proxy()
+              is a separately compiled entry, so the audit events this feed can list are only the
+              ones the application recorded. Shorter than the Audit tab's paragraph on purpose —
+              this is a dashboard widget and never presents itself as the audit log, so it points
+              at the surface that does rather than restating its disclosure. Unconditional: the gap
+              is a property of how the process is compiled, not of whether any event is loaded, so
+              there is no state in which the feed is complete and the notice would lie — and no
+              second branch for the coverage gate to chase. */}
+          <p data-testid="overview-audit-scope" className="text-xs text-fg-subtle mb-4">
+            Shows the audit events the application itself recorded, plus query history kept in this browser. Boundary
+            denials recorded by the proxy are in neither; the Audit tab and the{" "}
+            <code className="text-fg-secondary">libredb.audit.v1</code> process log carry those.
+          </p>
           {activityFeed.length === 0 ? (
             <div className="flex items-center justify-center py-8 text-sm text-fg-subtle">No recent activity.</div>
           ) : (

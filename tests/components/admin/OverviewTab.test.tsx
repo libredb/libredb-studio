@@ -854,4 +854,29 @@ describe("OverviewTab", () => {
     expect(bg).toBe("#ffffff");
     expect(color).toBe("#3f3f46");
   });
+
+  // ── Audit scope disclosure (#992) ─────────────────────────────────────────
+
+  /**
+   * The Audit tab names the per-process gap (#851, disclosed in #989); this feed reads the same
+   * endpoint and was not covered. It is not the same surface — nobody reads a dashboard widget as
+   * the audit log — so the notice is one sentence that points at the tab rather than the Audit
+   * tab's paragraph. It is asserted against an empty buffer on purpose: that is the state in which
+   * "No recent activity." would read as "nothing happened".
+   */
+  test("renders the audit scope notice even when the buffer is empty", async () => {
+    mockGlobalFetch({ "/api/admin/audit": { ok: true, json: { events: [] } } });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+
+    const notice = result!.queryByTestId("overview-audit-scope");
+    expect(notice).not.toBeNull();
+    // Names the gap, and points at the two surfaces that do carry those events.
+    expect(notice!.textContent).toContain("Boundary denials recorded by the proxy are in neither");
+    expect(notice!.textContent).toContain("Audit tab");
+    expect(notice!.textContent).toContain("libredb.audit.v1");
+  });
 });
