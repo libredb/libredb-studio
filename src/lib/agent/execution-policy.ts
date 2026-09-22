@@ -308,13 +308,16 @@ function workflowBudget(input: {
  *   in front of a container needs its own timeout raised — stated in `docs/AGENT.md`
  *   under "Deployment" rather than silently assumed.
  *
- * Every one of these ceilings is per DRIVE, not per run. The budget tracker, the repair
- * ledger and the deadline all live in the process that drives a run, so a run resumed
- * after a process death starts each of them again: N resumes cost up to N times a single
- * drive's ceiling. Nothing here is a lie about a run's total cost because nothing here
- * claims to bound one — bounding a run ACROSS resumes needs a ceiling folded from its own
- * ledger (the record carries `createdAtMs`, so the data exists), and that is recorded in
- * `docs/BACKLOG.md` rather than implied here.
+ * Which of these bound a RUN and which bound one DRIVE, since #999 folded the run's own
+ * ledger into the ceilings a drive starts with (`drive-budget.ts`):
+ *
+ *   - `maxStatementsPerRun` and the database-time figure bound the run. A resumed drive is
+ *     seeded with what earlier drives spent, so N resumes no longer cost N times the
+ *     ceiling.
+ *   - `runDeadlineMs` bounds the run too, and on the WALL clock: it is derived from
+ *     `createdAtMs`, so time a run spends paused or between drives is spent against it.
+ *   - `maxModelTurns` and the repair ledger are still per drive. A resumed run counts its
+ *     own turns, and its repair attempts start again (`docs/BACKLOG.md` B6).
  */
 export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowBudget>> = Object.freeze({
   investigation: workflowBudget({

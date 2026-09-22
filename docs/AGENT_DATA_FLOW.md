@@ -545,7 +545,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 18-45, by workflow | Reads per drive, grounding reads and repairs included — the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other fifteen. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
+| `maxStatementsPerRun` | 18-45, by workflow | Reads per run, folded across its drives (#999), grounding reads and repairs included — the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other fifteen. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |
@@ -555,8 +555,12 @@ An oversized read is **refused, not truncated**, so a result that reached the mo
 one. Note the honest edge: the comparison happens after the driver has materialised the rows, so an
 oversized read is refused but still paid for at the database.
 
-Every one of these is **per drive**. A run resumed after a restart starts each of them again
-(`docs/BACKLOG.md` B6).
+**Some of these bound the run and some bound one drive.** `maxStatementsPerRun` and the
+database-time figure bound the run: since #999 a drive is seeded with what the run's ledger says
+earlier drives spent. `runDeadlineMs` bounds the run on the wall clock, measured from the moment
+the run opened, so time it spends paused or between drives is spent against it. `maxModelTurns` and
+the repair ledger are still per drive: a resumed run counts its own turns and its repair attempts
+start again (`docs/BACKLOG.md` B6).
 
 **The classification is outside all of it**, by construction: it happens before a run exists, so
 there is no budget to charge it to. Its own bounds are its 8-second ceiling and its 16-token

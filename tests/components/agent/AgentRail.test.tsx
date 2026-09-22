@@ -2349,13 +2349,12 @@ describe("AgentRail", () => {
     });
 
     /**
-     * A ceiling is per drive while the ledger spans every drive, so a resumed run
-     * can fold to more than one drive's allowance. The numeral says what the run
-     * actually spent — hiding that would be the misleading direction — while the
-     * bar is clamped, because a bar past its own track reads as a larger allowance
-     * than exists.
+     * What the tracker enforces and what the ledger records are measured differently,
+     * so a fold can read past a ceiling. The numeral says what the run actually spent
+     * — hiding that would be the misleading direction — while the bar is clamped,
+     * because a bar past its own track reads as a larger allowance than exists.
      */
-    test("a run past a per-drive ceiling shows the real figure and a bar that does not overflow", async () => {
+    test("a run whose ledger reads past a ceiling shows the real figure and a bar that does not overflow", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, OVERSPENT_LINE]);
       const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
       fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
@@ -2437,10 +2436,11 @@ describe("AgentRail", () => {
       expect(getByTestId("agent-budget-caveats").textContent ?? "").not.toContain("holds no duration for");
     });
 
-    // Every ceiling is per drive (`docs/BACKLOG.md` B6), so a resumed run starts
-    // each of them again. A meter that read as a per-run total would understate
-    // what a run can cost.
-    test("the meter states the limits it cannot measure, and that they are per drive", () => {
+    // A resumed run CONTINUES its spend: `deriveDriveCeilings` folds the ledger's
+    // completed reads into the statement and database-time ceilings (#999), and the
+    // deadline is wall clock from the run's opening. A meter that said "per drive"
+    // would promise a resumed run a fresh allowance it does not get.
+    test("the meter states the limits it cannot measure, and that a resume continues the spend", () => {
       const view = render(<AgentRail {...DEFAULT_PROPS} />);
       const { getByTestId } = view;
       // Stated for a workflow the user NAMED: under Automatic there is no workflow yet
@@ -2455,7 +2455,12 @@ describe("AgentRail", () => {
       expect(limits).toContain("10.0 s");
       expect(limits).toContain("7.5 min");
       expect(limits).toContain("36 model turns");
-      expect(getByTestId("agent-budget-caveats").textContent).toContain("per drive");
+      const caveats = getByTestId("agent-budget-caveats").textContent ?? "";
+      expect(caveats).toContain("continues its spend");
+      expect(caveats).toContain("wall clock");
+      // The one ceiling that really is per drive, named rather than implied.
+      expect(caveats).toContain("Repair attempts");
+      expect(caveats).not.toContain("starts each of them again");
     });
 
     /**

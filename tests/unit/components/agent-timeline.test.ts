@@ -1867,13 +1867,13 @@ describe("foldLedgerEntries — the budget meter", () => {
    * tell it apart from an interruption, so the fold declines to guess.
    */
   /**
-   * A ceiling is per drive (`docs/BACKLOG.md` B6) while the ledger spans every
-   * drive, so a resumed run legitimately folds to more than one drive's allowance.
-   * The fold does NOT clamp it: clamping would hide that a run has cost more than
-   * its ceiling suggests, which is the direction that misleads. The rail's caveat
-   * is what says so, and this pins the behaviour that caveat describes.
+   * The fold reports what the ledger holds and does NOT clamp it to a ceiling:
+   * clamping would hide that a run has cost more than its ceiling suggests, which
+   * is the direction that misleads. What the tracker enforces and what the ledger
+   * records are measured differently (the rail's caveat says so), so the two can
+   * disagree, and this pins which of them the fold answers with.
    */
-  test("a run resumed past a per-drive ceiling folds to what it actually spent", () => {
+  test("a run whose ledger holds more than a ceiling folds to what it actually spent", () => {
     const failed = (stepId: string): AgentLedgerEntry =>
       event({
         kind: "event",

@@ -809,8 +809,10 @@ is asked of a **Plan** run, which has no report tool to call. The meter says thi
 Then the caveat, which is the part worth reading twice — behind the **What is counted** ⓘ, beside the
 gauges it is about:
 
-- **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
-  totals can read past a single drive's ceiling.
+- **A resumed run continues its spend.** The statement and database-time ceilings are folded from
+  the run's own ledger, so a resume does not start them again, and the run deadline is wall clock
+  from the moment the run opened, so time the run spends paused or between drives counts against it.
+  Repair attempts are the exception and are counted per drive (`docs/BACKLOG.md` B6).
 - **Every figure is a floor, never a ceiling.** The ledger records less than the server charges: the
   schema capture now contributes the statements and the span it was charged, but a call that failed
   while acquiring its provider settles no step and so cannot be seen, and a completed read reports the

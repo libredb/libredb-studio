@@ -2746,18 +2746,21 @@ export function AgentRail({
             ))}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[0.625rem] text-fg-subtle">
             {/*
-              What the measured figures above are: a floor, per drive. The claim qualifies
-              the gauges, so it sits with them.
+              What the measured figures above are: a floor, and cumulative across the run's
+              drives rather than per drive (#999). The claim qualifies the gauges, so it sits
+              with them.
             */}
             <span className="inline-flex items-center gap-0.5">
               What is counted
               <InfoNote title="What these figures count" testId="agent-budget-spend">
                 <span data-testid="agent-budget-caveats" className="block">
-                  Every ceiling is per drive, so a run resumed after a restart starts each of them again and these
-                  totals can read past a single drive&apos;s ceiling. What is counted comes from the run&apos;s ledger,
-                  which records less than the server charges: the schema capture&apos;s catalog reads are not itemized,
-                  and a completed read reports the engine&apos;s own elapsed time rather than the span the budget was
-                  charged. So a spend shown here is a floor, never a ceiling.
+                  A resumed run continues its spend rather than starting again: the statement and database-time ceilings
+                  are folded from this run&apos;s own ledger, and the run deadline is wall clock from the moment the run
+                  opened, so time it spends paused or between drives is spent against it. Repair attempts are the
+                  exception and are counted per drive. What is counted comes from the run&apos;s ledger, which records
+                  less than the server charges: the schema capture&apos;s catalog reads are not itemized, and a
+                  completed read reports the engine&apos;s own elapsed time rather than the span the budget was charged.
+                  So a spend shown here is a floor, never a ceiling.
                   {/*
                     The one remaining gap in the database-time figure, and it is per RUN
                     rather than a standing claim (#512). A failed
