@@ -480,9 +480,13 @@ channels:
       upstream_repo: https://github.com/azukaar/cosmos-servapps-official
       docs: deploy/cosmos/README.md
     pin:
-      strategy: remote_file
-      url: https://raw.githubusercontent.com/azukaar/cosmos-servapps-official/master/servapps/LibreDB-Studio/cosmos-compose.json
-      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      strategy: none
+      note: The servapp pins ghcr.io/libredb/libredb-studio:latest, so there is no version to
+        measure - the same shape as the Koyeb deploy button. It carried a semver until
+        azukaar/cosmos-servapps-official#305 (merged 2026-09-21) moved it to the floating tag, and
+        a remote_file pin left behind after that reports UNKNOWN on every run rather than drift,
+        because the extract pattern can never match. Cosmos installs whatever :latest resolves to
+        at install time, which is why this row went from a drift reminder to nothing to check.
 
   - id: kubero
     name: Kubero template catalog
