@@ -202,6 +202,8 @@
     "@radix-ui/react-toggle": "^1.1.18",
     "@radix-ui/react-toggle-group": "^1.1.19",
     "@radix-ui/react-tooltip": "^1.2.16",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.2",
     "@tanstack/react-table": "^9.2.4",
     "@tanstack/react-virtual": "^3.14.10",
     "@xyflow/react": "^12.11.6",
