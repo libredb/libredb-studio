@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { CopyButton } from "@/components/copy-button";
 import { cn } from "@/lib/utils";
 import type { SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
 import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
@@ -1047,9 +1048,24 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           </div>
         ) : showMigration && migrationSQL ? (
           <div className="flex-1 overflow-auto p-4">
-            <pre className="text-xs font-mono text-fg-secondary bg-raised border border-hairline-strong rounded-lg p-4 overflow-auto whitespace-pre-wrap">
-              {migrationSQL}
-            </pre>
+            <div className="relative">
+              <pre className="text-xs font-mono text-fg-secondary bg-raised border border-hairline-strong rounded-lg p-4 overflow-auto max-h-[50vh] whitespace-pre-wrap">
+                {migrationSQL}
+              </pre>
+              {/*
+                `CopyButton` rather than a local `copied` flag (B43): the flag flipped in the
+                same statement that started the write, which reads "Copied!" over an empty
+                clipboard wherever `navigator.clipboard` is absent — plain HTTP off loopback,
+                which several distribution channels are.
+                Pinned `absolute top-3 right-3` over a `div.relative` with `max-h-[50vh]` on the
+                scrollable `pre` (#1080) so the button does not scroll away with long migrations.
+              */}
+              <CopyButton
+                text={migrationSQL}
+                testId="schema-diff-migration-copy"
+                className="absolute top-3 right-3 gap-1.5 px-2.5 py-1 rounded-lg bg-fill-strong hover:bg-edge text-xs"
+              />
+            </div>
           </div>
         ) : diff && diff.hasChanges ? (
           <>

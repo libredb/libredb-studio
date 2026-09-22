@@ -2478,6 +2478,61 @@ describe("SchemaDiff", () => {
         expect(dialect).toBe("postgres");
       }
     });
+
+    test("schema-diff-migration-copy button renders and copies migration SQL", () => {
+      const writeText = mock(async (t: string) => {
+        void t;
+      });
+      const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+      Object.defineProperty(globalThis.navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+
+      try {
+        const { getByText, getByTestId } = renderWithDiff();
+        fireEvent.click(getByText("SQL Migration"));
+
+        const copyBtn = getByTestId("schema-diff-migration-copy");
+        expect(copyBtn).toBeTruthy();
+        expect(copyBtn.textContent).toContain("Copy");
+
+        fireEvent.click(copyBtn);
+        expect(writeText).toHaveBeenCalledTimes(1);
+        expect((writeText.mock.calls as unknown[][])[0][0]).toContain("CREATE TABLE new_table");
+      } finally {
+        if (originalClipboard === undefined) {
+          Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+        } else {
+          Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+        }
+      }
+    });
+
+    test("schema-diff-migration-copy button is pinned over the scrollable pre container rather than inside it", () => {
+      const { getByText, getByTestId, container } = renderWithDiff();
+      fireEvent.click(getByText("SQL Migration"));
+
+      const copyBtn = getByTestId("schema-diff-migration-copy");
+      const pre = container.querySelector("pre");
+      expect(pre).toBeTruthy();
+      expect(copyBtn).toBeTruthy();
+
+      // Structural assertion: The copy button must not sit inside the scrollable pre tag,
+      // where scrolling long migration text would carry the button away (#1080).
+      expect(pre!.contains(copyBtn)).toBe(false);
+
+      // The pre must be constrained with a scrollable max-height, and the button must be
+      // pinned absolutely over the relative wrapper container.
+      expect(pre!.className).toContain("overflow-auto");
+      expect(pre!.className).toContain("max-h-");
+      expect(copyBtn.className).toContain("absolute");
+
+      const parentWrapper = copyBtn.parentElement;
+      expect(parentWrapper).toBeTruthy();
+      expect(parentWrapper!.className).toContain("relative");
+      expect(parentWrapper!.contains(pre!)).toBe(true);
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
