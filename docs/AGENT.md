@@ -2611,7 +2611,8 @@ the role's own grants are the whole boundary (A3).
   cancel.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
 - **B6** — the repair ledger is rebuilt per drive, so a resumed run's repair attempts start over.
-- **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
+- **B9** — the resume sweep is local-only, so an interrupted run is picked up only on the `local`
+  backend, and only once its claim has gone stale.
 - **B11** — the rail can stop a run but cannot pause or resume one.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
