@@ -1011,6 +1011,20 @@ which is one rule on every server, and a caller joins the two answers on path ra
 A bounded read's membership is therefore the server's, and it is not promised to be the same on two servers
 of this family.
 
+**The bound is written into the statement, not bound to it.**
+`LIMIT 2`, never `LIMIT ?`, and that is a relative's constraint rather than a style choice.
+Measured 2026-09-22 through `mysql2` with the same statement four ways, against each server in turn:
+`execute()` with no bound answers everywhere, `execute()` with a literal `LIMIT` answers everywhere, and
+`execute()` with `LIMIT ?` answers on MySQL 8 and fails on **Apache Doris 4.1.3-rc02** with
+*mismatched input 'LIMIT' expecting {&lt;EOF&gt;, ';'}* and on **StarRocks 3.3.22-753696f** with
+*using parameter(?) as limit or offset not supported*.
+The text protocol (`query()`) takes `LIMIT ?` on all three, so this is the binary prepared protocol's
+placeholder in the LIMIT position specifically, not the LIMIT grammar and not prepared statements at large.
+Before the bound was written in, a Doris or StarRocks user got a 500 from the object browser the moment a
+folder was read, because the bulk read is the only caller that bounds.
+What is spelled in is the caller's `limit + 1`, which `describeObjects()` has already rejected unless it is a
+positive whole number, so the rendered statement can carry nothing but digits.
+
 **Mixed path depth (ruling 5f).**
 Not in this engine's relation set.
 The kinds that have columns are all addressed `[database, name]`; `trigger` is the one kind here with a

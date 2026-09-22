@@ -4709,22 +4709,45 @@ describe("PostgreSQL bulk column read", () => {
   });
 
   test("a bounded read reports its own truncation", async () => {
-    let bound: unknown;
-    mockQueryFn = async (sql, params) => {
+    let asked: string | undefined;
+    mockQueryFn = async (sql) => {
       if (!sql.includes("described_columns")) return { rows: [] };
       expect(sql).toContain("LIMIT");
-      bound = params?.[1];
+      asked = sql;
       // The provider asks for one row more than the bound, which is how it can tell a
       // saturated read from an exact one without a second count.
-      return { rows: bulkRows().slice(0, Number(bound)) };
+      return { rows: bulkRows().slice(0, 2) };
     };
     const provider = makeProvider();
     await provider.connect();
 
     const batch = await provider.describeObjects(["app"], "table", 1);
-    expect(bound).toBe(2);
+    expect(asked).toContain("LIMIT 2");
     expect(batch.details).toHaveLength(1);
     expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
+    await provider.disconnect();
+  });
+
+  test("the bound is spelled into the statement, because RisingWave refuses to bind one", async () => {
+    let asked: string | undefined;
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      asked = sql;
+      return { rows: bulkRows() };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await provider.describeObjects(["app"], "table", 2);
+
+    // Measured 2026-09-22 through `pg` against RisingWave 3.0.4: the same statement answers
+    // with the bound spelled in and fails with it bound, "Failed to prepare the statement
+    // ... expects an integer or expression". Stock PostgreSQL 17.11 binds it, so this is
+    // the relative's constraint and not the driver's, and it is the same trait
+    // `compatibility.ts` already records for RisingWave's monitoring reads. The value is
+    // the caller's `limit + 1`, validated as a positive whole number before it is spelled.
+    expect(asked).toContain("LIMIT 3");
+    expect(asked).not.toContain("LIMIT $2");
     await provider.disconnect();
   });
 

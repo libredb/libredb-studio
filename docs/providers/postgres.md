@@ -568,6 +568,28 @@ describeObjects(app, table, limit 10):   10 details, truncated=undefined
 Every detail path was found in that kind's own `listObjects()` answer, and every column list matched
 `describeObject()` for the same table column for column.
 
+**The bound is written into the statement, not bound to it.**
+`LIMIT 3`, never `LIMIT $2`, and that is a relative's constraint rather than a style choice.
+Measured 2026-09-22 through `pg` with the same statement three ways: no bound, a literal bound and a
+parameterised one.
+Stock PostgreSQL 17.11 answers all three.
+**RisingWave 3.0.4** answers the first two and refuses the third with *Failed to prepare the statement ...
+expects an integer or expression*, which is the same trait
+[`compatibility.ts`](../../src/lib/db/compatibility.ts) already records for its monitoring reads, where a
+parameterised `LIMIT` is why the slow-query and active-session panels stay empty.
+What is spelled in is the caller's `limit + 1`, which `describeObjects()` has already rejected unless it is a
+positive whole number, so the rendered statement can carry nothing but digits.
+
+That change does not make RisingWave's object browser work, and the reason is worth writing down rather
+than discovering twice.
+Measured against RisingWave 3.0.4 on 2026-09-22, through this provider and with a real table present:
+`listObjects(["public"], "table")` answers, and `describeObject()`, `describeObjects()` and
+`describeObjects(..., 1)` all fail alike with *Failed to bind expression: CAST(NULL AS json)* /
+*Feature is not yet implemented: unsupported data type: json*.
+So the tree lists this engine's objects and no column read of any shape succeeds, the bound is not what
+decides it, and the gap is the engine's missing `json` type rather than anything this statement chose.
+Two independent constraints sit on one statement here and only the first of them was ours.
+
 ### 3.1.5 Object source (#789)
 
 `readObjectSource(path, kind, limit?)` answers one object's definition text.

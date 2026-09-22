@@ -1277,8 +1277,16 @@ const OBJECT_DETAIL_SQL = withoutMaterializedHint(`
  * code-point order. That decides WHICH objects a bound keeps, and nothing else: the result
  * is re-sorted by path below, and a caller joins on path rather than on position.
  */
-function bulkDetailSql(relkinds: string, bounded: boolean): string {
-  const limit = bounded ? "\n          LIMIT $2" : "";
+function bulkDetailSql(relkinds: string, bound?: number): string {
+  // The bound is SPELLED IN rather than bound as `$2`. RisingWave 3.0.4 refuses a parameter
+  // in the LIMIT position, measured 2026-09-22 through `pg`: the identical statement answers
+  // with the number written in and fails with it bound, "Failed to prepare the statement ...
+  // expects an integer or expression". It is the same trait `compatibility.ts` already
+  // records for RisingWave's monitoring reads, where a parameterised LIMIT leaves the
+  // slow-query and active-session panels empty. Stock PostgreSQL binds it either way, so this
+  // costs nothing there. `describeObjects` validates the caller's limit as a positive whole
+  // number before this is reached, so what gets spelled in is only ever digits.
+  const limit = bound === undefined ? "" : `\n          LIMIT ${bound}`;
   return withoutMaterializedHint(`
         WITH described AS (
           SELECT c.oid, c.relname
@@ -1319,11 +1327,7 @@ function bulkDetailSql(relkinds: string, bounded: boolean): string {
 }
 
 const BULK_DETAIL_SQL: Record<string, string> = Object.fromEntries(
-  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, bulkDetailSql(relkinds, false)]),
-);
-
-const BULK_DETAIL_SQL_BOUNDED: Record<string, string> = Object.fromEntries(
-  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, bulkDetailSql(relkinds, true)]),
+  Object.entries(RELKIND_BY_KIND).map(([kind, relkinds]) => [kind, bulkDetailSql(relkinds)]),
 );
 
 /**
@@ -3026,9 +3030,10 @@ export class PostgresProvider extends SQLBaseProvider {
     if (RELKIND_BY_KIND[kind] === undefined) return { details: [] };
 
     const bounded = limit !== undefined;
-    const sql = bounded ? BULK_DETAIL_SQL_BOUNDED[kind] : BULK_DETAIL_SQL[kind];
-    // One row more than the bound, so the read itself says whether it stopped short.
-    const params = bounded ? [schema, limit + 1] : [schema];
+    // One row more than the bound, so the read itself says whether it stopped short. The
+    // bound is rendered rather than bound, for the reason `bulkDetailSql` carries.
+    const sql = bounded ? bulkDetailSql(RELKIND_BY_KIND[kind], limit + 1) : BULK_DETAIL_SQL[kind];
+    const params = [schema];
 
     const client = await this.pool!.connect();
     try {

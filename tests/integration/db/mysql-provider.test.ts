@@ -4835,7 +4835,7 @@ describe("MySQL bulk column read", () => {
     await provider.disconnect();
   });
 
-  test("a bounded read binds one row more than the bound and reports its own truncation", async () => {
+  test("a bounded read asks for one row more than the bound and reports its own truncation", async () => {
     const provider = await connectedTo(false);
     protocolCalls = [];
 
@@ -4843,10 +4843,27 @@ describe("MySQL bulk column read", () => {
 
     // limit + 1, which is how a saturated read is told from an exact one with no second
     // count. The bound is the caller's and is reported as the caller's.
-    expect(protocolCalls[0].params).toEqual(["app", "BASE TABLE", "SYSTEM VERSIONED", 2]);
-    expect(protocolCalls[0].sql).toContain("LIMIT ?");
+    expect(protocolCalls[0].params).toEqual(["app", "BASE TABLE", "SYSTEM VERSIONED"]);
     expect(batch.details.map((detail) => detail.path)).toEqual([["app", "customers"]]);
     expect(batch.truncated).toEqual({ limit: 1, reason: callerBoundTruncationReason(1) });
+    await provider.disconnect();
+  });
+
+  test("the bound is spelled into the statement, because two MySQL-wire engines refuse to bind one", async () => {
+    const provider = await connectedTo(false);
+    protocolCalls = [];
+
+    await provider.describeObjects(["app"], "table", 1);
+
+    // Measured 2026-09-22 through mysql2 against Apache Doris 4.1.3-rc02 and StarRocks
+    // 3.3.22-753696f: `execute()` with a literal LIMIT answers, `execute()` with `LIMIT ?`
+    // does not. Doris calls it `mismatched input 'LIMIT' expecting {<EOF>, ';'}` and
+    // StarRocks says it outright, `using parameter(?) as limit or offset not supported`.
+    // Stock MySQL 8 binds it happily, so this is the relatives' constraint and not the
+    // driver's. The value is the caller's `limit + 1`, already validated as a positive
+    // whole number above, which is why spelling it in cannot carry anything but digits.
+    expect(protocolCalls[0].sql).toContain("LIMIT 2");
+    expect(protocolCalls[0].sql).not.toContain("LIMIT ?");
     await provider.disconnect();
   });
 
