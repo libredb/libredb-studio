@@ -54,12 +54,42 @@ const PROVIDER_DOCS = readdirSync(path.join(ROOT, "docs/providers"))
  * The docs this round rewrote, the source their prose links to, and the method names that now
  * stand where a line number used to. The list is the point: renaming any of these breaks the
  * doc, and a name that is not declared is caught here rather than by a reader.
+ *
+ * Each list is the derivation, not a hand-picked subset: every `name(` the doc cites that the
+ * source declares as a class member, in declaration order. Module-level functions and inherited
+ * SQLBaseProvider members carry no access modifier for `declarationLine` to match, so they stay
+ * out: `keyGrouping()` in redis.md is pinned by its own test above, and the others are cited by
+ * prose that is not measured here.
  */
 const NAMED_CITATIONS = [
   {
     doc: "docs/providers/sqlite.md",
     source: "src/lib/db/providers/sql/sqlite.ts",
-    methods: ["getCapabilities", "validate", "connect", "getDatabasePath", "query", "describeObject", "runMaintenance"],
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "validate",
+      "connect",
+      "disconnect",
+      "getDatabasePath",
+      "query",
+      "endOpenQueryTransaction",
+      "queryReadOnly",
+      "listContainers",
+      "countObjects",
+      "listObjects",
+      "describeObject",
+      "describeObjects",
+      "getHealth",
+      "runMaintenance",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+    ],
   },
   {
     doc: "docs/providers/mssql.md",
@@ -67,25 +97,63 @@ const NAMED_CITATIONS = [
     methods: [
       "getCapabilities",
       "getLabels",
+      "escapeIdentifier",
       "validate",
       "buildConfig",
+      "connect",
       "query",
-      "cancelQuery",
-      "prepareQuery",
-      "beginTransaction",
-      "queryInTransaction",
       // The agent read-only execution profile (#328). The doc's §12 is the only prose in the fleet
       // describing a boundary whose first layer is the PRINCIPAL, so a rename here would strand it.
       "queryReadOnly",
+      "cancelQuery",
+      "prepareQuery",
+      "beginTransaction",
+      "commitTransaction",
+      "rollbackTransaction",
+      "isInTransaction",
+      "queryInTransaction",
+      "listContainers",
+      "countObjects",
       "describeObject",
+      "describeObjects",
+      "readObjectSource",
+      "getHealth",
       "runMaintenance",
       "getPoolStats",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
     ],
   },
   {
     doc: "docs/providers/trino.md",
     source: "src/lib/db/providers/sql/trino/index.ts",
-    methods: ["getCapabilities", "getLabels"],
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "connect",
+      "disconnect",
+      "query",
+      "cancelQuery",
+      "listContainers",
+      "countObjects",
+      "listObjects",
+      "describeObject",
+      "describeObjects",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getHealth",
+    ],
   },
   {
     doc: "docs/providers/mysql.md",
@@ -94,14 +162,32 @@ const NAMED_CITATIONS = [
       "getCapabilities",
       "getLabels",
       "validate",
+      "connect",
       "buildPoolConfig",
       "buildSSLConfig",
       "query",
       "cancelQuery",
+      "expireTransaction",
       "beginTransaction",
+      "commitTransaction",
+      "rollbackTransaction",
+      "isInTransaction",
+      "queryInTransaction",
+      "listContainers",
+      "countObjects",
       "describeObject",
+      "describeObjects",
+      "readObjectSource",
+      "getHealth",
       "runMaintenance",
       "getAllTablesForMaintenance",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
     ],
   },
   {
@@ -112,15 +198,33 @@ const NAMED_CITATIONS = [
       "getLabels",
       "validate",
       "getConnectString",
+      "buildTLSAttributes",
       "connect",
+      "buildQueryResult",
       "query",
       "cancelQuery",
       "prepareQuery",
       "beginTransaction",
+      "commitTransaction",
+      "rollbackTransaction",
+      "isInTransaction",
+      "queryInTransaction",
+      "listContainers",
+      "countObjects",
+      "listObjects",
       "describeObject",
+      "describeObjects",
+      "readObjectSource",
+      "getHealth",
       "runMaintenance",
       "getPoolStats",
-      "buildTLSAttributes",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
     ],
   },
   {
@@ -129,14 +233,27 @@ const NAMED_CITATIONS = [
     methods: [
       "getCapabilities",
       "getLabels",
+      "prepareQuery",
       "validate",
-      "buildConnectionString",
+      "connect",
       "buildTLSOptions",
+      "buildConnectionString",
       "query",
       "parseQuery",
       "serializeDocument",
-      "describeObject",
+      "getHealth",
       "runMaintenance",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "describeObject",
+      "readObjectSource",
+      "objectDetailFrom",
+      "describeObjects",
     ],
   },
   {
@@ -145,21 +262,41 @@ const NAMED_CITATIONS = [
     methods: [
       "getCapabilities",
       "getLabels",
+      "prepareQuery",
+      "validate",
       "buildTLSOptions",
+      "connect",
+      "disconnect",
+      "query",
+      "endOpenQueryTransaction",
+      "commandBody",
       "executeRedisCommand",
       "runCommand",
       "formatResult",
       "parseInfoResult",
-      "describeObject",
       // The object surface (#789). Module-level helpers such as `keyGrouping` are cited in the
       // doc too and cannot be listed here, because `declarationLine` matches class members
       // only; `keyGrouping()` is pinned by its own test in the `redis provider doc` block.
       "listContainers",
       "countObjects",
       "listObjects",
+      "keyspaceDetail",
       "describeObject",
-      "calculateHitRatio",
+      "readObjectSource",
+      "buildObjectEdit",
+      "applyObjectEdit",
+      "describeObjects",
+      "getHealth",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
       "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "runMaintenance",
+      "parseRedisInfo",
+      "calculateHitRatio",
     ],
   },
   {
@@ -167,22 +304,46 @@ const NAMED_CITATIONS = [
     source: "src/lib/db/providers/sql/postgres.ts",
     methods: [
       "getCapabilities",
-      "qualifyMaintenanceTarget",
+      "getLabels",
       "validate",
       "connect",
+      "disconnect",
+      "buildPoolConfig",
       "buildSSLConfig",
       "query",
       "cancelQuery",
+      "queryReadOnly",
+      "expireTransaction",
       "beginTransaction",
+      "commitTransaction",
+      "rollbackTransaction",
+      "isInTransaction",
+      "endOpenQueryTransaction",
+      "queryInTransaction",
+      "queryWithMaterializedFallback",
+      "listContainers",
+      "countObjects",
+      "listObjects",
+      "describeObject",
+      "describeObjects",
+      "readObjectSource",
+      "getHealth",
+      "qualifyMaintenanceTarget",
       "runMaintenance",
+      "getPoolStats",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getActiveSessions",
+      "getTableStats",
+      "getIndexStats",
+      "getStorageStats",
+      "getPgStatActivity",
     ],
   },
   {
     doc: "docs/providers/clickhouse.md",
     source: "src/lib/db/providers/sql/clickhouse/index.ts",
-    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
-    // a class member, in declaration order. Module-level functions (`resolveConnection`) and
-    // inherited SQLBaseProvider members carry no access modifier for `declarationLine` to match.
     methods: [
       "getCapabilities",
       "getLabels",
@@ -192,9 +353,11 @@ const NAMED_CITATIONS = [
       "disconnect",
       "query",
       "mapClickHouseError",
-      "describeObject",
+      "countObjects",
       "listObjects",
+      "describeObject",
       "describeObjects",
+      "readObjectSource",
       "getOverview",
       "getPerformanceMetrics",
       "getSlowQueries",
@@ -209,9 +372,6 @@ const NAMED_CITATIONS = [
   {
     doc: "docs/providers/druid.md",
     source: "src/lib/db/providers/sql/druid/index.ts",
-    // Tracks the doc, not a hand-picked subset: every `name(` it cites that index.ts declares as
-    // a class member, in declaration order. The doc links the monitoring methods to introspect.ts,
-    // where the work is; index.ts declares each as a member that delegates there.
     methods: [
       "getCapabilities",
       "getLabels",
@@ -221,7 +381,6 @@ const NAMED_CITATIONS = [
       "disconnect",
       "query",
       "mapDruidError",
-      "describeObject",
       "getOverview",
       "getPerformanceMetrics",
       "getSlowQueries",
@@ -230,15 +389,14 @@ const NAMED_CITATIONS = [
       "getTableStats",
       "getStorageStats",
       "getHealth",
+      "describeObject",
+      "describeObjects",
       "runMaintenance",
     ],
   },
   {
     doc: "docs/providers/couchbase.md",
     source: "src/lib/db/providers/document/couchbase/index.ts",
-    // Same rule as clickhouse: every `name(` the doc cites that index.ts declares as a class
-    // member, in declaration order. `degradeTo()` is module-level; the transport, introspection
-    // and keyspace names live in their own files.
     methods: [
       "getCapabilities",
       "getLabels",
@@ -250,9 +408,11 @@ const NAMED_CITATIONS = [
       "query",
       "mapCouchbaseError",
       "primaryIndexRemedy",
+      "countObjects",
       "listObjects",
-      "describeObjects",
       "describeObject",
+      "describeObjects",
+      "readObjectSource",
       "getOverview",
       "getPerformanceMetrics",
       "getSlowQueries",
@@ -297,6 +457,34 @@ const seamTableMethods = (section: string): string[] => {
 /** Line number of a method's declaration in a provider source, or -1. */
 const declarationLine = (source: string, method: string): number =>
   source.split("\n").findIndex((line) => new RegExp(`^\\s*(public|protected|private).*\\b${method}\\(`).test(line));
+
+/** The names a doc cites as `` `name( `` — the citation form every measured doc uses, deduped. */
+const citedNames = (doc: string): string[] => {
+  const names = new Set<string>();
+  for (const match of read(doc).matchAll(/`([A-Za-z]+)\(/g)) names.add(match[1]);
+  return [...names];
+};
+
+/**
+ * The cited names the source declares as a class member, in declaration order: the derivation each
+ * entry of `NAMED_CITATIONS` has to equal.
+ *
+ * `methods` there is the reviewed expectation and this is the fact. Only one of the two was
+ * measured before: an entry went red when a name vanished from the doc, and stayed green when the
+ * doc started citing a name nobody had added, which is how four entries came to disagree with the
+ * `mysql.md` entry's own "hand-picked subset" note by a factor of three (#963).
+ *
+ * `line > -1` is what keeps module-level and inherited names out. `declarationLine` matches
+ * `public`/`protected`/`private` members, and neither of those carries one.
+ */
+const citableNames = (doc: string, source: string): string[] => {
+  const text = read(source);
+  return citedNames(doc)
+    .map((name) => ({ name, line: declarationLine(text, name) }))
+    .filter((entry) => entry.line > -1)
+    .sort((a, b) => a.line - b.line)
+    .map((entry) => entry.name);
+};
 
 describe("search provider docs: the monitoring seam table", () => {
   const provider = read(SEARCH_PROVIDER);
@@ -374,6 +562,13 @@ describe("measured aggregate helper docs", () => {
 
 describe("provider docs rewritten this round: code cited by name, whole file", () => {
   for (const { doc, source, methods } of NAMED_CITATIONS) {
+    test(`${doc} lists every member it cites that ${source} declares`, () => {
+      const derived = citableNames(doc, source);
+      // A derivation that derives to nothing would satisfy the comparison below by being empty.
+      expect(derived.length).toBeGreaterThan(0);
+      expect([...methods]).toEqual(derived);
+    });
+
     test(`${doc} cites no line number anywhere`, () => {
       // `.tsx` too: couchbase.md cited `ConnectionModal.tsx:139`, which `\.ts:` cannot see.
       expect(read(doc)).not.toMatch(/\.tsx?:\d/);
