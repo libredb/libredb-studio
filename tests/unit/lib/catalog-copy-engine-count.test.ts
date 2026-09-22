@@ -1,7 +1,7 @@
 /**
  * The accuracy gate for the engine COUNT in outward-facing catalog copy (#518).
  *
- * Twelve files outside `src/` name the engine set by hand, and until this test nothing
+ * Thirteen files outside `src/` name the engine set by hand, and until this test nothing
  * counted them: `scripts/readme-check.mjs` locates the engine table in the three
  * READMEs and `chart:check` pins a version across files, but a storefront listing was
  * only ever corrected by somebody noticing. Measured on the DuckDB registration branch,
@@ -29,7 +29,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 const REPO_ROOT = join(import.meta.dir, "../../..");
 
 /**
- * The twelve files that publish the engine set outward. Each is copy somebody else's
+ * The thirteen files that publish the engine set outward. Each is copy somebody else's
  * catalog renders, so nobody in this repo reads it again once it is submitted.
  *
  * `deploy/rancher/app-readme.md` is the one that is not itself the submitted artifact: the
@@ -57,6 +57,7 @@ const COPY_FILES: ReadonlyArray<{ path: string; from?: string; to?: string }> = 
   { path: "deploy/aws/listing/description.md" },
   { path: "deploy/rancher/CATALOG_LISTING.md", from: "## Short description", to: "## Outstanding corrections" },
   { path: "deploy/rancher/app-readme.md" },
+  { path: "deploy/rancher/pcsc-listing.html" },
 ];
 
 const NUMERAL_WORDS: Record<string, number> = {

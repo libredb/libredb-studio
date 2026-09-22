@@ -9,10 +9,11 @@ what a partner-charts submission copies; the refresh submitted on 2026-09-09 is 
 (see the delivery note at the end).
 `E2E_VALIDATION_TASK.md` covers the validation side.
 
-The listing is live at https://www.suse.com/pcsc/viewVersionPage?versionID=26969 (SUSE
-published it on 2026-08-05 from an earlier revision of this file). Edits here do not
-propagate automatically — SUSE owns the page, so any change has to be mailed to the
-partner contact.
+The listing went live on 2026-08-05 from an earlier revision of this file.
+SUSE imports new chart versions from rancher/partner-charts about once a week, and each import creates a new version page with a new `versionID`, so link the partner search rather than one page: https://www.suse.com/pcsc/home#search?productName=&sortOrder.sortOrder=1&partnerName=Sekoya&platforms=1027
+The import takes the page title from `appVersion` and the chart version from `version`; the description is pasted by hand.
+Edits here do not propagate automatically — SUSE owns the page, so any change has to be mailed to the partner contact.
+What gets mailed is `pcsc-listing.html` beside this file, not the sections below: the page template holds at most 1494 characters including the list markup, and `tests/unit/pcsc-listing.test.ts` keeps that file under it.
 
 > **Accuracy gate — engine count.** The wording below says sixteen engines. That is true only
 > from the release that carries **DuckDB** ([#424](https://github.com/libredb/libredb-studio/issues/424)),
@@ -108,7 +109,7 @@ partner contact.
 | License | MIT (open source) |
 | Specialization | SUSE One — INNOVATE |
 | Certification | SUSE Ready, Platform: SUSE Rancher — granted, live since 2026-08-05 |
-| Catalog listing | https://www.suse.com/pcsc/viewVersionPage?versionID=26969 |
+| Catalog listing | https://www.suse.com/pcsc/viewVersionPage?versionID=27107 (0.16.2 / chart 0.1.67, imported 2026-09-23; the ID changes with every import) |
 | Website | https://libredb.org |
 | Source | https://github.com/libredb/libredb-studio |
 | Helm repository | https://libredb.org/libredb-studio/ (also OCI: `oci://ghcr.io/libredb/charts/libredb-studio`) |
@@ -227,6 +228,12 @@ carried our releases since the 0.1.36 listing without a pull request, taking the
 chart version at each run rather than every version in between.
 An overlay edit reaches the catalog with the next version that CI integrates, because the
 overlay is copied in only when a new chart version is built.
+
+**2026-09-23.** SUSE imported every release since 0.9.44 up to 0.16.2 / chart 0.1.67, so the Version row in the corrections table is resolved by the weekly import and needs no mail.
+The description is still the pre-0.11.0 text: the long description above did not fit the page template, which holds at most 1494 characters including the markup for the bullet list.
+`pcsc-listing.html` is the body cut to fit, and it is what goes to SUSE from now on.
+It answers to the same accuracy gates as this file, plus the size gate in `tests/unit/pcsc-listing.test.ts`, which counts line breaks as CRLF because we do not know how the form counts them.
+The open question to SUSE is whether their import can read the listing from a chart field; if it can, the paste step goes away.
 
 Vendor naming, as settled: the page heads the partner as **Sekoya** (the legal entity,
 Sekoya Grup Bilisim ve Teknoloji Ltd. Sti.) with the product named **LibreDB Studio**.
