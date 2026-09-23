@@ -32,7 +32,7 @@ const mockSetSchema = mock(() => {});
 const mockLoadObjects = mock(() => {});
 const mockFetchSchema = mock(() => {});
 // Tab manager
-const mockSetTabs = mock(() => {});
+const mockSetTabs = mock((_next?: unknown) => {});
 const mockUpdateCurrentTab = mock(() => {});
 const mockUpdateTabById = mock(() => {});
 const mockHandleTableClick = mock(() => {});
@@ -56,6 +56,12 @@ const mockRevokeObjectURL = mock(() => {});
 let connAdapterOverride: Record<string, unknown> = {};
 let tabMgrOverride: Record<string, unknown> = {};
 let queryAdapterOverride: Record<string, unknown> = {};
+/**
+ * When set, the tab-manager double holds its tabs in React state and hands out a `setTabs` that
+ * writes them, so a write this shell makes reaches the next render the way the real hook's does.
+ * Off by default: every other test reads the fixed `baseTab` list.
+ */
+let tabManagerHoldsState = false;
 
 // ---- Shared test data used inside mock factories ----
 
@@ -132,8 +138,22 @@ mock.module("@/workspace/hooks/use-query-adapter", () => ({
 // ---- Mock shared studio hooks ----
 
 mock.module("@/hooks/use-tab-manager", () => ({
-  useTabManager: mock((args: Record<string, unknown>) => {
+  // Named as a hook because it is one: it holds state for the tests that set `tabManagerHoldsState`.
+  useTabManager: mock(function useTabManagerDouble(args: Record<string, unknown>) {
     capturedTabManagerArgs = args;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useState } = require("react") as typeof import("react");
+    const [heldTabs, setHeldTabs] = useState<QueryTab[]>([baseTab]);
+    const held = tabManagerHoldsState
+      ? {
+          tabs: heldTabs,
+          currentTab: heldTabs[0],
+          setTabs: (next: React.SetStateAction<QueryTab[]>) => {
+            mockSetTabs(next);
+            setHeldTabs(next);
+          },
+        }
+      : {};
     return {
       tabs: [baseTab],
       activeTabId: "tab-1",
@@ -150,6 +170,7 @@ mock.module("@/hooks/use-tab-manager", () => ({
       updateTabById: mockUpdateTabById,
       handleTableClick: mockHandleTableClick,
       handleGenerateSelect: mockHandleGenerateSelect,
+      ...held,
       ...tabMgrOverride,
     };
   }),
@@ -300,6 +321,7 @@ import React from "react";
 import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { DatabaseObject } from "@/lib/db/types";
+import type { QueryTab } from "@/lib/types";
 import { generateTableQuery } from "@/lib/query-generators";
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
@@ -383,6 +405,7 @@ describe("StudioWorkspace", () => {
     connAdapterOverride = {};
     tabMgrOverride = {};
     queryAdapterOverride = {};
+    tabManagerHoldsState = false;
 
     // Clear trackable mocks
     mockSetConnections.mockClear();
@@ -1189,6 +1212,106 @@ describe("StudioWorkspace", () => {
     test("withholds onImport too when the host disables the data-import feature", () => {
       renderWorkspace({ features: ALL_FEATURES_OFF });
       expect(capturedQueryToolbarProps.onImport).toBeUndefined();
+    });
+  });
+
+  // =========================================================================
+  // The tab type follows the declared language (#1085)
+  // =========================================================================
+  //
+  // The tab manager starts from one SQL tab and types only the tabs it creates afterwards, so a
+  // host connection declaring `queryLanguage: "promql"` opened Query 1 as an SQL tab: SQL
+  // highlighting and completions, and a Format button whose SQL formatter rewrote `up == 0` as
+  // `up = = 0`. The standalone shell retypes the open tabs when the connection or its metadata
+  // changes, and this shell does the same.
+  describe("tab type from the declared language (#1085)", () => {
+    const promqlConnection = { ...dbConn, type: "prometheus" as const };
+    const promqlMetadata = { capabilities: { queryLanguage: "promql" } } as unknown as ProviderMetadata;
+
+    /** The updater of every `setTabs` call this shell made, in order. */
+    function tabWrites(): Array<(previous: QueryTab[]) => QueryTab[]> {
+      return mockSetTabs.mock.calls.map(([next]) => next as (previous: QueryTab[]) => QueryTab[]);
+    }
+
+    function rerenderWorkspace(rerender: (ui: React.ReactElement) => void) {
+      // A fresh array, the way a host that builds its list on every render passes it.
+      rerender(
+        <StudioWorkspace
+          connections={[...workspaceConnections]}
+          onQueryExecute={mockOnQueryExecute}
+          onSchemaFetch={mockOnSchemaFetch}
+          onObjectsFetch={mockOnObjectsFetch}
+          onSaveQuery={mockOnSaveQuery}
+        />,
+      );
+    }
+
+    test("Query 1 of a host declaring PromQL reaches the editor as a PromQL tab", () => {
+      tabManagerHoldsState = true;
+      connAdapterOverride = { activeConnection: promqlConnection, metadata: promqlMetadata };
+      renderWorkspace();
+      expect(capturedQueryEditorProps.language).toBe("promql");
+    });
+
+    test("every open tab takes the type, and a list that already carries it is handed back as it is", () => {
+      connAdapterOverride = { activeConnection: promqlConnection, metadata: promqlMetadata };
+      renderWorkspace();
+      expect(tabWrites()).toHaveLength(1);
+      const [retype] = tabWrites();
+
+      const redisTab = { ...baseTab, id: "tab-2", name: "Query 2", type: "redis" as const };
+      const typedTab = { ...baseTab, id: "tab-3", name: "Query 3", type: "promql" as const };
+      const sourceTab = { ...baseTab, id: "tab-4", name: "Source: up", source: { path: ["up"], kind: "metric" } };
+      const written = retype([baseTab, redisTab, typedTab, sourceTab]);
+      expect(written.map((tab) => tab.type)).toEqual(["promql", "promql", "promql", "promql"]);
+      expect(written[0].query).toBe(baseTab.query);
+      expect(written[2]).toBe(typedTab);
+      expect(written[3].source).toBe(sourceTab.source);
+
+      // Nothing to change is the same list, so React keeps its state and the tab manager has no
+      // new list to persist.
+      const alreadyTyped = [typedTab];
+      expect(retype(alreadyTyped)).toBe(alreadyTyped);
+    });
+
+    test("fresh host objects with the same declaration write no tab again, and a new language does", () => {
+      connAdapterOverride = { activeConnection: promqlConnection, metadata: promqlMetadata };
+      const { rerender } = renderWorkspace();
+      expect(tabWrites()).toHaveLength(1);
+
+      // The adapter rebuilds both objects from the host's list, so their identity says nothing.
+      connAdapterOverride = {
+        activeConnection: { ...promqlConnection },
+        metadata: { capabilities: { queryLanguage: "promql" } } as unknown as ProviderMetadata,
+      };
+      rerenderWorkspace(rerender);
+      expect(tabWrites()).toHaveLength(1);
+
+      // The control: the same connection declaring another language is written.
+      connAdapterOverride = {
+        activeConnection: { ...promqlConnection },
+        metadata: { capabilities: { queryLanguage: "sql" } } as unknown as ProviderMetadata,
+      };
+      rerenderWorkspace(rerender);
+      expect(tabWrites()).toHaveLength(2);
+      expect(tabWrites()[1]([{ ...baseTab, type: "promql" }]).map((tab) => tab.type)).toEqual(["sql"]);
+    });
+
+    test("switching to another connection of the same language types the tabs it opens with", () => {
+      // The tab manager restores each connection's own tabs, so the switch is what they are typed on.
+      connAdapterOverride = { activeConnection: promqlConnection, metadata: promqlMetadata };
+      const { rerender } = renderWorkspace();
+      expect(tabWrites()).toHaveLength(1);
+
+      connAdapterOverride = { activeConnection: { ...promqlConnection, id: "c2" }, metadata: promqlMetadata };
+      rerenderWorkspace(rerender);
+      expect(tabWrites()).toHaveLength(2);
+    });
+
+    test("with no connection the tabs are left as they are", () => {
+      connAdapterOverride = { activeConnection: null, metadata: null };
+      renderWorkspace();
+      expect(tabWrites()).toHaveLength(0);
     });
   });
 

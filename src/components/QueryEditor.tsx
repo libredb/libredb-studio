@@ -35,6 +35,11 @@ configureMonacoLoader();
 // the affordance is offered (see the explain-capability gate below).
 const CAN_EXPLAIN_CONTEXT_KEY = "libredbCanExplain";
 
+// Context key gating the "Format SQL" context-menu action and its keybinding, on the same
+// principle: the action's label is fixed when onMount registers it, so the key decides where the
+// entry is offered, which is an SQL tab only (see the format gate below).
+const CAN_FORMAT_SQL_CONTEXT_KEY = "libredbCanFormatSql";
+
 export interface QueryEditorRef {
   getSelectedText: () => string;
   getEffectiveQuery: () => string;
@@ -162,6 +167,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       // Null until the editor mounts; onMount seeds the key from the ref instead.
       canExplainKeyRef.current?.set(canExplain);
     }, [canExplain, onExplain]);
+
+    // Format gate for the "Format SQL" context-menu action (#1085). Its label is fixed at
+    // registration, so it is offered on an SQL tab only: a JSON tab formats through its toolbar
+    // button and the shortcut, and a PromQL, Redis or LibreDB tab has no formatter. Read at
+    // invocation time for the reason the explain gate above gives.
+    const canFormatSql = language === "sql";
+    const canFormatSqlRef = useRef(canFormatSql);
+    const canFormatSqlKeyRef = useRef<Monaco.editor.IContextKey<boolean> | null>(null);
+
+    useEffect(() => {
+      canFormatSqlRef.current = canFormatSql;
+      // Null until the editor mounts; onMount seeds the key from the ref instead.
+      canFormatSqlKeyRef.current?.set(canFormatSql);
+    }, [canFormatSql]);
 
     // Line numbers toggle. The store keeps the default SSR-stable and applies the stored
     // value at hydration, so there is no local default left that could overwrite it.
@@ -548,6 +567,28 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       window.dispatchEvent(event);
     };
 
+    /*
+      The handlers onMount hands to Monaco, read when a shortcut or a menu entry is INVOKED
+      (#1085). `@monaco-editor/react` keeps `onMount` in `useRef(onMount)` and calls that first
+      copy once, so a closure registered there ran with the mounting render's `language`,
+      `databaseType`, `monaco` and `onChange` for as long as the editor lived, which is what #200
+      found for Explain. Both shells mount the editor on an SQL tab and retype it in an effect
+      once the connection's capabilities are known, so for a PromQL tab the mounting render was
+      the wrong one on every page load: Shift+Alt+F and "Format SQL" ran the SQL formatter over
+      PromQL (`up == 0` became `up = = 0`, and setValue clears Monaco's undo history), and after a
+      remount under PostgreSQL, Cmd+Enter cut an expression at a `;` inside its `#` comment. On
+      an SQL tab the same closure held the `monaco === null` of a fresh load, so Cmd+Enter sent
+      the whole buffer rather than the statement at the caret.
+
+      Refreshed after every commit and not during render, like the latest-value refs in
+      `use-query-execution.ts`: every reader is a callback that runs after a commit, and the
+      `useRef` initializer already holds the first render's handlers.
+    */
+    const latestHandlersRef = useRef({ execute: handleExecute, format: handleFormat, blur: handleEditorBlur });
+    useEffect(() => {
+      latestHandlersRef.current = { execute: handleExecute, format: handleFormat, blur: handleEditorBlur };
+    });
+
     return (
       <div className="h-full w-full flex flex-col bg-canvas relative overflow-hidden group">
         {/* Dynamic Pro Toolbar - Hidden on mobile */}
@@ -661,7 +702,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
 
               // Sync to parent when editor loses focus
               editor.onDidBlurEditorText(() => {
-                handleEditorBlur();
+                latestHandlersRef.current.blur();
               });
 
               editor.onDidChangeCursorSelection(() => {
@@ -671,12 +712,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
 
               // Add custom keyboard shortcut
               editor.addCommand(monacoKeybinding(SHORTCUTS.executeQuery, monaco), () => {
-                handleExecute();
+                latestHandlersRef.current.execute();
               });
 
-              // Add format shortcut
+              // Add format shortcut. Not gated by the format key: a JSON tab formats through it,
+              // and on a tab with no formatter the current handleFormat returns.
               editor.addCommand(monacoKeybinding(SHORTCUTS.formatQuery, monaco), () => {
-                handleFormat();
+                latestHandlersRef.current.format();
               });
 
               // Context Menu Actions
@@ -686,7 +728,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
                 keybindings: [monacoKeybinding(SHORTCUTS.executeQuery, monaco)],
                 contextMenuGroupId: "navigation",
                 contextMenuOrder: 1,
-                run: () => handleExecute(),
+                run: () => latestHandlersRef.current.execute(),
               });
 
               canExplainKeyRef.current = editor.createContextKey<boolean>(
@@ -702,13 +744,18 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
                 run: () => explainHandlerRef.current?.(),
               });
 
+              canFormatSqlKeyRef.current = editor.createContextKey<boolean>(
+                CAN_FORMAT_SQL_CONTEXT_KEY,
+                canFormatSqlRef.current,
+              );
               editor.addAction({
                 id: "format-sql",
                 label: "Format SQL",
+                precondition: CAN_FORMAT_SQL_CONTEXT_KEY,
                 keybindings: [monacoKeybinding(SHORTCUTS.formatQuery, monaco)],
                 contextMenuGroupId: "modification",
                 contextMenuOrder: 1,
-                run: () => handleFormat(),
+                run: () => latestHandlersRef.current.format(),
               });
             }}
             options={getEditorOptions(showLineNumbers)}
