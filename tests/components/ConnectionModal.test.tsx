@@ -274,7 +274,7 @@ interface MockFieldCopy {
  */
 const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   prometheus: {
-    fieldLabels: { password: "Password or token" },
+    fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
   },
 };
@@ -999,6 +999,8 @@ describe("ConnectionModal", () => {
 
     expect(container.querySelector('label[for="password"]')?.textContent).toBe("Password or token");
     expect(getByTestId("password-hint").textContent).toBe("Leave User empty to send this as a bearer token.");
+    // The hint names the field "User", so the field is labelled that.
+    expect(container.querySelector('label[for="user"]')?.textContent).toBe("User");
     expect(container.querySelector("#password")?.getAttribute("aria-describedby")).toBe("password-hint");
     // No Database box: every read of the HTTP API goes to the one TSDB the server holds (#1085 6.1).
     expect(container.querySelector("#database")).toBeNull();
@@ -1283,7 +1285,7 @@ describe("ConnectionModal", () => {
         "prometheus",
         "prometheus",
         {},
-        { ...CREDENTIALS_ONLY, password: "Password or token" },
+        { ...CREDENTIALS_ONLY, user: "User", password: "Password or token" },
         { password: "Leave User empty to send this as a bearer token." },
       ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],

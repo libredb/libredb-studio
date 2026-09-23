@@ -63,6 +63,8 @@ test.describe("Prometheus in the connection dialog", () => {
     // Declared on DB_UI_CONFIG.prometheus, not chosen by a type test in the dialog.
     await expect(dialog.locator('label[for="password"]')).toHaveText("Password or token");
     await expect(dialog.getByText("Leave User empty to send this as a bearer token.", { exact: true })).toBeVisible();
+    // The hint names the field "User", so the field is labelled that.
+    await expect(dialog.locator('label[for="user"]')).toHaveText("User");
   });
 
   test("another engine keeps the plain Password label and draws its Database box", async ({ page }) => {
@@ -74,6 +76,7 @@ test.describe("Prometheus in the connection dialog", () => {
     await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();
 
     await expect(dialog.locator('label[for="password"]')).toHaveText("Password");
+    await expect(dialog.locator('label[for="user"]')).toHaveText("Username");
     await expect(dialog.getByText("Leave User empty to send this as a bearer token.", { exact: true })).toHaveCount(0);
     await expect(dialog.locator("#database")).toBeVisible();
     await expect(dialog.getByText("Database Name")).toBeVisible();

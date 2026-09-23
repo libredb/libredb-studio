@@ -100,6 +100,12 @@ describe("the connection section quotes what the dialog renders", () => {
     expect(DOC).toContain(`"${label}"`);
   });
 
+  test("the user label is the declared one", () => {
+    const label = connectionFieldLabel(DB_UI_CONFIG.prometheus, "user", "Username");
+    expect(label).toBe("User");
+    expect(rowOf("`user`")).toContain(`Labelled "${label}"`);
+  });
+
   test("the password hint is the declared one", () => {
     const hint = connectionFieldHint(DB_UI_CONFIG.prometheus, "password");
     expect(hint).toBe("Leave User empty to send this as a bearer token.");

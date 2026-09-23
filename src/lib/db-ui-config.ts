@@ -326,8 +326,9 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // `password` are HTTP Basic; a password with no user is sent as a bearer token.
     connectionFields: ["host", "port", "user", "password"],
     // Declared here rather than as one more boolean in ConnectionModal.tsx (#1085 3.3): the
-    // password box is the one field whose meaning depends on another field being empty.
-    fieldLabels: { password: "Password or token" },
+    // password box is the one field whose meaning depends on another field being empty. The user
+    // box is "User" because the hint and the provider's credential refusal both name it so.
+    fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
   },
   libredb: {

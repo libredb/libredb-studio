@@ -468,8 +468,11 @@ describe("declared connection-field copy (#1085)", () => {
     const config = getDBConfig("prometheus");
     expect(connectionFieldLabel(config, "password", "Password")).toBe("Password or token");
     expect(connectionFieldHint(config, "password")).toBe("Leave User empty to send this as a bearer token.");
+    // The hint and the credential refusal both name the field "User", so the label says it too.
+    expect(connectionFieldLabel(config, "user", "Username")).toBe("User");
+    expect(connectionFieldHint(config, "user")).toBeUndefined();
     // The control: every other field keeps the dialog's own word and draws no hint.
-    for (const field of EVERY_FIELD.filter((candidate) => candidate !== "password")) {
+    for (const field of EVERY_FIELD.filter((candidate) => candidate !== "password" && candidate !== "user")) {
       expect(connectionFieldLabel(config, field, "the dialog's own word")).toBe("the dialog's own word");
       expect(connectionFieldHint(config, field)).toBeUndefined();
     }

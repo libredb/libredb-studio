@@ -329,7 +329,7 @@ These partial records deliberately have none:
 |---|---|---|
 | `host` | Yes | A hostname or an IP literal; anything carrying URL syntax is refused before any request (#1085 S1) |
 | `port` | Yes | Default `9090` |
-| `user` | Optional | Selects Basic authentication ([§4.2](#42-authentication)) |
+| `user` | Optional | Labelled "User" in the dialog. Selects Basic authentication ([§4.2](#42-authentication)) |
 | `password` | Optional | Labelled "Password or token" in the dialog, with the hint "Leave User empty to send this as a bearer token." |
 | `database` | No | No Database box renders: a Prometheus server is one TSDB, so there is nothing to select |
 | TLS panel | Yes | [§4.4](#44-tls) |
