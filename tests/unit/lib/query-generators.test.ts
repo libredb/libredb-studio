@@ -10,6 +10,7 @@ import {
 import * as generators from "@/lib/query-generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
+import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 
 // ============================================================================
 // Helpers
@@ -1189,5 +1190,188 @@ describe("the dialects that address one key or collection, not a qualified name"
     expect(generateTableQuery(["travel", "inventory", "hotel"], makeCaps({ defaultPort: 8091 }))).toBe(
       "SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d;",
     );
+  });
+});
+
+// ============================================================================
+// PromQL (#1085): a metric is addressed by a selector, never by a quoted path
+// ============================================================================
+
+/** The capabilities #1085 section 6.3 gives Prometheus, varied from the SQL helper only where it says. */
+const promqlCaps = makeCaps({
+  queryLanguage: "promql",
+  defaultPort: 9090,
+  statementTerminator: "none",
+  supportsExplain: false,
+  supportsExternalQueryLimiting: false,
+  supportsCreateTable: false,
+  supportsInlineRowEdit: false,
+  supportsMaintenance: false,
+  supportsConnectionString: false,
+});
+
+/**
+ * The names #1085 S4 names, each of which a bare selector would misread or break out of: `nan` and
+ * `Inf` lex as numbers, `sum` as an aggregator, and the rest carry a quote, a backslash, a line
+ * feed, or a text built to close the matcher and open a second selector. Each maps to the one
+ * braced selector #1085 S4 gives it, `{__name__=` then the name as a JSON string then `}`, spelled
+ * as raw text so every backslash is literal.
+ */
+const ESCAPED_NAMES: readonly (readonly [label: string, name: string, selector: string])[] = [
+  ["nan, which the lexer reads as a number", "nan", '{__name__="nan"}'],
+  ["Inf, in any case", "Inf", '{__name__="Inf"}'],
+  ["sum, an aggregator", "sum", '{__name__="sum"}'],
+  ["a name holding a line feed", "a\nb", String.raw`{__name__="a\nb"}`],
+  [
+    "a name built to close the matcher and open a second selector",
+    'x"} or {__name__=~".+',
+    String.raw`{__name__="x\"} or {__name__=~\".+"}`,
+  ],
+  ["a quote", 'a"b', String.raw`{__name__="a\"b"}`],
+  ["a backslash", "a\\b", String.raw`{__name__="a\\b"}`],
+];
+
+/**
+ * The name a braced selector addresses, read back out of it: a `__name__` matcher holds exactly
+ * one JSON-quoted string, and decoding it must give back the name the selector was built for.
+ */
+const nameInBracedSelector = (selector: string): string | undefined => {
+  const match = /^\{__name__=("(?:[^"\\]|\\.)*")\}$/.exec(selector);
+  return match === null ? undefined : (JSON.parse(match[1]!) as string);
+};
+
+/** A label name built to leave a selector if anything ever wrote a column into the text. */
+const hostileLabelColumns: ColumnSchema[] = [
+  { name: 'job"} or vector(1) #\nup', type: "string", nullable: true, isPrimary: false },
+];
+
+describe("PromQL tree click (#1085)", () => {
+  test("a tree click on a metric runs its bare selector, and nothing else", () => {
+    expect(generateTableQuery(["http_requests_total"], promqlCaps)).toBe("http_requests_total");
+    // The control: the same path on the SQL helper is the SELECT a PromQL connection would have
+    // been sent without the arm, so the text above is the arm's and not the name's.
+    expect(generateTableQuery(["http_requests_total"], makeCaps())).toBe("SELECT * FROM http_requests_total;");
+  });
+
+  test("a legacy name with colons, a recording rule's output, stays bare", () => {
+    expect(generateTableQuery(["job:http_requests:rate5m"], promqlCaps)).toBe("job:http_requests:rate5m");
+  });
+
+  test.each(ESCAPED_NAMES)(
+    "a tree click on %s runs one braced selector that decodes to the name",
+    (_label, name, selector) => {
+      const text = generateTableQuery([name], promqlCaps);
+      expect(text).toBe(selector);
+      expect(text.split("\n")).toHaveLength(1);
+      expect(nameInBracedSelector(text)).toBe(name);
+      // One builder: the text is metricSelector's answer, never a second escaper's.
+      expect(text).toBe(metricSelector(name));
+    },
+  );
+
+  test("the metric's columns never reach the click's text", () => {
+    expect(generateTableQuery(["up"], promqlCaps, hostileLabelColumns)).toBe("up");
+  });
+});
+
+/**
+ * The lines of a PromQL text the engine evaluates. PromQL reads `#` as a comment to the end of
+ * the line, and every comment these generators write is a whole line of its own, so what is left
+ * once blank lines and `#` lines are dropped is the expression that runs.
+ */
+const runnableLines = (text: string): string[] =>
+  text.split("\n").filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
+
+/** A metric's columns as the inventory reports them: its label names, then timestamp and value (#1085, section 4.2). */
+const metricColumns: ColumnSchema[] = [
+  { name: "job", type: "string", nullable: true, isPrimary: false },
+  { name: "instance", type: "string", nullable: true, isPrimary: false },
+  { name: "timestamp", type: "timestamp", nullable: false, isPrimary: false },
+  { name: "value", type: "float", nullable: false, isPrimary: false },
+];
+
+describe("PromQL Generate Query (#1085)", () => {
+  test("writes one runnable selector, with the range forms of #1085 section 5.1 as comments above it", () => {
+    const text = generateSelectQuery(["http_requests_total"], metricColumns, promqlCaps);
+
+    expect(text).toBe(
+      [
+        '# PromQL for the metric "http_requests_total". Only the last line runs: a line starting with # is a comment.',
+        "# To try a form below, select it after its # and use Run Selected.",
+        "#",
+        "# Every raw sample from the last five minutes, one column per series:",
+        "#   http_requests_total[5m]",
+        "# For a counter: its per-second rate over the last hour, one row a minute:",
+        "#   rate(http_requests_total[5m])[1h:1m]",
+        "#",
+        "# Every series of the metric as of now, one row per series:",
+        "http_requests_total",
+      ].join("\n"),
+    );
+    // Run as it stands, the buffer is exactly one expression: every other line is a # comment.
+    expect(runnableLines(text)).toEqual(["http_requests_total"]);
+  });
+
+  test("the control: the same call on the SQL helper writes a SELECT, so the text above is the arm's", () => {
+    const sql = generateSelectQuery(["http_requests_total"], metricColumns, makeCaps());
+    expect(sql).toContain("SELECT");
+    expect(runnableLines(sql)).not.toEqual(["http_requests_total"]);
+  });
+
+  test.each(ESCAPED_NAMES)(
+    "Generate Query on %s keeps exactly one runnable line, the braced selector",
+    (_label, name, selector) => {
+      const text = generateSelectQuery([name], metricColumns, promqlCaps);
+
+      expect(runnableLines(text)).toEqual([selector]);
+      // Every other line is a whole comment, so no part of the name ended one early.
+      for (const line of text.split("\n")) {
+        if (line !== selector) expect(line.startsWith("#"), JSON.stringify(line)).toBe(true);
+      }
+      // The name reaches the header through commentName, JSON-quoted, and the forms carry the selector.
+      expect(text).toContain(`# PromQL for the metric ${JSON.stringify(name)}.`);
+      expect(text).toContain(`#   ${selector}[5m]`);
+      expect(text).toContain(`#   rate(${selector}[5m])[1h:1m]`);
+    },
+  );
+
+  test("no bound, no terminator and no label name reach the Generate Query text", () => {
+    const text = generateSelectQuery(["up"], hostileLabelColumns, promqlCaps);
+
+    expect(runnableLines(text)).toEqual(["up"]);
+    expect(text).not.toContain("vector(1)");
+    expect(text).not.toContain("LIMIT");
+    expect(text).not.toContain(";");
+    // The control: the SQL arm does project that column, which is exactly what this arm must not do.
+    const sql = generateSelectQuery(["up"], hostileLabelColumns, makeCaps());
+    expect(sql).toContain("vector(1)");
+    expect(sql).toContain(";");
+  });
+});
+
+/**
+ * Every export of the module, classified for a PromQL connection (#1085). The two generators have
+ * a PromQL arm (the two describes above). `objectSegment` answers the last path segment, which is
+ * a metric's name, and has no dialect. `shouldRefreshSchema` runs the pattern the connected
+ * provider declares and has no dialect either. `quoteIdentifier` and `quoteObjectPath` write SQL
+ * and MongoDB spellings, and a PromQL connection never reaches them: `POST /api/db/profile`
+ * refuses the language before its SQL branch (tests/api/db/profile.test.ts), both row menus
+ * withhold Generate Test Data on a metric (tests/unit/components/object-tree-row-actions.test.ts,
+ * tests/components/schema-explorer/TableItem.test.tsx), and the import dialog offers no metric as
+ * a target: it offers only objects whose kind declares row writes
+ * (tests/components/DataImportModal.test.tsx), and no Prometheus kind declares them
+ * (tests/unit/db/prometheus/objects.test.ts). An export added later has no classification, so this
+ * list fails until somebody writes one for it.
+ */
+describe("the module's exports, for a PromQL connection (#1085)", () => {
+  test("every export is one this file has classified", () => {
+    expect(Object.keys(generators).sort()).toEqual([
+      "generateSelectQuery",
+      "generateTableQuery",
+      "objectSegment",
+      "quoteIdentifier",
+      "quoteObjectPath",
+      "shouldRefreshSchema",
+    ]);
   });
 });

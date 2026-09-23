@@ -1074,6 +1074,65 @@ describe("DataImportModal target filtering", () => {
 });
 
 // =============================================================================
+// A PromQL metric is never an import target (#1085)
+// =============================================================================
+
+/**
+ * The import dialog quotes an EXISTING target's path through `quoteObjectPath`, and its targets are
+ * `rowWritableObjects`: the objects whose kind declares row writes. No Prometheus kind declares
+ * them (#1085, section 4.5), so a metric is never offered and the SQL quoting that function
+ * writes is never asked of a PromQL path. A new-table import names its table by the typed name
+ * and quotes nothing.
+ *
+ * This describe pins the dialog's half: an object whose kind declares no `acceptsRowWrites` is not
+ * offered as an import target, beside the control where the same kind declares it. The kind below
+ * is this file's own; that no REAL Prometheus kind declares row writes is pinned where the kinds
+ * are declared, by "no kind accepts a row write or an edited definition" in
+ * tests/unit/db/prometheus/objects.test.ts.
+ */
+describe("DataImportModal on a PromQL connection (#1085)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const metricKind = { id: "metric", role: "relation", label: "Metric", labelPlural: "Metrics", hasColumns: true };
+  const promqlCapabilities = { queryLanguage: "promql", objectKinds: [metricKind] } as unknown as ProviderCapabilities;
+  const metrics: DetailedObject[] = [
+    { name: "http_requests_total", kind: "metric", path: ["http_requests_total"], columns: [], indexes: [] },
+    { name: "up", kind: "metric", path: ["up"], columns: [], indexes: [] },
+  ];
+
+  // The option TEXT a person picks from, as `targetNames` above reads it, over these metrics.
+  function metricTargetNames(capabilities: ProviderCapabilities): string[] {
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={metrics} capabilities={capabilities} />,
+    );
+    act(() => {
+      simulateFileUpload(baseElement, "job,value\napi,1", "data.csv");
+    });
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    return Array.from(select.options)
+      .map((option) => option.textContent ?? "")
+      .filter((text) => text !== "-- Select a table --");
+  }
+
+  test("no metric is offered as an import target", () => {
+    expect(metricTargetNames(promqlCapabilities)).toEqual([]);
+  });
+
+  test("the control: the same metrics under a kind that takes row writes are offered", () => {
+    const writable = {
+      ...promqlCapabilities,
+      objectKinds: [{ ...metricKind, acceptsRowWrites: true }],
+    } as unknown as ProviderCapabilities;
+    expect(metricTargetNames(writable)).toEqual(["http_requests_total", "up"]);
+  });
+});
+
+// =============================================================================
 // The target an import is pointed at is an ADDRESS (#789, Task 36)
 // =============================================================================
 

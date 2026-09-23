@@ -1,3 +1,4 @@
+import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
@@ -174,7 +175,7 @@ export function objectSegment(path: readonly string[]): string {
  * JSON quoting is the fix: it escapes CR, LF and the quote character in one
  * lossless step, and for an ordinary name it renders exactly the `"name"` the
  * headers already wrote by hand. Any name entering a comment line must go
- * through this (#427).
+ * through this (#427), a PromQL metric's name included (#1085).
  */
 function commentName(name: string): string {
   return JSON.stringify(name);
@@ -405,6 +406,9 @@ function libredbNewlineNote(base: string): string | null {
  * the rule. Neither MongoDB nor Redis can be asked for page two at all
  * (`supportsResultPagination: false`, measured), so their bound is the only one there is
  * and no control is offered that a preview cap in the text could disengage.
+ *
+ * The PromQL branch writes the metric's selector and no bound at all (#1085): PromQL has no row
+ * bound to write, and the provider caps the series it returns (#1085, section 5.4).
  */
 export function generateTableQuery(
   path: readonly string[],
@@ -435,6 +439,14 @@ export function generateTableQuery(
   }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify({ collection: tableName, operation: "find", filter: {}, options: { limit: 50 } }, null, 2);
+  }
+  // PromQL (#1085). A metric is addressed by a SELECTOR, never by a quoted path: the bare name
+  // where the lexer reads it as one and a `__name__` matcher for every other name, both written
+  // by `metricSelector`, the one PromQL builder (#1085 S4). An instant selector evaluates at now
+  // and answers one row per series; the provider caps the series (#1085, section 5.4), so no
+  // bound is written here, and PromQL has no statement terminator to append.
+  if (capabilities.queryLanguage === "promql") {
+    return metricSelector(tableName);
   }
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++). The one SQL branch left, and it is about the PROJECTION: the
@@ -559,6 +571,10 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
  * written into the editor and run only if the user presses Run, at which point it is a
  * statement they chose to execute and its bound is theirs: a hard bound, honoured, and not
  * paged past. Removing it would instead hand them an unbounded scan they never asked for.
+ *
+ * The PromQL branch is the exception, for the tree click's reason: PromQL has no bound to write,
+ * so the text is the metric's selector, with the two range forms that widen it written as
+ * comments above it (#1085).
  */
 export function generateSelectQuery(
   path: readonly string[],
@@ -594,6 +610,31 @@ export function generateSelectQuery(
       null,
       2,
     );
+  }
+  // PromQL (#1085): exactly ONE runnable expression, the metric's selector on the last line,
+  // and the two range forms #1085 section 5.1 teaches as `#` comments above it. PromQL reads
+  // `#` as a comment to the end of the line, so the whole buffer, run as it stands, is that one
+  // expression. The name reaches its comment through `commentName`, which escapes CR and LF;
+  // the selector reaches its comments already escaped, because `metricSelector` writes any name
+  // that is not a bare identifier as a JSON-quoted `__name__` matcher. So neither can end a
+  // comment line early and turn its remainder into a second expression. The label columns are
+  // not read: a label name is server text too, and nothing here needs one. The rate form is
+  // written whatever the metric's type, because nothing this function receives says it, so its
+  // comment says it is the form for a counter.
+  if (capabilities.queryLanguage === "promql") {
+    const selector = metricSelector(tableName);
+    return [
+      `# PromQL for the metric ${commentName(tableName)}. Only the last line runs: a line starting with # is a comment.`,
+      "# To try a form below, select it after its # and use Run Selected.",
+      "#",
+      "# Every raw sample from the last five minutes, one column per series:",
+      `#   ${selector}[5m]`,
+      "# For a counter: its per-second rate over the last hour, one row a minute:",
+      `#   rate(${selector}[5m])[1h:1m]`,
+      "#",
+      "# Every series of the metric as of now, one row per series:",
+      selector,
+    ].join("\n");
   }
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++): every field is reached through the keyspace alias, and the
