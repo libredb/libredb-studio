@@ -731,7 +731,14 @@ describe("each captured answer decodes into the seam types", () => {
     const { value } = await transportWith().query("rate(prometheus_http_requests_total[1m])[5m:30s]", QUERY_OPTIONS);
 
     expect(raw.data.resultType).toBe("matrix");
-    expect(raw.data.result.length).toBeGreaterThan(0);
+    // The control: 70 series, each stepped at the same ten instants 30 seconds apart, so the
+    // equality below holds every sample of a multi-step range and not one instant per series.
+    const [first] = raw.data.result;
+    const instants = first.values.map(([at]) => at);
+    expect(raw.data.result).toHaveLength(70);
+    expect(instants).toHaveLength(10);
+    expect(instants.slice(1).map((at, index) => at - instants[index])).toEqual(Array(9).fill(30));
+    for (const entry of raw.data.result) expect(entry.values.map(([at]) => at)).toEqual(instants);
     expect(value).toEqual({
       shape: "matrix",
       series: raw.data.result.map((entry) => ({

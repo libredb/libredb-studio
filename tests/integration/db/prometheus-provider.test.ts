@@ -797,7 +797,16 @@ describe("queries", () => {
     const cells = result.rows.flatMap((row) => result.fields.slice(1).map((column) => row[column]));
 
     expect(SUBQUERY.data.resultType).toBe("matrix");
+    // The capture: 70 series, each sampled at the same ten instants 30 seconds apart.
+    expect(series).toHaveLength(70);
+    expect(stamps).toHaveLength(10);
+    expect(stamps.slice(1).map((at, index) => at - stamps[index])).toEqual(Array(9).fill(30));
+    // So the result is ten rows, one per step, a column per series, and no step without a sample.
+    expect(result.rows).toHaveLength(10);
+    expect(result.fields.slice(1)).toHaveLength(70);
     expect(result.rows.map((row) => row.timestamp)).toEqual(stamps.map(iso));
+    expect(cells).toHaveLength(700);
+    expect(cells.filter((cell) => cell === null)).toEqual([]);
     for (const cell of cells) {
       expect(cell === null || typeof cell === "number" || ["NaN", "+Inf", "-Inf"].includes(cell as string)).toBe(true);
     }
