@@ -701,6 +701,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "cassandra",
     "libsql",
     "duckdb",
+    "prometheus",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

@@ -42,6 +42,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "mysql",
   "opensearch",
   "oracle",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the product offers no write
+  // path to Prometheus at all (#1085 sections 2 and 4.5), which docs/providers/prometheus.md names.
+  "prometheus",
   "sqlite",
 ] as const);
 

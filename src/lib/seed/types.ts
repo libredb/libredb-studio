@@ -42,6 +42,7 @@ const SeedDatabaseType = z.enum([
   "cassandra",
   "libsql",
   "duckdb",
+  "prometheus",
 ]);
 
 export const SeedDefaultsSchema = z.object({

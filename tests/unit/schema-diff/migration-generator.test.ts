@@ -1026,6 +1026,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     mongodb: "engine-has-no-foreign-key",
     redis: "engine-has-no-foreign-key",
     libredb: "engine-has-no-foreign-key",
+    prometheus: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1131,6 +1132,8 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   mongodb: { label: "MongoDB", reason: "schemaless" },
   redis: { label: "Redis", reason: "no column definitions" },
   libredb: { label: "LibreDB", reason: "JSON command grammar" },
+  // Not a table store (#1085): a metric is what scrapes and rules write, not a declared table.
+  prometheus: { label: "Prometheus", reason: "written by scrapes and recording rules" },
 };
 
 /**
@@ -1292,7 +1295,11 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
 
     test(`${dialect}: modified column emits a comment naming the limitation, never PostgreSQL DDL`, () => {
       const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);
-      if (["couchbase", "druid", "elasticsearch", "opensearch", "mongodb", "redis", "libredb"].includes(dialect)) {
+      if (
+        ["couchbase", "druid", "elasticsearch", "opensearch", "mongodb", "redis", "libredb", "prometheus"].includes(
+          dialect,
+        )
+      ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
       } else {
         expect(sql).toContain(`-- ${expected.label}: Cannot alter column "name".`);
@@ -1326,10 +1333,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining nine each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining ten each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the nine needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the ten needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1341,6 +1348,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   elasticsearch: false, // `BEGIN` is not in the grammar (NO_COLUMN_MODIFICATION's measured statement list; docs/providers/elasticsearch.md §9)
   opensearch: false, // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
   trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
+  prometheus: false, // not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1358,9 +1366,17 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
         // about text that brackets a real statement, not an empty run of comments.
         if (
           fixture.emitsCreateTable &&
-          !["cassandra", "mongodb", "redis", "libredb", "couchbase", "druid", "elasticsearch", "opensearch"].includes(
-            dialect,
-          )
+          ![
+            "cassandra",
+            "mongodb",
+            "redis",
+            "libredb",
+            "couchbase",
+            "druid",
+            "elasticsearch",
+            "opensearch",
+            "prometheus",
+          ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);
         }

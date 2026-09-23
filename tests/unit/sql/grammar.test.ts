@@ -418,6 +418,8 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // Not SQL at all - see SQL_TEXT_COVERAGE below.
   mongodb: "default",
   redis: "default",
+  // PromQL, not SQL (#1085): no SQL grammar is established for it, and none is read.
+  prometheus: "default",
 };
 
 describe("every database type has a recorded grammar decision", () => {
@@ -462,6 +464,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   cassandra: true,
   mongodb: false,
   redis: false,
+  // A PromQL expression is not SQL text: its strings escape with a backslash, which a SQL span
+  // reader cannot follow (#1085).
+  prometheus: false,
 };
 
 describe("readsSqlText", () => {

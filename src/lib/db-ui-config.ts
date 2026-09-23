@@ -17,6 +17,7 @@ import {
   CassandraIcon,
   LibSQLIcon,
   DuckDBIcon,
+  PrometheusIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -303,6 +304,31 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // fails the CONNECT rather than the first statement. The form labels it
     // "Keyspace" - see ConnectionModal.tsx.
     connectionFields: ["host", "port", "user", "password", "database", "localDataCenter"],
+  },
+  prometheus: {
+    icon: PrometheusIcon,
+    // Prometheus's own mark is a flame orange (#E6522C), and `hue-orange` is Couchbase's. The
+    // theme has no second orange identity step, and adding one would be a palette change with a
+    // separation test of its own (tests/unit/theme-accent-contrast.test.ts); `hue-fuchsia` is a
+    // declared identity hue no engine here carries, and the distinct-colour assertion in
+    // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-hue-fuchsia",
+    label: "Prometheus",
+    // The port the HTTP API and the web UI share. The same number under TLS: a secured server
+    // serves on whatever port its operator chose, so inventing an HTTPS alternative would point
+    // credentials at a port nothing is listening on.
+    defaultPort: "9090",
+    // No URI convention to paste, and http:// / https:// already resolve to ClickHouse in
+    // connection-string-parser.ts. Two engines cannot own one scheme.
+    showConnectionStringToggle: false,
+    // Deliberately no "database": the server holds one TSDB and every API read is addressed to
+    // it, so a selector would be a control with no effect (#1085 6.1), the Druid shape. `user` and
+    // `password` are HTTP Basic; a password with no user is sent as a bearer token.
+    connectionFields: ["host", "port", "user", "password"],
+    // Declared here rather than as one more boolean in ConnectionModal.tsx (#1085 3.3): the
+    // password box is the one field whose meaning depends on another field being empty.
+    fieldLabels: { password: "Password or token" },
+    fieldHints: { password: "Leave User empty to send this as a bearer token." },
   },
   libredb: {
     icon: LibreDBIcon,

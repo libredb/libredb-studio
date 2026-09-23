@@ -121,6 +121,16 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   mongodb: ["view/json"],
   redis: ["function/lua"],
   couchbase: ["function/sql"],
+  // Every kind has a source, and every source is JSON the provider serialises from the API's own
+  // answer, under the `rendered` origin (#1085 4.4).
+  prometheus: [
+    "metric/json",
+    "rule_group/json",
+    "recording_rule/json",
+    "alerting_rule/json",
+    "scrape_pool/json",
+    "target/json",
+  ],
   libredb: [],
 });
 
@@ -204,7 +214,7 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(17);
+    expect(CENSUS_TYPES).toHaveLength(18);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -222,10 +232,10 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(58);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(58);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(64);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(64);
     expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(22);
-    expect(rows).toHaveLength(80);
+    expect(rows).toHaveLength(86);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -251,10 +261,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 60 on a MariaDB connection against 58 unconnected: the design states both numbers because
+    // 66 on a MariaDB connection against 64 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(60);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(66);
   });
 
   /*
@@ -340,7 +350,7 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    expect(rows).toHaveLength(88);
+    expect(rows).toHaveLength(94);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

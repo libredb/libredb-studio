@@ -242,8 +242,9 @@ export function ConnectionModal({
 
   // What an engine DECLARES for a connection field wins over this dialog's own words (#1085): an
   // engine that names a field differently says so on `DatabaseUIConfig` instead of growing another
-  // `isX` branch above. The branches above stay the fallback, and no shipped entry declares
-  // anything, so every label below reads as it did before the declaration existed.
+  // `isX` branch above. The branches above stay the fallback: Prometheus is the one entry that
+  // declares anything, so every other engine's labels below read as they did before the
+  // declaration existed.
   const uiConfig = getDBConfig(type);
   const databaseLabel = connectionFieldLabel(uiConfig, "database", `${databaseFieldLabel} Name`);
 

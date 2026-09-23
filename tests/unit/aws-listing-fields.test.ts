@@ -139,6 +139,7 @@ describe("AWS Marketplace listing fields", () => {
       Trino: "trino",
       libSQL: "libsql",
       DuckDB: "duckdb",
+      Prometheus: "prometheus",
     };
     const copy = [listingFields, description, usage].join("\n");
     for (const [product, id] of Object.entries(productNames)) {

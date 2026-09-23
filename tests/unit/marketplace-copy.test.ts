@@ -253,7 +253,21 @@ describe("no listing claims data management on an engine that cannot edit", () =
       "Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra.";
     const claims = manageDataClaims(submitted);
     expect(claims).toHaveLength(1);
-    expect(overclaimed(claims[0])).toEqual(notEditable);
+    // The nine it named, by id. Pinned rather than read from `notEditable`, which grows with every
+    // engine that ships unable to edit: Prometheus (#1085) is in that set and was never in this
+    // sentence, which predates it.
+    expect(overclaimed(claims[0])).toEqual([
+      "cassandra",
+      "clickhouse",
+      "couchbase",
+      "druid",
+      "elasticsearch",
+      "mongodb",
+      "opensearch",
+      "redis",
+      "trino",
+    ]);
+    expect(notEditable).toContain("prometheus");
   });
 
   test("an editing sentence that names what cannot edit is left alone", () => {

@@ -256,6 +256,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   druid: ["host", "port", "user", "password"],
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
+  prometheus: ["host", "port", "user", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -268,10 +269,15 @@ interface MockFieldCopy {
 
 /**
  * The copy each engine DECLARES for its connection fields (#1085), mirrored from the real table the
- * way MOCK_CONNECTION_FIELDS mirrors its field lists. No shipped entry declares any, which
- * tests/unit/lib/db-ui-config.test.ts pins against the real table, so this starts empty.
+ * way MOCK_CONNECTION_FIELDS mirrors its field lists. Prometheus is the one shipped entry that
+ * declares any, which tests/unit/lib/db-ui-config.test.ts pins against the real table.
  */
-const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {};
+const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
+  prometheus: {
+    fieldLabels: { password: "Password or token" },
+    fieldHints: { password: "Leave User empty to send this as a bearer token." },
+  },
+};
 
 /** Copy one test declares on top of the mirrored table, reset before every test. */
 let mockDeclaredCopy: MockFieldCopy = {};
@@ -979,6 +985,30 @@ describe("ConnectionModal", () => {
     expect(queryByText(/turso db tokens create/)).toBeNull();
   });
 
+  // ── 34b-ter. Prometheus: one password box that also carries a token (#1085 6.1) ──
+  //
+  // Prometheus declares its password label and hint on `DB_UI_CONFIG` (#1085 3.3) instead of
+  // joining the per-type chain libSQL's Auth Token belongs to. The dialog reads them here from the
+  // mock's mirror, `MOCK_FIELD_COPY`; the real entry's values are pinned in
+  // tests/unit/lib/db-ui-config.test.ts. Together they are the unit half of the registration gate
+  // of #1085 section 9, and the browser pass is its other half.
+
+  test("Prometheus labels the password field Password or token and says a lone password is sent as a bearer token", () => {
+    mockFormOverrides = { type: "prometheus" };
+    const { container, getByTestId, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect(container.querySelector('label[for="password"]')?.textContent).toBe("Password or token");
+    expect(getByTestId("password-hint").textContent).toBe("Leave User empty to send this as a bearer token.");
+    expect(container.querySelector("#password")?.getAttribute("aria-describedby")).toBe("password-hint");
+    // No Database box: every read of the HTTP API goes to the one TSDB the server holds (#1085 6.1).
+    expect(container.querySelector("#database")).toBeNull();
+    // libSQL's token wording stays libSQL's: the declaration replaced a label, not the chain.
+    expect(queryByText("Auth Token")).toBeNull();
+    // The controls: the engine is still addressed, and takes its user box beside the password box.
+    expect(container.querySelector("#host")).not.toBeNull();
+    expect(container.querySelector("#user")).not.toBeNull();
+  });
+
   // ── 34c. Cassandra asks for the one field its driver cannot start without ──
   //
   // `cassandra-driver` 4.9.0 refuses to connect with no local data centre at all
@@ -1148,11 +1178,12 @@ describe("ConnectionModal", () => {
 
   /*
     The copy an engine DECLARES for a connection field (#1085). `DatabaseUIConfig.fieldLabels` and
-    `fieldHints` are read before this dialog's own words, and no shipped entry declares either. So
-    the census pins every shipped type's field labels as they were before the declaration existed,
-    and the cases after it declare copy for every field and read it back from each place a field is
-    drawn. The copy is synthetic and lives in `mockDeclaredCopy`; the real table's is pinned in
-    tests/unit/lib/db-ui-config.test.ts, which runs the real helpers.
+    `fieldHints` are read before this dialog's own words, and Prometheus is the one shipped entry
+    that declares either. So the census pins every shipped type's field labels and hints: Prometheus's
+    as `MOCK_FIELD_COPY` mirrors its declaration, and every other type's as they were before the
+    declaration existed. The cases after it declare copy for every field and read it back from each
+    place a field is drawn; that copy is synthetic and lives in `mockDeclaredCopy`. The real table's
+    copy is pinned in tests/unit/lib/db-ui-config.test.ts, which runs the real helpers.
   */
   describe("declared connection-field copy (#1085)", () => {
     /** Every connection field, in the order `DatabaseUIConfig.connectionFields` names them. */
@@ -1198,7 +1229,8 @@ describe("ConnectionModal", () => {
 
     /**
      * [case, type, form state, labels drawn, declared hints drawn] for every shipped type, read off
-     * the dialog's code before the declaration existed, under the field lists this file mirrors.
+     * the dialog's code under the field lists and the field copy this file mirrors. Every row but
+     * Prometheus's is what the dialog drew before the declaration existed.
      */
     const SHIPPED: readonly (readonly [
       string,
@@ -1247,21 +1279,25 @@ describe("ConnectionModal", () => {
         {},
       ],
       ["opensearch", "opensearch", {}, CREDENTIALS_ONLY, {}],
+      [
+        "prometheus",
+        "prometheus",
+        {},
+        { ...CREDENTIALS_ONLY, password: "Password or token" },
+        { password: "Leave User empty to send this as a bearer token." },
+      ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],
     ];
 
-    test.each(SHIPPED)(
-      "%s draws the field labels it drew before any declaration, and no declared hint",
-      (_case, type, form, labels, hints) => {
-        mockFormOverrides = { type, ...form };
-        const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    test.each(SHIPPED)("%s draws exactly these field labels and declared hints", (_case, type, form, labels, hints) => {
+      mockFormOverrides = { type, ...form };
+      const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
 
-        expect(fieldLabelsOf(container)).toEqual(labels);
-        expect(fieldHintsOf(container)).toEqual(hints);
-      },
-    );
+      expect(fieldLabelsOf(container)).toEqual(labels);
+      expect(fieldHintsOf(container)).toEqual(hints);
+    });
 
     const declaredLabel = (field: string): string => `Declared label for ${field}`;
     const declaredHint = (field: string): string => `Declared hint for ${field}.`;

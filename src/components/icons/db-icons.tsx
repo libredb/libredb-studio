@@ -419,3 +419,28 @@ export const DuckDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="18.3" cy="5.2" r="0.85" fill="currentColor" stroke="none" />
   </svg>
 );
+
+/**
+ * Prometheus: the flame inside a ring, reduced to its outline.
+ *
+ * The brand mark is a solid disc with the flame cut out of it and a bar under the flame. A
+ * filled disc reads as a blot at the 14px (`w-3.5`) size the sidebar renders a DB icon at, so
+ * this draws the ring, the flame and the bar as strokes at the house weight: the flame is what
+ * makes it identifiable, and nothing else in this set has one.
+ */
+export const PrometheusIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 6.5c1.9 2.1 3.5 3.9 3.5 6.1a3.5 3.5 0 0 1-7 0c0-1.5.9-2.8 1.9-3.7.1 1 .5 1.7 1.1 2.1-.1-1.6.1-3.1.5-4.5Z" />
+    <path d="M9 18.5h6" />
+  </svg>
+);

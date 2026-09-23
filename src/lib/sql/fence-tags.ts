@@ -71,6 +71,11 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // is not: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as
   // "this was written for Cassandra" would put a claim in the model's mouth.
   cassandra: true,
+  // A ```prometheus block holds a PromQL expression the editor sends unchanged to
+  // `/api/v1/query` (#1085), and it is the tag the planning contract asks a model for. The
+  // `promql` alias below is a QUERY tag and NOT an engine, for the reason `cql` is not: PromQL
+  // is a language that VictoriaMetrics and other stores speak too.
+  prometheus: true,
 });
 
 /**
@@ -96,6 +101,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "mongo",
   "n1ql",
   "cql",
+  "promql",
 ]);
 
 /**

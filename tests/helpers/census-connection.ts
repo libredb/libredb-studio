@@ -69,5 +69,6 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   mongodb: unconnected("mongodb"),
   redis: unconnected("redis"),
   couchbase: unconnected("couchbase"),
+  prometheus: unconnected("prometheus"),
   libredb: unconnected("libredb"),
 });

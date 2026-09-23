@@ -1225,6 +1225,7 @@ describe("useConnectionForm", () => {
     cassandra: true,
     libsql: true,
     duckdb: true,
+    prometheus: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

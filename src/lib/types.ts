@@ -82,7 +82,13 @@ export type DatabaseType =
   // MotherDuck (`md:`), Quack and DuckLake are NOT this id and have no row anywhere
   // yet: each is a different connection story than a local path, and #424 publishes
   // no name it has not connected to.
-  | "duckdb";
+  | "duckdb"
+  // Prometheus (#1085). A metrics store queried in PromQL over its HTTP API, and the first
+  // provider whose `queryLanguage` is neither `sql` nor `json`. The connection is a host, a port
+  // and an optional credential: `user` and `password` are HTTP Basic, and a password with no
+  // user is sent as a bearer token. VictoriaMetrics speaks the same API and is recorded as a
+  // relative of this id, never as an id of its own.
+  | "prometheus";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

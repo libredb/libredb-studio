@@ -605,6 +605,11 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * gate, though, because both execution paths ask about whatever is in the editor
  * before running it (#297).
  *
+ * `prometheus` takes a PromQL expression (#1085), which is not SQL text either: PromQL
+ * strings escape with a backslash, so a SQL span reader reads `'it\'s'` as a literal
+ * that never closes, which is the false prompt #297 measured on Redis. Its provider
+ * extends `BaseDatabaseProvider` as well.
+ *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
@@ -629,7 +634,7 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
  * gate that never asks or a gate an operator learns to click through.
  */
-const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis"]);
+const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis", "prometheus"]);
 
 /**
  * Whether this dialect's query text is SQL - the question BEFORE which SQL grammar

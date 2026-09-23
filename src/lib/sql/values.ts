@@ -71,6 +71,9 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   mongodb: "standard",
   redis: "standard",
   libredb: "standard",
+  // PromQL, not SQL (#1085): the same reading as the three above. A PromQL string
+  // escapes with a backslash, but that is not a SQL literal and nothing here builds one.
+  prometheus: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
   // doubled backslash as two characters, which is why binding the value beats
   // quoting it wherever a bind form exists.

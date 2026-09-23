@@ -139,6 +139,14 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "LibreDB",
     reason: "The embedded engine speaks a JSON command grammar, not SQL DDL.",
   },
+  // Not a table store at all (#1085): a metric is whatever scrapes and recording rules write
+  // under its name, and the HTTP API declares no column anywhere. The sentence is the one
+  // `NO_TABLE_DDL` below prints when it declines the whole diff.
+  prometheus: {
+    label: "Prometheus",
+    reason:
+      "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -178,6 +186,10 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  *
  * Oracle DDL commits implicitly and BEGIN opens a PL/SQL block, not a transaction.
  * SQL Server is handled separately with BEGIN TRANSACTION.
+ *
+ * `prometheus` (#1085) joined later, on the fact `mongodb` and `redis` already rest on: its
+ * text is PromQL, not SQL (`NON_SQL_DIALECTS`). `NO_TABLE_DDL` declines its whole diff before
+ * any wrapper is written, so this entry keeps the two sets agreeing rather than changing output.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -193,6 +205,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "elasticsearch",
   "opensearch",
   "trino",
+  "prometheus",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -206,6 +219,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "druid",
   "elasticsearch",
   "opensearch",
+  "prometheus",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

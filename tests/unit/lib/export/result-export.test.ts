@@ -402,6 +402,17 @@ describe("buildResultExport — a binary value in a statement", () => {
     }
   });
 
+  test("writes the standard X'...' form for the dialects that write no SQL of their own", () => {
+    // No statement is ever built for these to read: MongoDB, Redis and the embedded store declare
+    // `queryLanguage: "json"` and Prometheus declares `"promql"` (#1085), so the export can claim
+    // only the portable form, as `values.ts` does for their literals.
+    for (const dialect of ["mongodb", "redis", "libredb", "prometheus"] as const) {
+      const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect }));
+
+      expect(file.content).toContain("VALUES (X'0102deadbeef');");
+    }
+  });
+
   test("writes the 0x… form for the dialects that reject X'…'", () => {
     for (const dialect of ["mssql", "cassandra"] as const) {
       const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect }));
@@ -834,9 +845,10 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
     expect(ddl({ c: "year" }, undefined)).toContain('"c" BIGINT');
   });
 
-  // The seven dialects no row could be measured for: Druid takes no INSERT without the
-  // MSQ extension, the two search endpoints parse no CREATE TABLE, and the other four
-  // declare `queryLanguage: "json"` so no statement is ever built for them to read.
+  // The eight dialects no row could be measured for: Druid takes no INSERT without the
+  // MSQ extension, the two search endpoints parse no CREATE TABLE, the other four declare
+  // `queryLanguage: "json"` and `prometheus` declares `"promql"`, so no statement is ever
+  // built for them to read.
   // A file for one of those is a file meant to run somewhere else, so it gets the same
   // portable spelling as no dialect at all rather than a guessed row.
   test("writes portable standard SQL for the dialects that parse no CREATE TABLE", () => {
@@ -850,6 +862,7 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
       "redis",
       "libredb",
       "couchbase",
+      "prometheus",
     ] as const) {
       expect(ddl({ c: "VARCHAR2" }, dialect)).toContain(" TEXT\n");
       expect(ddl({ c: "BINARY_DOUBLE" }, dialect)).toContain(" DOUBLE PRECISION\n");

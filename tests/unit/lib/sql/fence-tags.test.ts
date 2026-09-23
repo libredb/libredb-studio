@@ -29,6 +29,7 @@ describe("fenceTagEngine", () => {
       "trino",
       "cassandra",
       "duckdb",
+      "prometheus",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -91,5 +92,17 @@ describe("fenceTagEngine", () => {
     // The product name is the tag that DOES name the engine, and the canonical-engine
     // walk above asserts it.
     expect(isQueryFenceTag("cassandra")).toBe(true);
+  });
+
+  test("promql names a language, so it holds a query without naming an engine", () => {
+    // The `cql` case again (#1085): PromQL is a language that VictoriaMetrics and other stores
+    // speak too, so reading `promql` as "written for Prometheus" would put a claim in the model's
+    // mouth. The planning contract asks for the canonical tag, and this alias is what keeps a block
+    // a model tagged by language on offer to the editor and recorded as the deliverable.
+    expect(isQueryFenceTag("promql")).toBe(true);
+    expect(fenceTagEngine("promql")).toBeNull();
+    // The control: the product name is the tag that DOES name the engine.
+    expect(isQueryFenceTag("prometheus")).toBe(true);
+    expect(fenceTagEngine("prometheus")).toBe("prometheus");
   });
 });

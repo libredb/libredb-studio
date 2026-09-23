@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
 describe("SeedConnectionSchema", () => {
@@ -105,6 +106,21 @@ describe("SeedConnectionSchema", () => {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });
       expect(result.success).toBe(true);
     }
+  });
+
+  /**
+   * The hand-kept enum held to the registry it has to follow (#1085). `SeedDatabaseType` is a zod
+   * VALUE, so an id missing from it is no compile error: a seed file naming an engine the product
+   * ships is refused at startup with "invalid enum value". Driven from `SHIPPED_DATABASE_TYPES`,
+   * so the next type-id fails here the day it lands rather than on somebody's deployment.
+   */
+  it("accepts every type-id the product ships", () => {
+    const refused = SHIPPED_DATABASE_TYPES.filter(
+      (type) => !SeedConnectionSchema.safeParse({ ...validConn, type }).success,
+    );
+    // Vacuity, by name: an empty registry would refuse nothing and pass.
+    expect(SHIPPED_DATABASE_TYPES.length).toBeGreaterThan(0);
+    expect(refused).toEqual([]);
   });
 });
 
