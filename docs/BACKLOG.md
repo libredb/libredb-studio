@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D110, U17 · 55
+- [Drivers and connections](#drivers-and-connections) — D1–D111, U17 · 56
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U44 · 32
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U47 · 35
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC7 · 4
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B86 · 27
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B87 · 28
 
 ---
 
@@ -1702,6 +1702,23 @@ Not fixed in #1085: re-deciding M12, or parsing under a bound on what the parse 
 
 **Done when:** the cap is re-measured against the 384 MiB heap and the chart's `512Mi` limit with the most expensive body shape under it, or the body is parsed under a bound on what the parse may allocate, and a test holds that bound.
 
+### D111. MySQL's table statistics are the 100 largest tables of the schema, and no reader is told
+
+`TABLE_STATS_SQL` in `src/lib/db/providers/sql/mysql.ts` ends `ORDER BY DATA_LENGTH + COALESCE(INDEX_LENGTH, 0) DESC LIMIT 100`, and `getTableStats` runs it for the connected schema, while `OVERVIEW_TABLE_COUNT_SQL` counts every base table of the same schema.
+The provider declares no `tableStatsCaption`, the declaration `ProviderLabels` in `src/lib/db/types.ts` gives a ranked subset since #1085, so every reader counts the cut as the schema:
+- the monitoring Tables tab (`src/components/monitoring/tabs/TablesTab.tsx`) titles the 100 rows "Tables", sums their rows and sizes as the "Total", and answers "No tables found." to a search for a table outside them;
+- the Storage tab (`src/components/monitoring/tabs/StorageTab.tsx`) adds the 100 rows' table and index sizes as shares of the whole database size;
+- the admin Operations tab (`src/components/admin/tabs/OperationsTab.tsx`) lists them as "Tables (100)" and answers "No tables found." the same way;
+- the agent's table-stats reading in `src/lib/agent/tools.ts` hands a model "table statistics, 100 row(s)", under a row budget that never refuses 100.
+So a schema of 150 base tables reads 150 on the Overview beside 100 on the Tables tab.
+The PostgreSQL, SQL Server and Oracle table statistics sort without a cap, and `docs/providers/mysql.md` names no bound in its `getTableStats` row.
+Read from the code on 2026-09-23, and rendered through the real Tables tab with MySQL's own labels and capabilities over 100 rows beside an overview count of 150: no caption and "Tables 100", with a declared caption rendering as the control; not measured against a live schema of more than 100 tables.
+
+Found 2026-09-23 by the #1085 review.
+Not fixed in #1085: a new provider changes no other provider's behaviour, and this is MySQL's.
+
+**Done when:** MySQL's `getTableStats` returns every base table of the schema, or MySQL declares a `tableStatsCaption` that the Tables tab, the Storage tab, the admin Operations list and the agent reading each honour; `docs/providers/mysql.md` says which in its `getTableStats` row; and tests pin it, `tests/integration/db/mysql-provider.test.ts` at 101 base tables with 100 as the control and, on the caption route, a captioned MySQL-shaped cut in the Tables tab, Operations tab and agent reading tests.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -2518,7 +2535,8 @@ Not fixed in #1085: a new provider changes no other provider's behaviour, and th
 
 `chartData` in `src/components/DataCharts.tsx` maps each y cell through `typeof value === "number" ? value : Number(value) || 0`, so a `null` is drawn at 0, and so are the strings `"NaN"`, `"+Inf"` and `"-Inf"`, whose `Number` is `NaN`.
 `aggregateData`, which the aggregation and date-grouping controls reach, and the histogram and scatter mappings coerce the same way, and no `Line` or `Area` sets `connectNulls`.
-`analyzeField` counts only the filled cells and types a column numeric when more than 80% of them are numbers, so a sparse column is still drawn as a line and a non-finite cell among numbers is drawn at 0; a column with more non-finite cells than that is typed categorical, is not offered as a series, and the first such column replaces a date column as the default x axis.
+`analyzeField` counts only the filled cells and types a column numeric when more than 80% of them are numbers, so a sparse column is still drawn as a line and a non-finite cell among numbers is drawn at 0.
+A column whose `NaN` or `Inf` strings are 20% or more of its filled cells is not numeric and is not offered as a series; it is typed categorical only while it holds at most 50 distinct values, each number and each of the strings counted once, and only then does the first categorical column in field order replace a date column as the default x axis, while past 50 it is typed unknown and the date column stays the default.
 Since #1085 the Prometheus wide matrix meets this on an ordinary answer: its rows are the union of every series' instants, and a series with no sample at one holds `null` there (`shapeMatrix` in `src/lib/db/providers/timeseries/prometheus/results.ts`), so a raw range over targets scraped at their own offsets holds few of its series' samples on each row.
 Measured 2026-09-23 through the provider's shaper and the chart's own mapping: `up[5m]` from the compose server (`tests/fixtures/prometheus/v3.13.3/query-matrix-raw-all.json`) shaped into 29 rows of 4 series with 87 of its 116 cells `null`, and each was plotted at 0, which for `up` reads as a target that was down; `analyzeField("v", [1, 2, 3, 4, 5, "NaN"])` types its column numeric, so that `"NaN"` is plotted at 0 as well.
 A stepped subquery gives aligned rows and charts correctly while every series has a sample at every step, which is the only chart the manual pass of #1085 (section 9, gate 5) draws.
@@ -2529,6 +2547,47 @@ Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: the wide matrix was chosen so that the chart needed no change (#1085, section 5.3), and drawing a `null` as a gap changes how every engine's `NULL` charts, a decision for the chart rather than for one provider.
 
 **Done when:** no mapping plots a `null` or a non-finite y cell at 0, a line over a date x axis joins the samples its series has (`connectNulls`), and `tests/components/DataCharts.test.tsx` pins a two-series raw range with interleaved instants and a numeric column holding `"NaN"`, each asserting that no 0 reaches the chart for a cell that held no number.
+
+### U45. The connection status badges read a refused connection as slow, timed out or online
+
+Three surfaces report whether a connection works, and none of them says it was refused.
+- `checkHealth` in `src/hooks/use-connection-manager.ts` sets the pulse to `"degraded"` for any answer of `POST /api/db/health` that is not OK, and `src/components/studio/StudioDesktopHeader.tsx` renders `"degraded"` as "Slow", so a server that refused the credentials reads "Slow" in the desktop header.
+- The fleet list of `src/components/admin/tabs/OverviewTab.tsx` renders every item whose `status` is `"error"` as "timeout", beside the message that says what the error was.
+- `src/components/studio/StudioMobileHeader.tsx` renders the label "Online" for every active connection without reading the health check, and the pulse dot beside it draws `"degraded"` in the warning tint under the title "Connection: degraded".
+Seen 2026-09-23 in the #1085 browser pass on a Prometheus connection with a wrong password: `/api/v1/status/buildinfo` answered HTTP 401, and the desktop header read "Slow", the admin fleet "timeout" and the mobile header "Online", while the object panel showed the refusal itself.
+None of it is engine-specific: the three lines predate #1085 and none of them reads the connection's type, so every engine takes the same paths.
+
+Found 2026-09-23 by the #1085 browser pass.
+Not fixed in #1085: the three components serve every engine, and that PR changes no shared surface's behaviour for the engines it does not add.
+
+**Done when:** a failed health check reads as an error on the desktop header, the mobile header and the admin fleet, "Slow" and "timeout" appear only for an answer that was slow or timed out, and a component test pins each state on each of the three surfaces.
+
+### U46. The functional smoke's RUN locator also matches the agent rail's Run history button
+
+`e2e/functional-smoke.spec.ts` clicks `page.getByRole("button", { name: "RUN" })`, which Playwright matches case-insensitively as a substring, so it also matches the agent rail's `Run history` toggle (`data-testid="agent-history-toggle"`, `src/components/agent/AgentRail.tsx`).
+The rail renders only where an LLM is configured, which CI never is, so the required check passes while the same spec fails with a strict-mode violation on any machine whose `.env` configures one.
+Measured 2026-09-23 on the #1085 branch: the spec failed with `strict mode violation: getByRole('button', { name: 'RUN' }) resolved to 2 elements` under the local `.env`, and passed with `LLM_PROVIDER`, `LLM_API_KEY` and `LLM_MODEL` set empty.
+
+Found 2026-09-23 while running the #1085 local gates.
+Not fixed in #1085: the spec and the rail predate it.
+
+**Done when:** the spec's locator names the editor's RUN button alone (`exact: true`, or a test id of its own), and the spec passes with an LLM configured.
+
+### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Sel" run nothing, and the toolbar Run sends the whole buffer
+
+`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Sel" button all end there.
+The only listener is in `src/hooks/use-query-execution.ts`, which only the standalone `src/components/Studio.tsx` uses.
+The embedded `StudioWorkspace` (`src/workspace/StudioWorkspace.tsx`, the npm package's shell) runs queries through `useQueryAdapter`, which registers none, so in the published shell those three controls never reach the host's `onQueryExecute`.
+The one control that runs there is the toolbar Run, and `executeQuery` in `src/workspace/hooks/use-query-adapter.ts` sends `overrideQuery || tabToExec.query`, the whole buffer: it never asks the editor for `getEffectiveQuery`, as `use-query-execution.ts` does, so neither a selection nor the statement at the caret can be run in that shell.
+On a PromQL tab that is a refusal: a buffer holding `up` and `rate(prometheus_http_requests_total[5m])` on two lines is sent whole, and the server answers `bad_data` with `2:1: parse error: unexpected identifier "rate"`, while `up` alone answers.
+The editor shows its Cmd/Ctrl+Enter hint in both shells, and the shortcut list in `docs/FEATURES.md`, generated from `src/lib/keyboard-shortcuts.ts`, offers it without naming a shell.
+Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Sel" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
+`git log -S'execute-query' -- src/workspace` is empty, so the embedded shell never listened, and `tests/components/StudioWorkspace.test.tsx` mocks `QueryEditor`, so no test reaches the embedded run shortcut.
+
+Found 2026-09-23 by the #1085 review.
+Not fixed in #1085: the defect predates it, and a window listener in `StudioWorkspace` is not the remedy, because the event is global to the page: two mounted workspaces would both run one keystroke, and a host that also mounts the exported `QueryEditor` would have that editor's text run against the workspace's connection.
+
+**Done when:** the editor's run request reaches only the shell that mounted it, for example through an optional `onExecute(query)` prop that `handleExecute` calls in place of the window event and that `StudioWorkspace` passes as its own run; the embedded toolbar Run reads the editor's effective query as the standalone one does; and a `StudioWorkspace` test that mounts the real `QueryEditor` over a Monaco double fires the captured Cmd+Enter command over a selection and asserts that `onQueryExecute` receives only the selected text, with two mounted workspaces as the control, where only the workspace whose editor ran it runs.
 
 ## Dependencies
 
@@ -2709,22 +2768,26 @@ too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, the
 of those two were rewritten in round 17 and are the natural first pair; the round left them out because
 they were another lane's live files at the time, not because they are correct.
 
-### DOC6. Comments in other providers' files still count the fleet as it stood before #1085
+### DOC6. Comments and doc sentences about other providers still count the fleet as it stood before #1085
 
-Four comments inside provider directories, one test comment beside them and three sentences of other providers' docs count the providers as they stood before #1085 made the shipped type-ids eighteen, and that PR could not edit them, because a new provider changes no other provider's files.
-- `src/lib/db/providers/document/mongodb.ts`, the `describeObjects` docblock: "this method is the ONE place in the seventeen providers where a per-object read survives".
+Four comments inside provider directories, one test comment beside them and eight sentences of other providers' docs count the providers as they stood before #1085 made the shipped type-ids eighteen, served by seventeen provider implementations because `elasticsearch` and `opensearch` share one.
+Four of the eight doc sentences mirror the comments; the other four have no code twin.
+- `src/lib/db/providers/document/mongodb.ts`, the `describeObjects` docblock: "this method is the ONE place in the seventeen providers where a per-object read survives", mirrored in `docs/providers/mongodb.md` under "What `describeObjects` answers, and the one half this engine cannot bulk-read".
   Still true of eighteen, because the Prometheus bulk read is one series read; the count is what is stale.
-- `src/lib/db/providers/sql/druid/objects.ts`, point 4 of the header: "the guard the other sixteen providers write is absent here".
+- `src/lib/db/providers/sql/druid/objects.ts`, point 4 of the header: "the guard the other sixteen providers write is absent here", mirrored in `docs/providers/druid.md` under "`describeObjects()` describes a whole folder in ONE statement (#789)", point 2.
   Prometheus writes that guard too, answering a kind with no columns with `{ details: [] }` and no read, so the others are seventeen.
-- `src/lib/db/providers/sql/libsql/objects.ts` and `src/lib/db/providers/sql/sqlite.ts`, on why no synthetic `main` container is invented "to make the shape match the other sixteen engines", and the same words in `tests/integration/db/sqlite-provider.test.ts`.
+- `src/lib/db/providers/sql/libsql/objects.ts` and `src/lib/db/providers/sql/sqlite.ts`, on why no synthetic `main` container is invented "to make the shape match the other sixteen engines", with the same words in `tests/integration/db/sqlite-provider.test.ts` and in the zero-container sections of `docs/providers/libsql.md` and `docs/providers/sqlite.md`.
   No number makes that true: libSQL, SQLite, Elasticsearch, OpenSearch and Prometheus all declare `containerLevels: []`, so the other engines are not a set that has a container level.
-- `docs/providers/mongodb.md`, twice, on `HealthInfo.slowQueries` becoming optional "across all 17 type-ids", and `docs/providers/mysql.md`, on what "the other sixteen provider test files would receive".
-  Each counts one type-id short now.
+- `docs/providers/mongodb.md`, twice more on "17 type-ids": the closing parenthetical of section 7.2, on `HealthInfo.slowQueries` becoming optional, and the section 13 bullet "A failed overview read still reports `tableCount: 0` and `indexCount: 0`", on `DatabaseOverview.tableCount` and `indexCount` becoming optional.
+  The second breaks its line between "across all" and "17 type-ids", so a search for the longer phrase finds only the first.
+- `docs/providers/mysql.md`, section 12.1, on what "the other sixteen provider test files would receive", where there are eighteen provider test files.
+- `docs/providers/postgres.md`, section 3.1.4, "this is the line the fifteen other providers are read against", written when the implementations were sixteen.
+  Each of these four counts one short now.
 
 Found 2026-09-23 by the #1085 review.
-Not fixed in #1085: that PR edits no file of another provider.
+Not fixed in #1085: that PR edits another provider's doc only where a shared surface it changed alters what the doc describes, and no count here is about such a surface; the four comments sit in other providers' directories, which it does not edit, so their mirrors stay with them to change together.
 
-**Done when:** each names the set it counts instead of a number, or the number its set has, and the provider docs that mirror them (`docs/providers/mongodb.md`, `druid.md`, `libsql.md` and `sqlite.md`) say the same, as do the three doc sentences listed with them.
+**Done when:** each names the set it counts instead of a number, or the number its set has, and the doc sentences that mirror the comments say the same, as do the four doc sentences without a code twin.
 
 ### DOC7. Four translated READMEs still say the SSL/TLS panel takes effect on nine engines
 
@@ -3864,3 +3927,15 @@ Found 2026-09-23 in the #1085 review.
 Not fixed in #1085: the alias predates it, and that PR changes no existing arm's behaviour (#1085, section 3.5).
 
 **Done when:** `fenceTagEngine("cql")` is `"cassandra"`, a `cql` block before a `postgres` block on a PostgreSQL plan run records the PostgreSQL statement, a `cql`-only closing there records none and is asked for one, a `cql` block on a Cassandra run is still the deliverable, and the `cql` test in `tests/unit/lib/sql/fence-tags.test.ts` and the comment at the `cassandra` entry state the type-id rule.
+
+### B87. A run's inventory count names every kind with the engine's own noun
+
+`captureContextSnapshot` counts every object the inventory read, whatever its kind, and both places that show the count name it with the engine's entity noun, which `inventoryNoun` in `src/lib/agent/inventory-noun.ts` takes from `ProviderLabels.entityName`: the answer card in `src/components/agent/AnswerCard.tsx` ("`N` tables read") and the inventory header `src/lib/agent/context-snapshot.ts` writes into the prompt ("`N` table(s) read").
+So a SQLite run over six tables and two views reads "8 tables read", and a Prometheus run over 344 metrics and 22 rule groups, rules, scrape pools and targets reads "366 metrics read".
+Each inventory row carries its own kind, so the model is not misled about any one object; the number is what names the wrong thing.
+Measured 2026-09-23 in the #1085 browser pass: `context-captured` recorded `tableCount` 366 with the noun `metric` on the compose Prometheus, and a SQLite plan run over the sample employees database showed "8 tables read".
+
+Found 2026-09-23 by the #1085 browser pass.
+Not fixed in #1085: the count and its noun predate it and serve every engine.
+
+**Done when:** the answer card and the inventory header name what the count counts, the objects or each kind by its own label, and a test pins a capture of two kinds on each.

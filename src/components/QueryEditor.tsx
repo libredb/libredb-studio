@@ -574,11 +574,14 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       `databaseType`, `monaco` and `onChange` for as long as the editor lived, which is what #200
       found for Explain. Both shells mount the editor on an SQL tab and retype it in an effect
       once the connection's capabilities are known, so for a PromQL tab the mounting render was
-      the wrong one on every page load: Shift+Alt+F and "Format SQL" ran the SQL formatter over
-      PromQL (`up == 0` became `up = = 0`, and setValue clears Monaco's undo history), and after a
-      remount under PostgreSQL, Cmd+Enter cut an expression at a `;` inside its `#` comment. On
-      an SQL tab the same closure held the `monaco === null` of a fresh load, so Cmd+Enter sent
-      the whole buffer rather than the statement at the caret.
+      the wrong one on every page load: in both, Shift+Alt+F and "Format SQL" ran the SQL
+      formatter over PromQL (`up == 0` became `up = = 0`, and setValue clears Monaco's undo
+      history). The Cmd+Enter half is the standalone shell's alone, because only
+      `use-query-execution.ts` listens for the `execute-query` event handleExecute dispatches and
+      the embedded `StudioWorkspace` registers no listener (docs/BACKLOG.md U47). There, after a
+      remount under PostgreSQL, Cmd+Enter cut an expression at a `;` inside its `#` comment, and
+      on an SQL tab the same closure held the `monaco === null` of a fresh load, so Cmd+Enter
+      sent the whole buffer rather than the statement at the caret.
 
       Refreshed after every commit and not during render, like the latest-value refs in
       `use-query-execution.ts`: every reader is a callback that runs after a commit, and the
