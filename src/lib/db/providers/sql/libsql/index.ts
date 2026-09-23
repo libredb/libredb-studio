@@ -447,7 +447,11 @@ export class LibSQLProvider extends SQLBaseProvider {
    * succeeds as a statement and reports the damage in its row, so a provider that
    * only checked for an exception would report a corrupt database as healthy.
    */
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * `container` is deliberately ignored, for the same reason as `sqlite.ts`: a libSQL
+   * connection resolves names against its one attached database (#772).
+   */
+  public async runMaintenance(type: MaintenanceType, target?: string, _container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
 
     const { result, executionTime } = await this.measureExecution(async () => {

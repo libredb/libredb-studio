@@ -707,7 +707,7 @@ describe("OperationsTab", () => {
       fireEvent.click(analyzeBtn!.closest("button")!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", undefined, undefined);
     // Operation log should appear with success
     expect(queryByText("Operation Log (this session)")).not.toBeNull();
     expect(queryByText("ANALYZE")).not.toBeNull();
@@ -724,7 +724,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(vacuumBtn!.closest("button")!);
     });
-    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", undefined, undefined);
     expect(queryByText("VACUUM")).not.toBeNull();
   });
 
@@ -739,7 +739,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(reindexBtn!.closest("button")!);
     });
-    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", undefined, undefined);
     expect(queryByText("REINDEX")).not.toBeNull();
   });
 
@@ -815,7 +815,7 @@ describe("OperationsTab", () => {
       fireEvent.click(buttons[0]!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "users");
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "users", "public");
   });
 
   test("per-table vacuum button calls runMaintenance with table name", async () => {
@@ -832,7 +832,7 @@ describe("OperationsTab", () => {
       fireEvent.click(buttons[1]!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
+    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", "users", "public");
   });
 
   // =========================================================================
@@ -1695,7 +1695,7 @@ describe("OperationsTab", () => {
       fireEvent.click(button!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("optimize", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("optimize", undefined, undefined);
   });
 
   test("an operation with no whole-database form gets no global card", async () => {
@@ -1768,7 +1768,7 @@ describe("OperationsTab", () => {
     });
 
     // The target is what made this control honest: "users" is the collection row.
-    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", "users", "public");
   });
 
   test("an operation that ignores its target gets no per-row control", async () => {

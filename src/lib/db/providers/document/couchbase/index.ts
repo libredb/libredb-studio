@@ -1314,10 +1314,10 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   // Maintenance
   // ==========================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
     const { result, executionTime } = await this.measureExecution(() =>
-      this.guarded(() => this.dispatchMaintenance(transport, type, target)),
+      this.guarded(() => this.dispatchMaintenance(transport, type, target, container)),
     );
     return { ...result, executionTime };
   }
@@ -1326,12 +1326,13 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     transport: CouchbaseTransport,
     type: MaintenanceType,
     target?: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
     switch (type) {
       case "analyze":
-        return this.updateStatistics(transport, this.requireTarget(type, target));
+        return this.updateStatistics(transport, this.requireTarget(type, target), container);
       case "reindex":
-        return this.buildDeferredIndexes(transport, this.requireTarget(type, target));
+        return this.buildDeferredIndexes(transport, this.requireTarget(type, target), container);
       case "kill":
         return this.cancelRequest(transport, this.requireTarget(type, target));
     }
@@ -1354,8 +1355,14 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   private async updateStatistics(
     transport: CouchbaseTransport,
     target: string,
+    scope?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    const keyspace = keyspacePath(keyspaceFromDisplayName(this.bucket, target));
+    // A scope from the caller replaces the parse-back-out: the row already knows which scope
+    // it sits in, and `keyspaceFromDisplayName` cannot tell a scope name from a collection
+    // name that contains a dot (#772).
+    const keyspace = keyspacePath(
+      scope ? { bucket: this.bucket, scope, collection: target } : keyspaceFromDisplayName(this.bucket, target),
+    );
 
     try {
       await transport.query(`UPDATE STATISTICS FOR ${keyspace} INDEX ALL`, { timeoutMs: this.queryTimeout });
@@ -1372,8 +1379,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   private async buildDeferredIndexes(
     transport: CouchbaseTransport,
     target: string,
+    scope?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    const keyspace = keyspaceFromDisplayName(this.bucket, target);
+    const keyspace = scope
+      ? { bucket: this.bucket, scope, collection: target }
+      : keyspaceFromDisplayName(this.bucket, target);
     const deferred = await transport.query(DEFERRED_INDEX_SQL, {
       args: [keyspace.bucket, keyspace.scope, keyspace.collection],
       timeoutMs: CATALOG_TIMEOUT_MS,

@@ -1227,8 +1227,13 @@ export interface DatabaseProvider {
    * Run maintenance operations
    * @param type - Type of maintenance operation
    * @param target - Optional target (table name or process ID)
+   * @param container - Optional namespace the target lives in. What a container means is
+   * per-engine and the provider decides: a schema for PostgreSQL, DuckDB and SQL Server, a
+   * database for MySQL and ClickHouse, an owner for Oracle, a bucket or scope for Couchbase,
+   * the attached database for SQLite and libSQL. Providers that cannot act on one ignore it
+   * rather than guessing a dialect from the target string.
    */
-  runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult>;
 
   /**
    * Validate provider configuration

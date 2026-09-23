@@ -168,7 +168,7 @@ function bloatBadgeVariant(ratio: number): "destructive" | "outline" | "secondar
 interface TablesTabProps {
   data: MonitoringData | null;
   loading: boolean;
-  onRunMaintenance: (type: string, target?: string) => Promise<boolean>;
+  onRunMaintenance: (type: string, target?: string, container?: string) => Promise<boolean>;
   isAdmin?: boolean;
   /**
    * The connected provider's declared capabilities (issue #272). Undefined while
@@ -255,9 +255,13 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
     capabilities?.supportsMaintenance === true && capabilities.maintenanceOperations.includes("vacuum");
   const vacuumStateKnown = !vacuumUnsupported && !statsAbsent;
 
-  const handleMaintenance = async (type: MaintenanceType, tableName: string) => {
+  // `schemaName` travels beside the table name because the table's namespace is not the same
+  // thing to every engine: a schema for PostgreSQL, the database for MySQL, an owner for
+  // Oracle. The row already renders `${schemaName}.${tableName}`, so the value was one
+  // property away and was being dropped here (#772).
+  const handleMaintenance = async (type: MaintenanceType, tableName: string, container?: string) => {
     setActionLoading(`${type}-${tableName}`);
-    await onRunMaintenance(type, tableName);
+    await onRunMaintenance(type, tableName, container);
     setActionLoading(null);
   };
 
@@ -428,7 +432,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
                                 variant="ghost"
                                 size="icon"
                                 className={className}
-                                onClick={() => handleMaintenance(type, table.tableName)}
+                                onClick={() => handleMaintenance(type, table.tableName, table.schemaName)}
                                 disabled={!!actionLoading}
                                 title={label}
                               >

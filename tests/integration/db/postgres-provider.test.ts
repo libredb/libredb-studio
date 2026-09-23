@@ -2201,6 +2201,48 @@ describe("PostgresProvider", () => {
       expect(capturedSql).not.toContain("public.");
     });
 
+    // The container parameter exists because the name alone cannot say which schema it came
+    // from: `schemaName` is a schema for PostgreSQL, the database for MySQL, an owner for
+    // Oracle, and the monitoring page already renders it beside every table (#772). A name
+    // that carries a dot cannot stand in for it, since a container can contain one.
+    test("a container qualifies the target, and the name is not re-split", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("vacuum", "users", "reporting");
+      expect(capturedSql).toContain('"reporting"."users"');
+      expect(capturedSql).not.toContain("public.");
+    });
+
+    test("a container containing a dot survives the qualifier", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("analyze", "users", "my.schema");
+      expect(capturedSql).toContain('"my.schema"."users"');
+    });
+
+    test("without a container the old readings stay", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("vacuum", "reporting.MonthlySummary");
+      expect(capturedSql).toContain('"reporting"."MonthlySummary"');
+      expect(capturedSql).not.toContain('"reporting.MonthlySummary"');
+    });
+
     test("kill with valid PID returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();

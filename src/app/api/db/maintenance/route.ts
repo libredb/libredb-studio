@@ -24,7 +24,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { type, target } = body;
+    const { type, target, container } = body;
 
     const connection = await resolveConnection(body, guard.session);
 
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     }
 
     const startTime = Date.now();
-    const result = await provider.runMaintenance(type, target);
+    const result = await provider.runMaintenance(type, target, container);
     const duration = Date.now() - startTime;
 
     // Isolated in its own try/catch: runMaintenance() above has already succeeded and its result

@@ -2005,7 +2005,11 @@ export class TrinoProvider extends SQLBaseProvider {
    * maintenance panel has asked a direct question, and "that statement is not
    * running" is the answer.
    */
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * `container` is deliberately ignored: the only operation this provider performs is
+   * `kill`, whose target is a query id rather than an object inside any namespace (#772).
+   */
+  public async runMaintenance(type: MaintenanceType, target?: string, _container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
 
     if (type !== "kill") {

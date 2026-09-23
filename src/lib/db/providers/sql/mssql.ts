@@ -3158,7 +3158,19 @@ export class MSSQLProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * A maintenance target as a schema-qualified identifier, using the `[bracket]` quoting this
+   * provider already escapes with. A container is honoured when the caller sends one; a bare
+   * name keeps the previous reading, where the connected default schema applies.
+   */
+  private qualifyMaintenanceTarget(target: string, container?: string): string {
+    if (container) {
+      return `${this.escapeIdentifier(container)}.${this.escapeIdentifier(target)}`;
+    }
+    return this.escapeIdentifier(target);
+  }
+
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -3168,7 +3180,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         switch (type) {
           case "analyze":
             if (target) {
-              sql = `UPDATE STATISTICS [${target.replace(/\]/g, "]]")}]`;
+              sql = `UPDATE STATISTICS ${this.qualifyMaintenanceTarget(target, container)}`;
             } else {
               sql = `EXEC sp_updatestats`;
             }
@@ -3178,7 +3190,7 @@ export class MSSQLProvider extends SQLBaseProvider {
             break;
           case "optimize":
             if (target) {
-              sql = `ALTER INDEX ALL ON [${target.replace(/\]/g, "]]")}] REBUILD`;
+              sql = `ALTER INDEX ALL ON ${this.qualifyMaintenanceTarget(target, container)} REBUILD`;
             } else {
               sql = REBUILD_ALL_INDEXES_SQL;
             }
