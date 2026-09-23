@@ -2028,4 +2028,24 @@ describe("OperationsTab", () => {
     expect(absent.queryByText("Tables (0)")).not.toBeNull();
     expect(absent.getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
   });
+
+  test("a row with no schema prints its bare name, and a row with one keeps the schema before it", async () => {
+    // A metric has no schema, so a separator before it separates nothing: it read ".go_gc_duration_seconds".
+    mockMetadata = captionedList;
+    const inSchema = {
+      tableName: "orders",
+      schemaName: "public",
+      rowCount: 1,
+      totalSize: "8 kB",
+      totalSizeBytes: 8192,
+    };
+    monitoringOverride = { data: { activeSessions: [], tables: [...listedMetrics, inSchema] } };
+
+    const { getByText } = await render_();
+    const printedName = (name: string) => getByText(name).parentElement?.textContent;
+
+    expect(printedName("go_gc_duration_seconds")).toBe("go_gc_duration_seconds");
+    // The control: a row that has a schema still prints it, joined by the separator.
+    expect(printedName("orders")).toBe("public.orders");
+  });
 });
