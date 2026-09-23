@@ -2,7 +2,7 @@
 
 > Prometheus support for LibreDB Studio, over the Prometheus HTTP API (`/api/v1/*`, port `9090`) with **no driver dependency of any kind**.
 > Every call is one HTTP request through the runtime's own `fetch`, or through `node:https` when TLS material is configured.
-> This is the first provider whose query language is neither SQL nor JSON: the editor sends PromQL to the server unchanged.
+> This is the first provider to declare a `queryLanguage` of its own, `promql` beside `sql` and `json`: the editor sends PromQL to the server unchanged.
 > This document is the single reference for the Prometheus provider: design, architecture, usage and tests.
 
 | | |
@@ -217,7 +217,8 @@ Prometheus widens `queryLanguage` to `"sql" | "json" | "promql"` and declares no
 A third member is not neutral by default: a reader written `=== "json"` sends it into its SQL branch, and one written `!== "sql"` sends it into its MongoDB branch.
 Every reader was classified when the union widened (#1085, section 3.2): the editor has a `promql` tab type and a Monarch tokenizer (`src/lib/editor/promql-language.ts`), the two generators have a PromQL arm built through `promql.ts`, and the profile route refuses a language it cannot profile.
 On a metric row both row menus withhold Profile and Code Generator, through `offersColumnProfiling` and `offersCodeGeneration`, which offer neither for `promql`, and Generate Test Data, because no kind declares `acceptsRowWrites`; the tree's menu for a metric keeps Generate Query and View Source.
-A plan-mode draft is fenced with the canonical type-id, `prometheus`, which `ENGINE_FENCE_TAGS` accepts; `promql` is accepted as a query alias only (`QUERY_FENCE_ALIASES` in `src/lib/sql/fence-tags.ts`, the `cql` precedent), because other stores speak PromQL too and an alias claims no engine.
+A plan-mode draft is fenced with the canonical type-id, `prometheus`, which `ENGINE_FENCE_TAGS` accepts; a block tagged `promql` is accepted too, and that alias names the `prometheus` type-id (`ALIAS_ENGINES` in `src/lib/sql/fence-tags.ts`), because every PromQL server this product reaches, VictoriaMetrics included, connects through it.
+So a `promql` block is not the statement of a plan run on another engine, the rule a `mysql` block on a PostgreSQL run already follows.
 Widening a published union breaks an external consumer's exhaustive switch over it, and that ships with a release note rather than a compatibility layer.
 
 ### 3.2 One PromQL builder
@@ -228,7 +229,7 @@ On Prometheus 3.13.3 the bare form did not answer like `{__name__="<word>"}` in 
 So a metric named `sum` selects bare on this version, which #1085 S4 had expected to fail to parse.
 `PROMQL_RESERVED_WORDS` is the lexer's whole `key` table plus `inf` and `nan`, a superset of the words whose bare form differs, pinned by a test to that table as captured at the tag (`tests/fixtures/prometheus/v3.13.3/lexer-words.json`).
 So `promql.ts` writes the bare selector only for a legacy name (`^[a-zA-Z_:][a-zA-Z0-9_:]*$`) whose lowercase form is not in that set, which is where every parser this provider meets reads it as a metric; every other name becomes `{__name__=<its PromQL string>}`, which parses on 2.x, 3.x and MetricsQL.
-A PromQL string is `JSON.stringify` of the text with one exception: a U+FFFD in a name is written as the escape `�` (backslash, u, f, f, f, d), because the v3.13.3 lexer reads a literal U+FFFD as an invalid rune; every other character is exactly what `JSON.stringify` writes, and `JSON.parse` reads the string back to the same text.
+A PromQL string is `JSON.stringify` of the text with one exception: a U+FFFD in a name is written as the escape `\ufffd` (backslash, u, f, f, f, d), because the v3.13.3 lexer reads a literal U+FFFD as an invalid rune; every other character is exactly what `JSON.stringify` writes, and `JSON.parse` reads the string back to the same text.
 A name holding an unpaired surrogate is not well-formed text: `JSON.stringify` writes the surrogate as an escape the lexer refuses as an invalid code point, so the server refuses such a selector as `bad_data`, a parse error, and it never selects another metric.
 The same escaping writes label values in matchers and the wide matrix's column names (`seriesNotation`), so column naming stays injective.
 A label name that is not a legacy identifier, or that starts with `U__`, is `U__`-escaped in a label-values path, because the server unescapes any name starting with `U__`; the one such path this provider reads is `__name__`'s, where the escape is the name itself.
@@ -241,6 +242,7 @@ A single matrix response can reach gigabytes (`--query.max-samples` defaults to 
 `request.ts` enforces a streaming byte cap, `RESPONSE_BYTE_CAP`, on every response on both paths and aborts past it, and `errors.ts` reports a `QueryError` that names the cap and suggests a narrower range or a larger step.
 Every request, not only a query, carries an `AbortSignal` and a timeout.
 The series cap and the matrix cell budget then apply to what was parsed ([§5.4](#54-caps-warnings-and-truncation)).
+Neither bounds the result the query route sends, because every row repeats every field name, so the rows and fields of a vector or a matrix are also held to `RESULT_BYTE_BUDGET` (`16777216`) bytes of JSON: 500 series carrying 25 label names of their own are about 200 KB on the wire and, whole, 500 rows of 12,502 fields.
 
 ### 3.4 The server's query slots are shared
 
@@ -273,9 +275,11 @@ A handshake or verification failure is a `ConnectionError` carrying the Node err
 
 Finite sample values become JavaScript numbers; Prometheus writes the shortest round-tripping float, so nothing is lost.
 `NaN`, `+Inf` and `-Inf` stay the engine's strings, because JSON transport would turn a `NaN` number into `null`, and in the wide matrix shape `null` already means "no sample at this instant".
-The cost is that a column holding both numbers and one of those strings is mixed, and the chart tab may classify such a column as categorical rather than drawing it as a line.
-That is accepted by maintainer decision (#1085, section 5.3): a chart that plots a `NaN` as a gap would claim the series had no sample there.
-Filter the non-finite values in PromQL (`x > -Inf < +Inf`, or `x == x` for `NaN`) when a line chart matters more than seeing them.
+The grid shows them as the engine wrote them, by maintainer decision (#1085, section 5.3): a `null` in their place would claim the series had no sample there.
+The chart tab reads them otherwise: it types a column as numbers when more than 80% of its filled cells are numbers (`analyzeField` in `src/components/DataCharts.tsx`) and draws each cell of such a column that is not a number at 0, so a `NaN` or `Inf` among numbers is drawn at 0, and so is a `null`, an instant with no sample ([§5.2](#52-result-shaping)).
+A column holding more of those strings than that is typed categorical and is not offered as a series, and the first such column replaces `timestamp` as the chart's default x axis.
+Filtering the non-finite values in PromQL (`x > -Inf < +Inf`, or `x == x` for `NaN`) takes them out of the answer, which keeps a single series a line with no row at those instants, while in a matrix of several series each filtered cell holds `null` and is drawn at 0 as well.
+The chart is unchanged by #1085, and `docs/BACKLOG.md` U44 records its zeros.
 
 ### 3.8 Measurements
 
@@ -290,7 +294,7 @@ The constants are read by [`tests/unit/db/prometheus/provider-doc.test.ts`](../.
 | M5 | Credentials the server does not need | A stock server with no web config answers 200 with a bogus credential and with none; with basic auth configured, a wrong credential answers 401 with `WWW-Authenticate: Basic` and the plain-text body `Unauthorized` | Fixture README, M5 |
 | M7 | Whether plan mode grounds every kind within the provider path's bounds | Not on a large server: the grounding walk stops at the first truncated `describeObjects` batch, and the metric batch, the first the walk reads, is truncated past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, so plan mode there grounds metrics only (`docs/BACKLOG.md` B84); the compose server is far below both caps, which is why the limit is recorded from the code | `walkObjectInventory` in `src/lib/agent/tools.ts`, and the PR's live plan run |
 | M8 | How truncation is detected from the server | Prometheus sends the warning `results truncated due to limit` for `/api/v1/query`, the label values and the series listing when a `limit` bites; where no warning arrives, receiving more items than the cap (each read asks for cap + 1) is the signal | Fixture README, M8 |
-| M10 | The metric list cap | `METRIC_LIST_CAP` = `2000` names, below the inventory's 5000 so plan mode keeps room for the other kinds | Fixture README, M10 |
+| M10 | The metric list cap | `METRIC_LIST_CAP` = `2000` names: it bounds the one label-values read that lists metrics, and past it the tree's Metrics count is a floor, badged `2,000+`; it keeps plan mode no room for the other kinds, because past it the metric batch, bounded at the listing's length, is marked truncated and the grounding walk stops there, so on a server with 2,001 to 4,999 names and at most `DESCRIBE_SERIES_CAP` series in the hour it is this cap, not the inventory's budget of 5,000 objects, that leaves plan mode with metrics only (M7, `docs/BACKLOG.md` B84) | Fixture README, M10 |
 | M11 | Queries in flight per connection | `QUERY_CONCURRENCY_LIMIT` = `4`: with four heavy queries in flight for 60 s, every rule group kept its evaluation interval and no iteration was missed | Fixture README, M11 |
 | M12 | The response byte cap | `RESPONSE_BYTE_CAP` = `33554432` bytes (32 MiB) | Fixture README, M12 |
 | M13 | The series cap of a whole-folder describe | `DESCRIBE_SERIES_CAP` = `20000` series | Fixture README, M13 |
@@ -308,9 +312,8 @@ These partial records deliberately have none:
 | `CATALOG_COMPOSERS`, `ESTIMATING_EXPLAIN_PREFIX` | `src/lib/agent/composed-sql.ts` | They serve `AGENT_EXECUTION_ENGINES`, and agent execute mode is out of scope for PromQL (#1085, section 2) |
 | `ESTIMATE_BUILDERS` | `src/lib/agent/schema-stats.ts` | Prometheus holds no table statistics a run knows how to read; its series counts are TSDB top-N figures, not estimates |
 | `ENGINE_URI_SCHEMES` | `src/lib/connection-string-parser.ts` | No connection string ([§4.5](#45-no-connection-string)) |
-| `NON_SQL_DESTRUCTIVE_VOCABULARY` | `src/lib/db/destructive-commands.ts` | PromQL has no statement that writes, deletes or changes state, so there is no destructive vocabulary to confirm |
 | `DIALECTS` | `src/components/CreateTableModal.tsx` | Only engines with `supportsCreateTable: true` reach that form |
-| `SQL_GRAMMARS` | `src/lib/sql/grammar.ts` | PromQL is not SQL: `prometheus` is in `NON_SQL_DIALECTS`, so no SQL grammar fact applies |
+| `SQL_GRAMMARS` | `src/lib/sql/grammar.ts` | PromQL is not SQL, and `prometheus` is in `NON_SQL_DIALECTS`. Nothing on the run path reads PromQL under a SQL grammar: the confirmation gate answers from the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` before any SQL reading ([§5.1](#51-the-call)), the multi-statement route is taken only where `queryLanguage` is `sql`, and the provider's own `prepareQuery` returns the text unchanged |
 | `NO_PORTABLE_INDEX_DDL`, `NO_FOREIGN_KEYS`, `FOREIGN_KEY_ONLY_IN_CREATE_TABLE` | `src/lib/schema-diff/migration-generator.ts` | They qualify index and foreign-key DDL for engines that have table DDL at all; how the generator treats `prometheus` as a whole is recorded in `MODIFIED_COLUMN_COVERAGE` and `TRANSACTION_WRAPPER_COVERAGE` in `tests/unit/schema-diff/migration-generator.test.ts` |
 | `AGENT_EXECUTION_ENGINES` | `src/lib/agent/engine-support.ts` | Agent execute mode is a non-goal; plan mode and the `operations` workflow still reach the server |
 
@@ -364,6 +367,7 @@ Enable TLS for any server reached across a network you do not control.
 The three verifying modes come out the same, because Node checks the server name whenever it verifies, so `verify-ca` cannot skip that check here.
 `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` reach the request as `ca`, `cert` and `key`, an empty field is left out, and `ssl.rejectUnauthorized` overrides the mode's default either way.
 Each case is exercised by a real handshake against a local `node:https` server in `tests/unit/db/prometheus/request.test.ts`.
+`tests/unit/db/prometheus/provider.test.ts` repeats four of them through the provider's own composition, with nothing injected, so the panel is proven to reach that request function.
 
 ### 4.5 No connection string
 
@@ -385,6 +389,11 @@ Ranges are written in PromQL itself: `x[1h]` returns raw samples and `rate(x[5m]
 
 A row click in the tree runs the metric's selector as an instant query, the action the labels name "Run Instant Query".
 Generate Query writes that selector as the one runnable line, below the two range forms as `#` comments, so the buffer run whole is exactly one expression.
+The execution confirmation gate never asks on a Prometheus connection.
+PromQL has no statement that writes, and editor text only ever reaches `POST /api/v1/query`, so the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` names no operation and is the gate's whole answer.
+The gate's SQL keyword test, which still reads a MongoDB or Redis buffer first, never reads PromQL: a metric may legally be named `update`, `delete` or `drop`, and read as SQL its bare selector is a write.
+On a PromQL tab the run shortcut sends the selection when there is one and otherwise the whole buffer, never cut at a `;`, and there is no formatter: no Format button, no Format SQL entry in the editor's menu, and the format shortcut does nothing.
+Both shells type a Prometheus connection's tabs from its declared `queryLanguage`, the embedded `StudioWorkspace` as the standalone app does, and the editor reads its shortcuts' handlers when one is invoked, so a tab mounted before the connection's capabilities arrived behaves as a PromQL tab once it is one.
 The editor's tokenizer (`src/lib/editor/promql-language.ts`) colours a `#` comment wherever the lexer starts one: at the top level, inside `{}` and inside a range's `[]`; inside a raw string, between backticks, a `#` is text.
 
 ### 5.2 Result shaping
@@ -398,9 +407,12 @@ The editor's tokenizer (`src/lib/editor/promql-language.ts`) colours a `#` comme
 
 A label literally named `timestamp` or `value`, or a label name that is not a legacy identifier such as `service.name`, becomes the field `JSON.stringify(name)`, so the fields stay unique; the same function (`vectorFieldNames`) names a metric's columns in the tree, so the tree and the grid agree.
 Two answers are refused as protocol failures, a `ConnectionError`, rather than shaped: a vector series that does not hold exactly one point, and a matrix holding two series with one label set, because neither is an answer of a shape this build reads.
-A wide matrix names each series column by the labels that distinguish it from the others, in PromQL label notation (`{job="api"}`); a single series with nothing to distinguish is named `value`.
+A wide matrix names each series column by the labels that distinguish it from the other series kept, in PromQL label notation (`{job="api"}`).
+A series a bound leaves alone is named by the labels that tell it from every series of the answer, so the grid still says which one it shows; only an answer that held one series names its column `value`.
 The rows are the sorted union of every series' timestamps, and a series with no sample at one holds `null` there, so a raw range selector gives sparse rows and a stepped subquery aligned ones.
-The wide shape is what lets the existing chart tab draw one line per series with no change to the chart.
+The wide shape is what lets the existing chart tab draw one line per series with no change to the chart, and it does so for a stepped subquery while every series has a sample at every step.
+The chart tab draws a `null` at 0, though ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them)), so a raw range over targets scraped at their own offsets, whose rows each hold few of its series' samples, charts the rest at 0 on each row, and a series that starts or stops inside a subquery's window drops to 0 where it has no sample.
+Measured through the provider's shaper and the chart's own mapping, `up[5m]` from the compose server shaped into 29 rows of 4 series with 87 of its 116 cells `null`, each drawn at 0, which for `up` reads as a target that was down; `docs/BACKLOG.md` U44 records it.
 
 ### 5.3 Value encoding
 
@@ -414,8 +426,10 @@ The wide shape is what lets the existing chart tab draw one line per series with
 - Series are capped at `DEFAULT_QUERY_LIMIT` (500) for vector and matrix alike, sent as `limit` one above the cap (501), so a cut is seen even when the engine drops its own notice among more than ten annotations; at most 500 series are shown, and the cap is enforced locally as well, because only Prometheus 3.2.0 and later honour `limit`.
 - The series notice names an exact total only when the server sent more series than it was asked for; otherwise it says "more than" the number shown, because the server's own cut carries no total.
 - A wide matrix is also held to `MATRIX_SAMPLE_BUDGET` cells (M3), distinct instants times kept series, because a raw range over targets scraped at their own offsets gives nearly every sample its own row; whole series are kept in engine order while they fit, and the notice names the kept and total series and cells.
+- The rows and fields of a vector or a matrix are held to `RESULT_BYTE_BUDGET` bytes of JSON as well, counted exactly before any row is built, because every row repeats every field name; whole series are kept in engine order while they fit, a vector's fields are the label names of the series kept, and the notice names the kept and offered series and the budget.
+  The budget was measured under the 384 MiB heap the image ships with (`--max-old-space-size=384` in the `Dockerfile`), and M3's representative subquery takes 13.45 MiB of it at the compose server's label sets (`results.ts`), so on a server with longer label sets that subquery is cut by bytes while its 30,000 cells are far below the cell budget.
 - A truncated result carries a `QueryWarning` naming what was cut and how much, and reports itself limited on its own `pagination`, `wasLimited: true` with `hasMore: false`, which `POST /api/db/query` keeps (#1085, section 5.4).
-  So the stats strip shows the "limited" badge, and no next page is offered, because the cut is this provider's own bound and no offset advances it.
+  So the stats strip shows the "limited" badge, whose sentence, "Studio bounded this result. Anything beyond the bound is not in it.", names neither rows nor fetching, because these bounds leave out whole series, which in a matrix are columns, and the cell and byte budgets leave out series the provider already received; no next page is offered, because the cut is this provider's own bound and no offset advances it.
   The export menu over such a result still says it writes all the rows, which `docs/BACKLOG.md` U42 records.
 - The envelope's `warnings` and `infos` (for example "metric might not be a counter") become `QueryWarning` entries in the engine's own words, ahead of this provider's own.
 
@@ -510,12 +524,12 @@ Server text is data: a rule annotation, a HELP string or a target error is shown
 
 | Kind | Read | Parts |
 |---|---|---|
-| `metric` | metadata by the exact name, then by the family name with `_bucket`, `_sum`, `_count`, `_total` or `_created` removed | One part per distinct metadata entry (`family`, `type`, `help`, `unit`); past the `SOURCE_PART_LIMIT` (`8`) parts the source route accepts, parts 1 to 7 are single entries and part 8 is one JSON array holding the rest, so nothing the engine answered is dropped; with none, a refusal part that reads "The server holds no metadata for this name: metadata is collected per metric family from active scrape targets, so recording-rule outputs, ALERTS and classic histogram series have none." |
+| `metric` | metadata by the exact name, then by the family name with `_bucket`, `_sum`, `_count`, `_total` or `_created` removed | One part per distinct metadata entry (`family`, `type`, `help`, and `unit` only where the engine sends one); past the `SOURCE_PART_LIMIT` (`8`) parts the source route accepts, parts 1 to 7 are single entries and part 8 is one JSON array holding the rest, so nothing the engine answered is dropped; with none, a refusal part that reads "The server holds no metadata for this name: metadata is collected per metric family from active scrape targets, so recording-rule outputs, ALERTS and classic histogram series have none." |
 | `rule_group` | the rules listing entry (`exclude_alerts=true`), which already carries every field the source renders | `file`, `name`, `interval`, `limit`, `evaluationTime`, `lastEvaluation`, the rule count |
 | `recording_rule` | the rules listing entry (`exclude_alerts=true`), which already carries every field the source renders | `name`, `query`, `labels`, `health`, `lastError`, `evaluationTime`, `lastEvaluation` |
 | `alerting_rule` | the listing entry for the definition, then `rule_group[]`, `file[]` and `rule_name[]` without `exclude_alerts` for its live alerts, the rule picked by its occurrence among same-named rules | Part 1, the definition (`name`, `query`, `duration`, `keepFiringFor`, `labels`, `annotations`, `health`, `lastError`); part 2, the live `state` and the active alerts |
 | `scrape_pool` | the pools listing, which decides that the pool exists, then the pool's active targets | Target counts by health |
-| `target` | the pool read | `scrapeUrl`, `health`, `lastError`, `lastScrape`, `lastScrapeDuration`, `scrapeInterval`, `scrapeTimeout`, `labels`, `discoveredLabels` |
+| `target` | the pool read | `scrapeUrl`, `health`, `lastError`, `lastScrape`, `lastScrapeDuration`, `scrapeInterval` and `scrapeTimeout` where the engine sends them, `labels`, `discoveredLabels` |
 
 A name that does not exist answers a `QueryError` naming the segment.
 For a metric, existence is decided by the listing, because `/api/v1/metadata` answers `{}` both for an unknown name and for a real metric with no metadata.
@@ -538,8 +552,8 @@ Each surface reads the HTTP API only, and a surface that cannot give an honest n
 | `getHealth()` | `/-/healthy` and `/-/ready`, then `buildinfo` | Driven by the answers, never by identifying the product: `/health` is tried only after a 404 from `/-/healthy`; the first probe answering neither 200 nor a `/-/healthy` 404 that the `/health` probe superseded is named with its path and status, and ends the read before `buildinfo` is sent; a 401 or 403 is an `AuthenticationError` |
 | `getOverview()` | `buildinfo` (version), `runtimeinfo` (`startTime` and `serverTime`: uptime is the server's own clock minus its start time), `status/flags` (`web.max-connections`, a real `maxConnections`), `status/tsdb` (the metric count, M2) | `databaseSize` is "N/A" with `databaseSizeBytes` absent, because the API does not measure it; `tableCount` is the metric count and `indexCount` is 0; a server clock behind its start time reads the uptime "N/A"; a full label list that omits `__name__` refuses the overview with a `QueryError` rather than report a count it did not measure |
 | `getPerformanceMetrics()` | none | `cacheHitRatio` is absent and the panel renders unavailable |
-| `getTableStats()` | `/api/v1/status/tsdb?limit=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A"; the Tables panel counts those rows as tables and does not say the list is cut, because that tab takes no provider labels; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
-| `getStorageStats()` | `status/tsdb` `headStats` (series, chunks, min and max time), `runtimeinfo.storageRetention` | One row named `Head block: N series, M chunks`, with the head span and the retention as its location, and "no samples" as the span of an empty head; size "N/A" with `sizeBytes` 0, because the type requires a number (`docs/BACKLOG.md` D105) |
+| `getTableStats()` | `/api/v1/status/tsdb?limit=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A" beside the 0 the required `totalSizeBytes` carries (`docs/BACKLOG.md` D105); the provider's `tableStatsCaption`, "The metrics with the most head series, at most 50", heads the Tables tab, which then counts the rows as listed, under "Listed" rather than "Tables", and answers a search that matches none of them with "No listed table matches the search."; the caption heads the agent's table-stats reading too, which hands a model that 0 as each row's `totalSizeBytes`; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
+| `getStorageStats()` | `status/tsdb` `headStats` (series, chunks, min and max time), `runtimeinfo.storageRetention` | One row named `Head block: N series, M chunks`, with the head span and the retention as its location, and "no samples" as the span of an empty head; size "N/A" with `sizeBytes` 0, because the type requires a number (`docs/BACKLOG.md` D105); a TSDB status with no head statistics, the one VictoriaMetrics answers, is refused with a `QueryError` saying "The server reports no head block statistics: its TSDB status carries none, so the storage row has no series count, chunk count or sample span to show", because an empty list or a row of zeros would claim a measurement the server never sent |
 | `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty-state sentences from `getLabels()` saying Prometheus publishes no query log and no session list over its HTTP API |
 | `getIndexStats()` | none | `[]`: a Prometheus TSDB has no secondary index object to describe |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
@@ -586,9 +600,9 @@ Mapped from the envelope's `errorType`, not from the HTTP status, as Druid and T
 | any 3xx | `ConnectionError` naming the status and the `Location` origin |
 | TLS handshake or verification failure | `ConnectionError` carrying the Node error code |
 | refused connection, reset, DNS failure | `ConnectionError` |
-| a body that is not the API envelope (a proxy's HTML page, a 502) | `ConnectionError` that never quotes the body |
+| a body that is not the API envelope (a proxy's HTML page, a 502, or the plain-text 503 the server's own ready gate, `testReady` in `web/web.go`, answers while it starts up or shuts down) | `ConnectionError` naming the path and the status and the sources such an answer can have, without choosing one and without quoting the body |
 | a response past `RESPONSE_BYTE_CAP` | `QueryError` naming the cap |
-| an overview whose metric count cannot be measured (M2) | `QueryError` |
+| an overview whose metric count cannot be measured (M2), or a storage row whose TSDB status carries no head statistics | `QueryError` |
 | an invalid `host`, `port` or credential | `DatabaseConfigError` that never echoes the value |
 
 An `errorType` this build does not know is carried verbatim as the transport error's category and becomes a `QueryError` carrying the engine's message (the default arm of `errors.ts`), which covers `not_found` and `not_acceptable` on v3.13.3.
@@ -684,8 +698,8 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **On a server past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, plan mode grounds metrics only**, because the grounding walk stops at the metric folder's truncated batch (M7, `docs/BACKLOG.md` B84).
 - **A listed metric whose series went quiet before the hour is left out of the bulk column read**, and the inventory carries it with no columns ([§6.1](#metric-columns), `docs/BACKLOG.md` D107).
 - **The overview's metric count is unavailable only when a full list of `TSDB_LABEL_SCAN_LIMIT` label names omits the `__name__` entry** (M2), and a listed entry is the full count at any length of that list.
-- **The export menu says it writes all the rows of a result the series cap cut** ([§5.4](#54-caps-warnings-and-truncation), `docs/BACKLOG.md` U42).
-- **A column mixing numbers and `NaN` or `Inf` may chart as categorical** ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them)).
+- **The export menu says it writes all the rows of a result one of this provider's bounds cut** ([§5.4](#54-caps-warnings-and-truncation), `docs/BACKLOG.md` U42).
+- **The chart tab draws a missing sample, and a `NaN` or `Inf` among numbers, at 0**, so a raw range over targets scraped at their own offsets charts false zeros, while a stepped subquery charts correctly as long as every series has a sample at every step; a column mostly of `NaN` or `Inf` charts as categorical instead ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them), [§5.2](#52-result-shaping), `docs/BACKLOG.md` U44).
 - **Queries compete with the server's own rule evaluation** ([§3.4](#34-the-servers-query-slots-are-shared)).
 
 ---

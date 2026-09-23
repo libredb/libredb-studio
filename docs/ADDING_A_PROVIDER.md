@@ -19,15 +19,16 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Eight shipped type-ids need no driver: SQLite uses the built-in
+   establish before you start. Nine shipped type-ids need no driver: SQLite uses the built-in
    `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
    nothing but `fetch`/`node:https`. Couchbase goes over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
    ([clickhouse.md](./providers/clickhouse.md)), Apache Druid over `POST /druid/v2/sql`
    ([druid.md](./providers/druid.md)), Elasticsearch and OpenSearch over their SQL endpoints
    ([elasticsearch.md](./providers/elasticsearch.md) · [opensearch.md](./providers/opensearch.md)),
-   Apache Trino over its own client protocol ([trino.md](./providers/trino.md)), and libSQL over the
-   Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)). If it does need one, it
+   Apache Trino over its own client protocol ([trino.md](./providers/trino.md)), libSQL over the
+   Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)), and Prometheus over its
+   HTTP API, `/api/v1/*` ([prometheus.md](./providers/prometheus.md)). If it does need one, it
    will be something like `pg`,
    `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
 
@@ -875,8 +876,8 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      seven shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`
-      and `libsql`
+      eight shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
+      `libsql` and `prometheus`
       each add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default

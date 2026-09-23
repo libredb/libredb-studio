@@ -77,11 +77,11 @@ import {
 /**
  * How many metric names one listing holds before its count is a floor (#1085 4.3, M10).
  *
- * Below the inventory's 5,000 on purpose: the agent's grounding walk lists kinds in declaration
- * order and stops at its object budget, so a metric list as large as that budget would leave plan
- * mode no rule group, rule, pool or target. The design fixes 2,000;
- * `tests/fixtures/prometheus/README.md`, section "Measurements", entry M10, records the live check
- * that keeps it or the number that replaces it.
+ * It bounds the metric listing and the tree's Metrics count, and it keeps plan mode no room for
+ * the other kinds: the agent's grounding walk bounds the metric batch at the listing's length and
+ * stops at the first truncated batch, so past 2,000 names plan mode grounds metrics only
+ * (`docs/BACKLOG.md` B84). The design fixes 2,000; `tests/fixtures/prometheus/README.md`, section
+ * "Measurements", entry M10, records the live check that keeps it or the number that replaces it.
  */
 export const METRIC_LIST_CAP = 2000;
 

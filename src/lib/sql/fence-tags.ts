@@ -130,7 +130,7 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   // record, a ```promql block contradicted no connection and was recorded as a PostgreSQL
   // run's statement. A second type-id that runs PromQL is the moment to revisit this entry.
   // `cql` is absent on a reason the same rule does not leave standing, since ScyllaDB connects
-  // through `cassandra` too; docs/BACKLOG.md records it.
+  // through `cassandra` too; docs/BACKLOG.md B86 records it.
   promql: "prometheus",
 });
 

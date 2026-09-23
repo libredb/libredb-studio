@@ -196,7 +196,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | OpenSearch | `opensearch` | Search (SQL, read-only) | [providers/opensearch.md](./providers/opensearch.md) |
 | Apache Trino | `trino` | SQL (federated query engine) | [providers/trino.md](./providers/trino.md) |
 | Apache Cassandra | `cassandra` | SQL-shaped (CQL, wide-column) | [providers/cassandra.md](./providers/cassandra.md) |
-| Prometheus | `prometheus` | Time series (PromQL over HTTP) | [providers/prometheus.md](./providers/prometheus.md) |
+| Prometheus | `prometheus` | Time series (PromQL over HTTP, read-only) | [providers/prometheus.md](./providers/prometheus.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface

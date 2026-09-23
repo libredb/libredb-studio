@@ -28,19 +28,19 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D109, U17 · 54
+- [Drivers and connections](#drivers-and-connections) — D1–D110, U17 · 55
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U42 · 30
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U44 · 32
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3–DOC4 · 2
+- [Documentation](#documentation) — DOC3–DOC7 · 4
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H12 · 3
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B85 · 26
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B86 · 27
 
 ---
 
@@ -413,7 +413,7 @@ queries" where the truth is that the profiler is off.
 provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
 count of type-ids the type change touched is stated in the PR rather than discovered during it.
 
-### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 17 type-ids
+### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 18 type-ids
 
 Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
 round 17). `DatabaseOverview.activeConnections` and `DatabaseOverview.databaseSizeBytes` are optional
@@ -457,6 +457,7 @@ publishes a measured-looking zero - see D51, which is the same shape on the fiel
 right without being asked: `duckdb/introspect.ts` spreads the key conditionally and spells the string
 `"N/A"` when the database is in-memory. So it is a fourth correct provider rather than a fifteenth
 fabricating one, and it independently reached the same encoding this entry prescribes.
+Prometheus, the eighteenth type-id (#1085), leaves the key absent too (`overviewFrom` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts`), so the eleven that fabricate are eleven of eighteen.
 
 **Done when:** an unknown size is absent rather than 0 on the remaining eleven type-ids, a real zero
 still reads as zero, each provider's doc records it, and each provider's test pins both arms - the same
@@ -651,8 +652,9 @@ list it lands on still shows a bare name.
 
 ### D56. A Druid lookup's JSON definition is unreachable from the one URL a connection carries
 
-Fifteen of the seventeen shipped type-ids read object source under #789, measured by the census in
-`tests/isolated/object-source-declarations.test.ts`; druid and libredb are the two that read none.
+Sixteen of the eighteen shipped type-ids read object source, fifteen since #789 and `prometheus` since #1085,
+measured by the census in `tests/isolated/object-source-declarations.test.ts`; druid and libredb are
+the two that read none.
 Two of Druid's three kinds have nothing to read: a datasource and a system table were never written
 down as a statement, measured from the parser's own refusal, which enumerates every statement it
 expected and includes no form of `CREATE`. The third is different. A `lookup` IS authored, as a JSON
@@ -709,7 +711,7 @@ The smallest correct fix reads the connected provider out of the factory cache a
 `provider-meta` once the connection is warm, about ten lines. A `peekConnectedProvider(connectionId)`
 on `factory.ts` that returns the already-connected instance opens no socket and keeps
 `tests/unit/db-tunnel-discipline.test.ts` green, measured. The design question inside it is WHEN to
-re-read: an unconditional re-read costs a round trip on all seventeen engines and changes the
+re-read: an unconditional re-read costs a round trip on every engine and changes the
 capabilities object identity, invalidating every memo keyed on it.
 
 Two limits measured while writing this. It is NOT fleet-wide: `ProviderCapabilities` has exactly
@@ -965,7 +967,7 @@ None of the six was converted when the guard was hoisted (#789), because convert
 between one and two throws each, five provider suites assert on the exact wording, and a reworded
 throw is a behaviour change that does not belong folded inside a refactor. The cost of leaving them
 is that the hoist's second-order gain, that a new provider cannot silently forget one of the three
-guards, holds for nine of seventeen type-ids only.
+guards, holds for ten of eighteen type-ids only, `prometheus` the tenth since #1085.
 
 **Done when:** the six call `requireSourceKind`, with the five provider suites' assertions moved onto
 the guard's three sentences in the same commit, and the route layer either reuses one of those
@@ -1535,6 +1537,7 @@ No shipped engine trips it today, re-checked across all seventeen expectations: 
 libredb set the flag correctly, and Trino's only zero-counted kind, `materialized_view`, declares
 `hasColumns` and so is not an abstainer. This is a guard that refuses a legal provider, not a live
 red.
+The eighteenth expectation, Prometheus's (#1085), does not trip it either: it lists all six kinds with a count, the five that declare no `hasColumns` among them.
 
 Repro: take any expectation, add a kind the provider declares without `hasColumns` with a `want` of
 0, run it, then delete that kind from `expected.kinds` and run it again. Both throw the same message.
@@ -1572,18 +1575,24 @@ D37's consolidation removes this if the shared TLS path is built on the Promethe
 
 **Done when:** a Couchbase connection with TLS reaches a node addressed by an IPv6 literal, and a test drives `nodeRequestJson` against a local `node:https` server listening on `::1`, with the IPv4 case as its control.
 
-### D105. `StorageStats.sizeBytes` is required, so an engine that measures no size publishes a zero
+### D105. `StorageStats.sizeBytes` and `TableStats.totalSizeBytes` are required, so an engine that measures no size publishes a zero
 
 `StorageStats` in `src/lib/db/types.ts` declares `sizeBytes: number`, so a storage row carries a number even where the engine publishes no byte count for what the row names.
 Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
-The agent's `storage` reading forwards the field unchanged (`sizeBytes: store.sizeBytes`, `src/lib/agent/tools.ts:3004`), so a model is handed a zero-byte store that nobody measured.
+The agent's `storage` reading forwards the field unchanged (`sizeBytes: store.sizeBytes` in `CURATED_READINGS`, `src/lib/agent/tools.ts`), so a model is handed a zero-byte store that nobody measured.
 The search provider takes the other route and emits no storage row for a size it was not given (`toStorageStats` in `src/lib/db/providers/sql/search/index.ts`).
 D44 is the same fabrication on `DatabaseOverview.databaseSizeBytes`, where the type already allows absence; here the type itself forbids it.
 
-Found 2026-09-23 while mapping the Prometheus storage row (#1085, section 6.2).
-Not fixed in #1085: making the field optional changes a type every provider writes, and the agent's storage reading has to learn to carry an absence; neither is that PR's to change.
+`TableStats` makes the same demand of a table row: `totalSize` and `totalSizeBytes` are required, while `tableSize` and `tableSizeBytes` are optional, so a table whose bytes nobody measured carries `totalSize: "N/A"` beside a `totalSizeBytes` of 0.
+Six writers do that: `tableStatsFrom` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts` on every row since #1085, and before it `buildTableStats` in `src/lib/db/providers/sql/sqlite.ts` without `dbstat`, `readTableStats` in `src/lib/db/providers/sql/libsql/introspect.ts` for a table `dbstat` did not size, the table stats in `src/lib/db/providers/sql/duckdb/introspect.ts` for a table whose blocks `pragma_storage_info` could not size, `src/lib/db/providers/embedded/libredb.ts` on every row, and `toTableStats` in `src/lib/db/providers/sql/search/index.ts` for a closed index, which writes `"0 B"` beside it.
+The Tables and Storage tabs gate on the absent `tableSizeBytes` and draw "N/A", but the agent's `table-stats` reading does not: it forwards `totalSizeBytes: table.totalSizeBytes`, never projects `totalSize`, and passes `tableSize` and `tableSizeBytes` through as `undefined`, which its JSON rendering drops, so a model reads `"totalSizeBytes":0` beside `"indexSizeBytes":null`, the null the same reading writes for an index size nobody published.
+So the premise `docs/providers/sqlite.md` states for that shape, that every consumer gates on the absent `tableSizeBytes`, is false for this reader.
 
-**Done when:** `sizeBytes` can be absent, no provider writes 0 for a size it did not measure, and the agent's storage reading forwards an absence as an absence, with a test on that reading and on each provider that stops writing 0.
+Found 2026-09-23 while mapping the Prometheus storage row (#1085, section 6.2); the table half was found by the #1085 review the same day, through `inspectOperationsTool` over the real provider against the compose Prometheus, where all 50 rows reached the model as `"totalSizeBytes":0`.
+Not fixed in #1085: making either field optional changes a type every provider writes, and the agent's two readings have to learn to carry an absence; neither is that PR's to change.
+The table half has a remedy that needs no type change: the `table-stats` reading can forward `null` for `totalSizeBytes` wherever `tableSizeBytes` is absent, the gate the two tabs already apply, because every writer of a measured `totalSizeBytes` also sets `tableSizeBytes` today and every writer above leaves it out.
+
+**Done when:** no provider writes 0 for a storage or table size it did not measure, `sizeBytes` can be absent, and the agent's `storage` and `table-stats` readings forward an absence as an absence, with a test on each reading beside "an index the engine published no size for reaches the model as null, not as zero" in `tests/unit/lib/agent/tools.test.ts`, and on each provider that stops writing 0.
 
 ### D106. The `node:https` request paths are tested under Bun only, while production runs them under Node
 
@@ -1680,6 +1689,18 @@ Found 2026-09-23 while writing the Prometheus request path (#1085, section 3.4),
 Not fixed in #1085: the maintainer's decision for that PR is that it touches no other provider.
 
 **Done when:** a Couchbase or libSQL answer whose body cannot be read fails as that transport's own error, a 3xx is refused by `rejectRedirect` whether or not its body arrives, and a test drives each transport against a local server that answers a 302 and resets, with the whole 302 and a reset before any answer as its controls.
+
+### D110. The response byte cap is not sized against the heap the image ships with
+
+`RESPONSE_BYTE_CAP` in `src/lib/db/providers/timeseries/prometheus/http-transport.ts` bounds a Prometheus response at 32 MiB, and M12 confirmed it because it holds the largest representative answer four times over (1,930,719 decoded bytes, `tests/fixtures/prometheus/README.md`); it was never measured against the process that parses the body.
+The image runs that process with `--max-old-space-size=384` (`NODE_OPTIONS` in the `Dockerfile`), and the chart's default memory limit is `512Mi` (`charts/libredb-studio/values.yaml`).
+A body under the cap can exhaust that heap inside `JSON.parse`, before the transport decodes the envelope or the shaper applies any bound: measured 2026-09-23 on node v24.14.0, a 24,000,004-byte array of empty JSON objects aborted `node --max-old-space-size=384` inside `JSON.parse` with `Reached heap limit` and exit code 134.
+`RESULT_BYTE_BUDGET` in `src/lib/db/providers/timeseries/prometheus/results.ts` bounds what a parsed answer shapes into, and nothing bounds the parse itself.
+
+Found 2026-09-23 while measuring the result byte budget for #1085 (section 5.4).
+Not fixed in #1085: re-deciding M12, or parsing under a bound on what the parse may allocate, is a transport change of its own, and the one process every user shares is the one the parse runs in.
+
+**Done when:** the cap is re-measured against the 384 MiB heap and the chart's `512Mi` limit with the most expensive body shape under it, or the body is parsed under a bound on what the parse may allocate, and a test holds that bound.
 
 ## Value interpolation
 
@@ -2465,7 +2486,7 @@ X13 already names this site in its **Done when**, so the change that settles X13
 `describeExportScope` in `src/lib/export/scope.ts` words the export menu's summary from one condition: the grid can fetch a next page (the `pageOfferFor` answer `src/components/studio/BottomPanel.tsx` passes in) and the route's `pagination.hasMore` is true.
 Only then does it say "Writes the N rows loaded here." with its shortfall sentence; otherwise it says "Writes all N rows.", and it never reads `pagination.wasLimited`.
 A result a provider cut at its own bound meets neither half: since #1085 (section 5.4) `POST /api/db/query` keeps the Prometheus provider's `wasLimited: true` for a vector cut at the series cap, with `hasMore` false, and the engine cannot page, so no page is offered.
-So the stats strip shows "limited", which says rows beyond the bound were not fetched, while the export menu over the same result says every row is in the file.
+So the stats strip shows "limited", whose sentence says the result was bounded and that anything beyond the bound is not in it, while the export menu over the same result says every row is in the file.
 
 Measured 2026-09-23 end to end: the Prometheus provider's own `query`, over an injected `send` answering 501 series, returned 500 rows with its series notice; the route's rule gave `pagination` `{ hasMore: false, wasLimited: true }` and `pageOfferFor` no offer, and `describeExportScope` answered "Writes all 500 rows." with no shortfall.
 The control, 500 series with nothing cut, answers the same sentence, so the menu cannot tell a cut result from a whole one.
@@ -2481,6 +2502,33 @@ Found 2026-09-23 while making the query route keep a provider-reported `wasLimit
 Not fixed in #1085: the export dialog is shared by every engine, and that PR changes only how the route reports the bound.
 
 **Done when:** the summary says "all" only for a result nothing cut, a result whose `pagination.wasLimited` is true reads as the rows loaded here without an instruction to load more where no page can be fetched, and tests pin a result a provider cut, a bounded preview on an engine that cannot page, and a complete result.
+
+### U43. The gate's SQL keyword test prompts on a Redis read whose arguments include `update` and then `set`
+
+`isDangerousQuery` in `src/components/QuerySafetyDialog.tsx` runs its SQL keyword test in front of the Redis row of `NON_SQL_DESTRUCTIVE_VOCABULARY`, and that test's unanchored `UPDATE ... SET` probe finds the two words anywhere in the buffer.
+So a legal read whose arguments include `update` and then `set` opens the Query Safety Check dialog, and posts the command for AI analysis, on both execution paths: `MGET update set`, `HMGET h update set` and `EXISTS update set` each ask, while the Redis row alone answers no for each (measured against the two functions on 2026-09-23, with `DEL k` asking under both as the control).
+What the keyword test adds for Redis is a prompt on a buffer that leads with a SQL write keyword, and Redis has no command by any of those names, so that text errors without it.
+
+Found 2026-09-23 while giving PromQL its own row in that table for #1085 (section 2), the row that answers alone.
+Not fixed in #1085: a new provider changes no other provider's behaviour, and this is Redis's.
+
+**Done when:** the Redis row declares `decidesAlone: true`, as the Prometheus row does, and `still prompts for a destructive keyword under redis` in `tests/components/QuerySafetyDialog.test.tsx` becomes rows pinning that `MGET update set` does not ask while `DEL k` still does.
+
+### U44. The chart tab draws a missing value, and a `NaN` or `Inf` among numbers, at 0
+
+`chartData` in `src/components/DataCharts.tsx` maps each y cell through `typeof value === "number" ? value : Number(value) || 0`, so a `null` is drawn at 0, and so are the strings `"NaN"`, `"+Inf"` and `"-Inf"`, whose `Number` is `NaN`.
+`aggregateData`, which the aggregation and date-grouping controls reach, and the histogram and scatter mappings coerce the same way, and no `Line` or `Area` sets `connectNulls`.
+`analyzeField` counts only the filled cells and types a column numeric when more than 80% of them are numbers, so a sparse column is still drawn as a line and a non-finite cell among numbers is drawn at 0; a column with more non-finite cells than that is typed categorical, is not offered as a series, and the first such column replaces a date column as the default x axis.
+Since #1085 the Prometheus wide matrix meets this on an ordinary answer: its rows are the union of every series' instants, and a series with no sample at one holds `null` there (`shapeMatrix` in `src/lib/db/providers/timeseries/prometheus/results.ts`), so a raw range over targets scraped at their own offsets holds few of its series' samples on each row.
+Measured 2026-09-23 through the provider's shaper and the chart's own mapping: `up[5m]` from the compose server (`tests/fixtures/prometheus/v3.13.3/query-matrix-raw-all.json`) shaped into 29 rows of 4 series with 87 of its 116 cells `null`, and each was plotted at 0, which for `up` reads as a target that was down; `analyzeField("v", [1, 2, 3, 4, 5, "NaN"])` types its column numeric, so that `"NaN"` is plotted at 0 as well.
+A stepped subquery gives aligned rows and charts correctly while every series has a sample at every step, which is the only chart the manual pass of #1085 (section 9, gate 5) draws.
+Filtering the non-finite values in PromQL (`x > -Inf < +Inf`) takes them out of the answer, which in a matrix of several series leaves a `null` that is plotted at 0 too.
+The same mapping draws every engine's SQL `NULL` at 0.
+
+Found 2026-09-23 by the #1085 review.
+Not fixed in #1085: the wide matrix was chosen so that the chart needed no change (#1085, section 5.3), and drawing a `null` as a gap changes how every engine's `NULL` charts, a decision for the chart rather than for one provider.
+
+**Done when:** no mapping plots a `null` or a non-finite y cell at 0, a line over a date x axis joins the samples its series has (`connectNulls`), and `tests/components/DataCharts.test.tsx` pins a two-series raw range with interleaved instants and a numeric column holding `"NaN"`, each asserting that no 0 reaches the chart for a cell that held no number.
 
 ## Dependencies
 
@@ -2660,6 +2708,36 @@ guard, which is what makes the change stick - the guard bans the FORM, so a corr
 too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
 of those two were rewritten in round 17 and are the natural first pair; the round left them out because
 they were another lane's live files at the time, not because they are correct.
+
+### DOC6. Comments in other providers' files still count the fleet as it stood before #1085
+
+Four comments inside provider directories, one test comment beside them and three sentences of other providers' docs count the providers as they stood before #1085 made the shipped type-ids eighteen, and that PR could not edit them, because a new provider changes no other provider's files.
+- `src/lib/db/providers/document/mongodb.ts`, the `describeObjects` docblock: "this method is the ONE place in the seventeen providers where a per-object read survives".
+  Still true of eighteen, because the Prometheus bulk read is one series read; the count is what is stale.
+- `src/lib/db/providers/sql/druid/objects.ts`, point 4 of the header: "the guard the other sixteen providers write is absent here".
+  Prometheus writes that guard too, answering a kind with no columns with `{ details: [] }` and no read, so the others are seventeen.
+- `src/lib/db/providers/sql/libsql/objects.ts` and `src/lib/db/providers/sql/sqlite.ts`, on why no synthetic `main` container is invented "to make the shape match the other sixteen engines", and the same words in `tests/integration/db/sqlite-provider.test.ts`.
+  No number makes that true: libSQL, SQLite, Elasticsearch, OpenSearch and Prometheus all declare `containerLevels: []`, so the other engines are not a set that has a container level.
+- `docs/providers/mongodb.md`, twice, on `HealthInfo.slowQueries` becoming optional "across all 17 type-ids", and `docs/providers/mysql.md`, on what "the other sixteen provider test files would receive".
+  Each counts one type-id short now.
+
+Found 2026-09-23 by the #1085 review.
+Not fixed in #1085: that PR edits no file of another provider.
+
+**Done when:** each names the set it counts instead of a number, or the number its set has, and the provider docs that mirror them (`docs/providers/mongodb.md`, `druid.md`, `libsql.md` and `sqlite.md`) say the same, as do the three doc sentences listed with them.
+
+### DOC7. Four translated READMEs still say the SSL/TLS panel takes effect on nine engines
+
+The transport paragraph of `README_es.md`, `README_ja.md`, `README_hi.md` and `README_ur.md` carries wording `README.md` replaced in #466: it names the engines the SSL/TLS panel takes effect on, PostgreSQL to Trino, and says that Oracle, MongoDB and Redis ignore the option.
+`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
+#1085 added Prometheus to that list in all four files, because each file's new Prometheus row tells the reader to enable TLS, and changed nothing else there.
+`README_zh.md` already carries the English wording.
+Each file's translation-lag banner names `README.md` as the one that wins, and `bun run readme:check` reads no prose, so nothing flags the paragraph.
+
+Found 2026-09-23 by the #1085 review.
+Not fixed in #1085: rewriting one paragraph in four languages is the per-language follow-up #1055 leaves to a speaker of each.
+
+**Done when:** each of the four paragraphs says what `README.md` says about the panel, Oracle's certificate caveat and the libSQL connection string included.
 
 ---
 
@@ -3773,3 +3851,16 @@ Found 2026-09-23 while classifying the agent surfaces the Prometheus provider re
 Not fixed in #1085: a seed field for the pair changes the operator's seed contract for every engine, and its password needs the `${vault:...}` resolution `password` has (`RESOLVABLE_FIELDS` in `src/lib/seed/credential-resolver.ts`), neither of which that PR touches.
 
 **Done when:** a seed can declare `agentUser` and `agentPassword`, the password resolves as `password` does, a run on that seed opens its execution profiles as `agentUser`, and a test drives a run's acquisition from such a seed.
+
+### B86. A block tagged `cql` is read as the plan deliverable on every engine, not only Cassandra
+
+`cql` is in `QUERY_FENCE_ALIASES` and not in `ALIAS_ENGINES` (`src/lib/sql/fence-tags.ts`), so `fenceTagEngine("cql")` is `null`, and `fencedBlock` in `src/lib/agent/plan-draft.ts` reads a tag that names no engine as one that cannot contradict the connection.
+So on a PostgreSQL plan run a CQL block written before the `postgres` block is recorded as `plan-statement-drafted`, stamped `postgres` and judged by the SQL guard, and a closing whose only block is tagged `cql` is read as the run's statement, so the run is not asked for one.
+The reason the comment at the `cassandra` entry of `ENGINE_FENCE_TAGS` gives, that ScyllaDB speaks CQL too, does not hold for this record: an entry names the type-id a block's text runs on, and ScyllaDB connects through `cassandra` (`src/lib/db/compatibility.ts`).
+`promql` had the same flaw, and #1085 fixed it by naming `prometheus`.
+Reproduced 2026-09-23 on `main` and on the #1085 branch: `readPlanStatement` over a `cql` block then a `postgres` block, on dialect `postgres`, returns the CQL, and over a `cql` block alone returns it as the statement.
+
+Found 2026-09-23 in the #1085 review.
+Not fixed in #1085: the alias predates it, and that PR changes no existing arm's behaviour (#1085, section 3.5).
+
+**Done when:** `fenceTagEngine("cql")` is `"cassandra"`, a `cql` block before a `postgres` block on a PostgreSQL plan run records the PostgreSQL statement, a `cql`-only closing there records none and is asked for one, a `cql` block on a Cassandra run is still the deliverable, and the `cql` test in `tests/unit/lib/sql/fence-tags.test.ts` and the comment at the `cassandra` entry state the type-id rule.

@@ -65,8 +65,8 @@
 *   **Key-Value Stores:**
     *   **Redis:** Full support via the official `ioredis` driver — plain-command and JSON query styles, prefix-grouped key "schema" through a non-blocking `SCAN`, and `INFO`/`SLOWLOG`/`CLIENT LIST`-derived health and metrics.
 *   **Time-Series Stores:**
-    *   **Prometheus:** PromQL over the Prometheus HTTP API with **no driver dependency**, the first engine whose query language is neither SQL nor JSON.
-        The editor text reaches the server unchanged, results land in the grid and in the chart tab (a range becomes one line per series), and `NaN` and `Inf` stay the engine's strings.
+    *   **Prometheus:** PromQL over the Prometheus HTTP API with **no driver dependency**, the first engine to declare a `queryLanguage` of its own, `promql` beside `sql` and `json`.
+        The editor text reaches the server unchanged, results land in the grid and in the chart tab (a stepped subquery such as `rate(x[5m])[1h:1m]` becomes one line per series, but the chart draws a missing sample, and a `NaN` or `Inf` among numbers, at 0, so a raw range over targets scraped at their own offsets charts false zeros; `docs/BACKLOG.md` U44), and `NaN` and `Inf` stay the engine's strings.
         Metrics, rule groups, recording and alerting rules, scrape pools and scrape targets are browsable, with a firing alert or a down target marked in the tree.
         Read-only by design: no admin endpoint, no remote write, no maintenance.
         See [`providers/prometheus.md`](providers/prometheus.md).

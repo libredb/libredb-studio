@@ -24,7 +24,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > `src/lib/db/compatibility.ts` minus the embedded `libredb`, which `EXTERNAL` in the same
 > file already splits out; read it from there rather than from this file. The catalog entry
 > is version-scoped, so do not publish the seventeen-engine wording against a version that
-> predates Prometheus — send the sixteen-engine variant (the DuckDB release onwards), the fourteen-engine one (0.13.0 onwards), the ten-engine one
+> predates Prometheus: send the sixteen-engine variant (the DuckDB release onwards; its size-cut body is `pcsc-listing.html` at 06a4cb11), the fourteen-engine one (0.13.0 onwards), the ten-engine one
 > (0.11.0 onwards) or the eight-engine one instead.
 >
 > **The scope goes with the count.** Browsing and querying reach all seventeen; editing data does
@@ -84,8 +84,10 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > `operator/helm-charts/libredb-studio/` by hand, or the sync guard fails the required check.
 >
 > What *is* release-coupled is every marketplace description that spells the count:
-> `deploy/azure`, `deploy/railway` and `deploy/caprover` all say seventeen as of the Prometheus
-> release (#1085).
+> `deploy/azure`, `deploy/railway` and `deploy/caprover` all say seventeen from the merge of #1085,
+> because `tests/unit/lib/catalog-copy-engine-count.test.ts` holds every counted numeral there to
+> `EXTERNAL_DATABASE_TYPES` on `main`.
+> So until the CapRover version default and the Railway image pin move from 0.16.2 to a release that carries Prometheus, those two name a tag one engine short of their own description, the one exception to the rule below that the number is true at the tag it names.
 > At the DuckDB release they said sixteen - and all three were still on fourteen when it landed, a full engine behind, because
 > libSQL had moved the code and not them. `deploy/railway/template.json` and
 > `deploy/caprover/libredb-studio.yml` were on thirteen once for the same reason: each channel
@@ -180,9 +182,9 @@ partner contact rather than sending them one at a time.
 
 | Field on the page | Published value | Should be |
 |---|---|---|
-| Version | LibreDB Studio 0.9.44 | 0.13.5, with the release link pointing at <https://github.com/libredb/libredb-studio/releases/tag/0.13.5> — the sixteen-engine wording in this file is accurate as of that release, which is the one DuckDB ships in |
-| Key features | "Seven database engines" | sixteen — the accuracy gate above is satisfied as of 0.13.5, the release DuckDB ships in |
-| Short and long description | the pre-0.11.0 revision, which names seven engines and an AI that writes SQL from natural language | the text in this file — sixteen engines, and no natural-language-to-SQL claim: that feature was removed from the product |
+| Version | LibreDB Studio 0.9.44 | 0.13.5 when this row was written, with the release link pointing at <https://github.com/libredb/libredb-studio/releases/tag/0.13.5>; resolved by the weekly import, which carries 0.16.2 as of 2026-09-23 (the note of that date below) |
+| Key features | "Seven database engines" | sixteen while the page carries a release before Prometheus, 0.16.2 as of 2026-09-23, and seventeen, the wording in this file, from the release that carries Prometheus (#1085) |
+| Short and long description | the pre-0.11.0 revision, which names seven engines and an AI that writes SQL from natural language | until the page carries the release with Prometheus, the sixteen-engine body at 06a4cb11 (`git show 06a4cb11:deploy/rancher/pcsc-listing.html`); from that release, `pcsc-listing.html` as it stands, seventeen engines. No natural-language-to-SQL claim either way: that feature was removed from the product |
 | Hardware Architecture | x86-64 | x86-64 and Arm64 (`ghcr.io/libredb/libredb-studio` is linux/amd64 + linux/arm64) |
 
 Two open questions for the same mail: whether the version field can track the latest
@@ -237,6 +239,7 @@ The description is still the pre-0.11.0 text: the long description above did not
 `pcsc-listing.html` is the body cut to fit, and it is what goes to SUSE from now on.
 It answers to the same accuracy gates as this file, plus the size gate in `tests/unit/pcsc-listing.test.ts`, which counts line breaks as CRLF because we do not know how the form counts them.
 The open question to SUSE is whether their import can read the listing from a chart field; if it can, the paste step goes away.
+Since #1085, `app-readme.md` and `pcsc-listing.html` name seventeen engines, one more than #1168 and the page's 0.16.2 carry, so neither goes out before a release that carries Prometheus reaches the catalog.
 
 Vendor naming, as settled: the page heads the partner as **Sekoya** (the legal entity,
 Sekoya Grup Bilisim ve Teknoloji Ltd. Sti.) with the product named **LibreDB Studio**.

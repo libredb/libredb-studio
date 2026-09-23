@@ -7,8 +7,9 @@
  * being true (the same reasoning as `tests/unit/provider-docs-monitoring-citations.test.ts`).
  * So every quoted value is read back against its constant, the dialog strings against what
  * `DB_UI_CONFIG` declares, the cancellation claim against the method the routes detect by
- * presence, and the sentences a user reads in the tree and the source view against the object
- * surface that writes them.
+ * presence, the sentences a user reads in the tree and the source view against the object
+ * surface that writes them, the escape of the PromQL string rule against the builder, and the
+ * Tables caption and the storage refusal against the provider and the monitoring reader.
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -19,7 +20,11 @@ import { isCountSampled, SOURCE_PART_LIMIT } from "@/lib/db/object-kinds";
 import { QUERY_CONCURRENCY_LIMIT } from "@/lib/db/providers/timeseries/prometheus/concurrency";
 import { RESPONSE_BYTE_CAP } from "@/lib/db/providers/timeseries/prometheus/http-transport";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
-import { TSDB_LABEL_SCAN_LIMIT, TSDB_TOP_METRICS } from "@/lib/db/providers/timeseries/prometheus/monitoring";
+import {
+  storageStatsFrom,
+  TSDB_LABEL_SCAN_LIMIT,
+  TSDB_TOP_METRICS,
+} from "@/lib/db/providers/timeseries/prometheus/monitoring";
 import {
   DESCRIBE_SERIES_CAP,
   INVENTORY_WINDOW_MS,
@@ -27,7 +32,8 @@ import {
   type ObjectsTransport,
   PrometheusObjects,
 } from "@/lib/db/providers/timeseries/prometheus/objects";
-import { MATRIX_SAMPLE_BUDGET } from "@/lib/db/providers/timeseries/prometheus/results";
+import { labelNotation } from "@/lib/db/providers/timeseries/prometheus/promql";
+import { MATRIX_SAMPLE_BUDGET, RESULT_BYTE_BUDGET } from "@/lib/db/providers/timeseries/prometheus/results";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -63,8 +69,27 @@ describe("the measurement table quotes the constants the code uses", () => {
     ["TSDB_LABEL_SCAN_LIMIT", TSDB_LABEL_SCAN_LIMIT],
     ["INVENTORY_WINDOW_MS", INVENTORY_WINDOW_MS],
     ["SOURCE_PART_LIMIT", SOURCE_PART_LIMIT],
+    ["RESULT_BYTE_BUDGET", RESULT_BYTE_BUDGET],
   ] as const)("the fixed constant %s is quoted with its value", (name, value) => {
     expect(DOC).toContain(`\`${name}\` (\`${value}\`)`);
+  });
+});
+
+describe("the PromQL string rule quotes the escape the builder writes", () => {
+  // Both characters are built from their codes rather than typed: a tool that decodes a typed
+  // escape turns it into the character it names, which is how the doc came to show the one literal
+  // the lexer refuses where it meant to show the escape.
+  const replacement = String.fromCharCode(0xfffd);
+
+  test("a U+FFFD in a name is written as the six-character escape, and the doc shows that escape", () => {
+    const escape = labelNotation(replacement).slice(1, -1);
+    expect(escape).toBe(`${String.fromCharCode(92)}ufffd`);
+    expect(DOC).toContain(`the escape \`${escape}\``);
+  });
+
+  test("the doc holds no U+FFFD of its own", () => {
+    // The test above is the control: it reads the same text and finds the escape there.
+    expect(DOC).not.toContain(replacement);
   });
 });
 
@@ -184,5 +209,27 @@ describe("the object section quotes the sentences the object surface writes", ()
 
     expect(value).toBeDefined();
     expect(DOC).toContain(`\`${value?.type}\``);
+  });
+});
+
+describe("the monitoring table quotes what the Tables and Storage tabs are told", () => {
+  test("the getTableStats row names the caption the provider declares", () => {
+    const caption = new PrometheusProvider(CENSUS_CONNECTION.prometheus).getLabels().tableStatsCaption;
+    expect(caption).toBeDefined();
+    expect(rowOf("`getTableStats()`")).toContain(`"${caption}"`);
+  });
+
+  test("the getStorageStats row quotes the refusal of a TSDB status with no head statistics", () => {
+    let refusal: unknown;
+    try {
+      storageStatsFrom(
+        { seriesByMetric: [], valuesByLabel: [] },
+        { startTime: "2026-09-23T10:00:00Z", serverTime: "2026-09-23T12:00:00Z", storageRetention: "15d" },
+      );
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(Error);
+    expect(rowOf("`getStorageStats()`")).toContain(`"${(refusal as Error).message}"`);
   });
 });

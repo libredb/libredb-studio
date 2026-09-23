@@ -1402,8 +1402,8 @@ services:
   # -- Prometheus HTTP API -------------------------------------------------
 
   # VictoriaMetrics single-node, the wire-compatible relative of the `prometheus` provider
-  # (#1085 section 7): the Prometheus querying API on 8428, answered in MetricsQL, a superset
-  # of PromQL. The relative is claimed for PromQL only.
+  # (#1085 section 7): the Prometheus querying API on 8428, evaluated by MetricsQL, its own
+  # query language. The relative is claimed for PromQL only.
   #
   # PINNED to v1.152.0, the build the gate-4 probe ran against. The v1.136.x LTS line is not
   # published as an open-source image (#1085 section 7: `v1.136.15` answers 404 on Docker

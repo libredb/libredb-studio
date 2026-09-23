@@ -1174,7 +1174,7 @@ describe("assertObjectSurface and the object source read", () => {
     ]);
   });
 
-  test("a provider that declares nothing and implements nothing passes, which is fourteen of seventeen", async () => {
+  test("a provider that declares nothing and implements nothing passes, which is every edit abstainer", async () => {
     // The zero-iteration case, asserted rather than assumed: this is the state of most of the
     // fleet, so if it threw, every abstaining provider's suite would be red. The positive test at
     // `:1005` already drives this double; this one names WHY it must keep passing.

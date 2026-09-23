@@ -846,9 +846,10 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
   });
 
   // The eight dialects no row could be measured for: Druid takes no INSERT without the
-  // MSQ extension, the two search endpoints parse no CREATE TABLE, the other four declare
-  // `queryLanguage: "json"` and `prometheus` declares `"promql"`, so no statement is ever
-  // built for them to read.
+  // MSQ extension, the two search endpoints and Couchbase parse no CREATE TABLE (a SQL++
+  // collection takes no columns), and MongoDB, Redis and the embedded store declare
+  // `queryLanguage: "json"` and `prometheus` declares `"promql"`, so no SQL statement is
+  // ever built for those four to read.
   // A file for one of those is a file meant to run somewhere else, so it gets the same
   // portable spelling as no dialect at all rather than a guessed row.
   test("writes portable standard SQL for the dialects that parse no CREATE TABLE", () => {

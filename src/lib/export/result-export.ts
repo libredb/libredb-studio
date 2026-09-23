@@ -324,11 +324,14 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  *
  * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
  * inherit a silently wrong answer. The eight dialects with NO row measured have an
- * empty one — Druid takes no INSERT at all without the MSQ extension, the two search
- * endpoints parse no CREATE TABLE, the other four declare `queryLanguage: "json"` and
- * `prometheus` declares `"promql"`, so no statement is ever built for them to read. Their
- * file is by definition meant to run somewhere else, so every bare name in it is re-spelled
- * portably rather than kept as one engine's private word.
+ * empty one. Druid takes no INSERT at all without the MSQ extension. The two search
+ * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
+ * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
+ * `supportsCreateTable: false`. MongoDB, Redis and the embedded store declare
+ * `queryLanguage: "json"` and `prometheus` declares `"promql"`, so no SQL statement is
+ * ever built for those four to read. A file for any of the eight is by definition meant to
+ * run somewhere else, so every bare name in it is re-spelled portably rather than kept as
+ * one engine's private word.
  */
 const NOTHING_STANDS_ALONE: readonly string[] = [];
 

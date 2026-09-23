@@ -2684,6 +2684,8 @@ the role's own grants are the whole boundary (A3).
   The inventory's `truncated` tells the run that the reading is incomplete, and what it cannot reach is the rule groups, rules, scrape pools and targets a question about alerts or scrape health needs.
 - **B85**: the least-privilege `agentUser` this document names for every acquisition never reaches a run, because a run opens only on a seed and the seed schema carries neither `agentUser` nor `agentPassword`, so a seed file that sets them loses both without an error.
   Until that changes, an agent runs as a least-privileged role only where the seed's own `user` is that role.
+- **B86**: a block tagged `cql` is read as a plan run's statement on every engine, because `cql` names no engine in `src/lib/sql/fence-tags.ts`, so on a PostgreSQL run a CQL block written before the SQL is recorded as the run's statement and a CQL-only closing is read as one.
+  `promql` had the same flaw and names `prometheus` since #1085.
 
 **Settled as limits rather than as work.** The eight below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet

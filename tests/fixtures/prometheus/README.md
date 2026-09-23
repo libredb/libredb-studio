@@ -162,7 +162,7 @@ A stepped subquery's series share their instants, so its cells are about its sam
 Representative subquery: `{__name__=~".+"}[1h:1m]` with `limit=500`, run once the head held 65.8 minutes of data: 500 series, 30000 grid cells, 29940 samples (floats and histograms together), 1930719 bytes, 64.5 bytes per sample.
 Its notices: `results truncated due to limit`.
 Decision: `MATRIX_SAMPLE_BUDGET` = `250000` (candidate `250000`, confirmed): 4 x the representative subquery's 30000 grid cells (distinct instants times series) is 120000.
-A matrix of exactly the budget at this server's mix is about 15.4 MiB, below `RESPONSE_BYTE_CAP`, so the budget, not the byte cap, is what cuts such an answer.
+A matrix of exactly the budget at this server's mix is about 15.4 MiB, below `RESPONSE_BYTE_CAP`, so the byte cap does not refuse such an answer; the rows it shapes into are larger, because the grid repeats every column name in every row, and `RESULT_BYTE_BUDGET` in `results.ts` bounds those separately.
 The grid half of M3 needs the provider and is observed in the live browser pass, not here.
 
 ### M5. Credentials the server does not need
@@ -186,7 +186,7 @@ So on Prometheus 3.13.3 each of the four reads reports its own truncation in the
 ### M10. The metric list cap
 
 Measured by `bun probe-prometheus.ts capture` at 2026-09-23T10:16:48.509Z.
-Rule (#1085 M10): 2000 stands unless the live tree or the agent walk shows it wrong; the agent-walk half is M7, which the live plan-mode run decides.
+Rule (#1085 M10): 2000 stands unless the live tree or the agent walk shows it wrong; the agent-walk half is M7, settled from the code, because this server holds far fewer names than the cap (`docs/BACKLOG.md` B84).
 Measured: `label-values-names.json`, the last hour's metric names, holds 344 names.
 Decision: `METRIC_LIST_CAP` = `2000` (candidate `2000`, confirmed): the compose server holds 344 metric names in the last hour, so the cap does not bite here.
 

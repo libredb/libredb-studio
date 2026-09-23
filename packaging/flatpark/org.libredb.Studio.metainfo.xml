@@ -54,7 +54,7 @@
       <li>OpenSearch (read-only)</li>
       <li>Apache Trino</li>
       <li>Apache Cassandra and ScyllaDB</li>
-      <li>Prometheus</li>
+      <li>Prometheus (read-only)</li>
     </ul>
     <p>What you get:</p>
     <ul>
