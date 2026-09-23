@@ -260,6 +260,22 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
 
+/** The field copy a `DatabaseUIConfig` may declare (#1085): labels and hints keyed by field. */
+interface MockFieldCopy {
+  readonly fieldLabels?: Readonly<Record<string, string>>;
+  readonly fieldHints?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The copy each engine DECLARES for its connection fields (#1085), mirrored from the real table the
+ * way MOCK_CONNECTION_FIELDS mirrors its field lists. No shipped entry declares any, which
+ * tests/unit/lib/db-ui-config.test.ts pins against the real table, so this starts empty.
+ */
+const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {};
+
+/** Copy one test declares on top of the mirrored table, reset before every test. */
+let mockDeclaredCopy: MockFieldCopy = {};
+
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     icon: () => null,
@@ -269,8 +285,15 @@ mock.module("@/lib/db-ui-config", () => ({
     // Mirrors the real config: the URI-addressed providers offer the toggle.
     showConnectionStringToggle: type === "mongodb" || type === "couchbase",
     connectionFields: mockFields(type),
+    ...MOCK_FIELD_COPY[type],
+    ...mockDeclaredCopy,
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
+  // The real pair's rule, mirrored the way `isFileBased` below mirrors its own: the modal reads
+  // its field copy through these two, and the real ones run in tests/unit/lib/db-ui-config.test.ts.
+  connectionFieldLabel: (config: MockFieldCopy, field: string, fallback: string) =>
+    config.fieldLabels?.[field] ?? fallback,
+  connectionFieldHint: (config: MockFieldCopy, field: string) => config.fieldHints?.[field],
   getDBIcon: () => () => null,
   getDBColor: () => "text-hue-blue",
   // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
@@ -322,6 +345,7 @@ describe("ConnectionModal", () => {
 
   beforeEach(() => {
     mockFormOverrides = {};
+    mockDeclaredCopy = {};
     mockSetType.mockClear();
     mockSetName.mockClear();
     mockSetQueryTimeout.mockClear();
@@ -1120,5 +1144,252 @@ describe("ConnectionModal", () => {
 
     const passphraseInput = container.querySelector('input[placeholder="Key passphrase (if encrypted)"]');
     expect(passphraseInput?.getAttribute("autocomplete")).toBe("new-password");
+  });
+
+  /*
+    The copy an engine DECLARES for a connection field (#1085). `DatabaseUIConfig.fieldLabels` and
+    `fieldHints` are read before this dialog's own words, and no shipped entry declares either. So
+    the census pins every shipped type's field labels as they were before the declaration existed,
+    and the cases after it declare copy for every field and read it back from each place a field is
+    drawn. The copy is synthetic and lives in `mockDeclaredCopy`; the real table's is pinned in
+    tests/unit/lib/db-ui-config.test.ts, which runs the real helpers.
+  */
+  describe("declared connection-field copy (#1085)", () => {
+    /** Every connection field, in the order `DatabaseUIConfig.connectionFields` names them. */
+    const EVERY_FIELD = [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "schema",
+      "connectionString",
+      "serviceName",
+      "instanceName",
+      "localDataCenter",
+      "authSource",
+      "apiKeyId",
+      "apiKeySecret",
+    ] as const;
+
+    /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
+    const fieldLabelsOf = (container: HTMLElement): Record<string, string> => {
+      const labels: Record<string, string> = {};
+      for (const field of EVERY_FIELD) {
+        const label = container.querySelector(`label[for="${field}"]`);
+        if (label !== null) labels[field] = label.textContent ?? "";
+      }
+      return labels;
+    };
+
+    /** Each declared field hint a render draws, keyed by its field. */
+    const fieldHintsOf = (container: HTMLElement): Record<string, string> => {
+      const hints: Record<string, string> = {};
+      for (const field of EVERY_FIELD) {
+        const hint = container.querySelector(`[data-testid="${field}-hint"]`);
+        if (hint !== null) hints[field] = hint.textContent ?? "";
+      }
+      return hints;
+    };
+
+    const NETWORKED = { host: "Host & Instance", user: "Username", password: "Password", database: "Database Name" };
+    const CREDENTIALS_ONLY = { host: "Host & Instance", user: "Username", password: "Password" };
+    const FILE_PATH = { database: "Database File Path" };
+
+    /**
+     * [case, type, form state, labels drawn, declared hints drawn] for every shipped type, read off
+     * the dialog's code before the declaration existed, under the field lists this file mirrors.
+     */
+    const SHIPPED: readonly (readonly [
+      string,
+      string,
+      Record<string, unknown>,
+      Record<string, string>,
+      Record<string, string>,
+    ])[] = [
+      ["postgres", "postgres", {}, NETWORKED, {}],
+      ["mysql", "mysql", {}, NETWORKED, {}],
+      ["redis", "redis", {}, NETWORKED, {}],
+      ["oracle", "oracle", {}, NETWORKED, {}],
+      ["mssql", "mssql", {}, NETWORKED, {}],
+      ["clickhouse", "clickhouse", {}, NETWORKED, {}],
+      ["mongodb", "mongodb", {}, { ...NETWORKED, authSource: "Authentication Database" }, {}],
+      [
+        "mongodb in connection-string mode",
+        "mongodb",
+        { mongoConnectionMode: "connectionString" },
+        { connectionString: "Connection URI", database: "Database Name (optional override)" },
+        {},
+      ],
+      ["couchbase", "couchbase", {}, { ...NETWORKED, database: "Bucket Name" }, {}],
+      [
+        "couchbase in connection-string mode",
+        "couchbase",
+        { mongoConnectionMode: "connectionString" },
+        { connectionString: "Connection URI", database: "Bucket Name (optional override)" },
+        {},
+      ],
+      ["trino", "trino", {}, { ...NETWORKED, database: "Catalog Name", schema: "Schema Name" }, {}],
+      [
+        "cassandra",
+        "cassandra",
+        {},
+        { ...NETWORKED, database: "Keyspace Name", localDataCenter: "Local Data Center" },
+        {},
+      ],
+      ["libsql", "libsql", {}, { host: "Host & Instance", password: "Auth Token" }, {}],
+      ["druid", "druid", {}, CREDENTIALS_ONLY, {}],
+      [
+        "elasticsearch",
+        "elasticsearch",
+        {},
+        { ...CREDENTIALS_ONLY, apiKeyId: "API Key ID", apiKeySecret: "API Key Secret" },
+        {},
+      ],
+      ["opensearch", "opensearch", {}, CREDENTIALS_ONLY, {}],
+      ["sqlite", "sqlite", {}, FILE_PATH, {}],
+      ["duckdb", "duckdb", {}, FILE_PATH, {}],
+      ["libredb", "libredb", {}, FILE_PATH, {}],
+    ];
+
+    test.each(SHIPPED)(
+      "%s draws the field labels it drew before any declaration, and no declared hint",
+      (_case, type, form, labels, hints) => {
+        mockFormOverrides = { type, ...form };
+        const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+        expect(fieldLabelsOf(container)).toEqual(labels);
+        expect(fieldHintsOf(container)).toEqual(hints);
+      },
+    );
+
+    const declaredLabel = (field: string): string => `Declared label for ${field}`;
+    const declaredHint = (field: string): string => `Declared hint for ${field}.`;
+    const labelsFor = (...fields: string[]): Record<string, string> =>
+      Object.fromEntries(fields.map((field) => [field, declaredLabel(field)]));
+    const EVERY_FIELD_COPY: MockFieldCopy = {
+      fieldLabels: Object.fromEntries(EVERY_FIELD.map((field) => [field, declaredLabel(field)])),
+      fieldHints: Object.fromEntries(EVERY_FIELD.map((field) => [field, declaredHint(field)])),
+    };
+
+    /** [case, type, form state, labels drawn, fields whose declared hint is drawn], every field's copy declared. */
+    const DECLARED: readonly (readonly [
+      string,
+      string,
+      Record<string, unknown>,
+      Record<string, string>,
+      readonly string[],
+    ])[] = [
+      [
+        "postgres",
+        "postgres",
+        {},
+        labelsFor("host", "user", "password", "database"),
+        ["host", "port", "user", "password", "database"],
+      ],
+      [
+        "mongodb",
+        "mongodb",
+        {},
+        labelsFor("host", "user", "password", "database", "authSource"),
+        ["host", "port", "user", "password", "database", "authSource"],
+      ],
+      [
+        "mongodb in connection-string mode",
+        "mongodb",
+        { mongoConnectionMode: "connectionString" },
+        {
+          connectionString: declaredLabel("connectionString"),
+          database: `${declaredLabel("database")} (optional override)`,
+        },
+        ["connectionString", "database"],
+      ],
+      [
+        "trino",
+        "trino",
+        {},
+        labelsFor("host", "user", "password", "database", "schema"),
+        ["host", "port", "user", "password", "database", "schema"],
+      ],
+      [
+        "cassandra",
+        "cassandra",
+        {},
+        labelsFor("host", "user", "password", "database", "localDataCenter"),
+        ["host", "port", "user", "password", "database", "localDataCenter"],
+      ],
+      ["libsql", "libsql", {}, labelsFor("host", "password"), ["host", "port", "password"]],
+      [
+        "elasticsearch",
+        "elasticsearch",
+        {},
+        labelsFor("host", "user", "password", "apiKeyId", "apiKeySecret"),
+        ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
+      ],
+      ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
+    ];
+
+    test.each(DECLARED)(
+      "%s draws the declared label and hint of every field it draws",
+      (_case, type, form, labels, hinted) => {
+        mockFormOverrides = { type, ...form };
+        mockDeclaredCopy = EVERY_FIELD_COPY;
+        const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+        // The declaration wins over the per-type chains too: Cassandra's "Keyspace" and libSQL's
+        // "Auth Token" are replaced like every other word.
+        expect(fieldLabelsOf(container)).toEqual(labels);
+        expect(fieldHintsOf(container)).toEqual(
+          Object.fromEntries(hinted.map((field) => [field, declaredHint(field)])),
+        );
+        for (const field of hinted) {
+          expect(container.querySelector(`#${field}`)?.getAttribute("aria-describedby"), field).toBe(`${field}-hint`);
+        }
+      },
+    );
+
+    test.each([
+      ["oracle", "serviceName", "Service Name", "ORCL or XEPDB1"],
+      ["mssql", "instanceName", "Instance Name", "SQLEXPRESS"],
+    ] as const)("%s's Advanced field draws its declared label and hint", (type, field, ownWord, placeholder) => {
+      mockFormOverrides = { type, showAdvanced: true };
+      mockDeclaredCopy = EVERY_FIELD_COPY;
+      const { container, queryByText, getByTestId } = render(
+        React.createElement(ConnectionModal, createDefaultProps()),
+      );
+
+      expect(queryByText(declaredLabel(field))).not.toBeNull();
+      expect(queryByText(ownWord)).toBeNull();
+      expect(getByTestId(`${field}-hint`).textContent).toBe(declaredHint(field));
+      expect(container.querySelector(`input[placeholder="${placeholder}"]`)?.getAttribute("aria-describedby")).toBe(
+        `${field}-hint`,
+      );
+    });
+
+    test("the control: with nothing declared, an Advanced field keeps its own word and points at no hint", () => {
+      mockFormOverrides = { type: "oracle", showAdvanced: true };
+      const { container, queryByText, queryByTestId } = render(
+        React.createElement(ConnectionModal, createDefaultProps()),
+      );
+
+      expect(queryByText("Service Name")).not.toBeNull();
+      expect(queryByTestId("serviceName-hint")).toBeNull();
+      expect(container.querySelector('input[placeholder="ORCL or XEPDB1"]')?.hasAttribute("aria-describedby")).toBe(
+        false,
+      );
+    });
+
+    test("a declared password hint joins libSQL's own sentence rather than replacing it", () => {
+      // The per-type branches stay as they are (#1085); moving them onto the declaration is a
+      // backlog item, so a declaration adds to what they draw, and a label left undeclared keeps
+      // the branch's word.
+      mockFormOverrides = { type: "libsql" };
+      mockDeclaredCopy = { fieldHints: { password: "Declared hint for password." } };
+      const { getByTestId, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+      expect(getByTestId("password-hint").textContent).toBe("Declared hint for password.");
+      expect(queryByText(/turso db tokens create/)).not.toBeNull();
+      expect(queryByText("Auth Token")).not.toBeNull();
+    });
   });
 });

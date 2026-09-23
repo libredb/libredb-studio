@@ -1,7 +1,18 @@
 import { describe, test, expect } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { getDBConfig, getDBIcon, getDBColor, isFileBased, takesConnectionField } from "@/lib/db-ui-config";
+import {
+  connectionFieldHint,
+  connectionFieldLabel,
+  DB_UI_CONFIG,
+  getDBConfig,
+  getDBIcon,
+  getDBColor,
+  isFileBased,
+  takesConnectionField,
+  type ConnectionField,
+  type DatabaseUIConfig,
+} from "@/lib/db-ui-config";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import type { DatabaseType } from "@/lib/types";
 
@@ -361,6 +372,78 @@ describe("db-ui-config", () => {
       // case it existed to catch.
       expect(getDBConfig("redis").connectionFields).toContain("user");
     });
+  });
+});
+
+// ============================================================================
+// Declared connection-field copy (#1085)
+// ============================================================================
+
+/**
+ * Every connection field, as a total record so a field added to `connectionFields` fails to
+ * compile here until it is listed, and the walk below cannot miss it.
+ */
+const FIELD_CHECKLIST: Record<ConnectionField, true> = {
+  host: true,
+  port: true,
+  user: true,
+  password: true,
+  database: true,
+  schema: true,
+  connectionString: true,
+  serviceName: true,
+  instanceName: true,
+  localDataCenter: true,
+  authSource: true,
+  apiKeyId: true,
+  apiKeySecret: true,
+};
+const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
+
+describe("declared connection-field copy (#1085)", () => {
+  const plain = getDBConfig("postgres");
+  /** A synthetic declaration in the shape #1085 section 6.1 gives Prometheus; no shipped entry declares one yet. */
+  const declaring: DatabaseUIConfig = {
+    ...plain,
+    fieldLabels: { password: "Password or token" },
+    fieldHints: { password: "Leave User empty to send this as a bearer token." },
+  };
+
+  test("a declared label replaces the caller's fallback for its field", () => {
+    expect(connectionFieldLabel(declaring, "password", "Password")).toBe("Password or token");
+    // The control: a field the same declaration does not name keeps the caller's word.
+    expect(connectionFieldLabel(declaring, "user", "Username")).toBe("Username");
+  });
+
+  test("with nothing declared, the caller's fallback is the label", () => {
+    expect(connectionFieldLabel(plain, "password", "Password")).toBe("Password");
+  });
+
+  test("a declared hint is answered for its field and no other", () => {
+    expect(connectionFieldHint(declaring, "password")).toBe("Leave User empty to send this as a bearer token.");
+    expect(connectionFieldHint(declaring, "user")).toBeUndefined();
+    expect(connectionFieldHint(plain, "password")).toBeUndefined();
+  });
+
+  test("an empty declaration declares nothing", () => {
+    const empty: DatabaseUIConfig = { ...plain, fieldLabels: {}, fieldHints: {} };
+    expect(connectionFieldLabel(empty, "password", "Password")).toBe("Password");
+    expect(connectionFieldHint(empty, "password")).toBeUndefined();
+  });
+
+  test("no shipped entry declares field copy, so the dialog draws every label and hint it drew before", () => {
+    const declared = Object.entries(DB_UI_CONFIG)
+      .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
+      .map(([type]) => type);
+    expect(declared).toEqual([]);
+    // The control that the walk saw the whole table rather than nothing.
+    expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
+    for (const type of ALL_TYPES) {
+      for (const field of EVERY_FIELD) {
+        expect(connectionFieldLabel(getDBConfig(type), field, "the dialog's own word")).toBe("the dialog's own word");
+        expect(connectionFieldHint(getDBConfig(type), field)).toBeUndefined();
+      }
+    }
   });
 });
 

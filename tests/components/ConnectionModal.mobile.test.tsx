@@ -220,6 +220,11 @@ mock.module("@/lib/db-ui-config", () => ({
     connectionFields: mockFields(type),
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
+  // The modal reads its field copy through these two; this table declares none, so both answer
+  // the modal's own words. See the same pair in ConnectionModal.test.tsx.
+  connectionFieldLabel: (config: { fieldLabels?: Record<string, string> }, field: string, fallback: string) =>
+    config.fieldLabels?.[field] ?? fallback,
+  connectionFieldHint: (config: { fieldHints?: Record<string, string> }, field: string) => config.fieldHints?.[field],
   getDBIcon: () => () => null,
   getDBColor: () => "text-hue-blue",
   // See the same note in ConnectionModal.test.tsx: `DB_UI_CONFIG` became an exported

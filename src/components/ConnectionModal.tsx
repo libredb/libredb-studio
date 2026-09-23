@@ -30,7 +30,15 @@ import {
   Server,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDBConfig, isFileBased, takesConnectionField } from "@/lib/db-ui-config";
+import {
+  connectionFieldHint,
+  connectionFieldLabel,
+  getDBConfig,
+  isFileBased,
+  takesConnectionField,
+  type ConnectionField,
+  type DatabaseUIConfig,
+} from "@/lib/db-ui-config";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -53,6 +61,36 @@ const SSL_MODE_HINTS: Record<SSLMode, string> = {
   "verify-full":
     "Encrypts and verifies the chain against the CA certificate below, and that it names the host you typed.",
 };
+
+/**
+ * The id a declared field hint carries, which the field's input names in `aria-describedby`:
+ * `<field>-hint`, the shape `queryTimeout-hint` already has in this panel.
+ */
+function fieldHintId(field: ConnectionField): string {
+  return `${field}-hint`;
+}
+
+/** The `aria-describedby` a field's input carries: its declared hint's id, or none when the engine declares no hint. */
+function describedByHint(config: DatabaseUIConfig, field: ConnectionField): string | undefined {
+  return connectionFieldHint(config, field) === undefined ? undefined : fieldHintId(field);
+}
+
+/**
+ * The hint an engine DECLARES for one connection field (#1085), drawn under that field in this
+ * panel's hint idiom: the muted paragraph `ssl-mode-hint` is, with a test id, and an id the field's
+ * input names. Nothing is drawn where the engine declares none. The per-type hints the `isLibSQL`,
+ * `isTrino` and `isCassandra` branches write stay beside it untouched; moving them onto
+ * `DatabaseUIConfig.fieldHints` is a backlog item.
+ */
+function DeclaredFieldHint({ config, field }: { readonly config: DatabaseUIConfig; readonly field: ConnectionField }) {
+  const hint = connectionFieldHint(config, field);
+  if (hint === undefined) return null;
+  return (
+    <p id={fieldHintId(field)} data-testid={fieldHintId(field)} className="text-xs text-fg-muted">
+      {hint}
+    </p>
+  );
+}
 
 interface ConnectionModalProps {
   isOpen: boolean;
@@ -201,6 +239,13 @@ export function ConnectionModal({
     : isLibSQL
       ? "libsql://<database>-<org>.turso.io?authToken=<jwt>"
       : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
+
+  // What an engine DECLARES for a connection field wins over this dialog's own words (#1085): an
+  // engine that names a field differently says so on `DatabaseUIConfig` instead of growing another
+  // `isX` branch above. The branches above stay the fallback, and no shipped entry declares
+  // anything, so every label below reads as it did before the declaration existed.
+  const uiConfig = getDBConfig(type);
+  const databaseLabel = connectionFieldLabel(uiConfig, "database", `${databaseFieldLabel} Name`);
 
   const formContent = (
     <>
@@ -435,7 +480,7 @@ export function ConnectionModal({
                     <div className="flex items-center gap-2 mb-1">
                       <Link strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                       <Label htmlFor="connectionString" className="text-xs font-mediumr text-fg-muted">
-                        Connection URI
+                        {connectionFieldLabel(uiConfig, "connectionString", "Connection URI")}
                       </Label>
                     </div>
                     <Input
@@ -443,14 +488,16 @@ export function ConnectionModal({
                       value={connectionString}
                       onChange={(e) => setConnectionString(e.target.value)}
                       placeholder={connectionUriPlaceholder}
+                      aria-describedby={describedByHint(uiConfig, "connectionString")}
                       className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                     />
+                    <DeclaredFieldHint config={uiConfig} field="connectionString" />
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                       <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
-                        {databaseFieldLabel} Name (optional override)
+                        {databaseLabel} (optional override)
                       </Label>
                     </div>
                     <Input
@@ -458,8 +505,10 @@ export function ConnectionModal({
                       value={database}
                       onChange={(e) => setDatabase(e.target.value)}
                       placeholder="Extracted from URI if not provided"
+                      aria-describedby={describedByHint(uiConfig, "database")}
                       className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                     />
+                    <DeclaredFieldHint config={uiConfig} field="database" />
                   </div>
                 </>
               ) : isFileBased(type) ? (
@@ -467,7 +516,7 @@ export function ConnectionModal({
                   <div className="flex items-center gap-2 mb-1">
                     <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                     <Label htmlFor="database" className="text-xs font-medium text-fg-muted">
-                      Database File Path
+                      {connectionFieldLabel(uiConfig, "database", "Database File Path")}
                     </Label>
                   </div>
                   <Input
@@ -475,8 +524,10 @@ export function ConnectionModal({
                     value={database}
                     onChange={(e) => setDatabase(e.target.value)}
                     placeholder="/path/to/database file"
+                    aria-describedby={describedByHint(uiConfig, "database")}
                     className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                   />
+                  <DeclaredFieldHint config={uiConfig} field="database" />
                 </div>
               ) : (
                 <>
@@ -484,7 +535,7 @@ export function ConnectionModal({
                     <div className="flex items-center gap-2 mb-1">
                       <Globe strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                       <Label htmlFor="host" className="text-xs font-mediumr text-fg-muted">
-                        Host & Instance
+                        {connectionFieldLabel(uiConfig, "host", "Host & Instance")}
                       </Label>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -494,6 +545,7 @@ export function ConnectionModal({
                         onChange={(e) => setHost(e.target.value)}
                         placeholder="localhost"
                         autoComplete="off"
+                        aria-describedby={describedByHint(uiConfig, "host")}
                         className="md:col-span-3 h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       <Input
@@ -501,9 +553,12 @@ export function ConnectionModal({
                         value={port}
                         onChange={(e) => setPort(e.target.value)}
                         autoComplete="off"
+                        aria-describedby={describedByHint(uiConfig, "port")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                     </div>
+                    <DeclaredFieldHint config={uiConfig} field="host" />
+                    <DeclaredFieldHint config={uiConfig} field="port" />
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -517,7 +572,7 @@ export function ConnectionModal({
                         <div className="flex items-center gap-2 mb-1">
                           <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                           <Label htmlFor="user" className="text-xs font-mediumr text-fg-muted">
-                            Username
+                            {connectionFieldLabel(uiConfig, "user", "Username")}
                           </Label>
                         </div>
                         <Input
@@ -526,15 +581,17 @@ export function ConnectionModal({
                           onChange={(e) => setUser(e.target.value)}
                           placeholder="user"
                           autoComplete="off"
+                          aria-describedby={describedByHint(uiConfig, "user")}
                           className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                         />
+                        <DeclaredFieldHint config={uiConfig} field="user" />
                       </div>
                     )}
                     <div className={takesConnectionField(type, "user") ? "space-y-2" : "space-y-2 md:col-span-2"}>
                       <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="password" className="text-xs font-mediumr text-fg-muted">
-                          {passwordFieldLabel}
+                          {connectionFieldLabel(uiConfig, "password", passwordFieldLabel)}
                         </Label>
                       </div>
                       <Input
@@ -546,8 +603,10 @@ export function ConnectionModal({
                         // Server credential, not the user's own login: "new-password" is the only
                         // value Chrome honours to keep saved site passwords out of the field.
                         autoComplete="new-password"
+                        aria-describedby={describedByHint(uiConfig, "password")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
+                      <DeclaredFieldHint config={uiConfig} field="password" />
                       {/*
                         Measured on Trino 476 with authentication DISABLED: a request
                         carrying `Authorization: Basic` over plain HTTP is answered 401,
@@ -583,7 +642,7 @@ export function ConnectionModal({
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
-                          {databaseFieldLabel} Name
+                          {databaseLabel}
                         </Label>
                       </div>
                       <Input
@@ -591,8 +650,10 @@ export function ConnectionModal({
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
                         placeholder={databaseFieldPlaceholder}
+                        aria-describedby={describedByHint(uiConfig, "database")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
+                      <DeclaredFieldHint config={uiConfig} field="database" />
                       {isTrino && (
                         <p className="text-xs text-fg-muted">
                           The Trino catalog to open, such as tpch or hive. Its schemas are the level below.
@@ -612,7 +673,7 @@ export function ConnectionModal({
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="schema" className="text-xs font-mediumr text-fg-muted">
-                          Schema Name
+                          {connectionFieldLabel(uiConfig, "schema", "Schema Name")}
                         </Label>
                       </div>
                       <Input
@@ -620,8 +681,10 @@ export function ConnectionModal({
                         value={schema}
                         onChange={(e) => setSchema(e.target.value)}
                         placeholder="default"
+                        aria-describedby={describedByHint(uiConfig, "schema")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
+                      <DeclaredFieldHint config={uiConfig} field="schema" />
                       <p className="text-xs text-fg-muted">
                         Used for unqualified table names in queries and Create Table. Leave empty to qualify names
                         yourself. Run SHOW SCHEMAS to list the catalog's schemas.
@@ -641,7 +704,7 @@ export function ConnectionModal({
                       <div className="flex items-center gap-2 mb-1">
                         <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="authSource" className="text-xs font-medium text-fg-muted">
-                          Authentication Database
+                          {connectionFieldLabel(uiConfig, "authSource", "Authentication Database")}
                         </Label>
                       </div>
                       <Input
@@ -649,8 +712,10 @@ export function ConnectionModal({
                         value={authSource}
                         onChange={(e) => setAuthSource(e.target.value)}
                         placeholder="admin"
+                        aria-describedby={describedByHint(uiConfig, "authSource")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
+                      <DeclaredFieldHint config={uiConfig} field="authSource" />
                       <p className="text-xs text-fg-muted">
                         The database the user was created in, usually admin. Leave empty when the credentials live in
                         the database above.
@@ -674,7 +739,7 @@ export function ConnectionModal({
                         <div className="flex items-center gap-2 mb-1">
                           <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                           <Label htmlFor="apiKeyId" className="text-xs font-medium text-fg-muted">
-                            API Key ID
+                            {connectionFieldLabel(uiConfig, "apiKeyId", "API Key ID")}
                           </Label>
                         </div>
                         <Input
@@ -683,14 +748,16 @@ export function ConnectionModal({
                           onChange={(e) => setApiKeyId(e.target.value)}
                           placeholder="EWkMhKACjF5eHMlg6Car"
                           autoComplete="off"
+                          aria-describedby={describedByHint(uiConfig, "apiKeyId")}
                           className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                         />
+                        <DeclaredFieldHint config={uiConfig} field="apiKeyId" />
                       </div>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
                           <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                           <Label htmlFor="apiKeySecret" className="text-xs font-medium text-fg-muted">
-                            API Key Secret
+                            {connectionFieldLabel(uiConfig, "apiKeySecret", "API Key Secret")}
                           </Label>
                         </div>
                         <Input
@@ -700,8 +767,10 @@ export function ConnectionModal({
                           onChange={(e) => setApiKeySecret(e.target.value)}
                           placeholder="***"
                           autoComplete="new-password"
+                          aria-describedby={describedByHint(uiConfig, "apiKeySecret")}
                           className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                         />
+                        <DeclaredFieldHint config={uiConfig} field="apiKeySecret" />
                       </div>
                       <p className="text-xs text-fg-muted md:col-span-2">
                         Kibana shows this pair under the key's "Beats" or "Logstash" format. Preferred over
@@ -722,7 +791,7 @@ export function ConnectionModal({
                       <div className="flex items-center gap-2 mb-1">
                         <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="localDataCenter" className="text-xs font-medium text-fg-muted">
-                          Local Data Center
+                          {connectionFieldLabel(uiConfig, "localDataCenter", "Local Data Center")}
                         </Label>
                       </div>
                       <Input
@@ -730,8 +799,10 @@ export function ConnectionModal({
                         value={localDataCenter}
                         onChange={(e) => setLocalDataCenter(e.target.value)}
                         placeholder="datacenter1"
+                        aria-describedby={describedByHint(uiConfig, "localDataCenter")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
+                      <DeclaredFieldHint config={uiConfig} field="localDataCenter" />
                       <p className="text-xs text-fg-muted">
                         Required: the Cassandra driver refuses to connect without it. A stock single-node install
                         reports datacenter1; the server lists the ones it has if this is wrong.
@@ -771,13 +842,17 @@ export function ConnectionModal({
                     <div className="p-3 rounded-lg border border-hue-orange-tint/10 bg-hue-orange-tint/5 space-y-3">
                       {type === "oracle" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-fg-muted">Service Name</Label>
+                          <Label className="text-xs font-mediumr text-fg-muted">
+                            {connectionFieldLabel(uiConfig, "serviceName", "Service Name")}
+                          </Label>
                           <Input
                             value={serviceName}
                             onChange={(e) => setServiceName(e.target.value)}
                             placeholder="ORCL or XEPDB1"
+                            aria-describedby={describedByHint(uiConfig, "serviceName")}
                             className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
                           />
+                          <DeclaredFieldHint config={uiConfig} field="serviceName" />
                           <p className="text-xs text-fg-muted">
                             If empty, the Database Name field is used as the service name.
                           </p>
@@ -785,13 +860,17 @@ export function ConnectionModal({
                       )}
                       {type === "mssql" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-fg-muted">Instance Name</Label>
+                          <Label className="text-xs font-mediumr text-fg-muted">
+                            {connectionFieldLabel(uiConfig, "instanceName", "Instance Name")}
+                          </Label>
                           <Input
                             value={instanceName}
                             onChange={(e) => setInstanceName(e.target.value)}
                             placeholder="SQLEXPRESS"
+                            aria-describedby={describedByHint(uiConfig, "instanceName")}
                             className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
                           />
+                          <DeclaredFieldHint config={uiConfig} field="instanceName" />
                           <p className="text-xs text-fg-muted">
                             For named instances (e.g. SQLEXPRESS). Leave empty for default instance.
                           </p>

@@ -50,6 +50,19 @@ export interface DatabaseUIConfig {
     | "apiKeyId"
     | "apiKeySecret"
   )[];
+  /**
+   * The connection dialog's label for a field, where this engine names the field differently from
+   * the dialog's own word (#1085). Read through `connectionFieldLabel`, so an engine relabels a
+   * field by declaring it here rather than by another per-type branch in `ConnectionModal.tsx`.
+   * The branches that name Couchbase's bucket, Trino's catalog, Cassandra's keyspace and libSQL's
+   * token predate this and stay where they are; moving them onto this declaration is a backlog item.
+   */
+  fieldLabels?: Partial<Record<ConnectionField, string>>;
+  /**
+   * A sentence the connection dialog draws under a field, where this engine needs one said before
+   * the user reaches an error (#1085). Read through `connectionFieldHint`.
+   */
+  fieldHints?: Partial<Record<ConnectionField, string>>;
 }
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
@@ -334,4 +347,27 @@ export function isFileBased(type: DatabaseType): boolean {
  */
 export function takesConnectionField(type: DatabaseType, field: ConnectionField): boolean {
   return DB_UI_CONFIG[type].connectionFields.includes(field);
+}
+
+/**
+ * The connection dialog's label for one field: the engine's declared `fieldLabels` entry, or the
+ * dialog's own word when the engine declares none (#1085).
+ *
+ * The fallback is the caller's because the dialog's own words are not one table: the `database`
+ * field alone reads "Database Name", "Database File Path" or "Database Name (optional override)"
+ * by the mode the form is in, and the per-type branches still choose several. `port` shares the
+ * host row's label and draws none of its own, so a label declared for it has nowhere to appear;
+ * a hint declared for it does.
+ */
+export function connectionFieldLabel(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
+  return config.fieldLabels?.[field] ?? fallback;
+}
+
+/**
+ * The sentence the connection dialog draws under one field, or `undefined` where the engine
+ * declares none (#1085). There is no fallback: a field with no declared hint draws nothing new,
+ * and the per-type hints `ConnectionModal.tsx` already writes stay beside it.
+ */
+export function connectionFieldHint(config: DatabaseUIConfig, field: ConnectionField): string | undefined {
+  return config.fieldHints?.[field];
 }
