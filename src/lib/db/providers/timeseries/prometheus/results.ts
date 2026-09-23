@@ -622,8 +622,14 @@ function instantText(milliseconds: number): string {
 
 function vectorLabelOrder(labelNames: readonly string[]): string[] {
   const unique = new Set(labelNames);
-  const rest = [...unique].filter((name) => name !== METRIC_NAME_LABEL).sort();
+  const rest = [...unique].filter((name) => name !== METRIC_NAME_LABEL).sort(byCodeUnit);
   return unique.has(METRIC_NAME_LABEL) ? [METRIC_NAME_LABEL, ...rest] : rest;
+}
+
+/** UTF-16 code unit order, the same on every runtime and in every locale, unlike `localeCompare`. */
+function byCodeUnit(left: string, right: string): number {
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 function labelField(name: string): string {

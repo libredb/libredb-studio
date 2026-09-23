@@ -170,6 +170,17 @@ function thrownBy(run: () => unknown): unknown {
 // ============================================================================
 
 describe("shapeQueryResult on a vector", () => {
+  test("orders the label names after __name__ by UTF-16 code unit, never by the reader's locale", () => {
+    const shaped = shapeQueryResult(
+      answerOf({ shape: "vector", series: [floats({ job: "a", alpha: "b", _region: "c", Zone: "d" }, [T0, "1"])] }),
+      LIMITS,
+    );
+
+    // Upper case before `_` before lower case, as every runtime compares strings. A locale's
+    // collation would put `Zone` last, and one reader's grid would not match another's.
+    expect(shaped.fields).toEqual(["Zone", "_region", "alpha", "job", "timestamp", "value"]);
+  });
+
   test("gives one row per series: __name__ first when any series has it, the labels, timestamp, value", () => {
     const shaped = shapeQueryResult(
       answerOf({

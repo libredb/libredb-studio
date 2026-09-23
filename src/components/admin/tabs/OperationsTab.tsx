@@ -307,6 +307,7 @@ export function OperationsTab() {
   // list said no table was found. Only over a list that is there: a refused read, or an empty list
   // beside a counted overview, has nothing to scope and keeps the rendering below.
   const listScope = tableStatsAbsent ? undefined : labels?.tableStatsCaption;
+  const listNoun = listScope === undefined ? "Tables" : "Listed";
   const maintenanceUnreachable =
     tableActions.length > 0 && filteredTables.length === 0 && (deepLinkRowMissing || tableStatsAbsent);
 
@@ -519,7 +520,7 @@ export function OperationsTab() {
               <div className="flex items-center gap-2">
                 <Table2 className="w-4 h-4 text-brand" />
                 <span className="text-xs font-bold text-fg-secondary">
-                  {tablesUnavailable ? "Tables" : `${listScope === undefined ? "Tables" : "Listed"} (${tables.length})`}
+                  {tablesUnavailable ? "Tables" : `${listNoun} (${tables.length})`}
                 </span>
               </div>
               <Input
