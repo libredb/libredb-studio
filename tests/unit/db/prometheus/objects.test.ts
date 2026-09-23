@@ -62,7 +62,7 @@ import {
   type RuleFilter,
 } from "@/lib/db/providers/timeseries/prometheus/transport";
 import { assertObjectSurface } from "../../../helpers/object-surface-conformance";
-import { capture, captureBody } from "../../../helpers/prometheus-fixtures";
+import { capture, captureBody, captureVm, captureVmBody } from "../../../helpers/prometheus-fixtures";
 
 const ENGINE: ObjectPathShapeEngine = { code: "prometheus", label: "A Prometheus", attachedSegment: "required" };
 
@@ -483,6 +483,85 @@ function capturedSurface(): PrometheusObjects {
   });
 }
 
+/** The one scrape pool the VictoriaMetrics captures hold a pool read of: two targets that share an instance. */
+const VM_POOL = "studio-twin";
+
+/**
+ * The VictoriaMetrics capture that answers a read, by its path and the one parameter that picks a
+ * capture: `metadata-exact`, `metadata-family-suffixed` and `metadata-family` are the reads of one
+ * counter, one histogram series and that histogram's family, and `targets-one-pool` the read of
+ * {@link VM_POOL}. A read no capture answers fails the test by name.
+ */
+function vmCaptureFor(url: URL): string {
+  const unanswered = () => new Error(`no VictoriaMetrics capture answers ${url.pathname}${url.search}`);
+  switch (url.pathname) {
+    case "/api/v1/label/__name__/values":
+      return "label-values-names";
+    case "/api/v1/rules":
+      return "rules-all";
+    case "/api/v1/scrape_pools":
+      return "scrape-pools";
+    case "/api/v1/metadata": {
+      const metadata: Readonly<Record<string, string>> = {
+        prometheus_http_requests_total: "metadata-exact",
+        prometheus_http_request_duration_seconds_bucket: "metadata-family-suffixed",
+        prometheus_http_request_duration_seconds: "metadata-family",
+      };
+      const metric = url.searchParams.get("metric") ?? "";
+      if (!Object.hasOwn(metadata, metric)) throw unanswered();
+      return metadata[metric];
+    }
+    case "/api/v1/targets": {
+      const pool = url.searchParams.get("scrapePool");
+      if (pool === null) return "targets-active";
+      if (pool === VM_POOL) return "targets-one-pool";
+      throw unanswered();
+    }
+    default:
+      throw unanswered();
+  }
+}
+
+/**
+ * The surface over the real transport, answered from the compose `victoriametrics` service's captures
+ * (victoriametrics/victoria-metrics:v1.152.0), whose metadata entries carry no unit and whose targets
+ * carry no scrape interval or timeout, replayed with each record's own status, content type and text.
+ */
+function vmCapturedSurface(): PrometheusObjects {
+  const send: SendRequest = async (request) => {
+    const answer = captureVm(vmCaptureFor(request.url));
+    return { status: answer.status, contentType: answer.headers["content-type"] ?? null, body: answer.text };
+  };
+  const endpoint: PrometheusEndpoint = {
+    url: (pathname, query) => {
+      const url = new URL(pathname, "http://victoriametrics.test:8428");
+      if (query !== undefined) url.search = query.toString();
+      return url;
+    },
+  };
+  const deps = { send, endpoint, requestTimeoutMs: 5_000, maxResponseBytes: RESPONSE_BYTE_CAP };
+  return new PrometheusObjects({
+    transport: createHttpTransport({}, deps),
+    now: () => NOW_MS,
+    capabilities: CAPABILITIES,
+    engine: ENGINE,
+    queryOptions: () => QUERY_OPTIONS,
+  });
+}
+
+interface VmRawTarget extends RawTarget {
+  readonly lastError: string;
+  readonly lastScrape: string;
+  readonly lastScrapeDuration: number;
+  readonly scrapeInterval?: string;
+  readonly scrapeTimeout?: string;
+  readonly discoveredLabels: Readonly<Record<string, string>>;
+}
+
+function vmTargets(name: "targets-active" | "targets-one-pool"): readonly VmRawTarget[] {
+  return captureVmBody<{ data: { activeTargets: VmRawTarget[] } }>(name).data.activeTargets;
+}
+
 /** The series bound's sentence, built from the cap so a measured cap moves it with the code's. */
 const SERIES_BOUND =
   `the series read stopped at ${DESCRIBE_SERIES_CAP.toLocaleString("en-US")} series, so a metric may be missing ` +
@@ -668,6 +747,22 @@ describe("countObjects and listObjects (#1085 4.3)", () => {
     const listed = (await objects.listObjects([], "metric")).map((object) => object.name);
     expect(listed).toContain(names[METRIC_LIST_CAP - 1]);
     expect(listed).not.toContain(names[METRIC_LIST_CAP]);
+  });
+
+  test("exactly the cap with no notice is the whole listing: an exact count, and an unlisted name sends no query", async () => {
+    // The boundary the extra name is asked for: a server holding exactly the cap answers the cap and no
+    // notice, because `labelValues` (web/api/v1/api.go at v3.13.3) cuts and warns only past the limit.
+    const names = Array.from({ length: METRIC_LIST_CAP }, (_, index) => `metric_${String(index).padStart(5, "0")}`);
+    const { objects, calls } = surface({ metricNames: { items: names, truncatedByServer: false } });
+    expect((await objects.countObjects([])).metric).toEqual({ count: METRIC_LIST_CAP });
+    expect(await objects.listObjects([], "metric")).toHaveLength(METRIC_LIST_CAP);
+    await expect(objects.readObjectSource(["no_such_metric"], "metric")).rejects.toThrow(
+      "Prometheus reports no metric named no_such_metric",
+    );
+    // A complete listing decides existence alone, so the existence query is never sent.
+    expect(calls.filter((call) => call.method === "query")).toEqual([]);
+    // The control: the listing was read, so the absence above is of the query and not of every read.
+    expect(calls.some((call) => call.method === "metricNames")).toBe(true);
   });
 
   test("keys a rule group by file and name, so one group name in two files is two groups", async () => {
@@ -1035,6 +1130,18 @@ describe("describeObjects (#1085 4.2)", () => {
     expect(batch.truncated).toEqual({ limit: 1, reason: SERIES_BOUND });
   });
 
+  test("exactly the series cap with no notice is a complete batch", async () => {
+    const items = Array.from({ length: DESCRIBE_SERIES_CAP }, (_, index) => ({
+      __name__: "bulk",
+      shard: String(index),
+    }));
+    const { objects } = surface({ seriesLabels: { items, truncatedByServer: false } });
+    const batch = await objects.describeObjects([], "metric");
+    // The control: the read's series were all described, so an absent mark is about the bound alone.
+    expect(batch.details.map((detail) => detail.path)).toEqual([["bulk"]]);
+    expect(batch.truncated).toBeUndefined();
+  });
+
   test("both bounds biting are both named, the caller's first, joined the Redis way", async () => {
     const { objects } = surface({ seriesLabels: { items: SERIES, truncatedByServer: true } });
     const batch = await objects.describeObjects([], "metric", 1);
@@ -1340,6 +1447,87 @@ describe("readObjectSource: scrape pools and targets (#1085 4.4)", () => {
       discoveredLabels: unreachable.discoveredLabels,
     });
     expect(calls).toEqual([{ method: "targets", args: ["unreachable"] }]);
+  });
+});
+
+describe("a description the server leaves out stays out (captured from VictoriaMetrics, #1085 4.4)", () => {
+  interface VmMetadata {
+    readonly type: string;
+    readonly help: string;
+    readonly unit?: string;
+  }
+  const vmEntries = (name: string, family: string): readonly VmMetadata[] =>
+    captureVmBody<{ data: Record<string, VmMetadata[]> }>(name).data[family] ?? [];
+
+  test("a metric's source is the type and help the server sent, and no unit it did not send", async () => {
+    const family = "prometheus_http_requests_total";
+    const entries = vmEntries("metadata-exact", family);
+    // The control: the server sent one entry for the counter, and no unit in it.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.unit).toBeUndefined();
+
+    const document = await vmCapturedSurface().readObjectSource([family], "metric");
+
+    expect(document.parts).toEqual([
+      {
+        id: "metadata",
+        label: "Metadata",
+        text: JSON.stringify({ family, type: entries[0]?.type, help: entries[0]?.help }, null, 2),
+        language: "json",
+        form: "complete",
+        origin: "rendered",
+      },
+    ]);
+  });
+
+  test("a histogram series found under its family shows that family's type and help, and no unit", async () => {
+    const family = "prometheus_http_request_duration_seconds";
+    const entries = vmEntries("metadata-family", family);
+    // The control: the server holds nothing under the `_bucket` series itself, so this is the fallback.
+    expect(captureVmBody<{ data: Record<string, unknown> }>("metadata-family-suffixed").data).toEqual({});
+    expect(entries[0]?.unit).toBeUndefined();
+
+    const document = await vmCapturedSurface().readObjectSource([`${family}_bucket`], "metric");
+
+    expect(JSON.parse(textOf(document.parts[0]))).toEqual({ family, type: entries[0]?.type, help: entries[0]?.help });
+    expect(Object.keys(JSON.parse(textOf(document.parts[0])))).toEqual(["family", "type", "help"]);
+  });
+
+  test("the Targets folder counts and lists every active target the server reports", async () => {
+    const raw = vmTargets("targets-active");
+    // The control: the capture holds several targets, none with a scrape interval or timeout.
+    expect(raw.length).toBeGreaterThan(1);
+    expect(raw.every((target) => target.scrapeInterval === undefined && target.scrapeTimeout === undefined)).toBe(true);
+    const objects = vmCapturedSurface();
+
+    expect((await objects.countObjects([])).target).toEqual({ count: raw.length });
+    const listed = (await objects.listObjects([], "target")).map((object) => pathKey(object.path)).sort();
+    expect(listed).toEqual(raw.map((target) => pathKey([target.scrapePool, targetSegment(target)])).sort());
+  });
+
+  test("a target's source leaves out the scrape interval and timeout the server did not send, the rest as sent", async () => {
+    const [raw] = vmTargets("targets-one-pool");
+    // The control: the engine keeps its interval among the discovered labels, which the source shows whole.
+    expect(raw?.discoveredLabels.__scrape_interval__).toBeDefined();
+    if (raw === undefined) return;
+
+    const { parts } = await vmCapturedSurface().readObjectSource([VM_POOL, targetSegment(raw)], "target");
+
+    expect(textOf(parts[0])).toBe(
+      JSON.stringify(
+        {
+          scrapeUrl: raw.scrapeUrl,
+          health: raw.health,
+          lastError: raw.lastError,
+          lastScrape: raw.lastScrape,
+          lastScrapeDuration: raw.lastScrapeDuration,
+          labels: raw.labels,
+          discoveredLabels: raw.discoveredLabels,
+        },
+        null,
+        2,
+      ),
+    );
   });
 });
 

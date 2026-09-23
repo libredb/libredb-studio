@@ -9,7 +9,7 @@
  * what would let a second wire arrive as a second transport rather than as branches in the
  * provider.
  *
- * Two decisions shape the types:
+ * Three decisions shape the types:
  *
  * - Values stay the engine's text. A sample value is the string the engine wrote, "NaN", "+Inf"
  *   and "-Inf" included, and a time is its float seconds, so how a cell is typed is decided once,
@@ -17,6 +17,10 @@
  * - A failure is classified by category, never by HTTP status, because the status does not
  *   classify: web/api/v1/api.go answers `canceled` with 499, `timeout` with 503 and `execution`
  *   with 422, and lets `unavailable` fall through to 500. errors.ts maps the category (5.5).
+ * - A member that identifies or classifies an object is always there. A member that only describes
+ *   one is optional where an engine was measured leaving it out, VictoriaMetrics v1.152.0 so far:
+ *   an omitted description is a fact about that engine, so it arrives as absent and nothing above
+ *   the seam invents a value for it.
  *
  * Apart from the error class this file is purely structural: no I/O and no imports.
  */
@@ -42,7 +46,7 @@ export type PrometheusErrorCategory =
   | "aborted" // the caller cancelled
   | "credential" // a credential refused before any request (#1085 S3)
   | "protocol" // a body that is not the API envelope, or an envelope of the wrong shape
-  | "unmeasurable"; // a monitoring read whose number would not be exact (M2)
+  | "unmeasurable"; // a monitoring read with no exact number to give (M2), or no number sent at all
 
 /** What a failure may say about itself without echoing a credential, a header or a body (#1085 S3). */
 export interface PrometheusErrorDetail {
@@ -144,10 +148,11 @@ export interface CappedList<T> {
   readonly truncatedByServer: boolean; // the engine's own truncation notice was present (M8)
 }
 
+/** One metadata entry of a metric family. `type` classifies the family; the other two describe it. */
 export interface PrometheusMetadataEntry {
   readonly type: string;
   readonly help: string;
-  readonly unit: string;
+  readonly unit?: string; // absent where the engine leaves it out: VictoriaMetrics sends type and help only
 }
 
 export interface PrometheusAlert {
@@ -203,6 +208,7 @@ export interface RuleFilter {
   readonly ruleName: string;
 }
 
+/** An active target. Its pool, URL, health and labels identify and classify it; the rest describes it. */
 export interface PrometheusTarget {
   readonly scrapePool: string;
   readonly scrapeUrl: string;
@@ -210,8 +216,12 @@ export interface PrometheusTarget {
   readonly lastError: string;
   readonly lastScrape: string;
   readonly lastScrapeDuration: number;
-  readonly scrapeInterval: string;
-  readonly scrapeTimeout: string;
+  /**
+   * Both absent where the engine leaves them out: VictoriaMetrics keeps them as `__scrape_interval__`
+   * and `__scrape_timeout__` among the discovered labels instead.
+   */
+  readonly scrapeInterval?: string;
+  readonly scrapeTimeout?: string;
   readonly labels: Readonly<Record<string, string>>;
   readonly discoveredLabels: Readonly<Record<string, string>>;
 }
@@ -245,11 +255,20 @@ export interface NamedCount {
   readonly value: number;
 }
 
+/** The head block, in the engine's own units: two counts, and the span its samples cover in milliseconds. */
+export interface PrometheusHeadBlock {
+  readonly series: number;
+  readonly chunks: number;
+  readonly minTimeMs: number;
+  readonly maxTimeMs: number;
+}
+
 export interface PrometheusTsdbStatus {
-  readonly headSeries: number;
-  readonly headChunks: number;
-  readonly headMinTimeMs: number;
-  readonly headMaxTimeMs: number;
+  /**
+   * Absent where the engine sends no head statistics: VictoriaMetrics answers the TSDB status with
+   * statistics of its own and the two ranked lists below, and no head block.
+   */
+  readonly head?: PrometheusHeadBlock;
   readonly seriesByMetric: readonly NamedCount[];
   readonly valuesByLabel: readonly NamedCount[];
 }
@@ -284,6 +303,6 @@ export interface PrometheusTransport {
   buildInfo(): Promise<PrometheusBuildInfo>;
   runtimeInfo(): Promise<PrometheusRuntimeInfo>;
   flags(): Promise<Readonly<Record<string, string>>>;
-  /** TSDB head statistics, each top list at most `limit` long (6.2). */
+  /** TSDB statistics: the head block where the engine sends it, and each top list at most `limit` long (6.2). */
   tsdbStatus(limit: number): Promise<PrometheusTsdbStatus>;
 }

@@ -17,6 +17,7 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import {
   type HealthProbe,
   type PrometheusBuildInfo,
+  type PrometheusHeadBlock,
   type PrometheusHealth,
   type PrometheusRuntimeInfo,
   type PrometheusTransport,
@@ -161,6 +162,7 @@ function maxConnectionsFrom(flags: Readonly<Record<string, string>>): number {
  * zeros, the SQLite and libSQL shape for a table whose bytes are unknown. At most
  * `TSDB_TOP_METRICS` rows, whatever limit the status was read with; the Tables panel counts them as
  * its tables, so on a server with more metrics its count is that bound (see `TSDB_TOP_METRICS`).
+ * Only the ranked list is read, so a status with no head statistics lists its rows all the same.
  */
 export function tableStatsFrom(tsdb: PrometheusTsdbStatus): TableStats[] {
   return tsdb.seriesByMetric.slice(0, TSDB_TOP_METRICS).map((entry) => ({
@@ -171,6 +173,11 @@ export function tableStatsFrom(tsdb: PrometheusTsdbStatus): TableStats[] {
     totalSizeBytes: 0,
   }));
 }
+
+/** Why the storage row is refused where the TSDB status carries no head statistics. */
+const NO_HEAD_STATISTICS =
+  "Prometheus reports no head block statistics here: this server's TSDB status carries none, so the " +
+  "storage row has no series count, chunk count or sample span to show";
 
 /**
  * The head block as the one storage row this API can describe, with no byte figure in it.
@@ -183,12 +190,20 @@ export function tableStatsFrom(tsdb: PrometheusTsdbStatus): TableStats[] {
  * absent because no capacity crosses this API either. An empty head reports the int64 extremes the
  * engine starts it at (`tsdb/head.go`, `resetInMemoryState`: the minimum above the maximum), which
  * is no span and no date, so it reads "no samples".
+ *
+ * A status with no head statistics, the one VictoriaMetrics answers, leaves this row nothing to
+ * describe, and it is refused with that fact rather than answered: an empty list would read as a
+ * server that measured no storage, and a row of zeros as an empty head, and `MonitoringData`
+ * (`src/lib/db/types.ts`) keeps a panel the engine could not answer apart from an empty one for
+ * exactly that reason.
  */
 export function storageStatsFrom(tsdb: PrometheusTsdbStatus, runtime: PrometheusRuntimeInfo): StorageStats[] {
+  const head = tsdb.head;
+  if (head === undefined) throw new PrometheusTransportError("unmeasurable", NO_HEAD_STATISTICS);
   return [
     {
-      name: `Head block: ${formatCount(tsdb.headSeries)} series, ${formatCount(tsdb.headChunks)} chunks`,
-      location: `${headSpan(tsdb)}, retention ${runtime.storageRetention}`,
+      name: `Head block: ${formatCount(head.series)} series, ${formatCount(head.chunks)} chunks`,
+      location: `${headSpan(head)}, retention ${runtime.storageRetention}`,
       size: PROMETHEUS_UNKNOWN_TEXT,
       sizeBytes: 0,
     },
@@ -196,9 +211,9 @@ export function storageStatsFrom(tsdb: PrometheusTsdbStatus, runtime: Prometheus
 }
 
 /** The span the head's samples cover, as two ISO-8601 instants, or "no samples" for an empty head. */
-function headSpan(tsdb: PrometheusTsdbStatus): string {
-  if (tsdb.headMinTimeMs > tsdb.headMaxTimeMs) return "no samples";
-  return `${new Date(tsdb.headMinTimeMs).toISOString()} to ${new Date(tsdb.headMaxTimeMs).toISOString()}`;
+function headSpan(head: PrometheusHeadBlock): string {
+  if (head.minTimeMs > head.maxTimeMs) return "no samples";
+  return `${new Date(head.minTimeMs).toISOString()} to ${new Date(head.maxTimeMs).toISOString()}`;
 }
 
 /** A count grouped in `en-US`, so the text reads the same in every test and every screenshot. */
@@ -310,7 +325,8 @@ export async function readTableStats(transport: MonitoringTransport): Promise<Ta
  * The storage row: the head block from the TSDB status and the retention from the runtime read. The
  * TSDB status is read at `TSDB_TOP_METRICS` although the head counts do not depend on it, because
  * the engine caches that computation under the label name and the limit (`tsdb/head.go`,
- * `PostingsCardinalityStats`), and the table read beside this one sends the same limit.
+ * `PostingsCardinalityStats`), and the table read beside this one sends the same limit. A status
+ * with no head statistics refuses the row (see `storageStatsFrom`).
  */
 export async function readStorageStats(transport: MonitoringTransport): Promise<StorageStats[]> {
   const [tsdb, runtime] = await Promise.all([transport.tsdbStatus(TSDB_TOP_METRICS), transport.runtimeInfo()]);

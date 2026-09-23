@@ -4,9 +4,11 @@
  * Every input is built inline from the seam types of `transport.ts`, and each edge case says which
  * engine behaviour it stands for: these are pure mappings, and the captured v3.13.3 payloads reach
  * them through the real decoder in the provider's integration test, which is where a wire shape is
- * what is under test. The readers run over a recording fake of `MonitoringTransport`, so which
- * surface each one reads, and with which limit, is asserted rather than assumed. No
- * `mock.module()`: it is process-wide in bun.
+ * what is under test. The one exception is the status with no head statistics, whose two ranked
+ * lists are the VictoriaMetrics capture's own, read through the one fixture reader, so the mappings
+ * meet the answer a real server gave. The readers run over a recording fake of
+ * `MonitoringTransport`, so which surface each one reads, and with which limit, is asserted rather
+ * than assumed. No `mock.module()`: it is process-wide in bun.
  */
 import { describe, expect, setSystemTime, test } from "bun:test";
 import {
@@ -32,6 +34,7 @@ import {
   PrometheusTransportError,
   type PrometheusTsdbStatus,
 } from "@/lib/db/providers/timeseries/prometheus/transport";
+import { captureVmBody } from "../../../helpers/prometheus-fixtures";
 
 /**
  * A head block holding series, as the TSDB status reads once decoded: series and chunk counts, the
@@ -39,10 +42,12 @@ import {
  */
 function tsdbStatus(overrides: Partial<PrometheusTsdbStatus> = {}): PrometheusTsdbStatus {
   return {
-    headSeries: 1234,
-    headChunks: 5678,
-    headMinTimeMs: Date.parse("2026-09-23T10:00:00.000Z"),
-    headMaxTimeMs: Date.parse("2026-09-23T11:59:45.000Z"),
+    head: {
+      series: 1234,
+      chunks: 5678,
+      minTimeMs: Date.parse("2026-09-23T10:00:00.000Z"),
+      maxTimeMs: Date.parse("2026-09-23T11:59:45.000Z"),
+    },
     seriesByMetric: [
       { name: "prometheus_http_request_duration_seconds_bucket", value: 240 },
       { name: "up", value: 4 },
@@ -55,6 +60,33 @@ function tsdbStatus(overrides: Partial<PrometheusTsdbStatus> = {}): PrometheusTs
     ...overrides,
   };
 }
+
+interface CapturedTsdb {
+  readonly data: {
+    readonly headStats?: unknown;
+    readonly seriesCountByMetricName: readonly NamedCount[];
+    readonly labelValueCountByLabelName: readonly NamedCount[];
+  };
+}
+
+/**
+ * The TSDB status the compose `victoriametrics` service answered (victoriametrics/victoria-metrics:v1.152.0),
+ * as the decoder hands it on: its two ranked lists, and no head, because it sends no head statistics.
+ * `http-transport.test.ts` holds the decoder to that capture; here it is the input the mappings meet.
+ */
+function headlessTsdb(): PrometheusTsdbStatus {
+  const raw = captureVmBody<CapturedTsdb>("tsdb-status-50");
+  expect(raw.data.headStats).toBeUndefined();
+  return {
+    seriesByMetric: raw.data.seriesCountByMetricName.map(({ name, value }) => ({ name, value })),
+    valuesByLabel: raw.data.labelValueCountByLabelName.map(({ name, value }) => ({ name, value })),
+  };
+}
+
+/** What the storage reading says where no head statistics came: the fact, never a filled-in row. */
+const NO_HEAD_STATISTICS =
+  "Prometheus reports no head block statistics here: this server's TSDB status carries none, so the " +
+  "storage row has no series count, chunk count or sample span to show";
 
 /** A label-name list of `length` entries, the metric-name entry first with `metricNames` values. */
 function labelsWithMetricNames(length: number, metricNames: number): NamedCount[] {
@@ -318,6 +350,16 @@ describe("tableStatsFrom", () => {
     expect(rows[0]?.tableName).toBe("metric_0");
     expect(rows[TSDB_TOP_METRICS - 1]?.tableName).toBe(`metric_${TSDB_TOP_METRICS - 1}`);
   });
+
+  test("a status with no head statistics still lists its series counts by metric, which are all this reads", () => {
+    const status = headlessTsdb();
+    const rows = tableStatsFrom(status);
+    // The control: the capture ranks metrics, so the rows below are its own and not an empty answer.
+    expect(status.seriesByMetric.length).toBeGreaterThan(0);
+    expect(rows.map((row) => [row.tableName, row.rowCount])).toEqual(
+      status.seriesByMetric.map((entry) => [entry.name, entry.value]),
+    );
+  });
 });
 
 describe("storageStatsFrom", () => {
@@ -339,14 +381,26 @@ describe("storageStatsFrom", () => {
     // resetInMemoryState() starts a head at minTime MaxInt64 and maxTime MinInt64 (tsdb/head.go,
     // v3.13.3); JSON.parse turns both into these doubles, and neither is a date in range.
     const empty = tsdbStatus({
-      headSeries: 0,
-      headChunks: 0,
-      headMinTimeMs: JSON.parse("9223372036854775807") as number,
-      headMaxTimeMs: JSON.parse("-9223372036854775808") as number,
+      head: {
+        series: 0,
+        chunks: 0,
+        minTimeMs: JSON.parse("9223372036854775807") as number,
+        maxTimeMs: JSON.parse("-9223372036854775808") as number,
+      },
     });
     expect(storageStatsFrom(empty, RUNTIME)[0]?.location).toBe("no samples, retention 15d");
     // Control: a head with samples reports its span.
     expect(storageStatsFrom(tsdbStatus(), RUNTIME)[0]?.location).toContain(" to ");
+  });
+
+  test("a status with no head statistics has no row to describe, and says so rather than fill one in", () => {
+    // An empty list would read as a server that measured no storage, and a row of zeros as an empty
+    // head: both claim a measurement this server never sent.
+    const error = thrown(() => storageStatsFrom(headlessTsdb(), RUNTIME));
+    expect(error).toBeInstanceOf(PrometheusTransportError);
+    expect(error).toMatchObject({ category: "unmeasurable", message: NO_HEAD_STATISTICS });
+    // Control: the same runtime read beside head statistics is one row.
+    expect(storageStatsFrom(tsdbStatus(), RUNTIME)).toHaveLength(1);
   });
 });
 
@@ -489,5 +543,16 @@ describe("the readers", () => {
     const { transport, calls } = recordingTransport();
     expect(await readStorageStats(transport)).toEqual(storageStatsFrom(tsdbStatus(), RUNTIME));
     expect([...calls].sort()).toEqual(["runtimeInfo", `tsdbStatus(${TSDB_TOP_METRICS})`]);
+  });
+
+  test("a status with no head statistics refuses the storage read and still answers the table read", async () => {
+    const { transport } = recordingTransport({ tsdb: headlessTsdb() });
+    await expect(readStorageStats(transport)).rejects.toMatchObject({
+      category: "unmeasurable",
+      message: NO_HEAD_STATISTICS,
+    });
+    expect(await readTableStats(transport)).toEqual(tableStatsFrom(headlessTsdb()));
+    // The control: the table read has rows, so answering it is not answering nothing.
+    expect(await readTableStats(transport)).not.toEqual([]);
   });
 });

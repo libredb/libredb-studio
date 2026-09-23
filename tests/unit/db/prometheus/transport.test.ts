@@ -14,11 +14,13 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import {
   type PrometheusErrorCategory,
+  type PrometheusMetadataEntry,
   type PrometheusQueryData,
   type PrometheusRuleGroup,
   type PrometheusTarget,
   type PrometheusTransport,
   PrometheusTransportError,
+  type PrometheusTsdbStatus,
   type TimeWindow,
 } from "@/lib/db/providers/timeseries/prometheus/transport";
 
@@ -207,10 +209,7 @@ describe("PrometheusTransport", () => {
       flags: () => Promise.resolve({ "web.max-connections": "512" }),
       tsdbStatus: () =>
         Promise.resolve({
-          headSeries: 1,
-          headChunks: 1,
-          headMinTimeMs: 1790154000000,
-          headMaxTimeMs: 1790157600000,
+          head: { series: 1, chunks: 1, minTimeMs: 1790154000000, maxTimeMs: 1790157600000 },
           seriesByMetric: [{ name: "up", value: 1 }],
           valuesByLabel: [{ name: "__name__", value: 1 }],
         }),
@@ -225,5 +224,21 @@ describe("PrometheusTransport", () => {
     expect(answer.truncatedByServer).toBe(false);
     expect(names).toEqual({ items: ["up"], truncatedByServer: false });
     expect(group?.rules.map((rule) => rule.kind)).toEqual(["recording", "alerting"]);
+  });
+
+  // VictoriaMetrics v1.152.0 sends no metadata unit, no target scrape interval or timeout, and no
+  // head block statistics. Each value below is typed as the seam, so the compiler refuses this file
+  // the moment one of those members turns required again, and nothing has to invent a value for it.
+  test("carries what an engine leaves out of a description as absent, with nothing invented in its place", () => {
+    const { scrapeInterval, scrapeTimeout, ...undescribed } = TARGET;
+    const target: PrometheusTarget = undescribed;
+    const entry: PrometheusMetadataEntry = { type: "counter", help: "Counter of HTTP requests." };
+    const status: PrometheusTsdbStatus = { seriesByMetric: [{ name: "up", value: 1 }], valuesByLabel: [] };
+
+    // The control: the full target carries both members, so their absence below is the point.
+    expect([scrapeInterval, scrapeTimeout]).toEqual(["15s", "10s"]);
+    expect(Object.keys(target)).not.toContain("scrapeInterval");
+    expect(Object.keys(entry)).toEqual(["type", "help"]);
+    expect(Object.keys(status)).toEqual(["seriesByMetric", "valuesByLabel"]);
   });
 });

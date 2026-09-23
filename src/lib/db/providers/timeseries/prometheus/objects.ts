@@ -749,7 +749,8 @@ function distinctEntries(entries: readonly PrometheusMetadataEntry[]): Prometheu
  * One part per distinct metadata entry, and never more parts than a document may carry: the
  * source route refuses a document of more than `SOURCE_PART_LIMIT` parts (`src/lib/api/object-route.ts`),
  * so past that the last part holds every remaining entry as one JSON array. Nothing the engine
- * answered is dropped.
+ * answered is dropped, and nothing it left out is added: an entry sent without a unit, as
+ * VictoriaMetrics sends every entry, renders without one.
  */
 function metadataDrafts(family: string, entries: readonly PrometheusMetadataEntry[]): PartDrafts {
   const distinct = distinctEntries(entries);
@@ -758,7 +759,7 @@ function metadataDrafts(family: string, entries: readonly PrometheusMetadataEntr
     family,
     type: entry.type,
     help: entry.help,
-    unit: entry.unit,
+    ...(entry.unit === undefined ? {} : { unit: entry.unit }),
   });
   if (total === 1) return [{ id: METADATA_PART_ID, label: METADATA_PART_LABEL, value: value(distinct[0]) }];
   const singles = total > SOURCE_PART_LIMIT ? SOURCE_PART_LIMIT - 1 : total;
@@ -932,7 +933,11 @@ async function scrapePoolSource(context: SourceContext, path: readonly string[])
   ];
 }
 
-/** A target, found by its pool and segment in its own pool's read (#1085 4.4). */
+/**
+ * A target, found by its pool and segment in its own pool's read (#1085 4.4). A scrape interval or
+ * timeout the engine did not send is left out rather than filled in: VictoriaMetrics sends neither,
+ * and keeps both among the discovered labels the part shows whole.
+ */
 async function targetSource(context: SourceContext, path: readonly string[]): Promise<PartDrafts> {
   const pool = path[path.length - 2];
   const segment = path[path.length - 1];
@@ -952,8 +957,8 @@ async function targetSource(context: SourceContext, path: readonly string[]): Pr
         lastError: target.lastError,
         lastScrape: target.lastScrape,
         lastScrapeDuration: target.lastScrapeDuration,
-        scrapeInterval: target.scrapeInterval,
-        scrapeTimeout: target.scrapeTimeout,
+        ...(target.scrapeInterval === undefined ? {} : { scrapeInterval: target.scrapeInterval }),
+        ...(target.scrapeTimeout === undefined ? {} : { scrapeTimeout: target.scrapeTimeout }),
         labels: target.labels,
         discoveredLabels: target.discoveredLabels,
       },

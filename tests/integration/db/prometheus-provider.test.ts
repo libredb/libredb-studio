@@ -23,7 +23,9 @@
  * filtered capture in "the captures" below, so the fake cannot drift from the server in silence.
  * Text answers and failure shapes are built inline, each saying where it comes from. TLS handshakes
  * are not repeated: `tests/unit/db/prometheus/request.test.ts` drives them against a real
- * `node:https` server.
+ * `node:https` server. One block replays the compose `victoriametrics` service instead
+ * (`tests/fixtures/prometheus/victoriametrics-v1.152.0/`), the relative whose answers leave out
+ * members that only describe an object, and its title says so.
  *
  * Five measured behaviours drive what is asserted, and "the captures" pins each one:
  *
@@ -46,6 +48,7 @@ import {
   DatabaseConfigError,
   QueryCancelledError,
   QueryError,
+  TimeoutError,
 } from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
@@ -61,7 +64,7 @@ import type { ObjectSourceDocument, ObjectSourcePart } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
-import { capture, captureBody } from "../../helpers/prometheus-fixtures";
+import { capture, captureBody, captureVm, captureVmBody } from "../../helpers/prometheus-fixtures";
 
 // ============================================================================
 // The captured payloads, and the test's own view of their wire shapes
@@ -1382,6 +1385,146 @@ describe("monitoring", () => {
 });
 
 // ============================================================================
+// A relative whose answers leave descriptions out (VictoriaMetrics v1.152.0)
+// ============================================================================
+
+/**
+ * The capture of the compose `victoriametrics` service (victoriametrics/victoria-metrics:v1.152.0) that
+ * answers a read, by its path and the one parameter that picks a capture, for the reads the tests below
+ * make. Those captures hold one answer per read, so nothing is selected from a wider one.
+ */
+function vmCaptureName(request: Sent): string | undefined {
+  const { pathname, searchParams } = request.url;
+  const pool = searchParams.get("scrapePool");
+  switch (`${request.method} ${pathname}`) {
+    case "GET /api/v1/status/buildinfo":
+      return "buildinfo";
+    case "GET /api/v1/label/__name__/values":
+      return "label-values-names";
+    case "GET /api/v1/metadata":
+      return searchParams.get("metric") === COUNTER ? "metadata-exact" : undefined;
+    case "GET /api/v1/rules":
+      return searchParams.get("exclude_alerts") === "true" ? "rules-all" : undefined;
+    case "GET /api/v1/scrape_pools":
+      return "scrape-pools";
+    case "GET /api/v1/targets":
+      if (searchParams.get("state") !== "active") return undefined;
+      return pool === null ? "targets-active" : pool === "studio-twin" ? "targets-one-pool" : undefined;
+    case "GET /api/v1/status/tsdb":
+      return searchParams.get("limit") === String(TSDB_TOP_METRICS) ? "tsdb-status-50" : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The fake server's `victoriametrics` answers, replayed with each record's own status, headers and
+ * text. A read none of them answers fails as uncaptured rather than falling through to a capture of
+ * the `prometheus` service, so no test below reads one server's answer as the other's.
+ */
+function vmCaptured(request: Sent): Reply {
+  const name = vmCaptureName(request);
+  if (name === undefined) {
+    uncaptured.push(describeRequest(request));
+    throw new Error(`no VictoriaMetrics capture answers ${describeRequest(request)}`);
+  }
+  const answer = captureVm(name);
+  return { status: answer.status, body: answer.text, headers: answer.headers };
+}
+
+interface VmMetadata {
+  readonly type: string;
+  readonly help: string;
+  readonly unit?: string;
+}
+
+describe("a relative whose answers leave descriptions out, end to end (VictoriaMetrics v1.152.0 captures)", () => {
+  beforeEach(() => {
+    override = vmCaptured;
+  });
+
+  test("the Tables tab lists the server's series counts by metric, from a TSDB status with no head statistics", async () => {
+    const tsdb = captureVmBody<Envelope<TsdbData & { readonly headStats?: unknown }>>("tsdb-status-50");
+    // The control: the server ranked its metrics, and sent no head block statistics beside them.
+    expect(tsdb.data.seriesCountByMetricName.length).toBeGreaterThan(0);
+    expect(tsdb.data.headStats).toBeUndefined();
+    const provider = await connected();
+
+    const stats = await provider.getTableStats();
+
+    expect(stats.map((stat) => [stat.tableName, stat.rowCount])).toEqual(
+      tsdb.data.seriesCountByMetricName.map((stat) => [stat.name, stat.value]),
+    );
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a metric's source is the type and help the server sent, and no unit it did not send", async () => {
+    const families = captureVmBody<Envelope<Readonly<Record<string, readonly VmMetadata[]>>>>("metadata-exact").data;
+    const entry = families[COUNTER]?.[0];
+    // The control: the server holds an entry for the counter, and no unit in it.
+    expect(entry).toBeDefined();
+    expect(entry?.unit).toBeUndefined();
+    const provider = await connected();
+
+    const document = await provider.readObjectSource([COUNTER], "metric");
+
+    expect(document.parts).toHaveLength(1);
+    expect(parsedPart(document, 0)).toEqual({ family: COUNTER, type: entry?.type, help: entry?.help });
+    expect(Object.keys(parsedPart(document, 0))).toEqual(["family", "type", "help"]);
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the Targets folder counts every active target, and a target's source leaves out what the server did not send", async () => {
+    const targets = captureVmBody<Envelope<TargetsData>>("targets-active").data.activeTargets;
+    const pool = captureVmBody<Envelope<TargetsData>>("targets-one-pool").data.activeTargets;
+    // The control: the server reports several targets, a pool of them among them, with no scrape
+    // interval or timeout in any.
+    expect(targets.length).toBeGreaterThan(1);
+    expect(pool.length).toBeGreaterThan(0);
+    expect(targets.some((target) => "scrapeInterval" in target || "scrapeTimeout" in target)).toBe(false);
+    const provider = await connected();
+
+    expect((await provider.countObjects([])).target).toEqual({ count: targets.length });
+    const listed = (await provider.listObjects([], "target")).filter((object) => object.path[0] === "studio-twin");
+    expect(listed).toHaveLength(pool.length);
+    const document = await provider.readObjectSource(listed[0]?.path ?? [], "target");
+    const part = parsedPart(document, 0);
+    expect(part).toMatchObject({ scrapeUrl: pool[0]?.scrapeUrl, health: pool[0]?.health });
+    expect(Object.keys(part)).toEqual([
+      "scrapeUrl",
+      "health",
+      "lastError",
+      "lastScrape",
+      "lastScrapeDuration",
+      "labels",
+      "discoveredLabels",
+    ]);
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the storage row is refused as unmeasured where the TSDB status has no head statistics, never filled (built inline)", async () => {
+    // Inline: the VictoriaMetrics TSDB status beside every other answer from the `prometheus` captures,
+    // the runtime read among them, which is what a server that serves that read and sends no head
+    // statistics gives. VictoriaMetrics itself fails this panel one read earlier: it does not serve the
+    // runtime read, and says so in text.
+    override = (request) => (request.url.pathname === "/api/v1/status/tsdb" ? vmCaptured(request) : undefined);
+    const provider = await connected();
+
+    const failure = provider.getStorageStats();
+
+    await expect(failure).rejects.toBeInstanceOf(QueryError);
+    await expect(failure).rejects.toThrow("Prometheus reports no head block statistics here");
+    // The control: the same TSDB status answers the table read, so the refusal is about the head alone.
+    expect((await provider.getTableStats()).length).toBeGreaterThan(0);
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
 // Errors, end to end (section 5.5)
 // ============================================================================
 
@@ -1424,6 +1567,28 @@ describe("errors, end to end", () => {
     expect(message.length).toBeGreaterThan(0);
     expect(message).not.toContain("nginx");
     expect(message).not.toContain("upstream-host-7");
+  });
+
+  test("a server still starting or already stopping is named as one, and not as a proxy, when connecting (built inline)", async () => {
+    // Inline: what `testReady` in web/web.go (v3.13.3) answers on every API path this client reads while
+    // the server replays its write-ahead log at start-up, the window a restart of a large server spends
+    // minutes in.
+    override = () => ({
+      status: 503,
+      body: "Service Unavailable",
+      headers: { "content-type": "text/plain; charset=utf-8", "x-prometheus-stopping": "false" },
+    });
+    const provider = new PrometheusProvider(makeConnection());
+    const failure = provider.connect();
+
+    await expect(failure).rejects.toBeInstanceOf(ConnectionError);
+    const message = await messageOf(failure);
+    // The controls: the message names the read that failed and how, so the absences below mean something.
+    expect(message).toContain("/api/v1/status/buildinfo");
+    expect(message).toContain("HTTP 503");
+    expect(message).toContain("while it starts up");
+    expect(message).not.toContain("Service Unavailable");
+    expect(message).not.toContain("something other than the Prometheus API answered");
   });
 
   test("a 502 with a body is a ConnectionError that never quotes the body (built inline)", async () => {
@@ -1523,6 +1688,37 @@ describe("cancellation, M1 observed, so cancelQuery exists", () => {
     const provider = await connected();
 
     expect(await provider.cancelQuery("never-started")).toBe(false);
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// The query deadline (section 5.2)
+// ============================================================================
+
+describe("the query deadline, end to end (section 5.2)", () => {
+  test("a query the server never answers ends as a TimeoutError at the connection's query timeout", async () => {
+    // Inline: a server that takes the query and never answers, so only the client-side deadline can
+    // end it. The provider sends every query with a cancellation signal of its own, so this is the
+    // path a user's query always takes, and the deadline has to hold beside that signal. The timeout also
+    // bounds connect()'s build read, so it leaves that read room; the wait below stays inside bun's 5 s.
+    const queryTimeout = 500;
+    override = (request) => (request.url.pathname === "/api/v1/query" ? new Promise<Reply>(() => {}) : undefined);
+    const provider = new PrometheusProvider(makeConnection(), { queryTimeout });
+    await provider.connect();
+
+    const outcome = await Promise.race([
+      provider.query(QUERY.vector).then(
+        () => "answered",
+        (error: unknown) => error,
+      ),
+      Bun.sleep(queryTimeout * 8).then(() => "still pending"),
+    ]);
+
+    expect(outcome).toBeInstanceOf(TimeoutError);
+    expect((outcome as TimeoutError).timeout).toBe(queryTimeout);
+    // The control: the query did reach the server, so the timeout ended a request that was sent.
+    expect(requestsTo("/api/v1/query")).toHaveLength(1);
     await provider.disconnect();
   });
 });

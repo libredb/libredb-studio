@@ -9,7 +9,10 @@
  *
  * CAPTURED: every answer read through tests/helpers/prometheus-fixtures.ts is the verbatim answer of the
  * live compose `prometheus` service (prom/prometheus:v3.13.3), replayed with its own status, content type
- * and bytes, and the fixture README names the request behind each. CONSTRUCTED, and labelled so at each
+ * and bytes, and the fixture README names the request behind each. A test labelled "captured from
+ * VictoriaMetrics" replays the compose `victoriametrics` service (victoriametrics/victoria-metrics:v1.152.0)
+ * the same way: a relative whose answers leave out members that only describe an object, and which
+ * refuses paths it does not serve in text of its own. CONSTRUCTED, and labelled so at each
  * use, is only what no capture holds: a native histogram with no buckets, the rule and alert members the
  * engine omits, notice lists no capture combines, a metadata family named like an Object.prototype member,
  * the error types the live server was not provoked into, refusals carrying a marker, a proxy's bodies, and
@@ -40,15 +43,17 @@ import {
 } from "@/lib/db/providers/timeseries/prometheus/request";
 import {
   type PrometheusAlert,
+  type PrometheusMetadataEntry,
   type PrometheusQueryOptions,
   type PrometheusRule,
   type PrometheusRuleGroup,
   type PrometheusTarget,
   type PrometheusTransport,
   PrometheusTransportError,
+  type PrometheusTsdbStatus,
   type TimeWindow,
 } from "@/lib/db/providers/timeseries/prometheus/transport";
-import { capture, captureBody } from "../../../helpers/prometheus-fixtures";
+import { capture, captureBody, captureVm, captureVmBody } from "../../../helpers/prometheus-fixtures";
 
 // ============================================================================
 // Harness
@@ -114,6 +119,12 @@ function reply(...queued: Reply[]): void {
 /** A captured answer as the server sent it: the record's own status, content type and bytes. */
 function captureOf(name: string): Reply {
   const answer = capture(name);
+  return { status: answer.status, contentType: answer.headers["content-type"] ?? null, body: answer.text };
+}
+
+/** The same, from the VictoriaMetrics v1.152.0 captures. */
+function captureVmOf(name: string): Reply {
+  const answer = captureVm(name);
   return { status: answer.status, contentType: answer.headers["content-type"] ?? null, body: answer.text };
 }
 
@@ -265,6 +276,7 @@ interface RawRuleGroup {
   readonly lastEvaluation: string;
   readonly rules: RawRule[];
 }
+/** The two scrape members are absent from the VictoriaMetrics v1.152.0 captures. */
 interface RawTarget {
   readonly scrapePool: string;
   readonly scrapeUrl: string;
@@ -272,10 +284,16 @@ interface RawTarget {
   readonly lastError: string;
   readonly lastScrape: string;
   readonly lastScrapeDuration: number;
-  readonly scrapeInterval: string;
-  readonly scrapeTimeout: string;
+  readonly scrapeInterval?: string;
+  readonly scrapeTimeout?: string;
   readonly labels: RawLabels;
   readonly discoveredLabels: RawLabels;
+}
+/** `unit` is absent from the VictoriaMetrics v1.152.0 captures. */
+interface RawMetadata {
+  readonly type: string;
+  readonly help: string;
+  readonly unit?: string;
 }
 interface RawCount {
   readonly name: string;
@@ -287,8 +305,9 @@ interface RawHead {
   readonly minTime: number;
   readonly maxTime: number;
 }
+/** `headStats` is absent from the VictoriaMetrics v1.152.0 captures. */
 interface RawTsdb {
-  readonly headStats: RawHead;
+  readonly headStats?: RawHead;
   readonly seriesCountByMetricName: RawCount[];
   readonly labelValueCountByLabelName: RawCount[];
 }
@@ -341,6 +360,7 @@ function seamGroups(raw: readonly RawRuleGroup[]): PrometheusRuleGroup[] {
   }));
 }
 
+/** A member the engine left out stays out of the seam form too, as a missing key and never as undefined. */
 function seamTarget(raw: RawTarget): PrometheusTarget {
   return {
     scrapePool: raw.scrapePool,
@@ -349,11 +369,33 @@ function seamTarget(raw: RawTarget): PrometheusTarget {
     lastError: raw.lastError,
     lastScrape: raw.lastScrape,
     lastScrapeDuration: raw.lastScrapeDuration,
-    scrapeInterval: raw.scrapeInterval,
-    scrapeTimeout: raw.scrapeTimeout,
+    ...(raw.scrapeInterval === undefined ? {} : { scrapeInterval: raw.scrapeInterval }),
+    ...(raw.scrapeTimeout === undefined ? {} : { scrapeTimeout: raw.scrapeTimeout }),
     labels: raw.labels,
     discoveredLabels: raw.discoveredLabels,
   };
+}
+
+function seamMetadata(raw: RawMetadata): PrometheusMetadataEntry {
+  return { type: raw.type, help: raw.help, ...(raw.unit === undefined ? {} : { unit: raw.unit }) };
+}
+
+function seamTsdb(raw: RawTsdb): PrometheusTsdbStatus {
+  const lists = {
+    seriesByMetric: raw.seriesCountByMetricName.map(({ name, value }) => ({ name, value })),
+    valuesByLabel: raw.labelValueCountByLabelName.map(({ name, value }) => ({ name, value })),
+  };
+  if (raw.headStats === undefined) return lists;
+  const { numSeries, chunkCount, minTime, maxTime } = raw.headStats;
+  return { head: { series: numSeries, chunks: chunkCount, minTimeMs: minTime, maxTimeMs: maxTime }, ...lists };
+}
+
+/**
+ * Every member of a decoded value is either sent or left out, never present as undefined: `toEqual`
+ * treats the two alike, so the keys are compared on their own.
+ */
+function keysOf(value: object): string[] {
+  return Object.keys(value).sort();
 }
 
 // CONSTRUCTED members for the malformed documents below. Each is a complete, valid v3.13.3 object, so the
@@ -663,8 +705,26 @@ describe("the query's deadline and cancellation (5.2)", () => {
     caller.abort(reason);
     expect(request.signal.aborted).toBe(true);
     expect(request.signal.reason).toBe(reason);
-    // The deadline is still armed beside it: the cancellation is the caller's, the timeout the query's.
+    // A deadline was armed beside it. That the request still follows it is the next test's to prove:
+    // once the caller has aborted, the request keeps the caller's reason whatever fires after.
     expect(armed.map((deadline) => deadline.ms)).toEqual([QUERY_OPTIONS.timeoutMs]);
+  });
+
+  test("with the caller's signal live, the deadline still ends the query's request as a timeout", async () => {
+    // The provider always passes a signal of its own, so this is the arm every production query takes.
+    reply(captureOf("query-vector"));
+    const caller = new AbortController();
+
+    await transportWith().query("up", { ...QUERY_OPTIONS, signal: caller.signal });
+
+    const request = only();
+    expect(armed.map((deadline) => deadline.ms)).toEqual([QUERY_OPTIONS.timeoutMs]);
+    expect(request.signal.aborted).toBe(false);
+    armed[0]?.controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    expect(request.signal.aborted).toBe(true);
+    expect((request.signal.reason as DOMException).name).toBe("TimeoutError");
+    // The timeout is the query's own: the caller's signal is untouched by it.
+    expect(caller.signal.aborted).toBe(false);
   });
 });
 
@@ -859,18 +919,38 @@ describe("each captured answer decodes into the seam types", () => {
   });
 
   test("metadata is the entries of the one family asked for", async () => {
-    const raw =
-      captureBody<RawEnvelope<Record<string, { type: string; help: string; unit: string }[]>>>("metadata-exact");
+    const raw = captureBody<RawEnvelope<Record<string, RawMetadata[]>>>("metadata-exact");
     const [family, ...others] = Object.keys(raw.data);
     reply(captureOf("metadata-exact"));
 
     const entries = await transportWith().metadata(family as string);
 
-    // `limit=1`: one family, and a real one.
+    // `limit=1`: one family, and a real one, whose entries carry a unit as Prometheus writes them.
     expect(others).toEqual([]);
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries).toEqual((raw.data[family as string] ?? []).map(({ type, help, unit }) => ({ type, help, unit })));
+    expect((raw.data[family as string] ?? []).every((entry) => typeof entry.unit === "string")).toBe(true);
+    expect(entries).toEqual((raw.data[family as string] ?? []).map(seamMetadata));
+    expect(entries.map(keysOf)).toEqual(entries.map(() => ["help", "type", "unit"]));
   });
+
+  test.each(["metadata-exact", "metadata-family"])(
+    "an entry sent without a unit has none, its type and help verbatim (%s, captured from VictoriaMetrics)",
+    async (name) => {
+      const raw = captureVmBody<RawEnvelope<Record<string, RawMetadata[]>>>(name);
+      const [family] = Object.keys(raw.data);
+      const sent = raw.data[family as string] ?? [];
+      reply(captureVmOf(name));
+
+      const entries = await transportWith().metadata(family as string);
+
+      // The control: the engine sent entries, and none of them a unit.
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent.every((entry) => entry.unit === undefined)).toBe(true);
+      expect(entries).toEqual(sent.map(seamMetadata));
+      // Left out, never invented as an empty unit.
+      expect(entries.map(keysOf)).toEqual(sent.map(() => ["help", "type"]));
+    },
+  );
 
   test("an empty answer is no metadata, the engine's answer for a name it holds none for", async () => {
     const raw = captureBody<RawEnvelope<Record<string, unknown>>>("metadata-unknown");
@@ -961,6 +1041,26 @@ describe("each captured answer decodes into the seam types", () => {
     expect(targets.map((target) => target.health)).toContain("up");
     expect(targets.some((target) => target.health !== "up")).toBe(true);
     expect(targets).toEqual(raw.data.activeTargets.map(seamTarget));
+    expect(targets.every((target) => "scrapeInterval" in target && "scrapeTimeout" in target)).toBe(true);
+  });
+
+  test("targets sent without a scrape interval or timeout have neither, every other member verbatim (captured from VictoriaMetrics)", async () => {
+    const raw = captureVmBody<RawEnvelope<{ activeTargets: RawTarget[] }>>("targets-active");
+    reply(captureVmOf("targets-active"));
+
+    const targets = await transportWith().targets();
+
+    // The control: targets came, up and down among them, and none carries either member; the engine
+    // keeps both among a target's discovered labels, which reach the seam as they are.
+    expect(raw.data.activeTargets.length).toBeGreaterThan(1);
+    expect(targets.map((target) => target.health)).toEqual(expect.arrayContaining(["up", "down"]));
+    expect(raw.data.activeTargets.every((target) => target.scrapeInterval === undefined)).toBe(true);
+    expect(raw.data.activeTargets.every((target) => target.scrapeTimeout === undefined)).toBe(true);
+    expect(targets).toEqual(raw.data.activeTargets.map(seamTarget));
+    expect(targets.some((target) => "scrapeInterval" in target || "scrapeTimeout" in target)).toBe(false);
+    expect(targets.map((target) => target.discoveredLabels.__scrape_interval__)).toEqual(
+      raw.data.activeTargets.map((target) => target.discoveredLabels.__scrape_interval__),
+    );
   });
 
   test("build information carries the probed version", async () => {
@@ -1000,14 +1100,22 @@ describe("each captured answer decodes into the seam types", () => {
     const status = await transportWith().tsdbStatus(50);
 
     expect(raw.data.seriesCountByMetricName.length).toBeGreaterThan(0);
-    expect(status).toEqual({
-      headSeries: raw.data.headStats.numSeries,
-      headChunks: raw.data.headStats.chunkCount,
-      headMinTimeMs: raw.data.headStats.minTime,
-      headMaxTimeMs: raw.data.headStats.maxTime,
-      seriesByMetric: raw.data.seriesCountByMetricName.map(({ name, value }) => ({ name, value })),
-      valuesByLabel: raw.data.labelValueCountByLabelName.map(({ name, value }) => ({ name, value })),
-    });
+    expect(raw.data.headStats).toBeDefined();
+    expect(status).toEqual(seamTsdb(raw.data));
+    expect(keysOf(status)).toEqual(["head", "seriesByMetric", "valuesByLabel"]);
+  });
+
+  test("a TSDB status sent without head statistics has no head, both top lists verbatim (captured from VictoriaMetrics)", async () => {
+    const raw = captureVmBody<RawEnvelope<RawTsdb>>("tsdb-status-50");
+    reply(captureVmOf("tsdb-status-50"));
+
+    const status = await transportWith().tsdbStatus(50);
+
+    // The control: the engine sent its series counts by metric, and no head block statistics.
+    expect(raw.data.seriesCountByMetricName.length).toBeGreaterThan(0);
+    expect(raw.data.headStats).toBeUndefined();
+    expect(status).toEqual(seamTsdb(raw.data));
+    expect(keysOf(status)).toEqual(["seriesByMetric", "valuesByLabel"]);
   });
 });
 
@@ -1079,6 +1187,20 @@ const MALFORMED: readonly MalformedCase[] = [
     { up: [{ type: "gauge", unit: "" }] },
     (transport) => transport.metadata("up"),
   ],
+  // The type classifies the metric, so it stays required where a description may be left out.
+  [
+    "a metadata entry with no type",
+    "/api/v1/metadata",
+    { up: [{ help: "Up.", unit: "" }] },
+    (transport) => transport.metadata("up"),
+  ],
+  // A unit may be left out, but one that is sent must be text.
+  [
+    "a metadata unit that is not text",
+    "/api/v1/metadata",
+    { up: [{ type: "gauge", help: "Up.", unit: 1 }] },
+    (transport) => transport.metadata("up"),
+  ],
   ["rules without groups", "/api/v1/rules", {}, readRules],
   [
     "a rule group with no name",
@@ -1120,6 +1242,25 @@ const MALFORMED: readonly MalformedCase[] = [
     { activeTargets: [{ ...TARGET_BASE, lastScrapeDuration: "0.01" }] },
     (transport) => transport.targets(),
   ],
+  // The members that identify or classify a target stay required. JSON.stringify leaves an undefined
+  // member out, so each row's target reaches the decoder without that member at all.
+  ...(["scrapePool", "scrapeUrl", "health", "labels"] as const).map(
+    (member): MalformedCase => [
+      `a target with no ${member}`,
+      "/api/v1/targets",
+      { activeTargets: [{ ...TARGET_BASE, [member]: undefined }] },
+      (transport) => transport.targets(),
+    ],
+  ),
+  // The scrape interval and timeout may be left out, but one that is sent must be text.
+  ...(["scrapeInterval", "scrapeTimeout"] as const).map(
+    (member): MalformedCase => [
+      `a target whose ${member} is not text`,
+      "/api/v1/targets",
+      { activeTargets: [{ ...TARGET_BASE, [member]: 15 }] },
+      (transport) => transport.targets(),
+    ],
+  ),
   [
     "build information with no version",
     "/api/v1/status/buildinfo",
@@ -1139,10 +1280,27 @@ const MALFORMED: readonly MalformedCase[] = [
     (transport) => transport.runtimeInfo(),
   ],
   ["a flag that is not text", "/api/v1/status/flags", { "web.max-connections": 512 }, (transport) => transport.flags()],
+  // Head statistics may be left out whole, but sent ones must be the object of four numbers.
   [
-    "a TSDB status with no head block",
+    "head statistics that are not an object",
     "/api/v1/status/tsdb",
-    { seriesCountByMetricName: [], labelValueCountByLabelName: [] },
+    { headStats: [], seriesCountByMetricName: [], labelValueCountByLabelName: [] },
+    (transport) => transport.tsdbStatus(50),
+  ],
+  [
+    "head statistics with no maximum time",
+    "/api/v1/status/tsdb",
+    {
+      headStats: { numSeries: 1, numLabelPairs: 1, chunkCount: 1, minTime: 0 },
+      seriesCountByMetricName: [],
+      labelValueCountByLabelName: [],
+    },
+    (transport) => transport.tsdbStatus(50),
+  ],
+  [
+    "a TSDB status with no series counts by metric",
+    "/api/v1/status/tsdb",
+    { headStats: HEAD, labelValueCountByLabelName: [] },
     (transport) => transport.tsdbStatus(50),
   ],
   [
@@ -1426,6 +1584,44 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
     expect(failure.message).toContain("/api/v1/rules");
     expect(failure.message).toContain(`HTTP ${answer.status}`);
     expect(failure.message).not.toContain("marker");
+  });
+
+  test("the 503 the API's own ready gate answers is named as a server starting or stopping, or a proxy with none ready (CONSTRUCTED)", async () => {
+    // `testReady` in web/web.go (v3.13.3) wraps every API route this client reads, and writes exactly
+    // this while the server replays its write-ahead log at start-up and again while it shuts down. A
+    // proxy with no ready server behind it answers 503 too, so the message names both and decides neither.
+    reply(plain("Service Unavailable", 503));
+
+    const failure = await failureOf(() => transportWith().buildInfo());
+
+    expect(failure.category).toBe("protocol");
+    expect(failure.detail).toEqual({ status: 503 });
+    expect(failure.message).toBe(
+      "Prometheus answered /api/v1/status/buildinfo with HTTP 503 and a body that is not a Prometheus API " +
+        "response. Prometheus answers every API path this client reads with this status while it starts up, " +
+        "replaying its write-ahead log, and while it shuts down, and so does a proxy in front of it with no " +
+        "ready server behind it. The body is not shown.",
+    );
+  });
+
+  test("any other answer that is not the envelope offers its possible sources and decides none (captured from VictoriaMetrics)", async () => {
+    // A real answer of this kind: VictoriaMetrics v1.152.0 does not serve the runtime read, and refuses
+    // it with a plain-text 400 of its own.
+    const answer = captureVm("runtimeinfo");
+    reply(captureVmOf("runtimeinfo"));
+
+    const failure = await failureOf(() => transportWith().runtimeInfo());
+
+    // The control: the capture is a plain-text refusal, so the message below describes a real one.
+    expect(answer.status).toBe(400);
+    expect(answer.text).toContain("unsupported path requested");
+    expect(failure.category).toBe("protocol");
+    expect(failure.detail).toEqual({ status: 400 });
+    expect(failure.message).toBe(
+      "Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API " +
+        "response. A proxy or a login page in front of the server answers this way, and so does a server " +
+        "that does not serve this path. The body is not shown.",
+    );
   });
 
   test.each<[RequestFailureReason, string, RequestFailureDetail]>([

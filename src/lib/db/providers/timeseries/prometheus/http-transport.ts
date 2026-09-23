@@ -16,10 +16,13 @@
  * 1. A FAILURE IS CLASSIFIED BY `errorType`, NEVER BY THE HTTP STATUS. The status is not a stable
  *    signal: `canceled` answers 499, `timeout` 503, `execution` 422, and a type with no case of its own
  *    falls through to 500 (`getDefaultErrorCode`).
- * 2. A BODY THAT IS NOT THE ENVELOPE DID NOT COME FROM THE API. Web-config basic auth answers 401 with
- *    plain text, a proxy answers with an HTML page, and a server that is not ready answers 503
- *    `Service Unavailable` as text. Such a body is never parsed further and never copied into a message:
- *    it is whatever the thing that answered chose to say (#1085 S3).
+ * 2. A BODY THAT IS NOT THE ENVELOPE IS NEVER READ AS AN ANSWER. Web-config basic auth answers 401 with
+ *    plain text, a proxy answers with an HTML page, and the API's own ready gate (`testReady` in
+ *    `web/web.go`, which every API route this client reads passes through) answers 503 with the text
+ *    `Service Unavailable` while the server starts up or shuts down. Such a body is never parsed further
+ *    and never copied into a message: it is whatever the thing that answered chose to say (#1085 S3). The
+ *    message names the path and the status, and offers the sources such an answer can have without
+ *    deciding between them.
  * 3. A `limit` THAT CUTS A LIST SHORT SAYS SO, with the warning `results truncated due to limit`, in the
  *    query, series, label names and label values handlers, each of which cuts at the limit itself.
  * 4. THE QUERY HANDLER READS `r.FormValue`, so the expression travels as a form body rather than in a URL
@@ -191,7 +194,7 @@ const RESULT_TYPES = Object.freeze({
 /** A native histogram as `jsonutil.MarshalHistogram` writes it: `buckets` only when it has any. */
 const HISTOGRAM_FIELDS = Object.freeze({ COUNT: "count", SUM: "sum", BUCKETS: "buckets" } as const);
 
-/** One metadata entry. The answer around it is keyed by metric family. */
+/** One metadata entry. The answer around it is keyed by metric family. `unit` may be left out (`metadataEntry`). */
 const METADATA_FIELDS = Object.freeze({ TYPE: "type", HELP: "help", UNIT: "unit" } as const);
 
 /**
@@ -253,7 +256,10 @@ const TARGETS_FIELDS = Object.freeze({
   DROPPED: "droppedTargets",
 } as const);
 
-/** `Target`. `globalUrl` is not read: `scrapeUrl` is what a target is identified by (4.1). */
+/**
+ * `Target`. `globalUrl` is not read: `scrapeUrl` is what a target is identified by (4.1). `scrapeInterval`
+ * and `scrapeTimeout` may be left out (`target`).
+ */
 const TARGET_FIELDS = Object.freeze({
   SCRAPE_POOL: "scrapePool",
   SCRAPE_URL: "scrapeUrl",
@@ -280,7 +286,7 @@ const RUNTIME_FIELDS = Object.freeze({
 
 /**
  * `TSDBStatus` and `HeadStats`. `numLabelPairs`, `memoryInBytesByLabelName` and
- * `seriesCountByLabelValuePair` are not read.
+ * `seriesCountByLabelValuePair` are not read, and `headStats` may be left out whole (`tsdbStatus`).
  */
 const TSDB_FIELDS = Object.freeze({
   HEAD: "headStats",
@@ -310,6 +316,11 @@ const FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
 /** The statuses a refused credential answers with when no envelope says anything else (5.5). */
 const UNAUTHORIZED_STATUS = 401;
 const FORBIDDEN_STATUS = 403;
+/**
+ * The status the API's ready gate answers without an envelope while the server starts up or shuts down
+ * (fact 2), and the one a proxy answers when no server behind it is ready, so it names neither alone.
+ */
+const SERVICE_UNAVAILABLE_STATUS = 503;
 /** The one liveness answer that says the path does not exist, and so the only one that sends the probe on. */
 const NOT_FOUND_STATUS = 404;
 
@@ -438,6 +449,13 @@ interface MemberReader {
   text(member: string): string;
   /** Text, or "" where the engine omits the member while it is empty (`omitempty`). */
   optionalText(member: string): string;
+  /**
+   * Text, or undefined where an engine leaves out a member that only describes the object, which is a
+   * fact about that engine rather than a document this client cannot read. Used only for a member an
+   * engine was measured to omit; a member that identifies or classifies the object is read with `text`,
+   * and one sent with the wrong type is refused either way.
+   */
+  descriptiveText(member: string): string | undefined;
   number(member: string): number;
   labels(member: string): Record<string, string>;
 }
@@ -454,6 +472,12 @@ function membersOf(path: string, value: unknown, what: string): MemberReader {
     optionalText: (member) => {
       const found = source[member];
       if (found === undefined) return "";
+      if (typeof found !== "string") throw unreadable(path, `expected text or nothing at ${member} in ${what}`);
+      return found;
+    },
+    descriptiveText: (member) => {
+      const found = source[member];
+      if (found === undefined) return undefined;
       if (typeof found !== "string") throw unreadable(path, `expected text or nothing at ${member} in ${what}`);
       return found;
     },
@@ -504,16 +528,34 @@ function readEnvelope(path: string, response: InboundResponse): EnvelopeContent 
     if (response.status === UNAUTHORIZED_STATUS || response.status === FORBIDDEN_STATUS) {
       throw refusedCredentials(path, response.status);
     }
-    throw new PrometheusTransportError(
-      "protocol",
-      `Prometheus answered ${path} with HTTP ${response.status} and a body that is not a Prometheus API ` +
-        "response, so something other than the Prometheus API answered at this address, such as a proxy or a " +
-        "login page. The body is not shown.",
-      { status: response.status },
-    );
+    throw notAnApiAnswer(path, response.status);
   }
   if (envelope[ENVELOPE.STATUS] === STATUS_ERROR) throw engineFailure(path, envelope, response.status);
   return { data: envelope[ENVELOPE.DATA], notices: noticesOf(path, envelope) };
+}
+
+/**
+ * A body that is not the envelope and not a refused credential, described by what is known: the path,
+ * the status, and the sources an answer like it can have, none of them asserted, because the status
+ * alone cannot say who answered. A 503 is what Prometheus's own ready gate writes on every API path this
+ * client reads while the server starts up and while it shuts down, and also what a proxy answers with no
+ * ready server behind it. Any other status can be a proxy's page, a login page, or a server that does not
+ * serve the path, the way VictoriaMetrics answers `/api/v1/status/runtimeinfo` with a 400 of its own.
+ */
+function notAnApiAnswer(path: string, status: number): PrometheusTransportError {
+  const sources =
+    status === SERVICE_UNAVAILABLE_STATUS
+      ? "Prometheus answers every API path this client reads with this status while it starts up, replaying " +
+        "its write-ahead log, and while it shuts down, and so does a proxy in front of it with no ready server " +
+        "behind it."
+      : "A proxy or a login page in front of the server answers this way, and so does a server that does not " +
+        "serve this path.";
+  return new PrometheusTransportError(
+    "protocol",
+    `Prometheus answered ${path} with HTTP ${status} and a body that is not a Prometheus API response. ${sources} ` +
+      "The body is not shown.",
+    { status },
+  );
 }
 
 /**
@@ -670,12 +712,18 @@ function queryData(value: unknown): PrometheusQueryData {
   }
 }
 
+/**
+ * One metadata entry. `type` classifies the family and is required. `unit` only describes it, and
+ * VictoriaMetrics v1.152.0 sends `type` and `help` alone, so an entry without it has no unit rather than
+ * an empty one this client made up, and its type and help are still read.
+ */
 function metadataEntry(value: unknown): PrometheusMetadataEntry {
   const entry = membersOf(PATHS.METADATA, value, "a metadata entry");
+  const unit = entry.descriptiveText(METADATA_FIELDS.UNIT);
   return {
     type: entry.text(METADATA_FIELDS.TYPE),
     help: entry.text(METADATA_FIELDS.HELP),
-    unit: entry.text(METADATA_FIELDS.UNIT),
+    ...(unit === undefined ? {} : { unit }),
   };
 }
 
@@ -738,8 +786,16 @@ function alert(value: unknown): PrometheusAlert {
   };
 }
 
+/**
+ * One active target. Its pool, URL, health and labels identify and classify it and are required. The
+ * scrape interval and timeout only describe it, and VictoriaMetrics v1.152.0 leaves both out, keeping
+ * them among the discovered labels instead, so a target without them has neither rather than a value
+ * this client derived, and the target is still listed.
+ */
 function target(value: unknown): PrometheusTarget {
   const entry = membersOf(PATHS.TARGETS, value, "a target");
+  const scrapeInterval = entry.descriptiveText(TARGET_FIELDS.SCRAPE_INTERVAL);
+  const scrapeTimeout = entry.descriptiveText(TARGET_FIELDS.SCRAPE_TIMEOUT);
   return {
     scrapePool: entry.text(TARGET_FIELDS.SCRAPE_POOL),
     scrapeUrl: entry.text(TARGET_FIELDS.SCRAPE_URL),
@@ -747,8 +803,8 @@ function target(value: unknown): PrometheusTarget {
     lastError: entry.text(TARGET_FIELDS.LAST_ERROR),
     lastScrape: entry.text(TARGET_FIELDS.LAST_SCRAPE),
     lastScrapeDuration: entry.number(TARGET_FIELDS.LAST_SCRAPE_DURATION),
-    scrapeInterval: entry.text(TARGET_FIELDS.SCRAPE_INTERVAL),
-    scrapeTimeout: entry.text(TARGET_FIELDS.SCRAPE_TIMEOUT),
+    ...(scrapeInterval === undefined ? {} : { scrapeInterval }),
+    ...(scrapeTimeout === undefined ? {} : { scrapeTimeout }),
     labels: entry.labels(TARGET_FIELDS.LABELS),
     discoveredLabels: entry.labels(TARGET_FIELDS.DISCOVERED_LABELS),
   };
@@ -761,16 +817,29 @@ function namedCounts(value: unknown, what: string): NamedCount[] {
   });
 }
 
+/**
+ * The TSDB status. Its two ranked lists are required, and so is every member of head statistics that
+ * were sent. The head statistics themselves only describe the head block, and VictoriaMetrics v1.152.0
+ * leaves them out whole, answering statistics of its own beside the two lists, so such a status has no
+ * head and its lists are still read.
+ */
 function tsdbStatus(value: unknown): PrometheusTsdbStatus {
   const status = membersOf(PATHS.TSDB, value, "the TSDB status");
-  const head = membersOf(PATHS.TSDB, status.source[TSDB_FIELDS.HEAD], "the head block statistics");
-  return {
-    headSeries: head.number(TSDB_FIELDS.NUM_SERIES),
-    headChunks: head.number(TSDB_FIELDS.CHUNK_COUNT),
-    headMinTimeMs: head.number(TSDB_FIELDS.MIN_TIME),
-    headMaxTimeMs: head.number(TSDB_FIELDS.MAX_TIME),
+  const lists = {
     seriesByMetric: namedCounts(status.source[TSDB_FIELDS.SERIES_BY_METRIC], "the series counts by metric"),
     valuesByLabel: namedCounts(status.source[TSDB_FIELDS.VALUES_BY_LABEL], "the value counts by label"),
+  };
+  const sent = status.source[TSDB_FIELDS.HEAD];
+  if (sent === undefined) return lists;
+  const head = membersOf(PATHS.TSDB, sent, "the head block statistics");
+  return {
+    head: {
+      series: head.number(TSDB_FIELDS.NUM_SERIES),
+      chunks: head.number(TSDB_FIELDS.CHUNK_COUNT),
+      minTimeMs: head.number(TSDB_FIELDS.MIN_TIME),
+      maxTimeMs: head.number(TSDB_FIELDS.MAX_TIME),
+    },
+    ...lists,
   };
 }
 
