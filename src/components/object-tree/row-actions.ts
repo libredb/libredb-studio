@@ -18,20 +18,27 @@
  *   writes rows. They are different questions and standing ruling 4 keeps them apart:
  *   MongoDB, Couchbase and Cassandra declare the engine flag false while declaring a kind
  *   that does take row writes, so a conjunction inside `kindAcceptsRowWrites` would answer
- *   for three engines that never asked. The conjunction belongs at the caller that needs
- *   both facts, which is this one, spelled out.
+ *   for three engines that never asked. The conjunction belongs at each caller that needs
+ *   both facts, this one and the mobile `TableItem.tsx`, spelled out.
  * - `maintenanceControl(..., "perEntity")` for the two maintenance items, which is the same
  *   gate the admin Operations tab and the monitoring Tables tab ask (#496), so three
  *   surfaces cannot disagree about what a provider declared.
+ * - `offersColumnProfiling` and `offersCodeGeneration` for the two actions whose destination
+ *   speaks only some query languages: `POST /api/db/profile` builds SQL or a MongoDB document,
+ *   and the code generator maps columns onto table and document models, so a PromQL metric is
+ *   offered neither (#1085). Both sit beside `maintenanceControl` in `src/lib/db/types.ts`,
+ *   and the mobile menu asks the same two.
  *
  * Never the kind ID and never the database type id. `CLAUDE.md` forbids the second inside
  * `src/lib/db`, and the object model exists so the UI does not need the first.
  *
- * ONE gate of the flat menu has a successor of its own, and it is the only one that is not
- * a statement about a KIND. `TableItem.tsx:92` withholds three items whenever
- * `capabilities.tablesAreDerivedGroupings` is true - Profile, Generate Test Data and the two
- * per-row maintenance links - because those rows are key-prefix groupings a server derived
- * from a bounded scan rather than objects anybody named. It does NOT withhold Generate Query,
+ * ONE gate of the flat menu has a successor of its own, and it was the only one that was not
+ * a statement about a KIND until the two language gates above joined it. `TableItem.tsx`
+ * withheld three items whenever `capabilities.tablesAreDerivedGroupings` was true - Profile,
+ * Generate Test Data and the two per-row maintenance links - because those rows are key-prefix
+ * groupings a server derived from a bounded scan rather than objects anybody named. Since #1085
+ * (decision D-M) it asks this file's row-write rule for Generate Test Data instead, and still
+ * asks the flag for the other two. It does NOT withhold Generate Query,
  * and that is right rather than an oversight: the Redis generator answers
  * `SCAN 0 MATCH user:* COUNT 50` for a prefix group, a runnable command against exactly the
  * keys the row summarises (`src/lib/query-generators.ts`), and the row click that opens data
@@ -39,9 +46,10 @@
  * earlier version of this note said Generate Query was withheld, and it was not.
  *
  * Two of the three therefore need no new gate: a derived grouping declares no
- * `acceptsRowWrites`, so the test-data and create items are already withheld, and both
- * engines that set the flag declare their one maintenance operation as `perEntity: false`,
- * so `maintenanceControl` withholds those. PROFILE is the one that has no kind-level
+ * `acceptsRowWrites`, so the test-data and create items are already withheld; Redis
+ * declares its one maintenance operation as `perEntity: false` and LibreDB declares none
+ * (`supportsMaintenance: false`), so `maintenanceControl` withholds those.
+ * PROFILE is the one that has no kind-level
  * declaration behind it - profiling needs an ADDRESSABLE object, while every other relation
  * action here needs only a pattern - so it reads the same engine-wide flag the flat menu
  * read. Exactly two providers set it, `keyvalue/redis.ts` and `embedded/libredb.ts`, and it
@@ -53,6 +61,8 @@ import { ChartColumn, Code, FileCode, Funnel, Plus, Search, Trash2, WandSparkles
 import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
 import {
   maintenanceControl,
+  offersCodeGeneration,
+  offersColumnProfiling,
   type DatabaseObject,
   type ObjectKindSpec,
   type ProviderCapabilities,
@@ -154,16 +164,24 @@ function objectActions(
     });
   }
 
-  // Profile, and the one gate here that is engine-wide rather than per kind: see the note
-  // at the top of this file. A Redis `user:*` row is a grouping this server summarised, so
-  // the profiler has no object to run its per-column statistics against (#427).
+  // Profile asks two engine-wide facts rather than a per-kind one: see the note at the top of
+  // this file. A Redis `user:*` row is a grouping this server summarised, so the profiler has
+  // no object to run its per-column statistics against (#427); and the profile route builds
+  // SQL or a MongoDB document, so a language it writes neither in is not offered it (#1085).
   const profile = handlers.onProfileObject;
-  if (isRelation && profile !== undefined && capabilities.tablesAreDerivedGroupings !== true) {
+  if (
+    isRelation &&
+    profile !== undefined &&
+    capabilities.tablesAreDerivedGroupings !== true &&
+    offersColumnProfiling(capabilities)
+  ) {
     actions.push({ id: "profile", label: `Profile ${kind.label}`, icon: ChartColumn, run: () => profile(object) });
   }
 
+  // Generate Code names the row rather than addressing it, so a derived grouping keeps it
+  // (#427); the language gate withholds it where the columns model no stored record (#1085).
   const generateCode = handlers.onGenerateCode;
-  if (isRelation && generateCode !== undefined) {
+  if (isRelation && generateCode !== undefined && offersCodeGeneration(capabilities)) {
     actions.push({ id: "generate-code", label: "Generate Code", icon: Code, run: () => generateCode(object) });
   }
 

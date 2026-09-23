@@ -89,8 +89,9 @@ export function relationObjects(
  * engine-wide `supportsInlineRowEdit` is a SEPARATE fact about the results grid's inline
  * editor, and MongoDB, Couchbase and Cassandra declare it false while declaring a kind
  * that genuinely takes row writes. Conjoining the two here would refuse an import all
- * three engines support today. The conjunction belongs at the one caller that needs both
- * facts, `src/components/object-tree/row-actions.ts`, spelled out there.
+ * three engines support today. The conjunction belongs at the callers that need both
+ * facts, the two row menus (`src/components/object-tree/row-actions.ts` and, since
+ * #1085 (decision D-M), `src/components/schema-explorer/TableItem.tsx`), spelled out there.
  *
  * A view is the case this exists for: it has columns, it is a relation, and on most
  * engines an insert into it is meaningless, so only the provider's own

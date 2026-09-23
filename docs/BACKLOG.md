@@ -610,7 +610,7 @@ stated where a reader meets it.
 
 ### D54. The data profiler can only profile columns on PostgreSQL-family engines
 
-`src/app/api/db/profile/route.ts:115-116` casts every column with `${safeCol}::text` to take
+`src/app/api/db/profile/route.ts:132-133` casts every column with `${safeCol}::text` to take
 its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
 SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
 "Could not profile this column" while the row count and the column list beside it are correct.
@@ -1715,20 +1715,19 @@ Cassandra.
 
 ### X13. Profile is withheld from two engines by an engine-wide flag, and LibreDB has named objects behind it
 
-`row-actions.ts:146` gates Profile on `capabilities.tablesAreDerivedGroupings !== true`, which is a
-PROVIDER fact, while every other gate beside it is a per-kind declaration. The flag says "the rows
+`objectActions` in `row-actions.ts` gates Profile on `capabilities.tablesAreDerivedGroupings !== true`, a PROVIDER fact about what a row is, while everything else that function asks about what a row is comes from a per-kind declaration.
+The language gate #1085 added to the same item is engine-wide as well, and rightly so: it says what the profile route can run, not what the row is.
+The flag says "the rows
 this engine shows are prefix groupings this server derived from a bounded scan", and on Redis that
 is true of every row it has. On LibreDB it is true of one kind out of three: `keyspace` is derived,
 while `table` and `collection` are entries the persisted catalog NAMES, created by `table()` and
 `doc()` and addressed by the name their author chose (#789, Task 23). Those two are refused Profile
 purely because the gate never got a per-kind half.
 
-Nothing regresses today and that is measured, not assumed: `POST /api/db/profile` branches on
-`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is sent
-as a MongoDB aggregate pipeline and the grammar answers
-`Unknown command ... Supported: get, put, delete, prefix, range`. Profile cannot work on ANY kind
-here, so withholding it from all three is the honest menu rather than a cost. That is pinned by a
-test in `tests/integration/db/libredb-provider.test.ts`.
+Nothing regresses today and that is measured, not assumed: `POST /api/db/profile` profiles SQL and a MongoDB `aggregate` document only, and since #1085 it refuses JSON in a dialect of its own before sending anything, so a profile of a LibreDB table answers a 400 that names the language.
+Both row menus ask that refusal's own gate, `offersColumnProfiling`, so today Profile is withheld from all three kinds by the language as well as by the flag, and the flag becomes the only refusal on the day the route grows an arm for this grammar.
+The pipeline the route sent before that refusal existed is what the grammar answers with `Unknown command ... Supported: get, put, delete, prefix, range`, and a test in `tests/integration/db/libredb-provider.test.ts` still pins that at the provider.
+Profile cannot work on ANY kind here, so withholding it from all three is the honest menu rather than a cost.
 
 The condition that makes it bite is a separate fact changing: the day the profile route grows an arm
 for this engine's grammar, two named-object kinds stay silently refused with no declaration

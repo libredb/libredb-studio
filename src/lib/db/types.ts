@@ -169,6 +169,45 @@ export function maintenanceControl(
   return { offered: spec[placement], label: spec.label };
 }
 
+/**
+ * Whether column profiling may be offered for this engine: the one gate both row menus
+ * (`src/components/object-tree/row-actions.ts` and the mobile
+ * `src/components/schema-explorer/TableItem.tsx`) and `POST /api/db/profile` ask, so that no
+ * menu offers an action the route refuses.
+ *
+ * The route writes exactly two statement shapes: SQL aggregates, and a MongoDB `aggregate`
+ * document with a `$sample` stage. So profiling is offered for `"sql"`, and for `"json"` only
+ * when no `queryDialect` says the JSON is some other grammar. Redis and LibreDB declare
+ * `"json"` with a dialect of their own, and `"promql"` is not JSON at all; before this gate the
+ * route sent every one of them the MongoDB document, which only MongoDB reads (#1085).
+ *
+ * Unknown capabilities are not a permission, for the reason `maintenanceControl` gives:
+ * `/api/db/provider-meta` answers with nothing both while it is in flight and when it failed.
+ */
+export function offersColumnProfiling(capabilities: ProviderCapabilities | undefined): boolean {
+  if (capabilities === undefined) return false;
+  if (capabilities.queryLanguage === "sql") return true;
+  return capabilities.queryLanguage === "json" && capabilities.queryDialect === undefined;
+}
+
+/**
+ * Whether the code generator may be offered for this engine, asked by both row menus.
+ *
+ * `src/components/CodeGenerator.tsx` maps an object's columns onto a TypeScript interface, a Zod
+ * schema, a Prisma model, a Go struct, a Python dataclass and a Java POJO: the models an
+ * application writes over a table or a document collection. It is offered for `"sql"` and
+ * `"json"`, dialects included, because it names the row rather than addressing it, which is why
+ * Redis and LibreDB keep it (#427). A PromQL metric's columns are its label names, and a record
+ * type over them models nothing an application stores, so `"promql"` is not offered it (#1085).
+ * The two languages are named rather than `"promql"` excluded, so a language added later is not
+ * offered the generator until somebody decides that it should be.
+ *
+ * Unknown capabilities are not a permission, as for `offersColumnProfiling`.
+ */
+export function offersCodeGeneration(capabilities: ProviderCapabilities | undefined): boolean {
+  return capabilities?.queryLanguage === "sql" || capabilities?.queryLanguage === "json";
+}
+
 // ============================================================================
 // Provider Capabilities & Labels
 // ============================================================================
@@ -1452,8 +1491,9 @@ export interface ObjectKindSpec {
    * only the provider knows which.
    *
    * The engine-wide `supportsInlineRowEdit` stays, and it is a SEPARATE fact rather than
-   * the other half of a conjunction. It has one reader, `src/components/Studio.tsx:144`,
-   * where it gates the results grid's inline row editor and nothing else. MongoDB,
+   * the other half of a conjunction. It gates the results grid's inline row editor
+   * (`canEditRows` in `src/components/Studio.tsx`), and the two row menus, which need both
+   * facts for Generate Test Data, conjoin it with this field at the call site. MongoDB,
    * Couchbase and Cassandra declare it false, and #789 declares a kind that accepts row
    * writes on each of those three, so requiring both would refuse an import all three
    * engines do support.

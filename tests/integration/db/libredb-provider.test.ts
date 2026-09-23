@@ -1021,16 +1021,17 @@ describe("LibreDBProvider object surface (#789)", () => {
    * It STAYS true here, and it is asserted in the same test as the declaration so the
    * refusal cannot quietly disappear the day somebody edits `objectKinds`. The split is
    * the one `row-actions.ts` documents: no kind declares `acceptsRowWrites`, so Generate
-   * Test Data and the create item are withheld by the kinds; the single maintenance
-   * operation is `perEntity: false`, so `maintenanceControl` withholds the per-row links;
+   * Test Data and the create item are withheld by the kinds; the engine declares no
+   * maintenance operation (`supportsMaintenance: false`, asserted below), so
+   * `maintenanceControl` withholds the per-row links;
    * and Profile reads this engine-wide flag, which is the gate that has no kind-level
    * declaration behind it.
    *
    * The flag costs the two CATALOGED kinds their Profile item as well, and measured, that
-   * costs nothing: `POST /api/db/profile` has no arm for this engine. It branches on
-   * `queryLanguage === "sql"`, and this provider declares `json`, so a profile of a
-   * LibreDB table is sent as a MongoDB aggregate pipeline, which the grammar rejects with
-   * the message this test pins.
+   * costs nothing: `POST /api/db/profile` has no arm for this engine. It profiles SQL and a
+   * MongoDB `aggregate` document only, and since #1085 it refuses JSON in a dialect of its own
+   * before sending anything; the pipeline it sent a LibreDB table before that refusal existed
+   * is what the grammar rejects with the message this test pins.
    */
   test("the derived-grouping refusal survives the declaration, and Profile could not work anyway", async () => {
     expect(provider.getCapabilities().tablesAreDerivedGroupings).toBe(true);

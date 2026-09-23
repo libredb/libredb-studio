@@ -111,12 +111,13 @@ export function assertObjectPathShape(
  * Whether THIS KIND accepts a row write. Absent and undeclared both read as false.
  *
  * Deliberately NOT conjoined with the engine-wide `supportsInlineRowEdit`, and the name
- * says `kind` so a caller cannot mistake the scope. That flag has exactly one reader in
- * this repo, `src/components/Studio.tsx:144`, where it gates the results grid's inline
- * row editor and nothing else. Folding it in here would answer false for three engines
- * that do take row writes: MongoDB (`src/lib/db/providers/document/mongodb.ts:170`),
- * Couchbase (`src/lib/db/providers/document/couchbase/index.ts:316`) and Cassandra
- * (`src/lib/db/providers/sql/cassandra/index.ts:242`) all declare
+ * says `kind` so a caller cannot mistake the scope. That flag gates the results grid's
+ * inline row editor (`canEditRows` in `src/components/Studio.tsx`), and the two row
+ * menus, which need both facts for Generate Test Data, conjoin it with this function at
+ * the call site. Folding it in here would answer false for three engines
+ * that do take row writes: MongoDB (`src/lib/db/providers/document/mongodb.ts:635`),
+ * Couchbase (`src/lib/db/providers/document/couchbase/index.ts:352`) and Cassandra
+ * (`src/lib/db/providers/sql/cassandra/index.ts:256`) all declare
  * `supportsInlineRowEdit: false`, and #789 declares a kind that accepts a row write on
  * each of the three, so a conjunction would silently drop all three out of the import
  * target list.

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db/factory";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -37,6 +39,21 @@ export async function POST(req: NextRequest) {
 
     {
       const capabilities = provider.getCapabilities();
+
+      // A language this route writes no statement in is refused BEFORE anything is sent
+      // (#1085). The branch below took every language that is not SQL for MongoDB and sent
+      // it an `aggregate` document, which only MongoDB reads. The gate is the one both row
+      // menus ask, so no menu offers what this refuses. The message names the provider's own
+      // declared language and never the request's table or columns.
+      if (!offersColumnProfiling(capabilities)) {
+        const dialect = capabilities.queryDialect === undefined ? "" : ` in the ${capabilities.queryDialect} dialect`;
+        throw new DatabaseConfigError(
+          "Column profiling runs as SQL or as a MongoDB aggregate document, and this connection speaks " +
+            `"${capabilities.queryLanguage}"${dialect}, so nothing was sent.`,
+          provider.type,
+        );
+      }
+
       const isSQL = capabilities.queryLanguage === "sql";
 
       if (!isSQL) {

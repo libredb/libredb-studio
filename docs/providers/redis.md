@@ -636,8 +636,9 @@ Four menu actions are **not offered** on Redis, all for the same reason: they ad
 object, and a `user:*` row is this server's grouping of a key prefix, not an object any command can
 be given.
 
-- `Profile Table` and `Generate Test Data` profile an object and insert rows into it. Both are
-  hidden wherever `tablesAreDerivedGroupings` is true rather than left to answer HTTP 400 (#427).
+- `Profile Table` and `Generate Test Data` profile an object and insert rows into it, and neither is offered on a `user:*` row rather than left to answer HTTP 400 (#427).
+  Profile is hidden wherever `tablesAreDerivedGroupings` is true, and since #1085 by the language gate `offersColumnProfiling` as well, because the profile route refuses JSON in a dialect of its own.
+  Generate Test Data is withheld by the row-write rule, which the desktop tree has always asked and the mobile menu asks instead of the flag since #1085 (decision D-M), because `keyspace` declares no `acceptsRowWrites` and the engine declares `supportsInlineRowEdit: false`.
 - **Redis offers no per-row maintenance action at all** — neither *"Key Info"* nor *"Memory
   Doctor"*. Both items call `onOpenMaintenance("tables", <row>)`, which opens the admin Operations
   tab against a named table; there is no such table here, so the item was a dead end even for the

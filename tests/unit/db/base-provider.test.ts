@@ -1,6 +1,6 @@
 import { describe, test, expect, spyOn } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { maintenanceControl } from "@/lib/db/types";
+import { maintenanceControl, offersCodeGeneration, offersColumnProfiling } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type {
   DatabaseConnection,
@@ -1043,5 +1043,66 @@ describe("maintenanceControl", () => {
     });
 
     expect(maintenanceControl(drifted, "vacuum", "perEntity").offered).toBe(false);
+  });
+});
+
+// ============================================================================
+// offersColumnProfiling() and offersCodeGeneration(): the language gates both row menus and
+// POST /api/db/profile ask (#1085)
+// ============================================================================
+
+/**
+ * A declaration varied in the two language fields and nothing else. Both gates read only those
+ * two, so every `false` below sits beside a `true` for a declaration that differs from it in
+ * the one field under test, and a refusal cannot come from a fixture that is missing something.
+ */
+const languageCaps = (overrides: Partial<ProviderCapabilities>): ProviderCapabilities =>
+  overrides as ProviderCapabilities;
+
+describe("offersColumnProfiling", () => {
+  test("SQL and MongoDB's JSON are profiled: those are the two statements the route builds", () => {
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json" }))).toBe(true);
+  });
+
+  test("JSON in a dialect of its own is not the MongoDB document the route builds", () => {
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(false);
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "libredb" }))).toBe(false);
+    // The control: the same language with the dialect removed.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json" }))).toBe(true);
+  });
+
+  test("PromQL is not profiled, because the route writes no PromQL", () => {
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "promql" }))).toBe(false);
+    // The control: the same declaration in SQL.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+  });
+
+  test("undefined capabilities are a denial, not a permission", () => {
+    // /api/db/provider-meta answers with nothing both while it is in flight and when it
+    // failed, which is the rule maintenanceControl already keeps.
+    expect(offersColumnProfiling(undefined)).toBe(false);
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+  });
+});
+
+describe("offersCodeGeneration", () => {
+  test("SQL and JSON are offered it, dialects included, because it names the row", () => {
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    // Redis and LibreDB keep it, as they did before (#427).
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "libredb" }))).toBe(true);
+  });
+
+  test("PromQL is not offered it: a metric's label names model no stored record", () => {
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "promql" }))).toBe(false);
+    // The control: the same declaration in SQL.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+  });
+
+  test("undefined capabilities are a denial, not a permission", () => {
+    expect(offersCodeGeneration(undefined)).toBe(false);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
   });
 });

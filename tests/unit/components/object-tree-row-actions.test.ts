@@ -12,11 +12,13 @@ import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib
  * old flat menu could not avoid and what `CLAUDE.md` forbids one level up.
  */
 
-// The object-model half only, `Pick`-bound so renaming a field in `ProviderCapabilities`
-// fails this file rather than leaving the fixtures describing nothing.
+// The declaration fields these gates read, `Pick`-bound so renaming a field in
+// `ProviderCapabilities` fails this file rather than leaving the fixtures describing nothing.
 type Model = Partial<
   Pick<
     ProviderCapabilities,
+    | "queryLanguage"
+    | "queryDialect"
     | "objectKinds"
     | "supportsInlineRowEdit"
     | "supportsMaintenance"
@@ -534,5 +536,44 @@ describe("View Source is gated on the kind's declared source, and on nothing els
     expect(rowActions({ row: folderRow("function"), capabilities: withSourceKinds, handlers: allHandlers() })).toEqual(
       [],
     );
+  });
+});
+
+/**
+ * The two actions whose DESTINATION speaks only some query languages (#1085).
+ *
+ * `POST /api/db/profile` writes SQL aggregates or a MongoDB `aggregate` document and nothing
+ * else, and the code generator maps columns onto table and document models. A PromQL metric
+ * is a relation, and a click on it selects its series, while neither destination has anything
+ * to say about it, so both items also ask the language gates in `src/lib/db/types.ts`, the
+ * two the mobile menu asks too. Every negative below is paired with the same declaration in a
+ * language the destination does speak, so an empty answer cannot come from a fixture that
+ * lost its kind or its handlers.
+ */
+describe("the actions whose destination speaks only some query languages", () => {
+  const metric = { id: "metric", role: "relation", label: "Metric", labelPlural: "Metrics", hasColumns: true } as const;
+  const up: DatabaseObject = { path: ["up"], name: "up", kind: "metric" };
+  const metricRow: TreeRowModel = { ...objectRow("metric"), path: ["up"] };
+
+  test("a PromQL metric is offered neither Profile nor Generate Code, and keeps Generate Query", () => {
+    const promql = capabilitiesOf({ queryLanguage: "promql", objectKinds: [metric] });
+    expect(idsFor(metricRow, promql, allHandlers(), up)).toEqual(["generate-select"]);
+  });
+
+  test("the control: the same declaration in SQL is offered both", () => {
+    const sql = capabilitiesOf({ queryLanguage: "sql", objectKinds: [metric] });
+    expect(idsFor(metricRow, sql, allHandlers(), up)).toEqual(["generate-select", "profile", "generate-code"]);
+  });
+
+  test("JSON in a dialect of its own is not profiled, and still generates code", () => {
+    // Redis-shaped WITHOUT `tablesAreDerivedGroupings`, so the language gate is the only one
+    // here that can withhold Profile.
+    const redisDialect = capabilitiesOf({ queryLanguage: "json", queryDialect: "redis", objectKinds: [table] });
+    expect(idsFor(objectRow("table"), redisDialect)).toEqual(["generate-select", "generate-code"]);
+  });
+
+  test("the control: MongoDB's JSON, with no dialect, is profiled and generates code", () => {
+    const mongodb = capabilitiesOf({ queryLanguage: "json", objectKinds: [table] });
+    expect(idsFor(objectRow("table"), mongodb)).toEqual(["generate-select", "profile", "generate-code"]);
   });
 });

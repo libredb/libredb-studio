@@ -480,4 +480,59 @@ describe("POST /api/db/profile", () => {
       expect(JSON.parse(String(call[0])).collection).toBe("users");
     }
   });
+
+  /**
+   * A language this route writes no statement in is refused before anything is sent (#1085).
+   *
+   * The route used to take every language that is not SQL for MongoDB, so a PromQL or a Redis
+   * connection was sent an `aggregate` document. Each refusal below is paired, in the same
+   * test, with the same request against a provider the route CAN profile, whose statements do
+   * run, so "nothing was sent" cannot pass because the request never reached a provider. The
+   * table and column names are distinctive so the message can be shown not to echo them.
+   */
+  test("refuses a PromQL connection with a 400 that names the language, and sends nothing", async () => {
+    const promqlProvider = createMockProvider({ capabilities: { queryLanguage: "promql" } });
+    const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(promqlProvider);
+    mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
+    const body = { connection: validConnection, tablePath: ["refusal_probe_metric"], columns: ["refusal_probe_label"] };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"promql"');
+    expect(data.error).not.toContain("refusal_probe_metric");
+    expect(data.error).not.toContain("refusal_probe_label");
+    expect(promqlProvider.query).not.toHaveBeenCalled();
+
+    // The control: the same request against SQL is profiled, and its statements run.
+    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    expect(profiled.status).toBe(200);
+    expect(sqlProvider.query).toHaveBeenCalled();
+  });
+
+  test("refuses JSON in a dialect of its own, which is not the document the route builds", async () => {
+    const redisProvider = createMockProvider({ capabilities: { queryLanguage: "json", queryDialect: "redis" } });
+    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(redisProvider);
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+    const body = { connection: mongoConnection, tablePath: ["refusal_probe_prefix"], columns: ["refusal_probe_field"] };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"json" in the redis dialect');
+    expect(data.error).not.toContain("refusal_probe_prefix");
+    expect(data.error).not.toContain("refusal_probe_field");
+    expect(redisProvider.query).not.toHaveBeenCalled();
+
+    // The control: MongoDB's JSON, with no dialect, is profiled with its two statements.
+    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    expect(profiled.status).toBe(200);
+    expect(mongoProvider.query).toHaveBeenCalledTimes(2);
+  });
 });

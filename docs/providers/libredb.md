@@ -436,12 +436,12 @@ a plausible, runnable `delete billing:2024` one **Run Selected** away (only `get
 `firstCommandLine()` takes the first line). Auto-executing the note alone runs nothing and reports
 *No command to run (only comments or blank lines)* (U11).
 
-Two menu actions are **not offered** on this provider. `Profile Table` and `Generate Test Data`
-address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived
-from one bounded scan (`tablesAreDerivedGroupings`, see 9), not an object any command can be given,
-so both are hidden rather than left to answer HTTP 400 (#427). The per-row `Analyze` and `Vacuum`
-items are hidden for the same reason — they call `onOpenMaintenance("tables", <row>)` and there is no
-such row to name; the row menu reads no maintenance capability of its own. `Generate Code`
+Two menu actions are **not offered** on this provider.
+`Profile Table` and `Generate Test Data` address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived from one bounded scan (`tablesAreDerivedGroupings`, see 9), not an object any command can be given, so both are hidden rather than left to answer HTTP 400 (#427).
+Since #1085 each is withheld by its own declaration: Profile by that flag and by the language gate `offersColumnProfiling`, because the profile route refuses JSON in a dialect of its own, and Generate Test Data by the row-write rule both row menus ask (decision D-M), because no kind here declares `acceptsRowWrites` and the engine declares `supportsInlineRowEdit: false`.
+The per-row `Analyze` and `Vacuum`
+items are hidden as well: they call `onOpenMaintenance("tables", <row>)` and there is no
+such row to name, and the engine declares no maintenance operation (`supportsMaintenance: false`), which `maintenanceControl` reads for both row menus. `Generate Code`
 stays: it names the row, it does not address it, and it sanitises the name into an identifier that
 is legal in every target language (`users:*` -> `User`), keeping Unicode letters intact.
 
@@ -788,10 +788,10 @@ splits the same three ways Task 20 split it for Redis:
   exactly as the flat menu did. [`row-actions.ts`](../../src/components/object-tree/row-actions.ts)
   says so at the top of the file.
 
-**The flag costs the two CATALOGED kinds their Profile item too, and measured, that costs
-nothing.** `POST /api/db/profile` has no arm for this engine: it branches on
-`queryLanguage === "sql"` and this provider declares `json`, so a profile of a LibreDB table is
-sent as a MongoDB aggregate pipeline. Run against the fixture, the grammar answers:
+**The flag costs the two CATALOGED kinds their Profile item too, and measured, that costs nothing.**
+`POST /api/db/profile` has no arm for this engine: it profiles SQL and a MongoDB `aggregate` document only, and since #1085 it refuses JSON in a dialect of its own before sending anything, with a 400 that names the language.
+Both row menus read the same refusal through `offersColumnProfiling` in `src/lib/db/types.ts`, so the language withholds Profile here as well as the flag.
+The pipeline the route sent before that refusal existed is what the grammar answers, run against the fixture:
 
 ```
 Unknown command "{collection:employees,operation:aggregate,pipeline:[...]}".
@@ -995,8 +995,8 @@ unsupported (issue #272) — and, on the same reading, its *Vacuum* summary card
 *Not supported* rather than the `0` over green **OK** that a bloat count over no rows produced, which
 was a clean bill of health for an operation this provider does not offer — and the admin
 **Operations** tab hides its whole Global Operations group and its per-table buttons (issue #282). Neither offers a control that could only
-answer HTTP 400. The schema explorer's own per-row `Analyze`/`Vacuum` items are hidden here too, but
-for a different reason — the rows are derived groupings, see 5.3.
+answer HTTP 400. The schema explorer's own per-row `Analyze`/`Vacuum` items are hidden here too, by this same declaration through `maintenanceControl`, and
+for a second reason: the rows are derived groupings, see 5.3.
 
 ---
 

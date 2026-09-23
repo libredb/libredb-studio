@@ -65,15 +65,41 @@ import { TableItem } from "@/components/schema-explorer/TableItem";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
-// Capability fixtures are partial on purpose: TableItem reads three fields, and
+// Capability fixtures are partial on purpose: TableItem reads a handful of fields, and
 // spelling out every ProviderCapabilities key in each case would bury them (#427).
 type Caps = ProviderMetadata["capabilities"];
 const caps = (partial: Partial<Caps>): Caps => partial as Caps;
 
-/** Postgres-shaped: ordinary tables, both maintenance operations declared. */
-const sqlCaps = caps({ supportsMaintenance: true, maintenanceOperations: ["vacuum", "analyze"] });
-/** Redis-shaped: rows are derived key-prefix groupings, only ANALYZE declared. */
+/**
+ * The kinds the fixtures declare, written the way a provider writes them (#1085, D-M). A
+ * `table` takes row writes and a `view` does not: the per-KIND half of the row-write rule the
+ * desktop tree asks, which this menu asks too since #1085 (decision D-M).
+ */
+const tableKind = {
+  id: "table",
+  role: "relation",
+  label: "Table",
+  labelPlural: "Tables",
+  acceptsRowWrites: true,
+} as const;
+const viewKind = { id: "view", role: "relation", label: "View", labelPlural: "Views" } as const;
+
+/** Postgres-shaped: tables that take row writes, views that do not, both maintenance operations declared. */
+const sqlCaps = caps({
+  queryLanguage: "sql",
+  objectKinds: [tableKind, viewKind],
+  supportsInlineRowEdit: true,
+  supportsMaintenance: true,
+  maintenanceOperations: ["vacuum", "analyze"],
+});
+/**
+ * Redis-shaped: rows are derived key-prefix groupings, the language is JSON in a dialect of
+ * its own, the grid edits no row, and only ANALYZE is declared.
+ */
 const redisCaps = caps({
+  queryLanguage: "json",
+  queryDialect: "redis",
+  supportsInlineRowEdit: false,
   tablesAreDerivedGroupings: true,
   supportsMaintenance: true,
   maintenanceOperations: ["analyze"],
@@ -85,6 +111,9 @@ const redisCaps = caps({
  * gates rather than one (#427).
  */
 const libredbCaps = caps({
+  queryLanguage: "json",
+  queryDialect: "libredb",
+  supportsInlineRowEdit: false,
   tablesAreDerivedGroupings: true,
   supportsMaintenance: false,
   maintenanceOperations: [],
@@ -94,7 +123,15 @@ const libredbCaps = caps({
  * addressable object — so the `tablesAreDerivedGroupings` gate does NOT catch it —
  * and the engine still declares no maintenance of any kind.
  */
-const searchCaps = caps({ supportsMaintenance: false, maintenanceOperations: [] });
+const searchCaps = caps({
+  queryLanguage: "sql",
+  // An index takes a bulk document write while the engine declares no grid row edit, which
+  // is why Generate Test Data is withheld on it since D-M (#1085).
+  objectKinds: [{ id: "index", role: "relation", label: "Index", labelPlural: "Indices", acceptsRowWrites: true }],
+  supportsInlineRowEdit: false,
+  supportsMaintenance: false,
+  maintenanceOperations: [],
+});
 /**
  * SQLite-shaped (#496): `VACUUM` rewrites the whole file and takes no target, so the
  * provider declares `vacuum: { perEntity: false }` — and the monitoring Tables tab
@@ -171,6 +208,12 @@ const noRowCountTable: DetailedObject = {
   indexes: [],
   columns: [{ name: "id", type: "SERIAL", nullable: false, isPrimary: true }],
 };
+
+/** A view beside `largeTable`: a relation with columns whose kind declares no row writes (#1085, D-M). */
+const viewObject: DetailedObject = { ...largeTable, name: "active_users", kind: "view", path: ["active_users"] };
+
+/** An index on a search engine, the row `searchCaps` declares. */
+const searchIndex: DetailedObject = { ...largeTable, name: "orders", kind: "index", path: ["orders"] };
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -346,6 +389,8 @@ describe("TableItem", () => {
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
+        // Declared, because unknown capabilities offer none of the three row actions (#1085, D-M).
+        capabilities={sqlCaps}
         onProfileTable={onProfileTable}
       />,
     );
@@ -365,6 +410,7 @@ describe("TableItem", () => {
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
+        capabilities={sqlCaps}
         onGenerateCode={onGenerateCode}
       />,
     );
@@ -384,6 +430,7 @@ describe("TableItem", () => {
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin={false}
+        capabilities={sqlCaps}
         onGenerateTestData={onGenerateTestData}
       />,
     );
@@ -637,7 +684,7 @@ describe("TableItem", () => {
   // ── Derived-grouping rows and declared maintenance (#427) ─────────────────
 
   describe("capability gating (#427)", () => {
-    test("hides Profile Table and Generate Test Data when rows are derived groupings", () => {
+    test("a Redis-shaped declaration hides Profile Table (flag and language) and Generate Test Data (row-write rule)", () => {
       const { getByTestId } = render(
         <TableItem
           table={largeTable}
@@ -666,7 +713,7 @@ describe("TableItem", () => {
       expect(dropdown.queryByText("Generate Code")).not.toBeNull();
     });
 
-    test("shows Profile Table and Generate Test Data when rows are addressable objects", () => {
+    test("a Postgres-shaped table, which takes row writes, shows Profile Table and Generate Test Data", () => {
       const { getByTestId } = render(
         <TableItem
           table={largeTable}
@@ -740,7 +787,7 @@ describe("TableItem", () => {
     test("hides both items on an engine that declares no maintenance, addressable rows or not", () => {
       const { getByTestId } = render(
         <TableItem
-          table={largeTable}
+          table={searchIndex}
           isExpanded={false}
           onToggle={mock(() => {})}
           isAdmin
@@ -751,10 +798,13 @@ describe("TableItem", () => {
       const dropdown = within(getByTestId("dropdown"));
       expect(dropdown.queryByText("Index Statistics")).toBeNull();
       expect(dropdown.queryByText("Merge Segments")).toBeNull();
-      // The row IS addressable here, so everything the #427 gate removes for a
-      // derived grouping stays: this gate is about maintenance and nothing else.
+      // The row IS addressable here, so what the #427 gate removes for a derived grouping
+      // stays: this gate is about maintenance and nothing else. Generate Test Data is withheld
+      // here since D-M (#1085), by the row-write rule and not by this gate: the index kind takes
+      // a bulk document write, and the engine declares no grid row edit, which is the half the
+      // desktop tree has always asked. The describe below on the desktop tree's rule pins it on its own.
       expect(dropdown.queryByText("Profile Table")).not.toBeNull();
-      expect(dropdown.queryByText("Generate Test Data")).not.toBeNull();
+      expect(dropdown.queryByText("Generate Test Data")).toBeNull();
     });
 
     /*
@@ -852,6 +902,126 @@ describe("TableItem", () => {
       const dropdown = within(getByTestId("dropdown"));
       expect(dropdown.queryByText("Analyze Table")).toBeNull();
       expect(dropdown.queryByText("Vacuum Table")).toBeNull();
+    });
+  });
+
+  /**
+   * The three row actions ask exactly what the desktop tree asks (#1085, decision D-M).
+   *
+   * `src/components/object-tree/row-actions.ts` gates Profile on the derived-grouping flag and
+   * on `offersColumnProfiling`, Generate Code on `offersCodeGeneration`, and Generate Test Data
+   * on the row's kind accepting row writes AND the engine declaring the grid's row edit. This
+   * menu asked only the grouping flag, so it offered the generator on every view and on every
+   * engine the tree withholds it from. Each negative below is read from a menu that still
+   * carries the actions that name the row, and each test carries its own control: a
+   * declaration that differs in the field under test and is offered what the negative is not.
+   */
+  describe("the row actions ask what the desktop tree asks (#1085, D-M)", () => {
+    const ROW_ACTIONS = ["Profile Table", "Generate Code", "Generate Test Data"] as const;
+
+    /** MongoDB-shaped: a collection takes a document write, and the engine declares no grid row edit. */
+    const collectionKind = {
+      id: "collection",
+      role: "relation",
+      label: "Collection",
+      labelPlural: "Collections",
+      acceptsRowWrites: true,
+    } as const;
+    const mongoCaps = caps({ queryLanguage: "json", objectKinds: [collectionKind], supportsInlineRowEdit: false });
+    const collection: DetailedObject = { ...largeTable, name: "orders", kind: "collection", path: ["shop", "orders"] };
+
+    /** Prometheus-shaped: PromQL, a metric kind that takes no row write, no grid row edit, no maintenance. */
+    const promqlCaps = caps({
+      queryLanguage: "promql",
+      objectKinds: [{ id: "metric", role: "relation", label: "Metric", labelPlural: "Metrics", hasColumns: true }],
+      supportsInlineRowEdit: false,
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+    });
+    const metricObject: DetailedObject = { name: "up", kind: "metric", path: ["up"], columns: [], indexes: [] };
+
+    /** One non-admin row's dropdown, scoped to its own render so two renders in one test cannot collide. */
+    const menuOf = (table: DetailedObject, capabilities?: Caps): HTMLElement => {
+      const { container } = render(
+        <TableItem
+          table={table}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={capabilities}
+        />,
+      );
+      return within(container).getByTestId("dropdown");
+    };
+    const offered = (menu: HTMLElement): string[] =>
+      ROW_ACTIONS.filter((label) => within(menu).queryByText(label) !== null);
+
+    test("a SQL table is offered all three", () => {
+      expect(offered(menuOf(largeTable, sqlCaps))).toEqual(["Profile Table", "Generate Code", "Generate Test Data"]);
+    });
+
+    test("a view, whose kind declares no row writes, is offered everything but Generate Test Data", () => {
+      expect(offered(menuOf(viewObject, sqlCaps))).toEqual(["Profile Table", "Generate Code"]);
+      // The control: the same engine, and a kind that does take row writes.
+      expect(offered(menuOf(largeTable, sqlCaps))).toContain("Generate Test Data");
+    });
+
+    test("a kind that takes row writes is not offered Generate Test Data on an engine with no grid row edit", () => {
+      // MongoDB, Couchbase, Cassandra, ClickHouse, Druid, Trino and both search engines declare
+      // `supportsInlineRowEdit: false`, and the desktop tree has always withheld the item there.
+      expect(offered(menuOf(collection, mongoCaps))).toEqual(["Profile Table", "Generate Code"]);
+      // The control: the same declaration with the engine half switched on.
+      expect(offered(menuOf(collection, { ...mongoCaps, supportsInlineRowEdit: true }))).toEqual([
+        "Profile Table",
+        "Generate Code",
+        "Generate Test Data",
+      ]);
+    });
+
+    test("a Redis-shaped declaration keeps Generate Code and nothing else of the three", () => {
+      expect(offered(menuOf(largeTable, redisCaps))).toEqual(["Generate Code"]);
+      // The control: the same row on an ordinary SQL declaration is offered all three.
+      expect(offered(menuOf(largeTable, sqlCaps))).toEqual(["Profile Table", "Generate Code", "Generate Test Data"]);
+    });
+
+    test("the grouping flag withholds Profile on its own, and no longer decides Generate Test Data", () => {
+      // Redis and LibreDB also declare a JSON dialect, which the language gate refuses as well,
+      // so this is the declaration that shows the flag still does its own work. The desktop
+      // tree answers the same for it: its row-write rule has never read the flag.
+      expect(offered(menuOf(largeTable, { ...sqlCaps, tablesAreDerivedGroupings: true }))).toEqual([
+        "Generate Code",
+        "Generate Test Data",
+      ]);
+      // The control: the same declaration without the flag.
+      expect(offered(menuOf(largeTable, sqlCaps))).toContain("Profile Table");
+    });
+
+    test("a PromQL metric is offered none of the three, and no rule is drawn for them", () => {
+      const menu = menuOf(metricObject, promqlCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      // The actions that name the row are still there, so an empty list is the gate and not a
+      // menu that failed to render.
+      expect(within(menu).queryByText("Select Top 50")).not.toBeNull();
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control, in the one field under test: the same metric in SQL is offered the two
+      // actions that ask the language, and draws the rule above them. Generate Test Data stays
+      // withheld there too, because the metric kind declares no row writes.
+      const sqlMenu = menuOf(metricObject, { ...promqlCaps, queryLanguage: "sql" });
+      expect(offered(sqlMenu)).toEqual(["Profile Table", "Generate Code"]);
+      expect(sqlMenu.querySelectorAll("hr")).toHaveLength(1);
+    });
+
+    test("unknown capabilities offer none of the three", () => {
+      // `/api/db/provider-meta` answers with nothing both while it is in flight and when it
+      // failed, and a menu that guessed "offer it" is how the dead buttons came back.
+      const menu = menuOf(largeTable);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      expect(within(menu).queryByText("Select Top 50")).not.toBeNull();
+      expect(within(menu).queryByText("Generate Query")).not.toBeNull();
+      // The control: the same row once the declaration has arrived.
+      expect(offered(menuOf(largeTable, sqlCaps))).toEqual(["Profile Table", "Generate Code", "Generate Test Data"]);
     });
   });
 });

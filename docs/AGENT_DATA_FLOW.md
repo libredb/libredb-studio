@@ -640,7 +640,7 @@ fences what it sends:
 | Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`** | `src/components/DataProfiler.tsx:84-107` |
 
 **That last row is the one to read carefully.** `/api/db/profile` computes `MIN(col::text)` and
-`MAX(col::text)` per column (`src/app/api/db/profile/route.ts:115-116`), and the Data Profiler puts
+`MAX(col::text)` per column (`src/app/api/db/profile/route.ts:132-133`), and the Data Profiler puts
 both into the context it sends for an AI summary. Those are **real values out of your columns** —
 the lexicographic first and last of each profiled column. It is the sharpest difference between the
 two profiling surfaces in this product: the agent's `profile_table` was built so that no value can
