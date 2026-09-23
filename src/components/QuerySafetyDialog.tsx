@@ -5,7 +5,7 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isDestructiveNonSqlQuery } from "@/lib/db/destructive-commands";
+import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
@@ -428,12 +428,14 @@ function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
  * text (#292, #295): Oracle's `q'{it's}'` and ClickHouse's `[[1,2],[3,4]]` are
  * closed runs under their own grammars and unresolvable under a reader without them.
  *
- * For the two types whose text is not SQL there is nothing here to read, and this
- * predicate answered false for them outright - so a Redis `FLUSHALL` or `DEL` and a
- * MongoDB `deleteMany` ran with no confirmation at all, on both execution paths,
- * while the same intent on every SQL engine asked (S8). Their vocabulary now comes
- * from `@/lib/db/destructive-commands`, one table per type read by one function, and
- * it names only what those two providers can actually dispatch.
+ * For MongoDB and Redis, whose text is not SQL, there is nothing here to read, and
+ * this predicate answered false for them outright - so a Redis `FLUSHALL` or `DEL`
+ * and a MongoDB `deleteMany` ran with no confirmation at all, on both execution
+ * paths, while the same intent on every SQL engine asked (S8). Their vocabulary now
+ * comes from `@/lib/db/destructive-commands`, one table per type read by one
+ * function, and it names only what each provider can actually dispatch. PromQL's row
+ * in the same table names nothing and is the whole answer: PromQL has no write path
+ * (#1085, section 2), and read as SQL a metric named `update` or `delete` was a write.
  *
  * `databaseType` is the connection the statement is about to run on, and both
  * call sites hold one (#292). It decides the characters the engines read
@@ -451,11 +453,20 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // "not there".
   //
   // Only where the text IS SQL, though. Both execution paths ask about whatever is
-  // in the editor, so this predicate is handed MongoDB documents and Redis commands
-  // as well, and an escaped quote that a SQL span reader cannot resolve closes
-  // perfectly in the grammar those are written in. The keyword tests below still
-  // run: narrowing this rule is not switching the gate off.
+  // in the editor, so this predicate is handed MongoDB documents, Redis commands and
+  // PromQL expressions as well, and an escaped quote that a SQL span reader cannot
+  // resolve closes perfectly in the grammar those are written in. For MongoDB and
+  // Redis the keyword tests below still run: narrowing this rule is not switching the
+  // gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
+
+  // A type whose own vocabulary is the whole answer is not read as SQL at all, and
+  // PromQL is that type. An expression can start with a metric name the server's data
+  // chooses, `update`, `delete` and `drop` are legal names, and the keyword test below
+  // read the tree's own selector for such a metric as a write, about text that only
+  // ever reaches a query endpoint that cannot write (#1085, section 2). Which types
+  // decide alone is a fact of the same table, not a type test written here.
+  if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;
 

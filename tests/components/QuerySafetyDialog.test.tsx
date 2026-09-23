@@ -6,6 +6,8 @@ import React from "react";
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
+import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 
 function createStreamResponse({
   chunks,
@@ -1102,6 +1104,66 @@ describe("isDangerousQuery", () => {
   // wholesale for these two types.
   test("still prompts for a destructive keyword under a non-SQL type", () => {
     expect(isDangerousQuery("DROP TABLE users", "mongodb")).toBe(true);
+  });
+
+  // ── PromQL is never read as SQL (#1085, section 2) ───────────────────────
+  //
+  // A PromQL expression can start with a metric name, and the name is the server's data: a
+  // recording rule or an exporter may legally call a metric `update`, `delete` or `drop`.
+  // Read as SQL, the selector the tree runs for such a metric was a DELETE or an UPDATE, so
+  // the dialog asked, and sent the text for AI analysis, before an expression whose only
+  // destination is the provider's query endpoint, which cannot write. The capabilities are
+  // the provider's own, so the text below is exactly what a click in the tree and "Generate
+  // Query" put in the editor. Each negative is paired with the dialect-less SQL reading of
+  // the same text, the grammar prometheus text used to be read under, which must still ask.
+
+  const prometheusCapabilities = new PrometheusProvider({
+    id: "prometheus-gate",
+    name: "Prometheus",
+    type: "prometheus",
+    host: "localhost",
+    createdAt: new Date(0),
+  }).getCapabilities();
+
+  test.each<[string]>([
+    ["update"],
+    ["delete"],
+    ["drop"],
+    ["alter"],
+    ["truncate"],
+    ["grant"],
+    ["revoke"],
+    ["Update"],
+    ["DROP"],
+  ])("does not prompt when the tree runs a metric named %s on prometheus", (name) => {
+    const click = generateTableQuery([name], prometheusCapabilities);
+    const buffer = generateSelectQuery([name], [], prometheusCapabilities);
+    // The premise: the click runs the bare name, and both texts read as a write under SQL.
+    expect(click).toBe(name);
+    expect(isDangerousQuery(click)).toBe(true);
+    expect(isDangerousQuery(buffer)).toBe(true);
+
+    expect(isDangerousQuery(click, "prometheus")).toBe(false);
+    expect(isDangerousQuery(buffer, "prometheus")).toBe(false);
+  });
+
+  test.each<[string, string]>([
+    ["a selector with a matcher", 'delete{job="x"}'],
+    ["a recording-rule name", "drop:rate5m"],
+    ["a selector with an offset", "update offset 5m"],
+    ["arithmetic on such a metric", "delete / 2"],
+    ["label names that spell UPDATE ... SET", 'x{update="a", set="b"}'],
+    ["a grouping by the same two labels", "sum by (update, set) (x)"],
+  ])("does not prompt for %s on prometheus", (_label, query) => {
+    expect(isDangerousQuery(query)).toBe(true);
+    expect(isDangerousQuery(query, "prometheus")).toBe(false);
+  });
+
+  // The change is prometheus's own row, not a new order for every non-SQL type: the SQL
+  // keyword test still reads a Redis buffer in front of the Redis vocabulary, as the
+  // MongoDB row above pins for MongoDB.
+  test("still prompts for a destructive keyword under redis", () => {
+    expect(isDangerousQuery("DROP TABLE users", "redis")).toBe(true);
   });
 
   // ── The dialect decides what the statement says (#292) ──────────────────

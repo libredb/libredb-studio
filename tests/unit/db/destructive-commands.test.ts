@@ -1,11 +1,17 @@
 import { describe, test, expect } from "bun:test";
-import { NON_SQL_DESTRUCTIVE_VOCABULARY, isDestructiveNonSqlQuery } from "@/lib/db/destructive-commands";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import {
+  NON_SQL_DESTRUCTIVE_VOCABULARY,
+  isDestructiveNonSqlQuery,
+  vocabularyDecidesAlone,
+} from "@/lib/db/destructive-commands";
+import { readsSqlText } from "@/lib/sql/grammar";
 
-// The facts behind the confirmation gate for the two engines whose query text is
-// not SQL. The gate itself (`isDangerousQuery`) is tested in
+// The facts behind the confirmation gate for the engines whose query text is not
+// SQL. The gate itself (`isDangerousQuery`) is tested in
 // tests/components/QuerySafetyDialog.test.tsx; this file pins the vocabulary and the
-// two readers it is driven from, because they are what decides whether an operator
-// is asked before a FLUSHALL or a deleteMany runs.
+// readers it is driven from, because they are what decides whether an operator is
+// asked before a FLUSHALL or a deleteMany runs.
 
 describe("isDestructiveNonSqlQuery", () => {
   // ── The table decides which types this reader answers about ───────────────
@@ -211,11 +217,50 @@ describe("isDestructiveNonSqlQuery", () => {
   ])("reduces the buffer the way the provider does - %s", (_label, query, expected) => {
     expect(isDestructiveNonSqlQuery(query, "redis")).toBe(expected);
   });
+
+  // ── Prometheus ───────────────────────────────────────────────────────────
+
+  test.each<[string, string]>([
+    ["a metric named like a SQL write", "update"],
+    ["the same name uppercased", "DELETE"],
+    ["a selector with a matcher", 'drop{job="x"}'],
+    ["a range function", "rate(http_requests_total[5m])"],
+    ["a selector behind a comment", "# nightly\nalter"],
+    ["SQL, which the server refuses to parse", "DROP TABLE users"],
+    ["an expression that never closes", "sum(("],
+    ["nothing at all", ""],
+  ])("names nothing for %s, because PromQL text can only be evaluated", (_label, query) => {
+    // Not "unreadable, so ask": whatever the text, the one request it becomes is an
+    // evaluation on the query endpoint, which cannot write (#1085, section 2). Text the
+    // server cannot parse is refused there, with nothing changed.
+    expect(isDestructiveNonSqlQuery(query, "prometheus")).toBe(false);
+  });
+});
+
+describe("vocabularyDecidesAlone", () => {
+  // The one row the gate reads without its SQL keyword test in front. MongoDB and Redis
+  // keep that test as a backstop; a type with no row is read by the SQL half entirely.
+  test("is true for prometheus and for no other type", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual(["prometheus"]);
+  });
+
+  test("is false with no type at all", () => {
+    expect(vocabularyDecidesAlone()).toBe(false);
+  });
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the two types whose text is not SQL", () => {
-    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual(["mongodb", "redis"]);
+  test("carries a row for exactly the three types whose text is not SQL", () => {
+    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual(["mongodb", "prometheus", "redis"]);
+  });
+
+  // `readsSqlText` is the gate's other table. A type it reports as not SQL skips the SQL
+  // span check, and without a row here nothing but the SQL keyword test reads its text:
+  // that is how PromQL came to be read as SQL. A type added to one table and not the
+  // other fails here, so the gate's reading of it is decided rather than inherited.
+  test("carries a row for a type exactly when readsSqlText says its text is not SQL", () => {
+    const notSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type));
+    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([...notSql].sort());
   });
 
   test("names no MongoDB operation the provider cannot dispatch", () => {
