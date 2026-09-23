@@ -1,0 +1,14 @@
+# Rule groups of the compose `prometheus` service, file B (#1085, section 8).
+#
+# Group `studio` has the name of a group in studio-a.yml. Prometheus allows that across files
+# only (a group name repeated inside one file is refused, model/rulefmt/rulefmt.go) and keys
+# each loaded group by file and name, which is the case the provider's `<file>;<group>` group
+# identity exists for. Its own interval and limit give the group's source non-default values.
+
+groups:
+  - name: studio
+    interval: 10s
+    limit: 10
+    rules:
+      - record: studio:up:sum
+        expr: sum(up)

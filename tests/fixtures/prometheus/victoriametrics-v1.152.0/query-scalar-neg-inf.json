@@ -1,0 +1,26 @@
+{
+  "name": "query-scalar-neg-inf",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.491Z",
+  "holds": "the scalar -Inf",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=-1%2F0",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "157",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 157,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1790158608,\"-Inf\"]}]},\"stats\":{\"seriesFetched\": \"0\",\"executionTimeMsec\":0}}"
+}

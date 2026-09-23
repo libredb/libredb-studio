@@ -1,0 +1,26 @@
+{
+  "name": "tsdb-status-10",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.426Z",
+  "holds": "TSDB statistics at limit=10",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/status/tsdb",
+    "search": "limit=10",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "642",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 2045,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"headStats\":{\"numSeries\":918,\"numLabelPairs\":575,\"chunkCount\":918,\"minTime\":1790158567432,\"maxTime\":1790158607432},\"seriesCountByMetricName\":[{\"name\":\"prometheus_http_requests_total\",\"value\":63},{\"name\":\"prometheus_http_request_duration_seconds_bucket\",\"value\":50},{\"name\":\"prometheus_http_response_size_bytes_bucket\",\"value\":45},{\"name\":\"prometheus_target_sync_length_histogram_seconds_bucket\",\"value\":20},{\"name\":\"net_conntrack_dialer_conn_failed_total\",\"value\":20},{\"name\":\"prometheus_engine_query_duration_histogram_seconds_bucket\",\"value\":20},{\"name\":\"prometheus_target_sync_length_seconds\",\"value\":20},{\"name\":\"prometheus_sd_kubernetes_events_total\",\"value\":18},{\"name\":\"prometheus_tsdb_compaction_duration_seconds_bucket\",\"value\":15},{\"name\":\"prometheus_tsdb_stale_series_compaction_duration_seconds_bucket\",\"value\":15}],\"labelValueCountByLabelName\":[{\"name\":\"__name__\",\"value\":344},{\"name\":\"le\",\"value\":88},{\"name\":\"handler\",\"value\":63},{\"name\":\"quantile\",\"value\":9},{\"name\":\"role\",\"value\":6},{\"name\":\"dialer_name\",\"value\":5},{\"name\":\"scrape_job\",\"value\":4},{\"name\":\"reason\",\"value\":4},{\"name\":\"config\",\"value\":4},{\"name\":\"slice\",\"value\":4}],\"memoryInBytesByLabelName\":[{\"name\":\"__name__\",\"value\":46397},{\"name\":\"instance\",\"value\":21729},{\"name\":\"job\",\"value\":13609},{\"name\":\"handler\",\"value\":4075},{\"name\":\"le\",\"value\":3525},{\"name\":\"scrape_job\",\"value\":2112},{\"name\":\"rule_group\",\"value\":1815},{\"name\":\"slice\",\"value\":923},{\"name\":\"quantile\",\"value\":875},{\"name\":\"dialer_name\",\"value\":840}],\"seriesCountByLabelValuePair\":[{\"name\":\"instance=localhost:9090\",\"value\":901},{\"name\":\"job=prometheus\",\"value\":887},{\"name\":\"code=200\",\"value\":64},{\"name\":\"__name__=prometheus_http_requests_total\",\"value\":63},{\"name\":\"__name__=prometheus_http_request_duration_seconds_bucket\",\"value\":50},{\"name\":\"__name__=prometheus_http_response_size_bytes_bucket\",\"value\":45},{\"name\":\"le=+Inf\",\"value\":35},{\"name\":\"handler=/metrics\",\"value\":25},{\"name\":\"handler=/-/ready\",\"value\":25},{\"name\":\"handler=/api/v1/query\",\"value\":25}]}}"
+}

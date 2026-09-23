@@ -1,0 +1,26 @@
+{
+  "name": "label-values-names-limited",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.496Z",
+  "holds": "metric names cut by limit=5, with the engine's truncation warning",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/label/__name__/values",
+    "search": "start=1790155008.337&end=1790158608.337&limit=5",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "252",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 252,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":[\"go_gc_cycles_total_gc_cycles_total\",\"go_gc_heap_objects_objects\",\"prometheus_rule_evaluation_duration_histogram_seconds_count\",\"prometheus_sd_consul_rpc_failures_total\",\"prometheus_tsdb_compaction_chunk_size_bytes_bucket\"]}"
+}

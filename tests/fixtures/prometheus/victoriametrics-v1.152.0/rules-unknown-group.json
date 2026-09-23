@@ -1,0 +1,26 @@
+{
+  "name": "rules-unknown-group",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.504Z",
+  "holds": "a rule group that does not exist",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/rules",
+    "search": "rule_group%5B%5D=studio-no-such-group&file%5B%5D=%2Fetc%2Fprometheus%2Frules%2Fstudio-a.yml&exclude_alerts=true",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "41",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 41,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"groups\":[]}}"
+}

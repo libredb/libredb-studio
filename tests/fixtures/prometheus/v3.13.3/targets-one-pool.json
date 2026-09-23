@@ -1,0 +1,26 @@
+{
+  "name": "targets-one-pool",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.422Z",
+  "holds": "the two targets that share one address and instance",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/targets",
+    "search": "state=active&scrapePool=studio-twin",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "458",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 1534,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"activeTargets\":[{\"discoveredLabels\":{\"__address__\":\"localhost:9090\",\"__always_scrape_classic_histograms__\":\"false\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_native_histograms__\":\"false\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"labels\":{\"instance\":\"localhost:9090\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"scrapePool\":\"studio-twin\",\"scrapeUrl\":\"http://localhost:9090/metrics\",\"globalUrl\":\"http://7fec1c6c9840:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:43.560174255Z\",\"lastScrapeDuration\":0.004310116,\"health\":\"up\",\"scrapeInterval\":\"5s\",\"scrapeTimeout\":\"4s\"},{\"discoveredLabels\":{\"__address__\":\"localhost:9090\",\"__always_scrape_classic_histograms__\":\"false\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_native_histograms__\":\"false\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"labels\":{\"instance\":\"localhost:9090\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"scrapePool\":\"studio-twin\",\"scrapeUrl\":\"http://localhost:9090/metrics\",\"globalUrl\":\"http://7fec1c6c9840:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:44.549862183Z\",\"lastScrapeDuration\":0.004166747,\"health\":\"up\",\"scrapeInterval\":\"5s\",\"scrapeTimeout\":\"4s\"}],\"droppedTargets\":[],\"droppedTargetCounts\":null}}"
+}

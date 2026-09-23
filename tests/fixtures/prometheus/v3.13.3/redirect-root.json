@@ -1,0 +1,26 @@
+{
+  "name": "redirect-root",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.431Z",
+  "holds": "a redirect the server itself answers",
+  "request": {
+    "method": "GET",
+    "path": "/",
+    "search": "",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 302,
+  "headers": {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": "29",
+    "content-encoding": null,
+    "location": "/query",
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 29,
+  "durationMs": 0,
+  "body": "<a href=\"/query\">Found</a>.\n\n"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "rules-all",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.417Z",
+  "holds": "every rule group, alerts excluded",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/rules",
+    "search": "exclude_alerts=true",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "803",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 2907,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"groups\":[{\"name\":\"studio\",\"file\":\"/etc/prometheus/rules/studio-a.yml\",\"rules\":[{\"name\":\"studio:up:count\",\"query\":\"count(up)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000243705,\"lastEvaluation\":\"2026-09-23T10:16:46.495064037Z\",\"type\":\"recording\"},{\"state\":\"firing\",\"name\":\"StudioAlwaysFiring\",\"query\":\"vector(1)\",\"duration\":0,\"keepFiringFor\":0,\"labels\":{\"severity\":\"info\"},\"annotations\":{\"description\":\"Quotes \\\" and braces { } in an annotation,\\nand a second line.\",\"summary\":\"Always firing, for the provider's object tree.\"},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000168996,\"lastEvaluation\":\"2026-09-23T10:16:46.495313098Z\",\"type\":\"alerting\"},{\"state\":\"pending\",\"name\":\"StudioHeldPending\",\"query\":\"vector(1)\",\"duration\":3600,\"keepFiringFor\":0,\"labels\":{},\"annotations\":{\"summary\":\"Pending through the container's first hour.\"},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000088431,\"lastEvaluation\":\"2026-09-23T10:16:46.495486046Z\",\"type\":\"alerting\"},{\"state\":\"firing\",\"name\":\"StudioTwin\",\"query\":\"vector(1)\",\"duration\":0,\"keepFiringFor\":0,\"labels\":{\"twin\":\"first\"},\"annotations\":{},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000073022,\"lastEvaluation\":\"2026-09-23T10:16:46.495578028Z\",\"type\":\"alerting\"},{\"state\":\"inactive\",\"name\":\"StudioTwin\",\"query\":\"vector(1) \\u003e 2\",\"duration\":0,\"keepFiringFor\":0,\"labels\":{\"twin\":\"second\"},\"annotations\":{},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000053434,\"lastEvaluation\":\"2026-09-23T10:16:46.49565524Z\",\"type\":\"alerting\"}],\"interval\":5,\"limit\":0,\"evaluationTime\":0.000662476,\"lastEvaluation\":\"2026-09-23T10:16:46.495048078Z\"},{\"name\":\"studio-names\",\"file\":\"/etc/prometheus/rules/studio-a.yml\",\"rules\":[{\"name\":\"sum\",\"query\":\"vector(1)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000183765,\"lastEvaluation\":\"2026-09-23T10:16:47.434013592Z\",\"type\":\"recording\"},{\"name\":\"nan\",\"query\":\"vector(2)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000062535,\"lastEvaluation\":\"2026-09-23T10:16:47.43420247Z\",\"type\":\"recording\"},{\"name\":\"studio_reserved_labels\",\"query\":\"vector(3)\",\"labels\":{\"service.name\":\"checkout\",\"timestamp\":\"label-named-timestamp\",\"value\":\"label-named-value\"},\"health\":\"ok\",\"evaluationTime\":0.000067482,\"lastEvaluation\":\"2026-09-23T10:16:47.434268358Z\",\"type\":\"recording\"},{\"name\":\"studio.dotted.name\",\"query\":\"vector(4)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000049566,\"lastEvaluation\":\"2026-09-23T10:16:47.434338987Z\",\"type\":\"recording\"}],\"interval\":5,\"limit\":0,\"evaluationTime\":0.000388687,\"lastEvaluation\":\"2026-09-23T10:16:47.434002252Z\"},{\"name\":\"studio\",\"file\":\"/etc/prometheus/rules/studio-b.yml\",\"rules\":[{\"name\":\"studio:up:sum\",\"query\":\"sum(up)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000267914,\"lastEvaluation\":\"2026-09-23T10:16:44.939305573Z\",\"type\":\"recording\"}],\"interval\":10,\"limit\":10,\"evaluationTime\":0.0003005,\"lastEvaluation\":\"2026-09-23T10:16:44.939277243Z\"}]}}"
+}

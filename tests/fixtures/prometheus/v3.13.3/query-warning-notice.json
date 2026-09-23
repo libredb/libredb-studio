@@ -1,0 +1,26 @@
+{
+  "name": "query-warning-notice",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.349Z",
+  "holds": "a warning notice: a quantile outside 0 to 1",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=quantile%282%2C+up%29",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "184",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 194,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{},\"value\":[1790158608.348,\"+Inf\"]}]},\"warnings\":[\"PromQL warning: quantile value should be between 0 and 1, got 2 (1:10)\"]}"
+}

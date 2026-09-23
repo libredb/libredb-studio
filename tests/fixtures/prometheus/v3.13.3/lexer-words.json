@@ -1,0 +1,106 @@
+{
+  "source": "https://raw.githubusercontent.com/prometheus/prometheus/v3.13.3/promql/parser/lex.go",
+  "sha256": "5ddb072d7b3352184095eb84235c6c3bd792f8b43ae3270e46e55ed808efb68c",
+  "words": [
+    "and",
+    "or",
+    "unless",
+    "atan2",
+    "sum",
+    "avg",
+    "count",
+    "min",
+    "max",
+    "group",
+    "stddev",
+    "stdvar",
+    "topk",
+    "bottomk",
+    "count_values",
+    "quantile",
+    "limitk",
+    "limit_ratio",
+    "offset",
+    "smoothed",
+    "anchored",
+    "by",
+    "without",
+    "on",
+    "ignoring",
+    "group_left",
+    "group_right",
+    "fill",
+    "fill_left",
+    "fill_right",
+    "bool",
+    "start",
+    "end",
+    "step",
+    "range",
+    "max_of",
+    "min_of"
+  ],
+  "sections": [
+    {
+      "heading": "Operators",
+      "words": [
+        "and",
+        "or",
+        "unless",
+        "atan2"
+      ]
+    },
+    {
+      "heading": "Aggregators",
+      "words": [
+        "sum",
+        "avg",
+        "count",
+        "min",
+        "max",
+        "group",
+        "stddev",
+        "stdvar",
+        "topk",
+        "bottomk",
+        "count_values",
+        "quantile",
+        "limitk",
+        "limit_ratio"
+      ]
+    },
+    {
+      "heading": "Keywords",
+      "words": [
+        "offset",
+        "smoothed",
+        "anchored",
+        "by",
+        "without",
+        "on",
+        "ignoring",
+        "group_left",
+        "group_right",
+        "fill",
+        "fill_left",
+        "fill_right",
+        "bool"
+      ]
+    },
+    {
+      "heading": "Preprocessors",
+      "words": [
+        "start",
+        "end",
+        "step",
+        "range",
+        "max_of",
+        "min_of"
+      ]
+    }
+  ],
+  "numberWords": [
+    "inf",
+    "nan"
+  ]
+}

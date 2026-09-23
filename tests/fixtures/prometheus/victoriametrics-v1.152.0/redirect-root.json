@@ -1,0 +1,26 @@
+{
+  "name": "redirect-root",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.506Z",
+  "holds": "a redirect the server itself answers",
+  "request": {
+    "method": "GET",
+    "path": "/",
+    "search": "",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": "543",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 1223,
+  "durationMs": 0,
+  "body": "<h2>Single-node VictoriaMetrics</h2></br>Version victoria-metrics-20260911-130322-tags-v1.152.0-0-g540b91da03<br>See docs at <a href='https://docs.victoriametrics.com/'>https://docs.victoriametrics.com/</a></br>Useful endpoints:</br><a href=\"vmui\">vmui</a> - Web UI<br/><a href=\"targets\">targets</a> - status for discovered active targets<br/><a href=\"service-discovery\">service-discovery</a> - labels before and after relabeling for discovered targets<br/><a href=\"metric-relabel-debug\">metric-relabel-debug</a> - debug metric relabeling<br/><a href=\"expand-with-exprs\">expand-with-exprs</a> - WITH expressions' tutorial<br/><a href=\"api/v1/targets\">api/v1/targets</a> - advanced information about discovered targets in JSON format<br/><a href=\"config\">config</a> - -promscrape.config contents<br/><a href=\"metrics\">metrics</a> - available service metrics<br/><a href=\"flags\">flags</a> - command-line flags<br/><a href=\"api/v1/status/tsdb\">api/v1/status/tsdb</a> - tsdb status page<br/><a href=\"api/v1/status/top_queries\">api/v1/status/top_queries</a> - top queries<br/><a href=\"api/v1/status/active_queries\">api/v1/status/active_queries</a> - active queries<br/><a href=\"-/reload\">-/reload</a> - reload configuration<br/>"
+}

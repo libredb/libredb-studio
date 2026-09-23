@@ -1,0 +1,26 @@
+{
+  "name": "flags",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.425Z",
+  "holds": "every command-line flag with its value",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/status/flags",
+    "search": "",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "1033",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 2780,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"agent\":\"false\",\"alertmanager.drain-notification-queue-on-shutdown\":\"true\",\"alertmanager.notification-batch-size\":\"256\",\"alertmanager.notification-queue-capacity\":\"10000\",\"auto-gomaxprocs\":\"true\",\"auto-gomemlimit\":\"true\",\"auto-gomemlimit.ratio\":\"0.9\",\"config.auto-reload\":\"false\",\"config.auto-reload-interval\":\"30s\",\"config.file\":\"/etc/prometheus/prometheus.yml\",\"enable-feature\":\"\",\"log.format\":\"logfmt\",\"log.level\":\"info\",\"query.lookback-delta\":\"5m\",\"query.max-concurrency\":\"20\",\"query.max-samples\":\"50000000\",\"query.timeout\":\"2m\",\"rules.alert.for-grace-period\":\"10m\",\"rules.alert.for-outage-tolerance\":\"1h\",\"rules.alert.resend-delay\":\"1m\",\"rules.max-concurrent-evals\":\"4\",\"scrape.adjust-timestamps\":\"true\",\"scrape.discovery-reload-interval\":\"5s\",\"scrape.timestamp-tolerance\":\"2ms\",\"storage.agent.checkpoint-batch-size\":\"1000\",\"storage.agent.checkpoint-from-in-memory-series\":\"false\",\"storage.agent.no-lockfile\":\"false\",\"storage.agent.path\":\"data-agent/\",\"storage.agent.retention.max-time\":\"4h\",\"storage.agent.retention.min-time\":\"5m\",\"storage.agent.wal-compression\":\"true\",\"storage.agent.wal-compression-type\":\"snappy\",\"storage.agent.wal-segment-size\":\"0B\",\"storage.agent.wal-truncate-frequency\":\"0s\",\"storage.remote.flush-deadline\":\"1m\",\"storage.remote.read-concurrent-limit\":\"10\",\"storage.remote.read-max-bytes-in-frame\":\"1048576\",\"storage.remote.read-sample-limit\":\"50000000\",\"storage.tsdb.allow-overlapping-compaction\":\"true\",\"storage.tsdb.block-reload-interval\":\"1m\",\"storage.tsdb.delay-compact-file.path\":\"\",\"storage.tsdb.delayed-compaction.max-percent\":\"10\",\"storage.tsdb.head-chunks-write-queue-size\":\"0\",\"storage.tsdb.max-block-chunk-segment-size\":\"0B\",\"storage.tsdb.max-block-duration\":\"1d12h\",\"storage.tsdb.min-block-duration\":\"2h\",\"storage.tsdb.no-lockfile\":\"false\",\"storage.tsdb.path\":\"/prometheus\",\"storage.tsdb.retention.size\":\"0B\",\"storage.tsdb.retention.time\":\"15d\",\"storage.tsdb.samples-per-chunk\":\"120\",\"storage.tsdb.wal-compression\":\"true\",\"storage.tsdb.wal-compression-type\":\"snappy\",\"storage.tsdb.wal-segment-size\":\"0B\",\"web.config.file\":\"\",\"web.console.libraries\":\"console_libraries\",\"web.console.templates\":\"consoles\",\"web.cors.origin\":\".*\",\"web.enable-admin-api\":\"false\",\"web.enable-lifecycle\":\"false\",\"web.enable-otlp-receiver\":\"false\",\"web.enable-remote-write-receiver\":\"false\",\"web.external-url\":\"\",\"web.listen-address\":\"0.0.0.0:9090\",\"web.max-connections\":\"512\",\"web.max-notifications-subscribers\":\"16\",\"web.page-title\":\"Prometheus Time Series Collection and Processing Server\",\"web.read-timeout\":\"5m\",\"web.remote-write-receiver.accepted-protobuf-messages\":\"prometheus.WriteRequest,io.prometheus.write.v2.Request\",\"web.route-prefix\":\"/\",\"web.search.max-limit\":\"10000\",\"web.user-assets\":\"\",\"write-documentation\":\"false\"}}"
+}

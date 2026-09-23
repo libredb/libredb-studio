@@ -1,0 +1,26 @@
+{
+  "name": "query-limited-matrix",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.494Z",
+  "holds": "a matrix cut by limit=2, with the engine's truncation warning",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up%5B1m%5D&limit=2",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/stream+json; charset=utf-8",
+    "content-length": "320",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 1074,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[{\"metric\":{\"__name__\":\"up\",\"job\":\"studio-twin\",\"instance\":\"prometheus:9090\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"values\":[[1790158573.621,\"1\"],[1790158578.621,\"1\"],[1790158583.621,\"1\"],[1790158588.621,\"1\"],[1790158593.621,\"1\"],[1790158598.621,\"1\"],[1790158603.621,\"1\"]]},{\"metric\":{\"__name__\":\"up\",\"job\":\"studio-down\",\"instance\":\"127.0.0.1:1\"},\"values\":[[1790158573.99,\"0\"],[1790158578.99,\"0\"],[1790158583.99,\"0\"],[1790158588.99,\"0\"],[1790158593.99,\"0\"],[1790158598.99,\"0\"],[1790158603.99,\"0\"]]},{\"metric\":{\"__name__\":\"up\",\"job\":\"studio-twin\",\"instance\":\"prometheus:9090\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"values\":[[1790158574.005,\"1\"],[1790158579.005,\"1\"],[1790158584.005,\"1\"],[1790158589.005,\"1\"],[1790158594.005,\"1\"],[1790158599.005,\"1\"],[1790158604.005,\"1\"]]},{\"metric\":{\"__name__\":\"up\",\"job\":\"prometheus\",\"instance\":\"prometheus:9090\"},\"values\":[[1790158573.873,\"1\"],[1790158578.873,\"1\"],[1790158583.873,\"1\"],[1790158588.873,\"1\"],[1790158593.873,\"1\"],[1790158598.873,\"1\"],[1790158603.873,\"1\"]]}]}}"
+}

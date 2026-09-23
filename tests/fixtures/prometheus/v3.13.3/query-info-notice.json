@@ -1,0 +1,26 @@
+{
+  "name": "query-info-notice",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.348Z",
+  "holds": "an info notice: rate over a gauge",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=rate%28go_goroutines%5B1m%5D%29",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "249",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 298,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},\"value\":[1790158608.347,\"0.13015666666666667\"]}]},\"infos\":[\"PromQL info: metric might not be a counter, name does not end in _total/_sum/_count/_bucket: \\\"go_goroutines\\\" (1:6)\"]}"
+}

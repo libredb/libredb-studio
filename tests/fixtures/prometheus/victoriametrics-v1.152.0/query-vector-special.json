@@ -1,0 +1,26 @@
+{
+  "name": "query-vector-special",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.484Z",
+  "holds": "a vector holding NaN, +Inf and -Inf",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=label_replace%28vector%280%2F0%29%2C+%22v%22%2C+%22nan%22%2C+%22__name__%22%2C+%22.*%22%29+or+label_replace%28vector%281%2F0%29%2C+%22v%22%2C+%22pos_inf%22%2C+%22__name__%22%2C+%22.*%22%29+or+label_replace%28vector%28-1%2F0%29%2C+%22v%22%2C+%22neg_inf%22%2C+%22__name__%22%2C+%22.*%22%29",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "225",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 225,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"v\":\"pos_inf\"},\"value\":[1790158608,\"+Inf\"]},{\"metric\":{\"v\":\"neg_inf\"},\"value\":[1790158608,\"-Inf\"]}]},\"stats\":{\"seriesFetched\": \"0\",\"executionTimeMsec\":0}}"
+}

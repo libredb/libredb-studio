@@ -1,0 +1,26 @@
+{
+  "name": "targets-active",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.504Z",
+  "holds": "every active target: up, down and unknown",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/targets",
+    "search": "state=active",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "595",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 2506,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"activeTargets\":[{\"discoveredLabels\":{\"__address__\":\"127.0.0.1:1\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-down\"},\"labels\":{\"instance\":\"127.0.0.1:1\",\"job\":\"studio-down\"},\"scrapePool\":\"studio-down\",\"scrapeUrl\":\"http://127.0.0.1:1/metrics\",\"lastError\":\"cannot perform request to \\\"http://127.0.0.1:1/metrics\\\": Get \\\"http://127.0.0.1:1/metrics\\\": dial tcp4 127.0.0.1:1: connect: connection refused\",\"lastScrape\":\"2026-09-23T10:16:43.99Z\",\"lastScrapeDuration\":0,\"lastSamplesScraped\":0,\"health\":\"down\"},{\"discoveredLabels\":{\"__address__\":\"127.0.0.1:2\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"24h0m0s\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-unscraped\"},\"labels\":{\"instance\":\"127.0.0.1:2\",\"job\":\"studio-unscraped\"},\"scrapePool\":\"studio-unscraped\",\"scrapeUrl\":\"http://127.0.0.1:2/metrics\",\"lastError\":\"\",\"lastScrape\":\"1970-01-01T00:00:00Z\",\"lastScrapeDuration\":0,\"lastSamplesScraped\":0,\"health\":\"down\"},{\"discoveredLabels\":{\"__address__\":\"prometheus:9090\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_timeout__\":\"4s\",\"job\":\"prometheus\"},\"labels\":{\"instance\":\"prometheus:9090\",\"job\":\"prometheus\"},\"scrapePool\":\"prometheus\",\"scrapeUrl\":\"http://prometheus:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:43.873Z\",\"lastScrapeDuration\":0.004,\"lastSamplesScraped\":844,\"health\":\"up\"},{\"discoveredLabels\":{\"__address__\":\"prometheus:9090\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"labels\":{\"instance\":\"prometheus:9090\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"scrapePool\":\"studio-twin\",\"scrapeUrl\":\"http://prometheus:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:44.005Z\",\"lastScrapeDuration\":0.004,\"lastSamplesScraped\":844,\"health\":\"up\"},{\"discoveredLabels\":{\"__address__\":\"prometheus:9090\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"labels\":{\"instance\":\"prometheus:9090\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"scrapePool\":\"studio-twin\",\"scrapeUrl\":\"http://prometheus:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:43.621Z\",\"lastScrapeDuration\":0.005,\"lastSamplesScraped\":844,\"health\":\"up\"}],\"droppedTargets\":[]}}"
+}

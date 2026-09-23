@@ -1,0 +1,26 @@
+{
+  "name": "rules-one-group-other-file",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.419Z",
+  "holds": "the group of the same name in rule file B",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/rules",
+    "search": "rule_group%5B%5D=studio&file%5B%5D=%2Fetc%2Fprometheus%2Frules%2Fstudio-b.yml&exclude_alerts=true",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "258",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 381,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"groups\":[{\"name\":\"studio\",\"file\":\"/etc/prometheus/rules/studio-b.yml\",\"rules\":[{\"name\":\"studio:up:sum\",\"query\":\"sum(up)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000267914,\"lastEvaluation\":\"2026-09-23T10:16:44.939305573Z\",\"type\":\"recording\"}],\"interval\":10,\"limit\":10,\"evaluationTime\":0.0003005,\"lastEvaluation\":\"2026-09-23T10:16:44.939277243Z\"}]}}"
+}

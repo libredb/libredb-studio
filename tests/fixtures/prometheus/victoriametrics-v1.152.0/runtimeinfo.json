@@ -1,0 +1,26 @@
+{
+  "name": "runtimeinfo",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.505Z",
+  "holds": "the runtime: start time, retention",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/status/runtimeinfo",
+    "search": "",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 400,
+  "headers": {
+    "content-type": "text/plain; charset=utf-8",
+    "content-length": "57",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": "nosniff",
+    "x-prometheus-stopping": null
+  },
+  "bytes": 57,
+  "durationMs": 0,
+  "body": "unsupported path requested: \"/api/v1/status/runtimeinfo\"\n"
+}

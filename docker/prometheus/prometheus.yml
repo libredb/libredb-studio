@@ -1,0 +1,70 @@
+# Configuration of the compose `prometheus` and `prometheus-auth` services (#1085, section 8).
+#
+# Every job here, and every rule in rules/, exists to put one object kind, status or identity
+# edge of the provider's tree in front of the server, and the comment on each says which. So a
+# change to this directory is a change to what tests/fixtures/prometheus/ records: capture
+# again after editing it.
+#
+# Short intervals on purpose: a freshly created container has scraped, evaluated and fired
+# within seconds, which is what lets one `docker compose up` reproduce every fixture.
+
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+  # Every PromQL evaluation, the API's and the rule manager's alike, one JSON line each: M1
+  # reads it to see how an aborted query ended. It lives in the container's data volume, so
+  # it grows with the container (a few megabytes an hour at these intervals, almost all of it
+  # rule evaluations) and is reset by recreating it with --renew-anon-volumes.
+  query_log_file: /prometheus/query.log
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # The server scraping itself: the metric catalogue the provider browses. On 3.13.3 native
+  # histograms are scraped only where `scrape_native_histograms` is set (config/config.go;
+  # --enable-feature=native-histograms is a no-op there, cmd/prometheus/main.go), and
+  # prometheus_http_request_duration_seconds is exposed as one. The classic buckets are kept
+  # as well, so the same family also has `_bucket`, `_sum` and `_count` series, which carry no
+  # metadata of their own.
+  - job_name: prometheus
+    scrape_native_histograms: true
+    always_scrape_classic_histograms: true
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # An address nothing listens on, so every scrape is refused: a target whose health is
+  # `down`, with the engine's own lastError.
+  - job_name: studio-down
+    static_configs:
+      - targets: ["127.0.0.1:1"]
+
+  # Two targets in one pool with the same address, so the same scrape URL and the same
+  # `instance`, told apart only by `replica`: why a target's path segment carries a digest of
+  # its label set rather than its instance (#1085 4.1; scrape/target.go hashes both).
+  # `service.name` is a UTF-8 label name on scraped series. Only two metrics are kept, so the
+  # pair adds a handful of series rather than two more copies of the catalogue.
+  - job_name: studio-twin
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          replica: a
+          service.name: checkout
+      - targets: ["localhost:9090"]
+        labels:
+          replica: b
+          service.name: checkout
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "prometheus_build_info|process_start_time_seconds"
+        action: keep
+
+  # A target not scraped yet. Prometheus spreads a job's first scrape across its interval, so a
+  # 24h interval keeps the health `unknown` through the first hour almost always, and the
+  # capture refuses a server where it is not. It points at a refusing port, so if it is ever
+  # scraped it turns `down` rather than into data.
+  - job_name: studio-unscraped
+    scrape_interval: 24h
+    static_configs:
+      - targets: ["127.0.0.1:2"]

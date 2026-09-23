@@ -1,0 +1,26 @@
+{
+  "name": "error-timeout",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.495Z",
+  "holds": "the timeout envelope: timeout=50ms on a slow query",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=count_over_time%28absent%28studio_no_such_metric%29%5B1h%3A1ms%5D%29&timeout=50ms",
+    "credential": "none"
+  },
+  "status": 422,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "239",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 239,
+  "durationMs": 0,
+  "body": "{\"status\":\"error\",\"errorType\":\"422\",\"error\":\"too many points for the given start=1790154678494, end=1790158578496 and step=1: 3900003; the maximum number of points is 100000; (see -search.maxPointsSubqueryPerTimeseries command-line flag)\"}"
+}

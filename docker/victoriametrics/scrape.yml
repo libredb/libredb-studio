@@ -1,0 +1,40 @@
+# Scrape configuration of the compose `victoriametrics` service (#1085, section 7).
+#
+# The targets of docker/prometheus/prometheus.yml, reached through the compose network
+# (`prometheus:9090` is that service), so the two servers answer the same questions about the
+# same series. VictoriaMetrics refuses a field it does not support (-promscrape.config.strictParse
+# is on by default), so only fields both products read are used: native histogram scraping is
+# Prometheus's alone, and single-node VictoriaMetrics reads no rule files at all.
+
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: studio-down
+    static_configs:
+      - targets: ["127.0.0.1:1"]
+
+  - job_name: studio-twin
+    static_configs:
+      - targets: ["prometheus:9090"]
+        labels:
+          replica: a
+          service.name: checkout
+      - targets: ["prometheus:9090"]
+        labels:
+          replica: b
+          service.name: checkout
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "prometheus_build_info|process_start_time_seconds"
+        action: keep
+
+  - job_name: studio-unscraped
+    scrape_interval: 24h
+    static_configs:
+      - targets: ["127.0.0.1:2"]

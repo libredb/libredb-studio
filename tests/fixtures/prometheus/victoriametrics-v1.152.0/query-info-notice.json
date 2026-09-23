@@ -1,0 +1,26 @@
+{
+  "name": "query-info-notice",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.493Z",
+  "holds": "an info notice: rate over a gauge",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=rate%28go_goroutines%5B1m%5D%29",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "116",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 116,
+  "durationMs": 2,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[]},\"stats\":{\"seriesFetched\": \"1\",\"executionTimeMsec\":1}}"
+}

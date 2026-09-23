@@ -1,0 +1,26 @@
+{
+  "name": "metadata-family-suffixed",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.502Z",
+  "holds": "the metadata read by a classic histogram's _bucket name",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/metadata",
+    "search": "metric=prometheus_http_request_duration_seconds_bucket&limit=1",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "31",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 31,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\": {}}"
+}

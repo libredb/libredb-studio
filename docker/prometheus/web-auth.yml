@@ -1,0 +1,9 @@
+# The exporter-toolkit web configuration of the compose `prometheus-auth` service only
+# (#1085, section 8 and M5): basic auth on every path.
+#
+# A documented test credential, like every other password in database-compose.yml:
+# user `studio`, password `studio-probe`. The value is its bcrypt hash (cost 10), made with
+#   bun -e 'console.log(await Bun.password.hash("studio-probe", { algorithm: "bcrypt", cost: 10 }))'
+# which prints a different salt on every run; any of them verifies the same password.
+basic_auth_users:
+  studio: "$2b$10$BHXlUIR05urwT.ualAddK.mDxaFlKxnOmQ8FBZHxUAt9y0o4kg01."

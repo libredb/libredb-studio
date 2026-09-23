@@ -1,0 +1,26 @@
+{
+  "name": "query-vector-utf8-name",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.340Z",
+  "holds": "a vector of a UTF-8 metric name",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=%7B__name__%3D%22studio.dotted.name%22%7D",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "139",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 136,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"__name__\":\"studio.dotted.name\"},\"value\":[1790158608.340,\"4\"]}]}}"
+}

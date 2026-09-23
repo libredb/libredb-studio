@@ -1,0 +1,26 @@
+{
+  "name": "series-all-limited",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.413Z",
+  "holds": "series cut by limit=10, with the engine's truncation warning",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/series",
+    "search": "match%5B%5D=%7B__name__%3D%7E%22.%2B%22%7D&start=1790155008.337&end=1790158608.337&limit=10",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "282",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 862,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":[{\"__name__\":\"sum\"},{\"__name__\":\"nan\"},{\"__name__\":\"studio_reserved_labels\",\"service.name\":\"checkout\",\"timestamp\":\"label-named-timestamp\",\"value\":\"label-named-value\"},{\"__name__\":\"studio.dotted.name\"},{\"__name__\":\"go_gc_cleanups_executed_cleanups_total\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},{\"__name__\":\"go_gc_cleanups_queued_cleanups_total\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},{\"__name__\":\"go_gc_cycles_automatic_gc_cycles_total\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},{\"__name__\":\"go_gc_cycles_forced_gc_cycles_total\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},{\"__name__\":\"go_gc_cycles_total_gc_cycles_total\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},{\"__name__\":\"go_gc_duration_seconds_count\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"}],\"warnings\":[\"results truncated due to limit\"]}"
+}

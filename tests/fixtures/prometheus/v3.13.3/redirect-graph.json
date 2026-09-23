@@ -1,0 +1,26 @@
+{
+  "name": "redirect-graph",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.431Z",
+  "holds": "the old UI path's redirect, query string kept",
+  "request": {
+    "method": "GET",
+    "path": "/graph",
+    "search": "g0.expr=up",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 302,
+  "headers": {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": "40",
+    "content-encoding": null,
+    "location": "/query?g0.expr=up",
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 40,
+  "durationMs": 0,
+  "body": "<a href=\"/query?g0.expr=up\">Found</a>.\n\n"
+}

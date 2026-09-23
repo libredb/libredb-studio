@@ -1,0 +1,26 @@
+{
+  "name": "targets-active",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.421Z",
+  "holds": "every active target: up, down and unknown",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/targets",
+    "search": "state=active",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "686",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 3511,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"activeTargets\":[{\"discoveredLabels\":{\"__address__\":\"localhost:9090\",\"__always_scrape_classic_histograms__\":\"true\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_native_histograms__\":\"true\",\"__scrape_timeout__\":\"4s\",\"job\":\"prometheus\"},\"labels\":{\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},\"scrapePool\":\"prometheus\",\"scrapeUrl\":\"http://localhost:9090/metrics\",\"globalUrl\":\"http://7fec1c6c9840:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:46.800653731Z\",\"lastScrapeDuration\":0.00292038,\"health\":\"up\",\"scrapeInterval\":\"5s\",\"scrapeTimeout\":\"4s\"},{\"discoveredLabels\":{\"__address__\":\"127.0.0.1:1\",\"__always_scrape_classic_histograms__\":\"false\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_native_histograms__\":\"false\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-down\"},\"labels\":{\"instance\":\"127.0.0.1:1\",\"job\":\"studio-down\"},\"scrapePool\":\"studio-down\",\"scrapeUrl\":\"http://127.0.0.1:1/metrics\",\"globalUrl\":\"http://7fec1c6c9840:1/metrics\",\"lastError\":\"Get \\\"http://127.0.0.1:1/metrics\\\": dial tcp 127.0.0.1:1: connect: connection refused\",\"lastScrape\":\"2026-09-23T10:16:44.387065609Z\",\"lastScrapeDuration\":0.000292206,\"health\":\"down\",\"scrapeInterval\":\"5s\",\"scrapeTimeout\":\"4s\"},{\"discoveredLabels\":{\"__address__\":\"localhost:9090\",\"__always_scrape_classic_histograms__\":\"false\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_native_histograms__\":\"false\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"labels\":{\"instance\":\"localhost:9090\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"scrapePool\":\"studio-twin\",\"scrapeUrl\":\"http://localhost:9090/metrics\",\"globalUrl\":\"http://7fec1c6c9840:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:43.560174255Z\",\"lastScrapeDuration\":0.004310116,\"health\":\"up\",\"scrapeInterval\":\"5s\",\"scrapeTimeout\":\"4s\"},{\"discoveredLabels\":{\"__address__\":\"localhost:9090\",\"__always_scrape_classic_histograms__\":\"false\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"5s\",\"__scrape_native_histograms__\":\"false\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"labels\":{\"instance\":\"localhost:9090\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"scrapePool\":\"studio-twin\",\"scrapeUrl\":\"http://localhost:9090/metrics\",\"globalUrl\":\"http://7fec1c6c9840:9090/metrics\",\"lastError\":\"\",\"lastScrape\":\"2026-09-23T10:16:44.549862183Z\",\"lastScrapeDuration\":0.004166747,\"health\":\"up\",\"scrapeInterval\":\"5s\",\"scrapeTimeout\":\"4s\"},{\"discoveredLabels\":{\"__address__\":\"127.0.0.1:2\",\"__always_scrape_classic_histograms__\":\"false\",\"__convert_classic_histograms_to_nhcb__\":\"false\",\"__metrics_path__\":\"/metrics\",\"__scheme__\":\"http\",\"__scrape_interval__\":\"1d\",\"__scrape_native_histograms__\":\"false\",\"__scrape_timeout__\":\"4s\",\"job\":\"studio-unscraped\"},\"labels\":{\"instance\":\"127.0.0.1:2\",\"job\":\"studio-unscraped\"},\"scrapePool\":\"studio-unscraped\",\"scrapeUrl\":\"http://127.0.0.1:2/metrics\",\"globalUrl\":\"http://7fec1c6c9840:2/metrics\",\"lastError\":\"\",\"lastScrape\":\"0001-01-01T00:00:00Z\",\"lastScrapeDuration\":0,\"health\":\"unknown\",\"scrapeInterval\":\"1d\",\"scrapeTimeout\":\"4s\"}],\"droppedTargets\":[],\"droppedTargetCounts\":null}}"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "query-vector-reserved-labels",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.483Z",
+  "holds": "a vector whose labels are named value, timestamp and service.name",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=studio_reserved_labels",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "116",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 116,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[]},\"stats\":{\"seriesFetched\": \"0\",\"executionTimeMsec\":0}}"
+}

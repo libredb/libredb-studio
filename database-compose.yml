@@ -773,6 +773,84 @@ services:
     # `system_reports`, which exists to keep the "a system keyspace is excluded by exact
     # name, never by a `system%` prefix" measurement refutable.
 
+  # ---------------------------------------------------------------------------------------
+  # Prometheus (issue #1085, #424 Phase 6). One container is the whole server: it scrapes
+  # itself, evaluates the rule files beside its configuration and answers the HTTP API the
+  # provider reads, so nothing else is needed to exercise it. `prometheus-auth` below is the
+  # same image behind basic auth, for the answers only a credential-checking server gives.
+  # ---------------------------------------------------------------------------------------
+  prometheus:
+    # Pinned to the exact build the provider was live-verified against, the same rule the
+    # clickhouse and trino services follow: the envelope, the truncation warning, the lexer's
+    # reserved words and the 401 answer recorded in tests/fixtures/prometheus/README.md are
+    # claims about 3.13.3, the 3.13 LTS line, not about Prometheus in general.
+    image: prom/prometheus:v3.13.3
+    container_name: libredb-prometheus
+    restart: unless-stopped
+    # No `command`: the image's own reads /etc/prometheus/prometheus.yml and stores under
+    # /prometheus, and it passes neither --web.enable-lifecycle nor --web.enable-admin-api, so
+    # this server offers exactly the read API the provider may call (#1085 S9) and nothing
+    # that deletes a series or stops the process.
+    volumes:
+      # The whole configuration, tracked: the scrape jobs and the rule files, each commented
+      # with the edge of the provider's object model it exists for. Prometheus reads it at
+      # start, so restart the service after an edit; for a change that must reach the
+      # fixtures, recreate it with --force-recreate --renew-anon-volumes and capture again.
+      - ./docker/prometheus:/etc/prometheus:ro
+    ports:
+      - "9090:9090"
+    healthcheck:
+      # /-/ready answers 503 until the storage is open and the configuration is loaded, and 200
+      # after, which is the condition that matters; /-/healthy is 200 from the first second.
+      # The image is busybox-based and ships wget, not curl (checked with `command -v`
+      # before writing this, as the libsql service's comment asks).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  prometheus-auth:
+    # The same image and configuration behind the exporter-toolkit web config, which is how
+    # Prometheus itself does basic auth. It exists for the answers a stock server cannot give:
+    # the 401 status, body and header for a missing, wrong or Bearer credential (#1085 M5).
+    # Its own scrape jobs read /metrics without a credential, so its self-scrape targets are
+    # `down` with a 401; that is expected, and the data lives on 9090. Start it deliberately:
+    #
+    #   docker compose -f database-compose.yml --profile prometheus-auth up -d prometheus-auth
+    image: prom/prometheus:v3.13.3
+    container_name: libredb-prometheus-auth
+    profiles: ["prometheus-auth"]
+    restart: unless-stopped
+    # `command` replaces the image's CMD, so its two defaults are restated before the web
+    # config, and there is still no lifecycle or admin flag.
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.config.file=/etc/prometheus/web-auth.yml"
+    volumes:
+      - ./docker/prometheus:/etc/prometheus:ro
+    ports:
+      # 9091 on the host because the service above owns 9090. The provider's default port
+      # stays 9090: this is a collision on THIS machine, not a fact about the product.
+      - "9091:9090"
+    healthcheck:
+      # The web config guards every path, /-/ready included, so the check sends the documented
+      # test credential from web-auth.yml (user `studio`, password `studio-probe`). A hash that
+      # does not match that password therefore shows as a service that never turns healthy,
+      # not as a puzzling 401 in the first probe.
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - --header
+        - "Authorization: Basic c3R1ZGlvOnN0dWRpby1wcm9iZQ=="
+        - http://localhost:9090/-/ready
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #
@@ -1320,6 +1398,38 @@ services:
     ports:
       - "9142:9042"
     mem_limit: 4g
+
+  # -- Prometheus HTTP API -------------------------------------------------
+
+  # VictoriaMetrics single-node, the wire-compatible relative of the `prometheus` provider
+  # (#1085 section 7): the Prometheus querying API on 8428, answered in MetricsQL, a superset
+  # of PromQL. The relative is claimed for PromQL only.
+  #
+  # PINNED to v1.152.0, the build the gate-4 probe ran against. The v1.136.x LTS line is not
+  # published as an open-source image (#1085 section 7: `v1.136.15` answers 404 on Docker
+  # Hub), so there is no LTS tag to pin instead.
+  #
+  # It scrapes the targets of the `prometheus` service through the compose network
+  # (docker/victoriametrics/scrape.yml), so the two servers can be asked the same questions
+  # side by side, and it waits for that service to be healthy because its main target is that
+  # service. Single-node VictoriaMetrics evaluates no rules, so every metric the rule files in
+  # docker/prometheus/rules/ produce exists on 9090 only.
+  #
+  # No healthcheck, deliberately: which health path this build answers is one of the
+  # questions the probe asks, so a check here would presuppose the answer.
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.152.0
+    container_name: libredb-victoriametrics
+    profiles: ["compat"]
+    command:
+      - "-promscrape.config=/etc/victoriametrics/scrape.yml"
+    volumes:
+      - ./docker/victoriametrics:/etc/victoriametrics:ro
+    ports:
+      - "8428:8428"
+    depends_on:
+      prometheus:
+        condition: service_healthy
 
 volumes:
   # Named volumes only for Druid: it is the one service here whose processes must share

@@ -1,0 +1,26 @@
+{
+  "name": "label-values-names-limited",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.405Z",
+  "holds": "metric names cut by limit=5, with the engine's truncation warning",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/label/__name__/values",
+    "search": "start=1790155008.337&end=1790158608.337&limit=5",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "155",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 207,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":[\"go_gc_cleanups_executed_cleanups_total\",\"go_gc_cleanups_queued_cleanups_total\",\"nan\",\"studio.dotted.name\",\"studio_reserved_labels\"],\"warnings\":[\"results truncated due to limit\"]}"
+}

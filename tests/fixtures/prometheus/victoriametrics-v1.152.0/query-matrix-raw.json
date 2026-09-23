@@ -1,0 +1,26 @@
+{
+  "name": "query-matrix-raw",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.487Z",
+  "holds": "a raw range selector: samples at their scrape times",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up%7Bjob%3D%22prometheus%22%7D%5B1m%5D",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/stream+json; charset=utf-8",
+    "content-length": "297",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 297,
+  "durationMs": 3,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[{\"metric\":{\"__name__\":\"up\",\"job\":\"prometheus\",\"instance\":\"prometheus:9090\"},\"values\":[[1790158573.873,\"1\"],[1790158578.873,\"1\"],[1790158583.873,\"1\"],[1790158588.873,\"1\"],[1790158593.873,\"1\"],[1790158598.873,\"1\"],[1790158603.873,\"1\"]]}]}}"
+}

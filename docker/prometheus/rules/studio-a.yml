@@ -1,0 +1,67 @@
+# Rule groups of the compose `prometheus` service, file A (#1085, section 8).
+#
+# Each rule is here for one edge of the provider's object model, and the comment on each says
+# which. Group `studio` also exists in studio-b.yml: Prometheus keys a loaded group by file and
+# name (GroupKey in rules/group.go), and that pair is why a group's path segment is
+# `<file>;<group>` and not its name.
+
+groups:
+  - name: studio
+    rules:
+      # The plain recording rule: its output is a metric with no metadata.
+      - record: studio:up:count
+        expr: count(up)
+
+      # Fires on every evaluation, so the tree always shows a `firing` alert. The description
+      # holds quotes, braces and a line break, which a rule's source must show as data rather
+      # than as structure (#1085 S7).
+      - alert: StudioAlwaysFiring
+        expr: vector(1)
+        labels:
+          severity: info
+        annotations:
+          summary: Always firing, for the provider's object tree.
+          description: "Quotes \" and braces { } in an annotation,\nand a second line."
+
+      # Held `pending` by `for: 1h`, so the first hour of a fresh container shows a pending
+      # alert. It fires after that; recreate the container to see it pending again.
+      - alert: StudioHeldPending
+        expr: vector(1)
+        for: 1h
+        annotations:
+          summary: Pending through the container's first hour.
+
+      # Two alerting rules with one name in one group, as shipped rule sets have
+      # (node-mixin's NodeFilesystemSpaceFillingUp): why a rule's path segment is its position
+      # and its name. The second never fires, so it is also the `inactive` rule.
+      - alert: StudioTwin
+        expr: vector(1)
+        labels:
+          twin: first
+      - alert: StudioTwin
+        expr: vector(1) > 2
+        labels:
+          twin: second
+
+  - name: studio-names
+    rules:
+      # Metric names that collide with the PromQL lexer's words (#1085 S4): `sum` is an
+      # aggregator and `nan` lexes as a number. The reserved-word probe measures which such
+      # names may be written bare; these two give it a metric to find.
+      - record: "sum"
+        expr: vector(1)
+      - record: "nan"
+        expr: vector(2)
+
+      # One vector result whose label names collide with the result grid's own `timestamp`
+      # and `value` fields, next to a UTF-8 label name.
+      - record: studio_reserved_labels
+        expr: vector(3)
+        labels:
+          value: label-named-value
+          timestamp: label-named-timestamp
+          service.name: checkout
+
+      # A UTF-8 metric name, which only the {__name__="..."} form can select (#1085 S4).
+      - record: studio.dotted.name
+        expr: vector(4)

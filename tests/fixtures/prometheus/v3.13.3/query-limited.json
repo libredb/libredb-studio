@@ -1,0 +1,26 @@
+{
+  "name": "query-limited",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.350Z",
+  "holds": "a vector cut by limit=2, with the engine's truncation warning",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up&limit=2",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "227",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 359,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"__name__\":\"up\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},\"value\":[1790158608.349,\"1\"]},{\"metric\":{\"__name__\":\"up\",\"instance\":\"localhost:9090\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"value\":[1790158608.349,\"1\"]}]},\"warnings\":[\"results truncated due to limit\"]}"
+}

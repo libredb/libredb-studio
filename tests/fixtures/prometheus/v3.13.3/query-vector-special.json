@@ -1,0 +1,26 @@
+{
+  "name": "query-vector-special",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.341Z",
+  "holds": "a vector holding NaN, +Inf and -Inf",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=label_replace%28vector%280%2F0%29%2C+%22v%22%2C+%22nan%22%2C+%22__name__%22%2C+%22.*%22%29+or+label_replace%28vector%281%2F0%29%2C+%22v%22%2C+%22pos_inf%22%2C+%22__name__%22%2C+%22.*%22%29+or+label_replace%28vector%28-1%2F0%29%2C+%22v%22%2C+%22neg_inf%22%2C+%22__name__%22%2C+%22.*%22%29",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "156",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 234,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"v\":\"nan\"},\"value\":[1790158608.340,\"NaN\"]},{\"metric\":{\"v\":\"pos_inf\"},\"value\":[1790158608.340,\"+Inf\"]},{\"metric\":{\"v\":\"neg_inf\"},\"value\":[1790158608.340,\"-Inf\"]}]}}"
+}

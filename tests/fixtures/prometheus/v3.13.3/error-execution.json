@@ -1,0 +1,26 @@
+{
+  "name": "error-execution",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.352Z",
+  "holds": "the execution envelope: many-to-many matching",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up+%2B+on%28%29+up",
+    "credential": "none"
+  },
+  "status": 422,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "264",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 401,
+  "durationMs": 0,
+  "body": "{\"status\":\"error\",\"errorType\":\"execution\",\"error\":\"found duplicate series for the match group {} on the right hand-side of the operation: [{__name__=\\\"up\\\", instance=\\\"localhost:9090\\\", job=\\\"studio-twin\\\", replica=\\\"a\\\", \\\"service.name\\\"=\\\"checkout\\\"}, {__name__=\\\"up\\\", instance=\\\"localhost:9090\\\", job=\\\"prometheus\\\"}];many-to-many matching not allowed: matching labels must be unique on one side\"}"
+}

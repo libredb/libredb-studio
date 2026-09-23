@@ -1,0 +1,26 @@
+{
+  "name": "error-execution",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.495Z",
+  "holds": "the execution envelope: many-to-many matching",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up+%2B+on%28%29+up",
+    "credential": "none"
+  },
+  "status": 422,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "316",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 316,
+  "durationMs": 0,
+  "body": "{\"status\":\"error\",\"errorType\":\"422\",\"error\":\"error when executing query=\\\"up + on() up\\\" for (time=1790158578495, step=300000): cannot evaluate \\\"up + on() up\\\": duplicate time series on the left side of + on(): {instance=\\\"127.0.0.1:1\\\", job=\\\"studio-down\\\"} and {instance=\\\"prometheus:9090\\\", job=\\\"prometheus\\\"}\"}"
+}

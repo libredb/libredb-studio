@@ -1,0 +1,26 @@
+{
+  "name": "query-limited-matrix",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.350Z",
+  "holds": "a matrix cut by limit=2, with the engine's truncation warning",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up%5B1m%5D&limit=2",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "265",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 595,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[{\"metric\":{\"__name__\":\"up\",\"instance\":\"127.0.0.1:1\",\"job\":\"studio-down\"},\"values\":[[1790158574.387,\"0\"],[1790158579.387,\"0\"],[1790158584.387,\"0\"],[1790158589.387,\"0\"],[1790158594.387,\"0\"],[1790158599.387,\"0\"],[1790158604.387,\"0\"]]},{\"metric\":{\"__name__\":\"up\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},\"values\":[[1790158571.800,\"1\"],[1790158576.800,\"1\"],[1790158581.800,\"1\"],[1790158586.800,\"1\"],[1790158591.800,\"1\"],[1790158596.800,\"1\"],[1790158601.800,\"1\"],[1790158606.800,\"1\"]]}]},\"warnings\":[\"results truncated due to limit\"]}"
+}

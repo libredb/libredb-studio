@@ -1,0 +1,26 @@
+{
+  "name": "rules-one-group",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.418Z",
+  "holds": "group studio of rule file A, alerts excluded",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/rules",
+    "search": "rule_group%5B%5D=studio&file%5B%5D=%2Fetc%2Fprometheus%2Frules%2Fstudio-a.yml&exclude_alerts=true",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "580",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 1628,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"groups\":[{\"name\":\"studio\",\"file\":\"/etc/prometheus/rules/studio-a.yml\",\"rules\":[{\"name\":\"studio:up:count\",\"query\":\"count(up)\",\"labels\":{},\"health\":\"ok\",\"evaluationTime\":0.000243705,\"lastEvaluation\":\"2026-09-23T10:16:46.495064037Z\",\"type\":\"recording\"},{\"state\":\"firing\",\"name\":\"StudioAlwaysFiring\",\"query\":\"vector(1)\",\"duration\":0,\"keepFiringFor\":0,\"labels\":{\"severity\":\"info\"},\"annotations\":{\"description\":\"Quotes \\\" and braces { } in an annotation,\\nand a second line.\",\"summary\":\"Always firing, for the provider's object tree.\"},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000168996,\"lastEvaluation\":\"2026-09-23T10:16:46.495313098Z\",\"type\":\"alerting\"},{\"state\":\"pending\",\"name\":\"StudioHeldPending\",\"query\":\"vector(1)\",\"duration\":3600,\"keepFiringFor\":0,\"labels\":{},\"annotations\":{\"summary\":\"Pending through the container's first hour.\"},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000088431,\"lastEvaluation\":\"2026-09-23T10:16:46.495486046Z\",\"type\":\"alerting\"},{\"state\":\"firing\",\"name\":\"StudioTwin\",\"query\":\"vector(1)\",\"duration\":0,\"keepFiringFor\":0,\"labels\":{\"twin\":\"first\"},\"annotations\":{},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000073022,\"lastEvaluation\":\"2026-09-23T10:16:46.495578028Z\",\"type\":\"alerting\"},{\"state\":\"inactive\",\"name\":\"StudioTwin\",\"query\":\"vector(1) \\u003e 2\",\"duration\":0,\"keepFiringFor\":0,\"labels\":{\"twin\":\"second\"},\"annotations\":{},\"alerts\":null,\"health\":\"ok\",\"evaluationTime\":0.000053434,\"lastEvaluation\":\"2026-09-23T10:16:46.49565524Z\",\"type\":\"alerting\"}],\"interval\":5,\"limit\":0,\"evaluationTime\":0.000662476,\"lastEvaluation\":\"2026-09-23T10:16:46.495048078Z\"}]}}"
+}

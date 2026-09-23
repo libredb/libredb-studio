@@ -1,0 +1,26 @@
+{
+  "name": "query-matrix-subquery",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.490Z",
+  "holds": "a stepped subquery: aligned timestamps, several series, no __name__",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=rate%28prometheus_http_requests_total%5B1m%5D%29%5B5m%3A30s%5D",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "117",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 117,
+  "durationMs": 2,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[]},\"stats\":{\"seriesFetched\": \"63\",\"executionTimeMsec\":1}}"
+}

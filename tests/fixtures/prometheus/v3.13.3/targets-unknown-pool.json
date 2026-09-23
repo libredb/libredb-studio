@@ -1,0 +1,26 @@
+{
+  "name": "targets-unknown-pool",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.423Z",
+  "holds": "a scrape pool that does not exist",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/targets",
+    "search": "state=active&scrapePool=studio-no-such-pool",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "125",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 95,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"activeTargets\":[],\"droppedTargets\":[],\"droppedTargetCounts\":null}}"
+}

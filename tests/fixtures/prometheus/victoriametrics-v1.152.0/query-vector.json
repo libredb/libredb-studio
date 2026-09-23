@@ -1,0 +1,26 @@
+{
+  "name": "query-vector",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.482Z",
+  "holds": "an instant vector: one series per target",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=up",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "602",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 602,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"__name__\":\"up\",\"instance\":\"prometheus:9090\",\"job\":\"prometheus\"},\"value\":[1790158608,\"1\"]},{\"metric\":{\"__name__\":\"up\",\"instance\":\"127.0.0.1:1\",\"job\":\"studio-down\"},\"value\":[1790158608,\"0\"]},{\"metric\":{\"__name__\":\"up\",\"instance\":\"prometheus:9090\",\"job\":\"studio-twin\",\"replica\":\"a\",\"service.name\":\"checkout\"},\"value\":[1790158608,\"1\"]},{\"metric\":{\"__name__\":\"up\",\"instance\":\"prometheus:9090\",\"job\":\"studio-twin\",\"replica\":\"b\",\"service.name\":\"checkout\"},\"value\":[1790158608,\"1\"]}]},\"stats\":{\"seriesFetched\": \"4\",\"executionTimeMsec\":0}}"
+}

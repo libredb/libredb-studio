@@ -1,0 +1,26 @@
+{
+  "name": "query-count-absent",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.495Z",
+  "holds": "the existence read of a name that does not exist: an empty vector, not an error",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=count%28last_over_time%28studio_no_such_metric%5B1h%5D%29%29",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "116",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 116,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[]},\"stats\":{\"seriesFetched\": \"0\",\"executionTimeMsec\":0}}"
+}

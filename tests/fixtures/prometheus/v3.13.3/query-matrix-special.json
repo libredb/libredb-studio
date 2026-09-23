@@ -1,0 +1,26 @@
+{
+  "name": "query-matrix-special",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.344Z",
+  "holds": "a matrix holding NaN, +Inf and -Inf",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=%28label_replace%28vector%280%2F0%29%2C+%22v%22%2C+%22nan%22%2C+%22__name__%22%2C+%22.*%22%29+or+label_replace%28vector%281%2F0%29%2C+%22v%22%2C+%22pos_inf%22%2C+%22__name__%22%2C+%22.*%22%29+or+label_replace%28vector%28-1%2F0%29%2C+%22v%22%2C+%22neg_inf%22%2C+%22__name__%22%2C+%22.*%22%29%29%5B1m%3A30s%5D",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "168",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 290,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[{\"metric\":{\"v\":\"nan\"},\"values\":[[1790158560,\"NaN\"],[1790158590,\"NaN\"]]},{\"metric\":{\"v\":\"neg_inf\"},\"values\":[[1790158560,\"-Inf\"],[1790158590,\"-Inf\"]]},{\"metric\":{\"v\":\"pos_inf\"},\"values\":[[1790158560,\"+Inf\"],[1790158590,\"+Inf\"]]}]}}"
+}

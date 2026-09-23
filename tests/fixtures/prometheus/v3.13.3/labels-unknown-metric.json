@@ -1,0 +1,26 @@
+{
+  "name": "labels-unknown-metric",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.410Z",
+  "holds": "the label names of a metric that does not exist",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/labels",
+    "search": "match%5B%5D=studio_no_such_metric&start=1790155008.337&end=1790158608.337",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "60",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 30,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":[]}"
+}

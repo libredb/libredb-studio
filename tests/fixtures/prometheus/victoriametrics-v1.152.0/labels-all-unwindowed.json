@@ -1,0 +1,26 @@
+{
+  "name": "labels-all-unwindowed",
+  "server": "victoriametrics v1.152.0",
+  "capturedAt": "2026-09-23T10:16:48.498Z",
+  "holds": "every label name the TSDB holds, no window",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/labels",
+    "search": "",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "334",
+    "content-encoding": null,
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 334,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":[\"__name__\",\"branch\",\"call\",\"code\",\"compression\",\"config\",\"dialer_name\",\"endpoint\",\"event\",\"goarch\",\"goos\",\"goversion\",\"handler\",\"instance\",\"interval\",\"job\",\"le\",\"listener_name\",\"name\",\"quantile\",\"reason\",\"replica\",\"revision\",\"role\",\"rule_group\",\"scrape_job\",\"service.name\",\"slice\",\"tags\",\"type\",\"version\"]}"
+}

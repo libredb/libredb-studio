@@ -1,0 +1,26 @@
+{
+  "name": "rules-pending-rule",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.420Z",
+  "holds": "one alerting rule with its pending alert",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/rules",
+    "search": "rule_group%5B%5D=studio&file%5B%5D=%2Fetc%2Fprometheus%2Frules%2Fstudio-a.yml&rule_name%5B%5D=StudioHeldPending",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "384",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 716,
+  "durationMs": 0,
+  "body": "{\"status\":\"success\",\"data\":{\"groups\":[{\"name\":\"studio\",\"file\":\"/etc/prometheus/rules/studio-a.yml\",\"rules\":[{\"state\":\"pending\",\"name\":\"StudioHeldPending\",\"query\":\"vector(1)\",\"duration\":3600,\"keepFiringFor\":0,\"labels\":{},\"annotations\":{\"summary\":\"Pending through the container's first hour.\"},\"alerts\":[{\"labels\":{\"alertname\":\"StudioHeldPending\"},\"annotations\":{\"summary\":\"Pending through the container's first hour.\"},\"state\":\"pending\",\"activeAt\":\"2026-09-23T10:16:06.493099163Z\",\"value\":\"1e+00\"}],\"health\":\"ok\",\"evaluationTime\":0.000088431,\"lastEvaluation\":\"2026-09-23T10:16:46.495486046Z\",\"type\":\"alerting\"}],\"interval\":5,\"limit\":0,\"evaluationTime\":0.000662476,\"lastEvaluation\":\"2026-09-23T10:16:46.495048078Z\"}]}}"
+}

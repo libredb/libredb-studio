@@ -1,0 +1,26 @@
+{
+  "name": "query-native-histogram",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.347Z",
+  "holds": "a vector of native histogram samples",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=prometheus_http_request_duration_seconds%7Bhandler%3D%22%2Fapi%2Fv1%2Fquery%22%7D",
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "285",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 383,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"__name__\":\"prometheus_http_request_duration_seconds\",\"handler\":\"/api/v1/query\",\"instance\":\"localhost:9090\",\"job\":\"prometheus\"},\"histogram\":[1790158608.346,{\"count\":\"2\",\"sum\":\"0.000888658\",\"buckets\":[[0,\"0.00037651631479686053\",\"0.00041059395276060273\",\"1\"],[0,\"0.0004477558804710308\",\"0.00048828125\",\"1\"]]}]}]}}"
+}

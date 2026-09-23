@@ -1,0 +1,26 @@
+{
+  "name": "runtimeinfo",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.425Z",
+  "holds": "the runtime: start time, retention",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/status/runtimeinfo",
+    "search": "",
+    "form": null,
+    "credential": "none"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "266",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 364,
+  "durationMs": 1,
+  "body": "{\"status\":\"success\",\"data\":{\"startTime\":\"2026-09-23T10:16:05.141158217Z\",\"CWD\":\"/prometheus\",\"hostname\":\"7fec1c6c9840\",\"serverTime\":\"2026-09-23T10:16:48.424472656Z\",\"reloadConfigSuccess\":true,\"lastConfigTime\":\"2026-09-23T10:16:05Z\",\"corruptionCount\":0,\"goroutineCount\":46,\"GOMAXPROCS\":20,\"GOMEMLIMIT\":60406319923,\"GOGC\":\"75\",\"GODEBUG\":\"\",\"storageRetention\":\"15d\"}}"
+}

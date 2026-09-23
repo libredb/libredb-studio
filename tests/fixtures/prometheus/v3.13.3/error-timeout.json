@@ -1,0 +1,26 @@
+{
+  "name": "error-timeout",
+  "server": "prometheus v3.13.3",
+  "capturedAt": "2026-09-23T10:16:48.403Z",
+  "holds": "the timeout envelope: timeout=50ms on a slow query",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/query",
+    "search": "",
+    "form": "query=count_over_time%28absent%28studio_no_such_metric%29%5B1h%3A1ms%5D%29&timeout=50ms",
+    "credential": "none"
+  },
+  "status": 503,
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "121",
+    "content-encoding": "gzip",
+    "location": null,
+    "www-authenticate": null,
+    "x-content-type-options": null,
+    "x-prometheus-stopping": null
+  },
+  "bytes": 91,
+  "durationMs": 51,
+  "body": "{\"status\":\"error\",\"errorType\":\"timeout\",\"error\":\"query timed out in expression evaluation\"}"
+}
