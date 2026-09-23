@@ -2,7 +2,7 @@
 
 Verbatim answers of the compose `prometheus`, `prometheus-auth` and `victoriametrics` services, captured before any provider code was written (#1085, section 9, gate 4).
 A test that needs a real server answer loads one of these files instead of writing its own.
-The measurements at the end confirm or replace the provider's measured constants (#1085, section 10), each by the rule written beside it.
+The measurements at the end confirm or replace the provider's measured constants (#1085, section 10, and the result byte budget of section 5.4), each by the rule written beside it.
 A local harness took every file and rendered this page from them and from its measurements, so no value below was typed by hand.
 
 ## Provenance
@@ -162,7 +162,7 @@ A stepped subquery's series share their instants, so its cells are about its sam
 Representative subquery: `{__name__=~".+"}[1h:1m]` with `limit=500`, run once the head held 65.8 minutes of data: 500 series, 30000 grid cells, 29940 samples (floats and histograms together), 1930719 bytes, 64.5 bytes per sample.
 Its notices: `results truncated due to limit`.
 Decision: `MATRIX_SAMPLE_BUDGET` = `250000` (candidate `250000`, confirmed): 4 x the representative subquery's 30000 grid cells (distinct instants times series) is 120000.
-A matrix of exactly the budget at this server's mix is about 15.4 MiB, below `RESPONSE_BYTE_CAP`, so the byte cap does not refuse such an answer; the rows it shapes into are larger, because the grid repeats every column name in every row, and `RESULT_BYTE_BUDGET` in `results.ts` bounds those separately.
+A matrix of exactly the budget at this server's mix is about 15.4 MiB, below `RESPONSE_BYTE_CAP`, so the byte cap does not refuse such an answer; the rows it shapes into are larger, because the grid repeats every column name in every row, and `RESULT_BYTE_BUDGET` bounds those separately (M14).
 The grid half of M3 needs the provider and is observed in the live browser pass, not here.
 
 ### M5. Credentials the server does not need
@@ -217,6 +217,34 @@ Measured by `bun probe-prometheus.ts m2-m13` at 2026-09-23T10:17:59.925Z.
 Rule: `DESCRIBE_SERIES_CAP` holds this server's whole series listing four times over, and a listing of exactly the cap fits `RESPONSE_BYTE_CAP` four times over.
 Measured: `GET /api/v1/series?match[]={__name__=~".+"}` over the last hour answered 1213 series in 159367 bytes, 131.4 bytes per series.
 Decision: `DESCRIBE_SERIES_CAP` = `20000` (candidate `20000`, confirmed): it must be at least 4 x 1213 = 4852 series and at most 33554432 / (4 x 131.4 bytes) = 63848.
+
+### M14. The result byte budget
+
+Measured by `bun probe-prometheus.ts m14 <dir>` at 2026-09-23T21:31:53.255Z.
+Rule: `RESULT_BYTE_BUDGET` stands while each answer below, shaped against it and sent as `POST /api/db/query` sends a result, completes in the image's runtime under its heap flag and the chart's memory limit while the rest of the process holds three quarters of the heap live, 288 of 384 MiB, so that one request takes at most the last quarter, the four-times headroom M3, M12 and M13 use; a budget that fails is lowered and measured again.
+Runtime: the `runner` stage of the `Dockerfile`, `node:26.9.0-trixie-slim` (`node@sha256:3a771f83944bb763050c23c0225c260638c4b7899e7a72485ef75e5e570499e5`), with its `NODE_OPTIONS` `--max-old-space-size=384`; node `v26.9.0` there reported a heap limit of 396 MiB.
+Memory: the chart's `resources.limits.memory`, `512Mi` (`charts/libredb-studio/values.yaml`), given to each container as `--memory` and `--memory-swap` of 536870912 bytes, so with no swap; inside, `memory.max` read `536870912` and `memory.swap.max` `0`.
+Each run is one container with no network that mounts only a scratch directory, read-only, holding the answers and the program: the provider bundled from this checkout for Node by bun 1.4.2.
+The program holds the rest of the process live before the first query, one array of 131072 doubles per MiB, then sends each query through `PrometheusProvider.query` with only its request function replaced, each reading its answer's body afresh as the transport reads a response, and builds each response with `Response.json`, which `NextResponse.json` in the route calls, so a response holds the JSON text's UTF-8 bytes as its body.
+Shaping and encoding are synchronous, so the process runs one of them at a time; `QUERY_CONCURRENCY_LIMIT` is per connection, and its slot is released before the answer is shaped, so it does not multiply this.
+A response keeps its body until its socket takes it, and nothing bounds how many wait, so the last two columns count how many responses of the same answer could wait while one more was built; the searches step by 8 MiB and by one response, up to 32.
+
+| Answer | Series kept | Wire bytes | Rows and fields as JSON | `query`, `Response.json` | Nothing else live: heap, peak RSS, container peak | With 288 MiB held live | Most held live that completed | Waiting beside one more, nothing else live | Waiting beside one more, with 288 MiB held live |
+|---|---|---|---|---|---|---|---|---|---|
+| `vector-own-labels` | 217 of 501 | 186690 | 16645729 | 164 ms, 144 ms | 72.5, 191.1, 140.7 MiB | completed | 312 MiB (320 MiB killed at the memory limit) | 8 (9 killed at the memory limit) | 0 (1 out of heap) |
+| `matrix-own-labels` | 84 of 501 | 705993 | 16642975 | 137 ms, 74 ms | 47.8, 167, 114.5 MiB | completed | 352 MiB (360 MiB out of heap) | 9 (10 killed at the memory limit) | 1 (2 killed at the memory limit) |
+| `kube-pod-labels` | 51 of 501 | 2212175 | 16531025 | 31 ms, 52 ms | 39.1, 160.4, 108.5 MiB | completed | 360 MiB (368 MiB out of heap) | 11 (12 killed at the memory limit) | 1 (2 killed at the memory limit) |
+| `cadvisor-raw` | 16 of 501 | 1910218 | 15761696 | 28 ms, 46 ms | 35.2, 154.8, 102.6 MiB | completed | 368 MiB (376 MiB out of heap) | 12 (13 killed at the memory limit) | 2 (3 killed at the memory limit) |
+| `compose-subquery` | 500 of 501 | 1070854 | 14346726 | 31 ms, 54 ms | 31.6, 145.6, 93.3 MiB | completed | 360 MiB (368 MiB out of heap) | 13 (14 killed at the memory limit) | 3 (4 killed at the memory limit) |
+
+- `vector-own-labels`: an instant vector of 501 series, each carrying 25 label names no other series carries, valued `v`, and the sample value `1`.
+- `matrix-own-labels`: a range answer of 501 series, each carrying 100 label names of its own and one sample `1` at one instant, so each column name spells every label name the kept series carry.
+- `kube-pod-labels`: `kube_pod_labels[1h]` from one kube-state-metrics target: 501 pods in 25 apps, each carrying `namespace`, `pod`, `uid`, `label_app`, `label_team`, `label_tier` and 2 label keys of its app's own, with 240 samples `1` 15 s apart on the target's scrape times.
+- `cadvisor-raw`: `container_cpu_usage_seconds_total[30m]` from the kubelets of 20 nodes: 501 containers, each carrying 14 labels, `id`, `image` and `name` among them holding digests, with 120 counter samples 15 s apart at an offset of its own within the step.
+- `compose-subquery`: M3's subquery `{__name__=~".+"}[1h:1m]` rebuilt from the first 501 label sets of the captured listing `v3.13.3/series-all.json`, with 60 steps 60 s apart, the value of series i at step j being ((i x 7919 + j x 104729) mod 1000003) / 997 as JavaScript writes the float.
+
+Decision: `RESULT_BYTE_BUDGET` = `16777216` (candidate `16777216`, confirmed): every answer completed with 288 MiB of the 384 MiB heap held live, and the one with the least room, `vector-own-labels`, with up to 312 MiB.
+Responses waiting to be sent are outside the budget, and nothing bounds how many wait: with 288 MiB held live, one more request completed beside 0 to 3 of them and, with nothing else live, beside 8 to 13; each time, the run with one more waiting ran out of heap or was killed at the memory limit (`docs/BACKLOG.md` D112).
 
 ### The lexer's reserved words (#1085 S4)
 

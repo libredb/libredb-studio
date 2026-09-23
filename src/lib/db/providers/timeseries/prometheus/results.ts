@@ -42,7 +42,8 @@ export const MATRIX_SAMPLE_BUDGET = 250_000;
 
 /**
  * The most UTF-8 bytes the rows and fields of one vector or matrix result take as JSON, which is all
- * the query route sends of a result but a few hundred bytes (5.4).
+ * the query route sends of a result but its notices (5.4); those are a few hundred bytes, except the
+ * one naming a series kept under `value`, which holds that series' name once.
  *
  * The response byte cap bounds the answer, and the series cap and the cell budget bound the grid's
  * rows and cells, but none of them bounds the result as sent, because every row repeats every field
@@ -52,16 +53,13 @@ export const MATRIX_SAMPLE_BUDGET = 250_000;
  * are about 200 KB on the wire, and 500 rows of 12,502 fields here. The route serialises the result
  * whole, into one JSON text and then its UTF-8 bytes, in the one process every user shares.
  *
- * 16 MiB was measured under the heap the image ships with (`--max-old-space-size=384`, Dockerfile),
- * in a bare Node 24 process, over four answers cut to it: that vector, the same answer as a matrix
- * with 100 label names per series, a `kube_pod_labels` range whose apps carry label keys of their
- * own, and a cAdvisor raw range. Each was shaped in under a quarter of a second and serialised within
- * 77 MiB of heap and 250 MiB of resident memory. Four of one held at once, every answer, row and body
- * kept, took at most 282 MiB of heap, and four of that vector 492 MiB of resident memory.
- * Over the compose server's label sets, rebuilt from the captured series listing
- * (tests/fixtures/prometheus/v3.13.3/series-all.json), M3's subquery `{__name__=~".+"}[1h:1m]` takes
- * 13.45 MiB of it and the instant `{__name__=~".+"}` 0.27 MiB; a raw `up[1h]` over 200 targets,
- * held by the cell budget, takes 8.8 MiB.
+ * Set by measurement: tests/fixtures/prometheus/README.md, section "Measurements", entry M14,
+ * records how. Answers shaped against it, four of them cut by it and M3's subquery over the compose
+ * server's label sets beside them, go through the provider and out as the query route sends a
+ * result, in the image's runtime under its heap flag and the chart's memory limit, and each has to
+ * complete while the rest of the process holds three quarters of the heap. The bodies of responses
+ * waiting to be sent are outside the budget, and nothing bounds how many wait (`docs/BACKLOG.md`
+ * D112).
  */
 export const RESULT_BYTE_BUDGET = 16 * 1024 * 1024;
 

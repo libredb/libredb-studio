@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D111, U17 · 56
+- [Drivers and connections](#drivers-and-connections) — D1–D113, U17 · 58
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U47 · 35
@@ -1718,6 +1718,38 @@ Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: a new provider changes no other provider's behaviour, and this is MySQL's.
 
 **Done when:** MySQL's `getTableStats` returns every base table of the schema, or MySQL declares a `tableStatsCaption` that the Tables tab, the Storage tab, the admin Operations list and the agent reading each honour; `docs/providers/mysql.md` says which in its `getTableStats` row; and tests pin it, `tests/integration/db/mysql-provider.test.ts` at 101 base tables with 100 as the control and, on the caption route, a captioned MySQL-shaped cut in the Tables tab, Operations tab and agent reading tests.
+
+### D112. The result byte budget bounds one Prometheus response, and nothing bounds how many wait to be sent
+
+`RESULT_BYTE_BUDGET` in `src/lib/db/providers/timeseries/prometheus/results.ts` holds the rows and fields of one vector or matrix result to 16 MiB of JSON, and M14 confirmed it: in the image's runtime, `node:26.9.0-trixie-slim` with `--max-old-space-size=384`, under the chart's `512Mi` limit with no swap, one request at the budget completed while the rest of the process held 288 of the 384 MiB heap live (`tests/fixtures/prometheus/README.md`, M14).
+`POST /api/db/query` answers with `NextResponse.json`, which builds its body with `Response.json`: the response holds the JSON text's UTF-8 bytes until the client's socket takes them, and nothing in the process bounds how many responses wait.
+`QUERY_CONCURRENCY_LIMIT` does not: it is per connection, and its slot is released before the answer is shaped.
+So a few slow readers of large results, on one connection or several, add a body of up to 16 MiB each to whatever the next request needs, and lowering the budget changes the size of each body, not their number.
+
+Measured in M14 on 2026-09-23 with five answers shaped against the budget, from a vector whose series carry label names of their own to M3's subquery over the compose server's label sets: with 288 MiB held live, one more request completed beside 0 to 3 waiting responses of its own answer, 0 for that vector, and with nothing else live beside 8 to 13.
+Each time, the run with one more waiting ended the process, killed at the memory limit or, for that vector with 288 MiB held live, out of heap, and in the product that process is the one every user shares.
+An earlier full run the same hour differed from the recorded one by one response either way near those limits.
+
+D110 is the same process's other unbounded cost, the parse of a body under the response byte cap.
+
+Found 2026-09-23 by the #1085 review, while recording the result byte budget as a measurement.
+Not fixed in #1085: bounding the bytes of responses in flight is a change to the query route, or to the server, for every provider, and the budget cannot bound it.
+
+**Done when:** the process bounds the bytes of query responses waiting to be sent, or the budget is re-decided against such a bound, a test holds that bound, and M14 measures the waiting responses against it.
+
+### D113. The notice naming a Prometheus series kept under `value` is outside the result byte budget, and grows with the whole answer's label names
+
+When the matrix byte budget keeps one series under `value`, because the name that tells it from every series of the answer, written in every row, would not fit, one notice names it once (`namedOnce` in `src/lib/db/providers/timeseries/prometheus/results.ts`, `docs/providers/prometheus.md` section 5.2).
+That name writes every label of the answer the series lacks as `name=""`, so its length grows with the label names of the series the bounds cut, and `RESULT_BYTE_BUDGET` counts only the rows and the fields, not the notices.
+The shaper builds the same name to price the lone column whether or not it keeps it, so the notice adds its bytes to the response body rather than a new string to the heap, and the answer's own label bytes bound it, and through them `RESPONSE_BYTE_CAP`.
+
+Measured 2026-09-23 through `shapeQueryResult` at the provider's own limits, over two raw series of 172,800 samples, 30 days at a 15 s scrape, that the cell budget cuts to one, followed by 100 one-sample series each carrying label names of its own.
+At 300 names each, 6,978,238 bytes on the wire, the notice is 376,222 bytes as the route writes it, `{"message":...}`; at 3,000 names each, 10,931,238 bytes on the wire, it is 4,059,222 bytes; the rows and fields are 9,158,422 bytes in both.
+
+Found 2026-09-23 by the #1085 review, while fixing the lone column under the byte budget.
+Not fixed in #1085: the fix that added the notice fixed its text as well, and naming the series differently changes what the result reports.
+
+**Done when:** the notice is counted in `RESULT_BYTE_BUDGET`, or bounded on its own, for example by naming the series with the labels it carries rather than every label it lacks, and a test in `tests/unit/db/prometheus/results.test.ts` holds it at a label union that would take the notice past that bound.
 
 ## Value interpolation
 

@@ -31,10 +31,12 @@ import {
 
 /**
  * How many metrics the Tables panel lists: the top N by head-block series, in the order the TSDB
- * status ranks them. The panel is the only place a series count appears, because a metric row in
- * the tree carries none (#1085 4.3). The provider's `tableStatsCaption` label names this bound, so
- * the Tables tab heads the rows with it and counts them as listed rather than as the database's
- * tables, and the agent's table-stats reading carries it to the model (#1085 6.2).
+ * status ranks them. A metric's series count appears only where these rows are read (the Tables
+ * tab, the admin Operations list and the agent's table-stats reading), because a metric row in the
+ * tree carries none (#1085 4.3). The provider's `tableStatsCaption` label names this bound, so the
+ * Tables tab and the admin Operations list head the rows with it and count them as listed rather
+ * than as the database's tables, and the agent's table-stats reading carries it to the model
+ * (#1085 6.2).
  */
 export const TSDB_TOP_METRICS = 50;
 
@@ -165,7 +167,8 @@ function maxConnectionsFrom(flags: Readonly<Record<string, string>>): number {
  * absence is what the Tables and Storage tabs read to draw "N/A" and "-" rather than summing the
  * zeros, the SQLite and libSQL shape for a table whose bytes are unknown. At most
  * `TSDB_TOP_METRICS` rows, whatever limit the status was read with; the provider's
- * `tableStatsCaption` names that bound, and the Tables panel counts the rows as listed under it.
+ * `tableStatsCaption` names that bound, and the Tables panel and the admin Operations list count the
+ * rows as listed under it.
  * Only the ranked list is read, so a status with no head statistics lists its rows all the same.
  */
 export function tableStatsFrom(tsdb: PrometheusTsdbStatus): TableStats[] {
