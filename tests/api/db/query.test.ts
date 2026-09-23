@@ -456,6 +456,151 @@ describe("POST /api/db/query", () => {
     expect(data.pagination.totalReturned).toBe(3);
   });
 
+  /**
+   * A bound the PROVIDER applied reaches the response too (#1085, section 5.4).
+   *
+   * The route rebuilt `pagination` from `prepareQuery` alone, so a provider that cut its own
+   * result said so into a field the response then overwrote. The fixture is that provider's
+   * shape: its `prepareQuery` rewrites nothing, and its result carries its own `pagination`.
+   * The rows fill `prepared.limit` exactly and the provider's own `hasMore` says true, so a
+   * route that took `hasMore` from the provider, or from the joined `wasLimited`, would offer
+   * a Load More that re-runs the same statement; and the provider's other four fields differ
+   * from the route's, so only `wasLimited` may cross.
+   */
+  test("keeps a provider-reported wasLimited, and hasMore stays on the limiter's own bound", async () => {
+    const selfBounded = createMockProvider({
+      prepareQueryResult: { query: "up", wasLimited: false, limit: 3, offset: 0 },
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(selfBounded as never);
+    (selfBounded.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ value: 1 }, { value: 2 }, { value: 3 }],
+      fields: ["value"],
+      rowCount: 3,
+      executionTime: 4,
+      pagination: { limit: 500, offset: 7, hasMore: true, totalReturned: 500, wasLimited: true },
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "up" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      pagination: { limit: number; offset: number; hasMore: boolean; totalReturned: number; wasLimited: boolean };
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.pagination).toEqual({ limit: 3, offset: 0, hasMore: false, totalReturned: 3, wasLimited: true });
+  });
+
+  test("the control: the same provider with no pagination of its own reports the limiter's false", async () => {
+    const unbounded = createMockProvider({
+      prepareQueryResult: { query: "up", wasLimited: false, limit: 3, offset: 0 },
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(unbounded as never);
+    (unbounded.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ value: 1 }, { value: 2 }, { value: 3 }],
+      fields: ["value"],
+      rowCount: 3,
+      executionTime: 4,
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "up" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      pagination: { limit: number; offset: number; hasMore: boolean; totalReturned: number; wasLimited: boolean };
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.pagination).toEqual({ limit: 3, offset: 0, hasMore: false, totalReturned: 3, wasLimited: false });
+  });
+
+  test("a SQL result with no pagination of its own answers exactly what the route answered before", async () => {
+    // Every shipped provider's shape: the mock's default `prepareQuery` rewrote the statement
+    // (`wasLimited: true`, limit 50, `tests/helpers/mock-provider.ts:157-165`) and the result
+    // carries no `pagination`. The whole object is pinned, so no field of it moved.
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: Array.from({ length: 50 }, (_, i) => ({ id: i + 1 })),
+      fields: ["id"],
+      rowCount: 50,
+      executionTime: 10,
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      pagination: { limit: number; offset: number; hasMore: boolean; totalReturned: number; wasLimited: boolean };
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.pagination).toEqual({ limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true });
+  });
+
+  test("a provider's own false cannot clear a bound the limiter applied", async () => {
+    // The same limiter-bounded statement, and a result that says `wasLimited: false`. No shipped
+    // provider sets `pagination`, so this is the arm that keeps an external implementer's
+    // `false` from hiding the badge, and `hasMore` still answers from the limiter's bound.
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: Array.from({ length: 50 }, (_, i) => ({ id: i + 1 })),
+      fields: ["id"],
+      rowCount: 50,
+      executionTime: 10,
+      pagination: { limit: 50, offset: 0, hasMore: false, totalReturned: 50, wasLimited: false },
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      pagination: { limit: number; offset: number; hasMore: boolean; totalReturned: number; wasLimited: boolean };
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.pagination).toEqual({ limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true });
+  });
+
+  test("a provider's own false leaves an untouched statement unlimited", async () => {
+    // The mirror of the test above: nothing bounded this statement, and the provider's result
+    // carries a `pagination` that says `wasLimited: false`. Only a `true` crosses, so a
+    // `pagination` that is present is not by itself a bound, and the badge stays off.
+    const untouched = createMockProvider({
+      prepareQueryResult: { query: "up", wasLimited: false, limit: 3, offset: 0 },
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(untouched as never);
+    (untouched.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ value: 1 }, { value: 2 }, { value: 3 }],
+      fields: ["value"],
+      rowCount: 3,
+      executionTime: 4,
+      pagination: { limit: 3, offset: 0, hasMore: false, totalReturned: 3, wasLimited: false },
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "up" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      pagination: { limit: number; offset: number; hasMore: boolean; totalReturned: number; wasLimited: boolean };
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.pagination).toEqual({ limit: 3, offset: 0, hasMore: false, totalReturned: 3, wasLimited: false });
+  });
+
   test("returns 499 for interrupted query execution", async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
       new QueryCancelledError("Query execution was interrupted"),

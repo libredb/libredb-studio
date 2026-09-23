@@ -640,7 +640,9 @@ holding rows from two tables while naming one.
 }
 ```
 
-`hasMore` is `wasLimited && rows.length === limit`, and the first half is load-bearing. We can only
+`hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the limiter alone, and the first half is load-bearing.
+A provider that bounds its own result reports that bound on the response's `wasLimited` too (#1085, section 5.4), and it never sets `hasMore`.
+We can only
 offer page two of a bound this layer applied, because only then do we know how to advance it. A
 statement returned untouched — one carrying the user's own `LIMIT 50`, or a ClickHouse query whose
 trailing `FORMAT`/`SETTINGS` clause the limiter declines to cut into — runs identically at every

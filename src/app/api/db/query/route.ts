@@ -168,7 +168,13 @@ export async function POST(req: NextRequest) {
         offset: prepared.offset,
         hasMore,
         totalReturned: result.rows.length,
-        wasLimited: prepared.wasLimited,
+        // A bound the PROVIDER applied is reported too (#1085, section 5.4). A provider that cuts
+        // its own result, as the Prometheus provider cuts a vector at its series cap, says so on
+        // the result's own `pagination`, and the badge this field drives says "Studio bounded this
+        // result", which is as true of that bound as of the limiter's. Only a `true` crosses, so a
+        // provider cannot clear a bound this layer applied, and `hasMore` above stays on
+        // `prepared.wasLimited` alone, because an offset can only advance a bound this layer wrote.
+        wasLimited: prepared.wasLimited || result.pagination?.wasLimited === true,
       },
     });
   } catch (error) {

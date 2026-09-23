@@ -48,7 +48,10 @@ export function describeExportScope(
   const unit = rowCount === 1 ? "row" : "rows";
   // `hasMore` is the route's own answer about THIS run: OUR bound was applied and it
   // was reached, so a next page can be asked for. `wasLimited` without `hasMore` means
-  // the bound was applied and the result fit inside it, which is not a shortfall.
+  // either that the bound was applied and the result fit inside it, which is not a
+  // shortfall, or that a provider cut its own result (#1085, section 5.4), which no
+  // page can fetch: the grid's "limited" badge already says so, and the shortfall
+  // sentence below would name a load that nothing offers.
   //
   // It narrowed with #816: the route now requires `wasLimited` too, so a statement
   // carrying its OWN bound and filling it exactly — `SELECT * FROM t LIMIT 500` giving
