@@ -10,10 +10,25 @@
  * built inline and said so where they are. The endpoint is a test `PrometheusEndpoint` and the clock
  * is fixed, both injected through `PrometheusProviderDeps`, except where a test proves a default.
  * Two tests replace `globalThis.fetch`, to prove that the default `send` reads it and that the
- * default endpoint builds each URL from the connection, and `afterEach` restores it. No
- * `mock.module()`: it is process-wide in bun.
+ * default endpoint builds each URL from the connection, and `afterEach` restores it.
+ *
+ * The TLS tests inject nothing, because the request function a TLS panel gets, and the material it
+ * is built with, are decided in `connect()` and nowhere else. They connect to real `node:https`
+ * servers on the loopback interface, built from the throwaway certificates of tests/fixtures/tls/,
+ * and they too replace `globalThis.fetch`, with one that records being reached, so a TLS connection
+ * that fell back to it is seen. Three more globals are replaced only inside the one test that reads
+ * each, and restored in `finally`: `Date.now`, for the default inventory window;
+ * `AbortSignal.timeout`, for the deadline each request is armed with; and `performance.now`, the
+ * clock a query's execution time is read from. No `mock.module()`: it is process-wide in bun.
  */
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
+import {
+  createServer as createHttpsServer,
+  type Server as HttpsServer,
+  type ServerOptions as HttpsServerOptions,
+} from "node:https";
+import type { AddressInfo } from "node:net";
+import type { TLSSocket } from "node:tls";
 import {
   AuthenticationError,
   ConnectionError,
@@ -48,7 +63,11 @@ import {
   RequestFailure,
   type SendRequest,
 } from "@/lib/db/providers/timeseries/prometheus/request";
-import { MATRIX_SAMPLE_BUDGET, shapeQueryResult } from "@/lib/db/providers/timeseries/prometheus/results";
+import {
+  MATRIX_SAMPLE_BUDGET,
+  RESULT_BYTE_BUDGET,
+  shapeQueryResult,
+} from "@/lib/db/providers/timeseries/prometheus/results";
 import { type PrometheusTransport, PrometheusTransportError } from "@/lib/db/providers/timeseries/prometheus/transport";
 import {
   type Container,
@@ -64,8 +83,9 @@ import {
 import { formatDuration } from "@/lib/db/utils/pool-manager";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { generateSelectQuery } from "@/lib/query-generators";
-import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, SSLConfig } from "@/lib/types";
 import { capture, captureBody } from "../../../helpers/prometheus-fixtures";
+import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 
 // ============================================================================
 // The fake network, answering from what a live server answered
@@ -130,6 +150,10 @@ interface SentRequest {
   readonly headers: Readonly<Record<string, string>>;
   /** The form body a query carries, decoded; null on a request with no body. */
   readonly form: URLSearchParams | null;
+  /** The most bytes its answer may hold, which `request.ts` enforces as the body streams (#1085 S5). */
+  readonly maxBytes: number;
+  /** What it aborts on: its own deadline, and for a query the query's signal beside it. */
+  readonly signal: AbortSignal;
 }
 
 let sent: SentRequest[] = [];
@@ -143,6 +167,8 @@ const send: SendRequest = (request) => {
     search: request.url.searchParams,
     headers: request.headers,
     form: request.body === undefined ? null : new URLSearchParams(request.body),
+    maxBytes: request.maxBytes,
+    signal: request.signal,
   });
   return respond(request);
 };
@@ -256,7 +282,7 @@ const directTransport = (): PrometheusTransport =>
     { send, endpoint: TEST_ENDPOINT, requestTimeoutMs: DEFAULT_QUERY_TIMEOUT, maxResponseBytes: RESPONSE_BYTE_CAP },
   );
 
-const SHAPE = { seriesLimit: DEFAULT_QUERY_LIMIT, sampleBudget: MATRIX_SAMPLE_BUDGET };
+const SHAPE = { seriesLimit: DEFAULT_QUERY_LIMIT, sampleBudget: MATRIX_SAMPLE_BUDGET, byteBudget: RESULT_BYTE_BUDGET };
 const DIRECT_QUERY = { timeoutMs: DEFAULT_QUERY_TIMEOUT, seriesLimit: DEFAULT_QUERY_LIMIT };
 
 const originalFetch = globalThis.fetch;
@@ -388,6 +414,227 @@ describe("connect", () => {
 
     expect(fetched).toEqual([`${ORIGIN}/api/v1/status/buildinfo`]);
     expect(provider.isConnected()).toBe(true);
+  });
+});
+
+// ============================================================================
+// connect() over TLS, with nothing injected (#1085 S8)
+// ============================================================================
+
+describe("connect over TLS, through the request function a real connection gets (#1085 S8)", () => {
+  const TLS = loadTlsFixtures();
+
+  /** One request a test server received, and whether the client presented a certificate it verified. */
+  interface Hit {
+    readonly url: string | undefined;
+    readonly authorized: boolean;
+  }
+
+  const servers: HttpsServer[] = [];
+  let fetched: string[] = [];
+
+  beforeEach(() => {
+    // A TLS panel is sent through node:https, never through the global fetch, so the fetch is
+    // replaced by one that records being reached and refuses: a connection that fell back to it
+    // is seen here, whatever the runtime's own fetch would have answered.
+    fetched = [];
+    globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
+      fetched.push(String(input));
+      throw new Error("a TLS connection reached the global fetch");
+    }) as typeof fetch;
+  });
+
+  afterEach(async () => {
+    await Promise.all(
+      servers.splice(0).map((server) => {
+        server.closeAllConnections();
+        return new Promise<void>((resolve) => server.close(() => resolve()));
+      }),
+    );
+  });
+
+  /**
+   * A `node:https` server on 127.0.0.1 with the test CA's certificate, which names that address,
+   * answering every request with the captured build info, the one read `connect()` makes.
+   */
+  async function serveTls(options: HttpsServerOptions = {}): Promise<{ port: number; received: Hit[] }> {
+    const received: Hit[] = [];
+    const buildinfo = capture("buildinfo");
+    const server = createHttpsServer({ cert: TLS.server.cert, key: TLS.server.key, ...options }, (request, reply) => {
+      received.push({ url: request.url, authorized: (request.socket as TLSSocket).authorized });
+      request.resume();
+      reply.writeHead(buildinfo.status, buildinfo.headers);
+      reply.end(buildinfo.text);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    return { port: (server.address() as AddressInfo).port, received };
+  }
+
+  /**
+   * The provider as the factory builds it, with no dependency injected: the default endpoint and
+   * the default request function, from nothing but the connection and its TLS panel.
+   */
+  const providerFor = (port: number, ssl: SSLConfig): PrometheusProvider =>
+    new PrometheusProvider(connection({ host: "127.0.0.1", port, ssl }));
+
+  test("verify-full with no CA refuses the test CA's server as a ConnectionError naming the code, and sends it nothing", async () => {
+    const { port, received } = await serveTls();
+    const refused = providerFor(port, { mode: "verify-full" });
+
+    const failure = (await outcomeOf(refused.connect())).error;
+
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect((failure as Error).message).toContain("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(received).toEqual([]);
+    expect(refused.isConnected()).toBe(false);
+    // The control, sent after the refusal so no connection verified earlier can answer it: the
+    // same server, checked against the CA that signed it, is connected to.
+    const trusted = providerFor(port, { mode: "verify-full", caCert: TLS.ca });
+    await trusted.connect();
+    expect(trusted.isConnected()).toBe(true);
+    expect(received.map((hit) => hit.url)).toEqual(["/api/v1/status/buildinfo"]);
+    expect(fetched).toEqual([]);
+  });
+
+  test("verify-ca refuses a CA that did not sign the server, and connects with the one that did", async () => {
+    const { port, received } = await serveTls();
+
+    const failure = (await outcomeOf(providerFor(port, { mode: "verify-ca", caCert: TLS.otherCa }).connect())).error;
+
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect((failure as Error).message).toContain("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(received).toEqual([]);
+    // The control: the CA that did sign it is trusted.
+    await providerFor(port, { mode: "verify-ca", caCert: TLS.ca }).connect();
+    expect(received.map((hit) => hit.url)).toEqual(["/api/v1/status/buildinfo"]);
+    expect(fetched).toEqual([]);
+  });
+
+  test("require encrypts without verifying, so it connects to the same server with no CA", async () => {
+    const { port, received } = await serveTls();
+    const provider = providerFor(port, { mode: "require" });
+
+    await provider.connect();
+
+    expect(provider.isConnected()).toBe(true);
+    expect(received.map((hit) => hit.url)).toEqual(["/api/v1/status/buildinfo"]);
+    expect(fetched).toEqual([]);
+  });
+
+  test("the panel's client certificate and key reach a server that asks for one", async () => {
+    const { port, received } = await serveTls({ requestCert: true, rejectUnauthorized: true, ca: TLS.clientCa });
+
+    // Without them the server ends the handshake. bun 1.4.2 reports that as a reset rather than a
+    // TLS code, so only the refusal itself is asserted.
+    const refused = (await outcomeOf(providerFor(port, { mode: "verify-full", caCert: TLS.ca }).connect())).error;
+    expect(refused).toBeInstanceOf(ConnectionError);
+    expect(received).toEqual([]);
+
+    await providerFor(port, {
+      mode: "verify-full",
+      caCert: TLS.ca,
+      clientCert: TLS.client.cert,
+      clientKey: TLS.client.key,
+    }).connect();
+
+    expect(received).toEqual([{ url: "/api/v1/status/buildinfo", authorized: true }]);
+    expect(fetched).toEqual([]);
+  });
+});
+
+// ============================================================================
+// The bounds connect() hands the transport (#1085 S5)
+// ============================================================================
+
+describe("the bounds connect() hands the transport (#1085 S5)", () => {
+  /** Built inline: a one-name metric listing, what the object read below is answered with. */
+  const oneMetricListing: SendRequest = (request) =>
+    request.url.pathname === "/api/v1/label/__name__/values"
+      ? Promise.resolve(json('{"status":"success","data":["up"]}'))
+      : captured(request);
+
+  test("every request carries the response byte cap: connect, a query, a monitoring read and an object read", async () => {
+    respond = oneMetricListing;
+    const provider = new PrometheusProvider(connection(), {}, deps());
+
+    await provider.connect();
+    await provider.query("up");
+    await provider.getTableStats();
+    await provider.listObjects([], "metric");
+
+    expect(sent.map((request) => [request.pathname, request.maxBytes])).toEqual([
+      ["/api/v1/status/buildinfo", RESPONSE_BYTE_CAP],
+      ["/api/v1/query", RESPONSE_BYTE_CAP],
+      ["/api/v1/status/tsdb", RESPONSE_BYTE_CAP],
+      ["/api/v1/label/__name__/values", RESPONSE_BYTE_CAP],
+    ]);
+  });
+
+  test("every read that is not a query has the connection's query timeout as its deadline", async () => {
+    // Each deadline is recorded as it is armed and handed back as a signal that never fires, so
+    // nothing here waits on a clock. Replaced for this test alone: the tests of the query slots
+    // read the reason a real deadline aborts with.
+    const armed: { readonly ms: number; readonly signal: AbortSignal }[] = [];
+    const timeout = spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      const { signal } = new AbortController();
+      armed.push({ ms, signal });
+      return signal;
+    });
+    /** The deadline armed for exactly this request's signal. */
+    const deadlineOf = (request: SentRequest): number | undefined =>
+      armed.find((deadline) => deadline.signal === request.signal)?.ms;
+    try {
+      respond = oneMetricListing;
+      // Not the product's default, so a deadline written as a constant is told apart from the
+      // connection's own.
+      const provider = new PrometheusProvider(connection(), { queryTimeout: 4321 }, deps());
+
+      await provider.connect();
+      await provider.getTableStats();
+      await provider.listObjects([], "metric");
+
+      expect(sent.map((request) => [request.pathname, deadlineOf(request)])).toEqual([
+        ["/api/v1/status/buildinfo", 4321],
+        ["/api/v1/status/tsdb", 4321],
+        ["/api/v1/label/__name__/values", 4321],
+      ]);
+
+      // The control: with none configured it is the product's own default.
+      sent = [];
+      await new PrometheusProvider(connection(), {}, deps()).connect();
+      expect(sent.map(deadlineOf)).toEqual([DEFAULT_QUERY_TIMEOUT]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  test("the object surface's existence read is bounded as a query is, by the connection's query timeout and the series cap", async () => {
+    // Built inline, as in the query slots' tests: a metric listing one name past the cap, so a name
+    // outside it is asked about with a count over the hour the listing covers (#1085 4.3, 4.4).
+    const listing = JSON.stringify({
+      status: "success",
+      data: Array.from({ length: METRIC_LIST_CAP + 1 }, (_, index) => `studio_listed_${index}`),
+    });
+    respond = (request) => {
+      if (request.url.pathname === "/api/v1/label/__name__/values") return Promise.resolve(json(listing));
+      // The metadata read that follows: the captured answer for a name with none.
+      if (request.url.pathname === "/api/v1/metadata") return Promise.resolve(replay("metadata-unknown"));
+      return captured(request);
+    };
+    // Not the product's default, as above.
+    const provider = await connectedProvider({}, { queryTimeout: 4321 });
+
+    await provider.readObjectSource(["studio_unlisted"], "metric");
+
+    const [existence, ...others] = queries();
+    expect(others).toEqual([]);
+    expect(existence.form?.get("query")).toBe(`count(last_over_time(${metricSelector("studio_unlisted")}[1h]))`);
+    expect(durationMs(existence.form?.get("timeout"))).toBe(4321);
+    expect(existence.form?.get("limit")).toBe(String(DEFAULT_QUERY_LIMIT + 1));
   });
 });
 
@@ -541,6 +788,50 @@ describe("query", () => {
     expect(result.warnings?.length ?? 0).toBeGreaterThan(0);
   });
 
+  test("a matrix whose grid passes the cell budget is cut to the series that fit, and says so on its own pagination (#1085 5.4)", async () => {
+    // Built inline, since no capture comes near the budget. Every series but the last holds one
+    // sample at one shared instant; the last brings enough instants of its own that the grid,
+    // instants times series, passes the budget only once it is added. The answer holds exactly the
+    // series cap, so the budget is the one bound that cuts, and the series kept share one row.
+    const instant = 1758585600;
+    const ownInstants = Math.floor(MATRIX_SAMPLE_BUDGET / DEFAULT_QUERY_LIMIT);
+    const overBudget = JSON.stringify({
+      status: "success",
+      data: {
+        resultType: "matrix",
+        result: Array.from({ length: DEFAULT_QUERY_LIMIT }, (_, index) => ({
+          metric: { __name__: "budget_probe", index: String(index) },
+          values:
+            index < DEFAULT_QUERY_LIMIT - 1
+              ? [[instant, "1"]]
+              : Array.from({ length: ownInstants }, (_, step) => [instant + 1 + step, "1"]),
+        })),
+      },
+    });
+    respond = async (request) => (request.url.pathname === "/api/v1/query" ? json(overBudget) : captured(request));
+    const provider = await connectedProvider();
+
+    const result = await provider.query("budget_probe[1h]");
+    const expected = shapeQueryResult(await directTransport().query("budget_probe[1h]", DIRECT_QUERY), SHAPE);
+
+    expect(result.rows).toEqual(expected.rows);
+    expect(result.fields).toEqual(expected.fields);
+    expect(result.warnings).toEqual(expected.warnings);
+    expect(result.pagination).toEqual({
+      limit: DEFAULT_QUERY_LIMIT,
+      offset: 0,
+      hasMore: false,
+      totalReturned: result.rows.length,
+      wasLimited: true,
+    });
+    // Non-vacuous: at these bounds the shaper cuts this answer, and its notice names the budget. So
+    // any other budget reaching the shaper answers something else: a larger one, or none, keeps
+    // every series, and a smaller one names itself.
+    const budgetNotice = `held to ${MATRIX_SAMPLE_BUDGET.toLocaleString("en-US")} cells`;
+    expect(expected.wasLimited).toBe(true);
+    expect(expected.warnings.some((warning) => warning.message.includes(budgetNotice))).toBe(true);
+  });
+
   test("an engine error arrives as the class its errorType names", async () => {
     // The captured parse error: status 400 and `errorType` `bad_data`, asked with `sum(`.
     respond = async (request) =>
@@ -581,6 +872,41 @@ describe("the query slots and cancellation", () => {
 
     for (const slot of held) slot.release();
     for (const outcome of await Promise.all([...running, overflow])) expect(outcome.error).toBeUndefined();
+  });
+
+  test("a query that waited for a slot reports the time of its own exchange, not of its wait (#1085 S6)", async () => {
+    // `performance.now` is the clock the execution time is read from, and nothing else on this path
+    // reads it, so a stubbed one makes both the wait and the exchange exact.
+    let clock = 1_000;
+    const now = spyOn(performance, "now").mockImplementation(() => clock);
+    try {
+      respond = holdQueries;
+      const provider = await connectedProvider();
+      const running = Array.from({ length: QUERY_CONCURRENCY_LIMIT }, (_, index) =>
+        outcomeOf(provider.query(`vector(${index})`)),
+      );
+      await until(() => held.length === QUERY_CONCURRENCY_LIMIT, "every slot taken");
+      const waiting = outcomeOf(provider.query("vector(99)"));
+      await settle();
+
+      // Thirty seconds pass while it waits, then a slot comes free.
+      clock += 30_000;
+      held[0].release();
+      await until(() => held.length === QUERY_CONCURRENCY_LIMIT + 1, "the waiting query reaching the server");
+      // Its own exchange takes seven milliseconds.
+      clock += 7;
+      held[QUERY_CONCURRENCY_LIMIT].release();
+
+      expect((await waiting).value?.executionTime).toBe(7);
+      // The control: the query that held its slot through the wait reports all of it, so the stubbed
+      // clock is the one read, and the 7 above is about where it is read.
+      expect((await running[0]).value?.executionTime).toBe(30_000);
+
+      for (const slot of held) slot.release();
+      for (const outcome of await Promise.all(running)) expect(outcome.error).toBeUndefined();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   test("the object surface's existence read waits for a slot too, because it is a PromQL evaluation (#1085 S6)", async () => {

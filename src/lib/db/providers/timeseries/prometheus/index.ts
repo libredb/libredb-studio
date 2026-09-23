@@ -66,7 +66,7 @@ import { createHttpTransport, type PrometheusEndpoint, RESPONSE_BYTE_CAP } from 
 import { PROMETHEUS_SCHEMA_NAME, readHealth, readOverview, readStorageStats, readTableStats } from "./monitoring";
 import { type ObjectsTransport, PROMETHEUS_OBJECT_KINDS, PrometheusObjects } from "./objects";
 import { createSendRequest, type SendRequest, tlsMaterialFor } from "./request";
-import { MATRIX_SAMPLE_BUDGET, type ShapeLimits, shapeQueryResult } from "./results";
+import { MATRIX_SAMPLE_BUDGET, RESULT_BYTE_BUDGET, type ShapeLimits, shapeQueryResult } from "./results";
 import { type PrometheusQueryOptions, type PrometheusTransport, PrometheusTransportError } from "./transport";
 
 /**
@@ -88,8 +88,12 @@ export interface PrometheusProviderDeps {
 /** The port a stock server serves its HTTP API on, for either scheme (#1085 6.1). */
 const PROMETHEUS_DEFAULT_PORT = 9090;
 
-/** Every answer is shaped against the same two bounds (#1085 5.4). */
-const SHAPE_LIMITS: ShapeLimits = { seriesLimit: DEFAULT_QUERY_LIMIT, sampleBudget: MATRIX_SAMPLE_BUDGET };
+/** Every answer is shaped against the same three bounds (#1085 5.4). */
+const SHAPE_LIMITS: ShapeLimits = {
+  seriesLimit: DEFAULT_QUERY_LIMIT,
+  sampleBudget: MATRIX_SAMPLE_BUDGET,
+  byteBudget: RESULT_BYTE_BUDGET,
+};
 
 const EMPTY_EXPRESSION_MESSAGE =
   "The PromQL text holds no expression once its # comments and whitespace are removed, so nothing was sent to Prometheus.";
