@@ -94,14 +94,16 @@ describe("fenceTagEngine", () => {
     expect(isQueryFenceTag("cassandra")).toBe(true);
   });
 
-  test("promql names a language, so it holds a query without naming an engine", () => {
-    // The `cql` case again (#1085): PromQL is a language that VictoriaMetrics and other stores
-    // speak too, so reading `promql` as "written for Prometheus" would put a claim in the model's
-    // mouth. The planning contract asks for the canonical tag, and this alias is what keeps a block
-    // a model tagged by language on offer to the editor and recorded as the deliverable.
+  test("promql is a language tag that still names one engine, because one type-id runs PromQL", () => {
+    // An alias names the type-id a block's text runs on, not a product: `mariadb` names `mysql`
+    // and `turso` names `libsql`. Every PromQL server this product reaches, VictoriaMetrics
+    // included, connects through `prometheus` (#1085), so a ```promql block on any other
+    // connection was written for another engine. Naming none would let it pass there as the run's
+    // deliverable, the `mysql`-on-PostgreSQL case `fenceTagEngine` exists to catch.
+    expect(fenceTagEngine("promql")).toBe("prometheus");
+    // Naming an engine does not stop the block holding a query, so the editor is still offered it.
     expect(isQueryFenceTag("promql")).toBe(true);
-    expect(fenceTagEngine("promql")).toBeNull();
-    // The control: the product name is the tag that DOES name the engine.
+    // The control: the canonical tag names the same engine, so the two spellings cannot disagree.
     expect(isQueryFenceTag("prometheus")).toBe(true);
     expect(fenceTagEngine("prometheus")).toBe("prometheus");
   });

@@ -251,6 +251,34 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    #1085. `promql` is a language tag, and it still names one engine: every PromQL server this
+    product reaches, VictoriaMetrics included, connects through the `prometheus` type-id. So a
+    PromQL block on any other connection is the `mysql` case above, and a monitoring question
+    invites exactly that shape: the exporter metric first, then the SQL that answers the question.
+    Read as naming no engine, the PromQL was filed as this run's PostgreSQL statement.
+  */
+  test("a PromQL block is not the deliverable of a run on another engine", () => {
+    const promql = ["```promql", "pg_replication_lag_seconds > 30", "```"].join("\n");
+    const sql = ["```postgres", "SELECT client_addr, replay_lag FROM pg_stat_replication;", "```"].join("\n");
+
+    expect(readPlanStatement(promql, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement([promql, "", sql].join("\n"), "postgres")).toEqual({
+      kind: "statement",
+      sql: "SELECT client_addr, replay_lag FROM pg_stat_replication;",
+      tag: "postgres",
+    });
+  });
+
+  test("a PromQL block is still the deliverable of a Prometheus run", () => {
+    const expression = "sum by (job) (rate(prometheus_http_requests_total[5m]))";
+    const promql = ["```promql", expression, "```"].join("\n");
+
+    expect(readPlanStatement(promql, "prometheus")).toEqual({ kind: "statement", sql: expression, tag: "promql" });
+    // With no connection to contradict, a named engine rejects nothing, the rule every tag follows.
+    expect(readPlanStatement(promql)).toEqual({ kind: "statement", sql: expression, tag: "promql" });
+  });
+
+  /*
     A run that refused and also pasted an illustrative block has not drafted a
     deliverable, and offering that block to the editor as the answer would be exactly
     the mislabelling this event exists to prevent.

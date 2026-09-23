@@ -73,8 +73,7 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   cassandra: true,
   // A ```prometheus block holds a PromQL expression the editor sends unchanged to
   // `/api/v1/query` (#1085), and it is the tag the planning contract asks a model for. The
-  // `promql` alias below is a QUERY tag and NOT an engine, for the reason `cql` is not: PromQL
-  // is a language that VictoriaMetrics and other stores speak too.
+  // `promql` alias below spells the language, and it still names this engine: see its entry.
   prometheus: true,
 });
 
@@ -107,6 +106,9 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
 /**
  * The aliases that name ONE engine, and which one.
  *
+ * An entry names the type-id a block's text runs on, which is not always the product the
+ * tag spells: `mariadb` names `mysql`, the type-id MariaDB connects through.
+ *
  * `sql` is deliberately absent: it names no engine, and mapping it to the connection's
  * would turn a generic tag into a claim the model never made.
  */
@@ -123,6 +125,13 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   sqlserver: "mssql",
   mongo: "mongodb",
   n1ql: "couchbase",
+  // A language rather than a product, and still ONE type-id: every PromQL server this product
+  // reaches, VictoriaMetrics included, connects through `prometheus` (#1085). Left out of this
+  // record, a ```promql block contradicted no connection and was recorded as a PostgreSQL
+  // run's statement. A second type-id that runs PromQL is the moment to revisit this entry.
+  // `cql` is absent on a reason the same rule does not leave standing, since ScyllaDB connects
+  // through `cassandra` too; docs/BACKLOG.md records it.
+  promql: "prometheus",
 });
 
 /**

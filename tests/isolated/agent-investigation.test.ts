@@ -2697,6 +2697,42 @@ describe("planning mode runs no statement of the user's", () => {
       expect(draftedIn(events)).toBeUndefined();
     });
 
+    /*
+      #1085. `promql` is a language tag that names the `prometheus` type-id, the one every PromQL
+      server this product reaches connects through, so on this suite's PostgreSQL connection a
+      PromQL block is written for another engine exactly as the `mysql` one above is. Read as
+      naming no engine, it was recorded as this run's statement: stamped `postgres`, judged by
+      the SQL guard, its identifier check reporting no unknown table in a text that names none,
+      and the run scored answered without ever being asked for the SQL.
+    */
+    test("a PromQL block is not recorded as a PostgreSQL run's statement, and the run is asked for one", async () => {
+      const events = await planWith(fenced("pg_replication_lag_seconds > 30", "promql"));
+
+      expect(draftedIn(events)).toBeUndefined();
+      expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+        "plan-statement",
+      );
+      expect(events.find((event) => event.kind === "run-finished")).toMatchObject({
+        goalVerdict: { outcome: "unanswered", unmet: ["no-statement"] },
+      });
+    });
+
+    test("a PromQL block written before the run's own statement does not hide it", async () => {
+      const closing = [
+        fenced("pg_replication_lag_seconds > 30", "promql"),
+        "",
+        "```postgres",
+        "SELECT title FROM film;",
+        "```",
+      ];
+
+      expect(draftedIn(await planWith(closing.join("\n")))).toMatchObject({
+        sql: "SELECT title FROM film;",
+        dialect: "postgres",
+        readOnly: true,
+      });
+    });
+
     test("an explicit refusal drafts no statement, and is not recorded as one", async () => {
       const events = await planWith("NO STATEMENT: nothing in the inventory records payments.");
 
