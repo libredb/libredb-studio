@@ -745,10 +745,9 @@ engine.
 
 The deliverable is one runnable statement, not a lecture. The rules ask for it in a single fenced
 block tagged with the connection's canonical type-id, rationale after the block, and no name that is
-not in the inventory. Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does
-not: on a `json` engine the run is asked for one statement or command in that engine's own language —
-a MongoDB aggregation rather than a SELECT — and told that this engine speaks no SQL, while the tag
-stays the canonical type-id in both arms. That is deliberate rather than an oversight: `isQueryFenceTag`
+not in the inventory.
+Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, and since #1085 a `promql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
+That is deliberate rather than an oversight: `isQueryFenceTag`
 is a total record over `DatabaseType`, so all seventeen ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the

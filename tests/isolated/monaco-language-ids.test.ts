@@ -66,6 +66,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { PROMQL_LANGUAGE_ID } from "@/lib/editor/promql-language";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -222,6 +223,16 @@ describe("the installed editor's language ids", () => {
       json: basic.has("json"),
       typescript: basic.has("typescript"),
     }).toEqual({ css: true, html: true, json: false, typescript: true });
+  });
+
+  test("a language id this repository registers itself is not one the installed editor registers (#1085)", () => {
+    // `registerPromqlLanguage` returns early when its id is already registered, and the basic
+    // contribution registers every id it ships at load time, before any `beforeMount` runs. An id
+    // the bundle already had would leave Monaco's own tokenizer in charge, or none, and nothing on
+    // screen would say so. The control is an id the bundle does ship, read through the same set.
+    expect(basic.has(PROMQL_LANGUAGE_ID)).toBe(false);
+    expect(rich).not.toContain(PROMQL_LANGUAGE_ID);
+    expect(basic.has("redis")).toBe(true);
   });
 
   test("every declared sourceLanguage is an id the installed editor registers", async () => {

@@ -12,18 +12,24 @@ import type { QueryTab } from "@/lib/types";
  *
  * Lives here rather than inline because the same ladder had been copied to four
  * call sites and had already drifted between them.
+ *
+ * `"promql"` (#1085) has a rung of its own because the fallback at the bottom is SQL: PromQL
+ * declares no dialect and is not JSON, so without the rung a Prometheus tab would be typed
+ * `sql` and its expression highlighted and completed as SQL.
  */
 export function resolveTabType(capabilities?: ProviderCapabilities | null): QueryTab["type"] {
   if (capabilities?.queryDialect === "libredb") return "libredb";
   if (capabilities?.queryDialect === "redis") return "redis";
   if (capabilities?.queryLanguage === "json") return "mongodb";
+  if (capabilities?.queryLanguage === "promql") return "promql";
   return "sql";
 }
 
-/** The Monaco language id a tab type renders in (#427). */
-export function editorLanguageForTabType(type: QueryTab["type"]): "sql" | "json" | "libredb" | "redis" {
+/** The Monaco language id a tab type renders in (#427, #1085). */
+export function editorLanguageForTabType(type: QueryTab["type"]): "sql" | "json" | "libredb" | "redis" | "promql" {
   if (type === "libredb") return "libredb";
   if (type === "redis") return "redis";
   if (type === "mongodb") return "json";
+  if (type === "promql") return "promql";
   return "sql";
 }

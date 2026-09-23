@@ -919,6 +919,86 @@ describe("useQueryExecution", () => {
     expect(singleCall).toBeDefined();
   });
 
+  test("executeQuery keeps a PromQL buffer on /api/db/query, semicolons and all (#1085)", async () => {
+    // A PromQL text is ONE expression, and `#` starts a comment in it. Under the connection's SQL
+    // grammar (postgres here) the `;` inside the comment below separates two statements, so a
+    // splitter that ran would send the comment's first half on its own and the rest as a second
+    // statement. `dialectIsSql` keeps it off for every declared language but SQL.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const buffer = "# rate over five minutes; per second\nrate(prometheus_http_requests_total[5m])";
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: {
+          ...mockMetadata.capabilities,
+          queryLanguage: "promql",
+          supportsExplain: false,
+          explainFormat: undefined,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(singleCall).toBeDefined();
+    expect(JSON.parse(singleCall![1]!.body as string).sql).toBe(buffer);
+  });
+
+  test("the control: the same buffer on a SQL declaration IS split, so the language decides", async () => {
+    // The multi-statement answer shape the test `executeQuery uses /api/db/multi-query for
+    // multi-statement queries` above uses, since this buffer does take that route.
+    const multiResult = {
+      multiStatement: true,
+      executedCount: 2,
+      statementCount: 2,
+      hasError: false,
+      rows: [{ id: 1 }],
+      fields: ["id"],
+      rowCount: 1,
+      executionTime: 20,
+      statements: [
+        { index: 0, status: "success", rowCount: 1 },
+        { index: 1, status: "success", rowCount: 0 },
+      ],
+    };
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: multiResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const buffer = "# rate over five minutes; per second\nrate(prometheus_http_requests_total[5m])";
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: { ...mockMetadata.capabilities, supportsExplain: false, explainFormat: undefined },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeDefined();
+  });
+
   // ── executeQuery uses /api/db/transaction when transactionActive ───────────
 
   test("executeQuery uses /api/db/transaction when transactionActive", async () => {

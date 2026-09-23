@@ -184,18 +184,16 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql';  // Add your type here if needed
 }
 ```
 
 For most SQL databases, the existing `'sql'` type is sufficient. You only need a new tab type if your database uses a fundamentally different query language.
 
-A new tab type needs three things wired, all in `src/lib/editor/tab-language.ts` and its neighbours:
-declare `queryDialect` on the provider, add the arm to `resolveTabType()` **above** the
-`queryLanguage === 'json'` rung, and map the type to a Monaco language in
-`editorLanguageForTabType()` — registering that language module in `QueryEditor`'s
-`handleBeforeMount` alongside `registerLibreDBLanguage` / `registerRedisLanguage`. Skipping the
-dialect leaves the tab typed `mongodb` and the arm unreachable, which is exactly what #427 fixed.
+A new tab type is reached one of two ways, and both are wired in `src/lib/editor/tab-language.ts` and its neighbours.
+A language that is a kind of JSON declares a `queryDialect` on the provider and gets an arm in `resolveTabType()` **above** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb` and the arm unreachable, which is exactly what #427 fixed.
+A language that is neither SQL nor JSON widens `ProviderCapabilities.queryLanguage` instead, as PromQL did (#1085), and every reader of that union then needs an explicit arm or a test pinning that its branch is right, because a reader written `=== 'json'` sends the new member into its SQL branch and one written `!== 'sql'` into its JSON branch.
+Either way the type is mapped to a Monaco language in `editorLanguageForTabType()`, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage` and `registerPromqlLanguage`.
 
 ## Step 2: Create the Provider Class
 
@@ -679,7 +677,7 @@ Every field and what it controls:
 
 | Field | Type | Controls |
 |-------|------|----------|
-| `queryLanguage` | `'sql' \| 'json'` | Monaco editor language mode, AI prompt style, query template format |
+| `queryLanguage` | `'sql' \| 'json' \| 'promql'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
 | `queryDialect` | `'libredb' \| 'redis' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`) and picks the editor tab type and Monaco language. Checked **before** `queryLanguage` everywhere — `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |

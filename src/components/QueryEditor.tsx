@@ -13,6 +13,7 @@ import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-c
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
+import { registerPromqlLanguage } from "@/lib/editor/promql-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
@@ -65,7 +66,7 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?: "sql" | "json" | "libredb" | "redis";
+  language?: "sql" | "json" | "libredb" | "redis" | "promql";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
@@ -473,10 +474,12 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB and Redis command languages (both idempotent) so
-      // their tabs highlight correctly instead of being treated as JSON (#427).
+      // Register the LibreDB and Redis command languages and PromQL (each idempotent)
+      // so their tabs highlight correctly instead of being treated as JSON or SQL
+      // (#427, #1085).
       registerLibreDBLanguage(monacoInstance);
       registerRedisLanguage(monacoInstance);
+      registerPromqlLanguage(monacoInstance);
 
       // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
       if (!originalConsoleErrorRef.current) {

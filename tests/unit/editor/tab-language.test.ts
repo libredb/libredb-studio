@@ -35,6 +35,10 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe("redis");
   });
 
+  test("Prometheus (queryLanguage promql, no dialect) gets a promql tab, not the SQL fallback (#1085)", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "promql" }))).toBe("promql");
+  });
+
   test("missing capabilities fall back to sql", () => {
     expect(resolveTabType(undefined)).toBe("sql");
     expect(resolveTabType(null)).toBe("sql");
@@ -47,5 +51,6 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType("mongodb")).toBe("json");
     expect(editorLanguageForTabType("libredb")).toBe("libredb");
     expect(editorLanguageForTabType("redis")).toBe("redis");
+    expect(editorLanguageForTabType("promql")).toBe("promql");
   });
 });

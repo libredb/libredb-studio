@@ -367,8 +367,9 @@ export function useQueryExecution({
         // carried a `;` inside a `#` comment, so the buffer was split, and the
         // first "statement" was comments only - the run failed with "No command to
         // run" and the panel reported a successful empty result. Unknown metadata
-        // keeps the pre-existing behaviour, since only a declared JSON dialect is
-        // known not to be SQL.
+        // keeps the pre-existing behaviour, since only a declared language is known
+        // not to be SQL: JSON, and PromQL since #1085, whose single expression the
+        // splitter would cut at a `;` inside a `#` comment exactly as it cut Redis's.
         const dialectIsSql = (metadata?.capabilities.queryLanguage ?? "sql") === "sql";
         const useMultiQuery =
           !isExplain &&

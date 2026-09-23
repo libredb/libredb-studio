@@ -411,6 +411,26 @@ describe("QueryToolbar", () => {
     expect(queryByText("IMPORT")).toBeNull();
   });
 
+  test("No transaction, sandbox, edit or import controls for a PromQL connection (#1085)", () => {
+    const promqlMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "promql" },
+      labels: { ...sqlLabels, entityName: "metric", entityNamePlural: "metrics" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: promqlMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    // The control: the toolbar still rendered its run control, so the absent group is the gate.
+    expect(queryByText("RUN")).not.toBeNull();
+    cleanup();
+
+    // And the same props on SQL draw the group, so the handlers above were servable.
+    const sql = render(<QueryToolbar {...createDefaultProps()} />);
+    expect(sql.queryByText("BEGIN")).not.toBeNull();
+  });
+
   test("Query label always shown", () => {
     // With connection
     const props1 = createDefaultProps();

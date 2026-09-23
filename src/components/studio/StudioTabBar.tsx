@@ -18,6 +18,10 @@ import { FileBraces, FileCode, Hash, Plus, X } from "lucide-react";
  * a document connection; without this arm a Source tab on MongoDB or Redis would take the
  * document icon and be indistinguishable from a query tab in the one place a reader picks a
  * tab from. Nothing errors if the arm is missing, which is exactly why it is tested.
+ *
+ * The last arm means "a query language that is not SQL", not "JSON": Redis and LibreDB commands
+ * take it, and so does PromQL (#1085), decided rather than defaulted and pinned in
+ * `tests/components/studio/StudioTabBar.test.tsx`.
  */
 function tabIcon(tab: QueryTab): React.JSX.Element {
   // The ELEMENT rather than the component, so nothing here assigns a component to a local

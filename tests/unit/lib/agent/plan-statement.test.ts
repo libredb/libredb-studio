@@ -556,6 +556,19 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
     expect(validation.readOnly).toBe(false);
     expect(validation.guardViolation).toBe("NON_READ_STATEMENT");
   });
+
+  test("a PromQL draft is declined the same way: the reader speaks SQL and nothing else (#1085)", () => {
+    const PROMQL = "sum by (job) (rate(prometheus_http_requests_total[5m]))";
+
+    expect(validatePlanStatement(PROMQL, INVENTORY, "promql")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(PROMQL, null, "promql").identifiers).toEqual({ kind: "not-applicable" });
+    // The control: the same text on a SQL engine is judged, and the guard objects to it.
+    expect(validatePlanStatement(PROMQL, INVENTORY, "sql").guardViolation).toBe("NON_READ_STATEMENT");
+  });
 });
 
 describe("a statement the model wrote without a fence", () => {

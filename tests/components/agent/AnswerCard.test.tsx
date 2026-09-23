@@ -83,7 +83,10 @@ const finished = (status: "succeeded" | "failed" | "cancelled", reason?: "model-
 
 const STATEMENT = "SELECT count(*) FROM orders";
 
-const capabilitiesFor = (queryLanguage: "sql" | "json", queryDialect?: "libredb" | "redis"): ProviderCapabilities => ({
+const capabilitiesFor = (
+  queryLanguage: ProviderCapabilities["queryLanguage"],
+  queryDialect?: "libredb" | "redis",
+): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
@@ -239,6 +242,26 @@ describe("AnswerCard — a plan run's statement", () => {
       <AnswerCard timeline={checkedTimeline()} capabilities={capabilitiesFor("json", "libredb")} />,
     );
     expect(libredb.getByTestId("agent-answer-statement").getAttribute("data-language")).toBe("libredb");
+  });
+
+  test("tints a PromQL block as PromQL, in an accent that is neither SQL's nor a verdict's (#1085)", () => {
+    const promqlDraft = planTimeline({
+      sql: "sum by (job) (rate(prometheus_http_requests_total[5m]))",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const promql = render(<AnswerCard timeline={promqlDraft} capabilities={capabilitiesFor("promql")} />);
+    const block = promql.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("promql");
+    expect(block.className).toContain("border-hue-indigo/40");
+    cleanup();
+
+    // The control: SQL keeps its own accent, so the class above is the language's and not a default.
+    const sql = render(<AnswerCard timeline={checkedTimeline()} capabilities={capabilitiesFor("sql")} />);
+    const sqlBlock = sql.getByTestId("agent-answer-statement");
+    expect(sqlBlock.className).toContain("border-hue-blue/40");
+    expect(sqlBlock.className).not.toContain("border-hue-indigo/40");
   });
 
   test("with no capabilities to hand, the guard's reach decides the language rather than a default of SQL", () => {

@@ -1517,6 +1517,23 @@ describe("planning mode runs no statement of the user's", () => {
       });
 
       /*
+        #1085: a third language takes the non-SQL arm of `planningStatementContract`, and that arm
+        says nothing that is only true of JSON. The connection stays this describe's `mongodb`
+        fixture, because the type reaches only the two sentences that name the engine; what is
+        under test is which arm the LANGUAGE selects.
+      */
+      test("a PromQL engine takes the same neutral contract, and is never told to write SQL", async () => {
+        const { rules } = await planOnProvider("promql");
+
+        expect(rules).toContain("database's own query language");
+        expect(rules).toContain("This engine speaks no SQL");
+        expect(rules).toContain("those are the names of its own objects and of the fields inside them");
+        // The SQL arm's opening and its SQL-only name rule, neither of which may also be present.
+        expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
+        expect(rules).not.toContain("and no column name that is not in that inventory");
+      });
+
+      /*
         The gap a live run found, and the reason it is a LABEL rather than a branch on
         the engine name. Measured 2026-08-19 in the browser: a plan run on an
         OpenSearch connection, told only "produce ONE runnable statement", answered

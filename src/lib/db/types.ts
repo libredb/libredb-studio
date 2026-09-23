@@ -208,10 +208,25 @@ export type ContainerLevels =
   | readonly [ContainerLevelSpec, ContainerLevelSpec];
 
 export interface ProviderCapabilities {
-  queryLanguage: "sql" | "json";
   /**
-   * Optional client-side query dialect. `queryLanguage` only says SQL vs JSON;
-   * for non-SQL providers the query generators otherwise assume MongoDB syntax.
+   * The language this engine's statements are written in: what its editor tabs are typed and
+   * highlighted as (`src/lib/editor/tab-language.ts`), and the arm the query generators take for a
+   * tree click and for "Generate Query" (`src/lib/query-generators.ts`).
+   *
+   * A CLOSED union, and a member added to it is not neutral: a reader written `=== "json"` sends
+   * the new member into its SQL branch, and one written `!== "sql"` sends it into its JSON
+   * (MongoDB) branch. So a new member lands with an explicit arm in every reader, or with a test
+   * pinning that the branch it falls into is right for it. `"promql"` is the Prometheus provider's
+   * (#1085), and it declares no `queryDialect`, because PromQL is not a kind of JSON.
+   *
+   * Published through `src/exports/types.ts`, so widening it breaks a consumer's exhaustive
+   * switch over it; that ships with a release note, not a compatibility layer.
+   */
+  queryLanguage: "sql" | "json" | "promql";
+  /**
+   * Optional client-side query dialect, and only ever a kind of JSON. `queryLanguage`
+   * says SQL, JSON or PromQL; for a `"json"` provider the query generators otherwise
+   * assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
    * generator (see `query-generators.ts`), and it is checked BEFORE
    * `queryLanguage` everywhere. Left undefined by SQL and MongoDB, so their

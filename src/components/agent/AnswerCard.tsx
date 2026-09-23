@@ -109,19 +109,25 @@ const STATUS_TONES: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
  * `"unknown"` is this surface having nothing to go on, which is a different state from
  * every engine in the ladder and must not collapse into the first of them.
  */
-type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "unknown";
+type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "unknown";
 
 /**
  * Identity, never status. The rail spends amber on "nobody established this", rose on a
  * failure and emerald on a clean verdict, so none of those three is in this map: a tint
  * that a reader could mistake for a verdict is worse than no tint at all. `"unknown"`
  * takes the hairline, which says nothing, because nothing is what is known.
+ *
+ * PromQL takes indigo rather than Prometheus's own orange (#1085): orange sits next to that
+ * amber, and a PromQL draft is always shown beside the amber "not checked" chip, because no
+ * guard here reads PromQL (`validatePlanStatement` declines it, so `guardReading` answers
+ * `unexamined`).
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
   json: "border-hue-cyan/40",
   redis: "border-hue-fuchsia/40",
   libredb: "border-hue-violet/40",
+  promql: "border-hue-indigo/40",
   unknown: "border-hairline-strong",
 });
 

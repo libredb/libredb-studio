@@ -493,7 +493,7 @@ function activePart(document: ObjectSourceDocument, activePartId: string | undef
  *
  * NOT `QueryEditor`, and the four reasons are measured rather than stylistic: that component
  * hardcodes `readOnly: false` with no prop to change it, installs a Run action and a Cmd+Enter
- * binding unconditionally on mount, renders an execute toolbar, and takes a closed four-member
+ * binding unconditionally on mount, renders an execute toolbar, and takes a closed
  * `language` union reachable only through `resolveTabType`, which `CLAUDE.md` forbids
  * extending. A definition opened in it would offer to EXECUTE itself.
  *

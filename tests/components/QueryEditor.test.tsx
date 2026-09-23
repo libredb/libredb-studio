@@ -26,6 +26,9 @@ let capturedEditorProps: { value?: string; defaultValue?: string } | null = null
 // already holds is not free in real Monaco: it replaces the model's content, which drops
 // the undo stack and moves the caret, so "did not write" is worth asserting.
 let capturedSetValues: string[] = [];
+// Every language id the mock Monaco was asked to register before the editor mounted, in order
+// (#1085). The mock's `getLanguages` answers none, so each idempotent register call records.
+let capturedLanguageRegistrations: string[] = [];
 
 // ── Mock Monaco Editor with React.createElement (not plain objects) ─────────
 mock.module("@monaco-editor/react", () => ({
@@ -84,7 +87,9 @@ mock.module("@monaco-editor/react", () => ({
         },
         languages: {
           getLanguages: () => [] as { id: string }[],
-          register: mock(() => {}),
+          register: mock((language: { id: string }) => {
+            capturedLanguageRegistrations.push(language.id);
+          }),
           setMonarchTokensProvider: mock(() => {}),
           setLanguageConfiguration: mock(() => {}),
         },
@@ -294,6 +299,7 @@ describe("QueryEditor", () => {
     mockUpdateOptions = mock((..._a: unknown[]) => {});
     capturedEditorProps = null;
     capturedSetValues = [];
+    capturedLanguageRegistrations = [];
     mockClipboardWriteText = mock((data: string) => {
       void data;
       return Promise.resolve();
@@ -1730,6 +1736,94 @@ describe("QueryEditor", () => {
 
     expect(eventDetail!.query).toBe('{"collection":"users","operation":"find"}');
     window.removeEventListener("execute-query", handler);
+  });
+
+  // -----------------------------------------------------------------------
+  // PromQL (#1085)
+  // -----------------------------------------------------------------------
+
+  test("registers the PromQL language before the editor mounts, beside LibreDB and Redis (#1085)", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "promql", value: "up" })));
+
+    // The two command languages this mount registered before #1085 are the control: they reach the
+    // same capture, so a missing "promql" is the component and not the mock.
+    expect(capturedLanguageRegistrations).toContain("libredb");
+    expect(capturedLanguageRegistrations).toContain("redis");
+    expect(capturedLanguageRegistrations).toContain("promql");
+  });
+
+  test("a PromQL buffer runs whole, and draws no Format control and no SQL completions (#1085)", () => {
+    // A PromQL text is one expression and `#` starts a comment in it. Under a SQL grammar the `;`
+    // inside the comment below is a statement separator, which is what the control next door shows.
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockRegisterSQLCompletionProvider.mockClear();
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+    const buffer = "# rate over five minutes; per second\nrate(prometheus_http_requests_total[5m])";
+
+    const { queryByText } = render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ value: buffer, language: "promql", databaseType: "postgres" }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
+    window.removeEventListener("execute-query", handler);
+
+    expect(eventDetail!.query).toBe(buffer);
+    expect(queryByText("Format")).toBeNull();
+    expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+  });
+
+  test("the control: the same buffer as SQL is cut at the semicolon, formats, and loads SQL completions", () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockRegisterSQLCompletionProvider.mockClear();
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+    const buffer = "# rate over five minutes; per second\nrate(prometheus_http_requests_total[5m])";
+
+    const { queryByText } = render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ value: buffer, language: "sql", databaseType: "postgres" }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
+    window.removeEventListener("execute-query", handler);
+
+    // Measured with the shared splitter under the postgres grammar: the first statement is the
+    // comment's first half, and the caret at offset 0 is inside it.
+    expect(eventDetail!.query).toBe("# rate over five minutes");
+    expect(queryByText("Format")).not.toBeNull();
+    expect(mockRegisterSQLCompletionProvider).toHaveBeenCalled();
   });
 
   test("getEffectiveQuery: whitespace-only selection falls through to full value", () => {

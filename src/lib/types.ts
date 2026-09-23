@@ -541,7 +541,7 @@ export interface QueryTab {
    */
   resultQuery?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state
@@ -551,7 +551,7 @@ export interface QueryTab {
   /**
    * Present exactly on a Source tab (#789 Phase 2).
    *
-   * An optional FIELD and deliberately not a fifth member of `type`. Every member of that
+   * An optional FIELD and deliberately not another member of `type`. Every member of that
    * union is a QUERY DIALECT that `resolveTabType` may answer and that
    * `editorLanguageForTabType` maps onto `QueryEditor`'s closed language union, so a
    * `"source"` member would be an arm the resolver can never produce and the language mapper

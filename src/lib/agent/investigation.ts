@@ -1045,7 +1045,7 @@ const PLAN_DELIVERABLES: Readonly<Record<AgentRunWorkflowType, PlanDeliverable>>
  * at a statement — so the one thing this contract cannot afford to leave to the model
  * is what the tag says.
  *
- * What the json arm has to say instead is that SQL is the wrong language, and it has
+ * What the arm for every other language has to say instead is that SQL is the wrong language, and it has
  * to say it: the objective is prose, the words "statement", "table" and "column" are
  * all over the conversation, and a model handed a MongoDB inventory under those words
  * will write SQL against it unless told not to. The second clause is about the same
