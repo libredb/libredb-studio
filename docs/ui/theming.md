@@ -86,7 +86,7 @@ near-white text on a white page.
   `hue-<name>-alt` where two identities share a hue: there are more engines than there are hues,
   and `db-ui-config`'s own test asserts every engine colour differs.
 
-Folding an identity into a state role repaints seventeen engines in four colours. Folding a state
+Folding an identity into a state role repaints every engine in four colours. Folding a state
 into an identity hue means the next person to change what "error" looks like has to find every
 red in the codebase. The identity set is **selected per mode**, the way `lib/charts/palette.ts`
 selects rather than flipping a ramp — the two modes run out of room in different places, so a

@@ -5,8 +5,8 @@
  * model wrote "all seventeen providers implement the method" into every task brief without
  * re-measuring it, and it was FALSE: two providers never got the method, and the conformance
  * guard's own early return hid the gap because a provider that answers `undefined` was simply
- * skipped. A number typed by a person is not a measurement. So the claim "58 kinds across the
- * fleet declare a readable definition" is produced HERE, by building every provider through
+ * skipped. A number typed by a person is not a measurement. So the count of kinds across the
+ * fleet that declare a readable definition is produced HERE, by building every provider through
  * `createDatabaseProvider` and reading what each one actually declares, and compared against
  * an expectation committed from the design's own table.
  *

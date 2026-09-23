@@ -214,8 +214,8 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
-connection, which is the other fifteen (MySQL, Oracle, SQL Server, libSQL, DuckDB, MongoDB, Redis,
-ClickHouse, Couchbase, Druid, Elasticsearch, OpenSearch, Trino, Cassandra and the bundled LibreDB
+connection, which is the other sixteen (MySQL, Oracle, SQL Server, libSQL, DuckDB, MongoDB, Redis,
+ClickHouse, Couchbase, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Prometheus and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
 no longer decided by the engine, and that changed in #414; what decides it now is whether the
@@ -228,7 +228,7 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all seventeen engines.
+  statement path, because the provider reading sends no statement, so it reaches all eighteen engines.
 - **Agent mode — PostgreSQL, SQLite, DuckDB and SQL Server.** What a run may DO by itself. Its tools
   execute statements and need a database-native read-only path, which only those four providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
@@ -241,7 +241,7 @@ one. It is **bounded** — MongoDB stops at 200 collections, Redis scans 1000 ke
 inspection found and not proof that nothing else exists, and the plan is told so. And on the document
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
-catalog. The **estimated statistics** below are still PostgreSQL's and SQLite's alone; on the other
+catalog. The **estimated statistics** below are PostgreSQL's, SQLite's and SQL Server's alone; on the other
 fifteen the plan is told that this engine holds none it knows how to read, which means it has an
 inventory and no sizes — the ordinary case now rather than a rare one.
 
@@ -955,14 +955,14 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
   (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`). So on the other thirteen ids in the `DatabaseType` union
+  (`src/components/agent/timeline.ts`). So on the other fourteen ids in the `DatabaseType` union
   (`src/lib/types.ts`), an Agent-mode run cannot read anything: MySQL, Oracle, libSQL, MongoDB, Redis,
-  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Couchbase and LibreDB. That
+  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Couchbase, Prometheus and LibreDB. That
   last id is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other fifteen: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other sixteen: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

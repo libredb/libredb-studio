@@ -22,11 +22,11 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.16.2
-    createdAt: "2026-09-21T00:06:02Z"
-    description: Open-source web-based SQL IDE for sixteen engines - PostgreSQL, MySQL,
-      Oracle, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache
-      Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
-      - with AI-powered query assistance.
+    createdAt: "2026-09-23T14:08:07Z"
+    description: Open-source web-based SQL IDE for seventeen engines - PostgreSQL,
+      MySQL, Oracle, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase, ClickHouse,
+      Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL
+      and Prometheus - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.16.2'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
@@ -51,8 +51,8 @@ spec:
   description: |
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
-    ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
-    Cassandra from the browser —
+    ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache
+    Cassandra and Prometheus from the browser —
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 
@@ -358,6 +358,8 @@ spec:
   - libsql
   - turso
   - duckdb
+  - prometheus
+  - promql
   links:
   - name: Website
     url: https://libredb.org

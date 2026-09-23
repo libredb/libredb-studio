@@ -1995,7 +1995,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
    * whose grounding is enveloped keep their grounding and lose the KINDS. That is a loss of
    * detail rather than of grounding, which is the trade this module already makes for a
    * refused object read, and it is the only one available without either weakening the
-   * envelope or giving seventeen providers an enveloped object surface.
+   * envelope or giving every provider an enveloped object surface.
    */
   test("a dialect whose grounding is enveloped never reaches for the object surface", async () => {
     const harness = objectHarness({ type: "postgres" });

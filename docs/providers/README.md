@@ -22,13 +22,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | OpenSearch | `opensearch` | SQL (search) | none (HTTP: `_plugins/_sql` + REST) | SQL (OpenSearch SQL plugin) | [opensearch.md](./opensearch.md) |
 | Apache Trino | `trino` | SQL (federated query engine) | none (HTTP: the client protocol, `POST /v1/statement`) | SQL (Trino) | [trino.md](./trino.md) |
 | Apache Cassandra | `cassandra` | SQL (wide-column) | `cassandra-driver` (pure JS) | SQL-shaped (CQL) | [cassandra.md](./cassandra.md) |
+| Prometheus | `prometheus` | Time series | none (HTTP: the Prometheus HTTP API, `/api/v1/*`) | PromQL | [prometheus.md](./prometheus.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL and DuckDB are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB and Prometheus are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -245,9 +246,10 @@ same set as the table at the top of this file and a new provider is a new row ra
 grid. Each row was verified against the running container on 2026-08-19, and the Trino row on
 2026-08-20 — the credentials are the ones the fixture actually accepts, not the ones its environment
 block asks for (twice those differ; see the notes).
+The Prometheus row and the `prometheus-auth` note below were verified against the running containers on 2026-09-23, by the capture `tests/fixtures/prometheus/README.md` records.
 
-Start the fourteen always-on services with a plain `docker compose -f database-compose.yml up -d` -
-thirteen engine containers plus the one-shot `couchbase-init` seed sidecar; the `Profile` column names
+Start the sixteen always-on services with a plain `docker compose -f database-compose.yml up -d` -
+fourteen engine containers plus the one-shot `couchbase-init` and `trino-init` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -267,6 +269,7 @@ provider's integration pass.
 | OpenSearch | `opensearch` | localhost | **9201** | *none* | *none* | *none* | — |
 | Apache Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
+| Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
@@ -277,6 +280,10 @@ security extension in a default install, both search services run with their sec
 connection**: the coordinator answers `401 Password not allowed for insecure authentication` even
 with authentication off, so a password breaks a connection that works without one
 ([trino.md §4.3](./trino.md#43-tls-and-the-password-rule)).
+
+**Prometheus with basic auth is a second service, `prometheus-auth`, behind a profile of its own.**
+Start it with `docker compose -f database-compose.yml --profile prometheus-auth up -d prometheus-auth` and connect to port `9091` as user `studio` with password `studio-probe`, the throwaway credential its web config, `docker/prometheus/web-auth.yml`, holds as a bcrypt hash.
+The plain `prometheus` service on 9090 takes no credential at all ([prometheus.md §4.2](./prometheus.md#42-authentication)).
 
 **Cassandra needs one field this table has no column for, and will not connect without it.** `Local
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the

@@ -69,7 +69,7 @@ export function pathKey(path: readonly string[]): string {
  *    alphabet.
  *
  * So this is a DELIBERATE UTF-16 comparison, not an unexamined use of `<`. Changing it to a
- * byte order would change the sort of every listing on seventeen engines, and standing ruling
+ * byte order would change the sort of every listing on every engine, and standing ruling
  * 5b's discipline applies: that is a behaviour change and it needs its own failing test
  * first, not a quiet edit here.
  *

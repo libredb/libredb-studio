@@ -12,7 +12,7 @@
  * A future provider that implements the surface fails here until both sentences are updated, which
  * is the direction the failure has to point: the code is the fact and the prose is the claim.
  *
- * The detection is textual on purpose. Importing seventeen providers to ask which carry the method
+ * The detection is textual on purpose. Importing every provider to ask which carry the method
  * would load every driver, and a type-level check cannot see an optional method's presence on a
  * concrete class without instantiating it.
  */

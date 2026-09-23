@@ -32,7 +32,7 @@ export const dynamic = "force-dynamic";
  * bound belongs and because the conformance helper drives the bounded arm with a small number. An
  * unused request field would be a second way to reach one behaviour. The route then applies the
  * same bound to the ANSWER rather than trusting it: a number passed to an implementation is a
- * request and not a bound, and the sixteen providers that implement the method are the population
+ * request and not a bound, and the providers that implement the method are the population
  * that reaches this handler. CORRECTED after review: the first version of this sentence also named
  * the embedded seam's host, and MEASURED, a host cannot reach here at all, because the provider
  * comes from a closed `switch (connection.type)` in `src/lib/db/factory.ts` and the embedded shell

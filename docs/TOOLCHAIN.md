@@ -288,8 +288,8 @@ The first is a file that must load a module before anything else does:
 
 The second is the mirror image: a file that must read a module the rest of a layer replaces.
 
-- `tests/isolated/object-source-declarations.test.ts` censuses what all seventeen providers
-  declare, and `tests/isolated/monaco-language-ids.test.ts` checks every declared source language
+- `tests/isolated/object-source-declarations.test.ts` censuses what every provider
+  declares, and `tests/isolated/monaco-language-ids.test.ts` checks every declared source language
   against the ids the installed Monaco registers. Both build providers through the REAL
   `createDatabaseProvider`, which is the point: a census that read a double would certify the
   double.

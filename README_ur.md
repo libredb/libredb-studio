@@ -105,11 +105,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">سولہ engines، ایک interface</span>
+### <span dir="rtl">سترہ engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra · Prometheus
 
 <div dir="rtl" align="right">
 
@@ -134,6 +134,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **OpenSearch** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (`POST /_plugins/_sql`، port 9200)</span> | <span dir="rtl">Elasticsearch والا ہی provider module، وہی read-only IDE اور وہی explorer۔ یہاں `LIMIT n OFFSET m` کام کرتا ہے، اس لیے pagination دستیاب ہے</span> |
 | **Apache Trino** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (client protocol، `POST /v1/statement`، port 8080)</span> | <span dir="rtl">تمام configured catalogs پر مکمل SQL IDE، connection میں مقرر catalog کے `information_schema` کے ذریعے schema tree، `system.runtime` اور `jmx` سے monitoring، `SHOW STATS` سے اصل row counts، query cancellation اور `kill_query` کے ساتھ maintenance۔ Trino query engine ہے اور data store نہیں کرتا، اس لیے کہیں بھی primary keys، foreign keys یا indexes declare نہیں کرتا: ER diagram میں lines کے بغیر boxes ہوتے ہیں، inline editing بند رہتی ہے، اور capacity panel مصنوعی size بنانے کے بجائے catalogs دکھاتا ہے۔ ناکام statements بھی HTTP 200 کے ساتھ واپس آتی ہیں؛ اور cluster میں authentication بند ہو تب بھی plain HTTP پر password رد کر دیا جاتا ہے</span> |
 | **Apache Cassandra** | <span dir="rtl">`cassandra-driver` (خالص JavaScript، native modules کے بغیر)</span> | <span dir="rtl">native protocol (port 9042) پر CQL IDE، partition اور clustering keys نشان زد keyspaces explorer، `system_views` سے summary، uptime اور چلتی ہوئی statements۔ Connection کے لیے **`localDataCenter` لازمی ہے**: اس کے بغیر driver connect کرنے سے انکار کر دیتا ہے۔ EXPLAIN نہیں (CQL grammar میں یہ keyword موجود ہی نہیں)، query cancellation نہیں (protocol میں cancel frame نہیں) اور maintenance operations نہیں (compaction، repair اور flush، `nodetool` کے JMX operations ہیں)۔ اور **یہ کوئی row count یا size نہیں دکھاتا**: Cassandra صرف disk پر پہلے سے لکھی files سے partitions کا تخمینہ (500 rows کی table کو 143 پڑھا گیا) اور MiB میں integers (19,476 bytes کی table کو `1 MiB` پڑھا جاتا ہے) دے سکتا ہے، اس لیے غلط number دکھانے کے بجائے ہم کچھ نہیں دکھاتے</span> |
+| **Prometheus** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (Prometheus HTTP API، port 9090)</span> | <span dir="rtl">PromQL editor جو text کو بغیر تبدیلی server تک بھیجتا ہے، نتائج grid اور chart tab میں (range query ہر series کے لیے ایک line بناتی ہے)، metrics explorer جس میں label names columns اور metadata source ہیں، rule groups اور recording و alerting rules (firing alert tree میں نشان زد)، scrape pools اور targets (down target tree میں نشان زد)، اور health، version، uptime اور TSDB statistics۔ Design کے لحاظ سے صرف پڑھنے کے لیے: admin API یا remote write استعمال نہیں ہوتے، EXPLAIN نہیں (parse endpoint ابھی experimental ہے) اور maintenance operations نہیں۔ Plain HTTP پر credential رد نہیں ہوتا بلکہ بھیج دیا جاتا ہے، اس لیے جس network پر آپ کا اختیار نہ ہو وہاں TLS فعال کریں</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">

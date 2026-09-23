@@ -264,7 +264,7 @@ describe("applySourceBound", () => {
     or a Lua library holding an emoji or an astral CJK character, bounded at exactly the
     offset between the pair, would otherwise end in an unpaired high surrogate: JSON
     serializes it as a lone \ud83d and Monaco renders a replacement glyph. Redis cannot
-    reach this through its own fixture, and every one of the remaining sixteen providers
+    reach this through its own fixture, and every other provider that reads a source
     routes its text through this one function, which is why the guard lives here.
   */
   test("a bound landing inside a surrogate pair cuts before it, never emitting a lone surrogate", () => {

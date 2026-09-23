@@ -60,8 +60,7 @@
  * displayed as `order_total`. Uniqueness is what the old assertion was reaching for and
  * is the thing a tree actually needs.
  *
- * Invariant 7 is skipped entirely for a provider that does not declare `describeObjects`,
- * which is sixteen of the seventeen while the bulk read lands one family at a time. What it
+ * Invariant 7 is skipped entirely for a provider that does not declare `describeObjects`. What it
  * asserts, and why each part of it is not vacuous, is in `assertBulkColumnRead()` below.
  *
  * Three further checks guard the caller rather than the provider. An expectation naming a
@@ -367,8 +366,7 @@ export async function assertObjectSurface(
 /**
  * The fifth method, checked against the provider's OWN listing (#789).
  *
- * Skipped entirely when the provider does not declare it, which is where sixteen of the
- * seventeen are while the bulk read lands one family at a time. That skip is the reason
+ * Skipped entirely when the provider does not declare it. That skip is the reason
  * every assertion below is written against `listings`: the only thing that makes this
  * block non-vacuous is that it compares two answers the provider gave, never one the test
  * author typed.
@@ -708,8 +706,8 @@ function assertNoStaleReason(reasons: Readonly<Record<string, string>>, zeroed: 
  *
  * The zero-iteration case of each loop is what the throws guard:
  *
- *   - the PAIRING is outside every loop, so the fifteen providers that implement nothing are
- *     certified exactly as strongly as the two that implement something: `false === false` is
+ *   - the PAIRING is outside every loop, so the providers that implement nothing are
+ *     certified exactly as strongly as the ones that implement something: `false === false` is
  *     an assertion too, and it is the only thing standing between a declaration and a method
  *     that disagree;
  *   - a source-bearing kind the expectation never NAMES is refused by name, one notch narrower
@@ -747,15 +745,15 @@ async function assertSourceSurface(
   }
 
   // The edit pairing, unconditional and outside every loop, exactly as the source pairing above
-  // it is written. There is NO loop here, and that is the point: it certifies the pairing for all
-  // seventeen providers INCLUDING the fourteen that declare no editable kind, which is the
+  // it is written. There is NO loop here, and that is the point: it certifies the pairing for every
+  // provider INCLUDING the ones that declare no editable kind, which is the
   // population a loop over editable kinds cannot reach. A build with no apply is a mandatory
   // preview with nothing behind it; an apply with no build is ruling 1a violated (#789 Phase 3).
   // THROUGH `kindAcceptsSourceEdits()` and never `kind.acceptsSourceEdits === true` inline: that
   // function is the single reader of the field, its own docblock says so, and a later phase that
   // changes the derivation (the way `kindAcceptsRowWrites` sits next to `supportsInlineRowEdit`)
   // would otherwise move every provider and every route while this helper kept the old semantics
-  // for all seventeen suites (#789 Phase 3).
+  // for every provider's suite (#789 Phase 3).
   const editableKinds = declaredKinds(capabilities).filter((kind) => kindAcceptsSourceEdits(capabilities, kind.id));
   // `typeof` and never `"buildObjectEdit" in provider`: the property is optional on the
   // interface, so an `in` test walks the prototype chain and would answer true for anything the

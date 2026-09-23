@@ -538,7 +538,7 @@ export interface ProviderCapabilities {
    * "the provider declares no object kinds, so there is nothing to list" as a
    * `CATALOG_READ_REFUSED` capture - so a run is never handed an empty inventory as
    * though it were an empty database. It is deliberately not a construction-time throw:
-   * every one of the seventeen shipped type ids declares kinds, so the shape is
+   * every shipped type id declares kinds, so the shape is
    * unreachable here, and refusing to CONNECT over it would take a connection away from
    * an implementer whose query editor works perfectly well while their catalog reading is
    * still being written (#789).
@@ -1659,7 +1659,7 @@ export interface ObjectDetail {
  * cap somebody set: `reason` is the field that says WHICH bound bit, and it is the one to
  * show a person. Making the field optional was considered and refused: it is published
  * through `src/exports/types.ts`, every consumer compares against it, and an absent number
- * would buy accuracy on two engines by making the comparison conditional on all seventeen.
+ * would buy accuracy on two engines by making the comparison conditional on every engine.
  *
  * `reason` is ONE SENTENCE for one event across every engine, and that is a rule rather
  * than a convention: build the caller's half with `callerBoundTruncationReason()` in

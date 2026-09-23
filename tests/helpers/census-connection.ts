@@ -7,12 +7,12 @@ import type { DatabaseType } from "@/lib/types";
  * WHY IT LIVES HERE. `tests/isolated/object-edit-declarations.test.ts` used to import this from
  * `tests/isolated/object-source-declarations.test.ts`, which works but makes a TEST file
  * importable by another one: loading the importer registers the census's own suite a second
- * time. Under one bun process per test file that is nine extra tests, each building all
- * seventeen providers through the real `createDatabaseProvider`, run twice and counted twice, so
+ * time. Under one bun process per test file that is nine extra tests, each building every
+ * provider through the real `createDatabaseProvider`, run twice and counted twice, so
  * the runner's totals stop matching the suite. Moving the fixture into `tests/helpers/` keeps
  * the single source both censuses need and takes the import out of a test file.
  *
- * Copying it instead was the alternative and it is the worse one: a second seventeen-row
+ * Copying it instead was the alternative and it is the worse one: a second per-type-id
  * `Record<DatabaseType, DatabaseConnection>` goes stale the first time an engine's port moves in
  * only one of them, and the record exists so that a new member of the union is a COMPILE error
  * rather than a missing row. Two records defeat exactly that.

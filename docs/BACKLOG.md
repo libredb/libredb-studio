@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D103, U17 · 48
+- [Drivers and connections](#drivers-and-connections) — D1–D109, U17 · 54
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U35 · 23
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U42 · 30
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B83 · 24
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B85 · 26
 
 ---
 
@@ -339,6 +339,7 @@ Restored 2026-08-27 from `35294140`.
 
 Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
 fifth of five instances of one gap, and the fix already exists in the codebase.
+Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -352,14 +353,21 @@ by trusting it at the OS level, and the form's own TLS fields silently do nothin
 sends plaintext through `fetch` and TLS through `node:https`, a built-in that takes
 `ca`/`cert`/`key`/`rejectUnauthorized` directly (D26). Its `CouchbaseTlsMaterial` mapping,
 including `rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require"`, is the
-behaviour the other five need.
+behaviour the providers above need.
+
+**A second implementation exists, by maintainer decision.**
+The Prometheus provider (#1085, section 3.4) carries its own mapping and request path in `src/lib/db/providers/timeseries/prometheus/request.ts` (`tlsMaterialFor` and `createSendRequest`), with the same `rejectUnauthorized` rule, because that PR was decided to touch no other provider.
+It is not a copy of the Couchbase helper: it adds what that helper lacks, an `AbortSignal` and timeout on every request, a streaming byte cap, and IPv6 literals passed through `url.urlToHttpOptions` (the Couchbase path fails on them, D104).
+Neither follows a redirect: Prometheus refuses one on both paths through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts`, and Couchbase does on its `fetch` path since #1086, while its `node:https` path reports a 3xx as an HTTP failure (`docs/providers/couchbase.md` section 4.4).
+So the consolidation this entry asks for now has two sources to reconcile rather than one pattern to copy, and the shared helper should start from the Prometheus shape, which is the superset, and adopt `rejectRedirect` on its TLS path as that shape does.
 
 Not a defect in what any of them measures - it is a field the form offers and the transport
 discards, which is the kind of silence a security setting must not have.
 
-**Done when:** the TLS material mapping is shared rather than copied, the five `fetch`
-transports route TLS through it, and one test per transport pins that a supplied CA and a
-`verify-*` mode reach the request options - plus one that a `require` mode does not verify.
+**Done when:** the TLS material mapping and the TLS request path exist once, outside any provider directory.
+Couchbase and Prometheus both route through it and keep their own copies no longer.
+Every `fetch` transport that reads `ssl.mode` today (ClickHouse, Druid, Elasticsearch/OpenSearch, Trino, libSQL) routes TLS through it.
+One test per transport pins that a supplied CA and a `verify-*` mode reach the request options, plus one that a `require` mode does not verify.
 
 ---
 
@@ -1540,6 +1548,139 @@ the probe ran, or the expectation says why it could not.
 `listings`, an expectation that omits a declared abstaining kind is refused by name instead of by the
 flag's message, a flag set against declarations that contradict it is refused, and the negative
 direction of invariant 8 reports whether it ran rather than only whether it could have.
+
+### D104. A Couchbase connection over TLS cannot reach an IPv6 literal host
+
+The TLS path of the Couchbase transport is `nodeRequestJson` in `src/lib/db/providers/document/couchbase/http-transport.ts`, and it is the only path once `buildTlsMaterial` returns material.
+It builds the request options from `new URL(url)`, whose `hostname` keeps the brackets of an IPv6 host; since #1086 every Couchbase URL is built by `endpointUrl(httpOrigin(...))` of `src/lib/db/http/endpoint.ts`, which writes an IPv6 host bracketed as a URL requires, so `hostname` reaches `node:https` as `[::1]`.
+`node:https` does not strip the brackets and resolves the whole string as a name, which no resolver knows.
+A Couchbase node addressed by an IPv6 literal is therefore unreachable over TLS, while the same node over plaintext works, because plaintext goes through `fetch`, which reads the URL itself.
+#1086 accepts an IPv6 host (`docs/providers/couchbase.md` section 4.4) and did not change this path, so such a host now passes validation and then fails here.
+
+Found 2026-09-23 while designing the Prometheus transport (#1085, section 3.4), whose `request.ts` passes IPv6 literals through `url.urlToHttpOptions` for this reason.
+Not fixed there: the maintainer's decision for that PR is that it touches no other provider.
+
+Reproduced on node v24.14.0 and bun 1.4.2, from the repository root, with nothing listening on port 59999:
+
+    bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
+
+The IPv6 URL answers `Couchbase request failed: getaddrinfo ENOTFOUND [::1]`.
+The IPv4 URL is the control: `connect ECONNREFUSED 127.0.0.1:59999`, so the request reached the network and only the name failed.
+The engine fact underneath is the same on both runtimes: `https.request({ hostname: "[::1]", port: 59999 })` answers `ENOTFOUND` and `https.request({ hostname: "::1", port: 59999 })` answers `ECONNREFUSED`.
+
+D37's consolidation removes this if the shared TLS path is built on the Prometheus shape, which already handles it; until then it is a defect of its own.
+
+**Done when:** a Couchbase connection with TLS reaches a node addressed by an IPv6 literal, and a test drives `nodeRequestJson` against a local `node:https` server listening on `::1`, with the IPv4 case as its control.
+
+### D105. `StorageStats.sizeBytes` is required, so an engine that measures no size publishes a zero
+
+`StorageStats` in `src/lib/db/types.ts` declares `sizeBytes: number`, so a storage row carries a number even where the engine publishes no byte count for what the row names.
+Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
+The agent's `storage` reading forwards the field unchanged (`sizeBytes: store.sizeBytes`, `src/lib/agent/tools.ts:3004`), so a model is handed a zero-byte store that nobody measured.
+The search provider takes the other route and emits no storage row for a size it was not given (`toStorageStats` in `src/lib/db/providers/sql/search/index.ts`).
+D44 is the same fabrication on `DatabaseOverview.databaseSizeBytes`, where the type already allows absence; here the type itself forbids it.
+
+Found 2026-09-23 while mapping the Prometheus storage row (#1085, section 6.2).
+Not fixed in #1085: making the field optional changes a type every provider writes, and the agent's storage reading has to learn to carry an absence; neither is that PR's to change.
+
+**Done when:** `sizeBytes` can be absent, no provider writes 0 for a size it did not measure, and the agent's storage reading forwards an absence as an absence, with a test on that reading and on each provider that stops writing 0.
+
+### D106. The `node:https` request paths are tested under Bun only, while production runs them under Node
+
+Production starts the server with `node server.js` (the `CMD` of `Dockerfile`), while `bun run test` runs every test file as a `bun test` process of its own (`tests/run-tests.ts`).
+So the two `node:https` request paths, `request.ts` in `src/lib/db/providers/timeseries/prometheus/` and `nodeRequestJson` in `src/lib/db/providers/document/couchbase/http-transport.ts`, have their handshakes, refusals and error codes pinned against Bun's own implementation of `node:https` only.
+The two runtimes differ at exactly that surface: measured 2026-09-23 through the Prometheus request path, a server that demands a client certificate and receives none surfaces as `ECONNRESET` under bun 1.4.2, which that path classifies as a network failure, and as `ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED` under node v24.14.0, a TLS failure.
+The request test asserts only the refusal in that case, for that reason ("a client certificate reaches a server that asks for one" in `tests/unit/db/prometheus/request.test.ts`).
+#1085 ran its TLS path under Node once, by hand, before merge; nothing keeps that true afterwards.
+
+Found 2026-09-23 while writing the Prometheus TLS path (#1085, section 3.4).
+Not fixed in #1085: running part of the suite under Node is a runner and CI change for every provider with a TLS path.
+
+**Done when:** CI runs the `node:https` request tests of every provider that has one under Node as well as under Bun, and a test that depends on a runtime-specific error code says which runtime it expects.
+
+### D107. A listed Prometheus metric can be left out of the bulk column read, and nothing says so
+
+`describeObjects` in `src/lib/db/providers/timeseries/prometheus/objects.ts` describes the metrics one `/api/v1/series` read over the last hour returns, while `listObjects` names them from `/api/v1/label/__name__/values` over the same hour and `describeObject` reads one metric's columns from `/api/v1/labels`.
+On Prometheus 3.13.3 the head block answers both label reads with no per-series time filter: `headIndexReader.LabelValues` and `LabelNames` in `tsdb/head_read.go` check only that the window overlaps the head as a whole.
+The series read does filter, because `blockBaseSeriesSet.Next` in `tsdb/querier.go` skips a series with no chunk in the window.
+So a metric whose series all stopped sampling before the hour, while the head block still holds them, is listed and `describeObject` answers its columns, yet the bulk read leaves it out and reports no `truncated`.
+Both inventories then hold a listed metric with no columns and are not told why: `POST /api/db/objects/inventory`, whose details the app's schema read joins by path and fills with `columns: []` where one is missing (`detailedObjects` in `src/lib/db/detailed-object.ts`), and the agent's grounding walk, which does the same (`walkObjectInventory` in `src/lib/agent/tools.ts`).
+`assertObjectSurface` in `tests/helpers/object-surface-conformance.ts` refuses exactly this shape, an untruncated batch that leaves out an object `listObjects` named, and no test reaches it, because every series of the compose server is live.
+
+Found 2026-09-23 while writing the Prometheus object surface (#1085, section 4.2), from the upstream source at tag `v3.13.3`.
+Not fixed in #1085: each remedy costs the inventory's read, which every connection select sends, a second request or a heavier one, and the compose server cannot hold a series that has been quiet for an hour inside a test run, so no remedy could be measured there.
+
+**Done when:** over a head that holds a metric whose series stopped sampling before the window, the bulk read either describes that metric or marks the batch `truncated` with a sentence that says why, and a test holds that shape to `assertObjectSurface`.
+
+### D108. One redirected listing fails the whole Elasticsearch or OpenSearch object count
+
+`countObjects` in `src/lib/db/providers/sql/search/index.ts` reads the five kinds together and turns a failed listing into that kind's `unavailable` answer, but only for the transport's own error: anything that is not a `SearchTransportError` is rethrown (`:1189`).
+Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1531`), and that throws a `ConnectionError`, outside the class the count catches.
+So one listing a proxy redirects rejects the whole count with the redirect's message, where a refusal of the same listing marks only that kind and still counts the other four.
+
+Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` replaced and the pipeline listing answering a 302 and then, as the control, a 403, from the repository root:
+
+    bun -e '
+    import { ElasticsearchProvider } from "./src/lib/db/providers/sql/search/index.ts";
+    const answer = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+    const bodies = { "/_sql": { columns: [{ name: "1", type: "integer" }], rows: [[1]] }, "/_cat/indices": [], "/_alias": {}, "/_data_stream": { data_streams: [] }, "/_index_template": { index_templates: [] } };
+    for (const pass of ["redirect", "refusal"]) {
+      globalThis.fetch = async (url) => {
+        const { pathname } = new URL(url);
+        if (pathname in bodies) return answer(200, bodies[pathname]);
+        if (pathname !== "/_ingest/pipeline") throw new Error(`unexpected request ${pathname}`);
+        return pass === "redirect"
+          ? answer(302, {}, { location: "https://sso.example.test/login?next=%2F_ingest" })
+          : answer(403, { error: { type: "security_exception", reason: "no permissions" }, status: 403 });
+      };
+      const provider = new ElasticsearchProvider({ id: "es", name: "es", type: "elasticsearch", host: "127.0.0.1", port: 9200 });
+      await provider.connect();
+      await provider.countObjects([]).then((counts) => console.log(pass, JSON.stringify(counts)), (e) => console.log(pass, e.name, e.message));
+    }
+    '
+
+The first pass prints `redirect ConnectionError The server answered HTTP 302, a redirect to https://sso.example.test, and redirects are not followed`.
+The second prints `refusal` and the five counts, with the pipeline kind `unavailable` and the other four counted.
+
+Found 2026-09-23 while writing the Prometheus object surface (#1085, section 4.3), whose count reports a redirect refusal on the kind whose listing met it.
+Not fixed in #1085: the maintainer's decision for that PR is that it touches no other provider.
+
+**Done when:** a redirected listing marks only its own kind `unavailable`, with the redirect's sentence, while the other kinds still count, and a test drives `countObjects` over a 302 on one listing with a 403 on the same listing as its control.
+
+### D109. A Couchbase answer whose body cannot be read escapes the transport's error mapping, a refused redirect included
+
+`fetchJson` in `src/lib/db/providers/document/couchbase/http-transport.ts`, the plaintext path, maps a failure of `fetch` itself to a `CouchbaseError` ("Couchbase request failed: ..."), but reads the body with `const text = await response.text()` after that `try`, and only then asks `rejectRedirect` about the status.
+So a body that cannot be read, because the connection was reset after the status line, rejects with the runtime's own error, which is neither a `CouchbaseError` nor, for a 3xx, the redirect refusal.
+96207f17 (#1086) moved that read ahead of `rejectRedirect` to drain a refused redirect's body, which is how a redirect whose body fails came to lose its refusal; a 200 whose body fails escaped the same way before it.
+The provider then holds an unclassified `TypeError`: `mapDatabaseError` in `src/lib/db/errors.ts` answers a bare `DatabaseError` carrying the runtime's message, and through `connect()` it becomes a `ConnectionError` without the redirect sentence.
+`hrana-transport.ts` in `src/lib/db/providers/sql/libsql/` has the same shape by reading, `const text = await response.text()` after the `try` that maps a `fetch` failure to a `LibSQLTransportError`; not measured.
+The Prometheus request path reads its body inside a mapping of its own and releases a refused redirect's body unread (`sendPlain` in `src/lib/db/providers/timeseries/prometheus/request.ts`).
+
+Measured 2026-09-23 on bun 1.4.2 against a loopback server that answers `302` with a `Content-Length` it never sends and then resets the connection: 200 of 200 requests through `CouchbaseHttpTransport.manage` rejected with `TypeError: The socket connection was closed unexpectedly.`, Bun's sentence for the reset.
+The controls are the same server answering the 302 whole, which gives the redirect refusal (`ConnectionError: The server answered HTTP 302, a redirect to https://sso.example.test, and redirects are not followed`), and one resetting before any answer, which gives `CouchbaseError: Couchbase request failed: ...`.
+From the repository root, one request per case:
+
+    bun -e '
+    import { createServer } from "node:net";
+    import { CouchbaseHttpTransport } from "./src/lib/db/providers/document/couchbase/http-transport.ts";
+    for (const mode of ["302 then reset", "302 whole", "reset first"]) {
+      const server = createServer((socket) => socket.once("data", () => {
+        if (mode === "reset first") return void socket.destroy();
+        const head = `HTTP/1.1 302 Found\r\nLocation: https://sso.example.test/login\r\nContent-Length: ${mode === "302 whole" ? 2 : 4096}\r\n\r\n`;
+        socket.write(head, () => (mode === "302 whole" ? socket.end("{}") : socket.destroy()));
+      }));
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const transport = new CouchbaseHttpTransport({ id: "c", name: "c", type: "couchbase", host: "127.0.0.1", port: server.address().port, user: "u", password: "p" });
+      await transport.manage("/pools").then(() => console.log(mode, "answered"), (e) => console.log(`${mode}: ${e.constructor.name}: ${e.message}`));
+      server.close();
+    }
+    '
+
+Found 2026-09-23 while writing the Prometheus request path (#1085, section 3.4), whose release of a refused redirect's body lost the refusal to the same reset, as a raw `TypeError`, until that release stopped rethrowing the runtime's error.
+Not fixed in #1085: the maintainer's decision for that PR is that it touches no other provider.
+
+**Done when:** a Couchbase or libSQL answer whose body cannot be read fails as that transport's own error, a 3xx is refused by `rejectRedirect` whether or not its body arrives, and a test drives each transport against a local server that answers a 302 and resets, with the whole 302 and a reset before any answer as its controls.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -2243,6 +2384,103 @@ object tree. The right-hand slot reads `NULLABLE`.
 driven off what the provider publishes rather than off the shape of the string and without branching
 on a database type id in a component, and the tree slot and the flat explorer's column list take the
 same answer from one place.
+
+### U36. The connection dialog picks field labels by testing the type id, beside a declaration that does the same job
+
+`src/components/ConnectionModal.tsx` tests the type id in five booleans.
+Four of them (`isCouchbase`, `isTrino`, `isCassandra`, `isLibSQL`) choose `passwordFieldLabel`, `databaseFieldLabel`, `databaseFieldPlaceholder`, `connectionUriPlaceholder` and four hint paragraphs; `isMongoDB` and `isCassandra` also gate the `authSource` and `localDataCenter` field blocks, which `takesConnectionField` could decide because `connectionFields` in `src/lib/db-ui-config.ts` declares both.
+Since the Prometheus provider (#1085, section 3.3), `DatabaseUIConfig` carries optional `fieldLabels` and `fieldHints`, read through `connectionFieldLabel` and `connectionFieldHint` before those fallbacks, and only the `prometheus` entry declares them.
+So the same fact now has two mechanisms, and a sixth engine that follows the older one extends a chain the component should not own.
+
+Found 2026-09-23 while adding the declaration for #1085.
+Not fixed in #1085, on purpose: moving the older engines onto the declaration changes what five dialogs render, and each has its own E2E or component assertions that would move with it.
+
+**Done when:** no label, placeholder or hint in the dialog is chosen by a type-id boolean, each comes from `DatabaseUIConfig`, and the existing assertions for Couchbase, Trino, Cassandra, MongoDB and libSQL pass unchanged.
+
+### U37. Monaco's bundled `redis` language shadows the Redis tokenizer this repository registers
+
+`registerRedisLanguage` in `src/lib/editor/redis-language.ts` returns before it registers anything when `monaco.languages.getLanguages()` already lists the `redis` id, which is how it stays idempotent across editor mounts.
+The installed Monaco bundle registers that id itself at load time: `node_modules/monaco-editor/min/vs/basic-languages/monaco.contribution.js` registers `id:"redis"`, and `tests/isolated/monaco-language-ids.test.ts` asserts `redis` among the bundle's basic language ids.
+So in the browser the early return always fires, and a Redis tab is tokenized by Monaco's bundled Redis grammar, never by `REDIS_KEYWORDS` and the rules that file and its tests describe.
+Read from the bundle, not yet seen in a browser.
+
+Found 2026-09-23 while writing `registerPromqlLanguage` on the `redis-language.ts` template for #1085 (section 3.2); the template works for PromQL only because the bundle ships no `promql` id.
+Not fixed in #1085: registering Redis differently changes how every Redis tab is highlighted, which is not that PR's to change.
+
+`grep -rn 'getLanguages().some' src/lib/editor/redis-language.ts` returns exactly one hit, that early return, and the bundle's own registration of the id is what `tests/isolated/monaco-language-ids.test.ts` asserts.
+
+**Done when:** a Redis tab in the browser is tokenized by this repository's rules, through an id the bundle does not ship or by replacing the bundled tokenizer on purpose, with a test that fails while the bundled `redis` registration wins.
+
+### U38. The mobile header offers Import Data on every connection
+
+`src/components/studio/StudioMobileHeader.tsx` renders the Import Data item with `onClick={onImport}`, disabled only while no connection is active, and `src/components/Studio.tsx` hands it `onImport` unconditionally.
+The desktop toolbar withholds the same action off SQL: `src/components/studio/QueryToolbar.tsx` draws its Import control only when `metadata?.capabilities.queryLanguage === "sql"`.
+`src/components/DataImportModal.tsx` writes `CREATE TABLE` and `INSERT INTO` text and hands it to its `onImport`, which `src/components/Studio.tsx` wires to `executeQuery`, so on a phone a MongoDB, Redis, LibreDB or Prometheus connection can open the dialog and send SQL text to an engine that speaks none.
+Read from the code, not measured on a device: the engine is expected to answer with a parse error and write nothing.
+
+Found 2026-09-23 while classifying the shared surfaces for the Prometheus provider (#1085, section 3.2).
+Not fixed in #1085: the mobile gate is shared by every engine, and aligning it changes a menu every connection renders.
+
+**Done when:** the mobile header offers Import Data exactly where the desktop toolbar does, both read one capability rule, and a component test pins it for a SQL and a non-SQL connection.
+
+### U39. The tab manager writes SQL for a row whose engine it does not know yet
+
+`handleTableClick` and `handleGenerateSelect` in `src/hooks/use-tab-manager.ts` generate the statement through `generateTableQuery` and `generateSelectQuery` once the provider metadata has arrived, and otherwise write `SELECT * FROM <path>;` and a `SELECT ... LIMIT 100;` draft.
+A statement written without capabilities cannot know the engine's language, so that fallback is SQL on every engine, MongoDB, Redis, LibreDB and Prometheus included.
+The tree's click path, `onObjectClick` in `src/components/Studio.tsx`, returns while the metadata is null, but `onTableClick`, which the mobile explorer calls, has no such guard.
+Reachability is unmeasured: the schema read fetches `/api/db/provider-meta` for itself before it lists anything (`src/hooks/use-connection-manager.ts`), so whether a phone can tap a row while the tab manager's metadata is still null was not measured; if it can, a non-SQL engine is sent SQL text.
+
+Found 2026-09-23 while classifying the shared surfaces for #1085 (section 3.2).
+Not fixed in #1085: the remedy is a guard or a refusal the whole shell shares, not a Prometheus arm.
+
+**Done when:** no path writes a statement for a connection whose capabilities are unknown, the click waiting for them or refusing without them, with a test on the mobile path that taps a row before the metadata resolves.
+
+### U40. Generate Test Data is withheld on MongoDB, whose insertMany output the generator writes and the provider runs
+
+Both row menus offer Generate Test Data only where the row's kind declares `acceptsRowWrites` and the engine declares `supportsInlineRowEdit`: the desktop tree in `src/components/object-tree/row-actions.ts`, and since #1085 (decision D-M) the mobile menu in `src/components/schema-explorer/TableItem.tsx` by the same rule.
+MongoDB's `collection` kind declares `acceptsRowWrites: true` while the engine declares `supportsInlineRowEdit: false`, so neither menu offers the item there.
+Yet `src/components/TestDataGenerator.tsx` builds an `insertMany` command for a JSON connection, and the MongoDB provider runs `insertMany`, so the generator works where the gate withholds it.
+`README.md` and its five translations promise "INSERT statements or MongoDB insertMany JSON" in the Test Data Generator bullet, output no menu now reaches.
+Probably the same on ClickHouse and Trino, not measured: the generator writes one multi-row `INSERT ... VALUES`, `docs/providers/clickhouse.md` records a successful `INSERT`, and both engines declare `supportsInlineRowEdit: false`.
+
+Found 2026-09-23 while aligning the mobile gate with the desktop one for #1085 (section 3.2).
+Not fixed in #1085: the maintainer kept the desktop rule as it is for that PR (2026-09-23), and widening it is a product decision of its own.
+
+**Done when:** either Generate Test Data is offered wherever the row's kind accepts row writes and the generator's output runs, through a gate that says so rather than through `supportsInlineRowEdit`, which describes the grid editor, with a MongoDB test on both menus, or the README bullets stop promising insertMany output.
+
+### U41. The LibreDB provider's comment on `tablesAreDerivedGroupings` names one reader of the flag where there are six
+
+The comment beside `tablesAreDerivedGroupings: true` in `src/lib/db/providers/embedded/libredb.ts` makes two claims the code no longer bears out.
+It calls the Profile item in `src/components/object-tree/row-actions.ts` the flag's "only remaining reader", while six places read it: `src/components/admin/tabs/OperationsTab.tsx`, `src/components/object-tree/row-actions.ts`, `src/components/schema-explorer/TableItem.tsx`, `src/lib/agent/context-snapshot.ts`, `src/lib/agent/investigation.ts` and `src/lib/agent/tools.ts`.
+It says `/api/db/profile` branches on `queryLanguage === "sql"` for this provider, while since #1085 the route refuses a JSON language with a dialect of its own before that branch, through `offersColumnProfiling`.
+Its conclusion stays true: Profile cannot work on any kind of this provider.
+
+Found 2026-09-23 while gating Profile for #1085 (section 3.2), whose isolation rule keeps that PR from editing any provider file but its own.
+X13 already names this site in its **Done when**, so the change that settles X13 rewrites the comment too.
+
+**Done when:** the comment names the flag's readers as the code has them, or names none, and says how the profile route refuses this provider today.
+
+### U42. The export menu says it writes every row of a result a provider cut at its own bound
+
+`describeExportScope` in `src/lib/export/scope.ts` words the export menu's summary from one condition: the grid can fetch a next page (the `pageOfferFor` answer `src/components/studio/BottomPanel.tsx` passes in) and the route's `pagination.hasMore` is true.
+Only then does it say "Writes the N rows loaded here." with its shortfall sentence; otherwise it says "Writes all N rows.", and it never reads `pagination.wasLimited`.
+A result a provider cut at its own bound meets neither half: since #1085 (section 5.4) `POST /api/db/query` keeps the Prometheus provider's `wasLimited: true` for a vector cut at the series cap, with `hasMore` false, and the engine cannot page, so no page is offered.
+So the stats strip shows "limited", which says rows beyond the bound were not fetched, while the export menu over the same result says every row is in the file.
+
+Measured 2026-09-23 end to end: the Prometheus provider's own `query`, over an injected `send` answering 501 series, returned 500 rows with its series notice; the route's rule gave `pagination` `{ hasMore: false, wasLimited: true }` and `pageOfferFor` no offer, and `describeExportScope` answered "Writes all 500 rows." with no shortfall.
+The control, 500 series with nothing cut, answers the same sentence, so the menu cannot tell a cut result from a whole one.
+The two shapes alone, from the repository root:
+
+    bun -e 'import { describeExportScope } from "./src/lib/export/scope"; const rows = Array.from({ length: 500 }, () => ({})); console.log(describeExportScope({ rows, pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 500, wasLimited: true } }, false).summary); console.log(describeExportScope({ rows }, false).summary);'
+
+Both lines print `Writes all 500 rows.`.
+The same sentence is written for an engine that cannot page over a preview that filled its bound: "an engine that cannot page is not asked to load more first" in `tests/unit/lib/export/scope.test.ts` expects "Writes all 50 rows." for a preview whose `hasMore` is true, where that test's subject is the shortfall's instruction to load more, which rightly stays absent there.
+X2 is the other half of the same problem, an export that writes the whole result rather than the page the grid holds.
+
+Found 2026-09-23 while making the query route keep a provider-reported `wasLimited` for #1085 (section 5.4).
+Not fixed in #1085: the export dialog is shared by every engine, and that PR changes only how the route reports the bound.
+
+**Done when:** the summary says "all" only for a result nothing cut, a result whose `pagination.wasLimited` is true reads as the rows loaded here without an instruction to load more where no page can be fetched, and tests pin a result a provider cut, a bounded preview on an engine that cannot page, and a complete result.
 
 ## Dependencies
 
@@ -3509,3 +3747,29 @@ have to re-acquire them". The state exists; the release-and-re-acquire half does
 **Done when:** a paused run releases its budget and artifacts (and closes its stream) while it stays
 paused, and a resumed run re-acquires them — or the decision is recorded that pause deliberately
 retains them, with the resource bound that makes that safe.
+
+### B84. On a large Prometheus server, plan mode grounds metrics and nothing else
+
+The grounding walk, `walkObjectInventory` in `src/lib/agent/tools.ts`, describes each folder with `describeObjects(container, spec.id, listed.length)` (`:2581`), keeps the batch's `truncated` (`:2586`), and ends the whole walk at the first truncated batch (`:2610`, `:2612`).
+The Prometheus provider (#1085) declares its six kinds with metrics first, the order the tree draws its folders in, and its metric batch is truncated on any server with more than `METRIC_LIST_CAP` metric names, because its one series read then names more metrics than the capped listing holds, or with more than `DESCRIBE_SERIES_CAP` series in the hour (`src/lib/db/providers/timeseries/prometheus/objects.ts`).
+So on such a server a plan run's inventory holds metrics and no rule group, rule, scrape pool or target, and a question about alerts or scrape health is drafted over an inventory that lacks what it asks about.
+The inventory's `truncated` does tell the run that the reading is incomplete; what the run cannot reach is the rest.
+The compose `prometheus` service, a self-scrape far below both caps, cannot show it, so this is filed from the code rather than from a live run.
+
+Not fixed in #1085: each remedy moves something else, because a per-kind share of the object budget changes every engine that grounds through its provider, declaring metrics last changes the tree's folder order, and a batch that hid its bound would present a partial column list as complete (#1085, section 4.2).
+
+**Done when:** a plan run against a Prometheus server past either cap holds its rule groups, rules, scrape pools and targets, with a test that drives the grounding walk over a provider whose first kind's batch is truncated and asserts that the later kinds are still read.
+
+### B85. The least-privilege `agentUser` never reaches an agent run
+
+`docs/AGENT.md` says every agent acquisition opens with "the same optional least-privilege `agentUser`", and `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` opens a profile as `agentUser` whenever a connection carries it with `agentPassword` (#328).
+No run's connection can carry the pair.
+A run opens on a `seed:` id only: `POST /api/agent/runs` refuses an inline connection (`src/app/api/agent/runs/route.ts:283`), and the run route, the drive in `src/lib/agent/runtime.ts` and the hand-over route `src/app/api/agent/runs/[runId]/handover/route.ts` resolve the id through `resolveConnection` in `src/lib/seed/resolve-connection.ts`, which refuses an id outside that namespace.
+`SeedConnectionSchema` in `src/lib/seed/types.ts` declares neither field, and zod strips an unknown key without an error, so a seed file that sets both parses and loses them.
+A browser copy of the seed that carries its own pair no longer resolves to the seed, because `src/hooks/use-connection-payload.ts` classifies both fields as `resolution`, so that copy is browser-only and no run starts on it.
+So an agent runs as a least-privileged role only where the seed's own `user` is that role, which is the only way the dvdrental run of `docs/AGENT_DEMO.md` can read as `libredb_agent`.
+
+Found 2026-09-23 while classifying the agent surfaces the Prometheus provider reaches (#1085, section 3.2).
+Not fixed in #1085: a seed field for the pair changes the operator's seed contract for every engine, and its password needs the `${vault:...}` resolution `password` has (`RESOLVABLE_FIELDS` in `src/lib/seed/credential-resolver.ts`), neither of which that PR touches.
+
+**Done when:** a seed can declare `agentUser` and `agentPassword`, the password resolves as `password` does, a run on that seed opens its execution profiles as `agentUser`, and a test drives a run's acquisition from such a seed.

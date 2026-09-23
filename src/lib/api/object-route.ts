@@ -497,7 +497,7 @@ export function requireSourceReader(
  *
  * The route ENFORCES rather than trusts, which is the shipped precedent and not a new rule: the
  * inventory route applies its own two bounds on top of the bound it hands `describeObjects`. The
- * callers behind this one are the sixteen providers that implement `readObjectSource`, and the
+ * callers behind this one are the providers that implement `readObjectSource`, and the
  * route materialises the whole answer and serialises it in one `NextResponse.json`, so this is the
  * one place a memory bound can actually be held. A number merely PASSED to an implementation is a
  * request, not a bound.

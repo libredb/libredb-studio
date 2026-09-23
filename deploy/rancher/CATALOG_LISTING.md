@@ -15,24 +15,25 @@ The import takes the page title from `appVersion` and the chart version from `ve
 Edits here do not propagate automatically — SUSE owns the page, so any change has to be mailed to the partner contact.
 What gets mailed is `pcsc-listing.html` beside this file, not the sections below: the page template holds at most 1494 characters including the list markup, and `tests/unit/pcsc-listing.test.ts` keeps that file under it.
 
-> **Accuracy gate — engine count.** The wording below says sixteen engines. That is true only
-> from the release that carries **DuckDB** ([#424](https://github.com/libredb/libredb-studio/issues/424)),
-> which followed libSQL; fourteen was true from **0.13.0** onwards, the release that carried
+> **Accuracy gate — engine count.** The wording below says seventeen engines. That is true only
+> from the release that carries **Prometheus** ([#1085](https://github.com/libredb/libredb-studio/issues/1085)),
+> which followed DuckDB; sixteen was true from the release that carried **DuckDB**
+> ([#424](https://github.com/libredb/libredb-studio/issues/424)), which followed libSQL, and fourteen from **0.13.0** onwards, the release that carried
 > Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra alongside the ten of 0.11.0.
 > The number is the `SHIPPED` record in
 > `src/lib/db/compatibility.ts` minus the embedded `libredb`, which `EXTERNAL` in the same
 > file already splits out; read it from there rather than from this file. The catalog entry
-> is version-scoped, so do not publish the sixteen-engine wording against a version that
-> predates DuckDB — send the fourteen-engine variant (0.13.0 onwards), the ten-engine one
+> is version-scoped, so do not publish the seventeen-engine wording against a version that
+> predates Prometheus — send the sixteen-engine variant (the DuckDB release onwards), the fourteen-engine one (0.13.0 onwards), the ten-engine one
 > (0.11.0 onwards) or the eight-engine one instead.
 >
-> **The scope goes with the count.** Browsing and querying reach all sixteen; editing data does
+> **The scope goes with the count.** Browsing and querying reach all seventeen; editing data does
 > not, so "manage data across …" must never be written over the whole list. Read the split from
 > the providers: `supportsInlineRowEdit` and `supportsCreateTable` default to `true` in
 > `src/lib/db/base-provider.ts` and each provider that cannot turns them off, which leaves inline
 > row editing on PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL and DuckDB, and table
 > creation on those seven plus Apache Trino. Every other engine — Cassandra, ClickHouse, Couchbase, Druid,
-> Elasticsearch, MongoDB, OpenSearch and Redis — reports those controls as unsupported. The
+> Elasticsearch, MongoDB, OpenSearch, Prometheus and Redis — reports those controls as unsupported. The
 > reason differs per engine and the copy must not flatten it: on Elasticsearch no mutation is in
 > the SQL grammar at all, while OpenSearch's grammar carries exactly one — `DELETE`, off by
 > default on the cluster (`docs/providers/opensearch.md` §5.6, and `SEARCH_SCHEMA_REFRESH_PATTERN`
@@ -83,8 +84,9 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > `operator/helm-charts/libredb-studio/` by hand, or the sync guard fails the required check.
 >
 > What *is* release-coupled is every marketplace description that spells the count:
-> `deploy/azure`, `deploy/railway` and `deploy/caprover` all say sixteen as of the DuckDB
-> release - and all three were still on fourteen when it landed, a full engine behind, because
+> `deploy/azure`, `deploy/railway` and `deploy/caprover` all say seventeen as of the Prometheus
+> release (#1085).
+> At the DuckDB release they said sixteen - and all three were still on fourteen when it landed, a full engine behind, because
 > libSQL had moved the code and not them. `deploy/railway/template.json` and
 > `deploy/caprover/libredb-studio.yml` were on thirteen once for the same reason: each channel
 > spells the count in a second file nobody reads while editing the first. Each of these
@@ -96,7 +98,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > day the next engine lands (issue #445) - but their exhaustive descriptions still name every
 > engine, and so does `desktop/src-tauri/tauri.conf.json`.
 > `packaging/linux/nfpm.yaml` and the operator CSVs are consumed at release time from `main`,
-> so they name sixteen now and the next tag publishes it.
+> so they name seventeen now and the next tag publishes it.
 
 ## Listing facts
 

@@ -79,7 +79,7 @@ export const SeedConnectionSchema = z
     instanceName: z.string().optional(),
     // Cassandra only, and REQUIRED by that driver rather than optional to it: a seeded
     // Cassandra connection without it cannot open at all. Optional here because the
-    // other thirteen type-ids have no use for the field; the provider is what refuses a
+    // other type-ids have no use for the field; the provider is what refuses a
     // connection that omits it.
     localDataCenter: z.string().optional(),
     // MongoDB only: the database its credentials live in (`admin` in the ordinary

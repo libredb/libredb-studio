@@ -5,13 +5,13 @@
  * all, on every engine, and the decision is per KIND rather than per role: five `config` kinds in
  * the fleet have columns and at least one `relation`-shaped `sequence` has none, which is the
  * measurement that put the fact on the provider instead of in a rule above it. A claim that
- * spreads across sixteen provider files that way is a claim about the BUILD, so it is measured
+ * spreads across the provider files that way is a claim about the BUILD, so it is measured
  * here by building every provider through the REAL `createDatabaseProvider` and reading what each
  * one actually declares.
  *
  * THE TWO HALVES ARE INDEPENDENT OR THIS FILE CERTIFIES NOTHING. `EXPECTED_COLUMN_KINDS` below is
  * transcribed from the design's per-engine declaration table and was committed in wave 1, BEFORE
- * any provider declared anything: at that commit every one of the seventeen rows is red, and that
+ * any provider declared anything: at that commit every row is red, and that
  * red is the deliverable. The measurement comes from the build. A census that derived its
  * expectation from the build would agree with any declaration whatsoever. When the two disagree,
  * exactly one of them is wrong, and the repair is to the DECLARATION or to the design's table,
@@ -190,7 +190,7 @@ describe("the fleet census of object column declarations", () => {
     expect(CENSUS_TYPES).toHaveLength(18);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, and the design's
-    // table has no such row: every one of the eighteen engines has at least one kind with columns.
+    // table has no such row: every engine has at least one kind with columns.
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
     expect(empty).toEqual([]);
   });
@@ -239,10 +239,10 @@ describe("the fleet census of object column declarations", () => {
     }
     const expected: Record<string, readonly string[]> = {};
     for (const type of CENSUS_TYPES) expected[type] = [...EXPECTED_COLUMN_KINDS[type]].sort();
-    // ALL SEVENTEEN ROWS IN ONE DIFF, on purpose. Seventeen separate tests would report the same
+    // EVERY ROW IN ONE DIFF, on purpose. One test per row would report the same
     // facts, and a per-type comparison inside a loop would die on the first engine and say nothing
-    // about the other sixteen. A reader of the red needs the whole fleet's state at once, because
-    // the wave that repairs it is sixteen people working in parallel on one file each.
+    // about the rest. A reader of the red needs the whole fleet's state at once, because
+    // the wave that repairs it is one person per provider file, all working in parallel.
     expect(measured).toEqual(expected);
   });
 

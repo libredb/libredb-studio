@@ -16,7 +16,7 @@ column order or uniqueness replace its old definition; a uniqueness change can f
 data violates the new constraint. Identifier quoting escapes delimiters;
 line breaks in informational comments are flattened so metadata cannot start a SQL statement.
 
-MongoDB, Redis, LibreDB, Couchbase, Druid, Elasticsearch and OpenSearch receive an explanatory
+MongoDB, Redis, LibreDB, Couchbase, Druid, Elasticsearch, OpenSearch and Prometheus receive an explanatory
 comment instead of relational table DDL. Trino and ClickHouse refuse foreign-key clauses;
 Trino refuses primary keys too. Trino has no index grammar, and the diff does not retain enough
 ClickHouse index metadata to distinguish and recreate its index kinds, so those index changes

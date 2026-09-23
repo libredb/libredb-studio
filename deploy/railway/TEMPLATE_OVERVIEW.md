@@ -1,6 +1,6 @@
 # Deploy and Host libredb-studio on Railway
 
-LibreDB Studio is an open-source, web-based SQL IDE for cloud-native teams. Query PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra from your browser — with an ERD viewer, schema diff, a data profiler, and optional AI on your own model key: a read-only agent that investigates a question and cites the result each claim came from, plus one-click explanation of a query on the engines that return an `EXPLAIN` plan. No desktop client required.
+LibreDB Studio is an open-source, web-based SQL IDE for cloud-native teams. Query PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and Prometheus from your browser — with an ERD viewer, schema diff, a data profiler, and optional AI on your own model key: a read-only agent that investigates a question and cites the result each claim came from, plus one-click explanation of a query on the engines that return an `EXPLAIN` plan. No desktop client required.
 
 ## About Hosting libredb-studio
 
@@ -16,7 +16,7 @@ Hosting LibreDB Studio means running a single stateless Next.js container that s
 
 ## Dependencies for libredb-studio Hosting
 
-- A database to connect to — any of the sixteen engines above (bring your own, or add a Railway database to the project).
+- A database to connect to — any of the seventeen engines above (bring your own, or add a Railway database to the project).
 - A persistent volume mounted at `/app/data` for the SQLite-backed store of saved connections and settings (included in this template).
 
 ### Deployment Dependencies

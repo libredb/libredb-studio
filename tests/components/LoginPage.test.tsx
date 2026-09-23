@@ -393,8 +393,8 @@ describe("LoginPage showcase (issue #425)", () => {
   });
 
   test("counts external engines in the claim, never the embedded provider", () => {
-    // The number this page publishes is the one README.md publishes - fourteen drivers
-    // reaching forty named engines - and the embedded store is in neither half of that
+    // The number this page publishes is the one README.md publishes - the external drivers
+    // and the named engines they reach - and the embedded store is in neither half of that
     // arithmetic. Both counts are interpolated from the registry, so reverting the claim to
     // the showcase length (which includes libredb) fails the second assertion.
     // Matched with a tolerant regex rather than a substring: the desktop figure puts the

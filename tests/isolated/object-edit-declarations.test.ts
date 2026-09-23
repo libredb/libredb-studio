@@ -1,8 +1,8 @@
 /**
  * The fleet census of object EDIT declarations (#789 Phase 3).
  *
- * WHY THIS FILE EXISTS. Phase 3 makes four (type-id, kind) pairs editable and leaves fourteen
- * type-ids declaring nothing, and both halves are claims about the BUILD. The expectation they
+ * WHY THIS FILE EXISTS. Phase 3 makes four (type-id, kind) pairs editable and leaves every other
+ * type-id declaring nothing, and both halves are claims about the BUILD. The expectation they
  * are measured against is `tests/helpers/object-edit-expectation.ts`, committed in wave 1 before
  * any provider declared anything and transcribed from the design's day-one table. It was never
  * derived from a declaration, and that independence is the whole value of a census: one that
@@ -22,9 +22,9 @@
  * import. It used to be imported from the source census itself, which works and costs the run
  * that census twice: importing a TEST file registers its suite in this process too, so
  * `bun test ./tests/isolated/object-edit-declarations.test.ts` reported fifteen tests where this
- * file declares six, each of the nine strays building all seventeen providers a second time.
+ * file declares six, each of the nine strays building every provider a second time.
  * Under one bun process per test file that double count is in every run. Copying the record
- * instead was the other option and it is the worse one: a second seventeen-row
+ * instead was the other option and it is the worse one: a second per-type-id
  * `Record<DatabaseType, DatabaseConnection>` goes stale the first time an engine's port moves in
  * only one of them, and the record exists so a new member of the union is a compile error rather
  * than a missing row, which two records defeat exactly.
@@ -107,7 +107,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 
 /**
  * A markdown HEADING line whose text ends in `Object edit (#789)`, at any level and with any
- * trailing clause after it, which two of the fourteen carry (`druid.md` and `libredb.md` both
+ * trailing clause after it, which two of the abstainers carry (`druid.md` and `libredb.md` both
  * continue the heading with "nothing to write"). Anchored to `^#` so a mention of the phrase in a
  * paragraph, or in a link, cannot satisfy the guard.
  */
@@ -146,7 +146,7 @@ describe("the fleet census of object edit declarations", () => {
     if (declaring.length + abstaining.length === 0) {
       throw new Error("the abstainer census read 0 type-ids, so it certifies nothing about the fleet");
     }
-    // A biconditional is satisfied by a population holding only one side of it, so the fourteen
+    // A biconditional is satisfied by a population holding only one side of it, so the abstainers
     // are asserted as their own committed list and the three declaring ids are asserted beside
     // them. A run that reached no abstainer would certify nothing about the absence half.
     expect(abstaining.sort()).toEqual([...EXPECTED_EDIT_ABSTAINERS].map(String).sort());
@@ -217,10 +217,10 @@ describe("the fleet census of object edit declarations", () => {
   });
 
   test("every abstainer's provider doc carries the Object edit (#789) section naming its absence", () => {
-    // WHY THIS IS A TEST AND NOT PROSE. Each of the fourteen abstainer sections ends by saying
+    // WHY THIS IS A TEST AND NOT PROSE. Each abstainer section ends by saying
     // that THIS FILE is what holds that absence and that section together. Without this guard
     // that sentence was false in one direction: the census pinned the DECLARATION half only, so a
-    // seventeenth external engine landing as an abstainer would grow
+    // new external engine landing as an abstainer would grow
     // `EXPECTED_EDIT_ABSTAINERS`, pass the census with its new id, and ship with no section
     // written anywhere, and nothing in this repository would go red. The population this iterates
     // is the committed abstainer list, which is the same list the census above compares the
@@ -230,7 +230,7 @@ describe("the fleet census of object edit declarations", () => {
     // truth value a test can read. What it does buy is that a new absence cannot be shipped
     // silent.
     if (EXPECTED_EDIT_ABSTAINERS.length === 0) {
-      throw new Error("the doc-section guard read 0 abstainers, so it certifies nothing about the fourteen sections");
+      throw new Error("the doc-section guard read 0 abstainers, so it certifies nothing about the abstainer sections");
     }
     const missing: string[] = [];
     for (const type of EXPECTED_EDIT_ABSTAINERS) {
