@@ -61,6 +61,21 @@ import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ * LibreDB's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the only path this engine accepts is the declared depth, which here
+ * is the empty one, so any segment at all is a caller holding another engine's model.
+ */
+const LIBREDB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "libredb",
+  label: "A LibreDB",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
 
 // ============================================================================
 // Lazy package loader (mirrors sqlite.ts loading bun:sqlite)
@@ -309,10 +324,7 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * database holding nothing.
  */
 function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
-  const levels = declaredLevels(capabilities);
-  if (container.length === levels.length) return;
-  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
-  throw new QueryError(`A LibreDB container path is ${shape}, received ${JSON.stringify(container)}`, "libredb");
+  assertContainerPathShape(capabilities, container, LIBREDB_CONTAINER_PATH_ENGINE);
 }
 
 /** One enumerated object, with the two things `describeObject` needs to describe it. */

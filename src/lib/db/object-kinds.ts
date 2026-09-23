@@ -109,6 +109,102 @@ export function assertObjectPathShape(
 }
 
 /**
+ * The engine half of `assertContainerPathShape`: the identity its error carries, and the
+ * three things the fifteen hoisted copies disagreed on.
+ */
+export type ContainerPathShapeEngine = {
+  /** The engine code the thrown `QueryError` is stamped with. */
+  code: DatabaseType;
+  /** The message's opening subject, article included: "A MySQL", "An Oracle". */
+  label: string;
+  /**
+   * Which path depths this engine accepts. `exact` takes the declared depth and nothing
+   * else; `prefixes` takes every depth up to it, because a container that names only the
+   * outer levels is a real address on those engines (a bucket with no scope, a catalog
+   * with no schema). Both refuse a path longer than the declaration.
+   */
+  shapes: "exact" | "prefixes";
+  /**
+   * What the message prints in place of a shape list when the declaration carries no
+   * container level at all. The empty join would read as a formatting bug rather than as
+   * the fact it is, so each engine spells it in its own words.
+   */
+  emptyShapes: string;
+  /**
+   * Which field of a declared level spells the shape. `label` is the engine's own word for
+   * a person reading a refusal, which is what most engines print; `id` is what Trino and
+   * PostgreSQL print, because a declaration whose label is prose would otherwise describe
+   * a shape no read accepts, since every read binds its segment by `id`. On both engines'
+   * own declarations the two are the same word, so only a varied declaration shows it.
+   */
+  shapeNames: "id" | "label";
+  /**
+   * A level this engine's readers cannot work without, refused whether or not the depth
+   * matches. PostgreSQL's readers bind the segment by looking the level up, so a matching
+   * depth over a declaration that named no `schema` would bind `undefined` where `$1`
+   * belongs, which is the failure the check exists to prevent. Absent on every engine
+   * whose segments are read by position.
+   */
+  requireLevel?: ContainerLevelSpec["id"];
+};
+
+/**
+ * The path shapes a container is addressed by, spelled for a message: `[database]`,
+ * `[bucket] or [bucket, scope]`, or nothing at all for an engine that declares no level.
+ *
+ * An engine with no declared level accepts exactly one shape, the empty path, and prints
+ * `emptyShapes` rather than `[]` when a caller sends anything else.
+ */
+function containerShapeNames(
+  capabilities: ProviderCapabilities,
+  engine: ContainerPathShapeEngine,
+): readonly string[][] {
+  const names = declaredLevels(capabilities).map((level) =>
+    engine.shapeNames === "id" ? level.id : level.label.toLowerCase(),
+  );
+  // The two families differ on exactly one case, the declaration that names no level. An
+  // `exact` engine accepts the empty path there, because the depth it asks for is zero; a
+  // `prefixes` engine accepts nothing at all, since every prefix of an empty list is a
+  // shape it never declared, and the message says so in the engine's own words.
+  if (engine.shapes === "exact") return names.length === 0 ? [[]] : [names];
+  return names.map((_, index) => names.slice(0, index + 1));
+}
+
+function renderContainerShapes(shapes: readonly string[][], engine: ContainerPathShapeEngine): string {
+  if (shapes.length === 0 || shapes.every((shape) => shape.length === 0)) return engine.emptyShapes;
+  return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
+}
+
+/**
+ * Refuses a container path that is not one of the shapes the DECLARATION describes.
+ *
+ * Hoisted from fifteen provider-local copies (#1065): eleven threw on a depth mismatch and
+ * four carried their own `shapeList()`, and two of those four had already drifted. The
+ * depth comes from `containerDepth()` through `declaredLevels` and the segment names from
+ * the declared labels, so the check and its message are the same array and nothing here
+ * can inherit a hardcoded 1. An engine's own opening words, its accepted depths and its
+ * empty-declaration wording travel through the descriptor, because those differ by design.
+ *
+ * It raises rather than reading a segment and carrying on: `undefined` bound to a
+ * parameter answers an empty folder that looks exactly like a container holding nothing,
+ * and a path one segment too long would bind the object's own name as the missing level.
+ */
+export function assertContainerPathShape(
+  capabilities: ProviderCapabilities,
+  container: readonly string[],
+  engine: ContainerPathShapeEngine,
+): void {
+  const shapes = containerShapeNames(capabilities, engine);
+  const named =
+    engine.requireLevel === undefined || declaredLevels(capabilities).some((level) => level.id === engine.requireLevel);
+  if (named && shapes.some((shape) => shape.length === container.length)) return;
+  throw new QueryError(
+    `${engine.label} container path is ${renderContainerShapes(shapes, engine)}, received ${JSON.stringify(container)}`,
+    engine.code,
+  );
+}
+
+/**
  * Whether THIS KIND accepts a row write. Absent and undeclared both read as false.
  *
  * Deliberately NOT conjoined with the engine-wide `supportsInlineRowEdit`, and the name

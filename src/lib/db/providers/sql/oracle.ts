@@ -62,6 +62,21 @@ import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ *  Oracle's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the caller either names every declared level or is refused,
+ * because a partial path would leave a level unbound and answer an empty folder.
+ */
+const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "oracle",
+  label: "An Oracle",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
 
 // ============================================================================
 // SQL Statements
@@ -936,14 +951,7 @@ function notableStatus(status: string): { status?: string } {
  * `CREATE USER "app"` is legal, so upper-casing here would make that owner unreachable.
  */
 function containerOwner(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `An Oracle container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "oracle",
-    );
-  }
+  assertContainerPathShape(capabilities, container, ORACLE_CONTAINER_PATH_ENGINE);
   return ownerSegment(capabilities, container);
 }
 

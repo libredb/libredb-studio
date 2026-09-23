@@ -66,6 +66,21 @@ import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ * SQL Server's identity for the shared container-path renderer.
+ *
+ * `shapes: "prefixes"`: every depth up to the declaration is a real address here, because a
+ * caller may name only the outer levels. A path longer than the declaration is still refused.
+ */
+const MSSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mssql",
+  label: "A SQL Server",
+  shapeNames: "label",
+  shapes: "prefixes",
+  emptyShapes: "nothing: this declaration carries no container level",
+};
 
 /**
  * `SELECT ... ` with `TOP n` spliced in where T-SQL wants it, or `null` when this
@@ -1019,27 +1034,6 @@ function requiredSegment(
   return segment;
 }
 
-/**
- * The container paths this engine accepts, outermost first, as segment NAMES.
- *
- * Every prefix of the declared levels, which on a two-level engine means a database alone
- * or a database and a schema. Both are real containers here: the tree only ever draws
- * folders at the deepest level (`src/components/object-tree/flatten.ts`), but
- * `assertContainerDepth` in `src/lib/api/object-route.ts` admits any path down to the
- * declared depth and `assertObjectSurface` reads counts at the OUTER one, so a database
- * holding twelve tables across three schemas is a question with a true answer rather than
- * a caller mistake.
- *
- * The names in the message are the declared LABELS, which is the engine's own word for a
- * person reading a refusal; the code addresses the same segments by `ContainerLevelSpec.id`
- * through `containerSegments()`. The depth behind both is `containerDepth()`, so the check
- * and the sentence it raises cannot disagree.
- */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  return names.map((_, index) => names.slice(0, index + 1));
-}
-
 /** The shapes above, spelled for a message: `[database] or [database, schema]`. */
 function shapeList(shapes: readonly string[][]): string {
   return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
@@ -1056,13 +1050,7 @@ function containerTarget(
   capabilities: ProviderCapabilities,
   container: readonly string[],
 ): Partial<Record<ContainerLevelSpec["id"], string>> {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A SQL Server container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      "mssql",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MSSQL_CONTAINER_PATH_ENGINE);
   return containerSegments(capabilities, container);
 }
 

@@ -107,7 +107,28 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { assertObjectPathShape, containerDepth, type ObjectPathShapeEngine } from "@/lib/db/object-kinds";
+import {
+  assertContainerPathShape,
+  assertObjectPathShape,
+  containerDepth,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
+} from "@/lib/db/object-kinds";
+
+/**
+ * Couchbase's identity for the shared container-path renderer.
+ *
+ * `shapes: "prefixes"`: every depth up to the declaration is a real address here, because a
+ * caller may name only the outer levels. A path longer than the declaration is still refused.
+ */
+const COUCHBASE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "couchbase",
+  label: "A Couchbase",
+  shapeNames: "label",
+  shapes: "prefixes",
+  emptyShapes: "nothing: this declaration carries no container level",
+};
+
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
@@ -393,24 +414,6 @@ function requiredSegment(
   return segment;
 }
 
-/** Every prefix of the declared levels: a bucket alone, or a bucket and a scope. */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  return names.map((_, index) => names.slice(0, index + 1));
-}
-
-/**
- * The shapes above, spelled for a message: `[bucket] or [bucket, scope]`.
- *
- * A declaration carrying no container level has no shape at all, and the empty join would
- * print "a Couchbase container path is , received []", which reads as a formatting bug
- * rather than as the fact it is.
- */
-function shapeList(shapes: readonly string[][]): string {
-  if (shapes.length === 0) return "nothing: this declaration carries no container level";
-  return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
-}
-
 /**
  * What one container path addresses: the bucket to bind, and the scope to filter to.
  *
@@ -424,13 +427,7 @@ export interface ContainerRead {
 }
 
 export function containerRead(capabilities: ProviderCapabilities, container: readonly string[]): ContainerRead {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A Couchbase container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      "couchbase",
-    );
-  }
+  assertContainerPathShape(capabilities, container, COUCHBASE_CONTAINER_PATH_ENGINE);
   const segments = containerSegments(capabilities, container);
   return { bucket: requiredSegment(segments, "catalog"), scope: segments.schema };
 }

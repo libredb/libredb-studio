@@ -51,6 +51,21 @@ import type {
   ObjectSourceOrigin,
   ProviderCapabilities,
 } from "../../../types";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ * DuckDB's identity for the shared container-path renderer.
+ *
+ * `shapes: "prefixes"`: every depth up to the declaration is a real address here, because a
+ * caller may name only the outer levels. A path longer than the declaration is still refused.
+ */
+const DUCKDB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "duckdb",
+  label: "A DuckDB",
+  shapeNames: "label",
+  shapes: "prefixes",
+  emptyShapes: "nothing: this declaration carries no container level",
+};
 
 // ============================================================================
 // The macro vocabulary, derived from the ENGINE
@@ -757,26 +772,6 @@ function requiredSegment(
 }
 
 /**
- * The container paths this engine accepts, outermost first, as segment NAMES.
- *
- * Every prefix of the declared levels, which at two levels means a catalog alone or a
- * catalog and a schema. Both are real containers: the tree only draws folders at the
- * deepest level (`src/components/object-tree/flatten.ts`), but `assertContainerDepth` in
- * `src/lib/api/object-route.ts` admits any path down to the declared depth and
- * `tests/helpers/object-surface-conformance.ts` reads counts at the OUTER one, so "how
- * many tables does this whole catalog hold" is a question with a true answer rather than
- * a caller mistake. SQL Server answered the same way for the same reason.
- *
- * The names in the message are the declared LABELS, the engine's own word for a person
- * reading a refusal; the code addresses the same segments by `ContainerLevelSpec.id`. The
- * depth behind both is `containerDepth()`, so the check and the sentence cannot disagree.
- */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  return names.map((_, index) => names.slice(0, index + 1));
-}
-
-/**
  * The shapes above, spelled for a message: `[database] or [database, schema]`.
  *
  * A declaration carrying no container level has no shape at all, and the empty join would
@@ -801,13 +796,7 @@ function containerTarget(
   capabilities: ProviderCapabilities,
   container: readonly string[],
 ): Partial<Record<ContainerLevelSpec["id"], string>> {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A DuckDB container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      "duckdb",
-    );
-  }
+  assertContainerPathShape(capabilities, container, DUCKDB_CONTAINER_PATH_ENGINE);
   return containerSegments(capabilities, container);
 }
 

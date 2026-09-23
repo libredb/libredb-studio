@@ -47,14 +47,31 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
-  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
   findKind,
   isCountUnavailable,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
+
+/**
+ * MongoDB's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the caller either names every declared level or is refused,
+ * because a partial path would leave a level unbound and answer an empty folder.
+ */
+const MONGODB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mongodb",
+  label: "A MongoDB",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
+
 import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
@@ -431,14 +448,7 @@ function containerSegment(
  * way to report a caller mistake.
  */
 function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A MongoDB container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "mongodb",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MONGODB_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 
