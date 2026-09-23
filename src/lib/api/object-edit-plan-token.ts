@@ -21,7 +21,7 @@ import type { ObjectEditPlan } from "@/lib/db/types";
  * Fifteen minutes, carried as the JWS `exp` so `jose` owns the clock, with one measured basis and
  * one honest limit.
  *
- * The basis: the provider cache evicts on 30 idle minutes (`src/lib/db/factory.ts:410`), so a plan
+ * The basis: the provider cache evicts on 30 idle minutes (`src/lib/db/factory.ts:444`), so a plan
  * cannot ordinarily outlive its issuing provider by much. The limit: a reconnect can replace the
  * instance sooner, which is why a `connection`-scoped revision needs more than a TTL and does not
  * ship. Five minutes was considered and rejected: the browser probe opened a real 975,134-character
