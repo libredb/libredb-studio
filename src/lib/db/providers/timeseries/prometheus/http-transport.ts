@@ -407,11 +407,15 @@ export function authorizationFor(credentials: PrometheusCredentials): string | u
 /**
  * A document this client cannot read. The message names the path and what was expected, in this file's
  * own words, and never quotes the document: the server's text is data, not a message (#1085 S7).
+ *
+ * Every message this file writes names what answered as the server, never as Prometheus: a
+ * wire-compatible relative such as VictoriaMetrics answers through this transport too, and
+ * "Prometheus answered" would be false there.
  */
 function unreadable(path: string, problem: string): PrometheusTransportError {
   return new PrometheusTransportError(
     "protocol",
-    `Prometheus answered ${path} with a document this client cannot read: ${problem}`,
+    `The server answered ${path} with a document this client cannot read: ${problem}`,
   );
 }
 
@@ -552,7 +556,7 @@ function notAnApiAnswer(path: string, status: number): PrometheusTransportError 
         "serve this path.";
   return new PrometheusTransportError(
     "protocol",
-    `Prometheus answered ${path} with HTTP ${status} and a body that is not a Prometheus API response. ${sources} ` +
+    `The server answered ${path} with HTTP ${status} and a body that is not a Prometheus API response. ${sources} ` +
       "The body is not shown.",
     { status },
   );
@@ -569,7 +573,7 @@ function engineFailure(path: string, envelope: Record<string, unknown>, status: 
   if (typeof category !== "string" || category === "" || typeof message !== "string") {
     return new PrometheusTransportError(
       "protocol",
-      `Prometheus answered ${path} with HTTP ${status} and an error document that lacks an errorType or a message`,
+      `The server answered ${path} with HTTP ${status} and an error document that lacks an errorType or a message`,
       { status },
     );
   }
@@ -580,7 +584,7 @@ function engineFailure(path: string, envelope: Record<string, unknown>, status: 
 function refusedCredentials(path: string, status: number): PrometheusTransportError {
   return new PrometheusTransportError(
     "unauthorized",
-    `Prometheus refused the credentials for ${path} with HTTP ${status}. Check User and Password or token, ` +
+    `The server refused the credentials for ${path} with HTTP ${status}. Check User and Password or token, ` +
       "or what a proxy in front of the server expects.",
     { status },
   );

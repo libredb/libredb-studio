@@ -575,7 +575,7 @@ const HISTOGRAM_ENTRY: PrometheusMetadataEntry = {
 
 /** The engine fact a metric with no metadata is answered with (#1085 4.4). */
 const METADATA_ABSENT =
-  "Prometheus holds no metadata for this name: metadata is collected per metric family from active scrape " +
+  "The server holds no metadata for this name: metadata is collected per metric family from active scrape " +
   "targets, so recording-rule outputs, ALERTS and classic histogram series have none.";
 
 /** A readable part's text; a refusal fails the test by name. */
@@ -757,7 +757,7 @@ describe("countObjects and listObjects (#1085 4.3)", () => {
     expect((await objects.countObjects([])).metric).toEqual({ count: METRIC_LIST_CAP });
     expect(await objects.listObjects([], "metric")).toHaveLength(METRIC_LIST_CAP);
     await expect(objects.readObjectSource(["no_such_metric"], "metric")).rejects.toThrow(
-      "Prometheus reports no metric named no_such_metric",
+      "The server reports no metric named no_such_metric",
     );
     // A complete listing decides existence alone, so the existence query is never sent.
     expect(calls.filter((call) => call.method === "query")).toEqual([]);
@@ -833,15 +833,15 @@ describe("countObjects and listObjects (#1085 4.3)", () => {
   });
 
   test("a refused listing is its kinds' refusal, in the transport's sentence, and the rest still count", async () => {
-    const refusal = new PrometheusTransportError("unauthorized", "Prometheus refused the credentials (HTTP 401)", {
+    const refusal = new PrometheusTransportError("unauthorized", "The server refused the credentials (HTTP 401)", {
       status: 401,
     });
     const { objects, calls } = surface({ failures: { rules: refusal } });
     expect(await objects.countObjects([])).toEqual({
       metric: { count: 6 },
-      rule_group: { unavailable: "Prometheus refused the credentials (HTTP 401)" },
-      recording_rule: { unavailable: "Prometheus refused the credentials (HTTP 401)" },
-      alerting_rule: { unavailable: "Prometheus refused the credentials (HTTP 401)" },
+      rule_group: { unavailable: "The server refused the credentials (HTTP 401)" },
+      recording_rule: { unavailable: "The server refused the credentials (HTTP 401)" },
+      alerting_rule: { unavailable: "The server refused the credentials (HTTP 401)" },
       scrape_pool: { count: 3 },
       target: { count: 4 },
     });
@@ -1257,7 +1257,7 @@ describe("readObjectSource: metrics (#1085 4.4)", () => {
     const { objects, calls } = surface();
     const read = objects.readObjectSource(["no_such_metric"], "metric");
     await expect(read).rejects.toBeInstanceOf(QueryError);
-    await expect(read).rejects.toThrow("Prometheus reports no metric named no_such_metric");
+    await expect(read).rejects.toThrow("The server reports no metric named no_such_metric");
     expect(calls.map((call) => call.method)).toEqual(["metricNames"]);
   });
 
@@ -1279,7 +1279,7 @@ describe("readObjectSource: metrics (#1085 4.4)", () => {
   test("an existence read that finds no series outside a capped listing is the same QueryError", async () => {
     const { objects, calls } = surface({ metricNames: { items: ["go_goroutines"], truncatedByServer: true } });
     await expect(objects.readObjectSource(["gone_metric"], "metric")).rejects.toThrow(
-      "Prometheus reports no metric named gone_metric",
+      "The server reports no metric named gone_metric",
     );
     // The refusal comes after the one existence read was asked, not instead of it.
     expect(calls.filter((call) => call.method === "query").map((call) => call.args[0])).toEqual([
@@ -1402,7 +1402,7 @@ describe("readObjectSource: rules (#1085 4.4)", () => {
     // The listing still holds the rule; the read that names it finds nothing left.
     const { objects } = surface({ filteredRules: () => [] });
     await expect(objects.readObjectSource([KEY_A, "2:StudioAlwaysFiring"], "alerting_rule")).rejects.toThrow(
-      `Prometheus has no alerting rule 2:StudioAlwaysFiring in the rule group ${KEY_A}`,
+      `The server has no alerting rule 2:StudioAlwaysFiring in the rule group ${KEY_A}`,
     );
   });
 });
@@ -1545,6 +1545,32 @@ describe("readObjectSource: absence, bounds and guards (#1085 4.4)", () => {
     const read = objects.readObjectSource(path, kind);
     await expect(read).rejects.toBeInstanceOf(QueryError);
     await expect(read).rejects.toThrow(path[path.length - 1]);
+  });
+
+  test.each([
+    ["metric", ["no_such_metric"], "The server reports no metric named no_such_metric"],
+    ["rule_group", [`${STUDIO_A};no-such-group`], `The server has no rule group ${STUDIO_A};no-such-group`],
+    [
+      "recording_rule",
+      [KEY_A, "9:studio:up:count"],
+      `The server has no recording rule 9:studio:up:count in the rule group ${KEY_A}`,
+    ],
+    [
+      "alerting_rule",
+      [KEY_A, "1:studio:up:count"],
+      `The server has no alerting rule 1:studio:up:count in the rule group ${KEY_A}`,
+    ],
+    ["scrape_pool", ["no-such-pool"], "The server has no scrape pool no-such-pool"],
+    [
+      "target",
+      ["prometheus", "http://localhost:9090/metrics 000000000000"],
+      "The server has no active target http://localhost:9090/metrics 000000000000 in the scrape pool prometheus",
+    ],
+  ] as const)("an absent %s is refused in the server's words, not the product's", async (kind, path, message) => {
+    // A wire-compatible relative such as VictoriaMetrics answers these reads through this provider too, so
+    // a refusal that said Prometheus holds nothing by that name would be false there.
+    const { objects } = surface();
+    await expect(objects.readObjectSource(path, kind)).rejects.toMatchObject({ message });
   });
 
   test("a caller's limit bounds each readable part with the shared sentence", async () => {

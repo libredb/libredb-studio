@@ -12,8 +12,9 @@
  * engine's own sentence, except two whose message is built here because the rule is about what the
  * message may hold. A TLS failure is named by its Node error code (#1085 S8), because a `ConnectionError`
  * has no field for one. An answer past the byte cap names the cap and says how to ask for less (#1085 S5).
- * A refused credential keeps its message unchanged: that message was written never to hold the value
- * (#1085 S3), and nothing here has the value to add.
+ * Both name the server rather than Prometheus, because a wire-compatible relative such as VictoriaMetrics
+ * is reached through this provider too. A refused credential keeps its message unchanged: that message was
+ * written never to hold the value (#1085 S3), and nothing here has the value to add.
  */
 import {
   AuthenticationError,
@@ -84,7 +85,7 @@ export function toDatabaseError(error: unknown, context: ErrorContext): Error {
  */
 function tlsMessage(message: string, detail: PrometheusErrorDetail): string {
   const cause = detail.code === undefined ? `: ${message}` : ` (${detail.code})`;
-  return `The TLS connection to Prometheus failed${cause}. The request was not retried over plain HTTP.`;
+  return `The TLS connection to the server failed${cause}. The request was not retried over plain HTTP.`;
 }
 
 /** The cap by name, and how to ask for less (#1085 S5). */
@@ -94,7 +95,7 @@ function tooLargeMessage(detail: PrometheusErrorDetail): string {
       ? "the response cap"
       : `the ${detail.limitBytes.toLocaleString("en-US")}-byte response cap`;
   return (
-    `Prometheus's answer passed ${cap} and was not read to the end. Ask for less: a narrower range, a larger ` +
+    `The server's answer passed ${cap} and was not read to the end. Ask for less: a narrower range, a larger ` +
     "step, or fewer series."
   );
 }

@@ -186,7 +186,7 @@ describe("the messages built here (#1085 S5 and #1085 S8)", () => {
 
     expect(mapped).toBeInstanceOf(ConnectionError);
     expect(mapped.message).toBe(
-      "The TLS connection to Prometheus failed (DEPTH_ZERO_SELF_SIGNED_CERT). The request was not retried over plain HTTP.",
+      "The TLS connection to the server failed (DEPTH_ZERO_SELF_SIGNED_CERT). The request was not retried over plain HTTP.",
     );
     expect(mapped.message.split("DEPTH_ZERO_SELF_SIGNED_CERT")).toHaveLength(2);
     expect((mapped as ConnectionError).host).toBe("prom.internal");
@@ -202,7 +202,7 @@ describe("the messages built here (#1085 S5 and #1085 S8)", () => {
 
     expect(mapped).toBeInstanceOf(ConnectionError);
     expect(mapped.message).toBe(
-      "The TLS connection to Prometheus failed (DEPTH_ZERO_SELF_SIGNED_CERT). The request was not retried over plain HTTP.",
+      "The TLS connection to the server failed (DEPTH_ZERO_SELF_SIGNED_CERT). The request was not retried over plain HTTP.",
     );
   });
 
@@ -211,7 +211,7 @@ describe("the messages built here (#1085 S5 and #1085 S8)", () => {
 
     expect(mapped).toBeInstanceOf(ConnectionError);
     expect(mapped.message).toBe(
-      "The TLS connection to Prometheus failed: the handshake was reset. The request was not retried over plain HTTP.",
+      "The TLS connection to the server failed: the handshake was reset. The request was not retried over plain HTTP.",
     );
   });
 
@@ -221,9 +221,10 @@ describe("the messages built here (#1085 S5 and #1085 S8)", () => {
     const mapped = toDatabaseError(tooLarge, CONTEXT);
 
     expect(mapped).toBeInstanceOf(QueryError);
-    expect(mapped.message).toContain(`${RESPONSE_BYTE_CAP.toLocaleString("en-US")}-byte response cap`);
-    expect(mapped.message).toContain("a narrower range");
-    expect(mapped.message).toContain("a larger step");
+    expect(mapped.message).toBe(
+      `The server's answer passed the ${RESPONSE_BYTE_CAP.toLocaleString("en-US")}-byte response cap and was not ` +
+        "read to the end. Ask for less: a narrower range, a larger step, or fewer series.",
+    );
     expect((mapped as QueryError).query).toBe(CONTEXT.query);
   });
 
@@ -231,7 +232,9 @@ describe("the messages built here (#1085 S5 and #1085 S8)", () => {
     const mapped = toDatabaseError(transportFailure("too_large", "past the cap", {}), CONTEXT);
 
     expect(mapped).toBeInstanceOf(QueryError);
-    expect(mapped.message).toContain("passed the response cap");
-    expect(mapped.message).toContain("a narrower range");
+    expect(mapped.message).toBe(
+      "The server's answer passed the response cap and was not read to the end. Ask for less: a narrower range, " +
+        "a larger step, or fewer series.",
+    );
   });
 });

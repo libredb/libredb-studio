@@ -158,7 +158,11 @@ export const PROMETHEUS_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze(
   },
 ] as const);
 
-/** The engine's name in every sentence this surface writes. */
+/**
+ * This provider's name, in the sentences about its own declaration and a caller's arguments. A
+ * sentence about what the server holds names the server instead, because a wire-compatible relative
+ * such as VictoriaMetrics answers these reads through this provider too.
+ */
 const ENGINE_NAME = "Prometheus";
 
 export type ObjectsTransport = Pick<
@@ -658,10 +662,11 @@ const METADATA_PART_LABEL = "Metadata";
  * metadata per metric family from the targets it scrapes, so a series no target exposes has none,
  * and the metadata read answers the same empty map for such a real metric as for a name that does
  * not exist, which is why existence is decided before this is said. The design's backticks around
- * ALERTS are left out because a refusal renders as plain text.
+ * ALERTS are left out because a refusal renders as plain text, and its subject is the server rather
+ * than Prometheus, because a relative answers this read too.
  */
 const METADATA_ABSENT =
-  "Prometheus holds no metadata for this name: metadata is collected per metric family from active scrape " +
+  "The server holds no metadata for this name: metadata is collected per metric family from active scrape " +
   "targets, so recording-rule outputs, ALERTS and classic histogram series have none.";
 
 /**
@@ -712,7 +717,7 @@ async function requireMetric(context: SourceContext, name: string): Promise<void
     const answer = await context.transport.query(expression, context.queryOptions());
     if (answer.value.shape === "vector" && answer.value.series.length > 0) return;
   }
-  throw new QueryError(`${ENGINE_NAME} reports no metric named ${name}`, context.code);
+  throw new QueryError(`The server reports no metric named ${name}`, context.code);
 }
 
 function familyName(name: string): string | undefined {
@@ -798,7 +803,7 @@ async function metricSource(context: SourceContext, path: readonly string[]): Pr
 /** The group a key names, found in a listing by its key and never by splitting the key. */
 function requireGroup(groups: readonly PrometheusRuleGroup[], key: string, code: DatabaseType): PrometheusRuleGroup {
   const group = groups.find((candidate) => groupKey(candidate) === key);
-  if (group === undefined) throw new QueryError(`${ENGINE_NAME} has no rule group ${key}`, code);
+  if (group === undefined) throw new QueryError(`The server has no rule group ${key}`, code);
   return group;
 }
 
@@ -843,7 +848,7 @@ async function recordingRuleSource(context: SourceContext, path: readonly string
       candidate.kind === "recording" && ruleSegment(index + 1, candidate.name) === segment,
   );
   if (rule === undefined) {
-    throw new QueryError(`${ENGINE_NAME} has no recording rule ${segment} in the rule group ${key}`, context.code);
+    throw new QueryError(`The server has no recording rule ${segment} in the rule group ${key}`, context.code);
   }
   return [
     {
@@ -863,7 +868,7 @@ async function recordingRuleSource(context: SourceContext, path: readonly string
 }
 
 function noAlertingRule(key: string, segment: string, code: DatabaseType): QueryError {
-  return new QueryError(`${ENGINE_NAME} has no alerting rule ${segment} in the rule group ${key}`, code);
+  return new QueryError(`The server has no alerting rule ${segment} in the rule group ${key}`, code);
 }
 
 /**
@@ -921,7 +926,7 @@ function countByHealth(targets: readonly PrometheusTarget[]): Record<string, num
 async function scrapePoolSource(context: SourceContext, path: readonly string[]): Promise<PartDrafts> {
   const pool = path[path.length - 1];
   if (!(await context.reads.scrapePools()).includes(pool)) {
-    throw new QueryError(`${ENGINE_NAME} has no scrape pool ${pool}`, context.code);
+    throw new QueryError(`The server has no scrape pool ${pool}`, context.code);
   }
   const targets = (await context.transport.targets(pool)).filter((target) => target.scrapePool === pool);
   return [
@@ -945,7 +950,7 @@ async function targetSource(context: SourceContext, path: readonly string[]): Pr
     (candidate) => candidate.scrapePool === pool && targetSegment(candidate) === segment,
   );
   if (target === undefined) {
-    throw new QueryError(`${ENGINE_NAME} has no active target ${segment} in the scrape pool ${pool}`, context.code);
+    throw new QueryError(`The server has no active target ${segment} in the scrape pool ${pool}`, context.code);
   }
   return [
     {

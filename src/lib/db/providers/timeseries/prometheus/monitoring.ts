@@ -11,6 +11,10 @@
  * The readers take `MonitoringTransport`, the read-only slice of the seam they use (#1085 3.5,
  * interface segregation), so this file names no endpoint and no envelope member: a health probe's
  * path is read off the probe the transport recorded.
+ *
+ * A sentence about what the server answered or reported names the server, never Prometheus,
+ * because a wire-compatible relative such as VictoriaMetrics answers these reads through this
+ * provider too.
  */
 import type { DatabaseOverview, HealthInfo, StorageStats, TableStats } from "@/lib/db/types";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -129,7 +133,7 @@ export function overviewFrom(input: {
 function runtimeTimestamp(text: string, what: string): number {
   const ms = Date.parse(text);
   if (Number.isNaN(ms)) {
-    throw new PrometheusTransportError("protocol", `Prometheus reported a ${what} that is not a timestamp`);
+    throw new PrometheusTransportError("protocol", `The server reported a ${what} that is not a timestamp`);
   }
   return ms;
 }
@@ -146,7 +150,7 @@ function maxConnectionsFrom(flags: Readonly<Record<string, string>>): number {
   if (!/^\d+$/.test(text)) {
     throw new PrometheusTransportError(
       "protocol",
-      `Prometheus published ${MAX_CONNECTIONS_FLAG} as a value that is not a whole number`,
+      `The server published ${MAX_CONNECTIONS_FLAG} as a value that is not a whole number`,
     );
   }
   return Number(text);
@@ -176,8 +180,8 @@ export function tableStatsFrom(tsdb: PrometheusTsdbStatus): TableStats[] {
 
 /** Why the storage row is refused where the TSDB status carries no head statistics. */
 const NO_HEAD_STATISTICS =
-  "Prometheus reports no head block statistics here: this server's TSDB status carries none, so the " +
-  "storage row has no series count, chunk count or sample span to show";
+  "The server reports no head block statistics: its TSDB status carries none, so the storage row has no " +
+  "series count, chunk count or sample span to show";
 
 /**
  * The head block as the one storage row this API can describe, with no byte figure in it.
@@ -258,7 +262,7 @@ export function healthFrom(health: PrometheusHealth): HealthInfo {
   if (failed !== undefined) {
     throw new PrometheusTransportError(
       "unavailable",
-      `Prometheus answered its health probe ${failed.path} with HTTP ${failed.status}`,
+      `The server answered its health probe ${failed.path} with HTTP ${failed.status}`,
       { status: failed.status },
     );
   }
@@ -297,8 +301,8 @@ export async function readOverview(
     const listed = TSDB_LABEL_SCAN_LIMIT.toLocaleString("en-US");
     throw new PrometheusTransportError(
       "unmeasurable",
-      `Prometheus reports no exact metric count here: one TSDB status read lists at most ${listed} label names, ` +
-        "this server has at least that many, and the entry that counts metric names " +
+      `The server reports no exact metric count: one TSDB status read lists at most ${listed} label names, ` +
+        "it has at least that many, and the entry that counts metric names " +
         `is not among the ${listed} listed`,
     );
   }

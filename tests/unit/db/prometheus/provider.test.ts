@@ -689,6 +689,10 @@ describe("query", () => {
     for (const statement of ["", "   \n\t", "# only a comment", "# one\n  # two\n\n"]) {
       await expect(provider.query(statement)).rejects.toBeInstanceOf(QueryError);
     }
+    // The refusal names the server, not the product: a wire-compatible relative answers here too.
+    await expect(provider.query("# only a comment")).rejects.toThrow(
+      "The PromQL text holds no expression once its # comments and whitespace are removed, so nothing was sent to the server.",
+    );
     expect(sent).toEqual([]);
 
     // The controls: an expression under the same comments is sent, and so is a string literal whose

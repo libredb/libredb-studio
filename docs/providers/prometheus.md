@@ -61,14 +61,14 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 |---|---|---|
 | `connect` | answered | answered |
 | `getHealth` | answered | answered |
-| `getOverview` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
+| `getOverview` | answered | failed: `ConnectionError` The server answered /api/v1/status/flags with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
 | `getPerformanceMetrics` | answered | answered |
 | `getMonitoringData` | answered | answered, with its overview and storage panels failed on the 400s above |
 | `getSlowQueries` | answered | answered |
 | `getActiveSessions` | answered | answered |
 | `getTableStats` | answered, 50 metrics | answered, 10 metrics |
 | `getIndexStats` | answered | answered |
-| `getStorageStats` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
+| `getStorageStats` | answered | failed: `ConnectionError` The server answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
 | `listContainers` | answered | answered |
 | `countObjects` | answered | answered, with the scrape pool count unavailable on the `listObjects:scrape_pool` message |
 | `listObjects:metric` | answered | answered |
@@ -87,7 +87,7 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 | `describeObject:alerting_rule` | answered | skipped: listObjects returned no object to describe |
 | `describeObjects:alerting_rule` | answered | answered |
 | `readObjectSource:alerting_rule` | answered | skipped: listObjects returned no object to read |
-| `listObjects:scrape_pool` | answered | failed: `ConnectionError` Prometheus answered /api/v1/scrape_pools with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
+| `listObjects:scrape_pool` | answered | failed: `ConnectionError` The server answered /api/v1/scrape_pools with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
 | `describeObject:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to describe |
 | `describeObjects:scrape_pool` | answered | answered |
 | `readObjectSource:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to read |
@@ -113,7 +113,7 @@ A metric's columns are the same on both servers: `prometheus_http_requests_total
 
 **The Overview and Storage tabs and the Scrape pools folder fail, on three endpoints VictoriaMetrics does not serve.**
 `/api/v1/status/runtimeinfo`, `/api/v1/status/flags` and `/api/v1/scrape_pools` answer `400` with the plain text `unsupported path requested: "<the path>"`.
-The overview reads the first two at once, beside the build and TSDB status reads, so its message names whichever of the two answered first: `getOverview` named `/api/v1/status/runtimeinfo`, and the overview panel of the monitoring read in the same pass named `/api/v1/status/flags`.
+The overview reads the first two at once, beside the build and TSDB status reads, so its message names whichever of the two answered first, which can differ from one call to the next: `getOverview` named `/api/v1/status/flags` in the pass above, as the overview panel of the monitoring read did, and `/api/v1/status/runtimeinfo` in an earlier pass the same day.
 The storage row reads the first, and the Scrape pools folder the third, whose count then reads unavailable with the folder's message.
 The storage row also needs the head statistics, which the TSDB status below does not carry, and the provider refuses a status without them as unmeasured rather than show an empty head (`storageStatsFrom` in `monitoring.ts`).
 Each message names the path and the status, and offers the sources such an answer can have without choosing one: a proxy or a login page in front of the server, or a server that does not serve the path, which is what answered here.
@@ -510,7 +510,7 @@ Server text is data: a rule annotation, a HELP string or a target error is shown
 
 | Kind | Read | Parts |
 |---|---|---|
-| `metric` | metadata by the exact name, then by the family name with `_bucket`, `_sum`, `_count`, `_total` or `_created` removed | One part per distinct metadata entry (`family`, `type`, `help`, `unit`); past the `SOURCE_PART_LIMIT` (`8`) parts the source route accepts, parts 1 to 7 are single entries and part 8 is one JSON array holding the rest, so nothing the engine answered is dropped; with none, a refusal part that reads "Prometheus holds no metadata for this name: metadata is collected per metric family from active scrape targets, so recording-rule outputs, ALERTS and classic histogram series have none." |
+| `metric` | metadata by the exact name, then by the family name with `_bucket`, `_sum`, `_count`, `_total` or `_created` removed | One part per distinct metadata entry (`family`, `type`, `help`, `unit`); past the `SOURCE_PART_LIMIT` (`8`) parts the source route accepts, parts 1 to 7 are single entries and part 8 is one JSON array holding the rest, so nothing the engine answered is dropped; with none, a refusal part that reads "The server holds no metadata for this name: metadata is collected per metric family from active scrape targets, so recording-rule outputs, ALERTS and classic histogram series have none." |
 | `rule_group` | the rules listing entry (`exclude_alerts=true`), which already carries every field the source renders | `file`, `name`, `interval`, `limit`, `evaluationTime`, `lastEvaluation`, the rule count |
 | `recording_rule` | the rules listing entry (`exclude_alerts=true`), which already carries every field the source renders | `name`, `query`, `labels`, `health`, `lastError`, `evaluationTime`, `lastEvaluation` |
 | `alerting_rule` | the listing entry for the definition, then `rule_group[]`, `file[]` and `rule_name[]` without `exclude_alerts` for its live alerts, the rule picked by its occurrence among same-named rules | Part 1, the definition (`name`, `query`, `duration`, `keepFiringFor`, `labels`, `annotations`, `health`, `lastError`); part 2, the live `state` and the active alerts |

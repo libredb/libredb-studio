@@ -103,7 +103,7 @@ const SHAPE_LIMITS: ShapeLimits = {
 };
 
 const EMPTY_EXPRESSION_MESSAGE =
-  "The PromQL text holds no expression once its # comments and whitespace are removed, so nothing was sent to Prometheus.";
+  "The PromQL text holds no expression once its # comments and whitespace are removed, so nothing was sent to the server.";
 const BOUND_VALUES_MESSAGE = "PromQL has no parameter binding, so a statement with bound values cannot be sent.";
 const CANCELLED_MESSAGE = "The query was cancelled.";
 const DISCONNECTED_MESSAGE = "The connection was closed while the query was running or waiting to run.";

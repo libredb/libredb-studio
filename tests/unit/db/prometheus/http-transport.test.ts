@@ -1318,7 +1318,8 @@ describe("a document this client cannot read is a protocol failure naming the pa
     const failure = await failureOf(() => run(transportWith()));
 
     expect(failure.category).toBe("protocol");
-    expect(failure.message).toContain(path);
+    // The server that answered, never the product: a wire-compatible relative answers through this transport too.
+    expect(failure.message).toStartWith(`The server answered ${path} with a document this client cannot read: `);
   });
 });
 
@@ -1544,7 +1545,10 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
 
     expect(failure.category).toBe("protocol");
     expect(failure.detail).toEqual({ status: 500 });
-    expect(failure.message).toContain("/api/v1/status/buildinfo");
+    expect(failure.message).toBe(
+      "The server answered /api/v1/status/buildinfo with HTTP 500 and an error document that lacks an errorType " +
+        "or a message",
+    );
   });
 
   test.each([401, 403])(
@@ -1557,7 +1561,10 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
 
       expect(failure.category).toBe("unauthorized");
       expect(failure.detail).toEqual({ status });
-      expect(failure.message).toContain(`HTTP ${status}`);
+      expect(failure.message).toBe(
+        `The server refused the credentials for /api/v1/status/buildinfo with HTTP ${status}. Check User and ` +
+          "Password or token, or what a proxy in front of the server expects.",
+      );
       expect(failure.message).not.toContain(`marker-${status}`);
     },
   );
@@ -1597,7 +1604,7 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
     expect(failure.category).toBe("protocol");
     expect(failure.detail).toEqual({ status: 503 });
     expect(failure.message).toBe(
-      "Prometheus answered /api/v1/status/buildinfo with HTTP 503 and a body that is not a Prometheus API " +
+      "The server answered /api/v1/status/buildinfo with HTTP 503 and a body that is not a Prometheus API " +
         "response. Prometheus answers every API path this client reads with this status while it starts up, " +
         "replaying its write-ahead log, and while it shuts down, and so does a proxy in front of it with no " +
         "ready server behind it. The body is not shown.",
@@ -1617,8 +1624,9 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
     expect(answer.text).toContain("unsupported path requested");
     expect(failure.category).toBe("protocol");
     expect(failure.detail).toEqual({ status: 400 });
+    // The subject is the server: VictoriaMetrics answered here, so "Prometheus answered" would be false.
     expect(failure.message).toBe(
-      "Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API " +
+      "The server answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API " +
         "response. A proxy or a login page in front of the server answers this way, and so does a server " +
         "that does not serve this path. The body is not shown.",
     );

@@ -85,8 +85,8 @@ function headlessTsdb(): PrometheusTsdbStatus {
 
 /** What the storage reading says where no head statistics came: the fact, never a filled-in row. */
 const NO_HEAD_STATISTICS =
-  "Prometheus reports no head block statistics here: this server's TSDB status carries none, so the " +
-  "storage row has no series count, chunk count or sample span to show";
+  "The server reports no head block statistics: its TSDB status carries none, so the storage row has no " +
+  "series count, chunk count or sample span to show";
 
 /** A label-name list of `length` entries, the metric-name entry first with `metricNames` values. */
 function labelsWithMetricNames(length: number, metricNames: number): NamedCount[] {
@@ -258,7 +258,10 @@ describe("overviewFrom", () => {
       }),
     );
     expect(error).toBeInstanceOf(PrometheusTransportError);
-    expect(error).toMatchObject({ category: "protocol" });
+    expect(error).toMatchObject({
+      category: "protocol",
+      message: "The server published web.max-connections as a value that is not a whole number",
+    });
   });
 
   test("uptime reads the server's own clock, never this process's", () => {
@@ -316,7 +319,7 @@ describe("overviewFrom", () => {
     expect(error).toBeInstanceOf(PrometheusTransportError);
     expect(error).toMatchObject({
       category: "protocol",
-      message: `Prometheus reported a ${words} that is not a timestamp`,
+      message: `The server reported a ${words} that is not a timestamp`,
     });
   });
 });
@@ -424,7 +427,7 @@ describe("healthFrom", () => {
     expect(error).toBeInstanceOf(PrometheusTransportError);
     expect(error).toMatchObject({
       category: "unavailable",
-      message: "Prometheus answered its health probe /-/ready with HTTP 503",
+      message: "The server answered its health probe /-/ready with HTTP 503",
       detail: { status: 503 },
     });
   });
@@ -448,7 +451,7 @@ describe("healthFrom", () => {
     };
     expect(thrown(() => healthFrom(failing))).toMatchObject({
       category: "unavailable",
-      message: "Prometheus answered its health probe /health with HTTP 503",
+      message: "The server answered its health probe /health with HTTP 503",
     });
   });
 
@@ -460,7 +463,7 @@ describe("healthFrom", () => {
         { path: "/-/ready", status },
       ],
     });
-    const named = { category: "unavailable", message: "Prometheus answered its health probe /health with HTTP 404" };
+    const named = { category: "unavailable", message: "The server answered its health probe /health with HTTP 404" };
     expect(thrown(() => healthFrom(withReadiness(404)))).toMatchObject(named);
     // A ready server changes nothing: the fallback's own 404 is still the failure.
     expect(thrown(() => healthFrom(withReadiness(200)))).toMatchObject(named);
@@ -475,7 +478,7 @@ describe("healthFrom", () => {
     };
     expect(thrown(() => healthFrom(readinessMissing))).toMatchObject({
       category: "unavailable",
-      message: "Prometheus answered its health probe /-/ready with HTTP 404",
+      message: "The server answered its health probe /-/ready with HTTP 404",
       detail: { status: 404 },
     });
     // Control: the same read with readiness answering 200 is healthy.
@@ -503,8 +506,13 @@ describe("the readers", () => {
     });
     const refused = readOverview(cut.transport, String);
     await expect(refused).rejects.toBeInstanceOf(PrometheusTransportError);
-    await expect(refused).rejects.toMatchObject({ category: "unmeasurable" });
-    await expect(refused).rejects.toThrow(`${TSDB_LABEL_SCAN_LIMIT.toLocaleString("en-US")} label names`);
+    const scanned = TSDB_LABEL_SCAN_LIMIT.toLocaleString("en-US");
+    await expect(refused).rejects.toMatchObject({
+      category: "unmeasurable",
+      message:
+        `The server reports no exact metric count: one TSDB status read lists at most ${scanned} label names, it ` +
+        `has at least that many, and the entry that counts metric names is not among the ${scanned} listed`,
+    });
     // Control: a full list that carries the entry reads the entry, not the 10,000 names.
     const listed = recordingTransport({
       tsdb: tsdbStatus({ valuesByLabel: labelsWithMetricNames(TSDB_LABEL_SCAN_LIMIT, 777) }),
@@ -527,7 +535,7 @@ describe("the readers", () => {
   test("readHealth fails when the API behind healthy probes does not answer", async () => {
     const down = new PrometheusTransportError(
       "protocol",
-      "Prometheus answered with a body that is not the API envelope",
+      "The server answered with a body that is not the API envelope",
     );
     const { transport } = recordingTransport({ buildInfoFailure: down });
     await expect(readHealth(transport)).rejects.toBe(down);

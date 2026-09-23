@@ -1516,7 +1516,7 @@ describe("a relative whose answers leave descriptions out, end to end (VictoriaM
     const failure = provider.getStorageStats();
 
     await expect(failure).rejects.toBeInstanceOf(QueryError);
-    await expect(failure).rejects.toThrow("Prometheus reports no head block statistics here");
+    await expect(failure).rejects.toThrow("The server reports no head block statistics");
     // The control: the same TSDB status answers the table read, so the refusal is about the head alone.
     expect((await provider.getTableStats()).length).toBeGreaterThan(0);
     expect(uncaptured).toEqual([]);
