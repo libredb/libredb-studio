@@ -170,7 +170,8 @@ export interface WireCompatibleEngine {
  * AlloyDB Omni from a fourth run the same day, OceanBase Community Edition
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
  * 2026-08-21/22, Apache Doris, Garnet and both Percona distributions from a seventh run
- * on 2026-08-26, and ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27.
+ * on 2026-08-26, ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27, and
+ * VictoriaMetrics, the first relative of the `prometheus` driver, from a ninth on 2026-09-23.
  * The nine MySQL-wire relatives were re-measured together on 2026-09-06 for issues
  * #573 and #574, at the wire and then in a browser against the built app, and the
  * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5 for the
@@ -550,6 +551,27 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Row counts and sizes are blank for the same reason as on Cassandra, and the panels read N/A rather than a fabricated zero.",
       'Creating a keyspace needs NetworkTopologyStrategy on the 2026.2 line: SimpleStrategy is refused outright with "SimpleStrategy doesn\'t support tablet replication", so the setup recipe in the Cassandra provider doc does not run unchanged.',
       "ScyllaDB 2025.1.14-0.20260612.103b84070f3b was probed in the 2026-08-21/22 pass and behaved identically on every surface, including the same verbatim refusal the fix keys on, so this entry describes both the 2025.1 and the 2026.2 line - but only these two builds, only a single-node container, and only 2026.2.4 was re-probed after the fix.",
+    ],
+  },
+  {
+    // The first relative of a driver whose query language is neither SQL-shaped nor JSON: it
+    // answers the Prometheus HTTP API, so the `prometheus` provider serves it unchanged. Probed as a
+    // single node scraping the compose fixture's targets, with Prometheus 3.13.3 as the baseline in
+    // the same pass (#1085 section 7). Claimed for PromQL only: MetricsQL is a superset of it and
+    // was not measured. The advertised 2.24.0 is in the version string and in no caveat: the
+    // overview, the one panel that shows a version, fails here, as the first caveat says.
+    name: "VictoriaMetrics",
+    via: "prometheus",
+    tier: "partial",
+    probedVersion: "VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)",
+    caveats: [
+      "The Overview and Storage tabs of the monitoring dashboard fail, and so does the Scrape pools folder, whose count reads unavailable: VictoriaMetrics answers /api/v1/status/runtimeinfo, /api/v1/status/flags and /api/v1/scrape_pools with HTTP 400 and the text 'unsupported path requested', and the message shown suggests a proxy or a login page answered, which is how the provider reads any answer that is not the API's own envelope.",
+      "The Tables tab of the monitoring dashboard fails: VictoriaMetrics answers /api/v1/status/tsdb with statistics of its own (totalSeries, seriesCountByMetricName and the rest) and no headStats, and the provider refuses a TSDB status without it ('expected an object at the head block statistics').",
+      "A metric's Source tab fails: VictoriaMetrics' /api/v1/metadata entries carry type and help but no unit, and the provider refuses an entry without one ('expected text at unit in a metadata entry'), so the type and help are not shown either.",
+      "The Targets folder fails and its count reads unavailable: VictoriaMetrics' /api/v1/targets entries carry no scrapeInterval and no scrapeTimeout (it keeps them as __scrape_interval__ and __scrape_timeout__ among a target's discovered labels), and the provider refuses a target without them ('expected text at scrapeInterval in a target').",
+      "The Rule groups, Recording rules and Alerting rules folders are empty: a single-node server evaluates no rules, so its /api/v1/rules answered no group, and it answers that path from vmalert only when it is started with -vmalert.proxyURL.",
+      'A string expression such as "libredb" returns no rows: VictoriaMetrics answers it with an empty vector, where Prometheus answers a string.',
+      "PromQL infos and warnings do not appear beside a result: VictoriaMetrics answered rate(up[5m]) with no notice where Prometheus 3.13.3 attaches 'PromQL info: metric might not be a counter', and it sent none with any other answer measured.",
     ],
   },
 ];

@@ -63,6 +63,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   Garnet: "garnet",
   FerretDB: "ferretdb",
   ScyllaDB: "scylla",
+  VictoriaMetrics: "victoriametrics",
 };
 
 describe("wire-compatibility registry", () => {
@@ -288,6 +289,33 @@ describe("wire-compatibility registry", () => {
     const caveats = databend?.caveats.join(" ") ?? "";
     expect(caveats).toContain("Prepare is not support in Databend");
     expect(caveats).toContain("information_schema.tables");
+  });
+
+  test("VictoriaMetrics is a Prometheus relative, recorded at the tier its gate-4 probe measured", () => {
+    // Probed 2026-09-23 against `victoriametrics/victoria-metrics:v1.152.0`, a single node scraping
+    // the compose fixture's targets, through `createDatabaseProvider({ type: "prometheus" })`, with
+    // Prometheus 3.13.3 probed in the same pass as the baseline (#1085 section 7, #424 Phase 6). A
+    // surface counted as answered only where it passed AND held data wherever Prometheus did, the
+    // ScyllaDB rule, so an empty folder is not a folder that works, and by that rule 16 of the 36
+    // surfaces the baseline answered answer here. The advertised 2.24.0 is in the probed version and in no caveat,
+    // because the overview, the one panel that shows a version, fails there. The relative is
+    // claimed for PromQL only: MetricsQL is a superset of it, and nothing beyond PromQL was measured.
+    expect(SHIPPED_DATABASE_TYPES).toContain("prometheus");
+    const relatives = compatibleEnginesFor("prometheus");
+    expect(relatives.map((engine) => engine.name)).toEqual(["VictoriaMetrics"]);
+    const victoria = relatives[0];
+    expect(victoria?.via).toBe("prometheus");
+    expect(victoria?.tier).toBe("partial");
+    expect(victoria?.probedVersion).toBe("VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)");
+    // One pin per caveat the probe earned, so a caveat cannot be dropped or reworded away silently.
+    const caveats = victoria?.caveats.join(" ") ?? "";
+    expect(caveats).toContain("unsupported path requested");
+    expect(caveats).toContain("headStats");
+    expect(caveats).toContain("/api/v1/metadata");
+    expect(caveats).toContain("scrapeInterval");
+    expect(caveats).toContain("-vmalert.proxyURL");
+    expect(caveats).toContain("empty vector");
+    expect(caveats).toContain("PromQL info");
   });
 
   test("every entry names a driver we actually ship", () => {

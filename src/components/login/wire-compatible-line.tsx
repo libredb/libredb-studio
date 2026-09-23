@@ -12,7 +12,7 @@ interface WireCompatibleLineProps {
  * more named products than that: the others speak a wire protocol we already ship and
  * were published in README.md and the docs compatibility table, but nowhere a visitor to
  * the front door could see them. This line closes that gap and nothing else - the count and
- * every name come from `WIRE_COMPATIBLE_ENGINES`, so a twentieth probed engine joins the
+ * every name come from `WIRE_COMPATIBLE_ENGINES`, so the next probed engine joins the
  * page by being added to the registry.
  *
  * What it deliberately does NOT carry is the per-engine tier. `WireCompatibilityHint` shows

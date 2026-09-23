@@ -46,6 +46,100 @@ The teams this product is built for query their metrics next to their databases,
 | Object source | The engine's own JSON for that object, re-serialised with `JSON.stringify` |
 | Container | None: `containerLevels: []`, the Elasticsearch and SQLite shape |
 
+### VictoriaMetrics
+
+VictoriaMetrics answers the Prometheus HTTP API, so this provider connects to it unchanged: pick Prometheus in the connection dialog and give the VictoriaMetrics port, `8428` on a stock single node.
+It is a wire-compatible relative, not a provider of its own, and what it gives a user was measured rather than assumed.
+Every surface below was called separately through `createDatabaseProvider({ type: "prometheus" })` on 2026-09-23 against `victoriametrics/victoria-metrics:v1.152.0`, a single node scraping the compose fixture's targets with `-promscrape.config`, with `prom/prometheus:v3.13.3` probed in the same pass as the baseline.
+The result is the `partial` entry in `src/lib/db/compatibility.ts` and its row in the [compatibility table](./README.md#wire-compatible-engines); this section says why each difference is what it is.
+A surface that answers empty where Prometheus answers data is counted as not answering, the rule that keeps ScyllaDB `partial` ([cassandra.md §11](./cassandra.md#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-2026-08-24)), and by that rule 16 of the 36 surfaces that answer on Prometheus answer here.
+The metric, scrape pool and target reads ran on one named object that both servers hold, so the two columns compare the same thing: the metric `prometheus_http_requests_total`, the pool `prometheus` and a target of that pool.
+The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_name", "$1", "__name__", "(.+)")[1h:250ms]))` and cancels it 50 ms in, while it still runs on both servers.
+
+| Surface | Prometheus 3.13.3 | VictoriaMetrics v1.152.0 |
+|---|---|---|
+| `connect` | answered | answered |
+| `getHealth` | answered | answered |
+| `getOverview` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response, so something other than the Prometheus API answered at this address, such as a proxy or a login page. The body is not shown. |
+| `getPerformanceMetrics` | answered | answered |
+| `getMonitoringData` | answered | answered, empty |
+| `getSlowQueries` | answered | answered |
+| `getActiveSessions` | answered | answered |
+| `getTableStats` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/tsdb with a document this client cannot read: expected an object at the head block statistics |
+| `getIndexStats` | answered | answered |
+| `getStorageStats` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response, so something other than the Prometheus API answered at this address, such as a proxy or a login page. The body is not shown. |
+| `listContainers` | answered | answered |
+| `countObjects` | answered | answered |
+| `listObjects:metric` | answered | answered |
+| `describeObject:metric` | answered | answered |
+| `describeObjects:metric` | answered | answered |
+| `readObjectSource:metric` | answered | failed: `ConnectionError` Prometheus answered /api/v1/metadata with a document this client cannot read: expected text at unit in a metadata entry |
+| `listObjects:rule_group` | answered | answered, empty |
+| `describeObject:rule_group` | answered | skipped: listObjects returned no object to describe |
+| `describeObjects:rule_group` | answered | answered |
+| `readObjectSource:rule_group` | answered | skipped: listObjects returned no object to read |
+| `listObjects:recording_rule` | answered | answered, empty |
+| `describeObject:recording_rule` | answered | skipped: listObjects returned no object to describe |
+| `describeObjects:recording_rule` | answered | answered |
+| `readObjectSource:recording_rule` | answered | skipped: listObjects returned no object to read |
+| `listObjects:alerting_rule` | answered | answered, empty |
+| `describeObject:alerting_rule` | answered | skipped: listObjects returned no object to describe |
+| `describeObjects:alerting_rule` | answered | answered |
+| `readObjectSource:alerting_rule` | answered | skipped: listObjects returned no object to read |
+| `listObjects:scrape_pool` | answered | failed: `ConnectionError` Prometheus answered /api/v1/scrape_pools with HTTP 400 and a body that is not a Prometheus API response, so something other than the Prometheus API answered at this address, such as a proxy or a login page. The body is not shown. |
+| `describeObject:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to describe |
+| `describeObjects:scrape_pool` | answered | answered |
+| `readObjectSource:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to read |
+| `listObjects:target` | answered | failed: `ConnectionError` Prometheus answered /api/v1/targets with a document this client cannot read: expected text at scrapeInterval in a target |
+| `describeObject:target` | answered | skipped: listObjects did not list a target of the scrape pool prometheus to describe |
+| `describeObjects:target` | answered | answered |
+| `readObjectSource:target` | answered | skipped: listObjects did not list a target of the scrape pool prometheus to read |
+| `query:vector` | answered | answered |
+| `query:matrix-range` | answered | answered |
+| `query:matrix-subquery` | answered | answered |
+| `query:scalar` | answered | answered |
+| `query:string` | answered | answered, empty |
+| `query:notice` | answered, with the engine's PromQL info | answered, with no notice |
+| `query:bad-data` | refused as expected: `QueryError` | refused as expected: `QueryError` |
+| `query:comment-only` | refused as expected: `QueryError` | refused as expected: `QueryError` |
+| `query:bound-params` | refused as expected: `DatabaseConfigError` | refused as expected: `DatabaseConfigError` |
+| `cancelQuery:long-query` | cancelled as expected: `QueryCancelledError` | cancelled as expected: `QueryCancelledError` |
+
+**The editor and the metric tree work as they do on Prometheus.**
+Instant vectors, range selectors, subqueries and scalars answer, the three refusals (a parse error, a buffer holding only `#` comments, bound values) end in the same classes, and Cancel ends a running query as cancelled.
+A metric's columns are the same on both servers: `prometheus_http_requests_total` has `__name__`, `code`, `handler`, `instance`, `job`, `timestamp` and `value` on each.
+
+**The Overview and Storage tabs and the Scrape pools folder fail, on three endpoints VictoriaMetrics does not serve.**
+`/api/v1/status/runtimeinfo`, `/api/v1/status/flags` and `/api/v1/scrape_pools` answer `400` with the plain text `unsupported path requested: "<the path>"`.
+The overview reads the first two and the storage row the first, each beside the TSDB status below, so both fail whole, and the Scrape pools folder fails while its count reads unavailable.
+The message a user sees says that something other than the Prometheus API answered, such as a proxy or a login page, because that is how this provider reads any answer that is not the API envelope; here it is the server's own refusal of a path it does not implement.
+
+**Three documents lack a field the provider requires.**
+Each is refused whole as an envelope of the wrong shape, the `protocol` category of `transport.ts`, which `errors.ts` maps to `ConnectionError`.
+The TSDB status holds VictoriaMetrics' own statistics (`totalSeries`, `totalLabelValuePairs`, `seriesCountByMetricName` and four more) and no `headStats`, so the Tables tab fails with `expected an object at the head block statistics`.
+A metadata entry carries `type` and `help` but no `unit`, so a metric's Source tab fails with `expected text at unit in a metadata entry`, and the type and help it does send are not shown either.
+A target carries no `scrapeInterval` and no `scrapeTimeout`, which it keeps as `__scrape_interval__` and `__scrape_timeout__` among its discovered labels, so the Targets folder fails with `expected text at scrapeInterval in a target` and its count reads unavailable.
+
+**The rule folders are empty, and that is the deployment rather than a defect.**
+A single-node server evaluates no rules: alerting and recording rules belong to vmalert, and `/api/v1/rules` answers from vmalert only when the server is started with `-vmalert.proxyURL`.
+Here it answered `{"status":"success","data":{"groups":[]}}`, so the rule group, recording rule and alerting rule folders open onto nothing, and a question about alerts has nothing to read here.
+
+**A string expression returns no rows.**
+`"libredb"` answers an empty vector, `{"resultType":"vector","result":[]}`, where Prometheus answers a `string` result, so the grid shows nothing.
+
+**No PromQL info or warning appears.**
+VictoriaMetrics answered `rate(up[5m])` with no notice where Prometheus 3.13.3 attaches `PromQL info: metric might not be a counter, name does not end in _total/_sum/_count/_bucket: "up" (1:6)`, and none of the 69 answers captured from it in `tests/fixtures/prometheus/victoriametrics-v1.152.0/` carries one either.
+It also ignores `limit` on `/api/v1/query`: `limit=1` returned all four `up` series, so the series cap is applied by this provider alone, once the answer has arrived ([§5.4](#54-caps-warnings-and-truncation)).
+
+**No panel shows a version.**
+`/api/v1/status/buildinfo` answers `2.24.0`, the Prometheus version VictoriaMetrics advertises for Grafana, which is why the registry records the build as `VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)`.
+Its own build, `v1.152.0`, is in its `/metrics` as `vm_app_version`, which the provider does not read, and the overview, the one panel that would show a version, fails as above.
+
+The relative is claimed for PromQL only: MetricsQL is a superset of it, and nothing beyond PromQL was measured.
+`v1.152.0` is the release probed.
+The v1.136 line was not: `victoriametrics/victoria-metrics:v1.136.15` answered 404 on Docker Hub on 2026-09-23, where `v1.136.15-enterprise` is published, and every patch release of that line from `v1.136.1` to `v1.136.18` has an `-enterprise` tag there and no plain one.
+Reproduce the pass with `docker compose -f database-compose.yml --profile compat up -d victoriametrics` and a connection to `localhost:8428` with no user and no password.
+
 ---
 
 ## 2. Architecture
@@ -73,6 +167,7 @@ Each module has one reason to change (#1085, section 3.5).
 `tests/unit/db/prometheus/seam-guard.test.ts` fails the build the moment wire vocabulary appears outside `http-transport.ts`, or a module other than `request.ts` reaches the network, on the Trino template.
 
 Nothing outside this directory is imported from another provider: the Couchbase TLS helpers are the reference for the TLS mapping and not a dependency ([§3.6](#36-tls-is-its-own-implementation)).
+The endpoint and redirect rules are not this directory's own: `index.ts` builds each connection's `PrometheusEndpoint` from `httpOrigin` and `endpointUrl` of [`src/lib/db/http/endpoint.ts`](../../src/lib/db/http/endpoint.ts), the module every HTTP transport here uses, and `request.ts` refuses a 3xx on both request paths with that module's `rejectRedirect`, so host and port validation, the check of each built URL and the redirect rule are that module's and not a copy (#1085 S1 and #1085 S2, sections 3.6 and 13).
 
 ### 2.2 Class hierarchy
 
@@ -493,7 +588,7 @@ An `errorType` this build does not know is carried verbatim as the transport err
 | File | Owns |
 |---|---|
 | [`tests/integration/db/prometheus-provider.test.ts`](../../tests/integration/db/prometheus-provider.test.ts) | The provider end to end through the real composition; `globalThis.fetch` is replaced per test and restored in `afterEach`, with payloads captured from the live server |
-| `tests/unit/db/prometheus/` | One file per module: `promql`, `transport`, `results`, `request` (real TLS handshakes against a local `node:https` server), `concurrency`, `http-transport` (every endpoint's exact URL), `monitoring`, `errors`, `objects`, `provider`, `seam-guard`, and `provider-doc` (this document against the constants) |
+| `tests/unit/db/prometheus/` | One file per module: `promql`, `transport`, `results`, `request` (real TLS handshakes against a local `node:https` server), `concurrency`, `http-transport` (every endpoint's exact URL), `monitoring`, `errors`, `objects`, `provider`, `provider-endpoint` (the endpoint the real composition builds, against a local server), `seam-guard`, and `provider-doc` (this document against the constants) |
 | `tests/unit/editor/promql-language.test.ts` | The editor's tokenizer, its word lists pinned to the lexer and function tables captured at the tag |
 | [`e2e/prometheus-provider.spec.ts`](../../e2e/prometheus-provider.spec.ts) | The connection dialog: the driver is selectable, `9090` is the default, no Database box renders, the password field's label and hint |
 
