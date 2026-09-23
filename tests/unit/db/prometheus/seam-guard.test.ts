@@ -81,9 +81,10 @@ const WIRE_TOKENS = [
 
 /**
  * Wire members whose spelling other modules legitimately use as identifiers: the seam's `scrapePool`
- * field, a shaped result's `warnings`, a local list of `infos`, and the seam's `headMinTimeMs`, which holds
- * `minTime` inside it. Only the spelling document parsing produces is flagged: the member as an exact
- * string (`head["numSeries"]`, `params.set("scrapePool", pool)`).
+ * field, a shaped result's `warnings`, a local list of `infos`, and the head block's `minTimeMs` and
+ * `maxTimeMs` on the seam, which hold `minTime` and `maxTime` inside them. Only the spelling document
+ * parsing produces is flagged: the member as an exact string (`head["numSeries"]`,
+ * `params.set("scrapePool", pool)`).
  */
 const STRING_TOKENS = ["warnings", "infos", "scrapePool", "numSeries", "chunkCount", "minTime", "maxTime"];
 
@@ -125,7 +126,7 @@ const WIRE_RULE = [
   "",
   `Fix an access below by decoding the member inside ${TRANSPORT_FILE} and widening the seam type when the value is`,
   "genuinely needed. A health probe's path is data to read (probe.path), never a literal to compare. If you tripped",
-  "this on a local name rather than on the wire, rename it to the seam's vocabulary (headSeries, not numSeries).",
+  "this on a local name rather than on the wire, rename it to the seam's vocabulary (head.series, not numSeries).",
   "Do not weaken or delete this test: it is the only thing keeping the seam real.",
   "",
   "Wire vocabulary outside the transport:",
@@ -332,7 +333,7 @@ import { ALL_METRICS_SELECTOR, metricSelector } from "./promql";
 type Reader = Pick<PrometheusTransport, "query" | "metricNames" | "seriesLabels" | "scrapePools" | "targets" | "health">;
 
 export function headOf(tsdb: PrometheusTsdbStatus, flags: Readonly<Record<string, string>>) {
-  const head = [tsdb.headSeries, tsdb.headChunks, tsdb.headMinTimeMs, tsdb.headMaxTimeMs];
+  const head = [tsdb.head?.series, tsdb.head?.chunks, tsdb.head?.minTimeMs, tsdb.head?.maxTimeMs];
   return { head, top: tsdb.seriesByMetric, labels: tsdb.valuesByLabel, ceiling: flags["web.max-connections"] };
 }
 
@@ -473,7 +474,7 @@ export async function readTargets(origin: string, token: string) {
     ["the seam's target fields", "const { scrapePool, scrapeUrl, lastError, health, discoveredLabels } = target;"],
     [
       "the seam's head block fields",
-      "const span = [tsdb.headSeries, tsdb.headChunks, tsdb.headMinTimeMs, tsdb.headMaxTimeMs];",
+      "const span = [tsdb.head?.series, tsdb.head?.chunks, tsdb.head?.minTimeMs, tsdb.head?.maxTimeMs];",
     ],
     ["the seam's top lists", "const top = [tsdb.seriesByMetric, tsdb.valuesByLabel];"],
     ["a local list of info notices", 'const infos = answer.notices.filter((notice) => notice.level === "info");'],

@@ -478,6 +478,31 @@ describe("MonitoringDashboard", () => {
     expect(queriesTabProps[queriesTabProps.length - 1].labels).toEqual(mockLabels);
   });
 
+  test("hands the selected connection's own labels to the tables tab", async () => {
+    // Without them the tab cannot say that a provider's list is only part of the database, and
+    // counts it as the database's tables (#1085 6.2): the caption is the tab's, the metadata the
+    // dashboard's, as for the queries tab above.
+    const user = userEvent.setup();
+    tablesTabProps.length = 0;
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByTestId, container } = renderResult!;
+
+    const allTriggers = container.querySelectorAll('[role="tab"]');
+    const tablesTrigger = Array.from(allTriggers).find((t) => t.textContent?.includes("Tables")) as HTMLElement;
+    await user.click(tablesTrigger);
+
+    await waitFor(() => {
+      expect(queryByTestId("monitoring-tablestab")).not.toBeNull();
+    });
+
+    expect(tablesTabProps.length).toBeGreaterThan(0);
+    expect(tablesTabProps[tablesTabProps.length - 1].labels).toEqual(mockLabels);
+  });
+
   test("hands the selected connection's declared capabilities to the tables tab", async () => {
     const user = userEvent.setup();
     tablesTabProps.length = 0;

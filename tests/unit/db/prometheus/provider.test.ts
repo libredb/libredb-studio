@@ -49,6 +49,7 @@ import {
   readOverview,
   readStorageStats,
   readTableStats,
+  TSDB_TOP_METRICS,
 } from "@/lib/db/providers/timeseries/prometheus/monitoring";
 import {
   INVENTORY_WINDOW_MS,
@@ -84,7 +85,7 @@ import { formatDuration } from "@/lib/db/utils/pool-manager";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { generateSelectQuery } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, SSLConfig } from "@/lib/types";
-import { capture, captureBody } from "../../../helpers/prometheus-fixtures";
+import { capture, captureBody, captureVm } from "../../../helpers/prometheus-fixtures";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 
 // ============================================================================
@@ -832,6 +833,48 @@ describe("query", () => {
     expect(expected.warnings.some((warning) => warning.message.includes(budgetNotice))).toBe(true);
   });
 
+  test("a vector whose rows pass the byte budget is cut to the series that fit, and says so on its own pagination (#1085 5.4)", async () => {
+    // Built inline, since no capture comes near the budget. The answer holds exactly the series cap
+    // and is about 130 KB on the wire, but every series carries two long label names no other series
+    // carries, and a vector row holds a field for every label name of the series kept, null where its
+    // own series lacks one. So the rows grow with the square of the series kept, and the byte budget
+    // is the one bound that cuts.
+    const padding = "x".repeat(100);
+    const overBudget = JSON.stringify({
+      status: "success",
+      data: {
+        resultType: "vector",
+        result: Array.from({ length: DEFAULT_QUERY_LIMIT }, (_, index) => ({
+          metric: { __name__: "byte_probe", [`a${index}_${padding}`]: "1", [`b${index}_${padding}`]: "1" },
+          value: [1758585600, "1"],
+        })),
+      },
+    });
+    respond = async (request) => (request.url.pathname === "/api/v1/query" ? json(overBudget) : captured(request));
+    const provider = await connectedProvider();
+
+    const result = await provider.query("byte_probe");
+    const expected = shapeQueryResult(await directTransport().query("byte_probe", DIRECT_QUERY), SHAPE);
+
+    expect(result.rows).toEqual(expected.rows);
+    expect(result.fields).toEqual(expected.fields);
+    expect(result.warnings).toEqual(expected.warnings);
+    expect(result.pagination).toEqual({
+      limit: DEFAULT_QUERY_LIMIT,
+      offset: 0,
+      hasMore: false,
+      totalReturned: result.rows.length,
+      wasLimited: true,
+    });
+    // Non-vacuous: at these bounds the shaper keeps fewer series than the cap and names the byte
+    // budget. So any other budget reaching the shaper answers something else: a larger one, or none,
+    // keeps more series, and a smaller one names itself.
+    const byteNotice = `held to ${RESULT_BYTE_BUDGET.toLocaleString("en-US")} bytes`;
+    expect(result.rows.length).toBeGreaterThan(0);
+    expect(result.rows.length).toBeLessThan(DEFAULT_QUERY_LIMIT);
+    expect(result.warnings?.some((warning) => warning.message.includes(byteNotice))).toBe(true);
+  });
+
   test("an engine error arrives as the class its errorType names", async () => {
     // The captured parse error: status 400 and `errorType` `bad_data`, asked with `sum(`.
     respond = async (request) =>
@@ -1273,6 +1316,7 @@ describe("the declarations", () => {
       slowQueriesEmptyState: "Prometheus exposes no query log over its HTTP API, so there are no slow queries to read.",
       sessionsEmptyState:
         "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
+      tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
       analyzeAction: "TSDB Statistics",
       vacuumAction: "Compact Blocks",
       analyzeGlobalLabel: "TSDB Statistics",
@@ -1284,6 +1328,51 @@ describe("the declarations", () => {
       vacuumGlobalDesc:
         "Prometheus compacts its TSDB blocks on its own schedule. Deleting series and cleaning tombstones are admin API calls this product never makes, so nothing runs from here.",
     });
+  });
+
+  test("the Tables caption is true of the list getTableStats answers, on Prometheus and on VictoriaMetrics", async () => {
+    // The caption is built from the list's bound, so a change to the bound changes the sentence too.
+    expect(new PrometheusProvider(connection()).getLabels().tableStatsCaption).toContain(`at most ${TSDB_TOP_METRICS}`);
+
+    // Prometheus cuts its ranked list at the limit it is sent, and VictoriaMetrics ignores the limit
+    // and lists its own top ten, so "at most" is the count that holds on both.
+    const listedFrom = async (answer: InboundResponse) => {
+      respond = async (request) => (request.url.pathname === "/api/v1/status/tsdb" ? answer : captured(request));
+      return (await connectedProvider()).getTableStats();
+    };
+    const vm = captureVm("tsdb-status-50");
+    const onPrometheus = await listedFrom(replay("tsdb-status-10000"));
+    const onVictoriaMetrics = await listedFrom({
+      status: vm.status,
+      contentType: vm.headers["content-type"] ?? null,
+      body: vm.text,
+    });
+
+    for (const [engine, listed] of [
+      ["prometheus", onPrometheus],
+      ["victoriametrics", onVictoriaMetrics],
+    ] as const) {
+      const counts = listed.map((row) => row.rowCount);
+
+      expect(listed.length, engine).toBeGreaterThan(0);
+      expect(listed.length, engine).toBeLessThanOrEqual(TSDB_TOP_METRICS);
+      // The most series first.
+      expect(counts, engine).toEqual(counts.toSorted((a, b) => b - a));
+    }
+
+    // The Prometheus capture at limit=10000 lists every metric in the head, so there the list is at
+    // its bound and no metric left out of it has more series than one listed.
+    const everyMetric = captureBody<{ data: { seriesCountByMetricName: { name: string; value: number }[] } }>(
+      "tsdb-status-10000",
+    ).data.seriesCountByMetricName;
+    const names = new Set(onPrometheus.map((row) => row.tableName));
+    const fewestListed = Math.min(...onPrometheus.map((row) => row.rowCount));
+
+    expect(onPrometheus.length).toBe(TSDB_TOP_METRICS);
+    expect(everyMetric.length).toBeGreaterThan(TSDB_TOP_METRICS);
+    expect(everyMetric.filter((entry) => !names.has(entry.name)).every((entry) => entry.value <= fewestListed)).toBe(
+      true,
+    );
   });
 
   test("prepareQuery hands the text on untouched, at the series cap and never at an offset", () => {

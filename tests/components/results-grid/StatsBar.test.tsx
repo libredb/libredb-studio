@@ -739,3 +739,94 @@ describe("results-grid/StatsBar — the ordering notice (#816)", () => {
     expect(absent.queryByTitle(NOTICE)).toBeNull();
   });
 });
+
+/**
+ * The sentence the "limited" badge carries, which has to be true of every bound that sets
+ * `pagination.wasLimited` (#1085, section 5.4).
+ *
+ * It was written for the SQL limiter: "Rows beyond the bound were not fetched." `POST /api/db/query`
+ * also keeps a bound a provider applied to its own result, and the Prometheus provider applies its
+ * bounds after the answer has arrived. Its matrix cell budget leaves out whole series, which are
+ * COLUMNS of the wide grid, from an answer already fetched and parsed, and on an engine that ignores
+ * `limit` its series cap leaves out series the server sent. So the sentence may claim neither rows
+ * nor fetching, and it may not point at a warning either, because the limiter writes none.
+ */
+describe("results-grid/StatsBar - the limited badge's sentence (#1085, section 5.4)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const NOTICE = "Studio bounded this result. Anything beyond the bound is not in it.";
+
+  const statsBar = (result: QueryResult) => (
+    <StatsBar
+      result={result}
+      filteredRowCount={result.rows.length}
+      activeFilterCount={0}
+      onClearFilters={mock(() => {})}
+      viewMode="table"
+      onSetViewMode={mock(() => {})}
+      wrapText={false}
+      onToggleWrapText={mock(() => {})}
+      hasSensitive={false}
+      effectiveMaskingEnabled={false}
+      userCanToggle={false}
+    />
+  );
+
+  /**
+   * The shape the compose server's `prometheus_http_requests_total[1h:1s]` took through the provider:
+   * all 3,600 instants as rows, and 69 of the 70 series as columns, the 70th fetched and then left out
+   * by the cell budget. The badge reads only the row count, the fields and `pagination`, so each row
+   * carries its instant alone.
+   */
+  function budgetCutMatrix(): QueryResult {
+    const rows = Array.from({ length: 3600 }, (_, instant) => ({ timestamp: instant }));
+    return {
+      rows,
+      fields: ["timestamp", ...Array.from({ length: 69 }, (_, series) => `series_${series}`)],
+      rowCount: rows.length,
+      executionTime: 40,
+      pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: rows.length, wasLimited: true },
+      warnings: [
+        {
+          message:
+            "Showing 69 of 70 series and 248,400 of 252,000 cells, because a matrix result is held to 250,000 cells. Use a larger step or a shorter range to see the rest.",
+        },
+      ],
+    };
+  }
+
+  test("says nothing about rows or fetching over a matrix the provider cut after reading it", () => {
+    const { getByText } = render(statsBar(budgetCutMatrix()));
+
+    const title = getByText("limited").getAttribute("title") ?? "";
+    // The control: the badge is there and carries its sentence.
+    expect(title).toContain("Studio bounded this result.");
+    // Every instant is a row here, and the series left out was fetched.
+    expect(title).not.toMatch(/\brows?\b/i);
+    expect(title).not.toMatch(/fetch/i);
+    expect(title).toBe(NOTICE);
+    // The same sentence for anyone who listens rather than hovers.
+    expect(getByText("limited").textContent).toBe(`limited: ${NOTICE}`);
+  });
+
+  test("the limiter's own bound carries the same sentence, which points at no warning it never wrote", () => {
+    // The SQL shape: the limiter rewrote the statement, a full page came back, and no warning.
+    const { getByText, queryByText } = render(statsBar(makeResult()));
+
+    const title = getByText("limited").getAttribute("title") ?? "";
+    expect(title).toBe(NOTICE);
+    expect(title).not.toMatch(/warning/i);
+    expect(queryByText(/warning/)).toBeNull();
+  });
+
+  test("a result nothing bounded carries no badge and no sentence", () => {
+    const whole = makeResult();
+    delete whole.pagination;
+    const { queryByText, queryByTitle } = render(statsBar(whole));
+
+    expect(queryByText("limited")).toBeNull();
+    expect(queryByTitle(NOTICE)).toBeNull();
+  });
+});

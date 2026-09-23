@@ -2873,6 +2873,16 @@ interface CuratedReading {
   readonly fields: readonly string[];
   /** The projected column `input.schema` narrows on, or absent when the reading has no schema dimension. */
   readonly schemaColumn?: string;
+  /**
+   * What the rows ARE, when the provider declares that its answer is only part of what the engine
+   * holds, read off the run's labels. It goes in the header the model reads the rows under, as
+   * "estimated" does for the statistics inventory. The Prometheus table list is the metrics with the
+   * most head series, and 50 of them under "table statistics, 50 row(s)" read as the count of every
+   * table. That is a cap read as a count, the defect #513 closed for this run's own bounds in
+   * `runCuratedRead`; a provider's own ranked list never meets those bounds, so only the provider's
+   * declaration can say so (#1085 6.2).
+   */
+  readonly scope?: (labels: ProviderLabels) => string | undefined;
   readonly read: (
     provider: DatabaseProvider,
     input: AgentCuratedReadInput,
@@ -2934,6 +2944,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
     label: "table statistics",
     method: "getTableStats",
     schemaColumn: "schemaName",
+    scope: (labels) => labels.tableStatsCaption,
     fields: [
       "schemaName",
       "tableName",
@@ -3176,13 +3187,15 @@ export async function inspectOperationsTool(context: AgentToolContext, input: un
   const parsed = parseToolInput(agentCuratedReadInput, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const selector = parsed.value;
+  const reading = CURATED_READINGS[selector.kind];
+  const scope = reading.scope?.(context.labels);
   return runAuditedAgentCall(context, {
     operationId: "db.operations.read",
     // The reading, not a statement — canonical so that two identical requests are one
     // call to the repair ledger however the model ordered its arguments.
     fingerprintSource: `operations:${selector.kind}:${selector.limit ?? ""}:${selector.schema ?? ""}`,
     input: selector,
-    label: CURATED_READINGS[selector.kind].label,
+    label: scope === undefined ? reading.label : `${reading.label} (${scope})`,
     invoke: (validatedInput, budget, phase) => runCuratedRead(context, validatedInput, budget, phase),
     ...(selector.schema === undefined ? {} : { target: { schema: selector.schema } }),
   });

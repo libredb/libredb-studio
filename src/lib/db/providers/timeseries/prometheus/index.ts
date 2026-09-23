@@ -63,7 +63,14 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { createQueryLimiter, QUERY_CONCURRENCY_LIMIT, type QueryLimiter } from "./concurrency";
 import { type ErrorContext, toDatabaseError } from "./errors";
 import { createHttpTransport, type PrometheusEndpoint, RESPONSE_BYTE_CAP } from "./http-transport";
-import { PROMETHEUS_SCHEMA_NAME, readHealth, readOverview, readStorageStats, readTableStats } from "./monitoring";
+import {
+  PROMETHEUS_SCHEMA_NAME,
+  readHealth,
+  readOverview,
+  readStorageStats,
+  readTableStats,
+  TSDB_TOP_METRICS,
+} from "./monitoring";
 import { type ObjectsTransport, PROMETHEUS_OBJECT_KINDS, PrometheusObjects } from "./objects";
 import { createSendRequest, type SendRequest, tlsMaterialFor } from "./request";
 import { MATRIX_SAMPLE_BUDGET, RESULT_BYTE_BUDGET, type ShapeLimits, shapeQueryResult } from "./results";
@@ -234,6 +241,9 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       slowQueriesEmptyState: "Prometheus exposes no query log over its HTTP API, so there are no slow queries to read.",
       sessionsEmptyState:
         "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
+      // The Tables list is the top of the TSDB status's ranking, not every metric (#1085 6.2). "At most",
+      // because VictoriaMetrics ignores the limit on that read and lists its own top ten.
+      tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
       // Never rendered while `supportsMaintenance` is false (`maintenanceControl()` gates every
       // placement on it first), and written true to the engine all the same.
       analyzeAction: "TSDB Statistics",

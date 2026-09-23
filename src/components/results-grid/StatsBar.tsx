@@ -88,9 +88,19 @@ const ORDER_NOTICE = "Without an ORDER BY the engine may return rows that repeat
  * It said "AUTO-LIMITED" in the strip's shouting idiom, which cost 99px to say one word.
  * The word that carries the fact is "limited"; what applied the limit is in the sentence
  * on the `title`, where the other badges beside it already keep theirs.
+ *
+ * The sentence is true of every bound that sets `pagination.wasLimited`, and since #1085
+ * (section 5.4) that is not only the limiter's: `POST /api/db/query` also keeps a bound a
+ * provider applied to its own result. It used to say "Rows beyond the bound were not
+ * fetched.", which is the limiter's bound alone. The Prometheus provider applies its bounds
+ * once the answer has arrived: its matrix cell budget leaves out whole series, which are
+ * columns of the wide grid, and on an engine that ignores `limit` its series cap leaves out
+ * series the server sent. So the sentence names neither rows nor fetching. It points at no
+ * warning either, because the limiter writes none, and it stays true of a limiter bound the
+ * result fit inside, where nothing lies beyond the bound.
  */
 const AUTO_LIMIT_BADGE = "limited";
-const AUTO_LIMIT_NOTICE = "Studio bounded this result. Rows beyond the bound were not fetched.";
+const AUTO_LIMIT_NOTICE = "Studio bounded this result. Anything beyond the bound is not in it.";
 
 /** What the duration beside it is, for anyone who hovers or listens. */
 const EXEC_TIME_NOTICE = "Execution time";

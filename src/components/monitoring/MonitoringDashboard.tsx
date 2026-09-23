@@ -308,6 +308,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   loading={loading}
                   onRunMaintenance={runMaintenance}
                   capabilities={metadata?.capabilities}
+                  labels={metadata?.labels}
                 />
               </TabsContent>
               <TabsContent value="storage" className="h-full m-0 p-0">

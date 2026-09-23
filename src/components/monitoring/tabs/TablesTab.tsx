@@ -23,6 +23,7 @@ import {
   type MaintenanceType,
   type MonitoringData,
   type ProviderCapabilities,
+  type ProviderLabels,
 } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { PanelUnavailable } from "../PanelUnavailable";
@@ -146,6 +147,18 @@ function MaintenanceUnattachableNote({ actions, refused }: Readonly<{ actions: s
   );
 }
 
+/**
+ * Why the list shows no row. Three causes, which is why this is a function: no statistics at all,
+ * a search that matched none of the rows a provider says are only part of the database, and a
+ * whole list with no match. The middle one must not say no table was found: the search saw only
+ * the listed rows, and a table outside them may match.
+ */
+function emptyListNote(statsAbsent: boolean, searchMissedAPartialList: boolean): string {
+  if (statsAbsent) return "No table statistics available.";
+  if (searchMissedAPartialList) return "No listed table matches the search.";
+  return "No tables found.";
+}
+
 function bloatBadgeVariant(ratio: number): "destructive" | "outline" | "secondary" {
   if (ratio > 20) return "destructive";
   if (ratio > 10) return "outline";
@@ -166,9 +179,15 @@ interface TablesTabProps {
    * exists for whenever `/api/db/provider-meta` errors.
    */
   capabilities?: ProviderCapabilities;
+  /**
+   * The connected provider's own labels, read here for `tableStatsCaption` alone. Absent while
+   * /api/db/provider-meta is in flight or after it failed, and then the tab renders as it does for
+   * an engine that declares no caption.
+   */
+  labels?: ProviderLabels;
 }
 
-export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, capabilities }: TablesTabProps) {
+export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, capabilities, labels }: TablesTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -216,6 +235,14 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   const statsAbsent = tablesUnavailable !== undefined || (tables.length === 0 && (data?.overview?.tableCount ?? 0) > 0);
   const sizeAbsent = statsAbsent || !tables.every((t) => t.tableSizeBytes !== undefined);
 
+  // What the rows are, when the provider says they are only part of the database (#1085 6.2). The
+  // Prometheus list is the metrics with the most head series, so a count of it titled "Tables" and a
+  // sum of it read as the database's own figures, beside an Overview that counts every metric. With
+  // a caption the cards count the rows listed instead (see `ProviderLabels.tableStatsCaption`). Only
+  // over a list that is there: an absent or refused one has nothing to scope and keeps the absence
+  // rendering above.
+  const listScope = statsAbsent ? undefined : labels?.tableStatsCaption;
+
   // Whether the engine HAS vacuum is a capability question, not a data question, so it is
   // read from what the provider declares instead of inferred from the rows. Cassandra
   // declares `supportsMaintenance: false, maintenanceOperations: []` and every maintenance
@@ -254,11 +281,20 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
+      {/* Above the cards, so it heads every figure on the tab and the list below them. */}
+      {listScope !== undefined && (
+        <p className="text-xs text-muted-foreground" data-testid="tables-list-scope">
+          {listScope}
+        </p>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
+              {listScope === undefined ? "Tables" : "Listed"}
+            </CardTitle>
             <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
@@ -280,7 +316,11 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
             <div className="text-lg sm:text-2xl font-medium" data-testid="tables-stat-size">
               {sizeAbsent ? "N/A" : formatBytes(totalSize)}
             </div>
-            {!sizeAbsent && <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total</p>}
+            {!sizeAbsent && (
+              <p className="text-xs sm:text-xs text-muted-foreground mt-1">
+                {listScope === undefined ? "Total" : "Across the list"}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -324,7 +364,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
           ) : filteredTables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Table2 strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">{statsAbsent ? "No table statistics available." : "No tables found."}</p>
+              <p className="text-xs">{emptyListNote(statsAbsent, listScope !== undefined && tables.length > 0)}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">

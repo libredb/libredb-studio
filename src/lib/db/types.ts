@@ -664,6 +664,23 @@ export interface ProviderLabels {
    * `errors`), and an absence is not an error.
    */
   sessionsEmptyState?: string;
+
+  /**
+   * What the rows `getTableStats()` answers ARE, declared only by an engine whose list is a
+   * ranked subset of what the database holds rather than every table in it.
+   *
+   * Read by the monitoring `TablesTab`, which renders it above its cards and then counts the
+   * rows as listed rather than as the database's tables, and by the agent's table-stats
+   * reading, which puts it in the header a model reads the rows under. Without it the tab titled
+   * a cut list "Tables" and summed it as the database: measured 2026-09-23 on the compose
+   * Prometheus, the 50 metrics with the most head series read "Tables 50, 858 rows" beside an
+   * Overview of 344 metrics and a head of 1,237 series (#1085 6.2 frames the list as the top N).
+   *
+   * Every engine whose list is whole leaves this absent, and the tab then renders as it always
+   * has. Optional, like every field added to this published interface after the fact, so an
+   * external implementer keeps compiling.
+   */
+  tableStatsCaption?: string;
 }
 
 /**

@@ -6,7 +6,8 @@ import React from "react";
 import { describe, test, expect, mock, afterEach } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TablesTab } from "@/components/monitoring/tabs/TablesTab";
-import type { MonitoringData, ProviderCapabilities } from "@/lib/db/types";
+import type { MonitoringData, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { TABLE_LABELS } from "../../fixtures/provider-labels";
 
 function makeData(): MonitoringData {
   return {
@@ -797,5 +798,118 @@ describe("a per-table operation with no row to run it on (U22)", () => {
     );
 
     expect(queryByTestId("tables-maintenance-unattachable")).toBeNull();
+  });
+});
+
+// #1085 6.2: a provider whose list is a ranked subset of what the database holds says which subset,
+// and the cards then count the rows listed rather than the database. Measured 2026-09-23 on the
+// compose Prometheus: this tab read "Tables 50, 858 rows" beside an Overview of 344 metrics and a
+// head of 1,237 series, because the list is the 50 metrics with the most head series.
+describe("a provider that declares what its list holds", () => {
+  // Scoped here as well as in the blocks above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const CAPTION = "The metrics with the most head series, at most 50";
+  const scoped: ProviderLabels = { ...TABLE_LABELS, tableStatsCaption: CAPTION };
+
+  test("renders the caption, and counts the rows it lists rather than the database's tables", () => {
+    const { getByTestId, queryByText } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities()}
+        labels={scoped}
+      />,
+    );
+
+    expect(getByTestId("tables-list-scope").textContent).toBe(CAPTION);
+    // The count is the list's length, titled as what it counts.
+    expect(queryByText("Listed")).not.toBeNull();
+    expect(queryByText("Tables")).toBeNull();
+    expect(getByTestId("tables-stat-count").textContent).toBe("2");
+    expect(queryByText("501.2K rows")).not.toBeNull(); // 1,200 + 500,000 across the two listed rows
+    // The size sums the listed rows too, so it is not called the database's total.
+    expect(getByTestId("tables-stat-size").textContent).toBe("820 MB");
+    expect(queryByText("Across the list")).not.toBeNull();
+    expect(queryByText("Total")).toBeNull();
+  });
+
+  test("an engine that declares no caption renders exactly as it does with no labels at all", () => {
+    const unlabelled = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities()}
+      />,
+    );
+    const before = unlabelled.container.innerHTML;
+    // The control for the comparison below: this is the rendering the tab had.
+    expect(unlabelled.queryByText("Tables")).not.toBeNull();
+    expect(unlabelled.queryByText("Total")).not.toBeNull();
+    expect(unlabelled.queryByTestId("tables-list-scope")).toBeNull();
+    cleanup();
+
+    const labelled = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities()}
+        labels={TABLE_LABELS}
+      />,
+    );
+
+    expect(labelled.container.innerHTML).toBe(before);
+  });
+
+  test("a search that matches none of the listed rows does not say the table does not exist", () => {
+    const { getByPlaceholderText, queryByText } = render(
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} labels={scoped} />,
+    );
+
+    // A metric outside the list exists all the same, so "No tables found." would be false.
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "scrape_samples_scraped" } });
+
+    expect(queryByText("No listed table matches the search.")).not.toBeNull();
+    expect(queryByText("No tables found.")).toBeNull();
+  });
+
+  test("the same search over a whole list still finds no table", () => {
+    const { getByPlaceholderText, queryByText } = render(
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} labels={TABLE_LABELS} />,
+    );
+
+    fireEvent.change(getByPlaceholderText("Search..."), { target: { value: "scrape_samples_scraped" } });
+
+    expect(queryByText("No tables found.")).not.toBeNull();
+    expect(queryByText("No listed table matches the search.")).toBeNull();
+  });
+
+  test("a list that is not there carries no caption, and its cards read as they did", () => {
+    // No list means nothing to scope: the refused read and the empty list beside a counted
+    // overview keep the absence rendering the blocks above pin.
+    const rest: MonitoringData = makeData();
+    delete rest.tables;
+    const refused = { ...rest, errors: { tables: "no table statistics for this catalog" } } as MonitoringData;
+    const base = makeData();
+    const statsless = { ...base, overview: { ...base.overview, tableCount: 6 }, tables: [] } as MonitoringData;
+
+    for (const data of [refused, statsless]) {
+      const { queryByTestId, queryByText, getByTestId } = render(
+        <TablesTab data={data} loading={false} onRunMaintenance={mock(async () => true)} labels={scoped} />,
+      );
+
+      expect(queryByTestId("tables-list-scope")).toBeNull();
+      expect(queryByText("Tables")).not.toBeNull();
+      expect(queryByText("Listed")).toBeNull();
+      expect(getByTestId("tables-stat-count").textContent).toBe("N/A");
+      cleanup();
+    }
   });
 });

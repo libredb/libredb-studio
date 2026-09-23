@@ -4890,6 +4890,29 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_END);
   });
 
+  test("a table-stats reading says what its rows are when the provider declares they are only part of the database", async () => {
+    // Prometheus lists the metrics with the most head series, so 50 rows carried as
+    // "table statistics, 50 row(s)" read as the count of every table: a cap read as a count,
+    // the defect #513 closed for this tool's own bounds (#1085 6.2).
+    const caption = "The metrics with the most head series, at most 50";
+    const h = curatedHarness({ labels: { ...TABLE_LABELS, tableStatsCaption: caption } });
+
+    const scoped = await inspectOperationsTool(h.context, { kind: "table-stats" });
+
+    if (scoped.kind !== "completed") throw new Error("expected completed");
+    expect(scoped.modelText).toContain(`table statistics (${caption}), 1 row(s)`);
+
+    // The controls. Another reading on the same engine keeps its header, and so does the same
+    // reading on an engine that declares nothing, which is every engine whose list is whole.
+    const other = await inspectOperationsTool(h.context, { kind: "index-stats" });
+    const whole = await inspectOperationsTool(curatedHarness().context, { kind: "table-stats" });
+
+    if (other.kind !== "completed" || whole.kind !== "completed") throw new Error("expected completed");
+    expect(other.modelText).toContain("index statistics, 1 row(s)");
+    expect(other.modelText).not.toContain(caption);
+    expect(whole.modelText).toContain("table statistics, 1 row(s)");
+  });
+
   test("the tool tells the model, in its own description, that a reading is a moment", async () => {
     // Pinned decision 8's prompt half. The timeline carries the other half.
     expect(AGENT_TOOL_DEFINITIONS.inspect_operations.description).toContain("EVERY READING IS A MOMENT");
