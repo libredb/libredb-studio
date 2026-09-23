@@ -296,10 +296,11 @@ describe("wire-compatibility registry", () => {
     // the compose fixture's targets, through `createDatabaseProvider({ type: "prometheus" })`, with
     // Prometheus 3.13.3 probed in the same pass as the baseline (#1085 section 7, #424 Phase 6). A
     // surface counted as answered only where it passed AND held data wherever Prometheus did, the
-    // ScyllaDB rule, so an empty folder is not a folder that works, and by that rule 16 of the 36
-    // surfaces the baseline answered answer here. The advertised 2.24.0 is in the probed version and in no caveat,
+    // ScyllaDB rule, so an empty folder is not a folder that works, nor is a monitoring read or an
+    // object count with a failed panel or count, and by that rule 20 of the 36 surfaces outside the
+    // editor that the baseline answered answer here. The advertised 2.24.0 is in the probed version and in no caveat,
     // because the overview, the one panel that shows a version, fails there. The relative is
-    // claimed for PromQL only: MetricsQL is a superset of it, and nothing beyond PromQL was measured.
+    // claimed for PromQL only: nothing written in MetricsQL, its own query language, was measured.
     expect(SHIPPED_DATABASE_TYPES).toContain("prometheus");
     const relatives = compatibleEnginesFor("prometheus");
     expect(relatives.map((engine) => engine.name)).toEqual(["VictoriaMetrics"]);
@@ -310,12 +311,29 @@ describe("wire-compatibility registry", () => {
     // One pin per caveat the probe earned, so a caveat cannot be dropped or reworded away silently.
     const caveats = victoria?.caveats.join(" ") ?? "";
     expect(caveats).toContain("unsupported path requested");
-    expect(caveats).toContain("headStats");
-    expect(caveats).toContain("/api/v1/metadata");
-    expect(caveats).toContain("scrapeInterval");
+    expect(caveats).toContain("does not serve the path");
+    expect(caveats).toContain("its own top ten");
+    expect(caveats).toContain("shows its type and help");
+    expect(caveats).toContain("has no scrapeInterval or scrapeTimeout");
+    expect(caveats).toContain("1970-01-01T00:00:00Z");
     expect(caveats).toContain("-vmalert.proxyURL");
     expect(caveats).toContain("empty vector");
+    expect(caveats).toContain("31 points");
     expect(caveats).toContain("PromQL info");
+    // A metadata entry, a target and the TSDB status each lack a member Prometheus sends, and each
+    // is read without it, so the Tables tab, a metric's Source tab and the Targets folder answer.
+    // The message shown for a path the server does not serve names that path and its status, and
+    // no longer says a proxy or a login page answered. None of those old claims may come back.
+    for (const resolved of [
+      "Tables tab of the monitoring dashboard fails",
+      "Source tab fails",
+      "Targets folder fails",
+      "suggests a proxy or a login page",
+      "expected text at",
+      "expected an object at",
+    ]) {
+      expect(caveats).not.toContain(resolved);
+    }
   });
 
   test("every entry names a driver we actually ship", () => {

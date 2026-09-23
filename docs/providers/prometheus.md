@@ -52,7 +52,8 @@ VictoriaMetrics answers the Prometheus HTTP API, so this provider connects to it
 It is a wire-compatible relative, not a provider of its own, and what it gives a user was measured rather than assumed.
 Every surface below was called separately through `createDatabaseProvider({ type: "prometheus" })` on 2026-09-23 against `victoriametrics/victoria-metrics:v1.152.0`, a single node scraping the compose fixture's targets with `-promscrape.config`, with `prom/prometheus:v3.13.3` probed in the same pass as the baseline.
 The result is the `partial` entry in `src/lib/db/compatibility.ts` and its row in the [compatibility table](./README.md#wire-compatible-engines); this section says why each difference is what it is.
-A surface that answers empty where Prometheus answers data is counted as not answering, the rule that keeps ScyllaDB `partial` ([cassandra.md §11](./cassandra.md#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-2026-08-24)), and by that rule 16 of the 36 surfaces that answer on Prometheus answer here.
+A surface counts as answering only where it passed and held data wherever Prometheus did, the rule that keeps ScyllaDB `partial` ([cassandra.md §11](./cassandra.md#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-2026-08-24)).
+So an empty folder does not count, and neither does the monitoring read or the object count when one of its panels or counts failed, and by that rule 20 of the 36 surfaces above the query rows answer here, where Prometheus answers all 36.
 The metric, scrape pool and target reads ran on one named object that both servers hold, so the two columns compare the same thing: the metric `prometheus_http_requests_total`, the pool `prometheus` and a target of that pool.
 The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_name", "$1", "__name__", "(.+)")[1h:250ms]))` and cancels it 50 ms in, while it still runs on both servers.
 
@@ -60,20 +61,20 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 |---|---|---|
 | `connect` | answered | answered |
 | `getHealth` | answered | answered |
-| `getOverview` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response, so something other than the Prometheus API answered at this address, such as a proxy or a login page. The body is not shown. |
+| `getOverview` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
 | `getPerformanceMetrics` | answered | answered |
-| `getMonitoringData` | answered | answered, empty |
+| `getMonitoringData` | answered | answered, with its overview and storage panels failed on the 400s above |
 | `getSlowQueries` | answered | answered |
 | `getActiveSessions` | answered | answered |
-| `getTableStats` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/tsdb with a document this client cannot read: expected an object at the head block statistics |
+| `getTableStats` | answered, 50 metrics | answered, 10 metrics |
 | `getIndexStats` | answered | answered |
-| `getStorageStats` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response, so something other than the Prometheus API answered at this address, such as a proxy or a login page. The body is not shown. |
+| `getStorageStats` | answered | failed: `ConnectionError` Prometheus answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
 | `listContainers` | answered | answered |
-| `countObjects` | answered | answered |
+| `countObjects` | answered | answered, with the scrape pool count unavailable on the `listObjects:scrape_pool` message |
 | `listObjects:metric` | answered | answered |
 | `describeObject:metric` | answered | answered |
 | `describeObjects:metric` | answered | answered |
-| `readObjectSource:metric` | answered | failed: `ConnectionError` Prometheus answered /api/v1/metadata with a document this client cannot read: expected text at unit in a metadata entry |
+| `readObjectSource:metric` | answered | answered, with no `unit` |
 | `listObjects:rule_group` | answered | answered, empty |
 | `describeObject:rule_group` | answered | skipped: listObjects returned no object to describe |
 | `describeObjects:rule_group` | answered | answered |
@@ -86,17 +87,17 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 | `describeObject:alerting_rule` | answered | skipped: listObjects returned no object to describe |
 | `describeObjects:alerting_rule` | answered | answered |
 | `readObjectSource:alerting_rule` | answered | skipped: listObjects returned no object to read |
-| `listObjects:scrape_pool` | answered | failed: `ConnectionError` Prometheus answered /api/v1/scrape_pools with HTTP 400 and a body that is not a Prometheus API response, so something other than the Prometheus API answered at this address, such as a proxy or a login page. The body is not shown. |
+| `listObjects:scrape_pool` | answered | failed: `ConnectionError` Prometheus answered /api/v1/scrape_pools with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
 | `describeObject:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to describe |
 | `describeObjects:scrape_pool` | answered | answered |
 | `readObjectSource:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to read |
-| `listObjects:target` | answered | failed: `ConnectionError` Prometheus answered /api/v1/targets with a document this client cannot read: expected text at scrapeInterval in a target |
-| `describeObject:target` | answered | skipped: listObjects did not list a target of the scrape pool prometheus to describe |
+| `listObjects:target` | answered, one target down and one unknown | answered, two targets down |
+| `describeObject:target` | answered | answered |
 | `describeObjects:target` | answered | answered |
-| `readObjectSource:target` | answered | skipped: listObjects did not list a target of the scrape pool prometheus to read |
+| `readObjectSource:target` | answered | answered, with no `scrapeInterval` or `scrapeTimeout` |
 | `query:vector` | answered | answered |
 | `query:matrix-range` | answered | answered |
-| `query:matrix-subquery` | answered | answered |
+| `query:matrix-subquery` | answered, 30 rows on whole minutes | answered, 31 rows counted back from the evaluation time |
 | `query:scalar` | answered | answered |
 | `query:string` | answered | answered, empty |
 | `query:notice` | answered, with the engine's PromQL info | answered, with no notice |
@@ -106,19 +107,27 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 | `cancelQuery:long-query` | cancelled as expected: `QueryCancelledError` | cancelled as expected: `QueryCancelledError` |
 
 **The editor and the metric tree work as they do on Prometheus.**
-Instant vectors, range selectors, subqueries and scalars answer, the three refusals (a parse error, a buffer holding only `#` comments, bound values) end in the same classes, and Cancel ends a running query as cancelled.
+Instant vectors, range selectors, subqueries and scalars answer, a subquery on timestamps of its own (below).
+The three refusals (a parse error, a buffer holding only `#` comments, bound values) end in the same classes, and Cancel ends a running query as cancelled.
 A metric's columns are the same on both servers: `prometheus_http_requests_total` has `__name__`, `code`, `handler`, `instance`, `job`, `timestamp` and `value` on each.
 
 **The Overview and Storage tabs and the Scrape pools folder fail, on three endpoints VictoriaMetrics does not serve.**
 `/api/v1/status/runtimeinfo`, `/api/v1/status/flags` and `/api/v1/scrape_pools` answer `400` with the plain text `unsupported path requested: "<the path>"`.
-The overview reads the first two and the storage row the first, each beside the TSDB status below, so both fail whole, and the Scrape pools folder fails while its count reads unavailable.
-The message a user sees says that something other than the Prometheus API answered, such as a proxy or a login page, because that is how this provider reads any answer that is not the API envelope; here it is the server's own refusal of a path it does not implement.
+The overview reads the first two at once, beside the build and TSDB status reads, so its message names whichever of the two answered first: `getOverview` named `/api/v1/status/runtimeinfo`, and the overview panel of the monitoring read in the same pass named `/api/v1/status/flags`.
+The storage row reads the first, and the Scrape pools folder the third, whose count then reads unavailable with the folder's message.
+The storage row also needs the head statistics, which the TSDB status below does not carry, and the provider refuses a status without them as unmeasured rather than show an empty head (`storageStatsFrom` in `monitoring.ts`).
+Each message names the path and the status, and offers the sources such an answer can have without choosing one: a proxy or a login page in front of the server, or a server that does not serve the path, which is what answered here.
 
-**Three documents lack a field the provider requires.**
-Each is refused whole as an envelope of the wrong shape, the `protocol` category of `transport.ts`, which `errors.ts` maps to `ConnectionError`.
-The TSDB status holds VictoriaMetrics' own statistics (`totalSeries`, `totalLabelValuePairs`, `seriesCountByMetricName` and four more) and no `headStats`, so the Tables tab fails with `expected an object at the head block statistics`.
-A metadata entry carries `type` and `help` but no `unit`, so a metric's Source tab fails with `expected text at unit in a metadata entry`, and the type and help it does send are not shown either.
-A target carries no `scrapeInterval` and no `scrapeTimeout`, which it keeps as `__scrape_interval__` and `__scrape_timeout__` among its discovered labels, so the Targets folder fails with `expected text at scrapeInterval in a target` and its count reads unavailable.
+**Three documents lack a member Prometheus sends, and are read without it.**
+Each of those members only describes its object, so the provider reads the document without it and puts nothing in its place, while a member that identifies or classifies an object stays required (`transport.ts`).
+The TSDB status holds VictoriaMetrics' own statistics (`totalSeries`, `totalLabelValuePairs`, `seriesCountByMetricName` and four more) and no `headStats`, and its ranked list is ten entries long whatever `limit` it is sent: `limit=3` and `limit=50` each answered ten.
+The Tables tab reads only that list, so it lists ten metrics where Prometheus lists fifty, which its caption, "The metrics with the most head series, at most 50", allows, and each of the ten series counts matched Prometheus's for the same metric.
+A metadata entry carries `type` and `help` and no `unit`, so a metric's Source tab shows the family, its type and its help and no unit, where Prometheus sends `"unit": ""`.
+A target carries no `scrapeInterval` and no `scrapeTimeout`, and keeps them as `__scrape_interval__` and `__scrape_timeout__` among its discovered labels, so the Targets folder lists all five targets and a target's Source tab leaves the two members out, while its discovered labels show both.
+
+**A target not yet scraped reads as down.**
+`studio-unscraped`, the fixture's target scraped once a day, answered `"health":"down"` with `"lastError":""` and `"lastScrape":"1970-01-01T00:00:00Z"`, where Prometheus answered `"health":"unknown"` and `"lastScrape":"0001-01-01T00:00:00Z"`.
+So the Targets folder marks two targets down, where Prometheus marks one down and one unknown.
 
 **The rule folders are empty, and that is the deployment rather than a defect.**
 A single-node server evaluates no rules: alerting and recording rules belong to vmalert, and `/api/v1/rules` answers from vmalert only when the server is started with `-vmalert.proxyURL`.
@@ -126,6 +135,11 @@ Here it answered `{"status":"success","data":{"groups":[]}}`, so the rule group,
 
 **A string expression returns no rows.**
 `"libredb"` answers an empty vector, `{"resultType":"vector","result":[]}`, where Prometheus answers a `string` result, so the grid shows nothing.
+
+**A subquery's points are counted back from its evaluation time.**
+`avg_over_time(up[5m])[30m:1m]` answered 30 rows on Prometheus, the first at `17:08:00.000`, and 31 here, the first at `17:07:34.000`, thirty minutes before the evaluation time.
+Asked of both servers at one explicit time, `2026-09-23T17:34:36.5Z`, `avg_over_time(up{job="prometheus"}[5m])[30m:1m]` answered 30 points from `17:05:00.000` to `17:34:00.000` on Prometheus, on whole multiples of the step, and 31 from `17:04:36.500` to `17:34:36.500` here, each a whole step back from that time with both ends of the window kept.
+The grid and the chart show the points the engine sent, so the same subquery gives one more row here, on different timestamps.
 
 **No PromQL info or warning appears.**
 VictoriaMetrics answered `rate(up[5m])` with no notice where Prometheus 3.13.3 attaches `PromQL info: metric might not be a counter, name does not end in _total/_sum/_count/_bucket: "up" (1:6)`, and none of the 69 answers captured from it in `tests/fixtures/prometheus/victoriametrics-v1.152.0/` carries one either.
@@ -135,7 +149,7 @@ It also ignores `limit` on `/api/v1/query`: `limit=1` returned all four `up` ser
 `/api/v1/status/buildinfo` answers `2.24.0`, the Prometheus version VictoriaMetrics advertises for Grafana, which is why the registry records the build as `VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)`.
 Its own build, `v1.152.0`, is in its `/metrics` as `vm_app_version`, which the provider does not read, and the overview, the one panel that would show a version, fails as above.
 
-The relative is claimed for PromQL only: MetricsQL is a superset of it, and nothing beyond PromQL was measured.
+The relative is claimed for PromQL only: nothing written in MetricsQL, VictoriaMetrics' own query language, was measured.
 `v1.152.0` is the release probed.
 The v1.136 line was not: `victoriametrics/victoria-metrics:v1.136.15` answered 404 on Docker Hub on 2026-09-23, where `v1.136.15-enterprise` is published, and every patch release of that line from `v1.136.1` to `v1.136.18` has an `-enterprise` tag there and no plain one.
 Reproduce the pass with `docker compose -f database-compose.yml --profile compat up -d victoriametrics` and a connection to `localhost:8428` with no user and no password.

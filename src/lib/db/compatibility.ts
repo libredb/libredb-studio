@@ -557,20 +557,23 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     // The first relative of a driver whose query language is neither SQL-shaped nor JSON: it
     // answers the Prometheus HTTP API, so the `prometheus` provider serves it unchanged. Probed as a
     // single node scraping the compose fixture's targets, with Prometheus 3.13.3 as the baseline in
-    // the same pass (#1085 section 7). Claimed for PromQL only: MetricsQL is a superset of it and
-    // was not measured. The advertised 2.24.0 is in the version string and in no caveat: the
-    // overview, the one panel that shows a version, fails here, as the first caveat says.
+    // the same pass (#1085 section 7). Claimed for PromQL only: nothing written in MetricsQL, its own
+    // query language, was measured, and one PromQL subquery answered different points here than on
+    // Prometheus, as a caveat says. The advertised 2.24.0 is in the version string and in no caveat:
+    // the overview, the one panel that shows a version, fails here, as the first caveat says.
     name: "VictoriaMetrics",
     via: "prometheus",
     tier: "partial",
     probedVersion: "VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)",
     caveats: [
-      "The Overview and Storage tabs of the monitoring dashboard fail, and so does the Scrape pools folder, whose count reads unavailable: VictoriaMetrics answers /api/v1/status/runtimeinfo, /api/v1/status/flags and /api/v1/scrape_pools with HTTP 400 and the text 'unsupported path requested', and the message shown suggests a proxy or a login page answered, which is how the provider reads any answer that is not the API's own envelope.",
-      "The Tables tab of the monitoring dashboard fails: VictoriaMetrics answers /api/v1/status/tsdb with statistics of its own (totalSeries, seriesCountByMetricName and the rest) and no headStats, and the provider refuses a TSDB status without it ('expected an object at the head block statistics').",
-      "A metric's Source tab fails: VictoriaMetrics' /api/v1/metadata entries carry type and help but no unit, and the provider refuses an entry without one ('expected text at unit in a metadata entry'), so the type and help are not shown either.",
-      "The Targets folder fails and its count reads unavailable: VictoriaMetrics' /api/v1/targets entries carry no scrapeInterval and no scrapeTimeout (it keeps them as __scrape_interval__ and __scrape_timeout__ among a target's discovered labels), and the provider refuses a target without them ('expected text at scrapeInterval in a target').",
+      "The Overview and Storage tabs of the monitoring dashboard fail, and so does the Scrape pools folder, whose count reads unavailable: VictoriaMetrics answers /api/v1/status/runtimeinfo, /api/v1/status/flags and /api/v1/scrape_pools with HTTP 400 and the text 'unsupported path requested', and the message shown names the path and the status, with a server that does not serve the path among the causes it offers.",
+      "The Tables tab lists ten metrics where Prometheus lists up to fifty: VictoriaMetrics ignores the limit on /api/v1/status/tsdb and answers its own top ten, which the tab's caption, 'at most 50', allows, and each of the ten series counts matched Prometheus's for the same metric.",
+      "A metric's Source tab shows its type and help and no unit: VictoriaMetrics' /api/v1/metadata entries carry no unit, and the provider leaves it out rather than inventing an empty one.",
+      "A target's Source tab has no scrapeInterval or scrapeTimeout: VictoriaMetrics' /api/v1/targets entries carry neither, and keep them as __scrape_interval__ and __scrape_timeout__ among the discovered labels, which the tab shows.",
+      "A target VictoriaMetrics has not scraped yet reads as down: VictoriaMetrics reports it with health down, no error and a last scrape of 1970-01-01T00:00:00Z, where Prometheus reports health unknown.",
       "The Rule groups, Recording rules and Alerting rules folders are empty: a single-node server evaluates no rules, so its /api/v1/rules answered no group, and it answers that path from vmalert only when it is started with -vmalert.proxyURL.",
       'A string expression such as "libredb" returns no rows: VictoriaMetrics answers it with an empty vector, where Prometheus answers a string.',
+      "A subquery's points are counted back from its evaluation time, both ends of its window kept: avg_over_time(up[5m])[30m:1m] answered 31 points ending at that time, where Prometheus 3.13.3 answers 30 on whole minutes.",
       "PromQL infos and warnings do not appear beside a result: VictoriaMetrics answered rate(up[5m]) with no notice where Prometheus 3.13.3 attaches 'PromQL info: metric might not be a counter', and it sent none with any other answer measured.",
     ],
   },
