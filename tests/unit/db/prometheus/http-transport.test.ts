@@ -1569,29 +1569,57 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
     },
   );
 
-  test.each<[string, Reply]>([
+  /** The two source sentences a body that is not the envelope can get, written out rather than read from the code. */
+  const READY_GATE_SOURCES =
+    "Prometheus answers every API path this client reads with this status while it starts up, replaying its " +
+    "write-ahead log, and while it shuts down, and so does a proxy in front of it with no ready server behind it.";
+  const PROXY_SOURCES =
+    "A proxy or a login page in front of the server answers this way, and so does a server that does not serve " +
+    "this path.";
+
+  test.each<[string, Reply, string]>([
     [
       "an HTML page a proxy answers with HTTP 200",
       { status: 200, contentType: "text/html", body: "<html><title>Sign in marker-html</title></html>" },
+      PROXY_SOURCES,
     ],
-    ["a 502 with a text body", plain("upstream connect error marker-502", 502)],
-    ["the 503 a server that is not ready answers", plain("Service Unavailable marker-503", 503)],
-    ["JSON that is not an envelope", { status: 200, body: '{"hello":"marker-json"}' }],
-    ["a JSON list", { status: 200, body: '["marker-list"]' }],
-    ["an object whose status is neither success nor error", { status: 200, body: '{"status":"ok","data":"marker"}' }],
-    ["an empty body", { status: 500, body: "" }],
-  ])("%s is a protocol failure naming the path and status, never the body (CONSTRUCTED)", async (_label, answer) => {
-    reply(answer);
+    ["a 502 with a text body", plain("upstream connect error marker-502", 502), PROXY_SOURCES],
+    ["the 503 a server that is not ready answers", plain("Service Unavailable marker-503", 503), READY_GATE_SOURCES],
+    [
+      "the 504 a proxy answers when a query outlasts its read timeout",
+      { status: 504, contentType: "text/html", body: "<html><title>504 Gateway Time-out marker-504</title></html>" },
+      PROXY_SOURCES,
+    ],
+    ["JSON that is not an envelope", { status: 200, body: '{"hello":"marker-json"}' }, PROXY_SOURCES],
+    ["a JSON list", { status: 200, body: '["marker-list"]' }, PROXY_SOURCES],
+    [
+      "an object whose status is neither success nor error",
+      { status: 200, body: '{"status":"ok","data":"marker"}' },
+      PROXY_SOURCES,
+    ],
+    ["an empty body", { status: 500, body: "" }, PROXY_SOURCES],
+  ])(
+    "%s is a protocol failure naming the path, the status and its possible sources, never the body (CONSTRUCTED)",
+    async (_label, answer, sources) => {
+      reply(answer);
 
-    const failure = await failureOf(() => transportWith().rules());
+      const failure = await failureOf(() => transportWith().rules());
 
-    expect(failure.category).toBe("protocol");
-    expect(failure.detail).toEqual({ status: answer.status });
-    // The controls: the message says where and how, so the absence below is of the body, not of a message.
-    expect(failure.message).toContain("/api/v1/rules");
-    expect(failure.message).toContain(`HTTP ${answer.status}`);
-    expect(failure.message).not.toContain("marker");
-  });
+      expect(failure.category).toBe("protocol");
+      expect(failure.detail).toEqual({ status: answer.status });
+      // Each row states its sources, never derived from the status here, which would restate the predicate
+      // under test: only the 503 the ready gate writes gets the sentence about a server starting or stopping,
+      // and every other status, a proxy's 502 and 504 included, gets the one about a proxy, a login page or a
+      // path the server does not serve. The whole message is pinned, so a row that got the other sentence, or
+      // both, fails.
+      expect(failure.message).toBe(
+        `The server answered /api/v1/rules with HTTP ${answer.status} and a body that is not a Prometheus API ` +
+          `response. ${sources} The body is not shown.`,
+      );
+      // The control above says where and how, so this absence is of the body, not of a message.
+      expect(failure.message).not.toContain("marker");
+    },
+  );
 
   test("the 503 the API's own ready gate answers is named as a server starting or stopping, or a proxy with none ready (CONSTRUCTED)", async () => {
     // `testReady` in web/web.go (v3.13.3) wraps every API route this client reads, and writes exactly

@@ -1923,4 +1923,109 @@ describe("OperationsTab", () => {
     // The rows and their controls are there; the operator's own filter hid them.
     expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
   });
+
+  // =========================================================================
+  // A provider whose list is a ranked subset of what the database holds says
+  // which subset (#1085 6.2), and this list then heads its rows with it and
+  // titles them as listed, as the monitoring Tables tab does over the same rows.
+  // On the compose Prometheus (2026-09-23) the list holds 50 of 344 metrics, so
+  // this panel read "Tables (50)" and answered a filter for prometheus_build_info,
+  // a metric outside the 50, with "No tables found.".
+  // =========================================================================
+
+  const LIST_CAPTION = "The metrics with the most head series, at most 50";
+
+  /** The Prometheus declaration: no maintenance of any kind, and the caption its labels carry. */
+  const captionedList = {
+    capabilities: { supportsMaintenance: false, maintenanceOperations: [] },
+    labels: { tableStatsCaption: LIST_CAPTION },
+  };
+
+  /** Rows of the Prometheus shape: one per metric, its head series as the row count, no schema and no size. */
+  const listedMetrics = [
+    {
+      tableName: "prometheus_http_request_duration_seconds_bucket",
+      schemaName: "",
+      rowCount: 180,
+      totalSize: "N/A",
+      totalSizeBytes: 0,
+    },
+    { tableName: "go_gc_duration_seconds", schemaName: "", rowCount: 5, totalSize: "N/A", totalSizeBytes: 0 },
+  ];
+
+  /** A metric no listed name contains, so a filter for it matches no row. */
+  const UNLISTED_METRIC = "prometheus_build_info";
+
+  const filterFor = async (result: ReturnType<typeof render>, value: string) => {
+    await act(async () => {
+      fireEvent.change(result.getByPlaceholderText("Filter..."), { target: { value } });
+    });
+  };
+
+  test("a declared caption heads the list, and its rows are titled as listed, not as the database's tables", async () => {
+    mockMetadata = captionedList;
+    monitoringOverride = { data: { activeSessions: [], tables: listedMetrics } };
+
+    const { getByTestId, queryByText } = await render_();
+
+    expect(getByTestId("operations-tables-list-scope").textContent).toBe(LIST_CAPTION);
+    expect(queryByText("Listed (2)")).not.toBeNull();
+    expect(queryByText("Tables (2)")).toBeNull();
+  });
+
+  test("a filter that matches none of the listed rows does not say the table does not exist", async () => {
+    mockMetadata = captionedList;
+    monitoringOverride = { data: { activeSessions: [], tables: listedMetrics } };
+
+    const result = await render_();
+    await filterFor(result, UNLISTED_METRIC);
+
+    // The metric can exist outside the list, so "No tables found." would be false.
+    expect(result.getByTestId("operations-tables-empty").textContent).toBe("No listed table matches the filter.");
+  });
+
+  test("an engine that declares no caption keeps the Tables title and the empty-state copy", async () => {
+    // The control for the two tests above: labels without the caption, over the same rows.
+    mockMetadata = { capabilities: captionedList.capabilities, labels: {} };
+    monitoringOverride = { data: { activeSessions: [], tables: listedMetrics } };
+
+    const result = await render_();
+
+    expect(result.queryByText("Tables (2)")).not.toBeNull();
+    expect(result.queryByText("Listed (2)")).toBeNull();
+    expect(result.queryByTestId("operations-tables-list-scope")).toBeNull();
+    await filterFor(result, UNLISTED_METRIC);
+    expect(result.getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
+  });
+
+  test("a refused read carries no caption, and keeps its own sentence under the plain title", async () => {
+    // No list means nothing to scope: the refusal is the panel's whole answer.
+    const refusal = "the TSDB status could not be read";
+    mockMetadata = captionedList;
+    monitoringOverride = { data: { activeSessions: [], errors: { tables: refusal } } };
+
+    const { getByTestId, getByText, queryByTestId, queryByText } = await render_();
+
+    expect(queryByTestId("operations-tables-list-scope")).toBeNull();
+    expect(getByText("Tables")).not.toBeNull();
+    expect(queryByText(/^Listed/)).toBeNull();
+    expect(getByTestId("operations-tables-empty").textContent).toBe(refusal);
+  });
+
+  test("an empty list keeps its empty-state copy under a caption, and one beside a counted overview carries none", async () => {
+    mockMetadata = captionedList;
+
+    // Nothing listed and nothing counted: there is no row for a filter to have missed.
+    monitoringOverride = { data: { activeSessions: [], tables: [], overview: { tableCount: 0 } } };
+    const empty = await render_();
+    expect(empty.getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
+    cleanup();
+
+    // No rows beside an overview that counts tables means the statistics are absent, not a list to scope.
+    monitoringOverride = { data: { activeSessions: [], tables: [], overview: { tableCount: 344 } } };
+    const absent = await render_();
+    expect(absent.queryByTestId("operations-tables-list-scope")).toBeNull();
+    expect(absent.queryByText("Tables (0)")).not.toBeNull();
+    expect(absent.getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
+  });
 });

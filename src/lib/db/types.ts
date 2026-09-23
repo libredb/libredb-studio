@@ -669,15 +669,19 @@ export interface ProviderLabels {
    * What the rows `getTableStats()` answers ARE, declared only by an engine whose list is a
    * ranked subset of what the database holds rather than every table in it.
    *
-   * Read by the monitoring `TablesTab`, which renders it above its cards and then counts the
-   * rows as listed rather than as the database's tables, and by the agent's table-stats
-   * reading, which puts it in the header a model reads the rows under. Without it the tab titled
-   * a cut list "Tables" and summed it as the database: measured 2026-09-23 on the compose
-   * Prometheus, the 50 metrics with the most head series read "Tables 50, 858 rows" beside an
-   * Overview of 344 metrics and a head of 1,237 series (#1085 6.2 frames the list as the top N).
+   * Three readers. The monitoring `TablesTab` renders it above its cards and then counts the rows
+   * as listed rather than as the database's tables. The admin Operations list renders it above its
+   * rows, titles them "Listed (N)" rather than "Tables (N)", and answers a filter that matches none
+   * of them with "No listed table matches the filter.", because a table outside the list may match.
+   * The agent's table-stats reading puts it in the header a model reads the rows under. Neither list
+   * shows it where the read was refused or published no statistics: there is no list to scope.
+   * Without it both lists titled a cut list "Tables" and the tab summed it as the database:
+   * measured 2026-09-23 on the compose Prometheus, the 50 metrics with the most head series read
+   * "Tables 50, 858 rows" beside an Overview of 344 metrics and a head of 1,237 series (#1085 6.2
+   * frames the list as the top N).
    *
-   * Every engine whose list is whole leaves this absent, and the tab then renders as it always
-   * has. Optional, like every field added to this published interface after the fact, so an
+   * Every engine whose list is whole leaves this absent, and both lists then render as they always
+   * have. Optional, like every field added to this published interface after the fact, so an
    * external implementer keeps compiling.
    */
   tableStatsCaption?: string;
