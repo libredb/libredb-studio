@@ -108,7 +108,7 @@ type Cell = readonly [field: string, value: unknown];
 interface Table {
   readonly rows: Record<string, unknown>[];
   readonly fields: string[];
-  /** This provider's truncation notices, one per bound that cut. */
+  /** This provider's truncation notices: one per bound that cut, and one naming a series kept under `value`. */
   readonly cuts: QueryWarning[];
 }
 
@@ -127,6 +127,11 @@ interface Kept {
   readonly cuts: QueryWarning[];
 }
 
+/** The series the matrix byte budget kept, with the name each one's column is written under. */
+interface Columns extends Kept {
+  readonly columns: readonly string[];
+}
+
 /** The seam member one result type arrives as. */
 type ShapeOf<K extends PrometheusQueryData["shape"]> = Extract<PrometheusQueryData, { readonly shape: K }>;
 
@@ -142,7 +147,8 @@ const SHAPERS: { readonly [K in PrometheusQueryData["shape"]]: Shaper<K> } = {
 
 /**
  * The rows and fields of one answer, with the engine's notices verbatim and in its order, then one
- * notice for each bound that cut (5.4). `wasLimited` is true exactly when such a notice is present.
+ * notice for each bound that cut (5.4), and one naming a series a cut left alone when the byte budget
+ * writes it under `value`. `wasLimited` is true exactly when such a notice is present.
  */
 export function shapeQueryResult(answer: PrometheusAnswer<PrometheusQueryData>, limits: ShapeLimits): ShapedResult {
   const serverCut = answer.truncatedByServer;
@@ -234,8 +240,7 @@ function onlyPoint(series: PrometheusSeries): { readonly at: number; readonly ce
 function shapeMatrix(held: readonly PrometheusSeries[], context: ShapeContext): Table {
   const capped = capSeries(held, context);
   const budgeted = withinSampleBudget(capped.kept, context.limits.sampleBudget);
-  const { kept, cuts } = withinMatrixBytes(budgeted.kept, held, context.limits.byteBudget);
-  const columns = seriesColumns(kept, held);
+  const { kept, columns, cuts } = withinMatrixBytes(budgeted.kept, held, context.limits.byteBudget);
   const cellsByInstant = new Map<number, unknown[]>();
   const place = (column: number, at: number, cell: unknown): void => {
     const instant = sampleMillis(at);
@@ -256,14 +261,12 @@ function shapeMatrix(held: readonly PrometheusSeries[], context: ShapeContext): 
 }
 
 /**
- * Each kept series' column name (5.3): the labels that tell the kept series apart, in PromQL label
- * notation (ColumnLabels says which do). A series kept alone is told apart from every series the
- * answer held, because the rest were cut and it has no other to be told from; only an answer that
- * held one series names its column `value`. Two kept series with one label set would share a
- * column, one overwriting the other, so that answer is refused.
+ * The column names of two or more kept series (5.3): the labels that tell the kept series apart, in
+ * PromQL label notation (ColumnLabels says which do). Two kept series with one label set would share
+ * a column, one overwriting the other, so that answer is refused. A series kept alone is named by
+ * withinMatrixBytes, which prices the name it writes.
  */
-function seriesColumns(kept: readonly PrometheusSeries[], held: readonly PrometheusSeries[]): string[] {
-  if (kept.length === 1) return [loneColumn(kept[0], held)];
+function seriesColumns(kept: readonly PrometheusSeries[]): string[] {
   const distinguishing = ColumnLabels.of(kept).distinguishing();
   const columns = kept.map((series) => seriesNotation(series.labels, distinguishing));
   if (new Set(columns).size !== columns.length) {
@@ -276,8 +279,9 @@ function seriesColumns(kept: readonly PrometheusSeries[], held: readonly Prometh
 }
 
 /**
- * The column of a series kept alone: `value` when the answer held no other, else the labels that
- * tell it from the rest of the answer.
+ * The name of a series kept alone (5.3): `value` when the answer held no other, else the labels that
+ * tell it from every series the answer held, because the rest were cut and it has no other to be
+ * told from.
  */
 function loneColumn(series: PrometheusSeries, held: readonly PrometheusSeries[]): string {
   return held.length === 1 ? VALUE_FIELD : seriesNotation(series.labels, ColumnLabels.of(held).distinguishing());
@@ -479,24 +483,33 @@ function withinVectorBytes(series: readonly PrometheusSeries[], budget: number):
 
 /**
  * Whole series in engine order while the wide grid's rows and fields fit the byte budget as JSON
- * (5.4), with a notice naming what did not. Each row is `{"timestamp":time,"column":cell,...}` with a
- * cell for every kept series, null where it has no sample at that instant, so a column name is
- * written once per instant and once more in the fields; and a name spells the labels that tell its
- * series apart, so the names can grow as series are kept. The count is exact, the names included
- * (ColumnLabels, loneColumn), and no row or name is built for it. It stops at the first series that
- * does not fit, as the cell budget does.
+ * (5.4), with a notice naming what did not, and the name each kept series' column is written under,
+ * which shapeMatrix writes as given, so what is counted is what is written. Each row is
+ * `{"timestamp":time,"column":cell,...}` with a cell for every kept series, null where it has no
+ * sample at that instant, so a column name is written once per instant and once more in the fields.
+ * The count is exact, and it builds no row, nor any name but a lone series' (ColumnLabels, loneColumn).
+ *
+ * Two or more series are named by the labels that tell them apart, a set that only grows as series
+ * are added, so their grid only grows too, and they are kept while they fit. A series kept alone is
+ * named against the whole answer instead, which can cost more than two named among themselves, so a
+ * first series that does not fit alone does not end the walk: it is priced alone only when no two
+ * series fit, and is then kept under that name when it fits, else under `value` with one notice
+ * writing its name once rather than in every row. No series is kept only when even `value` does not
+ * fit.
  */
 function withinMatrixBytes(
   series: readonly PrometheusSeries[],
   held: readonly PrometheusSeries[],
   budget: number,
-): Kept {
+): Columns {
   const labels = new ColumnLabels();
   const instants = new Set<number>();
   // Every row's time, and what every sample and histogram point takes past the null it replaces.
   let cellBytes = 0;
+  // The rows and cell bytes of the first series alone, priced below once its name is known.
+  let alone = { rows: 0, cellBytes: 0 };
   let count = 0;
-  for (const one of series) {
+  for (const [index, one] of series.entries()) {
     labels.add(one);
     for (const instant of instantsOf(one)) {
       if (instants.has(instant)) continue;
@@ -505,19 +518,50 @@ function withinMatrixBytes(
     }
     for (const sample of one.samples) cellBytes += jsonBytes(sampleCell(sample.value)) - NULL_BYTES;
     for (const point of one.histograms) cellBytes += jsonBytes(point.histogram) - NULL_BYTES;
-    const columns = count + 1;
-    const nameBytes = columns === 1 ? jsonBytes(loneColumn(one, held)) : labels.nameBytes();
-    // The fields, ["timestamp","column",...].
-    const fieldBytes = 2 + jsonBytes(TIMESTAMP_FIELD) + columns + nameBytes;
-    // Per row: the braces, the timestamp's key and colon, and each column's comma, key, colon and null.
-    const rowBytes = 2 + jsonBytes(TIMESTAMP_FIELD) + 1 + columns * (2 + NULL_BYTES) + nameBytes;
-    const rows = instants.size;
-    // The rows are joined by commas inside brackets, and a grid with no instant is `[]`.
-    const total = fieldBytes + (rows === 0 ? 2 : rows + 1 + rows * rowBytes + cellBytes);
-    if (total > budget) break;
-    count += 1;
+    if (index === 0) {
+      alone = { rows: instants.size, cellBytes };
+      continue;
+    }
+    if (gridBytes(index + 1, labels.nameBytes(), instants.size, cellBytes) > budget) break;
+    count = index + 1;
   }
-  return withinBytes(series, count, budget, SHRINK_ADVICE);
+  if (count > 1) {
+    const within = withinBytes(series, count, budget, SHRINK_ADVICE);
+    return { ...within, columns: seriesColumns(within.kept) };
+  }
+  const [first] = series;
+  if (first === undefined) return { kept: series, columns: [], cuts: [] };
+  const fits = (name: string): boolean => gridBytes(1, jsonBytes(name), alone.rows, alone.cellBytes) <= budget;
+  const name = loneColumn(first, held);
+  if (fits(name)) return { ...withinBytes(series, 1, budget, SHRINK_ADVICE), columns: [name] };
+  if (!fits(VALUE_FIELD)) return { ...withinBytes(series, 0, budget, SHRINK_ADVICE), columns: [] };
+  const within = withinBytes(series, 1, budget, SHRINK_ADVICE);
+  return { kept: within.kept, columns: [VALUE_FIELD], cuts: [...within.cuts, namedOnce(name, budget)] };
+}
+
+/**
+ * The UTF-8 bytes of a wide grid's rows and fields as JSON: `columns` columns whose names take
+ * `nameBytes` as keys, over `rows` rows whose times and cells take `cellBytes` past the nulls.
+ */
+function gridBytes(columns: number, nameBytes: number, rows: number, cellBytes: number): number {
+  // The fields, ["timestamp","column",...].
+  const fieldBytes = 2 + jsonBytes(TIMESTAMP_FIELD) + columns + nameBytes;
+  // Per row: the braces, the timestamp's key and colon, and each column's comma, key, colon and null.
+  const rowBytes = 2 + jsonBytes(TIMESTAMP_FIELD) + 1 + columns * (2 + NULL_BYTES) + nameBytes;
+  // The rows are joined by commas inside brackets, and a grid with no instant is `[]`.
+  return fieldBytes + (rows === 0 ? 2 : rows + 1 + rows * rowBytes + cellBytes);
+}
+
+/**
+ * The notice for a series kept alone under `value` because the name that tells it from the rest of
+ * the answer, written in every row, would not fit the byte budget: the notice writes that name once.
+ * Those bytes are outside the budget, paid once rather than once per row, and they grow with the
+ * label names of the whole answer, not of the series kept.
+ */
+function namedOnce(name: string, budget: number): QueryWarning {
+  return {
+    message: `Showing the series ${name} in the column named ${VALUE_FIELD}, because a result is held to ${formatCount(budget)} bytes and that name, written in every row, would not fit.`,
+  };
 }
 
 /** The first `count` series, with the byte budget's notice when that is not all of them. */

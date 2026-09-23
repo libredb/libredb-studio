@@ -828,6 +828,16 @@ function heldTo(kept: number, offered: number, budget: number, advice: string): 
 const SHRINK = "Narrow the selector, aggregate the result, or use a larger step or a shorter range to see the rest.";
 
 /**
+ * The byte budget's notice for a series kept alone under `value`, because the name that tells it
+ * from the rest of the answer, written in every row, would not fit: the notice writes it once.
+ */
+function namedOnce(name: string, budget: number): QueryWarning {
+  return {
+    message: `Showing the series ${name} in the column named value, because a result is held to ${budget.toLocaleString("en-US")} bytes and that name, written in every row, would not fit.`,
+  };
+}
+
+/**
  * A vector series with two label names no other series here carries. One value holds a quote, a
  * backslash and a letter past ASCII, which JSON escapes or writes in two bytes, the other holds
  * letters of three bytes each, and one name is not a legacy identifier, so its field is quoted.
@@ -879,6 +889,25 @@ const FOUR_MATRIX = answerOf({
 });
 
 /**
+ * Labels every series of `up` or of a kube-state metric carries alike, `__name__` and one with a
+ * single value, beside the one that tells the series apart: a vector writes one field for each shared
+ * name, and a matrix's column names leave the shared labels out.
+ */
+function sharing(job: string): Readonly<Record<string, string>> {
+  return { __name__: "up", cluster: "eu-west-1", job };
+}
+
+const SHARED_VECTOR = answerOf({
+  shape: "vector",
+  series: ["a", "b", "c", "d"].map((job) => floats(sharing(job), [T0, "1"])),
+});
+
+const SHARED_MATRIX = answerOf({
+  shape: "matrix",
+  series: ["a", "b", "c", "d"].map((job) => floats(sharing(job), ...lattice(10))),
+});
+
+/**
  * An answer of `count` series of one sample each at T0, each carrying 25 label names no other
  * series carries: legal data, as federation, relabelling or a recording rule can write it.
  */
@@ -921,11 +950,13 @@ describe("shapeQueryResult's byte budget, over the rows and fields as JSON", () 
   });
 
   // The estimate is the rows' JSON to the byte, escapes, quoted names, letters past ASCII,
-  // histograms and non-finite text included: at exactly their size nothing is cut, one byte under
-  // it the last series is.
+  // histograms, non-finite text and labels every series carries alike included: at exactly their
+  // size nothing is cut, one byte under it the last series is.
   test.each([
     ["vector", FOUR_VECTOR, NARROW],
     ["matrix", FOUR_MATRIX, SHRINK],
+    ["vector whose series share labels", SHARED_VECTOR, NARROW],
+    ["matrix whose series share labels", SHARED_MATRIX, SHRINK],
   ] as const)(
     "cuts nothing from a %s at exactly the budget, and its last series at a byte less",
     (_, answer, advice) => {
@@ -948,17 +979,134 @@ describe("shapeQueryResult's byte budget, over the rows and fields as JSON", () 
     expect(shapeQueryResult(answer, bytesOf(budget - 1)).fields).toEqual(["timestamp"]);
   });
 
-  test("counts the name of a series kept alone as it is written", () => {
+  // A byte short of its name in every row, the series is kept under `value` and a notice says which
+  // one it is; short of that too, nothing is kept.
+  test("counts the name of a series kept alone as it is written, and falls back to value", () => {
     const answer = answerOf({ shape: "matrix", series: [sized("a", 2), sized("b", 2)] });
     const alone = [
       { timestamp: "2026-09-23T10:00:00.000Z", '{job="a"}': 1 },
       { timestamp: "2026-09-23T10:00:15.000Z", '{job="a"}': 1 },
     ];
+    const underValue = alone.map(({ timestamp }) => ({ timestamp, value: 1 }));
     const budget = sentBytes({ rows: alone, fields: ["timestamp", '{job="a"}'] });
+    const valueBudget = sentBytes({ rows: underValue, fields: ["timestamp", "value"] });
 
-    expect(shapeQueryResult(answer, bytesOf(budget)).rows).toEqual(alone);
-    expect(shapeQueryResult(answer, bytesOf(budget - 1)).fields).toEqual(["timestamp"]);
+    expect(shapeQueryResult(answer, bytesOf(budget))).toEqual({
+      rows: alone,
+      fields: ["timestamp", '{job="a"}'],
+      warnings: [heldTo(1, 2, budget, SHRINK)],
+      wasLimited: true,
+    });
+    expect(shapeQueryResult(answer, bytesOf(budget - 1))).toEqual({
+      rows: underValue,
+      fields: ["timestamp", "value"],
+      warnings: [heldTo(1, 2, budget - 1, SHRINK), namedOnce('{job="a"}', budget - 1)],
+      wasLimited: true,
+    });
+    expect(shapeQueryResult(answer, bytesOf(valueBudget - 1))).toEqual({
+      rows: [],
+      fields: ["timestamp"],
+      warnings: [heldTo(0, 2, valueBudget - 1, SHRINK)],
+      wasLimited: true,
+    });
   });
+
+  // A series kept alone is named against the whole answer and two or more among themselves, so the
+  // first series alone can cost more than two together: here its name spells the 3,000 labels only
+  // the third series carries, each written name="" in every one of its rows.
+  test("keeps the series that fit together although the first alone, named against the whole answer, does not", () => {
+    const own = Object.fromEntries(Array.from({ length: 3000 }, (_, label) => [`l${label}`, "x"]));
+    const answer = answerOf({
+      shape: "matrix",
+      series: [
+        floats({ instance: "a" }, ...lattice(1000)),
+        floats({ instance: "b" }, ...lattice(1000)),
+        floats({ instance: "c", ...own }, ...lattice(1000)),
+      ],
+    });
+    const shaped = shapeQueryResult(answer, LIMITS);
+
+    expect(shaped.fields).toEqual(["timestamp", '{instance="a"}', '{instance="b"}']);
+    expect(shaped.rows).toEqual(shapeQueryResult(firstOf(answer, 2), LIMITS).rows);
+    expect(shaped.warnings).toEqual([heldTo(2, 3, RESULT_BYTE_BUDGET, SHRINK)]);
+    // The control: that name alone, in each of the first series' 1,000 rows, passes the budget.
+    const lone = `{instance="a",${Object.keys(own)
+      .sort()
+      .map((name) => `${name}=""`)
+      .join(",")}}`;
+    expect(Buffer.byteLength(JSON.stringify(lone)) * 1000).toBeGreaterThan(RESULT_BYTE_BUDGET);
+  });
+
+  // A raw range's rows are its samples, so the one series another bound leaves alone can take as
+  // many rows as the cell budget allows, each repeating its name.
+  test("keeps a series left alone under value when its name in every row would not fit, and names it once", () => {
+    const first = floats({ instance: "db-1.internal:9100", job: "node" }, ...sixFrom(0));
+    const answer = answerOf({
+      shape: "matrix",
+      series: [first, floats({ instance: "db-2.internal:9100", job: "node" }, ...sixFrom(5))],
+    });
+    const cells = {
+      message: `Showing 1 of 2 series and 6 of 24 cells, because a matrix result is held to 10 cells. ${COARSEN}`,
+    };
+    const underValue = shapeQueryResult(answerOf({ shape: "matrix", series: [first] }), LIMITS);
+    const budget = sentBytes(underValue);
+
+    expect(shapeQueryResult(answer, { ...budgetOf(10), byteBudget: budget })).toEqual({
+      rows: underValue.rows,
+      fields: ["timestamp", "value"],
+      warnings: [cells, namedOnce('{instance="db-1.internal:9100"}', budget)],
+      wasLimited: true,
+    });
+    // The controls: named, the same rows pass that budget, and a byte short of them under `value`
+    // nothing is kept.
+    const named = shapeQueryResult(answer, budgetOf(10));
+    expect(named.fields).toEqual(["timestamp", '{instance="db-1.internal:9100"}']);
+    expect(sentBytes(named)).toBeGreaterThan(budget);
+    expect(shapeQueryResult(answer, { ...budgetOf(10), byteBudget: budget - 1 })).toEqual({
+      rows: [],
+      fields: ["timestamp"],
+      warnings: [cells, heldTo(0, 1, budget - 1, SHRINK)],
+      wasLimited: true,
+    });
+  });
+
+  // Another bound leaves the series alone here, so the name it is priced under is decided by every
+  // series of the answer, the ones that bound cut included.
+  test.each([
+    [
+      "the cell budget",
+      budgetOf(10),
+      { message: `Showing 1 of 2 series and 6 of 24 cells, because a matrix result is held to 10 cells. ${COARSEN}` },
+    ],
+    [
+      "the series cap",
+      { ...LIMITS, seriesLimit: 1 },
+      { message: `Showing the first 1 of more than 1 series. ${NARROW}` },
+    ],
+  ] as const)(
+    "prices a series %s left alone by its name against the whole answer, to the byte",
+    (_, limits, earlier) => {
+      const answer = answerOf({
+        shape: "matrix",
+        series: [
+          floats({ __name__: "up", job: "a" }, ...sixFrom(0)),
+          floats({ __name__: "up", job: "b" }, ...sixFrom(5)),
+        ],
+      });
+      const alone = shapeQueryResult(answer, limits);
+      const exact = sentBytes(alone);
+
+      expect(alone.fields).toEqual(["timestamp", '{job="a"}']);
+      expect(alone.warnings).toEqual([earlier]);
+      expect(shapeQueryResult(answer, { ...limits, byteBudget: exact })).toEqual(alone);
+      expect(shapeQueryResult(answer, { ...limits, byteBudget: exact - 1 })).toEqual({
+        rows: alone.rows.map((row) => ({ timestamp: row.timestamp, value: row['{job="a"}'] })),
+        fields: ["timestamp", "value"],
+        warnings: [earlier, namedOnce('{job="a"}', exact - 1)],
+        wasLimited: true,
+      });
+    },
+  );
 
   test("leaves no row when the first series alone passes it, and says so", () => {
     expect(shapeQueryResult(FOUR_VECTOR, bytesOf(2))).toEqual({
