@@ -208,7 +208,7 @@ export function registerPromqlLanguage(monaco: typeof Monaco): void {
       root: [
         // `#` starts a comment to the end of the line wherever it stands outside a string, which
         // is the lexer's rule, so a trailing comment after an expression is one too.
-        [/#.*$/, "comment"],
+        [/#[^\r\n]*/, "comment"],
         // A double- or single-quoted string ends on its line: the lexer refuses a line break
         // inside one ("unterminated quoted string"), so neither may carry a state across lines.
         [/"(?:[^"\\]|\\.)*"/, "string"],
@@ -240,7 +240,7 @@ export function registerPromqlLanguage(monaco: typeof Monaco): void {
       // Inside `{}` a word is a LABEL NAME, keywords included (`{by="x"}` names a label `by`), the
       // way the lexer's `lexIdentifier` reads it there; a label name has no `:`.
       braces: [
-        [/#.*$/, "comment"],
+        [/#[^\r\n]*/, "comment"],
         [/"(?:[^"\\]|\\.)*"/, "string"],
         [/'(?:[^'\\]|\\.)*'/, "string"],
         [/`/, { token: "string", next: "@rawString" }],
@@ -255,7 +255,7 @@ export function registerPromqlLanguage(monaco: typeof Monaco): void {
       // hands back to `lexStatements`, and refuses one before it, which colours as a comment all
       // the same, the kind of cosmetic overreach the case-insensitivity above already makes.
       range: [
-        [/#.*$/, "comment"],
+        [/#[^\r\n]*/, "comment"],
         [NUMBER_OR_DURATION, "number"],
         [/:/, "delimiter"],
         [/[a-zA-Z_]\w*/, { cases: { "@functions": "function", "@default": "identifier" } }],

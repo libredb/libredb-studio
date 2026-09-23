@@ -112,13 +112,19 @@ const DISCONNECTED_MESSAGE = "The connection was closed while the query was runn
  * Whether PromQL text holds anything once its comments and whitespace are removed (#1085 5.1).
  *
  * PromQL's only comment is a `#` running to the end of its line (`lexLineComment` in the v3.13.3
- * lexer, `promql/parser/lex.go`), so each line is cut at its first `#` and the text is empty when
- * every line is then blank. A `#` inside a string literal is cut too, and that can never make the
- * text blank: the literal's opening quote stands before it on the same line. So this refuses only a
- * text that holds no expression at all, and it never rewrites what is sent.
+ * lexer, `promql/parser/lex.go`), and the lexer ends a line at `\r` or `\n` alone, so each line is
+ * cut at its first `#` and the text is empty when every line is then blank. A `#` inside a string
+ * literal is cut too, and that can never make the text blank: the literal's opening quote stands
+ * before it on the same line. So this refuses only a text that holds no expression at all, and it
+ * never rewrites what is sent. The cut is an index, not a pattern: `/#.*$/` could not match before
+ * another line terminator such as U+2028, and then retried at every later `#`, which is quadratic
+ * in the length of the user's text.
  */
 function holdsExpression(text: string): boolean {
-  return text.split(/\r\n|\r|\n/).some((line) => line.replace(/#.*$/, "").trim() !== "");
+  return text.split(/\r\n|\r|\n/).some((line) => {
+    const comment = line.indexOf("#");
+    return (comment === -1 ? line : line.slice(0, comment)).trim() !== "";
+  });
 }
 
 /**

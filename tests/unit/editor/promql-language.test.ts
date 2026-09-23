@@ -574,6 +574,17 @@ describe("registerPromqlLanguage", () => {
       ]);
     });
 
+    test("a # comment runs past a U+2028 to the line's end, because the lexer ends a comment at \\r or \\n alone", () => {
+      // Built from its code, because a typed escape lands as the character itself.
+      const lineSeparator = String.fromCharCode(0x2028);
+      expect(tokenize([`up # a${lineSeparator}b`])).toEqual([
+        [
+          ["identifier", "up"],
+          ["comment", `# a${lineSeparator}b`],
+        ],
+      ]);
+    });
+
     test("a # comment runs to the end of the line after an expression and inside braces, but not inside a string", () => {
       expect(tokenize(["rate(x[5m]) # per second", 'up{job="a#b"}'])).toEqual([
         [

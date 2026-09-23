@@ -702,6 +702,23 @@ describe("query", () => {
     expect(queries().map((request) => request.form?.get("query"))).toEqual(["# one\n  # two\nup", '"#"']);
   });
 
+  test("a comment runs to a line break only, so text after a U+2028 inside it is still the comment", async () => {
+    // The lexer ends a comment at \r or \n alone (`lexLineComment`, `isEndOfLine`), so a line
+    // separator does not end it. Built from its code, because a typed escape lands as the character.
+    const lineSeparator = String.fromCharCode(0x2028);
+    const EMPTY_EXPRESSION = "The PromQL text holds no expression once its # comments and whitespace are removed";
+    const provider = await connectedProvider();
+
+    await expect(provider.query(`# a comment${lineSeparator}up`)).rejects.toThrow(EMPTY_EXPRESSION);
+    // Many #s before a line separator: the text a regular expression cut would scan once per #.
+    await expect(provider.query(`${"#".repeat(20_000)}${lineSeparator}`)).rejects.toThrow(EMPTY_EXPRESSION);
+    expect(sent).toEqual([]);
+
+    // The control: after a real line break the expression is sent.
+    await provider.query(`# a comment${lineSeparator}\nup`);
+    expect(queries().map((request) => request.form?.get("query"))).toEqual([`# a comment${lineSeparator}\nup`]);
+  });
+
   test("bound values are refused, because PromQL binds nothing", async () => {
     const provider = await connectedProvider();
 

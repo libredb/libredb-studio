@@ -386,6 +386,7 @@ There is no path-prefix field either, so Grafana Mimir (`/prometheus`), Greptime
 The editor text goes to `POST /api/v1/query` as a form body (`query`, `timeout` in seconds, `limit`) with no `time` parameter, so the server evaluates at now.
 `#` comments are PromQL syntax and are sent as written.
 A text that is empty once comments and whitespace are removed is refused before any request, with a `QueryError` saying so.
+A comment runs to the next `\r` or `\n`, as the lexer reads it, so a Unicode line separator inside one does not end it.
 Bound `params` are refused with a `DatabaseConfigError`: PromQL has no binding, and ignoring them would run a different statement from the one the caller built.
 Ranges are written in PromQL itself: `x[1h]` returns raw samples and `rate(x[5m])[1h:1m]` a stepped series; there is no `query_range` path.
 `supportsResultPagination` and `supportsExternalQueryLimiting` are both `false`, as on Redis and MongoDB.
