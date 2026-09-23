@@ -47,10 +47,12 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   kindAcceptsSourceEdits,
@@ -74,6 +76,21 @@ import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * PostgreSQL's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: every declared level is named or the path is refused. Which level the
+ * readers need is not a field here: they look `schema` up rather than by position, so a
+ * declaration that names none is refused by `containerSchema` itself, where the reads are.
+ */
+const POSTGRES_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "postgres",
+  label: "A PostgreSQL",
+  shapeNames: "id",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
 
 // ============================================================================
 // Type parsers
@@ -1400,15 +1417,21 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * A path of another depth is a caller that built it from another engine's shape, and it
  * raises rather than reading a segment and carrying on: `undefined` bound to `$1` would
  * answer an empty folder that looks exactly like a schema holding nothing.
+ *
+ * The same failure arrives through a declaration rather than a caller: a depth-matching one
+ * that names no `schema` level passes the shared shape check, so the lookup below refuses
+ * it. A rule only this engine's readers need cannot be seen by that check, which compares
+ * depths, so it lives here, next to the reads it protects.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  assertContainerPathShape(capabilities, container, POSTGRES_CONTAINER_PATH_ENGINE);
   const levels = declaredLevels(capabilities);
   const index = levels.findIndex((level) => level.id === "schema");
-  const segment = container.length === levels.length && index >= 0 ? container[index] : undefined;
+  const segment = index < 0 ? undefined : container[index];
   if (segment === undefined) {
     throw new QueryError(
-      `A PostgreSQL container path is [${levels.map((level) => level.id).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
+      `A PostgreSQL path needs a "schema" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(container)}`,
       "postgres",
     );
   }

@@ -64,7 +64,8 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { containerDepth } from "@/lib/db/object-kinds";
+import { assertContainerPathShape, containerDepth, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
@@ -80,6 +81,20 @@ import { TrinoTransportError, type TrinoRow } from "./transport";
 
 /** The canonical type-id, for the errors raised here. */
 const TYPE_ID = "trino";
+
+/**
+ * Trino's identity for the shared container-path renderer.
+ *
+ * `shapes: "prefixes"`: every depth up to the declaration is a real address here, because a
+ * caller may name only the outer levels. A path longer than the declaration is still refused.
+ */
+const TRINO_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: TYPE_ID,
+  label: "A Trino",
+  shapeNames: "id",
+  shapes: "prefixes",
+  emptyShapes: "nothing: this declaration carries no container level",
+};
 
 // ============================================================================
 // Quoting
@@ -479,36 +494,8 @@ function requiredSegment(
   return segment;
 }
 
-/**
- * The container paths this engine accepts, outermost first, as segment NAMES.
- *
- * Every prefix of the declared levels, which at two levels means a catalog alone or a
- * catalog and a schema. Both are real containers: the tree only draws folders at the
- * deepest level (`src/components/object-tree/flatten.ts`), but `assertContainerDepth` in
- * `src/lib/api/object-route.ts` admits any path down to the declared depth and
- * `tests/helpers/object-surface-conformance.ts` reads counts at the OUTER one, so "how many
- * tables does this whole catalog hold" is a question with a true answer rather than a
- * caller mistake. SQL Server and DuckDB answered the same way for the same reason.
- */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  // `level.id` and NOT `level.label.toLowerCase()`: `id` is the field every read binds by
-  // (`containerSegments()` keys the record with it), so spelling the shape from `label`
-  // would describe a path shape no read accepts the moment a declaration's label is prose
-  // rather than its id capitalised. The two are the same word on Trino's own declaration,
-  // which is exactly why the divergence was invisible until a test varied the labels.
-  const names = declaredLevels(capabilities).map((level) => level.id);
-  return names.map((_, index) => names.slice(0, index + 1));
-}
-
-/**
- * The shapes above, spelled for a message: `[catalog] or [catalog, schema]`.
- *
- * A declaration carrying no container level has no shape at all, and the empty join would
- * print "a Trino container path is , received []", which reads as a formatting bug rather
- * than as the fact it is.
- */
+/** The one shape a Trino object path takes, spelled for the message in `objectRead()`. */
 function shapeList(shapes: readonly string[][]): string {
-  if (shapes.length === 0) return "nothing: this declaration carries no container level";
   return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
 }
 
@@ -520,13 +507,7 @@ function shapeList(shapes: readonly string[][]): string {
  * that looks exactly like a schema holding nothing.
  */
 export function containerRead(capabilities: ProviderCapabilities, container: readonly string[]): TrinoContainer {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A Trino container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      TYPE_ID,
-    );
-  }
+  assertContainerPathShape(capabilities, container, TRINO_CONTAINER_PATH_ENGINE);
   const segments = containerSegments(capabilities, container);
   const catalog = requiredSegment(segments, "catalog");
   const schema = segments.schema;
@@ -562,7 +543,8 @@ export function objectRead(
       TYPE_ID,
     );
   }
-  // `level.id`, the field the segments below are resolved by. See {@link containerShapes}.
+  // `level.id`, the field the segments below are resolved by. See the `shapeNames` note on
+  // {@link ContainerPathShapeEngine} for why the refusal spells the same field.
   const shape = [...declaredLevels(capabilities).map((level) => level.id), "name"];
   if (path.length !== shape.length) {
     throw new QueryError(

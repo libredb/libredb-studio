@@ -97,14 +97,17 @@
 import { QueryError } from "@/lib/db/errors";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
-  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
   findKind,
   requireSourceKind,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
+
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
@@ -126,6 +129,20 @@ import { cassandraTableColumns } from "./introspect";
 import { CassandraTransportError, type CassandraRow, type CassandraTransport } from "./transport";
 
 const PROVIDER = "cassandra" as const;
+
+/**
+ * Cassandra's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the caller either names every declared level or is refused,
+ * because a partial path would leave a level unbound and answer an empty folder.
+ */
+const CASSANDRA_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: PROVIDER,
+  label: "A Cassandra",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
 
 // ============================================================================
 // Declaration
@@ -594,14 +611,7 @@ function containerSegment(
  * the worst way to report a caller mistake.
  */
 function containerKeyspace(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A Cassandra container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      PROVIDER,
-    );
-  }
+  assertContainerPathShape(capabilities, container, CASSANDRA_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 
