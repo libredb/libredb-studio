@@ -6,7 +6,8 @@
  * throwaway certificates of tests/fixtures/tls/ for the TLS path, so every handshake and every
  * verification below is a real one. A few tests replace `globalThis.fetch` instead, and restore
  * it in afterEach, for what no server can show: the options `fetch` was called with, and the
- * error shapes Node's `fetch` produces, which a Bun-run suite never meets. `mock.module()` is not
+ * error shapes Node's `fetch` produces, which a Bun-run suite never meets. Two more wrap the real
+ * `fetch` only to keep its answers from being collected (holdResponses). `mock.module()` is not
  * used: it is process-wide in bun.
  *
  * The codes asserted against real servers (ConnectionRefused, ECONNREFUSED, ECONNRESET,
@@ -164,6 +165,48 @@ async function refusalOf(sending: Promise<unknown>): Promise<ConnectionError> {
   );
   expect(outcome).toBeInstanceOf(ConnectionError);
   return outcome as ConnectionError;
+}
+
+/**
+ * Keeps every Response the plaintext path receives reachable until afterEach restores fetch, and
+ * answers the list it keeps them in, so that a test waiting for the server to see a connection
+ * close measures the code's own release. Bun also closes the connection of a Response it collects:
+ * on bun 1.4.2, with the code's cancel deleted and nothing held, the server still saw the close half
+ * a second to a second later, and both tests that call this passed. Production runs on Node, whose
+ * fetch never closes a body read through a reader on its own, and closes an unread one only when a
+ * collection happens to run (measured on node v24.14.0). node:https never calls fetch, so the TLS
+ * path is unaffected.
+ */
+function holdResponses(): readonly Response[] {
+  const held: Response[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = await originalFetch(input, init);
+    held.push(response);
+    return response;
+  }) as unknown as typeof fetch;
+  return held;
+}
+
+/**
+ * Resolves once the server has seen the connection close, and fails the test, saying so, when the
+ * connection is still open two seconds after the send settled. The code's release closes it within
+ * milliseconds; the per-test timeout would catch a connection left open too, later and without
+ * naming it.
+ */
+async function closeSeen(closed: Promise<void>): Promise<void> {
+  const boundMs = 2000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`The connection was still open ${boundMs} ms after the send settled`)),
+      boundMs,
+    );
+  });
+  try {
+    await Promise.race([closed, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** One of the two ways a request leaves the process, and the code it reports for a refused port. */
@@ -734,6 +777,7 @@ describe.each(PATHS)("$name: redirects (#1085 S2)", ({ scheme, send }) => {
   });
 
   test("a redirect whose body never ends is refused without being read, and its connection let go", async () => {
+    const held = holdResponses();
     const released = Promise.withResolvers<void>();
     const redirector = await serve(scheme, (response) => {
       response.writeHead(302, { location: "/elsewhere" });
@@ -746,13 +790,16 @@ describe.each(PATHS)("$name: redirects (#1085 S2)", ({ scheme, send }) => {
     expect(refusal.message).toBe(
       `The server answered HTTP 302, a redirect to ${redirector.origin}, and redirects are not followed`,
     );
-    // Resolves only when the connection closes: the answer itself never ends.
-    await released.promise;
+    // The control for the wait below: fetch's answer is held, and the TLS path never called fetch.
+    expect(held).toHaveLength(scheme === "http" ? 1 : 0);
+    // The answer never ends and nothing collects it: only the code's release can close it.
+    await closeSeen(released.promise);
   });
 });
 
 describe.each(PATHS)("$name: the byte limit (#1085 S5)", ({ scheme, send }) => {
   test("an answer that keeps streaming is cut off at the limit, and its connection torn down", async () => {
+    const held = holdResponses();
     const released = Promise.withResolvers<void>();
     const served = await serve(scheme, (response) => {
       response.writeHead(200, { "content-type": "application/json" });
@@ -772,8 +819,10 @@ describe.each(PATHS)("$name: the byte limit (#1085 S5)", ({ scheme, send }) => {
       "The response exceeded the 65536-byte limit for one response, so it was not read to the end",
     );
     expect(failure.message).not.toContain(PLANTED_BODY);
-    // Resolves only when the connection closes: the server never stops writing.
-    await released.promise;
+    // The control for the wait below: fetch's answer is held, and the TLS path never called fetch.
+    expect(held).toHaveLength(scheme === "http" ? 1 : 0);
+    // The server never stops writing and nothing collects the answer: only the code's cut closes it.
+    await closeSeen(released.promise);
   });
 
   test("the limit counts bytes: exactly the limit is read, and one byte more is refused", async () => {
