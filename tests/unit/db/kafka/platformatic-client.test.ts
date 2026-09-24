@@ -219,6 +219,44 @@ describe("createPlatformaticClient", () => {
     ).toEqual(["admin.close", "consumer.close"]);
   });
 
+  test.each(["10.0.0.5", "fd00::5"])(
+    "one broker advertised by IP (%s) among named ones is enough: both clients are rebuilt without SNI (spec 6.1)",
+    async (ip) => {
+      // The client's SNI option is one flag for all of its broker connections, and Node 26 throws
+      // on an IP literal as a server name. The IP broker sits between two named ones, so a check
+      // that asks whether any broker has a name, or reads only the first or the last, keeps SNI.
+      const { lib, constructed, calls } = fakeLib({
+        "admin.metadata": () => ({
+          id: "c",
+          controllerId: 1,
+          brokers: new Map([
+            [1, { host: "broker-1.example", port: 9092, rack: null }],
+            [2, { host: ip, port: 9092, rack: null }],
+            [3, { host: "broker-3.example", port: 9092, rack: null }],
+          ]),
+          topics: new Map(),
+        }),
+      });
+      const client = createPlatformaticClient(
+        { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
+        lib,
+      );
+      await client.metadata([]);
+      expect(constructed.map(([n, o]) => [n, (o as Record<string, unknown>).tlsServerName])).toEqual([
+        ["Admin", true],
+        ["Consumer", true],
+        ["Admin", undefined],
+        ["Consumer", undefined],
+      ]);
+      expect(
+        calls
+          .map(([n]) => n)
+          .filter((n) => n.endsWith(".close"))
+          .sort(),
+      ).toEqual(["admin.close", "consumer.close"]);
+    },
+  );
+
   test("a cluster that advertises its brokers by name keeps SNI", async () => {
     const { lib, constructed } = fakeLib();
     const client = createPlatformaticClient(
@@ -375,6 +413,30 @@ describe("createPlatformaticClient", () => {
       },
     });
     expect(await createPlatformaticClient(OPTIONS, lib).listTopics()).toEqual(["orders"]);
+  });
+
+  test("listTopics answers every name sorted, whatever order the listing holds, on both paths (the seam's contract)", async () => {
+    // A broker lists topics in its own order (neither Kafka 4.3.1 nor Redpanda v26.2.2 sorts
+    // them), and only the library's success path sorts. The orders below are neither sorted
+    // nor reversed, so a missing sort and a reversal both show.
+    const sorted = ["events", "orders", "payments"];
+    const raw = {
+      ...RAW_OFFLINE,
+      topics: [
+        RAW_OFFLINE.topics[1],
+        { ...RAW_OFFLINE.topics[1], name: "payments", topicId: "t2" },
+        RAW_OFFLINE.topics[0],
+        { ...RAW_OFFLINE.topics[1], name: "events", topicId: "t3" },
+      ],
+    };
+    const throughLeaderless = fakeLib({
+      "admin.listTopics": () => {
+        throw libError({ code: "PLT_KFK_MULTIPLE", message: "Listing topics failed." }, [leaderless(raw)]);
+      },
+    });
+    expect(await createPlatformaticClient(OPTIONS, throughLeaderless.lib).listTopics()).toEqual(sorted);
+    const answered = fakeLib({ "admin.listTopics": () => ["orders", "payments", "events"] });
+    expect(await createPlatformaticClient(OPTIONS, answered.lib).listTopics()).toEqual(sorted);
   });
 
   test("a leaderless listing that names a topic by id alone is a protocol error, never an empty name", async () => {
