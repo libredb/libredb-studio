@@ -70,6 +70,7 @@
 
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import {
   type SearchClusterHealth,
@@ -1507,7 +1508,7 @@ export class SearchHttpTransport implements SearchTransport {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: body === undefined ? "GET" : "POST",
         headers: {
           // Sent on GETs too: harmless, and it keeps one header block for one

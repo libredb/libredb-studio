@@ -32,6 +32,7 @@
  */
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { isSQLiteInt64Digits } from "../sqlite-int64";
 import {
@@ -440,7 +441,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
 
   public async serverVersion(): Promise<string | null> {
     try {
-      const response = await fetch(endpointUrl(this.origin, VERSION_PATH), {
+      const response = await httpTransportFetch(endpointUrl(this.origin, VERSION_PATH), {
         method: "GET",
         headers: this.headers(),
         // Not followed, like every other request: a 3xx is one more "no version".
@@ -473,7 +474,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     const url = endpointUrl(this.origin, path);
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: "POST",
         headers: this.headers(),
         body,

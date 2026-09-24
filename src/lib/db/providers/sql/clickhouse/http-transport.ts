@@ -23,6 +23,7 @@
  */
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import {
   type ClickHouseQueryOptions,
@@ -413,7 +414,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: "POST",
         headers: this.authorization ? { authorization: this.authorization } : {},
         body: sql,

@@ -20,6 +20,7 @@
 
 import { isIPv6 } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { assertPublicLiteralHost } from "./egress-policy";
 
 export type HttpScheme = "http" | "https";
 
@@ -79,8 +80,14 @@ function validateHost(host: unknown): string {
   if (typeof host !== "string") throw new DatabaseConfigError(INVALID_HOST);
 
   const ipv6 = ipv6Literal(host);
-  if (ipv6 !== null) return `[${ipv6.toLowerCase()}]`;
-  if (IPV4.test(host) || isHostname(host)) return host.toLowerCase();
+  if (ipv6 !== null) {
+    assertPublicLiteralHost(ipv6);
+    return `[${ipv6.toLowerCase()}]`;
+  }
+  if (IPV4.test(host) || isHostname(host)) {
+    assertPublicLiteralHost(host);
+    return host.toLowerCase();
+  }
 
   throw new DatabaseConfigError(INVALID_HOST);
 }

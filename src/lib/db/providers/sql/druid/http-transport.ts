@@ -30,6 +30,7 @@
  */
 
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 // Shared with `lib/explain/druid-native.ts`, which parses the EXPLAIN plan columns:
 // those arrive as JSON *text* inside this body, so the pass below correctly leaves
@@ -563,7 +564,7 @@ export class DruidHttpTransport implements DruidTransport {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(this.endpoint, {
+      response = await httpTransportFetch(this.endpoint, {
         method: "POST",
         headers: {
           "content-type": JSON_CONTENT_TYPE,
