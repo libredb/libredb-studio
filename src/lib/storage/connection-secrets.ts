@@ -209,6 +209,17 @@ export function encryptConnections(connections: DatabaseConnection[]): DatabaseC
   return connections.map((connection) => walkConnection(connection, sealIfPlaintext).connection);
 }
 
+/**
+ * A copy with every secret field removed, for a reader that may use a connection but must not
+ * hold its credentials: the browser, for a managed seed it opens by id
+ * (GET /api/connections/managed). The same maps and walker as encryption, so a field classified
+ * secret tomorrow is withheld here without a second list to remember. An empty value stays, as it
+ * does in the walker: there is nothing in it to withhold.
+ */
+export function withoutSecretFields<T extends DatabaseConnection>(connection: T): T {
+  return walkConnection(connection, () => undefined).connection as T;
+}
+
 export interface ConnectionReadResult {
   connections: DatabaseConnection[];
   /** How many secret fields could not be opened. The caller reports it once, not per field. */

@@ -53,6 +53,97 @@ describe("GET /api/connections/managed", () => {
     }
   });
 
+  // A managed connection is opened by id (`buildConnectionPayload` sends `seed:<id>`), so the
+  // browser needs none of its credentials: every field the storage layer classifies as secret
+  // stays on the server, not only the password.
+  it("withholds every credential of a managed:true connection", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "managed-secrets-config.yaml");
+    process.env.MANAGED_ES_KEY_ID = "CANARY-MANAGED-KEY-ID";
+    process.env.MANAGED_ES_KEY_SECRET = "CANARY-MANAGED-KEY-SECRET";
+    process.env.MANAGED_PG_PASSWORD = "CANARY-MANAGED-PG-PASSWORD";
+    process.env.MANAGED_MONGO_URI = "mongodb://app:CANARY-MANAGED-URI-PASSWORD@mongo.internal/app";
+    process.env.EDITABLE_ES_KEY_ID = "editable-key-id";
+    process.env.EDITABLE_ES_KEY_SECRET = "editable-key-secret";
+    resetCache();
+
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const search = data.connections.find((c: { seedId: string }) => c.seedId === "managed-search");
+      const mtls = data.connections.find((c: { seedId: string }) => c.seedId === "managed-mtls");
+      const uri = data.connections.find((c: { seedId: string }) => c.seedId === "managed-uri");
+
+      // Control: each is listed, and what is not a credential still reaches the browser.
+      expect(search.host).toBe("es.internal");
+      expect(mtls.user).toBe("app");
+      expect(uri.type).toBe("mongodb");
+      expect(mtls.ssl).toEqual({
+        mode: "verify-full",
+        caCert: "CA-CERTIFICATE-PEM",
+        clientCert: "CLIENT-CERTIFICATE-PEM",
+      });
+
+      expect("apiKeyId" in search).toBe(false);
+      expect("apiKeySecret" in search).toBe(false);
+      expect("password" in mtls).toBe(false);
+      expect("connectionString" in uri).toBe(false);
+      const managedBody = JSON.stringify(data.connections.filter((c: { managed: boolean }) => c.managed));
+      for (const canary of [
+        "CANARY-MANAGED-KEY-ID",
+        "CANARY-MANAGED-KEY-SECRET",
+        "CANARY-MANAGED-PG-PASSWORD",
+        "CANARY-MANAGED-TLS-CLIENT-KEY",
+        "CANARY-MANAGED-URI-PASSWORD",
+      ]) {
+        expect(managedBody).not.toContain(canary);
+      }
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      delete process.env.MANAGED_ES_KEY_ID;
+      delete process.env.MANAGED_ES_KEY_SECRET;
+      delete process.env.MANAGED_PG_PASSWORD;
+      delete process.env.MANAGED_MONGO_URI;
+      delete process.env.EDITABLE_ES_KEY_ID;
+      delete process.env.EDITABLE_ES_KEY_SECRET;
+      resetCache();
+    }
+  });
+
+  // The other side of the same line: an editable seed is copied into the browser to be edited,
+  // so it keeps what the editor needs, the API key pair included.
+  it("still hands an editable connection its API key pair", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "managed-secrets-config.yaml");
+    process.env.MANAGED_ES_KEY_ID = "managed-key-id";
+    process.env.MANAGED_ES_KEY_SECRET = "managed-key-secret";
+    process.env.MANAGED_PG_PASSWORD = "managed-pg-password";
+    process.env.MANAGED_MONGO_URI = "mongodb://app:managed-uri-password@mongo.internal/app";
+    process.env.EDITABLE_ES_KEY_ID = "editable-key-id";
+    process.env.EDITABLE_ES_KEY_SECRET = "editable-key-secret";
+    resetCache();
+
+    try {
+      const res = await GET();
+      const data = await res.json();
+      const editable = data.connections.find((c: { seedId: string }) => c.seedId === "editable-search");
+
+      expect(editable.managed).toBe(false);
+      expect(editable.apiKeyId).toBe("editable-key-id");
+      expect(editable.apiKeySecret).toBe("editable-key-secret");
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      delete process.env.MANAGED_ES_KEY_ID;
+      delete process.env.MANAGED_ES_KEY_SECRET;
+      delete process.env.MANAGED_PG_PASSWORD;
+      delete process.env.MANAGED_MONGO_URI;
+      delete process.env.EDITABLE_ES_KEY_ID;
+      delete process.env.EDITABLE_ES_KEY_SECRET;
+      resetCache();
+    }
+  });
+
   it("returns 401 when no session", async () => {
     (getSession as ReturnType<typeof mock>).mockImplementation(() => null);
     const res = await GET();

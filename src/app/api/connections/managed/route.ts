@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getManagedConnections, getPendingSeeds } from "@/lib/seed";
 import { logger } from "@/lib/logger";
+import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 
 export const dynamic = "force-dynamic";
@@ -31,13 +32,11 @@ export async function GET() {
       );
     }
 
-    const sanitized = connections.map((conn) => {
-      if (conn.managed) {
-        const { password, connectionString, ...rest } = conn;
-        return rest;
-      }
-      return conn;
-    });
+    // A managed connection is opened by id (`buildConnectionPayload` sends `seed:<id>`), so the
+    // browser needs none of its credentials: every field the storage layer classifies as secret
+    // stays here, the API key pair and the TLS client key as well as the password. An editable
+    // one is copied into the browser to be edited, so it keeps them.
+    const sanitized = connections.map((conn) => (conn.managed ? withoutSecretFields(conn) : conn));
 
     const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
     const cacheTTL = Number.isFinite(rawTTL) ? rawTTL : 60_000;

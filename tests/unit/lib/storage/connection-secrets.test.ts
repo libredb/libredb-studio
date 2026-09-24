@@ -3,8 +3,10 @@ import {
   CONNECTION_FIELDS,
   decryptConnections,
   encryptConnections,
+  type FieldClass,
   SSH_TUNNEL_FIELDS,
   SSL_FIELDS,
+  withoutSecretFields,
 } from "@/lib/storage/connection-secrets";
 import { ENVELOPE_VERSION, readSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import type { DatabaseConnection } from "@/lib/types";
@@ -308,5 +310,66 @@ describe("decryptConnections", () => {
 
   test("an empty list is not an error", () => {
     expect(decryptConnections([])).toEqual({ connections: [], undecryptable: 0 });
+  });
+});
+
+describe("withoutSecretFields", () => {
+  const keysOf = (map: Record<string, FieldClass>, fieldClass: FieldClass): string[] =>
+    Object.keys(map).filter((key) => map[key] === fieldClass);
+  const groups = (conn: DatabaseConnection) =>
+    [
+      [conn as unknown as Record<string, unknown>, CONNECTION_FIELDS],
+      [conn.ssl as unknown as Record<string, unknown>, SSL_FIELDS],
+      [conn.sshTunnel as unknown as Record<string, unknown>, SSH_TUNNEL_FIELDS],
+    ] as const;
+
+  // Derived from the maps rather than listed, so a field classified secret tomorrow is covered
+  // by this test the day it is classified.
+  test("removes every field the maps classify as secret", () => {
+    const original = fullConnection();
+    for (const [group, map] of groups(original)) {
+      for (const key of keysOf(map, "secret")) {
+        // Control: the fixture really carries each secret, so the absence below is not vacuous.
+        expect(typeof group[key]).toBe("string");
+      }
+    }
+
+    const withheld = withoutSecretFields(original);
+    for (const [group, map] of groups(withheld)) {
+      for (const key of keysOf(map, "secret")) {
+        expect(key in group).toBe(false);
+      }
+    }
+    const serialized = JSON.stringify(withheld);
+    for (const canary of CANARIES) {
+      expect(serialized).not.toContain(canary);
+    }
+  });
+
+  test("keeps every public field as it was", () => {
+    const original = fullConnection();
+    const withheld = withoutSecretFields(fullConnection());
+    const before = groups(original);
+    const after = groups(withheld);
+    for (const [index, [group, map]] of before.entries()) {
+      for (const key of keysOf(map, "public")) {
+        expect(after[index][0][key]).toEqual(group[key]);
+      }
+    }
+  });
+
+  // An empty value holds nothing to withhold, and the walker skips it as encryption does.
+  test("leaves an empty secret as it is", () => {
+    const withheld = withoutSecretFields({ ...fullConnection(), password: "" });
+    expect(withheld.password).toBe("");
+    expect("apiKeySecret" in withheld).toBe(false);
+  });
+
+  test("leaves the connection it was given untouched", () => {
+    const original = fullConnection();
+    withoutSecretFields(original);
+    expect(original.password).toBe("CANARY-DB-PASSWORD");
+    expect(original.ssl?.clientKey).toBe("CANARY-TLS-CLIENT-KEY");
+    expect(original.sshTunnel?.privateKey).toBe("CANARY-SSH-PRIVATE-KEY");
   });
 });

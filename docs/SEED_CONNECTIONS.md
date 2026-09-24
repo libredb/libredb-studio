@@ -504,7 +504,8 @@ extraEnvFrom:
 
 ### Credential Protection
 
-- `managed: true` connections: passwords **never reach the client**. The API strips `password` and `connectionString` from responses. Server resolves credentials at query execution time.
+- `managed: true` connections: credentials **never reach the client**. The API strips every field `src/lib/storage/connection-secrets.ts` classifies as secret, which on a seed means `password`, `connectionString`, the Elasticsearch `apiKeyId` and `apiKeySecret` pair, and `ssl.clientKey`. Certificates (`ssl.caCert`, `ssl.clientCert`) are public and still reach it. Server resolves credentials at query execution time.
+- That covers what the API returns, not what an engine answers a statement with. A managed Redis seed that authenticates with `requirepass` answers `CONFIG GET requirepass` with the password, so give a managed seed a least-privilege credential, for Redis an ACL user without `+config`.
 - Config file should be mounted **read-only** (`:ro` in Docker, `readOnly: true` in Kubernetes).
 - Use `${ENV_VAR}` for all secrets. Plaintext passwords trigger a warning log.
 

@@ -1436,7 +1436,7 @@ Auth required. Merges a client's localStorage payload into server storage on fir
 
 #### GET /api/connections/managed
 
-Auth required. Returns seed/managed connections for the current user's role, with secrets (`password`, `connectionString`) stripped. `cacheHint` is the client cache TTL in ms (`SEED_CACHE_TTL_MS`, default 60000). See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md).
+Auth required. Returns seed/managed connections for the current user's role. A `managed: true` connection has every secret-classified field stripped (`password`, `connectionString`, `apiKeyId`, `apiKeySecret`, `ssl.clientKey`); a `managed: false` one is returned whole, because the browser edits it. `cacheHint` is the client cache TTL in ms (`SEED_CACHE_TTL_MS`, default 60000). See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md).
 
 ```json
 { "connections": [], "cacheHint": 60000 }
