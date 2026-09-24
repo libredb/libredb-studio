@@ -47,6 +47,41 @@ describe("config-loader", () => {
     await expect(loadConfig()).rejects.toThrow(/Failed to parse seed config/);
   });
 
+  // A parser's message quotes the line it failed on, and in a seed file that line can hold a
+  // plaintext password. The loader's message reaches every caller of a `seed:` route through the
+  // error response, so it says where the file fails and quotes none of it.
+  it("says where a YAML file fails to parse without quoting the file", async () => {
+    const file = path.join(FIXTURES, "malformed-secret-config.yaml");
+    process.env.SEED_CONFIG_PATH = file;
+    const error = (await loadConfig().catch((thrown: unknown) => thrown)) as Error;
+    expect(error).toBeInstanceOf(Error);
+
+    expect(error.message).toBe(`Failed to parse seed config at ${file}: BAD_SCALAR_START at line 8, column 15`);
+    // Control: the parser's own message quotes the password, and the operator can still reach it.
+    expect((error.cause as Error).message).toContain("CanaryPlaintextPassword");
+  });
+
+  // An unresolved alias is not a YAMLParseError, and its message is the alias name itself.
+  it("says a YAML file fails to load without quoting an alias it names", async () => {
+    const file = path.join(FIXTURES, "malformed-alias-config.yaml");
+    process.env.SEED_CONFIG_PATH = file;
+    const error = (await loadConfig().catch((thrown: unknown) => thrown)) as Error;
+    expect(error).toBeInstanceOf(Error);
+
+    expect(error.message).toBe(`Failed to parse seed config at ${file}: the file is not valid YAML`);
+    expect((error.cause as Error).message).toContain("CanaryAliasPassword");
+  });
+
+  it("says a JSON file fails to parse without quoting the file", async () => {
+    const file = path.join(FIXTURES, "malformed-secret-config.json");
+    process.env.SEED_CONFIG_PATH = file;
+    const error = (await loadConfig().catch((thrown: unknown) => thrown)) as Error;
+    expect(error).toBeInstanceOf(Error);
+
+    expect(error.message).toBe(`Failed to parse seed config at ${file}: the file is not valid JSON`);
+    expect((error.cause as Error).message).toContain("CanaryPlaintextPassword");
+  });
+
   it("rethrows non-ENOENT read errors", async () => {
     // Reading a directory fails with EISDIR, which must NOT be swallowed.
     process.env.SEED_CONFIG_PATH = FIXTURES;

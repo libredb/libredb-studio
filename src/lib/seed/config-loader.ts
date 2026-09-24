@@ -1,5 +1,5 @@
 import { readFile } from "fs/promises";
-import { parse as parseYAML } from "yaml";
+import { parse as parseYAML, YAMLParseError } from "yaml";
 import { SeedConfigSchema, type SeedConfig } from "./types";
 import { logger } from "@/lib/logger";
 
@@ -22,6 +22,20 @@ export function resetCache(): void {
   cachedConfig = null;
   cachedAt = 0;
   cacheIsNull = false;
+}
+
+/**
+ * Where the file fails to parse, without the file's text. A parser's message quotes the line it
+ * failed on, and in a seed file that line can hold a plaintext password; this message reaches every
+ * caller of a `seed:` route through the error response, before any role filter runs. The parser's
+ * own error stays attached as `cause`.
+ */
+function parseFailure(err: unknown, isJSON: boolean): string {
+  if (err instanceof YAMLParseError) {
+    const at = err.linePos?.[0];
+    return at ? `${err.code} at line ${at.line}, column ${at.col}` : err.code;
+  }
+  return isJSON ? "the file is not valid JSON" : "the file is not valid YAML";
 }
 
 export async function loadConfig(): Promise<SeedConfig | null> {
@@ -57,7 +71,7 @@ export async function loadConfig(): Promise<SeedConfig | null> {
   try {
     parsed = isJSON ? JSON.parse(raw) : parseYAML(raw);
   } catch (err) {
-    throw new Error(`Failed to parse seed config at ${configPath}: ${err}`, { cause: err });
+    throw new Error(`Failed to parse seed config at ${configPath}: ${parseFailure(err, isJSON)}`, { cause: err });
   }
 
   const result = SeedConfigSchema.safeParse(parsed);

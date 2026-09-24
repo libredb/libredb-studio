@@ -1,0 +1,10 @@
+version: "1"
+# A plaintext password YAML reads as an alias: a plain scalar starting with `*` names an anchor,
+# and the error for an anchor that does not exist quotes the name.
+connections:
+  - id: "broken-alias"
+    name: "Broken"
+    type: postgres
+    host: pg.internal
+    password: *CanaryAliasPassword
+    roles: ["*"]

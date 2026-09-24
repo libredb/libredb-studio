@@ -101,6 +101,27 @@ describe("resolve-connection", () => {
     expect(result.password).toBe("admin-secret");
   });
 
+  // What a `seed:` route answers when the seed file itself is broken is this error's message, and
+  // any signed-in caller can ask: the role filter runs only after the file parses.
+  it("does not hand a caller the seed file's text when the file fails to parse", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "malformed-secret-config.yaml");
+    resetCache();
+
+    try {
+      const error = (await resolveConnection(
+        { connectionId: "seed:broken-secret" },
+        { role: "user", username: "test" },
+      ).catch((thrown: unknown) => thrown)) as Error;
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("Failed to parse seed config");
+      expect(error.message).not.toContain("CanaryPlaintextPassword");
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+    }
+  });
+
   it("throws 400 when neither connection nor connectionId", async () => {
     try {
       await resolveConnection({}, { role: "admin", username: "test" });
