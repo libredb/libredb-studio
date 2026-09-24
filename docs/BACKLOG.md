@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D113, U17 · 58
+- [Drivers and connections](#drivers-and-connections) — D1–D117, U17 · 62
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U47 · 35
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B87 · 28
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B88 · 29
 
 ---
 
@@ -1751,6 +1751,62 @@ Found 2026-09-23 by the #1085 review, while fixing the lone column under the byt
 Not fixed in #1085: the fix that added the notice fixed its text as well, and naming the series differently changes what the result reports.
 
 **Done when:** the notice is counted in `RESULT_BYTE_BUDGET`, or bounded on its own, for example by naming the series with the labels it carries rather than every label it lacks, and a test in `tests/unit/db/prometheus/results.test.ts` holds it at a label union that would take the notice past that bound.
+
+### D114. Through an SSH tunnel, a verifying TLS mode checks the certificate against `127.0.0.1`
+
+`tunnelledConnection` in `src/lib/db/factory.ts` rewrites a tunnelled connection's host and port to the tunnel's local end, `127.0.0.1` and a local port, and keeps the real server under `TUNNEL_FAR_END` (`:260`).
+No provider hands the far end's name to its TLS layer: nothing in `src/` sets `servername`, `serverName` or `checkServerIdentity`, and the only reader of `TUNNEL_FAR_END` is `src/lib/db/connection-fingerprint.ts`.
+So `verify-system`, `verify-ca` and `verify-full` check the server's certificate against `127.0.0.1`, and a certificate issued to the server's own name fails with `ERR_TLS_CERT_ALTNAME_INVALID`.
+Measured 2026-09-24 through the real tunnel client, factory and providers, against an in-process SSH bastion and a certificate whose only SAN was the server's DNS name: Prometheus, PostgreSQL (the `pg` driver against a TLS endpoint), ClickHouse (`verify-system`, under Bun's `fetch`) and the Couchbase REST helper all failed that way.
+MSSQL, MongoDB, Redis, Cassandra and Oracle were read, not measured; MySQL and Oracle pass `verify-ca`, because that mode does not check the name there.
+It fails closed, so no identity check is skipped, but it leaves a tunnel user who needs a working connection with `require`, which encrypts without verifying.
+Over a tunnel the HTTP providers also send no SNI and a `Host` of `127.0.0.1:<local port>`, so a reverse proxy that routes by either can send the request elsewhere; that was observed as the headers sent, not measured against a proxy.
+
+Found 2026-09-24 while checking the Prometheus provider's TLS path after #1104.
+Not fixed there: the rewrite and every driver's TLS options are shared by all engines.
+
+**Done when:** a tunnelled connection's TLS identity is checked against `TUNNEL_FAR_END`, as the server name when it is a DNS name and through `checkServerIdentity` when it is an address, on every driver that verifies, and a test through a tunnel with `verify-full` holds it for one wire driver and one HTTP provider.
+
+### D115. A request naming a different query timeout rebuilds a cached provider, and disconnecting the old one ends work still running on it
+
+`getOrCreateProvider` in `src/lib/db/factory.ts` disconnects a cached provider whose `queryTimeout` differs from the request's and builds a new one (`:552`), and the execution-profile cache does the same (`:722`); `src/lib/db/provider-cache-key.ts` records why the timeout is not in the key.
+The old provider's `disconnect()` runs while another request may still be using it.
+On Prometheus it aborts every query running or queued on it (`disconnect` in `src/lib/db/providers/timeseries/prometheus/index.ts`), so that query fails as a cancellation nobody asked for.
+Measured 2026-09-24 against the compose Prometheus: a query that takes about 3.5 s, started on a provider opened with 60000 ms, failed after 301 ms with `QueryCancelledError` when the same connection was requested with 30000 ms; with 60000 ms both times it completed.
+On PostgreSQL the running query completes, because `pool.end()` drains, but a request that reaches the old provider during the drain fails with `Cannot use a pool after calling end`, measured over a 2709 ms drain.
+Trino, ClickHouse and Druid hold nothing a running query needs when they close; that was read, not measured.
+The timeout travels in the connection object a browser sends for a connection the user created, so the trigger is one user's two tabs or browsers holding different Query Timeout values for the same connection; a tab keeps the value it loaded, which was read, not driven in a browser.
+A seed is sent by id and carries no timeout, so seeded connections do not trigger it.
+
+Found 2026-09-24 while checking the Prometheus provider's cancellation after #1104.
+Not fixed there: the teardown is shared by every engine.
+
+**Done when:** a timeout change reaches the next query without ending work in flight, by passing the timeout per query or by retiring the old provider without disconnecting it until its running work ends, and a test runs a slow query, requests the same connection with another timeout, and asserts the first query completes.
+
+### D116. Two connection digests a caller receives hash the connection string with plain SHA-256, so a password inside it can be guessed offline
+
+`connectionFingerprint` in `src/lib/db/connection-fingerprint.ts` and `connectionIdentity` in `src/lib/agent/context-snapshot.ts` both hash `connectionString` among the fields they frame, with unsalted SHA-256, and a connection string can carry the password (`scheme://user:pass@host`).
+The first reaches the browser inside the plan `POST /api/db/objects/edit-plan` returns, and the second inside the run record `GET /api/agent/runs/<id>` returns to the run's owner; both exposures were read, not driven through a live server.
+A managed seed defined by a connection string no longer sends that string to the browser, but a user whose role reaches the seed learns every other framed field by using the connection, so either digest checks a password guess offline.
+Measured 2026-09-24 as arithmetic over the framing both functions use: a four-word guess list recovered the password of a seeded connection string from each digest.
+
+Found 2026-09-24 by the review of the fix that withholds a managed seed's secrets from the browser.
+Not fixed there: both digests are compared server-side exactly as they are, so changing what they hash changes every stored plan and every run's recorded identity.
+
+**Done when:** neither digest can be recomputed from what a caller can learn, by keying both with a server secret or by hashing the connection string with its credentials masked, or the fingerprint no longer reaches the client, and a test holds that a digest differs from the plain SHA-256 of its own framing.
+
+### D117. The provider cache key reads neither half of the Elasticsearch API key pair
+
+`credentialDigest` in `src/lib/db/provider-cache-key.ts` frames the password, the agent pair, the TLS material and the tunnel's secrets, and neither `apiKeyId` nor `apiKeySecret`; `connectionFingerprint` frames neither either.
+So two Elasticsearch connections that differ only in the pair share one cache entry, and `getOrCreateProvider` in `src/lib/db/factory.ts` returns the provider built with the first pair.
+A key rotated behind a `${vault:...}` reference, which `docs/SEED_CONNECTIONS.md` says becomes visible within 120 seconds, keeps the old provider until the 30-minute idle sweep, and steady use keeps it from ever idling, so a revoked key answers 401 until the process restarts.
+Measured 2026-09-24: `providerCacheKey` returned the same key for two Elasticsearch connections differing only in the pair, and for one with a pair and one without; changing only the password changed it.
+A caller cannot use it to reach another user's pool: a claimed `seed:` id is re-resolved in `src/lib/seed/resolve-connection.ts`, and a browser connection's id is random.
+
+Found 2026-09-24 by the review of the fix that withholds a managed seed's secrets from the browser.
+Not fixed there: the cache key is shared by every engine.
+
+**Done when:** `credentialDigest` frames the API key pair, and a test holds that two connections differing only in either half get different keys.
 
 ## Value interpolation
 
@@ -4007,3 +4063,18 @@ Found 2026-09-23 by the #1085 browser pass.
 Not fixed in #1085: the count and its noun predate it and serve every engine.
 
 **Done when:** the answer card and the inventory header name what the count counts, the objects or each kind by its own label, and a test pins a capture of two kinds on each.
+
+### B88. A kind whose listing is refused ends the grounding walk, so plan mode on VictoriaMetrics reads nothing
+
+`walkObjectInventory` in `src/lib/agent/tools.ts` skips only a kind counted zero (`:2558`) and lists a kind whose count was refused as well, calling `listObjects` with no catch of its own (`:2566`).
+VictoriaMetrics answers `/api/v1/scrape_pools` with HTTP 400, so the Prometheus provider counts scrape pools as unavailable and then throws a `ConnectionError` when the walk lists them.
+The capture is all-or-nothing by design (the module docblock of `src/lib/agent/context-snapshot.ts`), so the run gets no inventory and the refusal `This run could not reach this prometheus database to ask it for its schema, so nothing was read for this run.`, although the server answered three of the four listings.
+Measured 2026-09-24 against VictoriaMetrics v1.152.0, single node: `captureContextSnapshot` and `readObjectInventoryForGrounding` both refused, and the 329 metrics and 5 targets already read were dropped; the same calls against Prometheus 3.13.3 captured.
+Only a seeded connection is affected, because a run opens on a `seed:` id only (B85).
+On a VictoriaMetrics server past `METRIC_LIST_CAP`, the walk stops at the truncated metric batch first (B84) and grounds metrics only.
+A Redis-wire relative that refuses `FUNCTION LIST` (KeyDB, DragonflyDB, Garnet) may end the walk the same way; that was read, not measured.
+
+Found 2026-09-24 while checking the VictoriaMetrics relative after #1104.
+Not fixed there: both rules of the walk are documented decisions (the `walkObjectInventory` docblock), so changing either is a ruling rather than a fix.
+
+**Done when:** a ruling chooses between recording a refused kind in the inventory, with the engine's sentence, while keeping the kinds that were read, and keeping the whole-capture refusal with a message that names the refused kind rather than an unreachable server; and a test drives the walk over a provider whose one kind's listing throws.

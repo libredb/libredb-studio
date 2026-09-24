@@ -2688,6 +2688,7 @@ the role's own grants are the whole boundary (A3).
   `promql` had the same flaw and names `prometheus` since #1085.
 - **B87**: a run's inventory count names every kind with the engine's entity noun, because `captureContextSnapshot` counts every object the inventory read and both the answer card and the prompt's inventory header name that count through `inventoryNoun`, so a SQLite run over six tables and two views reads "8 tables read" and a Prometheus run over metrics, rule groups, rules, scrape pools and targets counts them all as metrics.
   Each inventory row still carries its own kind; the count is what names the wrong thing.
+- **B88**: a kind whose listing the engine refuses ends the grounding walk, because `walkObjectInventory` lists a kind whose count was refused and the capture is all-or-nothing, so a plan run on a seeded VictoriaMetrics connection starts with no inventory and is told the server could not be reached, though it answered three of its four listings.
 
 **Settled as limits rather than as work.** The eight below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet
