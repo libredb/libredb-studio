@@ -37,15 +37,33 @@ const RAW_OFFLINE = {
     },
   ],
 };
-const leaderless = (response: unknown = RAW_OFFLINE) =>
+const leaderless = (response: unknown = RAW_OFFLINE, apiIds: string[] = ["LEADER_NOT_AVAILABLE"]) =>
   libError({ code: "PLT_KFK_MULTIPLE", message: "metadata failed 2 times." }, [
     libError(
       { code: "PLT_KFK_RESPONSE", message: "Received response with error while executing API Metadata(v12)", response },
-      [libError({ code: "PLT_KFK_PROTOCOL", apiId: "LEADER_NOT_AVAILABLE", path: "/topics/1/partitions/0" })],
+      // One protocol error per leaderless partition, each on its own partition's path.
+      apiIds.map((apiId, index) =>
+        libError({ code: "PLT_KFK_PROTOCOL", apiId, path: `/topics/1/partitions/${index}` }),
+      ),
     ),
   ]);
 const notLeader = () =>
   libError({ code: "PLT_KFK_RESPONSE" }, [libError({ code: "PLT_KFK_PROTOCOL", apiId: "NOT_LEADER_OR_FOLLOWER" })]);
+/** The client's NetworkError for one connection, with the Node error as its cause (dist/network/connection.js; captured, error-refused). */
+const connectionFailure = (host: string, port: number, nodeCode: string) =>
+  libError({
+    code: "PLT_KFK_NETWORK",
+    message: `Connection to ${host}:${port} failed.`,
+    cause: Object.assign(new Error(`connect ${nodeCode} ${host}:${port}`), { code: nodeCode }),
+  });
+/** One Fetch answer carrying the partition's error code, as the client's ResponseError holds it (captured, error-offset-out-of-range). */
+const fetchRefusal = (apiId: string) =>
+  libError({ code: "PLT_KFK_RESPONSE", message: "Received response with error while executing API Fetch(v17)" }, [
+    libError({ code: "PLT_KFK_PROTOCOL", apiId, path: "/responses/0/partitions/0" }),
+  ]);
+/** A fetch that failed on both of the client's attempts, its one retry spent, as its retry loop reports it (dist/clients/base/base.js). */
+const fetchFailedTwice = (attempt: () => unknown) =>
+  libError({ code: "PLT_KFK_MULTIPLE", message: "fetch failed 2 times." }, [attempt(), attempt()]);
 
 /** A metadata answer for orders whose partition 1 has the given leader. */
 const ordersWithLeader = (leader: number) => {
@@ -65,6 +83,27 @@ const ORDERS_ID = ALL.topics.get("orders")!.id;
 /** Every call's first argument, for one recorded method. */
 const argsOf = (calls: Array<[string, unknown[]]>, name: string) =>
   calls.filter(([called]) => called === name).map(([, args]) => args[0]);
+
+/**
+ * A client over orders whose partition 1 is led by node 1 until a forced metadata read names
+ * `movedTo`, and whose first fetch fails with `failure`; every later fetch answers the capture.
+ */
+const afterLeaderMove = (movedTo: number, failure: () => unknown) => {
+  let fetches = 0;
+  const recorded = fakeLib({
+    "admin.metadata": (o) => ordersWithLeader((o as { forceUpdate?: boolean }).forceUpdate ? movedTo : 1),
+    "consumer.fetch": () => {
+      fetches++;
+      if (fetches === 1) throw failure();
+      return kafkaFixture("fetch-orders-p1-o5");
+    },
+  });
+  const client = createPlatformaticClient(OPTIONS, recorded.lib);
+  return {
+    read: async () => client.fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal()),
+    nodes: () => argsOf(recorded.calls, "consumer.fetch").map((o) => (o as { node: number }).node),
+  };
+};
 
 /** A fetch that answers only when the test releases it, counting how many are in flight at once. */
 const heldFetches = () => {
@@ -406,6 +445,34 @@ describe("createPlatformaticClient", () => {
     ).toBe("network");
   });
 
+  test.each<[string, string[]]>([
+    ["LISTENER_NOT_FOUND", ["LISTENER_NOT_FOUND"]],
+    ["LISTENER_NOT_FOUND beside LEADER_NOT_AVAILABLE", ["LEADER_NOT_AVAILABLE", "LISTENER_NOT_FOUND"]],
+  ])(
+    "a partition answered with %s has no leader either, and is read through as leader -1 (spec 4.1)",
+    async (_, apiIds) => {
+      // Kafka answers LISTENER_NOT_FOUND, with leader -1, for a partition whose leader has no endpoint
+      // on the listener the request came in on: the other form a leaderless partition takes.
+      const { lib } = fakeLib({
+        "admin.metadata": () => {
+          throw leaderless(RAW_OFFLINE, apiIds);
+        },
+        "admin.listTopics": () => {
+          throw libError({ code: "PLT_KFK_MULTIPLE", message: "Listing topics failed." }, [
+            leaderless(RAW_OFFLINE, apiIds),
+          ]);
+        },
+      });
+      const client = createPlatformaticClient(OPTIONS, lib);
+      const [orders] = (await client.metadata(["orders"])).topics;
+      expect(orders.partitions.map((p) => [p.partition, p.leader])).toEqual([
+        [0, 1],
+        [1, -1],
+      ]);
+      expect(await client.listTopics()).toEqual(["orders"]);
+    },
+  );
+
   test("listTopics reads names through a leaderless partition too, internal topics excluded", async () => {
     const { lib } = fakeLib({
       "admin.listTopics": () => {
@@ -659,6 +726,19 @@ describe("createPlatformaticClient", () => {
     await client.fetch(orders, 1, big(5), signal());
     await client.fetch(orders, 1, big(5), signal());
     expect(calls.filter(([n]) => n === "admin.listApis").length).toBe(1);
+    // Fetch 13 itself is enough: the first version that names a topic by id, and where Redpanda v26.2.2 stops.
+    const atThirteen = fakeLib({
+      "admin.listApis": () => [{ apiKey: 1, name: "Fetch", minVersion: 4, maxVersion: 13 }],
+    });
+    const atThirteenClient = createPlatformaticClient(OPTIONS, atThirteen.lib);
+    const read = await atThirteenClient.fetch(
+      (await atThirteenClient.metadata(["orders"])).topics[0],
+      1,
+      big(5),
+      signal(),
+    );
+    expect(read.records[0].offset).toBe(big(5));
+    expect(atThirteen.calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
     for (const apis of [[{ apiKey: 1, name: "Fetch", minVersion: 0, maxVersion: 12 }], []]) {
       const old = fakeLib({ "admin.listApis": () => apis });
       const oldClient = createPlatformaticClient(OPTIONS, old.lib);
@@ -669,6 +749,41 @@ describe("createPlatformaticClient", () => {
       expect(error.message).toContain("Fetch 13");
       expect(old.calls.some(([n]) => n === "consumer.fetch")).toBe(false);
     }
+  });
+
+  test("Redpanda's captured answers read and fetch: node 0 leads every partition, and its Fetch range ends at 13", async () => {
+    // Redpanda v26.2.2 runs one broker, node 0, and answers Fetch up to v13, so it sits on the
+    // boundary of both refusals above: a leader of 0 is a leader (a partition with none answers
+    // -1), and Fetch 13 is the version a read needs.
+    const { lib, calls } = fakeLib({
+      "admin.metadata": () => kafkaFixture("redpanda-metadata-orders"),
+      "admin.listApis": () => kafkaFixture("redpanda-api-versions"),
+      "consumer.listOffsets": () => kafkaFixture("redpanda-offsets-latest"),
+      "consumer.fetch": () => kafkaFixture("redpanda-fetch-orders-p1-o5"),
+    });
+    const client = createPlatformaticClient(OPTIONS, lib);
+    const [orders] = (await client.metadata(["orders"])).topics;
+    // The control: the captures hold both boundaries.
+    expect(orders.partitions.map((p) => p.leader)).toEqual([0, 0, 0]);
+    expect(
+      kafkaFixture<Array<{ apiKey: number; maxVersion: number }>>("redpanda-api-versions").find((a) => a.apiKey === 1)
+        ?.maxVersion,
+    ).toBe(13);
+    const offsets = await client.offsets("orders", "latest");
+    expect(argsOf(calls, "consumer.listOffsets")).toHaveLength(1);
+    expect([...offsets.keys()]).toEqual([0, 1, 2]);
+    const captured = kafkaFixture<Map<string, bigint[]>>("redpanda-offsets-latest").get("orders")!;
+    expect([...offsets]).toEqual(captured.map((offset, partition) => [partition, offset]));
+    const read = await client.fetch(orders, 1, big(5), signal());
+    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([0]);
+    expect(read.records.map((r) => r.offset)).toEqual([5, 6, 7, 8, 9, 10, 11].map(big));
+    expect(read.records.every((r) => r.partition === 1)).toBe(true);
+    expect(read.nextOffset).toBe(big(12));
+    // The captured batch starts at offset 0, so its records from the sixth on are the ones read.
+    const [batch] = kafkaFixture<{
+      responses: Array<{ partitions: Array<{ records: Array<{ records: Array<{ value: Uint8Array | null }> }> }> }>;
+    }>("redpanda-fetch-orders-p1-o5").responses[0].partitions[0].records;
+    expect(read.records.map((r) => r.value)).toEqual(batch.records.slice(5).map((r) => r.value));
   });
 
   test("a fetch sent to a leader that moved is sent once more, to the new leader", async () => {
@@ -707,6 +822,40 @@ describe("createPlatformaticClient", () => {
     expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([1, 2]);
   });
 
+  test.each<[string, () => unknown]>([
+    [
+      "LEADER_NOT_AVAILABLE while a new leader is elected",
+      () => fetchFailedTwice(() => fetchRefusal("LEADER_NOT_AVAILABLE")),
+    ],
+    [
+      "UNKNOWN_TOPIC_OR_PARTITION from a broker a reassignment took the partition from",
+      () => fetchFailedTwice(() => fetchRefusal("UNKNOWN_TOPIC_OR_PARTITION")),
+    ],
+    [
+      "a network failure to a leader that is gone",
+      () => fetchFailedTwice(() => connectionFailure("localhost", 9092, "ECONNREFUSED")),
+    ],
+  ])("%s: the fetch is sent once more, to the leader a forced re-read names", async (_, failure) => {
+    const moved = afterLeaderMove(2, failure);
+    const result = await moved.read();
+    expect(moved.nodes()).toEqual([1, 2]);
+    expect(result.records.map((r) => r.offset)).toEqual([5, 6, 7, 8, 9, 10, 11].map(big));
+  });
+
+  test("a leader that moved to node 0 is followed there: node 0 is a broker like any other, and Redpanda's only one", async () => {
+    const moved = afterLeaderMove(0, notLeader);
+    expect((await moved.read()).records[0].offset).toBe(big(5));
+    expect(moved.nodes()).toEqual([1, 0]);
+  });
+
+  test("a re-read that names no leader (-1) sends no second fetch, and the read is refused, to be run again", async () => {
+    const moved = afterLeaderMove(-1, notLeader);
+    const error = await moved.read().catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.message).toContain("run it again");
+    expect(moved.nodes()).toEqual([1]);
+  });
+
   test("a stale leader that has not moved is said as such; any other fetch failure is not retried", async () => {
     const stuck = fakeLib({
       "consumer.fetch": () => {
@@ -718,6 +867,8 @@ describe("createPlatformaticClient", () => {
       .fetch((await stuckClient.metadata(["orders"])).topics[0], 1, big(5), signal())
       .catch((e) => e);
     expect(stale.message).toContain("leadership moved");
+    // The re-read found the leader where it was, so the fetch is not sent to it again.
+    expect(stuck.calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
     const range = fakeLib({
       "consumer.fetch": () => {
         throw libError({ code: "PLT_KFK_RESPONSE" }, [
@@ -924,6 +1075,9 @@ describe("createPlatformaticClient", () => {
       connectTimeout: 5000,
       requestTimeout: 5000,
     });
+    // Without TLS the connection carries no server name, as the clients carry none; with TLS, the
+    // KIP-848 member test below sends one to a DNS host.
+    expect(Object.keys(constructed.find(([n]) => n === "Connection")![1] as object)).not.toContain("tlsServerName");
     expect(calls.filter(([n]) => n === "connection.close").length).toBe(1);
   });
 
@@ -994,6 +1148,31 @@ describe("createPlatformaticClient", () => {
       .catch((e) => e);
     expect(error.category).toBe("unknown-object");
     expect(calls.some(([n]) => n === "admin.describeGroups")).toBe(false);
+  });
+
+  test("a classic group with no protocol type, one that only ever committed offsets, is described (spec 4.3)", async () => {
+    // A consumer that assigns its own partitions and commits under a group id never joins, so the
+    // broker lists and describes its group with an empty protocol type, and the listing keeps it.
+    const { lib, calls } = fakeLib({
+      "admin.describeGroups": () =>
+        new Map([
+          ["offsets-only", { id: "offsets-only", state: "Empty", protocolType: "", protocol: "", members: new Map() }],
+        ]),
+    });
+    const group = await createPlatformaticClient(OPTIONS, lib).describeGroup({
+      groupId: "offsets-only",
+      state: "Empty",
+      groupType: "classic",
+      protocolType: "",
+    });
+    expect(argsOf(calls, "admin.describeGroups")).toEqual([{ groups: ["offsets-only"] }]);
+    expect(group).toEqual({
+      groupId: "offsets-only",
+      groupType: "classic",
+      state: "Empty",
+      protocolOrAssignor: "",
+      members: [],
+    });
   });
 
   test("a KIP-848 group's members are mapped from API 69, and its connection sends SNI only to a DNS host", async () => {
@@ -1430,6 +1609,16 @@ describe("translateError", () => {
       ...(e.cause === undefined ? [] : chainOf(e.cause)),
     ];
   };
+  /**
+   * A listing whose broker could not be reached, as the client reports it: measured for a name
+   * that does not resolve under Bun and Node, and the shape error-refused and error-tls-ca hold.
+   */
+  const unreachable = (host: string, port: number, nodeCode: string) =>
+    libError({ code: "PLT_KFK_MULTIPLE", message: "Listing topics failed." }, [
+      libError({ code: "PLT_KFK_MULTIPLE", message: "Cannot connect to any broker." }, [
+        connectionFailure(host, port, nodeCode),
+      ]),
+    ]);
 
   test("Unknown topic (PLT_KFK_USER) is unknown-topic (M-B), nested under MultipleErrors or not", () => {
     expect(
@@ -1458,6 +1647,11 @@ describe("translateError", () => {
     expect(translateError(leaderless(), bootstrap)).toMatchObject({
       category: "unreadable-topic",
       detail: { apiId: "LEADER_NOT_AVAILABLE" },
+    });
+    // LISTENER_NOT_FOUND is the other form a partition with no leader takes (spec 4.1, 5.6).
+    expect(translateError(leaderless(RAW_OFFLINE, ["LISTENER_NOT_FOUND"]), bootstrap)).toMatchObject({
+      category: "unreadable-topic",
+      detail: { apiId: "LISTENER_NOT_FOUND" },
     });
   });
 
@@ -1492,6 +1686,24 @@ describe("translateError", () => {
     expect(translateError(selfSigned, bootstrap).detail.nodeCode).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
   });
 
+  // Each code as the client reported it through local TLS servers under Bun 1.4.2 and Node 24.14.0,
+  // and UNABLE_TO_VERIFY_LEAF_SIGNATURE as error-tls-ca holds it: the Node error is the cause of the
+  // connection's NetworkError. One code for each form the TLS rule reads, and Node's own for a
+  // plaintext listener, where Bun names another.
+  test.each([
+    ["ERR_TLS_CERT_ALTNAME_INVALID", "a certificate for another name"],
+    ["ERR_SSL_WRONG_VERSION_NUMBER", "TLS to a listener that answers in plaintext, under Bun"],
+    ["ERR_SSL_PACKET_LENGTH_TOO_LONG", "TLS to a listener that answers in plaintext, under Node"],
+    ["CERT_HAS_EXPIRED", "an expired certificate"],
+    ["DEPTH_ZERO_SELF_SIGNED_CERT", "a self-signed certificate"],
+    ["SELF_SIGNED_CERT_IN_CHAIN", "a chain that ends in an untrusted self-signed root"],
+    ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "a certificate from an untrusted CA"],
+    ["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "a certificate and its intermediate, under an untrusted root"],
+  ])("%s (%s) is tls carrying that code (K7)", (nodeCode) => {
+    const error = translateError(unreachable("localhost", 9092, nodeCode), bootstrap);
+    expect([error.category, error.detail]).toEqual(["tls", { nodeCode }]);
+  });
+
   test("a refused connection is network at the address the client named, and advertised-unreachable at any other (captured, error-refused)", () => {
     // Measured M-J: the client names "localhost" while Node's error names the resolved address,
     // so the target is read from the client's own "Connection to <host>:<port> failed." text.
@@ -1510,6 +1722,35 @@ describe("translateError", () => {
       category: "advertised-unreachable",
       detail: target,
     });
+  });
+
+  // ECONNREFUSED as error-refused holds it, ENOTFOUND as the client reported a name that does not
+  // resolve under Bun and Node, and ENETUNREACH as it reported an address with no route under Node;
+  // the rest are Node's other connection failures, in the same shape.
+  test.each(["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN"])(
+    "a connection that fails with %s is network at the bootstrap, and advertised-unreachable at an address the broker advertised (spec 5.6)",
+    (nodeCode) => {
+      const atBootstrap = translateError(unreachable("localhost", 9092, nodeCode), bootstrap);
+      expect([atBootstrap.category, atBootstrap.detail]).toEqual(["network", { nodeCode }]);
+      // A name the broker advertises that this server cannot reach: the Docker and NAT case.
+      const advertised = translateError(unreachable("broker-2.internal", 9092, nodeCode), bootstrap);
+      expect([advertised.category, advertised.detail]).toEqual([
+        "advertised-unreachable",
+        { host: "broker-2.internal", port: 9092, nodeCode },
+      ]);
+    },
+  );
+
+  test("an address on the bootstrap's host at another port is one the broker advertised (the kafka-cluster shape)", () => {
+    // kafka-cluster bootstraps on localhost:9192, and its other brokers advertise localhost:9193 and localhost:9194.
+    const clusterBootstrap = { host: "localhost", port: 9192 };
+    const otherPort = translateError(unreachable("localhost", 9193, "ECONNREFUSED"), clusterBootstrap);
+    expect([otherPort.category, otherPort.detail]).toEqual([
+      "advertised-unreachable",
+      { host: "localhost", port: 9193, nodeCode: "ECONNREFUSED" },
+    ]);
+    // The control: the bootstrap's own address is network.
+    expect(translateError(unreachable("localhost", 9192, "ECONNREFUSED"), clusterBootstrap).category).toBe("network");
   });
 
   test("measured protocol mismatches are tls, not network (captured, M-J)", () => {
