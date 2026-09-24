@@ -305,6 +305,30 @@ describe("readMessages", () => {
     ]);
   });
 
+  test("the budget warning names only the later partitions that hold records to read, never an empty one", async () => {
+    // Partitions 1 and 3 are empty (their earliest offset is their end), and partition 2 holds one record.
+    const sparse = {
+      0: [rec(0, 0, 1, "a".repeat(600)), rec(0, 1, 2, "b".repeat(600)), rec(0, 2, 3, "c".repeat(600))],
+      1: [],
+      2: [rec(2, 0, 4, "d".repeat(10))],
+      3: [],
+    };
+    const { client, calls } = fakeClient(sparse, {}, undefined, 1);
+    const tight = { resultByteBudget: 1300, cellLimit: 1000 };
+    const warning =
+      "The read stopped before offset 2 of partition 0, at the result budget of 1,300 bytes of record data, and did not read partition 2; narrow it with a partition, an offset or a smaller limit";
+    const earliest = await readMessages(client, req({ from: { kind: "earliest" } }), tight, signal);
+    expect(earliest.warnings.map((w) => w.message)).toEqual([warning]);
+    const latest = await readMessages(client, req({ from: { kind: "latest" } }), tight, signal);
+    expect(latest.warnings.map((w) => w.message)).toEqual([warning]);
+    // Control: with room for every record, the empty partitions are never fetched either.
+    calls.length = 0;
+    const whole = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
+    expect(whole.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "0/1", "0/2", "2/0"]);
+    expect(calls.map(([p]) => p)).toEqual([0, 0, 0, 2]);
+    expect(whole.warnings).toEqual([]);
+  });
+
   test("the budget counts record bytes, not the cut cell: a record larger than the budget is still one row", async () => {
     const huge = { 0: [rec(0, 0, 1, "h".repeat(5000)), rec(0, 1, 2, "i".repeat(5000))] };
     const { client } = fakeClient(huge);

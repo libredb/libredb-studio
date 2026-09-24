@@ -379,7 +379,9 @@ async function planPartitions(
       byTimestamp?.offsets[index],
     );
     if (start === undefined) pastEnd.push(partition);
-    else plans.push({ partition, start, end });
+    // A partition with no offset from its start to its end holds nothing to read, so it has
+    // no plan: it is never fetched, and never named as a partition a read left unread.
+    else if (start < end) plans.push({ partition, start, end });
   });
   return { plans, pastEnd };
 }
