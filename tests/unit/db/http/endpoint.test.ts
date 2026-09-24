@@ -8,7 +8,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
-import { endpointUrl, httpOrigin, type HttpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import {
+  endpointUrl,
+  httpOrigin,
+  type HttpOrigin,
+  rejectRedirect,
+  validateHost,
+  validatePort,
+} from "@/lib/db/http/endpoint";
 
 function refusal(run: () => unknown): Error {
   try {
@@ -268,5 +275,31 @@ describe("rejectRedirect", () => {
     expect(error.message).toContain("HTTP 301");
     expect(error.message).toContain("not an http or https URL");
     expect(error.message).not.toContain("SECRET");
+  });
+});
+
+describe("validateHost and validatePort are exported for non-HTTP transports", () => {
+  test("a hostname, an IPv4 and an IPv6 literal pass; IPv6 comes back bracketed", () => {
+    expect(validateHost("Broker-1.Example.com")).toBe("broker-1.example.com");
+    expect(validateHost("10.0.0.7")).toBe("10.0.0.7");
+    expect(validateHost("::1")).toBe("[::1]");
+  });
+
+  test.each(["a:1", "a/b", "u@a", "a b", "a%25b"])(
+    "URL syntax in the host %p is refused without echoing it",
+    (host) => {
+      const error = refusal(() => validateHost(host));
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).not.toContain(host);
+    },
+  );
+
+  test("a port from 1 to 65535 passes, as a number or a string of digits", () => {
+    expect(validatePort(9092)).toBe(9092);
+    expect(validatePort("9092")).toBe(9092);
+  });
+
+  test.each([0, 65536, "90a", -1, 1.5])("the port %p is refused", (port) => {
+    expect(refusal(() => validatePort(port))).toBeInstanceOf(DatabaseConfigError);
   });
 });
