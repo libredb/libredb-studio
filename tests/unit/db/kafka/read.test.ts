@@ -102,16 +102,19 @@ describe("readMessages", () => {
   });
 
   test("the rows the merge leaves out of the limit mark the read limited, for earliest and for latest", async () => {
-    const { client } = fakeClient(log);
+    // Each partition holds exactly the limit, so both reads take each partition to its end
+    // and no partition is cut: only the merge leaves rows out, in either read.
+    const { client } = fakeClient({ 0: [rec(0, 0, 10), rec(0, 1, 30)], 1: [rec(1, 0, 20), rec(1, 1, 40)] });
     const reads = await Promise.all([
       readMessages(client, req({ from: { kind: "earliest" }, limit: 2 }), LIMITS, signal),
       readMessages(client, req({ from: { kind: "latest" }, limit: 2 }), LIMITS, signal),
     ]);
-    for (const out of reads) {
-      expect(out.rows).toHaveLength(2);
-      expect(out.wasLimited).toBe(true);
-      expect(out.warnings).toEqual([]);
-    }
+    expect(reads.map((out) => out.rows.map((r) => `${r.partition}/${r.offset}`))).toEqual([
+      ["0/0", "1/0"],
+      ["0/1", "1/1"],
+    ]);
+    expect(reads.map((out) => out.wasLimited)).toEqual([true, true]);
+    expect(reads.map((out) => out.warnings)).toEqual([[], []]);
   });
 
   test("an offset on one partition", async () => {
@@ -189,6 +192,61 @@ describe("readMessages", () => {
     expect(out.warnings.map((w) => w.message).join()).toContain("budget");
   });
 
+  test("the budget stops the whole read: no later record, no later partition, and no fetch after the one that hit it", async () => {
+    // One record a fetch. Partition 0 holds 600, 600, 600 and 10 bytes, and partition 1 one record of 10:
+    // a budget of 1,300 holds the first two, offset 2 would pass it, and offset 3 or partition 1 would still fit.
+    const log = {
+      0: [
+        rec(0, 0, 1, "a".repeat(600)),
+        rec(0, 1, 2, "b".repeat(600)),
+        rec(0, 2, 3, "c".repeat(600)),
+        rec(0, 3, 4, "d".repeat(10)),
+      ],
+      1: [rec(1, 0, 5, "e".repeat(10))],
+    };
+    const { client, calls } = fakeClient(log, {}, undefined, 1);
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 1300, cellLimit: 1000 },
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "0/1"]);
+    expect(calls).toEqual([
+      [0, n(0)],
+      [0, n(1)],
+      [0, n(2)],
+    ]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0].message).toContain("result budget of 1,300 bytes");
+  });
+
+  test("a latest read the budget stops holds what it read before the stop, not the newest rows of the topic (the stated limit)", async () => {
+    // Three partitions of offsets 0 to 9, 100 bytes each, timestamps in offset order across partitions.
+    const three = Object.fromEntries(
+      [0, 1, 2].map((p) => [p, Array.from({ length: 10 }, (_, o) => rec(p, o, o * 10 + p, "x".repeat(100)))]),
+    );
+    const { client, calls } = fakeClient(three);
+    // Control: with room for every window, the read answers the five newest rows of the topic.
+    const whole = await readMessages(client, req({ from: { kind: "latest" }, limit: 5 }), LIMITS, signal);
+    expect(whole.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/8", "2/8", "0/9", "1/9", "2/9"]);
+    calls.length = 0;
+    // 650 bytes: partition 0's window, 5 to 9, fits whole in 500, partition 1 stops before offset 6,
+    // and partition 2 is never read.
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      { resultByteBudget: 650, cellLimit: 1000 },
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/5", "0/6", "0/7", "0/8", "0/9"]);
+    expect(calls.map(([p]) => p)).toEqual([0, 0, 0, 1]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0].message).toContain("result budget of 650 bytes");
+  });
+
   test("the budget counts record bytes, not the cut cell: a record larger than the budget is still one row", async () => {
     const huge = { 0: [rec(0, 0, 1, "h".repeat(5000)), rec(0, 1, 2, "i".repeat(5000))] };
     const { client } = fakeClient(huge);
@@ -243,6 +301,19 @@ describe("readMessages", () => {
     expect(out.wasLimited).toBe(true);
   });
 
+  test("the cell warning counts the rows the result returns, never a cut cell in a row the merge left out", async () => {
+    // Partition 0's one record is the older and is cut at 10 characters; partition 1's is the newer and whole.
+    const { client } = fakeClient({ 0: [rec(0, 0, 10, "x".repeat(50))], 1: [rec(1, 0, 20, "y")] });
+    const limits = { resultByteBudget: 1e6, cellLimit: 10 };
+    const newest = await readMessages(client, req({ from: { kind: "latest" }, limit: 1 }), limits, signal);
+    expect(newest.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/0"]);
+    expect(newest.warnings).toEqual([]);
+    // Control: when the cut row is returned, its cell is warned about.
+    const both = await readMessages(client, req({ from: { kind: "latest" }, limit: 2 }), limits, signal);
+    expect(both.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "1/0"]);
+    expect(both.warnings.map((w) => w.message)).toEqual(["1 cell(s) were cut at 10 characters"]);
+  });
+
   test("hitting the row limit before the log end sets wasLimited", async () => {
     const { client } = fakeClient(log);
     expect((await readMessages(client, req({ from: { kind: "earliest" }, limit: 1 }), LIMITS, signal)).wasLimited).toBe(
@@ -279,6 +350,38 @@ describe("readMessages", () => {
       (await readMessages(client, req({ partition: 0, from: { kind: "earliest" }, limit: 2 }), LIMITS, signal))
         .wasLimited,
     ).toBe(true);
+  });
+
+  test("a record a fetch answers at or past the end the read planned is never a row and never a cut", async () => {
+    // Offsets 3 and 4 arrived after the latest offset, 3, was read, and one fetch answers all five.
+    const base = fakeClient(
+      { 0: Array.from({ length: 5 }, (_, i) => rec(0, i, i + 1)) },
+      { offsets: async (_t, at) => new Map([[0, at === "earliest" ? n(0) : n(3)]]) },
+      undefined,
+      100,
+    );
+    const answered: string[][] = [];
+    const client: ReadClient = {
+      ...base.client,
+      fetch: async (topic, partition, offset, fetchSignal) => {
+        const answer = await base.client.fetch(topic, partition, offset, fetchSignal);
+        answered.push(answer.records.map((r) => String(r.offset)));
+        return answer;
+      },
+    };
+    const earliest = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
+    expect(earliest.rows.map((r) => r.offset)).toEqual(["0", "1", "2"]);
+    expect(earliest.wasLimited).toBe(false);
+    // A latest read of limit 3 reads its whole window, 0 to 2: nothing below the end is left unread.
+    const latest = await readMessages(client, req({ from: { kind: "latest" }, limit: 3 }), LIMITS, signal);
+    expect(latest.rows.map((r) => r.offset)).toEqual(["0", "1", "2"]);
+    expect(latest.wasLimited).toBe(false);
+    expect(latest.warnings).toEqual([]);
+    // Control: each read's one fetch did answer the two records past the end.
+    expect(answered).toEqual([
+      ["0", "1", "2", "3", "4"],
+      ["0", "1", "2", "3", "4"],
+    ]);
   });
 
   test("Review Focus 1: a topic with a leaderless partition is refused naming the partition, and nothing is read", async () => {
@@ -451,6 +554,23 @@ describe("startOffset and readWarnings, the pure rules", () => {
     );
     expect(startOffset({ kind: "timestamp", timestampMs: n(1), iso: "x" }, 0, n(0), n(9), 5, n(-1))).toBeUndefined();
     expect(startOffset({ kind: "timestamp", timestampMs: n(1), iso: "x" }, 0, n(0), n(9), 5, n(4))).toBe(n(4));
+  });
+
+  test("an offset at either end of the range is a start: the earliest offset, and the end", () => {
+    // The earliest offset of a trimmed partition is the first row's offset an earliest read shows (spec 6.4).
+    expect(startOffset({ kind: "offset", offset: n(1200) }, 0, n(1200), n(1500), 5, undefined)).toBe(n(1200));
+    expect(startOffset({ kind: "offset", offset: n(1500) }, 0, n(1200), n(1500), 5, undefined)).toBe(n(1500));
+    // Controls: one offset past either end is refused.
+    expect(
+      thrown(() => startOffset({ kind: "offset", offset: n(1199) }, 0, n(1200), n(1500), 5, undefined)).message,
+    ).toBe("Offset 1199 is outside partition 0's range 1200 to 1500");
+    expect(
+      thrown(() => startOffset({ kind: "offset", offset: n(1501) }, 0, n(1200), n(1500), 5, undefined)).message,
+    ).toBe("Offset 1501 is outside partition 0's range 1200 to 1500");
+  });
+
+  test("a timestamp offset of 0 is a start, on a partition whose log begins at 0", () => {
+    expect(startOffset({ kind: "timestamp", timestampMs: n(1), iso: "x" }, 0, n(0), n(9), 5, n(0))).toBe(n(0));
   });
 
   test("a timestamp offset at or past the end this read stops at starts nowhere", () => {
