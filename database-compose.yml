@@ -890,14 +890,25 @@ services:
       # cannot drift apart. Measured on the seeded fixtures: 150 to 176 MiB live after a GC.
       KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
-      interval: 5s
-      timeout: 10s
-      retries: 20
+      # A socket to the in-container listener through bash's /dev/tcp (the libsql service's
+      # form), not kafka-topics.sh: that CLI is a fresh JVM, 1.55 CPU-seconds per probe, which
+      # kept each idle broker at ~0.3 of a core; this probe takes 0.02. Enough, because the
+      # broker opens its listeners only once started: measured from cold, the socket accepted
+      # and ApiVersions answered within 4 ms of each other, and an RF 3 topic created at once.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/19092"]
+      # Probed every second while starting, so `up --wait` and depends_on see healthy within
+      # a second of the broker (from cold: ready in 3 to 4 s); once healthy, once a minute.
+      # The start period is three times the ~60 s the start plus seed took on a loaded host,
+      # failures inside it do not count, and a connect answers in milliseconds.
+      start_period: 180s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
     # Bounded at the maintainer's request: unbounded, the Kafka fixtures loaded the host until
     # it locked up. 1G holds the 512m heap plus the ~140 MiB the JVM keeps outside it plus the
-    # ~127 MiB healthcheck JVM (measured peak 543 MiB with the seed); no swap past it. 1.5
-    # CPUs: the broker plus a healthcheck JVM every 5 seconds idle at ~0.25 of one core.
+    # ~127 MiB of a CLI JVM run inside it (measured peak 543 MiB with the seed); no swap past
+    # it. 1.5 CPUs: the broker plus one CLI JVM, which takes a core while it runs.
     deploy:
       resources:
         limits:
@@ -963,11 +974,14 @@ services:
       # 512m in place of the image's default 1G, so the heap and the container limit below
       # cannot drift apart. Measured on the seeded fixtures: 150 to 176 MiB live after a GC.
       KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+    # The kafka service's probe and its reasons, shared by the three nodes through this anchor.
     healthcheck: &kafka-cluster-health
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
-      interval: 5s
-      timeout: 10s
-      retries: 30
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/19092"]
+      start_period: 180s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
     # The kafka service's bound and its reasons, per node and shared by all three through
     # this anchor; measured peak 541 to 650 MiB per node with the replicated seed.
     <<: &kafka-cluster-limits
@@ -1120,11 +1134,15 @@ services:
       # 512m in place of the image's default 1G, so the heap and the container limit below
       # cannot drift apart. Measured on the seeded fixtures: 150 to 176 MiB live after a GC.
       KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+    # The kafka service's probe and its reasons; the INTERNAL listener is the one the
+    # kafka-configs.sh that creates the SCRAM user talks to.
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
-      interval: 5s
-      timeout: 10s
-      retries: 20
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/19092"]
+      start_period: 180s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
     # The kafka service's bound and its reasons; measured peak 547 MiB with the reader and topic.
     deploy:
       resources:
