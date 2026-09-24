@@ -59,6 +59,8 @@ graph TD
         Document --> Couchbase[(Couchbase)]
         KeyValue --> Redis[(Redis)]
         TimeSeries --> Prometheus[(Prometheus)]
+        DBFactory --> Embedded[Embedded Providers]
+        Embedded --> LibreDB[(LibreDB)]
     end
 
     subgraph "AI Providers (Strategy Pattern)"
@@ -107,6 +109,7 @@ classDiagram
     BaseDatabaseProvider <|-- CouchbaseProvider
     BaseDatabaseProvider <|-- RedisProvider
     BaseDatabaseProvider <|-- PrometheusProvider
+    BaseDatabaseProvider <|-- LibreDBProvider
 
     SQLBaseProvider <|-- PostgresProvider
     SQLBaseProvider <|-- MySQLProvider
