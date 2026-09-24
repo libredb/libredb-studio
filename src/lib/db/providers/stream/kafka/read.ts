@@ -7,6 +7,11 @@
  * Each record is shaped once, as it arrives, and only its row is kept: no record's
  * buffers outlive the fetch that brought them (spec K5).
  *
+ * The partitions are read one after another, each forward from its start, so the budget
+ * stops a read inside one partition and the partitions after it are never fetched, whatever
+ * the `from` form; the budget's warning names the offset it stopped before and the
+ * partitions it did not read.
+ *
  * No offset is ever invented. A partition that an offsets answer leaves out has no offset
  * to start or end at, so the read is refused naming it before any fetch, and a fetch that
  * makes no progress below a partition's end stops that partition, never spins, and the
@@ -45,6 +50,16 @@ interface StoppedShort {
   readonly partition: number;
   readonly at: bigint;
   readonly end: bigint;
+}
+
+/**
+ * Where the result budget stopped a read: before the record at `at` in `partition`. The
+ * partitions are read one after another, so the ones after it, `unread`, were never fetched.
+ */
+interface BudgetStop {
+  readonly partition: number;
+  readonly at: bigint;
+  readonly unread: readonly number[];
 }
 
 /** A shaped row and the three fields it is ordered by; the record itself is not kept. */
@@ -103,7 +118,7 @@ export function startOffset(
 export function readWarnings(input: {
   readonly pastEnd: readonly number[];
   readonly stoppedShort: readonly StoppedShort[];
-  readonly budgetHit: boolean;
+  readonly budgetStop: BudgetStop | undefined;
   readonly truncatedCells: number;
   readonly limits: ReadLimits;
 }): { message: string }[] {
@@ -119,9 +134,12 @@ export function readWarnings(input: {
       message: `The broker answered no records ${where.join(", and ")}, so the read stopped there; run it again`,
     });
   }
-  if (input.budgetHit) {
+  if (input.budgetStop !== undefined) {
+    const { partition, at, unread } = input.budgetStop;
+    const budget = input.limits.resultByteBudget.toLocaleString("en-US");
+    const skipped = unread.length > 0 ? `, and did not read partition ${unread.join(", ")}` : "";
     warnings.push({
-      message: `The read stopped at the result budget of ${input.limits.resultByteBudget.toLocaleString("en-US")} bytes of record data; narrow it with a partition, an offset or a smaller limit`,
+      message: `The read stopped before offset ${at} of partition ${partition}, at the result budget of ${budget} bytes of record data${skipped}; narrow it with a partition, an offset or a smaller limit`,
     });
   }
   if (input.truncatedCells > 0) {
@@ -157,12 +175,12 @@ export async function readMessages(
   const collected: Collected[] = [];
   const stoppedShort: StoppedShort[] = [];
   let heldBytes = 0;
-  let budgetHit = false;
+  let budgetStop: BudgetStop | undefined;
   let partitionCut = false;
-  for (const plan of plans) {
+  for (const [index, plan] of plans.entries()) {
     let position = plan.start;
     let taken = 0;
-    while (position < plan.end && taken < request.limit && !budgetHit) {
+    while (position < plan.end && taken < request.limit && budgetStop === undefined) {
       if (signal.aborted) throw new KafkaError("timeout", "The read ran past its time limit and was stopped");
       // oxlint-disable-next-line no-await-in-loop -- each fetch starts where the one before it ended.
       const { records, nextOffset } = await client.fetch(topic, plan.partition, position, signal);
@@ -175,9 +193,11 @@ export async function readMessages(
         }
         const bytes = recordBytes(record);
         // The first record is always kept, however large, so an oversized record still
-        // answers one row, cut at the cell limit (spec 5.4).
+        // answers one row, cut at the cell limit (spec 5.4). Past that, the budget stops the
+        // whole read here: no later record of this partition, and no later partition.
         if (collected.length > 0 && heldBytes + bytes > limits.resultByteBudget) {
-          budgetHit = true;
+          const unread = plans.slice(index + 1).map((later) => later.partition);
+          budgetStop = { partition: plan.partition, at: record.offset, unread };
           break;
         }
         heldBytes += bytes;
@@ -209,8 +229,8 @@ export async function readMessages(
   const truncatedCells = chosen.reduce((sum, entry) => sum + entry.truncatedCells, 0);
   return {
     rows: chosen.map((entry) => entry.row),
-    warnings: readWarnings({ pastEnd, stoppedShort, budgetHit, truncatedCells, limits }),
-    wasLimited: budgetHit || truncatedCells > 0 || overLimit || partitionCut || stoppedShort.length > 0,
+    warnings: readWarnings({ pastEnd, stoppedShort, budgetStop, truncatedCells, limits }),
+    wasLimited: budgetStop !== undefined || truncatedCells > 0 || overLimit || partitionCut || stoppedShort.length > 0,
   };
 }
 

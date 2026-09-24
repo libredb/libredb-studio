@@ -218,8 +218,9 @@ describe("readMessages", () => {
       [0, n(2)],
     ]);
     expect(out.wasLimited).toBe(true);
-    expect(out.warnings).toHaveLength(1);
-    expect(out.warnings[0].message).toContain("result budget of 1,300 bytes");
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 2 of partition 0, at the result budget of 1,300 bytes of record data, and did not read partition 1; narrow it with a partition, an offset or a smaller limit",
+    ]);
   });
 
   test("a latest read the budget stops holds what it read before the stop, not the newest rows of the topic (the stated limit)", async () => {
@@ -243,8 +244,9 @@ describe("readMessages", () => {
     expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/5", "0/6", "0/7", "0/8", "0/9"]);
     expect(calls.map(([p]) => p)).toEqual([0, 0, 0, 1]);
     expect(out.wasLimited).toBe(true);
-    expect(out.warnings).toHaveLength(1);
-    expect(out.warnings[0].message).toContain("result budget of 650 bytes");
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 6 of partition 1, at the result budget of 650 bytes of record data, and did not read partition 2; narrow it with a partition, an offset or a smaller limit",
+    ]);
   });
 
   test("the budget counts record bytes, not the cut cell: a record larger than the budget is still one row", async () => {
@@ -258,7 +260,10 @@ describe("readMessages", () => {
     );
     expect(out.rows.map((r) => r.offset)).toEqual(["0"]);
     expect(out.rows[0].value).toBe("h".repeat(10));
-    expect(out.warnings.map((w) => w.message).join()).toContain("budget");
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 1 of partition 0, at the result budget of 100 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+      "1 cell(s) were cut at 10 characters",
+    ]);
   });
 
   test("the budget counts keys and header names and values, not only the value", async () => {
@@ -593,19 +598,36 @@ describe("startOffset and readWarnings, the pure rules", () => {
     const warnings = readWarnings({
       pastEnd: [2],
       stoppedShort: [{ partition: 0, at: n(6), end: n(7) }],
-      budgetHit: true,
+      budgetStop: { partition: 1, at: n(4), unread: [3] },
       truncatedCells: 3,
       limits: { resultByteBudget: 1024, cellLimit: 10 },
     });
     expect(warnings.map((w) => w.message)).toEqual([
       "No message at or after the timestamp on partition 2",
       "The broker answered no records for partition 0 at offset 6, below its end at 7, so the read stopped there; run it again",
-      "The read stopped at the result budget of 1,024 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+      "The read stopped before offset 4 of partition 1, at the result budget of 1,024 bytes of record data, and did not read partition 3; narrow it with a partition, an offset or a smaller limit",
       "3 cell(s) were cut at 10 characters",
     ]);
     expect(
-      readWarnings({ pastEnd: [], stoppedShort: [], budgetHit: false, truncatedCells: 0, limits: LIMITS }),
+      readWarnings({ pastEnd: [], stoppedShort: [], budgetStop: undefined, truncatedCells: 0, limits: LIMITS }),
     ).toEqual([]);
+  });
+
+  test("the budget warning names the offset and partition it stopped before, and every partition it did not read", () => {
+    const budgetWarning = (unread: number[]) =>
+      readWarnings({
+        pastEnd: [],
+        stoppedShort: [],
+        budgetStop: { partition: 0, at: n(7), unread },
+        truncatedCells: 0,
+        limits: { resultByteBudget: 250, cellLimit: 10 },
+      }).map((w) => w.message);
+    expect(budgetWarning([])).toEqual([
+      "The read stopped before offset 7 of partition 0, at the result budget of 250 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+    ]);
+    expect(budgetWarning([2, 5])).toEqual([
+      "The read stopped before offset 7 of partition 0, at the result budget of 250 bytes of record data, and did not read partition 2, 5; narrow it with a partition, an offset or a smaller limit",
+    ]);
   });
 
   test("every partition that stopped short is named with the offset it stopped at and its end", () => {
@@ -615,7 +637,7 @@ describe("startOffset and readWarnings, the pure rules", () => {
         { partition: 0, at: n(6), end: n(7) },
         { partition: 2, at: n(10), end: n(12) },
       ],
-      budgetHit: false,
+      budgetStop: undefined,
       truncatedCells: 0,
       limits: LIMITS,
     });
