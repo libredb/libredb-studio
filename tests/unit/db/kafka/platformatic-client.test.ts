@@ -1775,6 +1775,23 @@ describe("translateError", () => {
     });
   });
 
+  test("a connection that never became ready names no address, and is a connect timeout at the bootstrap (spec 5.6)", () => {
+    // The client's ready() says "Connection ready timed out after <ms>ms." when the connection has no
+    // address yet (dist/network/connection.js); it is a connect that was not answered in time, not a
+    // connection the peer closed.
+    const readyTimeout = libError({ code: "PLT_KFK_MULTIPLE", message: "Cannot connect to any broker." }, [
+      libError({ code: "PLT_KFK_NETWORK", class: "TimeoutError", message: "Connection ready timed out after 5000ms." }),
+    ]);
+    const error = translateError(readyTimeout, bootstrap);
+    expect([error.category, error.detail]).toEqual(["network", { nodeCode: "connect-timeout" }]);
+    // The control: a connection that closed while the client waited for it is still a lost one.
+    const closedWhileWaiting = libError({
+      code: "PLT_KFK_NETWORK",
+      message: "Connection closed while waiting for ready.",
+    });
+    expect(translateError(closedWhileWaiting, bootstrap).detail).toEqual({ nodeCode: "connection-lost" });
+  });
+
   test("a request timeout is timeout, and a closed connection is network (captured chains)", () => {
     expect(translateError(kafkaFixture("error-request-timeout"), bootstrap).category).toBe("timeout");
     expect(translateError(kafkaFixture("error-connection-closed"), bootstrap)).toMatchObject({

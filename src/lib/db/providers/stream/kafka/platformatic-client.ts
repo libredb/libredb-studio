@@ -915,8 +915,10 @@ const NETWORK_CODES = new Set([
 ]);
 /** The client's own text for one connection's failure: "Connection to <host>:<port> failed." or "... timed out." (dist/network/connection.js). */
 const CONNECTION_TARGET = /^Connection to (.+):(\d+) (failed|timed out)\.$/;
-/** A connection that timed out before it knew its address, or one the peer closed (dist/network/connection.js). */
-const CONNECTION_LOST = /^(Connection ready timed out after \d+ms\.|Connection closed)/;
+/** A connect that timed out before the connection knew its address (dist/network/connection.js, ready()). */
+const READY_TIMED_OUT = /^Connection ready timed out after \d+ms\.$/;
+/** A connection the peer closed, or one that closed while the client waited for it (dist/network/connection.js). */
+const CONNECTION_LOST = /^Connection closed/;
 
 function* walk(error: unknown): Generator<Record<string, unknown>> {
   if (error === null || typeof error !== "object") return;
@@ -985,7 +987,7 @@ export function translateError(error: unknown, bootstrap: { host: string; port: 
   // and look like a different broker (measured M-J).
   const errno = chain.find((e) => typeof e.code === "string" && NETWORK_CODES.has(e.code));
   const target = messages.map((m) => CONNECTION_TARGET.exec(m)).find((match) => match !== null);
-  const connectTimedOut = target?.[3] === "timed out";
+  const connectTimedOut = target?.[3] === "timed out" || messages.some((m) => READY_TIMED_OUT.test(m));
   if (errno !== undefined || connectTimedOut || messages.some((m) => CONNECTION_LOST.test(m))) {
     const host = target?.[1] ?? bootstrap.host;
     const port = target ? Number(target[2]) : bootstrap.port;
