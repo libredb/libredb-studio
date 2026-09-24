@@ -1,8 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { KafkaError, type KafkaRecord, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
-import { type ReadClient, readMessages, readWarnings, startOffset } from "@/lib/db/providers/stream/kafka/read";
-import type { ReadRequest } from "@/lib/db/providers/stream/kafka/request";
+import {
+  type KafkaFetchResult,
+  KafkaError,
+  type KafkaRecord,
+  type KafkaTopicMetadata,
+} from "@/lib/db/providers/stream/kafka/client";
+import {
+  type ReadClient,
+  type ReadLimits,
+  readMessages,
+  readWarnings,
+  startOffset,
+} from "@/lib/db/providers/stream/kafka/read";
+import type { ReadRequest, ReadStart } from "@/lib/db/providers/stream/kafka/request";
+import { compareRecords, shapeRecord } from "@/lib/db/providers/stream/kafka/results";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const n = (value: number) => BigInt(value);
@@ -359,7 +371,27 @@ describe("readMessages", () => {
     expect(roomy.map((out) => out.rows)).toEqual([latest.rows, earliest.rows]);
   });
 
-  test("a latest read whose own rows pass the budget holds the oldest rows of its window, and says where it stopped (the stated limit)", async () => {
+  test("a row that falls out of the rows held gives back its own bytes and no more, so the budget still stops the next record that passes it", async () => {
+    // Earliest, limit 1: each partition's one record is older than the one before, so it takes that one's place.
+    // 50, 50 and 60 bytes under a budget of 55: the second fits in the first's place, and the third would hold 60.
+    const { client } = fakeClient({
+      0: [rec(0, 0, 20, "a".repeat(50))],
+      1: [rec(1, 0, 10, "b".repeat(50))],
+      2: [rec(2, 0, 5, "c".repeat(60))],
+    });
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "earliest" }, limit: 1 }),
+      { resultByteBudget: 55, cellLimit: 1000 },
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/0"]);
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 0 of partition 2, at the result budget of 55 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+    ]);
+  });
+
+  test("a latest read the budget stops in the first partition it reads holds the oldest rows of that partition's window, and says where it stopped (the stated limit)", async () => {
     const three = Object.fromEntries(
       [0, 1, 2].map((p) => [p, Array.from({ length: 10 }, (_, o) => rec(p, o, o * 10 + p, "x".repeat(120)))]),
     );
@@ -379,7 +411,59 @@ describe("readMessages", () => {
     ]);
   });
 
-  test("the budget warning names only the later partitions that hold records to read, never an empty one", async () => {
+  test("a latest read the budget stops in a later partition answers what it held, not the newest rows of the topic (the stated limit)", async () => {
+    // Two partitions of offsets 0 to 9 with interleaved timestamps: partition 0's records are 120 bytes, partition 1's 200.
+    const two = Object.fromEntries(
+      [0, 1].map((p) => [
+        p,
+        Array.from({ length: 10 }, (_, o) => rec(p, o, o * 10 + p * 5, "x".repeat(p === 0 ? 120 : 200))),
+      ]),
+    );
+    const { client, calls } = fakeClient(two);
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      { resultByteBudget: 650, cellLimit: 1000 },
+      signal,
+    );
+    // Partition 0's whole window is held, 600 bytes. Partition 1's first record would take the place of
+    // 0/5 and bring the rows held to 680, past 650, so the read stops there.
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/5", "0/6", "0/7", "0/8", "0/9"]);
+    expect(calls.map(([p, o]) => `${p}@${o}`)).toEqual(["0@5", "0@7", "0@9", "1@5"]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 5 of partition 1, at the result budget of 650 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+    ]);
+    // Control: the newest five messages of the topic, which an unbounded read answers, are mostly partition 1's.
+    const roomy = await readMessages(client, req({ from: { kind: "latest" }, limit: 5 }), LIMITS, signal);
+    expect(roomy.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/7", "0/8", "1/8", "0/9", "1/9"]);
+  });
+
+  test("a latest read can be stopped although the rows an unbounded read answers would fit: the rows it held early would have been displaced by rows it never read (the stated limit)", async () => {
+    // Partition 0, read first, holds five old 200-byte records; partition 1 five newer 10-byte ones.
+    const { client, calls } = fakeClient({
+      0: Array.from({ length: 5 }, (_, o) => rec(0, o, o, "b".repeat(200))),
+      1: Array.from({ length: 5 }, (_, o) => rec(1, o, 100 + o, "s".repeat(10))),
+    });
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      { resultByteBudget: 650, cellLimit: 1000 },
+      signal,
+    );
+    // Three of partition 0's rows fill 600 of the 650 bytes, and the fourth stops the read.
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "0/1", "0/2"]);
+    expect(calls.map(([p, o]) => `${p}@${o}`)).toEqual(["0@0", "0@2"]);
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 3 of partition 0, at the result budget of 650 bytes of record data, and did not read partition 1; narrow it with a partition, an offset or a smaller limit",
+    ]);
+    // Control: the unbounded read answers partition 1's five rows, 50 bytes, which the budget would have held.
+    const roomy = await readMessages(client, req({ from: { kind: "latest" }, limit: 5 }), LIMITS, signal);
+    expect(roomy.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["1/0", "1/1", "1/2", "1/3", "1/4"]);
+    expect(roomy.rows.reduce((sum, r) => sum + String(r.value).length, 0)).toBe(50);
+  });
+
+  test("the budget warning names only the later partitions with offsets to read, never one whose start is its end", async () => {
     // Partitions 1 and 3 are empty (their earliest offset is their end), and partition 2 holds one record.
     const sparse = {
       0: [rec(0, 0, 1, "a".repeat(600)), rec(0, 1, 2, "b".repeat(600)), rec(0, 2, 3, "c".repeat(600))],
@@ -400,6 +484,48 @@ describe("readMessages", () => {
     const whole = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
     expect(whole.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "0/1", "0/2", "2/0"]);
     expect(calls.map(([p]) => p)).toEqual([0, 0, 0, 2]);
+    expect(whole.warnings).toEqual([]);
+  });
+
+  test("a later partition whose offsets hold no record is still named as unread: only reading it could tell", async () => {
+    // Partition 1's two offsets are transaction markers: a fetch there answers no record and moves past them.
+    const base = fakeClient(
+      { 0: [rec(0, 0, 1, "a".repeat(600)), rec(0, 1, 2, "b".repeat(600)), rec(0, 2, 3, "c".repeat(600))], 1: [] },
+      {
+        offsets: async (_t, at) =>
+          new Map([
+            [0, at === "earliest" ? n(0) : n(3)],
+            [1, at === "earliest" ? n(0) : n(2)],
+          ]),
+      },
+      undefined,
+      1,
+    );
+    const fetched: number[] = [];
+    const client: ReadClient = {
+      ...base.client,
+      fetch: async (topic, partition, offset, fetchSignal) => {
+        fetched.push(partition);
+        return partition === 1
+          ? { records: [], nextOffset: n(2) }
+          : base.client.fetch(topic, partition, offset, fetchSignal);
+      },
+    };
+    const tight = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 1300, cellLimit: 1000 },
+      signal,
+    );
+    expect(tight.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 2 of partition 0, at the result budget of 1,300 bytes of record data, and did not read partition 1; narrow it with a partition, an offset or a smaller limit",
+    ]);
+    expect(fetched).toEqual([0, 0, 0]);
+    // Control: read whole, partition 1 is fetched once and answers no row and no warning.
+    fetched.length = 0;
+    const whole = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
+    expect(whole.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "0/1", "0/2"]);
+    expect(fetched).toEqual([0, 0, 0, 1]);
     expect(whole.warnings).toEqual([]);
   });
 
@@ -448,6 +574,69 @@ describe("readMessages", () => {
     expect(exact.wasLimited).toBe(false);
   });
 
+  test("a tombstone's missing value and a keyless record's missing key count no bytes, and a tombstone is a row", async () => {
+    // Two tombstones of a compacted topic (a 10-byte key, no value) and one keyless record (a 10-byte value).
+    const tombstone = (offset: number): KafkaRecord => ({
+      ...rec(0, offset, offset + 1),
+      key: enc("k".repeat(10)),
+      value: null,
+    });
+    const { client } = fakeClient({ 0: [tombstone(0), tombstone(1), rec(0, 2, 3, "v".repeat(10))] });
+    // 10 bytes a record: a budget of 30 holds all three, and 29 only the two tombstones.
+    const fits = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 30, cellLimit: 100 },
+      signal,
+    );
+    expect(fits.rows.map((r) => [r.offset, r.key, r.value, r.value_encoding])).toEqual([
+      ["0", "k".repeat(10), null, "null"],
+      ["1", "k".repeat(10), null, "null"],
+      ["2", null, "v".repeat(10), "text"],
+    ]);
+    expect(fits.wasLimited).toBe(false);
+    expect(fits.warnings).toEqual([]);
+    const tight = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 29, cellLimit: 100 },
+      signal,
+    );
+    expect(tight.rows.map((r) => r.offset)).toEqual(["0", "1"]);
+    expect(tight.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 2 of partition 0, at the result budget of 29 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+    ]);
+  });
+
+  test("a header with no name counts only its value, and one with no value only its name", async () => {
+    const { client } = fakeClient({
+      0: [
+        { ...rec(0, 0, 1, "v".repeat(10)), headers: [[null, enc("x".repeat(10))]] },
+        { ...rec(0, 1, 2, "w".repeat(10)), headers: [[enc("h".repeat(10)), null]] },
+      ],
+    });
+    // 20 bytes a record: a budget of 40 holds both, and 39 only the first.
+    const fits = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 40, cellLimit: 100 },
+      signal,
+    );
+    expect(fits.rows.map((r) => [r.offset, r.headers])).toEqual([
+      ["0", { null: "x".repeat(10) }],
+      ["1", { ["h".repeat(10)]: null }],
+    ]);
+    expect(fits.wasLimited).toBe(false);
+    const tight = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 39, cellLimit: 100 },
+      signal,
+    );
+    expect(tight.rows.map((r) => r.offset)).toEqual(["0"]);
+    expect(tight.wasLimited).toBe(true);
+  });
+
   test("a truncated cell is warned about", async () => {
     const { client } = fakeClient({ 0: [rec(0, 0, 1, "x".repeat(50))] });
     const out = await readMessages(
@@ -482,6 +671,22 @@ describe("readMessages", () => {
     const both = await readMessages(client, req({ from: { kind: "latest" }, limit: 2 }), limits, signal);
     expect(both.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "1/0"]);
     expect(both.warnings.map((w) => w.message)).toEqual(["1 cell(s) were cut at 10 characters"]);
+  });
+
+  test("the cell warning sums the cut cells of every row the result returns, across partitions", async () => {
+    // Partition 0's two records cut one cell each, and partition 1's one record two: its key and its value.
+    const { client } = fakeClient({
+      0: [rec(0, 0, 1, "x".repeat(50)), rec(0, 1, 2, "y".repeat(50))],
+      1: [{ ...rec(1, 0, 3, "z".repeat(50)), key: enc("k".repeat(50)) }],
+    });
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 1e6, cellLimit: 10 },
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "0/1", "1/0"]);
+    expect(out.warnings.map((w) => w.message)).toEqual(["4 cell(s) were cut at 10 characters"]);
   });
 
   test("hitting the row limit before the log end sets wasLimited", async () => {
@@ -769,6 +974,304 @@ describe("readMessages", () => {
     // Partition 0's three records take two fetches, and partition 1's two take one.
     expect(seen).toHaveLength(3);
     expect(seen.every((fetchSignal) => fetchSignal === controller.signal)).toBe(true);
+  });
+});
+
+/**
+ * readMessages against a reference of spec 5.1 and 5.4 over generated logs. The reference keeps no
+ * state between records: each decision is made again from every record read so far, sorted afresh,
+ * so it shares none of the merge's incremental bookkeeping, and it counts a record's bytes on its own.
+ * It takes the result order from compareRecords, the row shape from shapeRecord and the warning texts
+ * from readWarnings, whose own tests pin them: what it decides is which records are rows, what the rows
+ * hold, which warnings are owed, whether the read is limited, and which fetches the read makes.
+ */
+describe("readMessages against a reference of spec 5.1 and 5.4", () => {
+  const READS = 3000;
+  /** Each rule the reference states, which the generated reads must each meet often enough to test it. */
+  const RULES = [
+    "the read was complete",
+    "the merge left a read record out",
+    "the row limit left a partition's record unread inside a fetch",
+    "the row limit stopped a partition before its end",
+    "the budget stopped the read in the first partition read",
+    "the budget stopped the read in a later partition",
+    "a fetch made no progress",
+    "a fetch answered records past the end",
+    "a timestamp lay past a partition's end",
+    "cells were cut in more than one row",
+    "a row has no key",
+    "a row has no value",
+    "a row has a header with no name",
+    "a row has a header with no value",
+  ] as const;
+  type Rule = (typeof RULES)[number];
+
+  interface Scenario {
+    readonly label: string;
+    /** The partitions in the order the metadata lists them. */
+    readonly order: readonly number[];
+    readonly log: Readonly<Record<number, readonly KafkaRecord[]>>;
+    readonly earliest: Readonly<Record<number, bigint>>;
+    readonly latest: Readonly<Record<number, bigint>>;
+    readonly request: ReadRequest;
+    readonly limits: ReadLimits;
+    readonly perFetch: number;
+  }
+
+  /** Park and Miller's generator: exact in doubles, so every run draws the same reads. */
+  function draws(seed: number) {
+    let state = seed;
+    const next = () => {
+      state = (state * 48271) % 2147483647;
+      return state / 2147483647;
+    };
+    const int = (low: number, high: number) => low + Math.floor(next() * (high - low + 1));
+    const chance = (p: number) => next() < p;
+    const pick = <T>(items: readonly T[]): T => items[int(0, items.length - 1)];
+    return { int, chance, pick };
+  }
+
+  const filled = (length: number, fill: string) => enc(fill.repeat(length));
+
+  function scenario(index: number): Scenario {
+    const { int, chance, pick } = draws(20260925 + index * 7919);
+    const partitions = int(1, 4);
+    const monotonic = chance(0.6);
+    const sizes = pick(["uniform", "mixed", "big first"] as const);
+    const log: Record<number, KafkaRecord[]> = {};
+    const earliest: Record<number, bigint> = {};
+    const latest: Record<number, bigint> = {};
+    for (let p = 0; p < partitions; p++) {
+      const first = int(0, 3);
+      let offset = first;
+      let timestamp = int(0, 5);
+      log[p] = Array.from({ length: chance(0.12) ? 0 : int(1, 7) }, () => {
+        timestamp = monotonic ? timestamp + int(0, 3) : int(0, 20);
+        const valueLength =
+          sizes === "uniform" ? 20 : sizes === "mixed" ? int(0, 60) : p === 0 ? int(40, 80) : int(0, 6);
+        const record: KafkaRecord = {
+          partition: p,
+          offset: n(offset),
+          timestamp: n(timestamp),
+          key: chance(0.35) ? null : filled(int(0, 12), "k"),
+          value: chance(0.15) ? null : filled(valueLength, "v"),
+          headers: Array.from(
+            { length: chance(0.6) ? 0 : int(1, 2) },
+            () => [chance(0.15) ? null : filled(int(1, 6), "h"), chance(0.3) ? null : filled(int(0, 8), "x")] as const,
+          ),
+        };
+        // A gap: an offset that compaction removed, or that a transaction marker took.
+        offset += chance(0.25) ? 2 : 1;
+        return record;
+      });
+      earliest[p] = n(first);
+      // The latest offset the read is given: the log's end; past it, over offsets a fetch answers
+      // nothing for; or before it, when records arrived after the latest offset was read.
+      const records = log[p];
+      const end = records.length === 0 ? first : Number(records[records.length - 1].offset) + 1;
+      const shift = chance(0.7) ? 0 : chance(0.5) ? int(1, 2) : -int(1, 2);
+      latest[p] = n(Math.max(first, end + shift));
+    }
+    const order = Array.from({ length: partitions }, (_, p) => p);
+    if (chance(0.25)) order.reverse();
+    const named = int(0, partitions - 1);
+    const kind = pick(["earliest", "latest", "latest", "offset", "timestamp"] as const);
+    const partition = kind === "offset" || chance(0.25) ? named : undefined;
+    const from: ReadStart =
+      kind === "offset"
+        ? { kind, offset: n(int(Number(earliest[named]), Number(latest[named]))) }
+        : kind === "timestamp"
+          ? { kind, timestampMs: n(int(0, 25)), iso: "x" }
+          : { kind };
+    const limit = int(1, 6);
+    const limits = {
+      resultByteBudget: chance(0.35) ? 1_000_000 : int(5, 220),
+      cellLimit: chance(0.5) ? 1000 : int(3, 15),
+    };
+    const perFetch = pick([1, 2, 3, 100]);
+    const where = partition === undefined ? "" : ` of partition ${partition}`;
+    return {
+      label: `read ${index}: ${kind}${where}, limit ${limit}, ${perFetch} a fetch, budget ${limits.resultByteBudget}, cells ${limits.cellLimit}`,
+      order,
+      log,
+      earliest,
+      latest,
+      request: { topic: "orders", ...(partition === undefined ? {} : { partition }), from, limit },
+      limits,
+      perFetch,
+    };
+  }
+
+  /** The fake broker: a fetch answers up to `perFetch` records from the offset asked for, and nothing past the log. */
+  function fetchFrom(s: Scenario, partition: number, offset: bigint): KafkaFetchResult {
+    const records = s.log[partition].filter((r) => r.offset >= offset).slice(0, s.perFetch);
+    return { records, nextOffset: records.length === 0 ? offset : records[records.length - 1].offset + n(1) };
+  }
+
+  function clientOf(s: Scenario, fetches: string[]): ReadClient {
+    const topic: KafkaTopicMetadata = {
+      name: "orders",
+      id: "id-1",
+      partitions: s.order.map((partition) => ({
+        partition,
+        leader: 1,
+        leaderEpoch: 0,
+        replicas: [1],
+        isr: [1],
+        offlineReplicas: [],
+      })),
+    };
+    return {
+      metadata: async () => ({ clusterId: "c", controllerId: 1, brokers: [], topics: [topic] }),
+      offsets: async (_t, at) => new Map(s.order.map((p) => [p, at === "earliest" ? s.earliest[p] : s.latest[p]])),
+      offsetsForTimestamp: async (_t, ts) =>
+        new Map(s.order.map((p) => [p, s.log[p].find((r) => r.timestamp >= ts)?.offset ?? n(-1)])),
+      fetch: async (_t, partition, offset) => {
+        fetches.push(`${partition}@${offset}`);
+        return fetchFrom(s, partition, offset);
+      },
+    };
+  }
+
+  /** Where spec 5.1 starts a partition's read; undefined when no message at or after the timestamp lies below the end. */
+  function startOf(s: Scenario, partition: number, end: bigint): bigint | undefined {
+    const { from, limit } = s.request;
+    const first = s.earliest[partition];
+    switch (from.kind) {
+      case "earliest":
+        return first;
+      case "latest":
+        return end - n(limit) > first ? end - n(limit) : first;
+      case "offset":
+        return from.offset;
+      case "timestamp": {
+        const instant = from.timestampMs;
+        const at = s.log[partition].find((r) => r.timestamp >= instant)?.offset;
+        return at === undefined || at >= end ? undefined : at;
+      }
+    }
+  }
+
+  /** What spec 5.1 and 5.4 say the read answers, warns and fetches; `saw` is told each rule the read meets. */
+  function reference(s: Scenario, saw: (rule: Rule) => void) {
+    const { request, limits } = s;
+    const plans: { partition: number; start: bigint; end: bigint }[] = [];
+    const pastEnd: number[] = [];
+    for (const partition of s.order.filter((p) => request.partition === undefined || p === request.partition)) {
+      const end = s.latest[partition];
+      const start = startOf(s, partition, end);
+      if (start === undefined) pastEnd.push(partition);
+      else if (start < end) plans.push({ partition, start, end });
+    }
+    // Spec 5.2 and 5.4: the rows a read answers of the records it has read, and the bytes they hold.
+    const answerOf = (records: readonly KafkaRecord[]) => {
+      const sorted = [...records].sort(compareRecords);
+      return request.from.kind === "latest" ? sorted.slice(-request.limit) : sorted.slice(0, request.limit);
+    };
+    const size = (bytes: Uint8Array | null) => (bytes === null ? 0 : bytes.byteLength);
+    const bytesOf = (records: readonly KafkaRecord[]) =>
+      records.reduce(
+        (sum, r) =>
+          sum +
+          size(r.key) +
+          size(r.value) +
+          r.headers.reduce((all, [name, value]) => all + size(name) + size(value), 0),
+        0,
+      );
+    const read: KafkaRecord[] = [];
+    const fetches: string[] = [];
+    const stoppedShort: { partition: number; at: bigint; end: bigint }[] = [];
+    let budgetStop: { partition: number; at: bigint; unread: number[] } | undefined;
+    let unfinished = false;
+    // Spec 5.4: a partition is fetched from its start, each fetch from where the one before it ended,
+    // until it has given `limit` records or reached its end, or a fetch makes no progress; the budget
+    // stops the whole read. Answers whether the budget stopped it.
+    const readPartition = (plan: (typeof plans)[number], index: number): boolean => {
+      let position = plan.start;
+      let taken = 0;
+      while (position < plan.end && taken < request.limit) {
+        fetches.push(`${plan.partition}@${position}`);
+        const answer = fetchFrom(s, plan.partition, position);
+        if (answer.records.some((r) => r.offset >= plan.end)) saw("a fetch answered records past the end");
+        for (const record of answer.records.filter((r) => r.offset < plan.end)) {
+          if (taken === request.limit) {
+            saw("the row limit left a partition's record unread inside a fetch");
+            unfinished = true;
+            break;
+          }
+          // The rows held are the answer of the records read so far. A record that would be one of them
+          // stops the read when they would then pass the budget, unless it is the read's first record.
+          const next = answerOf([...read, record]);
+          if (read.length > 0 && next.includes(record) && bytesOf(next) > limits.resultByteBudget) {
+            saw(
+              index === 0
+                ? "the budget stopped the read in the first partition read"
+                : "the budget stopped the read in a later partition",
+            );
+            const unread = plans.slice(index + 1).map((later) => later.partition);
+            budgetStop = { partition: plan.partition, at: record.offset, unread };
+            return true;
+          }
+          read.push(record);
+          taken++;
+        }
+        if (answer.nextOffset <= position) {
+          saw("a fetch made no progress");
+          stoppedShort.push({ partition: plan.partition, at: position, end: plan.end });
+          return false;
+        }
+        position = answer.nextOffset;
+      }
+      if (taken === request.limit && position < plan.end) {
+        saw("the row limit stopped a partition before its end");
+        unfinished = true;
+      }
+      return false;
+    };
+    for (const [index, plan] of plans.entries()) {
+      if (readPartition(plan, index)) break;
+    }
+    const answer = answerOf(read);
+    const shaped = answer.map((record) => shapeRecord(record, limits));
+    const truncatedCells = shaped.reduce((sum, entry) => sum + entry.truncatedCells, 0);
+    const wasLimited =
+      budgetStop !== undefined ||
+      stoppedShort.length > 0 ||
+      truncatedCells > 0 ||
+      answer.length < read.length ||
+      unfinished;
+    if (answer.length < read.length) saw("the merge left a read record out");
+    if (pastEnd.length > 0) saw("a timestamp lay past a partition's end");
+    if (shaped.filter((entry) => entry.truncatedCells > 0).length > 1) saw("cells were cut in more than one row");
+    if (answer.some((r) => r.key === null)) saw("a row has no key");
+    if (answer.some((r) => r.value === null)) saw("a row has no value");
+    if (answer.some((r) => r.headers.some(([name]) => name === null))) saw("a row has a header with no name");
+    if (answer.some((r) => r.headers.some(([, value]) => value === null))) saw("a row has a header with no value");
+    if (!wasLimited) saw("the read was complete");
+    return {
+      rows: shaped.map((entry) => entry.row),
+      warnings: readWarnings({ pastEnd, stoppedShort, budgetStop, truncatedCells, limits }),
+      wasLimited,
+      fetches,
+    };
+  }
+
+  test("every generated read answers the reference's rows, warnings and limited flag, through the reference's fetches", async () => {
+    const scenarios = Array.from({ length: READS }, (_, index) => scenario(index));
+    const reads = await Promise.all(
+      scenarios.map(async (s) => {
+        const fetches: string[] = [];
+        const out = await readMessages(clientOf(s, fetches), s.request, s.limits, signal);
+        return { read: s.label, rows: out.rows, warnings: out.warnings, wasLimited: out.wasLimited, fetches };
+      }),
+    );
+    const met = new Map<Rule, number>();
+    const saw = (rule: Rule) => met.set(rule, (met.get(rule) ?? 0) + 1);
+    scenarios.forEach((s, index) => {
+      expect(reads[index]).toEqual({ read: s.label, ...reference(s, saw) });
+    });
+    // The generator's own check: every rule the reference states was met by enough reads to test it.
+    expect(RULES.filter((rule) => (met.get(rule) ?? 0) < 20)).toEqual([]);
   });
 });
 
