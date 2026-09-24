@@ -6,6 +6,9 @@ const bytes = (s: string) => new TextEncoder().encode(s);
 /** The UTF-8 byte order mark, EF BB BF. */
 const BOM = [0xef, 0xbb, 0xbf];
 
+/** U+1F600, a four-byte UTF-8 character (F0 9F 98 80) and a UTF-16 surrogate pair. */
+const FOUR_BYTE = "\u{1F600}";
+
 describe("decodeBytes", () => {
   test("null stays null", () => {
     expect(decodeBytes(null, 100)).toEqual({ value: null, encoding: "null", truncated: false });
@@ -37,7 +40,7 @@ describe("decodeBytes", () => {
 
   test("a leading byte order mark is kept as sent, so the value is text and never parsed as JSON", () => {
     const decoded = decodeBytes(new Uint8Array([...BOM, ...bytes('{"a":1}')]), 1000);
-    expect(decoded).toEqual({ value: '﻿{"a":1}', encoding: "text", truncated: false });
+    expect(decoded).toEqual({ value: '\uFEFF{"a":1}', encoding: "text", truncated: false });
   });
 
   test("invalid UTF-8 is base64 with its byte length, never a replacement character", () => {
@@ -76,9 +79,13 @@ describe("decodeBytes", () => {
   });
 
   test("the cell cut never keeps half of a surrogate pair, which would render as a character never sent", () => {
-    // "a😀b" is a, then the two UTF-16 code units of the emoji, then b: a cut at 2 would end inside the pair.
-    expect(decodeBytes(bytes("a😀b"), 2)).toEqual({ value: "a", encoding: "text", truncated: true });
-    expect(decodeBytes(bytes('["😀😀"]'), 3)).toEqual({ value: '["', encoding: "json", truncated: true });
+    // a, U+1F600, b is a, then the two UTF-16 code units of U+1F600, then b: a cut at 2 would end inside the pair.
+    expect(decodeBytes(bytes(`a${FOUR_BYTE}b`), 2)).toEqual({ value: "a", encoding: "text", truncated: true });
+    expect(decodeBytes(bytes(`["${FOUR_BYTE}${FOUR_BYTE}"]`), 3)).toEqual({
+      value: '["',
+      encoding: "json",
+      truncated: true,
+    });
   });
 
   test("JSON past the cell limit but within the prefix bound keeps its label, and its cut text is shown", () => {
@@ -104,8 +111,8 @@ describe("decodeBytes", () => {
   });
 
   test("the back-off covers a four-byte character cut after its third byte", () => {
-    // "a😀a" is 61 F0 9F 98 80 61: a cut at 4 bytes ends two continuation bytes into the emoji.
-    expect(decodeBytes(bytes("a😀a"), 1)).toMatchObject({ value: "a", encoding: "text", truncated: true });
+    // a, U+1F600, a is 61 F0 9F 98 80 61: a cut at 4 bytes ends two continuation bytes into U+1F600.
+    expect(decodeBytes(bytes(`a${FOUR_BYTE}a`), 1)).toMatchObject({ value: "a", encoding: "text", truncated: true });
   });
 
   test("a long invalid value is the base64 of a prefix, with the whole length stated", () => {
@@ -151,7 +158,7 @@ describe("decodeHeaderName", () => {
 
   test("a name with a leading byte order mark stays apart from the same name without one", () => {
     const marked = decodeHeaderName(new Uint8Array([...BOM, ...bytes("trace")]), 100);
-    expect(marked.value).toBe("﻿trace");
+    expect(marked.value).toBe("\uFEFFtrace");
     expect(marked.value).not.toBe(decodeHeaderName(bytes("trace"), 100).value);
   });
 });
