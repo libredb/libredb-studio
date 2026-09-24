@@ -160,6 +160,56 @@ describe("readGroupSource", () => {
     expect(positions).toEqual(["high-watermark"]);
   });
 
+  test("a member's assigned topic with no commit yet is read and gives a row per assigned partition", async () => {
+    const reads: string[] = [];
+    const source = await readGroupSource(
+      client({
+        describeGroup: async (listing) => ({
+          groupId: listing.groupId,
+          groupType: listing.groupType,
+          state: "Stable",
+          protocolOrAssignor: "range",
+          members: [
+            {
+              memberId: "m-1",
+              clientId: "c-1",
+              clientHost: "/10.0.0.1",
+              assignment: [{ topic: "events", partitions: [0, 1] }],
+            },
+          ],
+        }),
+        committedOffsets: async () => [],
+        offsets: async (topic, at) => (
+          reads.push(`${topic}@${at}`),
+          new Map([
+            [0, n(5)],
+            [1, n(7)],
+          ])
+        ),
+      }),
+      "lag-classic",
+    );
+    expect(reads).toEqual(["events@high-watermark"]);
+    expect(source?.lag).toEqual([
+      {
+        topic: "events",
+        partition: 0,
+        committedOffset: null,
+        latestOffset: "5",
+        lag: null,
+        note: "no committed offset",
+      },
+      {
+        topic: "events",
+        partition: 1,
+        committedOffset: null,
+        latestOffset: "7",
+        lag: null,
+        note: "no committed offset",
+      },
+    ]);
+  });
+
   test("a group not in the listing answers undefined, because describeGroups says Dead for anything (M-E)", async () => {
     expect(await readGroupSource(client(), "no-such-group")).toBeUndefined();
   });
