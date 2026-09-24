@@ -7,6 +7,13 @@
  * Each record is shaped once, as it arrives, and only its row is kept: no record's
  * buffers outlive the fetch that brought them (spec K5).
  *
+ * The read holds, at every point, only the rows it would answer if it ended there: at most
+ * `limit`, the first in result order, or the last for "latest". A row that falls out of them
+ * can never be chosen again, since later records only add rows to choose from, so it is
+ * dropped as it falls out, and a record that would sort past them is never shaped. The
+ * budget counts the record bytes of the rows held, which are the bytes the result holds,
+ * never a row the merge dropped (spec 5.4, K5).
+ *
  * The partitions are read one after another, each forward from its start, so the budget
  * stops a read inside one partition and the partitions after it are never fetched, whatever
  * the `from` form; the budget's warning names the offset it stopped before and the
@@ -62,10 +69,27 @@ interface BudgetStop {
   readonly unread: readonly number[];
 }
 
-/** A shaped row and the three fields it is ordered by; the record itself is not kept. */
+/** A shaped row, the three fields it is ordered by, and its record's bytes; the record itself is not kept. */
 interface Collected extends RecordOrder {
   readonly row: Record<string, unknown>;
   readonly truncatedCells: number;
+  /** The record bytes the row stands for, which the result budget counts while the row is held. */
+  readonly bytes: number;
+}
+
+/**
+ * The rows the result would answer if the read ended now, in result order (spec 5.2): at most
+ * `limit` of the records read so far, the first in that order, or for "latest" the last
+ * (spec 5.1). `bytes` is what they hold, which is what the result budget counts (spec 5.4).
+ */
+interface HeldRows {
+  readonly limit: number;
+  /** "latest" keeps the last `limit` rows in result order; every other form keeps the first. */
+  readonly keepLast: boolean;
+  readonly rows: Collected[];
+  bytes: number;
+  /** Whether the merge left a row out: one that fell out of the rows held, or never came in. */
+  dropped: boolean;
 }
 
 /**
@@ -157,6 +181,53 @@ function recordBytes(record: KafkaRecord): number {
   return bytes;
 }
 
+/** Where `order` goes among rows in result order: after every row that sorts before it. */
+function insertionIndex(rows: readonly RecordOrder[], order: RecordOrder): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (compareRecords(rows[middle], order) < 0) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * Offers one record to the rows held. When they are full, the row at their far end leaves as
+ * the record comes in, and a record that would sort past that end is the one the merge drops:
+ * it is never shaped and never counted. Answers false, holding nothing, when the rows held
+ * would then pass the result budget; the read's first record is always held, however large,
+ * so an oversized record still answers one row, cut at the cell limit (spec 5.4).
+ */
+function hold(held: HeldRows, record: KafkaRecord, limits: ReadLimits): boolean {
+  const at = insertionIndex(held.rows, record);
+  const full = held.rows.length === held.limit;
+  if (full && at === (held.keepLast ? 0 : held.limit)) {
+    held.dropped = true;
+    return true;
+  }
+  const leaving = full ? held.rows[held.keepLast ? 0 : held.limit - 1] : undefined;
+  const bytes = recordBytes(record);
+  if (held.rows.length > 0 && held.bytes - (leaving?.bytes ?? 0) + bytes > limits.resultByteBudget) return false;
+  const shaped = shapeRecord(record, limits);
+  held.rows.splice(at, 0, {
+    partition: record.partition,
+    offset: record.offset,
+    timestamp: record.timestamp,
+    row: shaped.row,
+    truncatedCells: shaped.truncatedCells,
+    bytes,
+  });
+  held.bytes += bytes;
+  if (leaving !== undefined) {
+    held.rows.splice(held.rows.indexOf(leaving), 1);
+    held.bytes -= leaving.bytes;
+    held.dropped = true;
+  }
+  return true;
+}
+
 export async function readMessages(
   client: ReadClient,
   request: ReadRequest,
@@ -170,11 +241,17 @@ export async function readMessages(
 
   const { plans, pastEnd } = await planPartitions(client, topic, request);
 
-  // Up to `limit` per partition, then merge: the first (or, for "latest", the last)
-  // `limit` records overall are among each partition's first (or last) `limit`.
-  const collected: Collected[] = [];
+  // Up to `limit` records of each partition, merged as they arrive: the first (or, for
+  // "latest", the last) `limit` records overall are among each partition's first (or last)
+  // `limit`, and the rows held are the first (or last) `limit` of those read so far.
+  const held: HeldRows = {
+    limit: request.limit,
+    keepLast: request.from.kind === "latest",
+    rows: [],
+    bytes: 0,
+    dropped: false,
+  };
   const stoppedShort: StoppedShort[] = [];
-  let heldBytes = 0;
   let budgetStop: BudgetStop | undefined;
   let partitionCut = false;
   for (const [index, plan] of plans.entries()) {
@@ -191,24 +268,13 @@ export async function readMessages(
           partitionCut = true;
           break;
         }
-        const bytes = recordBytes(record);
-        // The first record is always kept, however large, so an oversized record still
-        // answers one row, cut at the cell limit (spec 5.4). Past that, the budget stops the
-        // whole read here: no later record of this partition, and no later partition.
-        if (collected.length > 0 && heldBytes + bytes > limits.resultByteBudget) {
+        // The budget stops the whole read here: no later record of this partition, and no
+        // later partition.
+        if (!hold(held, record, limits)) {
           const unread = plans.slice(index + 1).map((later) => later.partition);
           budgetStop = { partition: plan.partition, at: record.offset, unread };
           break;
         }
-        heldBytes += bytes;
-        const shaped = shapeRecord(record, limits);
-        collected.push({
-          partition: record.partition,
-          offset: record.offset,
-          timestamp: record.timestamp,
-          row: shaped.row,
-          truncatedCells: shaped.truncatedCells,
-        });
         taken++;
       }
       if (nextOffset <= position) {
@@ -223,14 +289,12 @@ export async function readMessages(
     if (taken >= request.limit && position < plan.end) partitionCut = true;
   }
 
-  collected.sort(compareRecords);
-  const overLimit = collected.length > request.limit;
-  const chosen = request.from.kind === "latest" ? collected.slice(-request.limit) : collected.slice(0, request.limit);
-  const truncatedCells = chosen.reduce((sum, entry) => sum + entry.truncatedCells, 0);
+  const truncatedCells = held.rows.reduce((sum, entry) => sum + entry.truncatedCells, 0);
   return {
-    rows: chosen.map((entry) => entry.row),
+    rows: held.rows.map((entry) => entry.row),
     warnings: readWarnings({ pastEnd, stoppedShort, budgetStop, truncatedCells, limits }),
-    wasLimited: budgetStop !== undefined || truncatedCells > 0 || overLimit || partitionCut || stoppedShort.length > 0,
+    wasLimited:
+      budgetStop !== undefined || truncatedCells > 0 || held.dropped || partitionCut || stoppedShort.length > 0,
   };
 }
 
