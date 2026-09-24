@@ -1399,7 +1399,7 @@ reconstructing. `columnTypes` is consumed by the results grid's column labels, b
 
 ## 6. Schema introspection
 
-One surface, the object surface ([§3.1.1](#311-the-object-surface-789)): `listContainers()`,
+One surface, the object surface ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)): `listContainers()`,
 `countObjects()`, `listObjects()`, `describeObject()` and `describeObjects()`, over one set of shared
 `MATERIALIZED` CTEs.
 
