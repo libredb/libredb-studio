@@ -291,6 +291,51 @@ describe("sources", () => {
     });
   });
 
+  test("a partition the offsets answer does not name has no offset and says so, never an invented 0", async () => {
+    const c = client(["orders"], {
+      metadata: async () => ({
+        clusterId: "c",
+        controllerId: 1,
+        brokers: [],
+        topics: [topic("orders", [partition(0), partition(1), partition(2), partition(3)])],
+      }),
+      offsets: async (_t, at) =>
+        at === "earliest"
+          ? new Map([
+              [0, big(3)],
+              [2, big(5)],
+            ])
+          : new Map([
+              [0, big(24)],
+              [1, big(9)],
+            ]),
+    });
+    const rows = JSON.parse(textOf(await readObjectSource(c, CAPS, ["orders"], "topic"), 0));
+    expect(rows[0]).toMatchObject({ earliestOffset: "3", latestOffset: "24", offsetSpan: "21" });
+    expect("note" in rows[0]).toBe(false);
+    expect(rows[1]).toMatchObject({
+      partition: 1,
+      earliestOffset: null,
+      latestOffset: "9",
+      offsetSpan: null,
+      note: "the broker reported no earliest offset for this partition",
+    });
+    expect(rows[2]).toMatchObject({
+      partition: 2,
+      earliestOffset: "5",
+      latestOffset: null,
+      offsetSpan: null,
+      note: "the broker reported no latest offset for this partition",
+    });
+    expect(rows[3]).toMatchObject({
+      partition: 3,
+      earliestOffset: null,
+      latestOffset: null,
+      offsetSpan: null,
+      note: "the broker reported no earliest or latest offset for this partition",
+    });
+  });
+
   test("a caller's source bound cuts each part to its limit and marks it; a part within the bound is not marked", async () => {
     const whole = await readObjectSource(client(["a"]), CAPS, ["1"], "broker");
     const length = textOf(whole, 0).length;

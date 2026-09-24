@@ -18,13 +18,7 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { applySourceBound, assertObjectPathShape, callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
-import {
-  BIGINT_ZERO,
-  KafkaError,
-  type KafkaConfigEntry,
-  type KafkaReadClient,
-  type KafkaTopicMetadata,
-} from "./client";
+import { KafkaError, type KafkaConfigEntry, type KafkaReadClient, type KafkaTopicMetadata } from "./client";
 import { readGroupSource } from "./groups";
 
 export const KAFKA_CONTAINER_LEVELS: ContainerLevels = Object.freeze([] as const);
@@ -289,9 +283,19 @@ async function topicSource(
   const partitions = topic.partitions.map((p) => {
     if (earliest === undefined || latest === undefined)
       return { ...p, earliestOffset: null, latestOffset: null, offsetSpan: null };
-    const first = earliest.get(p.partition) ?? BIGINT_ZERO;
-    const end = latest.get(p.partition) ?? BIGINT_ZERO;
-    return { ...p, earliestOffset: first, latestOffset: end, offsetSpan: end - first };
+    const first = earliest.get(p.partition);
+    const end = latest.get(p.partition);
+    if (first !== undefined && end !== undefined)
+      return { ...p, earliestOffset: first, latestOffset: end, offsetSpan: end - first };
+    // A partition the offsets answer does not name has no offset to show: never 0 (spec 4.1).
+    const missing = [first === undefined ? "earliest" : undefined, end === undefined ? "latest" : undefined];
+    return {
+      ...p,
+      earliestOffset: first ?? null,
+      latestOffset: end ?? null,
+      offsetSpan: null,
+      note: `the broker reported no ${missing.filter(Boolean).join(" or ")} offset for this partition`,
+    };
   });
   const label =
     offline.length > 0
