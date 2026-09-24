@@ -232,6 +232,11 @@ const nextConfig: NextConfig = {
   // from `.next/server/chunks`. The addon itself is still a file-tracing blind
   // spot; the Dockerfile runner stage and scripts/build-standalone-payload.sh
   // copy the package for that.
+  // `@platformatic/kafka` is pure JavaScript and WebAssembly, but
+  // dist/protocol/crc32c.js loads the optional native addon `@node-rs/crc32`
+  // through createRequire, and bundling it fails the build with "non-ecmascript
+  // placeable asset" on that addon's .node file. External, the library resolves
+  // the addon at runtime and falls back to its WebAssembly crc32c without it.
   serverExternalPackages: [
     "pg",
     "mysql2",
@@ -242,6 +247,7 @@ const nextConfig: NextConfig = {
     "oracledb",
     "@duckdb/node-api",
     "@duckdb/node-bindings",
+    "@platformatic/kafka",
   ],
 
   // One rule over every path, not just the skipped ones: both values are constants and byte
