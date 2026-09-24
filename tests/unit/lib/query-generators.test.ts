@@ -1352,7 +1352,9 @@ describe("PromQL Generate Query (#1085)", () => {
 /**
  * Every export of the module, classified for a PromQL connection (#1085). The two generators have
  * a PromQL arm (the two describes above). `objectSegment` answers the last path segment, which is
- * a metric's name, and has no dialect. `shouldRefreshSchema` runs the pattern the connected
+ * a metric's name, and has no dialect. `generateCountQuery` answers `null` for PromQL, because
+ * `offersCountQuery` refuses the language (the `prometheus` row of tests/unit/lib/table-count.test.ts,
+ * built from the provider's own capabilities). `shouldRefreshSchema` runs the pattern the connected
  * provider declares and has no dialect either. `quoteIdentifier` and `quoteObjectPath` write SQL
  * and MongoDB spellings, and a PromQL connection never reaches them: `POST /api/db/profile`
  * refuses the language before its SQL branch (tests/api/db/profile.test.ts), both row menus
@@ -1366,6 +1368,7 @@ describe("PromQL Generate Query (#1085)", () => {
 describe("the module's exports, for a PromQL connection (#1085)", () => {
   test("every export is one this file has classified", () => {
     expect(Object.keys(generators).sort()).toEqual([
+      "generateCountQuery",
       "generateSelectQuery",
       "generateTableQuery",
       "objectSegment",

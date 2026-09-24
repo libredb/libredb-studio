@@ -632,13 +632,16 @@ keywords, argument words such as `MATCH` / `COUNT` / `WITHSCORES` as functions, 
 Before #427 a Redis tab was typed `mongodb` and highlighted as JSON, which flagged every command as
 a syntax error.
 
-Four menu actions are **not offered** on Redis, all for the same reason: they address the row as an
+Five menu actions are **not offered** on Redis, all for the same reason: they address the row as an
 object, and a `user:*` row is this server's grouping of a key prefix, not an object any command can
 be given.
 
 - `Profile Table` and `Generate Test Data` profile an object and insert rows into it, and neither is offered on a `user:*` row rather than left to answer HTTP 400 (#427).
   Profile is hidden wherever `tablesAreDerivedGroupings` is true, and since #1085 by the language gate `offersColumnProfiling` as well, because the profile route refuses JSON in a dialect of its own.
   Generate Test Data is withheld by the row-write rule, which the desktop tree has always asked and the mobile menu asks instead of the flag since #1085 (decision D-M), because `keyspace` declares no `acceptsRowWrites` and the engine declares `supportsInlineRowEdit: false`.
+- `Generate Count Query` is withheld by `offersCountQuery`, which both row menus and the generator ask (#702).
+  The command grammar has no count statement to write, the JSON carries a dialect of its own, and a derived grouping has nothing to count.
+  The row's badge is absent as well, because the object surface reports no `rowCount` for a prefix.
 - **Redis offers no per-row maintenance action at all** — neither *"Key Info"* nor *"Memory
   Doctor"*. Both items call `onOpenMaintenance("tables", <row>)`, which opens the admin Operations
   tab against a named table; there is no such table here, so the item was a dead end even for the

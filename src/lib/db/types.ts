@@ -208,6 +208,29 @@ export function offersCodeGeneration(capabilities: ProviderCapabilities | undefi
   return capabilities?.queryLanguage === "sql" || capabilities?.queryLanguage === "json";
 }
 
+/**
+ * Whether "Generate Count Query" may be offered for this engine, asked by both row menus and by
+ * `generateCountQuery` itself (#702).
+ *
+ * The generator writes two shapes: a SQL `SELECT COUNT(*)`, and a MongoDB `count` document. So
+ * it is offered for `"sql"` and `"json"`, and only when no `queryDialect` says the language is
+ * some other grammar. The dialect is read for both languages rather than for JSON alone, as
+ * `offersColumnProfiling` does, so that a dialect declared on a SQL engine later refuses the
+ * action until somebody writes its count. Redis and LibreDB have no count
+ * statement in their command grammars, and `"promql"` is not offered it either: `count()` in
+ * PromQL counts series at an instant, which is not the row count this action promises.
+ *
+ * A derived grouping is refused on top of the language, because a Redis `user:*` row is a
+ * summary this server built and there is no object to address (#427).
+ *
+ * Unknown capabilities are not a permission, as for `offersColumnProfiling`.
+ */
+export function offersCountQuery(capabilities: ProviderCapabilities | undefined): boolean {
+  if (capabilities === undefined) return false;
+  if (capabilities.queryDialect !== undefined || capabilities.tablesAreDerivedGroupings === true) return false;
+  return capabilities.queryLanguage === "sql" || capabilities.queryLanguage === "json";
+}
+
 // ============================================================================
 // Provider Capabilities & Labels
 // ============================================================================

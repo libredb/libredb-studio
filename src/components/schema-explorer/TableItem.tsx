@@ -17,9 +17,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { kindAcceptsRowWrites } from "@/lib/db/object-kinds";
-import { maintenanceControl, offersCodeGeneration, offersColumnProfiling } from "@/lib/db/types";
+import { maintenanceControl, offersCodeGeneration, offersColumnProfiling, offersCountQuery } from "@/lib/db/types";
 import { formatRowCount, formatRowCountTitle } from "@/lib/db/utils/pool-manager";
-import { canGenerateCountQuery } from "@/lib/query-generators";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -145,7 +144,7 @@ function renderMenuItems({
         <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
         {labels?.generateAction || "Generate Query"}
       </Item>
-      {callbacks.onGenerateCount !== undefined && canGenerateCountQuery(capabilities) && (
+      {callbacks.onGenerateCount !== undefined && offersCountQuery(capabilities) && (
         <Item onClick={() => callbacks.onGenerateCount?.(table.path)}>
           <Hash strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
           {"Generate Count Query"}

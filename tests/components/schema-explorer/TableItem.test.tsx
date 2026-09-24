@@ -295,7 +295,7 @@ describe("TableItem", () => {
     },
   );
 
-  test.each([undefined, redisCaps, libredbCaps])(
+  test.each([undefined, redisCaps, libredbCaps, caps({ queryLanguage: "promql" })])(
     "withholds count for unresolved or unsupported capabilities (%#)",
     (capabilities) => {
       const { queryAllByText } = render(

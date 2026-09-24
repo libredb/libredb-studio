@@ -551,7 +551,7 @@ describe("the three states of a describe", () => {
     // count it had displaced is back. A row still holding the refusal matches neither.
     const closed = screen.getByRole("treeitem", { name: "orders 1,234" });
     expect(within(closed).queryByTestId("tree-row-failure")).toBeNull();
-    expect(within(closed).getByTestId("tree-row-count").textContent).toBe("1,234");
+    expect(within(closed).getByTestId("tree-row-count").textContent).toBe("1.2K");
   });
 
   test("a body of the wrong shape is reported, and the tree stays mounted", async () => {

@@ -1,5 +1,5 @@
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import { offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
 /** Couchbase management port, the capability signal for the SQL++ dialect. */
@@ -660,19 +660,9 @@ export function generateSelectQuery(
   return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nLIMIT 100${terminator(capabilities)}`;
 }
 
-/** SQL and MongoDB have a count grammar; custom key dialects and derived groupings do not. */
-export function canGenerateCountQuery(capabilities: ProviderCapabilities | undefined): boolean {
-  return (
-    capabilities !== undefined &&
-    capabilities.tablesAreDerivedGroupings !== true &&
-    capabilities.queryDialect === undefined &&
-    (capabilities.queryLanguage === "sql" || capabilities.queryLanguage === "json")
-  );
-}
-
 /** Prepare an editable count statement, without a row limit or any execution (#702). */
 export function generateCountQuery(path: readonly string[], capabilities: ProviderCapabilities): string | null {
-  if (!canGenerateCountQuery(capabilities)) return null;
+  if (!offersCountQuery(capabilities)) return null;
   const name = objectSegment(path);
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify({ collection: name, operation: "count", filter: {} }, null, 2);

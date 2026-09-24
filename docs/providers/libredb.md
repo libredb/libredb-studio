@@ -436,9 +436,10 @@ a plausible, runnable `delete billing:2024` one **Run Selected** away (only `get
 `firstCommandLine()` takes the first line). Auto-executing the note alone runs nothing and reports
 *No command to run (only comments or blank lines)* (U11).
 
-Two menu actions are **not offered** on this provider.
+Three menu actions are **not offered** on this provider.
 `Profile Table` and `Generate Test Data` address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived from one bounded scan (`tablesAreDerivedGroupings`, see 9), not an object any command can be given, so both are hidden rather than left to answer HTTP 400 (#427).
 Since #1085 each is withheld by its own declaration: Profile by that flag and by the language gate `offersColumnProfiling`, because the profile route refuses JSON in a dialect of its own, and Generate Test Data by the row-write rule both row menus ask (decision D-M), because no kind here declares `acceptsRowWrites` and the engine declares `supportsInlineRowEdit: false`.
+`Generate Count Query` is the third, withheld by `offersCountQuery` (#702): the five-verb grammar has no count, and a derived grouping has nothing to count.
 The per-row `Analyze` and `Vacuum`
 items are hidden as well: they call `onOpenMaintenance("tables", <row>)` and there is no
 such row to name, and the engine declares no maintenance operation (`supportsMaintenance: false`), which `maintenanceControl` reads for both row menus. `Generate Code`

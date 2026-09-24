@@ -142,6 +142,7 @@ describe("rowActions on an object row", () => {
       { ...postgres, tablesAreDerivedGroupings: true },
       { ...postgres, queryDialect: "redis" as const },
       { ...postgres, queryDialect: "libredb" as const },
+      { ...postgres, queryLanguage: "promql" as const },
     ]) {
       expect(idsFor(objectRow("table"), capabilities, handlers)).not.toContain("generate-count");
     }

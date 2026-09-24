@@ -415,6 +415,7 @@ export function TreeRow({
           id={rowNameId("count", row.id)}
           data-testid="tree-row-count"
           title={formatRowCountTitle(object.rowCount)}
+          aria-label={object.rowCount.toLocaleString("en-US")}
           className="ml-auto shrink-0 pl-2 text-[10px] text-muted-foreground tabular-nums"
         >
           {formatRowCount(object.rowCount)}

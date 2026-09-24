@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import * as generators from "@/lib/query-generators";
 import * as formatting from "@/lib/db/utils/pool-manager";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseType } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 function caps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities {
   return { queryLanguage: "sql", defaultPort: 5432, ...overrides } as ProviderCapabilities;
@@ -33,70 +36,62 @@ describe("compact row counts (#702)", () => {
   });
 });
 
+/**
+ * What `generateCountQuery` writes for every shipped type-id, from each provider's OWN
+ * `getCapabilities()` rather than from a hand-built capabilities object. A synthetic fixture
+ * can claim a terminator or a quote character the provider does not declare and pass anyway:
+ * the first version of this file expected `;` after Trino and OpenSearch, both of which declare
+ * `statementTerminator: "none"`. Nothing here connects; see `CENSUS_CONNECTION`.
+ *
+ * The object segment is `Order"Items` so every row shows its dialect's quote and its escape,
+ * and each container level is a plain lower-case name so the row shows which engines quote a
+ * name that needs no quoting. `null` is "no action": a language with no count grammar here, or
+ * a derived grouping with nothing to count. A Record, so a new member of the union is a compile
+ * error rather than an engine this census skips.
+ */
+const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
+  postgres: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',
+  mysql: 'SELECT COUNT(*) AS row_count\nFROM c0.`Order"Items`;',
+  sqlite: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items";',
+  libsql: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items";',
+  duckdb: 'SELECT COUNT(*) AS row_count\nFROM c0.c1."Order""Items";',
+  oracle: 'SELECT COUNT(*) AS row_count\nFROM "c0"."Order""Items"',
+  // COUNT answers an int on SQL Server and overflows past 2,147,483,647 rows.
+  mssql: 'SELECT COUNT_BIG(*) AS row_count\nFROM c0.c1.[Order"Items];',
+  clickhouse: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',
+  druid: 'SELECT COUNT(*) AS row_count\nFROM "c0"."Order""Items";',
+  trino: 'SELECT COUNT(*) AS row_count\nFROM c0.c1."Order""Items"',
+  cassandra: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',
+  elasticsearch: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items"',
+  opensearch: 'SELECT COUNT(*) AS row_count\nFROM `Order"Items`',
+  couchbase: 'SELECT COUNT(*) AS row_count\nFROM `c0`.`c1`.`Order"Items`;',
+  mongodb: '{\n  "collection": "Order\\"Items",\n  "operation": "count",\n  "filter": {}\n}',
+  redis: null,
+  libredb: null,
+  prometheus: null,
+});
+
+async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {
+  return (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+}
+
+function censusPath(capabilities: ProviderCapabilities): string[] {
+  return [...(capabilities.containerLevels ?? []).map((_, index) => `c${index}`), 'Order"Items'];
+}
+
 describe("editable count queries (#702)", () => {
-  test.each([
-    ["PostgreSQL", caps(), ["app", "Order.Items"], 'SELECT COUNT(*) AS row_count\nFROM app."Order.Items";'],
-    [
-      "MySQL",
-      caps({ defaultPort: 3306 }),
-      ["app", "Order`Items"],
-      "SELECT COUNT(*) AS row_count\nFROM app.`Order``Items`;",
-    ],
-    ["SQLite", caps({ defaultPort: null }), ["Order.Items"], 'SELECT COUNT(*) AS row_count\nFROM "Order.Items";'],
-    ["libSQL", caps({ defaultPort: null }), ["items"], "SELECT COUNT(*) AS row_count\nFROM items;"],
-    [
-      "DuckDB",
-      caps({ defaultPort: null }),
-      ["catalog", "app", "items"],
-      "SELECT COUNT(*) AS row_count\nFROM catalog.app.items;",
-    ],
-    [
-      "Oracle",
-      caps({ defaultPort: 1521, statementTerminator: "none" }),
-      ["APP", 'Order"Items'],
-      'SELECT COUNT(*) AS row_count\nFROM APP."Order""Items"',
-    ],
-    [
-      "SQL Server",
-      caps({ defaultPort: 1433 }),
-      ["catalog", "app", "Order]Items"],
-      "SELECT COUNT_BIG(*) AS row_count\nFROM catalog.app.[Order]]Items];",
-    ],
-    [
-      "Couchbase",
-      caps({ defaultPort: 8091 }),
-      ["bucket", "scope", "Order`Items"],
-      "SELECT COUNT(*) AS row_count\nFROM `bucket`.`scope`.`Order``Items`;",
-    ],
-    [
-      "ClickHouse",
-      caps({ defaultPort: 8123 }),
-      ["app", ".inner.items"],
-      'SELECT COUNT(*) AS row_count\nFROM app.".inner.items";',
-    ],
-    ["Druid", caps({ defaultPort: 8888 }), ['Order"Items'], 'SELECT COUNT(*) AS row_count\nFROM "Order""Items";'],
-    [
-      "Trino",
-      caps({ defaultPort: 8080 }),
-      ["catalog", "app", "items"],
-      "SELECT COUNT(*) AS row_count\nFROM catalog.app.items;",
-    ],
-    ["Cassandra", caps({ defaultPort: 9042 }), ["app", "items"], "SELECT COUNT(*) AS row_count\nFROM app.items;"],
-    [
-      "Elasticsearch",
-      caps({ defaultPort: 9200, identifierQuoting: "double", statementTerminator: "none" }),
-      ["order-items"],
-      'SELECT COUNT(*) AS row_count\nFROM "order-items"',
-    ],
-    [
-      "OpenSearch",
-      caps({ defaultPort: 9200, identifierQuoting: "backtick" }),
-      ["order-items"],
-      "SELECT COUNT(*) AS row_count\nFROM `order-items`;",
-    ],
-  ] as const)("quotes the full %s address without a result limit", (_engine, capabilities, path, expected) => {
-    expect(generators.canGenerateCountQuery(capabilities)).toBe(true);
-    expect(generators.generateCountQuery(path, capabilities)).toBe(expected);
+  test.each(Object.keys(EXPECTED_COUNT) as DatabaseType[])(
+    "%s writes the count its own capabilities call for, with no result limit",
+    async (type) => {
+      const capabilities = await censusCapabilities(type);
+      const expected = EXPECTED_COUNT[type];
+      expect(offersCountQuery(capabilities)).toBe(expected !== null);
+      expect(generators.generateCountQuery(censusPath(capabilities), capabilities)).toBe(expected);
+    },
+  );
+
+  test("unresolved metadata is not a permission", () => {
+    expect(offersCountQuery(undefined)).toBe(false);
   });
 
   test("MongoDB emits an editable count/filter document with a lossless collection name", () => {
@@ -109,17 +104,12 @@ describe("editable count queries (#702)", () => {
     });
   });
 
-  test.each(["redis", "libredb"] as const)("withholds %s count grammar even for a bare key", (queryDialect) => {
-    const capabilities = caps({ queryLanguage: "json", queryDialect });
-    expect(generators.canGenerateCountQuery(capabilities)).toBe(false);
-    expect(generators.generateCountQuery(["key"], capabilities)).toBeNull();
-  });
-
-  test("derived groupings and unresolved metadata have no count action", () => {
+  test("a derived grouping on a language that has a count grammar is still not counted", () => {
+    // No shipped provider pairs the two, so the census above cannot reach this arm: Redis and
+    // LibreDB are refused by their dialect first. The grouping alone must be enough.
     const derived = caps({ tablesAreDerivedGroupings: true });
-    expect(generators.canGenerateCountQuery(derived)).toBe(false);
+    expect(offersCountQuery(derived)).toBe(false);
     expect(generators.generateCountQuery(["user:*"], derived)).toBeNull();
-    expect(generators.canGenerateCountQuery(undefined)).toBe(false);
   });
 
   test("refuses an empty object address", () => {

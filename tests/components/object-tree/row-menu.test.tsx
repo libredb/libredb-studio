@@ -707,7 +707,11 @@ describe("the row names itself, and never the control inside it", () => {
     expect(within(orders).getByTestId("tree-row-menu-trigger")).toBeTruthy();
     expect(nameSourceIds(orders)).toEqual(["tree-row-label", "tree-row-count"]);
     expect(nameSources(orders).some((element) => element.tagName === "BUTTON")).toBe(false);
-    expect(screen.getByRole("treeitem", { name: "orders 1.2K" })).toBe(orders);
+    // The badge draws the compact "1.2K", but a screen reader hears the exact figure (#702):
+    // `title` is never consulted for a name once the element has text, so the count span
+    // carries it in `aria-label`, which `aria-labelledby` resolution does read.
+    expect(within(orders).getByTestId("tree-row-count").textContent).toBe("1.2K");
+    expect(screen.getByRole("treeitem", { name: "orders 1,234" })).toBe(orders);
   });
 
   test("a folder row's name is its label and its badge, with the trigger left out", async () => {

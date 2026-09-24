@@ -69,12 +69,12 @@ import {
   WandSparkles,
   type LucideIcon,
 } from "lucide-react";
-import { canGenerateCountQuery } from "@/lib/query-generators";
 import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
 import {
   maintenanceControl,
   offersCodeGeneration,
   offersColumnProfiling,
+  offersCountQuery,
   type DatabaseObject,
   type ObjectKindSpec,
   type ProviderCapabilities,
@@ -179,7 +179,7 @@ function objectActions(
   }
 
   const count = handlers.onGenerateCount;
-  if (isRelation && count !== undefined && canGenerateCountQuery(capabilities)) {
+  if (isRelation && count !== undefined && offersCountQuery(capabilities)) {
     actions.push({ id: "generate-count", label: "Generate Count Query", icon: Hash, run: () => count(object) });
   }
 
