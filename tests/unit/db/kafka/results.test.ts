@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { QueryError } from "@/lib/db/errors";
 import type { KafkaRecord } from "@/lib/db/providers/stream/kafka/client";
 import {
   compareRecords,
@@ -44,6 +45,26 @@ describe("shapeRecord", () => {
     // Control: the millisecond before the epoch is still an instant when it is not the sentinel.
     expect(shapeRecord(record({ timestamp: BigInt(0) }), { cellLimit: 1000 }).row.timestamp).toBe(
       "1970-01-01T00:00:00.000Z",
+    );
+  });
+
+  test("a timestamp outside the Date range is a QueryError naming the partition and offset", () => {
+    const beyond = () =>
+      shapeRecord(record({ partition: 2, offset: BigInt(7), timestamp: BigInt("8640000000000001") }), {
+        cellLimit: 1000,
+      });
+    expect(beyond).toThrow(QueryError);
+    expect(beyond).toThrow(
+      "The record at partition 2, offset 7 has timestamp 8640000000000001, which is outside the range a date can show (-8640000000000000 to 8640000000000000 ms); read from a later offset to skip it.",
+    );
+    const before = () => shapeRecord(record({ timestamp: BigInt("-10000000000000000") }), { cellLimit: 1000 });
+    expect(before).toThrow("has timestamp -10000000000000000");
+    // Controls: both ends of the range are still instants.
+    expect(shapeRecord(record({ timestamp: BigInt("8640000000000000") }), { cellLimit: 1000 }).row.timestamp).toBe(
+      "+275760-09-13T00:00:00.000Z",
+    );
+    expect(shapeRecord(record({ timestamp: BigInt("-8640000000000000") }), { cellLimit: 1000 }).row.timestamp).toBe(
+      "-271821-04-20T00:00:00.000Z",
     );
   });
 

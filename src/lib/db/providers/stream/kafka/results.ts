@@ -1,6 +1,7 @@
 /**
  * Records to a QueryResult (spec 5.2). Pure.
  */
+import { QueryError } from "@/lib/db/errors";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 import type { KafkaRecord } from "./client";
 import { decodeBytes, decodeHeaderName } from "./decode";
@@ -20,6 +21,9 @@ export const KAFKA_RESULT_FIELDS: readonly string[] = Object.freeze([
 /** The protocol's "no timestamp" value (RecordBatch.NO_TIMESTAMP), which is an absence, not an instant. */
 const NO_TIMESTAMP = BigInt(-1);
 
+/** The widest instant a JavaScript Date holds, in milliseconds either side of the epoch (ECMA-262, "Time Values and Time Range"). */
+const DATE_RANGE_MS = BigInt("8640000000000000");
+
 export interface ShapeLimits {
   readonly cellLimit: number;
 }
@@ -33,6 +37,21 @@ export function compareRecords(a: RecordOrder, b: RecordOrder): number {
   if (a.partition !== b.partition) return a.partition - b.partition;
   if (a.offset !== b.offset) return a.offset < b.offset ? -1 : 1;
   return 0;
+}
+
+/**
+ * A timestamp no Date can hold is refused in words naming the record (plan D-T8-3): the protocol
+ * allows any 64-bit CreateTime, and toISOString would otherwise throw a bare RangeError.
+ */
+function toIsoTimestamp(record: KafkaRecord): string | null {
+  if (record.timestamp === NO_TIMESTAMP) return null;
+  if (record.timestamp > DATE_RANGE_MS || record.timestamp < -DATE_RANGE_MS) {
+    throw new QueryError(
+      `The record at partition ${record.partition}, offset ${record.offset} has timestamp ${record.timestamp}, which is outside the range a date can show (${-DATE_RANGE_MS} to ${DATE_RANGE_MS} ms); read from a later offset to skip it.`,
+      "kafka",
+    );
+  }
+  return new Date(Number(record.timestamp)).toISOString();
 }
 
 export function shapeRecord(
@@ -60,7 +79,7 @@ export function shapeRecord(
     row: {
       partition: record.partition,
       offset: record.offset.toString(),
-      timestamp: record.timestamp === NO_TIMESTAMP ? null : new Date(Number(record.timestamp)).toISOString(),
+      timestamp: toIsoTimestamp(record),
       key: key.value,
       key_encoding: key.encoding,
       value: value.value,
