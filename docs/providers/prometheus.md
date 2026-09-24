@@ -344,7 +344,7 @@ No new `DatabaseConnection` field exists, so the bearer token rides `password`, 
 
 | `user` | `password` | Header sent |
 |---|---|---|
-| set | set | `Authorization: Basic` over `user:password`. Grafana Cloud's hosted Prometheus works this way, with the instance id as the user and an access-policy token as the password |
+| set | set | `Authorization: Basic` over `user:password`. This is Grafana Cloud's scheme for its hosted Prometheus, with the instance id as the user and an access-policy token as the password, but its query API sits under a path prefix, so this version cannot reach it ([§4.5](#45-no-connection-string)) |
 | empty | set | `Authorization: Bearer <password>`, the libSQL precedent, for a token-guarded proxy |
 | set | empty | `Authorization: Basic` with an empty password, the ClickHouse behaviour |
 | empty | empty | No header |
@@ -375,7 +375,8 @@ Each case is exercised by a real handshake against a local `node:https` server i
 ### 4.5 No connection string
 
 `showConnectionStringToggle: false`: `http://` and `https://` already parse as ClickHouse in `src/lib/connection-string-parser.ts`, and two engines cannot own one scheme.
-There is no path-prefix field either, so Grafana Mimir (`/prometheus`), GreptimeDB (`/v1/prometheus`) and proxies that mount the API under a prefix are not reachable in this version (maintainer decision, 2026-09-23).
+There is no path-prefix field either, so Grafana Mimir (`/prometheus`), Grafana Cloud's hosted Prometheus (its query URL ends in `/api/prom` or `/prometheus`), GreptimeDB (`/v1/prometheus`) and proxies that mount the API under a prefix are not reachable in this version (maintainer decision, 2026-09-23).
+The host field cannot carry the prefix instead: a host holding `/` is refused before any request is sent.
 
 ---
 
@@ -445,6 +446,9 @@ Measured through the provider's shaper and the chart's own mapping, `up[5m]` fro
 ### 5.5 Timeout and cancellation
 
 The configured query timeout is sent as the `timeout` parameter, which the server caps at its own `--query.timeout` (default `2m`), and is enforced on the client with an `AbortSignal` as well.
+It covers the request, not the wait before it: a query waiting for one of the connection's `QUERY_CONCURRENCY_LIMIT` slots ([§3.4](#34-the-servers-query-slots-are-shared)) has no timer of its own, and starts its timeout only once it holds a slot.
+The wait still ends, because each query ahead of it finishes or times out: measured on 2026-09-24 against a server that never answered, nine queries sent at once under a 2-second timeout ended at 2, 4 and 6 seconds, four at a time.
+The reported execution time leaves the wait out on purpose, so it measures the server.
 `cancelQuery(queryId)` aborts that query's request.
 Prometheus derives the evaluation context from the HTTP request and checks it at fixed points during evaluation, so an abort ends the evaluation at the next checkpoint.
 That was observed on the live server before the method was added (M1): the `prometheus_engine_queries` gauge fell back once the request was aborted, and the aborted query's own query-log line recorded it as canceled.
@@ -700,7 +704,8 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 
 - **No time-range picker and no `query_range`.**
   Ranges are written in PromQL ([§5.1](#51-the-call)); a picker is a maintainer decision not taken (2026-09-23).
-- **No path prefix**, so Mimir, GreptimeDB and prefix-mounted proxies are out of reach ([§4.5](#45-no-connection-string)).
+- **No path prefix**, so Mimir, Grafana Cloud's hosted Prometheus, GreptimeDB and prefix-mounted proxies are out of reach ([§4.5](#45-no-connection-string)).
+- **The query timeout does not cover the wait for a query slot** ([§5.5](#55-timeout-and-cancellation)).
 - **No AWS Managed Prometheus**: it needs SigV4 signing for the `aps` service.
 - **No EXPLAIN**, because the only parse endpoint is experimental.
 - **No agent execute mode for PromQL**, out of scope for the whole #424 epic; plan mode grounds through the object surface and drafts PromQL for the user to run.

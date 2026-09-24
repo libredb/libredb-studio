@@ -143,10 +143,11 @@ connections:
     environment: production
     # No `database`: one Prometheus server is one TSDB, so there is nothing to select.
     # No `connectionString` either: http:// and https:// already parse as ClickHouse.
-    # user/password are optional. Both set send Basic auth (Grafana Cloud: the instance
-    # id as user, an access-policy token as password); a password alone is sent as a
-    # bearer token, for a token-guarded proxy. Over plain HTTP either one is readable
-    # on the wire, so set `ssl` for a server across a network you do not control.
+    # user/password are optional. Both set send Basic auth (Grafana Cloud's scheme,
+    # though its query API sits under a path prefix this version cannot reach); a
+    # password alone is sent as a bearer token, for a token-guarded proxy. Over plain
+    # HTTP either one is readable on the wire, so set `ssl` for a server across a
+    # network you do not control.
 ```
 
 ### Field Reference

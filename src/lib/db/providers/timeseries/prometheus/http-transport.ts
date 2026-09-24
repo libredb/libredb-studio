@@ -363,8 +363,9 @@ function refuseHeaderBreaking(value: string, field: string): void {
 /**
  * The `Authorization` header these credentials make, or undefined when neither is set (6.1).
  *
- * - User and password: `Basic`. Grafana Cloud's hosted Prometheus works this way, with the instance id
- *   as the user and an access-policy token as the password.
+ * - User and password: `Basic`, the scheme Grafana Cloud's hosted Prometheus uses (the instance id as
+ *   the user, an access-policy token as the password), though its query API sits under a path prefix
+ *   this version cannot address (docs/providers/prometheus.md 4.5).
  * - Password alone: `Bearer <password>`, the libSQL precedent; the field is labelled "Password or token".
  * - User alone: `Basic` with an empty password, the ClickHouse behaviour.
  * - An empty field is not set: the connection form stores one as "".
