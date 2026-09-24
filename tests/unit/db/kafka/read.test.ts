@@ -201,6 +201,22 @@ describe("readMessages", () => {
     expect((await readMessages(client, req({}), LIMITS, signal).catch((e) => e)).category).toBe("unknown-topic");
   });
 
+  test("a metadata answer that names only another topic is unknown-topic, never read as the one asked for", async () => {
+    const { client, calls } = fakeClient(log, {
+      metadata: async () => ({
+        clusterId: "c",
+        controllerId: 1,
+        brokers: [],
+        topics: [{ name: "payments", id: "id-2", partitions: [] }],
+      }),
+    });
+    const error = await readMessages(client, req({}), LIMITS, signal).catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.category).toBe("unknown-topic");
+    expect(error.message).toBe('Topic "orders" does not exist');
+    expect(calls).toEqual([]);
+  });
+
   test("a timestamp past the log end on a partition contributes nothing and is warned about", async () => {
     const { client } = fakeClient(log);
     const out = await readMessages(
@@ -211,6 +227,20 @@ describe("readMessages", () => {
     );
     expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/2"]);
     expect(out.warnings.map((w) => w.message).join()).toContain("partition 1");
+  });
+
+  test("a timestamp read answers the first limit messages at or after the instant, across partitions", async () => {
+    const { client } = fakeClient(log);
+    // At or after 25: partition 0 from offset 1 (30 and 50), and partition 1 from offset 1 (40).
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "timestamp", timestampMs: n(25), iso: "x" }, limit: 2 }),
+      LIMITS,
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/1", "1/1"]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings).toEqual([]);
   });
 
   test("the result byte budget stops the loop and sets wasLimited with a warning", async () => {
@@ -256,6 +286,50 @@ describe("readMessages", () => {
     expect(out.wasLimited).toBe(true);
     expect(out.warnings.map((w) => w.message)).toEqual([
       "The read stopped before offset 2 of partition 0, at the result budget of 1,300 bytes of record data, and did not read partition 1; narrow it with a partition, an offset or a smaller limit",
+    ]);
+  });
+
+  test("the budget stops inside one fetch: no record after the one that would pass it, even one that would fit", async () => {
+    // One fetch answers all four records: 600, 600, 600 and 10 bytes, under a budget of 1,300.
+    const { client, calls } = fakeClient(
+      {
+        0: [
+          rec(0, 0, 1, "a".repeat(600)),
+          rec(0, 1, 2, "b".repeat(600)),
+          rec(0, 2, 3, "c".repeat(600)),
+          rec(0, 3, 4, "d".repeat(10)),
+        ],
+      },
+      {},
+      undefined,
+      100,
+    );
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 1300, cellLimit: 1000 },
+      signal,
+    );
+    expect(out.rows.map((r) => r.offset)).toEqual(["0", "1"]);
+    expect(calls).toEqual([[0, n(0)]]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 2 of partition 0, at the result budget of 1,300 bytes of record data; narrow it with a partition, an offset or a smaller limit",
+    ]);
+  });
+
+  test("only the read's first record is held past the budget, never each partition's first", async () => {
+    const { client } = fakeClient({ 0: [rec(0, 0, 1, "a".repeat(600))], 1: [rec(1, 0, 2, "b".repeat(900))] });
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 1000, cellLimit: 1000 },
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0"]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "The read stopped before offset 0 of partition 1, at the result budget of 1,000 bytes of record data; narrow it with a partition, an offset or a smaller limit",
     ]);
   });
 
@@ -386,6 +460,17 @@ describe("readMessages", () => {
     expect(out.wasLimited).toBe(true);
   });
 
+  test("the cell warning counts every cut cell of a row: a key and a value cut in one record are two", async () => {
+    const { client } = fakeClient({ 0: [{ ...rec(0, 0, 1, "v".repeat(50)), key: enc("k".repeat(50)) }] });
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "earliest" } }),
+      { resultByteBudget: 1e6, cellLimit: 10 },
+      signal,
+    );
+    expect(out.warnings.map((w) => w.message)).toEqual(["2 cell(s) were cut at 10 characters"]);
+  });
+
   test("the cell warning counts the rows the result returns, never a cut cell in a row the merge left out", async () => {
     // Partition 0's one record is the older and is cut at 10 characters; partition 1's is the newer and whole.
     const { client } = fakeClient({ 0: [rec(0, 0, 10, "x".repeat(50))], 1: [rec(1, 0, 20, "y")] });
@@ -407,6 +492,40 @@ describe("readMessages", () => {
     expect(
       (await readMessages(client, req({ from: { kind: "earliest" }, limit: 50 }), LIMITS, signal)).wasLimited,
     ).toBe(false);
+  });
+
+  test("the row limit stops a partition's fetches once it has read limit records", async () => {
+    const { client, calls } = fakeClient(
+      { 0: Array.from({ length: 5 }, (_, i) => rec(0, i, i + 1)) },
+      {},
+      undefined,
+      1,
+    );
+    const out = await readMessages(client, req({ from: { kind: "earliest" }, limit: 2 }), LIMITS, signal);
+    expect(out.rows.map((r) => r.offset)).toEqual(["0", "1"]);
+    expect(calls).toEqual([
+      [0, n(0)],
+      [0, n(1)],
+    ]);
+    expect(out.wasLimited).toBe(true);
+  });
+
+  test("the row limit takes each partition's first limit records in log order, however many one fetch answers", async () => {
+    // Offsets 2 to 4 carry timestamps older than offsets 0 and 1: a producer's CreateTime need not follow the log.
+    const outOfOrder = { 0: [rec(0, 0, 50), rec(0, 1, 60), rec(0, 2, 10), rec(0, 3, 20), rec(0, 4, 30)] };
+    const oneAFetch = fakeClient(outOfOrder, {}, undefined, 1);
+    const allAtOnce = fakeClient(outOfOrder, {}, undefined, 100);
+    const reads = await Promise.all(
+      [oneAFetch, allAtOnce].map(({ client }) =>
+        readMessages(client, req({ from: { kind: "earliest" }, limit: 2 }), LIMITS, signal),
+      ),
+    );
+    expect(reads.map((out) => out.rows.map((r) => r.offset))).toEqual([
+      ["0", "1"],
+      ["0", "1"],
+    ]);
+    expect(reads.map((out) => out.wasLimited)).toEqual([true, true]);
+    expect(allAtOnce.calls).toEqual([[0, n(0)]]);
   });
 
   test("a fetch that answers the whole partition at once still marks the rows it left unread", async () => {
@@ -477,6 +596,13 @@ describe("readMessages", () => {
     expect(error.message).toContain("partition 1");
     expect(calls).toEqual([]);
     expect(offsetCalls).toEqual([]);
+  });
+
+  test("a partition led by broker 0 has a leader: node 0 is a broker id, only -1 means none", async () => {
+    // Redpanda's single broker is node 0 (spec 8).
+    const { client } = fakeClient(log, {}, { 0: 0, 1: 0 });
+    const out = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "1/0", "0/1", "1/1", "0/2"]);
   });
 
   test("a partition an offsets answer leaves out is refused by name, never read from an invented offset 0", async () => {
@@ -623,7 +749,26 @@ describe("readMessages", () => {
     );
     expect(error).toBeInstanceOf(KafkaError);
     expect(error.category).toBe("timeout");
-    expect(seen).toEqual([controller.signal]);
+    // By identity: toEqual cannot tell two AbortSignals apart.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(controller.signal);
+  });
+
+  test("every fetch of a read gets the read's own signal, the one its time limit aborts", async () => {
+    const controller = new AbortController();
+    const seen: AbortSignal[] = [];
+    const base = fakeClient(log);
+    const client: ReadClient = {
+      ...base.client,
+      fetch: async (topic, partition, offset, fetchSignal) => {
+        seen.push(fetchSignal);
+        return base.client.fetch(topic, partition, offset, fetchSignal);
+      },
+    };
+    await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, controller.signal);
+    // Partition 0's three records take two fetches, and partition 1's two take one.
+    expect(seen).toHaveLength(3);
+    expect(seen.every((fetchSignal) => fetchSignal === controller.signal)).toBe(true);
   });
 });
 
@@ -708,6 +853,28 @@ describe("startOffset and readWarnings, the pure rules", () => {
     expect(budgetWarning([2, 5])).toEqual([
       "The read stopped before offset 7 of partition 0, at the result budget of 250 bytes of record data, and did not read partition 2, 5; narrow it with a partition, an offset or a smaller limit",
     ]);
+  });
+
+  test("the past-end warning names every partition it applies to", () => {
+    const warnings = readWarnings({
+      pastEnd: [1, 3],
+      stoppedShort: [],
+      budgetStop: undefined,
+      truncatedCells: 0,
+      limits: LIMITS,
+    });
+    expect(warnings.map((w) => w.message)).toEqual(["No message at or after the timestamp on partition 1, 3"]);
+  });
+
+  test("the cell limit is written with thousands separators, as the budget is", () => {
+    const warnings = readWarnings({
+      pastEnd: [],
+      stoppedShort: [],
+      budgetStop: undefined,
+      truncatedCells: 2,
+      limits: { resultByteBudget: 8 * 1024 * 1024, cellLimit: 64 * 1024 },
+    });
+    expect(warnings.map((w) => w.message)).toEqual(["2 cell(s) were cut at 65,536 characters"]);
   });
 
   test("every partition that stopped short is named with the offset it stopped at and its end", () => {
