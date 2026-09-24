@@ -1,0 +1,97 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.listConsumerGroupOffsets({ groups: [lag-classic, lag-kip848, lag-partial] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "groupId": "lag-classic",
+   "topics": [
+    {
+     "name": "orders",
+     "partitions": [
+      {
+       "partitionIndex": 2,
+       "committedOffset": {
+        "$bigint": "0"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      },
+      {
+       "partitionIndex": 0,
+       "committedOffset": {
+        "$bigint": "10"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      },
+      {
+       "partitionIndex": 1,
+       "committedOffset": {
+        "$bigint": "0"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "groupId": "lag-kip848",
+   "topics": [
+    {
+     "name": "orders",
+     "partitions": [
+      {
+       "partitionIndex": 2,
+       "committedOffset": {
+        "$bigint": "0"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      },
+      {
+       "partitionIndex": 0,
+       "committedOffset": {
+        "$bigint": "24"
+       },
+       "committedLeaderEpoch": 0,
+       "metadata": ""
+      },
+      {
+       "partitionIndex": 1,
+       "committedOffset": {
+        "$bigint": "1"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "groupId": "lag-partial",
+   "topics": [
+    {
+     "name": "lag-partial",
+     "partitions": [
+      {
+       "partitionIndex": 0,
+       "committedOffset": {
+        "$bigint": "1"
+       },
+       "committedLeaderEpoch": 0,
+       "metadata": ""
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

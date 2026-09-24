@@ -1,0 +1,105 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "consumer.fetch(ts-append partition 0 offset 0, READ_COMMITTED)"
+ },
+ "outcome": "pass",
+ "payload": {
+  "throttleTimeMs": 0,
+  "errorCode": 0,
+  "sessionId": 1,
+  "responses": [
+   {
+    "topicId": "b59d4a1c-d43e-4a0a-a748-c7ee230d31e7",
+    "partitions": [
+     {
+      "partitionIndex": 0,
+      "errorCode": 0,
+      "highWatermark": {
+       "$bigint": "2"
+      },
+      "lastStableOffset": {
+       "$bigint": "2"
+      },
+      "logStartOffset": {
+       "$bigint": "0"
+      },
+      "divergingEpoch": {
+       "epoch": -1,
+       "endOffset": {
+        "$bigint": "-1"
+       }
+      },
+      "currentLeader": {
+       "leaderId": -1,
+       "leaderEpoch": -1
+      },
+      "snapshotId": {
+       "endOffset": {
+        "$bigint": "-1"
+       },
+       "epoch": -1
+      },
+      "abortedTransactions": null,
+      "preferredReadReplica": -1,
+      "records": [
+       {
+        "firstOffset": {
+         "$bigint": "0"
+        },
+        "length": 89,
+        "partitionLeaderEpoch": 1,
+        "magic": 2,
+        "crc": 670815686,
+        "attributes": 8,
+        "lastOffsetDelta": 1,
+        "firstTimestamp": {
+         "$bigint": "1790275857244"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275857263"
+        },
+        "producerId": {
+         "$bigint": "8"
+        },
+        "producerEpoch": 0,
+        "firstSequence": 0,
+        "records": [
+         {
+          "length": 19,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": null,
+          "value": {
+           "$bytes": "eyJzdGFtcGVkIjoxfQ=="
+          },
+          "headers": []
+         },
+         {
+          "length": 19,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "7"
+          },
+          "offsetDelta": 1,
+          "key": null,
+          "value": {
+           "$bytes": "eyJzdGFtcGVkIjoyfQ=="
+          },
+          "headers": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "nodeEndpoints": []
+ }
+}

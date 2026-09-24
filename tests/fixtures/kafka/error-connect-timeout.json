@@ -1,0 +1,22 @@
+{
+ "$captured": {
+  "image": null,
+  "clusterId": null,
+  "date": "2026-09-24T18:56:39.621Z",
+  "surface": "admin.metadata({ topics: [] }) to the unroutable 10.255.255.1:9092, retries 0, connectTimeout 800"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Cannot connect to any broker.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "Connection to 10.255.255.1:9092 timed out.",
+    "code": "PLT_KFK_NETWORK",
+    "canRetry": true,
+    "class": "TimeoutError"
+   }
+  ]
+ }
+}

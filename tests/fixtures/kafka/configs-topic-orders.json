@@ -1,0 +1,347 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.describeConfigs({ resources: [{ resourceType: TOPIC, resourceName: \"orders\" }] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "resourceType": 2,
+   "resourceName": "orders",
+   "configs": [
+    {
+     "name": "compression.type",
+     "value": "producer",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.delete.on.disable",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "leader.replication.throttled.replicas",
+     "value": "",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "remote.storage.enable",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "min.insync.replicas",
+     "value": "1",
+     "readOnly": false,
+     "configSource": 3,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "segment.jitter.ms",
+     "value": "0",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.copy.disable",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "local.retention.ms",
+     "value": "-2",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "cleanup.policy",
+     "value": "delete",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "flush.ms",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "follower.replication.throttled.replicas",
+     "value": "",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "compression.lz4.level",
+     "value": "9",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "segment.bytes",
+     "value": "1073741824",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "retention.ms",
+     "value": "604800000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "compression.gzip.level",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "flush.messages",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "compression.zstd.level",
+     "value": "3",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "max.compaction.lag.ms",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "file.delete.delay.ms",
+     "value": "60000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "max.message.bytes",
+     "value": "1048588",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "min.compaction.lag.ms",
+     "value": "0",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "message.timestamp.type",
+     "value": "CreateTime",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "local.retention.bytes",
+     "value": "-2",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "preallocate",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "index.interval.bytes",
+     "value": "4096",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "min.cleanable.dirty.ratio",
+     "value": "0.5",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "unclean.leader.election.enable",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "retention.bytes",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "delete.retention.ms",
+     "value": "86400000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "message.timestamp.after.max.ms",
+     "value": "3600000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "message.timestamp.before.max.ms",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "segment.ms",
+     "value": "604800000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "segment.index.bytes",
+     "value": "10485760",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    }
+   ]
+  }
+ ]
+}

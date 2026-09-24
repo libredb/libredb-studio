@@ -1,0 +1,63 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.describeLogDirs({ topics: [{ name: \"orders\", partitions: [0, 1, 2] }] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "broker": 1,
+   "throttleTimeMs": 0,
+   "results": [
+    {
+     "logDir": "/tmp/kafka-logs",
+     "topics": [
+      {
+       "name": "orders",
+       "partitions": [
+        {
+         "partitionIndex": 1,
+         "partitionSize": {
+          "$bigint": "1125"
+         },
+         "offsetLag": {
+          "$bigint": "0"
+         },
+         "isFutureKey": false
+        },
+        {
+         "partitionIndex": 2,
+         "partitionSize": {
+          "$bigint": "2189"
+         },
+         "offsetLag": {
+          "$bigint": "0"
+         },
+         "isFutureKey": false
+        },
+        {
+         "partitionIndex": 0,
+         "partitionSize": {
+          "$bigint": "2189"
+         },
+         "offsetLag": {
+          "$bigint": "0"
+         },
+         "isFutureKey": false
+        }
+       ]
+      }
+     ],
+     "totalBytes": {
+      "$bigint": "294147883008"
+     },
+     "usableBytes": {
+      "$bigint": "61404086272"
+     }
+    }
+   ]
+  }
+ ]
+}

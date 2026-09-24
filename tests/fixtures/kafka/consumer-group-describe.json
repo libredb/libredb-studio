@@ -1,0 +1,25 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumerGroupDescribeV0.api.async(conn, [\"lag-kip848\"], false)"
+ },
+ "outcome": "pass",
+ "payload": {
+  "throttleTimeMs": 0,
+  "groups": [
+   {
+    "errorCode": 0,
+    "errorMessage": null,
+    "groupId": "lag-kip848",
+    "groupState": "Empty",
+    "groupEpoch": 3,
+    "assignmentEpoch": 2,
+    "assignorName": "uniform",
+    "members": [],
+    "authorizedOperations": -2147483648
+   }
+  ]
+ }
+}

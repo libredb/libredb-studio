@@ -1,0 +1,17 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.findCoordinator({ keyType: GROUP, keys: [\"lag-kip848\"] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "key": "lag-kip848",
+   "nodeId": 1,
+   "host": "localhost",
+   "port": 9092
+  }
+ ]
+}

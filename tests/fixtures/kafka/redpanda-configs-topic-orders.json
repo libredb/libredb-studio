@@ -1,0 +1,329 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.describeConfigs({ resources: [{ resourceType: TOPIC, resourceName: \"orders\" }] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "resourceType": 2,
+   "resourceName": "orders",
+   "configs": [
+    {
+     "name": "compression.type",
+     "value": "producer",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "cleanup.policy",
+     "value": "delete",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "segment.bytes",
+     "value": "134217728",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "retention.ms",
+     "value": "604800000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "retention.bytes",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "message.timestamp.type",
+     "value": "CreateTime",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "max.message.bytes",
+     "value": "1048576",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "write.caching",
+     "value": "true",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "flush.bytes",
+     "value": "262144",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "flush.ms",
+     "value": "100",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.remote.read",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.remote.write",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "retention.local.target.bytes",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "retention.local.target.ms",
+     "value": "86400000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.remote.delete",
+     "value": "true",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [
+      {
+       "name": "redpanda.remote.delete",
+       "value": "true",
+       "source": 5
+      }
+     ],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "segment.ms",
+     "value": "1209600000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.iceberg.mode",
+     "value": "disabled",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [
+      {
+       "name": "redpanda.iceberg.mode",
+       "value": "disabled",
+       "source": 5
+      }
+     ],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "delete.retention.ms",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "initial.retention.local.target.bytes",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "initial.retention.local.target.ms",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.leaders.preference",
+     "value": "none",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.schema.registry.context",
+     "value": ".",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "min.cleanable.dirty.ratio",
+     "value": "0.5",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "min.compaction.lag.ms",
+     "value": "0",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "max.compaction.lag.ms",
+     "value": "9223372036854",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.remote.allowgaps",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "message.timestamp.before.max.ms",
+     "value": "9223372036854",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "message.timestamp.after.max.ms",
+     "value": "3600000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.storage.mode",
+     "value": "unset",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "redpanda.storage.mode.impl",
+     "value": "unset",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    }
+   ]
+  }
+ ]
+}

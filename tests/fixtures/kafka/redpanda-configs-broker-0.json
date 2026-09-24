@@ -1,0 +1,107 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.describeConfigs({ resources: [{ resourceType: BROKER, resourceName: \"0\" }] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "resourceType": 4,
+   "resourceName": "0",
+   "configs": [
+    {
+     "name": "listeners",
+     "value": "internal://0.0.0.0:9092,external://0.0.0.0:29092",
+     "readOnly": false,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "advertised.listeners",
+     "value": "internal://redpanda:9092,external://localhost:29092",
+     "readOnly": false,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "log.segment.bytes",
+     "value": "134217728",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.bytes",
+     "value": "18446744073709551615",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.ms",
+     "value": "604800000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "num.partitions",
+     "value": "1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "default.replication.factor",
+     "value": "1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "log.dirs",
+     "value": "/var/lib/redpanda/data",
+     "readOnly": false,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "auto.create.topics.enable",
+     "value": "true",
+     "readOnly": false,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    }
+   ]
+  }
+ ]
+}

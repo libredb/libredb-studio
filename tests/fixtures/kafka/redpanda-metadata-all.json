@@ -1,0 +1,273 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.metadata({ topics: <every seeded topic>, autocreateTopics: false })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "id": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "brokers": {
+   "$map": [
+    [
+     0,
+     {
+      "host": "localhost",
+      "port": 29092,
+      "rack": null
+     }
+    ]
+   ]
+  },
+  "topics": {
+   "$map": [
+    [
+     "big",
+     {
+      "id": "12b8e6c9-2315-4ffd-acf2-650e037a9801",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "bytes",
+     {
+      "id": "157ed92a-1c2c-45d7-8823-788e586f02d8",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "codec-gzip",
+     {
+      "id": "8ff0e6da-8fcb-43a6-bbe5-e46ae610f42e",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "codec-lz4",
+     {
+      "id": "f854f944-d7b9-4547-a679-8645e1853f7e",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "codec-snappy",
+     {
+      "id": "364009aa-c927-4b30-beaa-1d578e923269",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "codec-zstd",
+     {
+      "id": "20b6e3c5-0ec3-40b8-b1a9-cd5282afccf7",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "lag-partial",
+     {
+      "id": "25e1710e-9989-472a-8894-119d8a7199e1",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 2,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "orders",
+     {
+      "id": "03c22755-ff60-4977-b784-b9da7e542644",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 3,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "ts-append",
+     {
+      "id": "b59d4a1c-d43e-4a0a-a748-c7ee230d31e7",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ],
+    [
+     "txn",
+     {
+      "id": "92f8fe53-078c-4605-b0d6-382ca3138b35",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 1,
+      "lastUpdate": 1790276299456
+     }
+    ]
+   ]
+  },
+  "lastUpdate": 1790276299456,
+  "controllerId": 0
+ }
+}

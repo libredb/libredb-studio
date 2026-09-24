@@ -1,0 +1,461 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.listApis()"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "apiKey": 0,
+   "name": "Produce",
+   "minVersion": 0,
+   "maxVersion": 13
+  },
+  {
+   "apiKey": 1,
+   "name": "Fetch",
+   "minVersion": 4,
+   "maxVersion": 18
+  },
+  {
+   "apiKey": 2,
+   "name": "ListOffsets",
+   "minVersion": 1,
+   "maxVersion": 11
+  },
+  {
+   "apiKey": 3,
+   "name": "Metadata",
+   "minVersion": 0,
+   "maxVersion": 13
+  },
+  {
+   "apiKey": 8,
+   "name": "OffsetCommit",
+   "minVersion": 2,
+   "maxVersion": 10
+  },
+  {
+   "apiKey": 9,
+   "name": "OffsetFetch",
+   "minVersion": 1,
+   "maxVersion": 10
+  },
+  {
+   "apiKey": 10,
+   "name": "FindCoordinator",
+   "minVersion": 0,
+   "maxVersion": 6
+  },
+  {
+   "apiKey": 11,
+   "name": "JoinGroup",
+   "minVersion": 0,
+   "maxVersion": 9
+  },
+  {
+   "apiKey": 12,
+   "name": "Heartbeat",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 13,
+   "name": "LeaveGroup",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 14,
+   "name": "SyncGroup",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 15,
+   "name": "DescribeGroups",
+   "minVersion": 0,
+   "maxVersion": 6
+  },
+  {
+   "apiKey": 16,
+   "name": "ListGroups",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 17,
+   "name": "SaslHandshake",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 18,
+   "name": "ApiVersions",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 19,
+   "name": "CreateTopics",
+   "minVersion": 2,
+   "maxVersion": 7
+  },
+  {
+   "apiKey": 20,
+   "name": "DeleteTopics",
+   "minVersion": 1,
+   "maxVersion": 6
+  },
+  {
+   "apiKey": 21,
+   "name": "DeleteRecords",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 22,
+   "name": "InitProducerId",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 23,
+   "name": "OffsetForLeaderEpoch",
+   "minVersion": 2,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 24,
+   "name": "AddPartitionsToTxn",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 25,
+   "name": "AddOffsetsToTxn",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 26,
+   "name": "EndTxn",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 27,
+   "name": "WriteTxnMarkers",
+   "minVersion": 1,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 28,
+   "name": "TxnOffsetCommit",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 29,
+   "name": "DescribeAcls",
+   "minVersion": 1,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 30,
+   "name": "CreateAcls",
+   "minVersion": 1,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 31,
+   "name": "DeleteAcls",
+   "minVersion": 1,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 32,
+   "name": "DescribeConfigs",
+   "minVersion": 1,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 33,
+   "name": "AlterConfigs",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 34,
+   "name": "AlterReplicaLogDirs",
+   "minVersion": 1,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 35,
+   "name": "DescribeLogDirs",
+   "minVersion": 1,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 36,
+   "name": "SaslAuthenticate",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 37,
+   "name": "CreatePartitions",
+   "minVersion": 0,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 38,
+   "name": "CreateDelegationToken",
+   "minVersion": 1,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 39,
+   "name": "RenewDelegationToken",
+   "minVersion": 1,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 40,
+   "name": "ExpireDelegationToken",
+   "minVersion": 1,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 41,
+   "name": "DescribeDelegationToken",
+   "minVersion": 1,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 42,
+   "name": "DeleteGroups",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 43,
+   "name": "ElectLeaders",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 44,
+   "name": "IncrementalAlterConfigs",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 45,
+   "name": "AlterPartitionReassignments",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 46,
+   "name": "ListPartitionReassignments",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 47,
+   "name": "OffsetDelete",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 48,
+   "name": "DescribeClientQuotas",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 49,
+   "name": "AlterClientQuotas",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 50,
+   "name": "DescribeUserScramCredentials",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 51,
+   "name": "AlterUserScramCredentials",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 55,
+   "name": "DescribeQuorum",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 57,
+   "name": "UpdateFeatures",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 60,
+   "name": "DescribeCluster",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 61,
+   "name": "DescribeProducers",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 64,
+   "name": "UnregisterBroker",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 65,
+   "name": "DescribeTransactions",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 66,
+   "name": "ListTransactions",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 68,
+   "name": "ConsumerGroupHeartbeat",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 69,
+   "name": "ConsumerGroupDescribe",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 74,
+   "name": "ListClientMetricsResources",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 75,
+   "name": "DescribeTopicPartitions",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 76,
+   "name": "ShareGroupHeartbeat",
+   "minVersion": 1,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 77,
+   "name": "ShareGroupDescribe",
+   "minVersion": 1,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 78,
+   "name": "ShareFetch",
+   "minVersion": 1,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 79,
+   "name": "ShareAcknowledge",
+   "minVersion": 1,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 80,
+   "name": "AddRaftVoter",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 81,
+   "name": "RemoveRaftVoter",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 83,
+   "name": "InitializeShareGroupState",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 84,
+   "name": "ReadShareGroupState",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 85,
+   "name": "WriteShareGroupState",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 86,
+   "name": "DeleteShareGroupState",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 87,
+   "name": "ReadShareGroupStateSummary",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 88,
+   "name": "StreamsGroupHeartbeat",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 89,
+   "name": "StreamsGroupDescribe",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 90,
+   "name": "DescribeShareGroupOffsets",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 91,
+   "name": "AlterShareGroupOffsets",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 92,
+   "name": "DeleteShareGroupOffsets",
+   "minVersion": 0,
+   "maxVersion": 0
+  }
+ ]
+}
