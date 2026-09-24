@@ -42,7 +42,11 @@ describe("shapeRecord", () => {
   test("the protocol's no-timestamp value (-1) is null, never a 1969 instant", () => {
     const { row } = shapeRecord(record({ timestamp: BigInt(-1) }), { cellLimit: 1000 });
     expect(row.timestamp).toBeNull();
-    // Control: the millisecond before the epoch is still an instant when it is not the sentinel.
+    // Control: the nearest negative value that is not the sentinel is still an instant.
+    expect(shapeRecord(record({ timestamp: BigInt(-2) }), { cellLimit: 1000 }).row.timestamp).toBe(
+      "1969-12-31T23:59:59.998Z",
+    );
+    // Control: the epoch itself is an instant too.
     expect(shapeRecord(record({ timestamp: BigInt(0) }), { cellLimit: 1000 }).row.timestamp).toBe(
       "1970-01-01T00:00:00.000Z",
     );
