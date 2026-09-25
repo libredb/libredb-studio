@@ -53,9 +53,20 @@
  * array or answered by a function and read back, handed in from another file, or reached by
  * reflection; outside the provider, whose files alone are refused a module name that is not
  * a plain string and every call of a require function the guard sees, a module name computed
- * or fixed by a bind that a name then calls; a package that loads the library itself; and
- * text another process runs. The provider may not spell a write or a pinned option as a
- * name, a string or a computed property name.
+ * or fixed by a bind that a name then calls; a module name that a runtime reads otherwise
+ * than TypeScript and that is no file URL, which the guard reads with its query and fragment
+ * dropped and its escapes decoded: one with a query, which Bun drops from any module name, or
+ * a path or a package's subpath with a query, a fragment or a percent-escape, which Node's ES
+ * module loader reads as a URL, so the name loads a file while TypeScript resolves it to
+ * nothing, and neither the seed's nor the loader's takers nor the re-export rule see it, nor
+ * the importer count unless its text alone is a path into the library's package or a subpath
+ * of it (tsc refuses such a name in every file it checks unless a comment switches tsc off,
+ * and tsconfig's include takes in no .js, .mjs or .cjs file); a Bun plugin or a Node loader
+ * hook, which can hand the runtime another file, or other text, for any module name; a
+ * package that loads the library itself; and text run as code, by another process or a
+ * worker, or by this one through eval, the Function constructor or a data: URL module, whose
+ * text can import the library in turn. The provider may not spell a write or a pinned option
+ * as a name, a string or a computed property name.
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -438,7 +449,9 @@ function loadsLibrary(specifier: string, containing: string, root: string): bool
 
 /**
  * Whether a module name written in `containing` names the file at `target`: TypeScript resolves it
- * there, or it is a file URL of it, the one spelling of a file TypeScript resolves to nothing.
+ * there, or it is a file URL of it, which TypeScript resolves to nothing. Any other name a runtime
+ * reads otherwise than TypeScript, such as a path with a query, is not read here, and the file's
+ * docblock states it among the guard's limits.
  */
 function resolvesTo(specifier: string, containing: string, root: string, target: string): boolean {
   if (resolvedFile(specifier, containing, root) === canonical(target)) return true;
@@ -2244,7 +2257,9 @@ describe("Kafka seam guard", () => {
       ['read.ts loads a module through module["require"]'],
     ],
     // A require function called through call or apply, or bound by bind, loads what it is handed
-    // (measured under Bun 1.4.2 and Node 24.14.0, 2026-09-25: each form below loads the library).
+    // (measured on 2026-09-25: each form below loads the library under Bun 1.4.2, and each but
+    // import.meta.require, which Node does not define, under Node 24.14.0, the require and
+    // module.require forms in a CommonJS module, where Node defines them).
     [
       "require through call",
       `const kafka = require.call(null, "${LIBRARY}");`,
