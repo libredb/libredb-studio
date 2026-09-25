@@ -1,12 +1,17 @@
 /**
  * Real TLS handshakes and real transport failures through the real client library,
- * against local servers this file starts (spec 10, gate 1). Every TLS server completes the
- * handshake and then closes, so a handshake that succeeds is observed as a secureConnection
- * on the server followed by a non-TLS failure on the client, and a handshake that fails is a
- * KafkaError "tls" carrying the code the runtime gave it (spec 3.6 K7).
+ * against local servers this file starts (spec 10, gate 1). Every TLS server closes each
+ * connection once its handshake completes, so a handshake that succeeds is observed as a
+ * secureConnection on the server followed by a non-TLS failure on the client, and a handshake
+ * the client refuses is a KafkaError "tls" carrying the code the runtime gave it (spec 3.6 K7).
+ * One the server refuses is the exception K7 states: under TLS 1.3, which these servers
+ * negotiate, a server that requires a client certificate refuses, after the client's half of the
+ * handshake, a client whose certificate is missing or untrusted, so the library reports only that
+ * the connection closed, which the adapter reads as network connection-lost, and this file
+ * observes that refusal on the server alone.
  *
- * The connections are the ones a user saves: each TLS mode goes through kafkaConnectionOptions,
- * so "verify-full", "verify-ca" and "require" are the dialog's modes, not hand-built options.
+ * Each TLS mode goes through kafkaConnectionOptions from a connection as a user saves it, so
+ * "verify-full", "verify-ca" and "require" are the dialog's modes, not hand-built options.
  * The certificates are made here with openssl, into a temporary directory, and never committed;
  * openssl reads only this file's own config, never the platform's default one.
  *
@@ -200,7 +205,7 @@ beforeAll(async () => {
   authority("ca");
   authority("other-ca");
   leaf("broker", "localhost", "ca", 1, ["basicConstraints = CA:FALSE", SERVER_NAMES, "extendedKeyUsage = serverAuth"]);
-  // The broker's certificate but for its extended key usage, client authentication only.
+  // Issued by the broker's CA for the broker's names, but for client authentication only.
   leaf("client-auth-only", "localhost", "ca", 2, [
     "basicConstraints = CA:FALSE",
     SERVER_NAMES,
@@ -290,8 +295,9 @@ describe("TLS handshakes through the real client", () => {
   }, 20_000);
 
   test("a server certificate for client authentication only is refused as INVALID_PURPOSE, tls at the bootstrap and at an advertised address (K7)", async () => {
-    // The control is verify-ca's handshake above: the broker's certificate, signed by the same CA,
-    // differs from this one in its extended key usage alone.
+    // The control is verify-ca's handshake above, whose options verify-full builds too: the same CA
+    // issued the broker's certificate for the same names, and of what a verifier checks, only the
+    // extended key usage tells the two apart.
     const { error, handshook } = await attempt(clientAuthOnly, { mode: "verify-full", caCert: ca() });
     expect([error.category, error.detail]).toStrictEqual(["tls", { nodeCode: "INVALID_PURPOSE" }]);
     expect(handshook).toBe(false);
