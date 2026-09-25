@@ -14,7 +14,8 @@
   <b>日本語</b> ·
   <a href="README_es.md">Español</a> ·
   <a href="README_ur.md">اردو</a> ·
-  <a href="README_hi.md">हिन्दी</a>
+  <a href="README_hi.md">हिन्दी</a> ·
+  <a href="README_pt.md">Português (Brasil)</a>
 </p>
 
 <p align="center">

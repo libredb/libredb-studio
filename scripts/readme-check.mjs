@@ -47,7 +47,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CANONICAL = "README.md";
-const LOCALIZED = ["README_zh.md", "README_ja.md", "README_es.md", "README_ur.md", "README_hi.md"];
+const LOCALIZED = ["README_zh.md", "README_ja.md", "README_es.md", "README_ur.md", "README_hi.md", "README_pt.md"];
 
 /** The variable the quickstart warning must name. */
 const WARNING_VARIABLE = "AUTH_COOKIE_SECURE";
