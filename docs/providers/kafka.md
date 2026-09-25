@@ -564,12 +564,14 @@ bun tests/live/kafka-read-only.ts --bootstrap localhost:9192 --failover
 ```
 
 It snapshots the broker before and after the run: the topic and group lists, every group's committed offsets, every partition's earliest and latest offsets, the topic and broker configs, and on `kafka-auth` the ACLs, through the broker's own tools (`rpk` on Redpanda).
+Each line of the snapshot carries the tool that printed it and the block it sits under, such as `All configs for topic orders are:`, before the lines are sorted, and the two snapshots must hold the same lines the same number of times: twelve topics print the same default config line, so a line compared without its topic could change hands unseen.
 Between the two it runs the counts, the three listings and one source of each kind, a read in every `from` form and of each seeded topic, the refusals of a missing topic, an out-of-range offset and `__consumer_offsets`, the three panels, the group listing and each group's lag against the broker's own CLI, two `metadata([])` calls counted as two Metadata frames at a forwarder, a bootstrap at `::1`, a read through a bootstrap forwarder that sends no Fetch frame through it, three reads at once, and the process's sockets after `disconnect()`.
 With `--tripwire` it first reads every seeded topic on a broker never asked for a group coordinator and checks that `__consumer_offsets` is still absent.
 Its log searches for an automatic topic creation and for the never-joined group id are each paired with a control that finds that kind of line in the broker's whole log.
 
 Measured on 2026-09-25: every check passed on `kafka` (57, with the tripwire), on `redpanda` (39), on `kafka-cluster` (47), and on `kafka-auth` as `reader` (7), and every snapshot after a run equalled the one before it.
-Against the provider with one rule broken at a time, the check failed each time: a `disconnect()` that closes nothing, `autocreateTopics: true`, a `metadata([])` answered from the cache, lag that ignores the committed offset, a transaction filter that keeps aborted records, and a group listing without the `consumer` type.
+Against the provider with one rule broken at a time, the check failed each time: a `disconnect()` that closes nothing, `autocreateTopics: true`, a `metadata([])` answered from the cache, lag that ignores the committed offset, a transaction filter that keeps aborted records, a group listing without the `consumer` type, and a lag listing that shows one partition twice.
+A config write made during the run from outside the provider, setting `orders` to the `compression.type=gzip` line `codec-gzip` already holds, failed the check too; the check as first committed, which compared bare lines as a set, passed it.
 
 #### Redpanda
 

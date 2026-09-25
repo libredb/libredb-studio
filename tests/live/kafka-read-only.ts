@@ -60,6 +60,7 @@ import { readFileSync } from "node:fs";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import type { KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { sameSnapshot, snapshotDiff, snapshotLines } from "./kafka-snapshot";
 
 // ============================================================================
 // Fixtures and arguments
@@ -259,8 +260,8 @@ function cliGroups(): string[] {
     .filter(Boolean);
 }
 
-/** The broker state spec K4 lists, one sorted section per tool. */
-function snapshot(): string {
+/** The broker state spec K4 lists, as the sorted attributed lines of `./kafka-snapshot`. */
+function snapshot(): string[] {
   if (fixture.flavor === "redpanda") {
     const parts: [string, string][] = [
       ["rpk topic list", rpk("topic", "list")],
@@ -270,7 +271,7 @@ function snapshot(): string {
     // -a prints the partitions with their log start and high watermark (what -p prints) and the configs.
     for (const topic of cliTopics())
       parts.push([`rpk topic describe -a ${topic}`, rpk("topic", "describe", "-a", topic)]);
-    return parts.map(([title, text]) => `## ${title}\n${sortedLines(text)}`).join("\n");
+    return snapshotLines(parts);
   }
   const c = fixture.container;
   const parts: [string, string][] = [
@@ -292,15 +293,7 @@ function snapshot(): string {
     ],
   ];
   if (fixture.auth) parts.push(["kafka-acls.sh --list", tool(c, "kafka-acls.sh", "--list")]);
-  return parts.map(([title, text]) => `## ${title}\n${sortedLines(text)}`).join("\n");
-}
-
-function snapshotDiff(before: string, after: string): string {
-  const a = before.split("\n");
-  const b = after.split("\n");
-  const gone = a.filter((line) => !b.includes(line)).map((line) => `- ${line}`);
-  const added = b.filter((line) => !a.includes(line)).map((line) => `+ ${line}`);
-  return [...gone, ...added].join("\n");
+  return snapshotLines(parts);
 }
 
 /**
@@ -749,6 +742,9 @@ async function groupSurfaces(provider: KafkaProvider): Promise<void> {
       }[];
       const cli = cliLag(group);
       must(cli.length > 0, "the CLI describes no partition for the group");
+      // The match below finds a row by partition, so a partition shown twice would pass it.
+      const keys = rows.map((r) => `${r.topic}/${r.partition}`);
+      must(new Set(keys).size === keys.length, `a partition appears twice: ${keys.join(", ")}`);
       for (const expected of cli) {
         const row = rows.find((r) => r.topic === expected.topic && r.partition === expected.partition);
         must(row !== undefined, `the provider shows no row for ${expected.topic}/${expected.partition}`);
@@ -1033,9 +1029,8 @@ async function failover(): Promise<void> {
   }
   await check("K4 failover: the snapshot after the restart equals the one before the stop", () => {
     const after = snapshot();
-    const diff = snapshotDiff(before, after);
-    must(diff === "", `the broker state changed:\n${diff}`);
-    return `${before.split("\n").length} lines identical`;
+    must(sameSnapshot(before, after), `the broker state changed:\n${snapshotDiff(before, after)}`);
+    return `${before.length} lines identical`;
   });
 }
 
@@ -1102,7 +1097,7 @@ async function main(): Promise<void> {
   } else {
     const since = new Date().toISOString();
     const before = snapshot();
-    console.log(`snapshot taken at ${since}: ${before.split("\n").length} lines`);
+    console.log(`snapshot taken at ${since}: ${before.length} lines`);
     const provider = await connected(BOOTSTRAP_HOST, BOOTSTRAP_PORT);
     try {
       if (fixture.auth) {
@@ -1128,9 +1123,8 @@ async function main(): Promise<void> {
     }
     await check("K4: the snapshot after the run equals the one before it", () => {
       const after = snapshot();
-      const diff = snapshotDiff(before, after);
-      must(diff === "", `the broker state changed:\n${diff}`);
-      return `${before.split("\n").length} lines identical`;
+      must(sameSnapshot(before, after), `the broker state changed:\n${snapshotDiff(before, after)}`);
+      return `${before.length} lines identical`;
     });
     await logChecks(since);
   }
