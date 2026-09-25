@@ -36,6 +36,25 @@ const schema: DetailedObject = {
   ],
 };
 
+/**
+ * A MySQL/MariaDB reading, as the provider now reports one (#1033): `type` is the type AS
+ * DECLARED and `baseType` is the family. Every mapper here decides on a type FAMILY, and a
+ * declared type is not one - `int unsigned` is no more `int` to a `===` than `int(11)` is,
+ * and an `ENUM` carries its values, so a substring test for `int` matches a column of two
+ * words that mean neither.
+ */
+const declaredTypeSchema: DetailedObject = {
+  name: "lentest",
+  kind: "table",
+  path: ["lentest"],
+  indexes: [],
+  columns: [
+    { name: "id", type: "int unsigned", baseType: "int", nullable: false, isPrimary: true },
+    { name: "note", type: "varchar(20)", baseType: "varchar", nullable: true, isPrimary: false },
+    { name: "status", type: "enum('int','text')", baseType: "enum", nullable: true, isPrimary: false },
+  ],
+};
+
 describe("CodeGenerator", () => {
   afterEach(() => {
     cleanup();
@@ -182,6 +201,42 @@ describe("CodeGenerator", () => {
     fireEvent.click(queryByText("TypeScript Interface")!);
     fireEvent.click(queryByText("Java POJO")!);
     expect(container.textContent).toContain("public class User");
+  });
+
+  test("maps a MySQL column by its type FAMILY, not its declaration (#1033)", () => {
+    // Prisma, Go and Java all test the family with `===`, so a declared `int unsigned` fell
+    // through every numeric arm to the string default the moment the provider stopped
+    // reporting the family in `type`.
+    for (const [language, want] of [
+      ["Prisma Model", "Int"],
+      ["Go Struct", "int"],
+      ["Java POJO", "Integer"],
+    ] as const) {
+      const { queryByText, container, unmount } = render(
+        <CodeGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["app", "lentest"]}
+          tableSchema={declaredTypeSchema}
+        />,
+      );
+      fireEvent.click(queryByText("TypeScript Interface")!);
+      fireEvent.click(queryByText(language)!);
+      expect(container.textContent).toContain(want);
+      unmount();
+    }
+  });
+
+  test("an ENUM's VALUES are not a type family (#1033)", () => {
+    // The other direction, and the reason the substring mappers are not safe either:
+    // `enum('int','text')` contains the four characters `int`, and Python's mapper is a
+    // substring test, so the declared type alone types this column `int`.
+    const { queryByText, container } = render(
+      <CodeGenerator isOpen onClose={mock(() => {})} tablePath={["app", "lentest"]} tableSchema={declaredTypeSchema} />,
+    );
+    fireEvent.click(queryByText("TypeScript Interface")!);
+    fireEvent.click(queryByText("Python Dataclass")!);
+    expect(container.textContent).toContain("status: Optional[str]");
   });
 
   test("footer shows column count and format", () => {

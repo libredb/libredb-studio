@@ -884,6 +884,7 @@ const LIST_EVENTS_SQL = `
 const OBJECT_COLUMNS_SQL = `
         SELECT
           COLUMN_NAME AS column_name,
+          COLUMN_TYPE AS column_type,
           DATA_TYPE AS data_type,
           IS_NULLABLE AS is_nullable,
           COLUMN_DEFAULT AS column_default,
@@ -1011,6 +1012,7 @@ function bulkDetailSql(spellings: number, bound?: number): BulkDetailStatements 
         SELECT
           d.name AS object_name,
           c.COLUMN_NAME AS column_name,
+          c.COLUMN_TYPE AS column_type,
           c.DATA_TYPE AS data_type,
           c.IS_NULLABLE AS is_nullable,
           c.COLUMN_DEFAULT AS column_default,
@@ -1704,6 +1706,13 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
 /** One row of the column read, single or bulk. `object_name` is present only in the bulk one. */
 interface DetailColumnRow extends RowDataPacket {
   column_name: string;
+  /**
+   * The type AS DECLARED, length and precision and value list and `unsigned` included
+   * (#1033). Both column reads select it, so it is required rather than optional: a row
+   * without it is a read this module did not write.
+   */
+  column_type: string;
+  /** The type FAMILY, which is `COLUMN_TYPE` with every one of those parts removed. */
   data_type: string;
   is_nullable: string;
   column_default: string | null;
@@ -1845,7 +1854,8 @@ function objectDetailFromRows(
 ): ObjectDetail {
   const columns: ColumnSchema[] = rows.columns.map((row) => ({
     name: row.column_name,
-    type: row.data_type,
+    type: row.column_type,
+    ...(row.column_type === row.data_type ? {} : { baseType: row.data_type }),
     nullable: row.is_nullable === "YES",
     isPrimary: row.column_key === "PRI",
     ...catalogDefault(row.column_default, row.extra, reading),

@@ -1,5 +1,7 @@
 import { describe, test, expect } from "bun:test";
+import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
+import type { StoredObject } from "@/lib/db/detailed-object";
 import type { ColumnDiff, SchemaDiff } from "@/lib/schema-diff/types";
 import type { DatabaseType } from "@/lib/types";
 
@@ -1576,5 +1578,56 @@ describe("generateMigrationSQL: a default is emitted as SQL, not as its value", 
   test("a dialect whose provider declares no SQL text is unchanged", () => {
     const sql = generateMigrationSQL(makeAddedColumnDiff({ targetDefault: "42" }), "postgres");
     expect(sql).toContain(`ADD COLUMN "note" varchar(20) DEFAULT 42;`);
+  });
+});
+
+describe("a MySQL column's declared type reaches the DDL (#1033)", () => {
+  /**
+   * The table `docker/mysql-init/01-object-fixture.sql` creates, as the provider now reads it
+   * back: `type` is the type AS DECLARED and `baseType` the family beside it.
+   *
+   * The generator interpolates `ColumnDiff.targetType` verbatim, and `diffSchemas` fills that
+   * field from `ColumnSchema.type`, so this asserts the whole path the issue names - provider
+   * reading, diff, generated statement - and not the generator alone.
+   */
+  const target: StoredObject[] = [
+    {
+      name: "column_types",
+      columns: [
+        { name: "c_varchar", type: "varchar(20)", baseType: "varchar", nullable: true, isPrimary: false },
+        { name: "c_decimal", type: "decimal(12,2)", baseType: "decimal", nullable: true, isPrimary: false },
+        { name: "c_char", type: "char(2)", baseType: "char", nullable: true, isPrimary: false },
+        { name: "c_enum", type: "enum('x','y')", baseType: "enum", nullable: true, isPrimary: false },
+        { name: "c_set", type: "set('a','b')", baseType: "set", nullable: true, isPrimary: false },
+        { name: "c_unsigned", type: "int unsigned", baseType: "int", nullable: true, isPrimary: false },
+        { name: "c_text", type: "text", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+
+  test("CREATE TABLE carries every length, precision, value list and attribute", () => {
+    const sql = generateMigrationSQL(diffSchemas([], target), "mysql");
+
+    expect(sql).toContain("`c_varchar` varchar(20)");
+    expect(sql).toContain("`c_decimal` decimal(12,2)");
+    expect(sql).toContain("`c_char` char(2)");
+    expect(sql).toContain("`c_enum` enum('x','y')");
+    expect(sql).toContain("`c_set` set('a','b')");
+    expect(sql).toContain("`c_unsigned` int unsigned");
+    expect(sql).toContain("`c_text` text");
+    // The defect this replaces: a bare family. `CREATE TABLE t (note varchar)` is error 1064
+    // on both servers, so a definition of exactly `varchar` is not DDL either engine accepts.
+    expect(sql).not.toMatch(/`c_varchar` varchar[^(]/);
+  });
+
+  test("ADD COLUMN carries them too, because one column reading feeds both", () => {
+    const source: StoredObject[] = [{ name: "column_types", columns: [], indexes: [] }];
+    const sql = generateMigrationSQL(diffSchemas(source, target), "mysql");
+
+    expect(sql).toContain("ADD COLUMN `c_varchar` varchar(20);");
+    expect(sql).toContain("ADD COLUMN `c_decimal` decimal(12,2);");
+    expect(sql).toContain("ADD COLUMN `c_enum` enum('x','y');");
+    expect(sql).toContain("ADD COLUMN `c_unsigned` int unsigned;");
   });
 });

@@ -389,9 +389,30 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
   if (normalized.includes("information_schema.columns")) {
     return Promise.resolve([
       [
-        { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI" },
-        { column_name: "name", data_type: "varchar", is_nullable: "YES", column_default: null, column_key: "" },
-        { column_name: "email", data_type: "varchar", is_nullable: "NO", column_default: null, column_key: "UNI" },
+        {
+          column_name: "id",
+          column_type: "int",
+          data_type: "int",
+          is_nullable: "NO",
+          column_default: null,
+          column_key: "PRI",
+        },
+        {
+          column_name: "name",
+          column_type: "varchar(100)",
+          data_type: "varchar",
+          is_nullable: "YES",
+          column_default: null,
+          column_key: "",
+        },
+        {
+          column_name: "email",
+          column_type: "varchar(255)",
+          data_type: "varchar",
+          is_nullable: "NO",
+          column_default: null,
+          column_key: "UNI",
+        },
       ],
       [],
     ]);
@@ -3298,23 +3319,75 @@ function sourceReply(sql: string, mariadb: boolean): unknown[] {
  * per server, `HEX(COLUMN_DEFAULT)` read beside the text so no display layer could hide a
  * byte. MySQL reports the VALUE and MariaDB the expression AS WRITTEN, so the same DDL
  * arrives here as two different strings and has to leave as one.
+ *
+ * Two type fields, and they are the two catalog columns (#1033): `declared` is `COLUMN_TYPE`,
+ * the type as the DDL wrote it, and `type` is `DATA_TYPE`, the family. `declaredOn()` below
+ * applies the one per-server difference between them.
  */
 const COLUMN_DEFAULT_MEASUREMENT = [
   // DDL: `INT NULL`. MariaDB spells absence as the four-character keyword.
-  { name: "def_absent", type: "int", maria: "NULL", mysql: null, extra: "", expected: undefined },
+  { name: "def_absent", declared: "int", type: "int", maria: "NULL", mysql: null, extra: "", expected: undefined },
   // DDL: `VARCHAR(20) DEFAULT 'NULL'`. The four characters, as a value.
-  { name: "def_null_string", type: "varchar", maria: "'NULL'", mysql: "NULL", extra: "", expected: "NULL" },
-  { name: "def_text", type: "varchar", maria: "'abc'", mysql: "abc", extra: "", expected: "abc" },
-  { name: "def_empty", type: "varchar", maria: "''", mysql: "", extra: "", expected: "" },
-  { name: "def_quote", type: "varchar", maria: "'it''s'", mysql: "it's", extra: "", expected: "it's" },
+  {
+    name: "def_null_string",
+    declared: "varchar(20)",
+    type: "varchar",
+    maria: "'NULL'",
+    mysql: "NULL",
+    extra: "",
+    expected: "NULL",
+  },
+  {
+    name: "def_text",
+    declared: "varchar(20)",
+    type: "varchar",
+    maria: "'abc'",
+    mysql: "abc",
+    extra: "",
+    expected: "abc",
+  },
+  { name: "def_empty", declared: "varchar(20)", type: "varchar", maria: "''", mysql: "", extra: "", expected: "" },
+  {
+    name: "def_quote",
+    declared: "varchar(20)",
+    type: "varchar",
+    maria: "'it''s'",
+    mysql: "it's",
+    extra: "",
+    expected: "it's",
+  },
   // DDL: `DEFAULT 'a\\b'`, whose value is the three characters a, backslash, b. MariaDB
   // doubles the backslash, exactly as `quoteLiteral` does for this family.
-  { name: "def_backslash", type: "varchar", maria: "'a\\\\b'", mysql: "a\\b", extra: "", expected: "a\\b" },
-  { name: "def_newline", type: "varchar", maria: "'a\\nb'", mysql: "a\nb", extra: "", expected: "a\nb" },
-  { name: "def_number", type: "int", maria: "42", mysql: "42", extra: "", expected: "42" },
+  {
+    name: "def_backslash",
+    declared: "varchar(20)",
+    type: "varchar",
+    maria: "'a\\\\b'",
+    mysql: "a\\b",
+    extra: "",
+    expected: "a\\b",
+  },
+  {
+    name: "def_newline",
+    declared: "varchar(20)",
+    type: "varchar",
+    maria: "'a\\nb'",
+    mysql: "a\nb",
+    extra: "",
+    expected: "a\nb",
+  },
+  { name: "def_number", declared: "int", type: "int", maria: "42", mysql: "42", extra: "", expected: "42" },
   // A generated column. MariaDB says the keyword, MySQL says SQL NULL, and neither has an
   // insert default. `EXTRA` is the discriminator and both servers spell it the same way.
-  { name: "def_generated", type: "int", maria: "NULL", mysql: null, extra: "STORED GENERATED", expected: undefined },
+  {
+    name: "def_generated",
+    declared: "int",
+    type: "int",
+    maria: "NULL",
+    mysql: null,
+    extra: "STORED GENERATED",
+    expected: undefined,
+  },
 ] as const;
 
 /**
@@ -3325,10 +3398,24 @@ const COLUMN_DEFAULT_MEASUREMENT = [
  */
 const EXPRESSION_DEFAULT = {
   name: "def_expression",
+  declared: "timestamp",
   type: "timestamp",
   maria: { raw: "current_timestamp()", extra: "", expected: "current_timestamp()" },
   mysql: { raw: "CURRENT_TIMESTAMP", extra: "DEFAULT_GENERATED", expected: "CURRENT_TIMESTAMP" },
 } as const;
+
+/**
+ * MariaDB still reports the integer display width that MySQL 8.0.19 deprecated and MySQL
+ * 26.7.0 no longer emits, so ONE declaration has two spellings across the fleet. Measured
+ * 2026-09-22 on MySQL 26.7.0 and MariaDB 13.0.2: `INT` is `int` on the first and `int(11)` on
+ * the second, while `VARCHAR(20)`, `DECIMAL(12,2)` and `TIMESTAMP` are spelled alike on both.
+ *
+ * That is the reason `baseType` is carried beside the declaration rather than parsed back out
+ * of it: `int` and `int(11)` are one family under two names, and only the server knows which.
+ */
+function declaredOn(declared: string, mariadb: boolean): string {
+  return mariadb && declared === "int" ? "int(11)" : declared;
+}
 
 /** The catalog rows for the measurement, as the named server reports them. */
 function measuredDefaultRows(mariadb: boolean): Record<string, unknown>[] {
@@ -3336,6 +3423,7 @@ function measuredDefaultRows(mariadb: boolean): Record<string, unknown>[] {
   return [
     ...COLUMN_DEFAULT_MEASUREMENT.map((column) => ({
       column_name: column.name,
+      column_type: declaredOn(column.declared, mariadb),
       data_type: column.type,
       is_nullable: "YES",
       column_default: mariadb ? column.maria : column.mysql,
@@ -3344,6 +3432,7 @@ function measuredDefaultRows(mariadb: boolean): Record<string, unknown>[] {
     })),
     {
       column_name: EXPRESSION_DEFAULT.name,
+      column_type: declaredOn(EXPRESSION_DEFAULT.declared, mariadb),
       data_type: EXPRESSION_DEFAULT.type,
       is_nullable: "YES",
       column_default: expression.raw,
@@ -3366,7 +3455,8 @@ function measuredDefaultColumns(mariadb: boolean): ColumnSchema[] {
   return [
     ...COLUMN_DEFAULT_MEASUREMENT.map((column) => ({
       name: column.name,
-      type: column.type,
+      type: declaredOn(column.declared, mariadb),
+      ...(declaredOn(column.declared, mariadb) === column.type ? {} : { baseType: column.type }),
       nullable: true,
       isPrimary: false,
       defaultValue: column.expected,
@@ -3374,7 +3464,7 @@ function measuredDefaultColumns(mariadb: boolean): ColumnSchema[] {
     })),
     {
       name: EXPRESSION_DEFAULT.name,
-      type: EXPRESSION_DEFAULT.type,
+      type: declaredOn(EXPRESSION_DEFAULT.declared, mariadb),
       nullable: true,
       isPrimary: false,
       defaultValue: expression.expected,
@@ -3456,6 +3546,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "customers",
           column_name: "id",
+          column_type: declaredOn("int", options.mariadb),
           data_type: "int",
           is_nullable: "NO",
           column_default: null,
@@ -3467,6 +3558,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "order_archive",
           column_name: "id",
+          column_type: declaredOn("int", options.mariadb),
           data_type: "int",
           is_nullable: "NO",
           column_default: null,
@@ -3477,6 +3569,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "orders",
           column_name: "id",
+          column_type: declaredOn("int", options.mariadb),
           data_type: "int",
           is_nullable: "NO",
           column_default: null,
@@ -3485,6 +3578,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "orders",
           column_name: "total",
+          column_type: "decimal(12,2)",
           data_type: "decimal",
           is_nullable: "YES",
           column_default: "0.00",
@@ -3495,6 +3589,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "order_audit",
           column_name: "id",
+          column_type: declaredOn("int", options.mariadb),
           data_type: "int",
           is_nullable: "NO",
           column_default: null,
@@ -3505,6 +3600,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "order_summary",
           column_name: "customer",
+          column_type: "varchar(100)",
           data_type: "varchar",
           is_nullable: "YES",
           column_default: null,
@@ -3515,6 +3611,7 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
         {
           object_name: "invoice_number_seq",
           column_name: "next_not_cached_value",
+          column_type: "bigint(21)",
           data_type: "bigint",
           is_nullable: "NO",
           column_default: null,
@@ -4441,7 +4538,17 @@ describe("MySQL object listing and detail", () => {
     expect(detail.path).toEqual(["app", "orders"]);
     expect(detail.columns).toEqual([
       { name: "id", type: "int", nullable: false, isPrimary: true, defaultValue: undefined },
-      { name: "total", type: "decimal", nullable: true, isPrimary: false, defaultValue: "0.00" },
+      // `decimal(12,2)` is the DECLARED type and `decimal` the family beside it (#1033): the
+      // fixture's DDL is `DECIMAL(12, 2)`, and a migration generated from a bare `decimal` is
+      // rejected by both servers.
+      {
+        name: "total",
+        type: "decimal(12,2)",
+        baseType: "decimal",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: "0.00",
+      },
     ]);
     // One entry per index with its columns in SEQ_IN_INDEX order, and NON_UNIQUE negated:
     // 0 is a unique index. GROUP_CONCAT is deliberately not used - group_concat_max_len is
@@ -4459,6 +4566,127 @@ describe("MySQL object listing and detail", () => {
     // Three reads, each narrowed to ONE database and ONE object.
     expect(bound).toHaveLength(3);
     for (const params of bound) expect(params).toEqual(["app", "orders"]);
+    await provider.disconnect();
+  });
+
+  /**
+   * The #1033 measurement: what each of the two type columns of `information_schema.COLUMNS`
+   * carries for one declaration.
+   *
+   * Measured 2026-09-22 on MySQL 26.7.0 and MariaDB 13.0.2, `SELECT COLUMN_NAME, DATA_TYPE,
+   * COLUMN_TYPE` over the `app.column_types` that `docker/mysql-init/01-object-fixture.sql`
+   * and `docker/mariadb-init/01-object-fixture.sql` create. `DATA_TYPE` is the FAMILY and
+   * drops the length, the precision and scale, the value list of an `ENUM` or a `SET`, and the
+   * `unsigned` attribute. `COLUMN_TYPE` is the type AS DECLARED and drops none of them.
+   *
+   * `varchar` with no length is not a type on either server - `CREATE TABLE t (note varchar)`
+   * is error 1064 - so the family is what a reader DISPLAYS at its peril and what a reader
+   * emitting DDL cannot use at all.
+   *
+   * The two servers agree on every row but `c_unsigned`, and `maria` is that disagreement
+   * measured rather than guessed: MariaDB still reports the integer display width MySQL 8.0.19
+   * deprecated, so `INT UNSIGNED` is `int unsigned` on MySQL and `int(10) unsigned` on
+   * MariaDB. One family, two declarations, and only the server knows which - which is why the
+   * family rides beside the declaration rather than being parsed back out of it.
+   */
+  const COLUMN_TYPE_MEASUREMENT = [
+    { name: "c_varchar", declared: "varchar(20)", family: "varchar" },
+    { name: "c_decimal", declared: "decimal(12,2)", family: "decimal" },
+    { name: "c_char", declared: "char(2)", family: "char" },
+    { name: "c_enum", declared: "enum('x','y')", family: "enum" },
+    { name: "c_set", declared: "set('a','b')", family: "set" },
+    { name: "c_unsigned", declared: "int unsigned", maria: "int(10) unsigned", family: "int" },
+    // The row where the two columns AGREE, and it is not decoration: a provider that copied
+    // the family into `baseType` unconditionally would claim a distinction this column does
+    // not have, which is the thing `ColumnSchema.baseType` says an absent field means.
+    { name: "c_text", declared: "text", family: "text" },
+  ] as const;
+
+  /** What the named server declares, which is `declared` except where `maria` overrides it. */
+  const declaredBy = (column: (typeof COLUMN_TYPE_MEASUREMENT)[number], mariadb: boolean): string =>
+    mariadb && "maria" in column ? column.maria : column.declared;
+
+  /** Those rows as the catalog answers them, for either column read. */
+  const columnTypeRows = (mariadb: boolean) =>
+    COLUMN_TYPE_MEASUREMENT.map((column) => ({
+      object_name: "column_types",
+      column_name: column.name,
+      column_type: declaredBy(column, mariadb),
+      data_type: column.family,
+      is_nullable: "YES",
+      column_default: null,
+      column_key: "",
+      extra: "",
+    }));
+
+  /** And what they must become: the declaration to SEE, the family to DECIDE on. */
+  const columnTypeColumns = (mariadb: boolean) =>
+    COLUMN_TYPE_MEASUREMENT.map((column) => ({
+      name: column.name,
+      type: declaredBy(column, mariadb),
+      ...(declaredBy(column, mariadb) === column.family ? {} : { baseType: column.family }),
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    }));
+
+  test("a column's type is the type AS DECLARED, with the family beside it (#1033)", async () => {
+    // Both flavours, because one provider file serves both type ids and the issue names both.
+    for (const mariadb of [true, false]) {
+      const provider = await connectedTo(mariadb);
+      mockExecuteFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        // The bulk TARGET read is the only statement ordered by TABLE_NAME that does not also
+        // project `object_name`; the bulk column read embeds the target as a subquery.
+        if (normalized.includes("order by table_name") && !normalized.includes("object_name")) {
+          return [[{ name: "column_types" }], []];
+        }
+        if (!normalized.includes("information_schema.columns")) return [[], []];
+        return [columnTypeRows(mariadb), []];
+      };
+
+      const single = await provider.describeObject(["app", "column_types"], "table");
+      expect(single.columns).toEqual(columnTypeColumns(mariadb));
+
+      // The SAME answer through the bulk read: two mappings would be two chances to disagree
+      // about the same table, and nothing downstream could tell which one was right.
+      const batch = await provider.describeObjects(["app"], "table");
+      expect(batch.details).toHaveLength(1);
+      expect(batch.details[0]?.columns).toEqual(columnTypeColumns(mariadb));
+
+      // `toEqual` ignores an undefined property, so the absent case is asserted by hand: a
+      // column whose declaration IS its family declares no `baseType` at all.
+      const plain = single.columns.find((column) => column.name === "c_text");
+      expect(Object.hasOwn(plain ?? {}, "baseType")).toBe(false);
+      await provider.disconnect();
+    }
+  });
+
+  test("both column reads select COLUMN_TYPE beside DATA_TYPE (#1033)", async () => {
+    // The statements themselves, because a mock answers whatever its author wrote: a read
+    // that stopped selecting `COLUMN_TYPE` would still pass the mapping test above.
+    const provider = await connectedTo(false);
+    const statements: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      statements.push(sql);
+      const normalized = sql.trim().toLowerCase();
+      // The bulk read skips its three detail statements when the target names nothing, so the
+      // target has to answer for the column read to be issued at all.
+      if (normalized.includes("order by table_name") && !normalized.includes("object_name")) {
+        return [[{ name: "orders" }], []];
+      }
+      return [[], []];
+    };
+
+    await provider.describeObject(["app", "orders"], "table");
+    await provider.describeObjects(["app"], "table");
+
+    const columnReads = statements.filter((sql) => sql.includes("information_schema.COLUMNS"));
+    expect(columnReads).toHaveLength(2);
+    for (const sql of columnReads) {
+      expect(sql).toContain("COLUMN_TYPE AS column_type");
+      expect(sql).toContain("DATA_TYPE AS data_type");
+    }
     await provider.disconnect();
   });
 
@@ -4503,6 +4731,7 @@ describe("MySQL object listing and detail", () => {
         [
           {
             column_name: "next_not_cached_value",
+            column_type: "bigint(21)",
             data_type: "bigint",
             is_nullable: "NO",
             column_default: null,
@@ -4515,7 +4744,14 @@ describe("MySQL object listing and detail", () => {
 
     const detail = await provider.describeObject(["app", "invoice_number_seq"], "sequence");
     expect(detail.columns).toEqual([
-      { name: "next_not_cached_value", type: "bigint", nullable: false, isPrimary: false, defaultValue: undefined },
+      {
+        name: "next_not_cached_value",
+        type: "bigint(21)",
+        baseType: "bigint",
+        nullable: false,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
     ]);
     await provider.disconnect();
   });
@@ -4826,7 +5062,17 @@ describe("MySQL bulk column read", () => {
     const orders = batch.details[2];
     expect(orders.columns).toEqual([
       { name: "id", type: "int", nullable: false, isPrimary: true, defaultValue: undefined },
-      { name: "total", type: "decimal", nullable: true, isPrimary: false, defaultValue: "0.00" },
+      // `decimal(12,2)` is the DECLARED type and `decimal` the family beside it (#1033): the
+      // fixture's DDL is `DECIMAL(12, 2)`, and a migration generated from a bare `decimal` is
+      // rejected by both servers.
+      {
+        name: "total",
+        type: "decimal(12,2)",
+        baseType: "decimal",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: "0.00",
+      },
     ]);
     expect(orders.indexes).toEqual([
       { name: "PRIMARY", columns: ["id"], unique: true },
@@ -4951,7 +5197,14 @@ describe("MySQL bulk column read", () => {
       {
         path: ["app", "invoice_number_seq"],
         columns: [
-          { name: "next_not_cached_value", type: "bigint", nullable: false, isPrimary: false, defaultValue: undefined },
+          {
+            name: "next_not_cached_value",
+            type: "bigint(21)",
+            baseType: "bigint",
+            nullable: false,
+            isPrimary: false,
+            defaultValue: undefined,
+          },
         ],
         indexes: [],
         foreignKeys: [],
