@@ -33,6 +33,17 @@
  * failure a test throws is one of the captures above; the `TypeError`s, which stand for a defect of
  * the provider's own, and a close that fails are built inline.
  *
+ * The recorded library answers every construction of a class with the same object, so two clients
+ * would share their calls and their closes. A test therefore counts clients by the provider's own
+ * factory calls and by the library's construction log, never by what was called or closed.
+ *
+ * Most rules the provider owns are compositions no module can see, and many of them are kept by what
+ * the provider does not do: build no second client, degrade no read but the two KM4 names, add no read
+ * to a module's, keep no answer for the next call. So those rules are pinned whole, as a class, rather
+ * than one mutant at a time: the lifecycle test counts every client, the KM4 matrix answers every
+ * combination of the two refusals, the failure matrix fails each read of each surface separately, and
+ * the wire traces and the delegation tests compare every read a surface makes.
+ *
  * A section number below, "spec 5.1" for example, is a section of #1088's design.
  */
 import { describe, expect, spyOn, test } from "bun:test";
@@ -41,15 +52,14 @@ import { flattenTree } from "@/components/object-tree/flatten";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
-import {
-  KAFKA_CONTAINER_LEVELS,
-  KAFKA_OBJECT_KINDS,
-  KAFKA_TOPIC_COLUMNS,
-} from "@/lib/db/providers/stream/kafka/objects";
+import type { KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
+import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
+import * as kafkaObjects from "@/lib/db/providers/stream/kafka/objects";
 import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/stream/kafka/platformatic-client";
-import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET } from "@/lib/db/providers/stream/kafka/read";
+import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, readMessages } from "@/lib/db/providers/stream/kafka/read";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
-import { KAFKA_RESULT_FIELDS } from "@/lib/db/providers/stream/kafka/results";
+import { KAFKA_RESULT_FIELDS, toQueryResult } from "@/lib/db/providers/stream/kafka/results";
+import type { ProviderCapabilities, ProviderOptions, QueryResult } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection } from "@/lib/types";
 import { kafkaFixture, recordedLib } from "../../helpers/kafka-fixtures";
@@ -148,32 +158,36 @@ function fetchAnswerFor(topics: unknown): unknown {
   return kafkaFixture(`fetch-${name}`);
 }
 
+/** How the captured broker answers each library call, as a broker answers the request the call carries. */
+const BROKER_ANSWERS: Readonly<Record<string, Answer>> = {
+  "admin.metadata": metadataFor,
+  // The captured listing, which the client answered without the internal topics.
+  "admin.listTopics": () => kafkaFixture("list-topics"),
+  // Topic orders and broker 1 were captured. Any other topic answers orders' captured configs, and
+  // any other broker broker 1's, under its own name: the shape a broker answers for any resource.
+  "admin.describeConfigs": (request) => {
+    const [resource] = (request as { resources: Array<{ resourceType: number; resourceName: string }> }).resources;
+    const captured = resource.resourceType === BROKER_RESOURCE ? "configs-broker-1" : "configs-topic-orders";
+    const answer = kafkaFixture<LibConfigResource[]>(captured);
+    for (const entry of answer) entry.resourceName = resource.resourceName;
+    return answer;
+  },
+  // The capture of a request that named orders alone, whatever the request names: every size these
+  // tests read is orders' 5,503 bytes on broker 1's one log dir, not the seeded cluster's.
+  "admin.describeLogDirs": () => kafkaFixture("log-dirs"),
+  // Only lag-classic's description was captured. lag-partial is also an Empty classic group with
+  // no members (list-groups), so it answers the same shape under its own id.
+  "admin.describeGroups": (request) => {
+    const [group] = kafkaFixture<Map<string, Record<string, unknown>>>("describe-groups-classic").values();
+    return new Map((request as { groups: string[] }).groups.map((id) => [id, { ...group, id }]));
+  },
+  "consumer.listOffsets": offsetsFor,
+  // The library's positional arguments: the topics are at index 7.
+  fetchV13: (...args) => fetchAnswerFor(args[7]),
+};
+
 function brokerLib(overrides: Record<string, Answer> = {}) {
-  return recordedLib({
-    "admin.metadata": metadataFor,
-    // Topic orders and broker 1 were captured. Any other topic answers orders' captured configs, and
-    // any other broker broker 1's, under its own name: the shape a broker answers for any resource.
-    "admin.describeConfigs": (request) => {
-      const [resource] = (request as { resources: Array<{ resourceType: number; resourceName: string }> }).resources;
-      const captured = resource.resourceType === BROKER_RESOURCE ? "configs-broker-1" : "configs-topic-orders";
-      const answer = kafkaFixture<LibConfigResource[]>(captured);
-      for (const entry of answer) entry.resourceName = resource.resourceName;
-      return answer;
-    },
-    // The capture of a request that named orders alone, whatever the request names: every size these
-    // tests read is orders' 5,503 bytes on broker 1's one log dir, not the seeded cluster's.
-    "admin.describeLogDirs": () => kafkaFixture("log-dirs"),
-    // Only lag-classic's description was captured. lag-partial is also an Empty classic group with
-    // no members (list-groups), so it answers the same shape under its own id.
-    "admin.describeGroups": (request) => {
-      const [group] = kafkaFixture<Map<string, Record<string, unknown>>>("describe-groups-classic").values();
-      return new Map((request as { groups: string[] }).groups.map((id) => [id, { ...group, id }]));
-    },
-    "consumer.listOffsets": offsetsFor,
-    // The library's positional arguments: the topics are at index 7.
-    fetchV13: (...args) => fetchAnswerFor(args[7]),
-    ...overrides,
-  });
+  return recordedLib({ ...BROKER_ANSWERS, ...overrides });
 }
 
 const CONNECTION = {
@@ -185,30 +199,68 @@ const CONNECTION = {
   createdAt: new Date(),
 } as unknown as DatabaseConnection;
 
-async function connected(overrides: Record<string, Answer> = {}, queryTimeout?: number) {
+/** One client, as the library builds it: one Admin, one Consumer and one fetch pool (spec 3.6 K8). */
+const LIBRARY_CLIENTS = ["Admin", "Consumer", "ConnectionPool"];
+
+/**
+ * A provider over the captured broker, not yet connected, with every client its factory built: the
+ * count that tells one client from two, which the shared objects of the recorded library cannot.
+ */
+function unconnected(overrides: Record<string, Answer> = {}, options: ProviderOptions = {}) {
   const recorded = brokerLib(overrides);
-  const provider = new KafkaProvider(CONNECTION, queryTimeout === undefined ? {} : { queryTimeout }, async (options) =>
-    createPlatformaticClient(options, recorded.lib),
-  );
-  await provider.connect();
-  return { provider, recorded };
+  const created: KafkaReadClient[] = [];
+  const provider = new KafkaProvider(CONNECTION, options, async (clientOptions) => {
+    const client = createPlatformaticClient(clientOptions, recorded.lib);
+    created.push(client);
+    return client;
+  });
+  return { provider, recorded, created };
+}
+
+async function connected(overrides: Record<string, Answer> = {}, queryTimeout?: number) {
+  const setup = unconnected(overrides, queryTimeout === undefined ? {} : { queryTimeout });
+  await setup.provider.connect();
+  return setup;
 }
 
 /** The query timeout the failure tests connect with, which a TimeoutError carries. */
 const FAILURE_TIMEOUT_MS = 7_000;
 
 /**
- * A provider connected over the captured broker, after which every call of one library member
- * fails with `failure`. Connect's own round trip is a metadata read, so that member starts failing
- * only once connect is done, and the failure is always the surface's own.
+ * One read a surface makes, as spec 7.1 names it, and which calls of one library member carry it: a
+ * metadata call is the forced broker read when it names no topic, and a topic read when it names some.
  */
-async function connectedThenFailing(member: string, failure: unknown) {
+type Read = { readonly name: string; readonly member: string; readonly carries: (request: unknown) => boolean };
+const namesNoTopic = (request: unknown) => (request as { topics: string[] }).topics.length === 0;
+const everyCall = () => true;
+const READS = {
+  forcedBrokers: { name: "the forced broker read", member: "admin.metadata", carries: namesNoTopic },
+  topicListing: { name: "the topic listing", member: "admin.listTopics", carries: everyCall },
+  listedTopics: { name: "the listed topics' metadata", member: "admin.metadata", carries: (r) => !namesNoTopic(r) },
+  brokerConfigs: { name: "the lowest broker's configs", member: "admin.describeConfigs", carries: everyCall },
+  logDirs: { name: "the log dirs", member: "admin.describeLogDirs", carries: everyCall },
+  offsets: { name: "the topic's offsets", member: "consumer.listOffsets", carries: everyCall },
+  topicMetadata: { name: "the topic's metadata", member: "admin.metadata", carries: (r) => !namesNoTopic(r) },
+  topicConfigs: { name: "the topic's configs", member: "admin.describeConfigs", carries: everyCall },
+} satisfies Record<string, Read>;
+
+/**
+ * A provider connected over the captured broker, after which every call that carries one read fails
+ * with `failure` while every other call is answered. Connect's own round trip is a metadata read, so
+ * the read starts failing only once connect is done, and the failure is always the surface's own.
+ */
+async function connectedThenFailing(read: Read, failure: unknown) {
   let armed = false;
-  const fail = (): never => {
-    throw failure;
-  };
-  const answer: Answer = member === "admin.metadata" ? (request) => (armed ? fail() : metadataFor(request)) : fail;
-  const setup = await connected({ [member]: answer }, FAILURE_TIMEOUT_MS);
+  const answer = BROKER_ANSWERS[read.member];
+  const setup = await connected(
+    {
+      [read.member]: (...args) => {
+        if (armed && read.carries(args[0])) throw failure;
+        return answer(...args);
+      },
+    },
+    FAILURE_TIMEOUT_MS,
+  );
   armed = true;
   return setup;
 }
@@ -247,27 +299,56 @@ const NON_AUTHORIZATION_FAILURES = [
 ] as const;
 
 /**
- * Every surface that reads the broker, each with a library call its read goes through, and each
- * monitoring panel once for every kind of read it makes: the forced broker read, the topic listing,
- * the lowest broker's configs and the log dirs.
+ * The refusal a principal without the cluster ACLs meets (M-I): the one failure KM4 degrades on, and
+ * only at two reads, the log dirs and the overview's broker configs; every other read it fails.
  */
-const BROKER_READS: ReadonlyArray<readonly [string, string, (provider: KafkaProvider) => Promise<unknown>]> = [
-  ["query", "consumer.listOffsets", (p) => p.query('{"topic":"codec-gzip","from":"earliest","limit":1}')],
-  ["listObjects", "admin.listTopics", (p) => p.listObjects([], "topic")],
-  ["describeObject", "admin.metadata", (p) => p.describeObject(["orders"], "topic")],
-  ["describeObjects", "admin.listTopics", (p) => p.describeObjects([], "topic")],
-  ["readObjectSource", "admin.describeConfigs", (p) => p.readObjectSource(["orders"], "topic")],
-  // The forced broker read, the listing the log-dir request names, and the log dirs themselves.
-  ["getHealth", "admin.metadata", (p) => p.getHealth()],
-  ["getHealth", "admin.listTopics", (p) => p.getHealth()],
-  ["getHealth", "admin.describeLogDirs", (p) => p.getHealth()],
-  // The forced broker read, the topic listing, the lowest broker's configs and the log dirs.
-  ["getOverview", "admin.metadata", (p) => p.getOverview()],
-  ["getOverview", "admin.listTopics", (p) => p.getOverview()],
-  ["getOverview", "admin.describeConfigs", (p) => p.getOverview()],
-  ["getOverview", "admin.describeLogDirs", (p) => p.getOverview()],
-  ["getStorageStats", "admin.listTopics", (p) => p.getStorageStats()],
-  ["getStorageStats", "admin.describeLogDirs", (p) => p.getStorageStats()],
+const AUTHORIZATION_REFUSAL = [
+  "error-cluster-authorization",
+  AuthenticationError,
+  { provider: "kafka", message: "The broker denied access to this cluster" },
+] as const;
+
+type BrokerRead = readonly [
+  surface: string,
+  readName: string,
+  read: Read,
+  call: (provider: KafkaProvider) => Promise<unknown>,
+  degradesOnRefusal: boolean,
+];
+const brokerRead = (
+  surface: string,
+  read: Read,
+  call: (provider: KafkaProvider) => Promise<unknown>,
+  degradesOnRefusal = false,
+): BrokerRead => [surface, read.name, read, call, degradesOnRefusal];
+
+/**
+ * Every read each surface makes, each failed on its own, and whether an authorization refusal of it
+ * degrades the surface (KM4) or fails it. A monitoring panel is listed once for every read spec 7.1
+ * gives it, because the provider composes those reads itself; a surface that delegates is listed with
+ * one read, because its module owns the rest.
+ */
+const BROKER_READS: readonly BrokerRead[] = [
+  brokerRead("query", READS.offsets, (p) => p.query('{"topic":"codec-gzip","from":"earliest","limit":1}')),
+  brokerRead("listObjects", READS.topicListing, (p) => p.listObjects([], "topic")),
+  brokerRead("describeObject", READS.topicMetadata, (p) => p.describeObject(["orders"], "topic")),
+  brokerRead("describeObjects", READS.topicListing, (p) => p.describeObjects([], "topic")),
+  brokerRead("readObjectSource", READS.topicConfigs, (p) => p.readObjectSource(["orders"], "topic")),
+  // The forced broker read, then the log-dir read: the listing it names, their metadata, the log dirs.
+  brokerRead("getHealth", READS.forcedBrokers, (p) => p.getHealth()),
+  brokerRead("getHealth", READS.topicListing, (p) => p.getHealth()),
+  brokerRead("getHealth", READS.listedTopics, (p) => p.getHealth()),
+  brokerRead("getHealth", READS.logDirs, (p) => p.getHealth(), true),
+  // The forced broker read, then the topic listing, the lowest broker's configs and the log-dir read.
+  brokerRead("getOverview", READS.forcedBrokers, (p) => p.getOverview()),
+  brokerRead("getOverview", READS.topicListing, (p) => p.getOverview()),
+  brokerRead("getOverview", READS.listedTopics, (p) => p.getOverview()),
+  brokerRead("getOverview", READS.brokerConfigs, (p) => p.getOverview(), true),
+  brokerRead("getOverview", READS.logDirs, (p) => p.getOverview(), true),
+  // The log-dir read alone.
+  brokerRead("getStorageStats", READS.topicListing, (p) => p.getStorageStats()),
+  brokerRead("getStorageStats", READS.listedTopics, (p) => p.getStorageStats()),
+  brokerRead("getStorageStats", READS.logDirs, (p) => p.getStorageStats(), true),
 ];
 
 const lagRows = async (provider: KafkaProvider, group: string) => {
@@ -281,9 +362,9 @@ const lagRows = async (provider: KafkaProvider, group: string) => {
   }>;
 };
 
-/** Every surface of a provider, called as a caller would. */
+/** Every surface of a provider, called as a caller would; each answers over the captured broker but maintenance. */
 const SURFACES: ReadonlyArray<readonly [string, (provider: KafkaProvider) => Promise<unknown>]> = [
-  ["query", (p) => p.query('{"topic":"orders"}')],
+  ["query", (p) => p.query('{"topic":"codec-gzip","from":"earliest","limit":1}')],
   ["listContainers", (p) => p.listContainers()],
   ["countObjects", (p) => p.countObjects([])],
   ["listObjects", (p) => p.listObjects([], "topic")],
@@ -302,8 +383,11 @@ const SURFACES: ReadonlyArray<readonly [string, (provider: KafkaProvider) => Pro
 ];
 
 describe("connect and disconnect", () => {
-  test("connect builds the client from the validated options and proves the broker answers with one forced metadata read", async () => {
-    const { recorded } = await connected({}, 7_000);
+  test("connect builds one client from the validated options and proves the broker answers with one forced metadata read", async () => {
+    const { recorded, created } = await connected({}, 7_000);
+    // One client, which is the library's one Admin, one Consumer and one fetch pool (spec 3.6 K8).
+    expect(created).toHaveLength(1);
+    expect(recorded.constructed.map(([name]) => name)).toEqual(LIBRARY_CLIENTS);
     const [admin] = recorded.constructed.filter(([name]) => name === "Admin").map(([, options]) => options);
     expect(admin).toMatchObject({
       clientId: "libredb-studio",
@@ -318,17 +402,17 @@ describe("connect and disconnect", () => {
   });
 
   test("a connect the broker fails closes the client it built and reports the broker's failure", async () => {
-    const recorded = brokerLib({
+    const { provider, recorded, created } = unconnected({
       "admin.metadata": () => {
         throw libError("error-connection-closed");
       },
     });
-    const provider = new KafkaProvider(CONNECTION, {}, async (options) =>
-      createPlatformaticClient(options, recorded.lib),
-    );
     const error = await provider.connect().catch((e) => e);
     expect(error).toBeInstanceOf(ConnectionError);
     expect(error).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+    // The client it closed is the one it built: no other was built to be closed in its place.
+    expect(created).toHaveLength(1);
+    expect(recorded.constructed.map(([name]) => name)).toEqual(LIBRARY_CLIENTS);
     expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
     expect(provider.isConnected()).toBe(false);
     await expect(provider.query('{"topic":"orders"}')).rejects.toThrow("Provider is not connected");
@@ -399,9 +483,12 @@ describe("connect and disconnect", () => {
   });
 
   test("K8: disconnect closes both clients and the fetch pool, and the provider then refuses every call", async () => {
-    const { provider, recorded } = await connected();
+    const { provider, recorded, created } = await connected();
     await provider.disconnect();
     expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+    // Closing builds nothing: the one client connect built is the one closed.
+    expect(created).toHaveLength(1);
+    expect(recorded.constructed.map(([name]) => name)).toEqual(LIBRARY_CLIENTS);
     expect(provider.isConnected()).toBe(false);
     const callsAfterClose = recorded.calls.length;
     await expect(provider.query('{"topic":"orders"}')).rejects.toThrow("Provider is not connected");
@@ -409,6 +496,37 @@ describe("connect and disconnect", () => {
     // A second disconnect has nothing left to close.
     await provider.disconnect();
     expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+  });
+
+  test("K8: one connect builds one client; the constructor, the declarations, every surface and disconnect build none", async () => {
+    const { provider, recorded, created } = unconnected();
+    const built = () => recorded.constructed.map(([name]) => name);
+    // Building the provider and reading its declarations opens nothing (C-65, Y-06).
+    provider.getCapabilities();
+    provider.getLabels();
+    expect(created).toEqual([]);
+    expect(built()).toEqual([]);
+    expect(recorded.calls).toEqual([]);
+    await provider.connect();
+    expect(created).toHaveLength(1);
+    expect(built()).toEqual(LIBRARY_CLIENTS);
+    // Every surface answers over that one client, and a source of each kind as well; the only other
+    // construction is the one-off Connection of a consumer-protocol group's API 69 description (spec
+    // 4.3), which the adapter closes before the source answers.
+    const answered = await Promise.all([
+      ...SURFACES.map(([name, call]) => (name === "runMaintenance" ? call(provider).catch((e) => e) : call(provider))),
+      provider.readObjectSource(["lag-classic"], "consumer_group"),
+      provider.readObjectSource(["lag-kip848"], "consumer_group"),
+      provider.readObjectSource(["1"], "broker"),
+    ]);
+    expect(answered).toHaveLength(SURFACES.length + 3);
+    expect(created).toHaveLength(1);
+    expect(built()).toEqual([...LIBRARY_CLIENTS, "Connection"]);
+    expect(closesOf(recorded.calls)).toEqual(["connection.close"]);
+    await provider.disconnect();
+    expect(created).toHaveLength(1);
+    expect(built()).toEqual([...LIBRARY_CLIENTS, "Connection"]);
+    expect(closesOf(recorded.calls)).toEqual(["admin.close", "connection.close", "consumer.close", "pool.close"]);
   });
 
   test("a disconnect whose close fails reports that failure, and leaves the provider disconnected all the same", async () => {
@@ -719,9 +837,17 @@ describe("reads over captured payloads", () => {
     const bound = await provider.query('{"topic":"orders"}', [1]).catch((e) => e);
     expect(bound).toBeInstanceOf(DatabaseConfigError);
     expect(bound.message).toBe("Bound params are not supported: a Kafka read request has no placeholders");
-    // None of the three reached the broker.
+    // A list is refused for holding an entry, whatever the entry: an undefined or a null is bound too.
+    const boundEmptyValues = await Promise.all(
+      [[undefined], [null]].map((params) => provider.query('{"topic":"orders"}', params).catch((e) => e)),
+    );
+    for (const refusal of boundEmptyValues) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect(refusal.message).toBe(bound.message);
+    }
+    // None of them reached the broker.
     expect(recorded.calls).toHaveLength(sent);
-    for (const refusal of [empty, invalid, bound]) expect(refusal.provider).toBe("kafka");
+    for (const refusal of [empty, invalid, bound, ...boundEmptyValues]) expect(refusal.provider).toBe("kafka");
     // Empty text and bound params need no broker, so they come before anything else, the
     // connection check included: a provider that never connected refuses them the same way.
     const unconnected = new KafkaProvider(CONNECTION);
@@ -817,7 +943,12 @@ describe("the object surface", () => {
     const { provider, recorded } = await connected();
     const sent = recorded.calls.length;
     const detail = await provider.describeObject(["codec-gzip"], "topic");
-    expect(detail).toEqual({ path: ["codec-gzip"], columns: [...KAFKA_TOPIC_COLUMNS], indexes: [], foreignKeys: [] });
+    expect(detail).toEqual({
+      path: ["codec-gzip"],
+      columns: [...kafkaObjects.KAFKA_TOPIC_COLUMNS],
+      indexes: [],
+      foreignKeys: [],
+    });
     expect(detail.columns.map((column) => column.name)).toEqual([
       "partition",
       "offset",
@@ -909,15 +1040,15 @@ describe("declarations", () => {
       maintenanceOperations: [],
       schemaRefreshPattern: "(?!)",
       defaultPort: 9092,
-      containerLevels: KAFKA_CONTAINER_LEVELS,
-      objectKinds: KAFKA_OBJECT_KINDS,
+      containerLevels: kafkaObjects.KAFKA_CONTAINER_LEVELS,
+      objectKinds: kafkaObjects.KAFKA_OBJECT_KINDS,
     };
     expect(capabilities).toMatchObject(declared);
     // Exactly these members, so no flag the spec does not name (a key browser, an explain format) is declared.
     expect(Object.keys(capabilities).sort()).toEqual(Object.keys(declared).sort());
     // The declarations are the objects module's own, not copies of them.
-    expect(capabilities.objectKinds).toBe(KAFKA_OBJECT_KINDS);
-    expect(capabilities.containerLevels).toBe(KAFKA_CONTAINER_LEVELS);
+    expect(capabilities.objectKinds).toBe(kafkaObjects.KAFKA_OBJECT_KINDS);
+    expect(capabilities.containerLevels).toBe(kafkaObjects.KAFKA_CONTAINER_LEVELS);
     // Compiled the way src/lib/query-generators.ts compiles it, over a click on a topic whose name holds a SQL verb.
     const pattern = new RegExp(capabilities.schemaRefreshPattern, "i");
     expect(pattern.test(JSON.stringify({ topic: "orders-drop", from: "latest", limit: 50 }, null, 2))).toBe(false);
@@ -1175,26 +1306,126 @@ describe("monitoring", () => {
     expect(none).toMatchObject({ provider: "kafka", message: "The broker's metadata listed no live broker" });
   });
 
-  test("the overview degrades per refused cluster read, each alone (KM4)", async () => {
-    const bothRefused = await connected({
-      "admin.describeConfigs": () => {
-        throw libError("error-cluster-authorization");
-      },
-      "admin.describeLogDirs": () => {
-        throw libError("error-cluster-authorization");
+  const clusterRefusal: Answer = () => {
+    throw libError("error-cluster-authorization");
+  };
+  const ON_DISK = "5.37 KB on disk, all replicas, internal topics excluded";
+  const STORAGE_ROW = {
+    name: "broker 1: /tmp/kafka-logs",
+    location: "/tmp/kafka-logs",
+    size: "5.37 KB",
+    sizeBytes: 5503,
+    usagePercent: 79,
+  };
+  // The two cluster reads need different rights (Describe and DescribeConfigs on the cluster), so
+  // either can be refused alone (KM4): every combination, and each panel's whole answer in each.
+  const KM4_COMBINATIONS = [
+    ["neither cluster read refused", {}, { configs: true, logDirs: true }],
+    [
+      "the broker configs refused alone",
+      { "admin.describeConfigs": clusterRefusal },
+      { configs: false, logDirs: true },
+    ],
+    ["the log dirs refused alone", { "admin.describeLogDirs": clusterRefusal }, { configs: true, logDirs: false }],
+    [
+      "both cluster reads refused",
+      { "admin.describeConfigs": clusterRefusal, "admin.describeLogDirs": clusterRefusal },
+      { configs: false, logDirs: false },
+    ],
+  ] as const;
+
+  test.each(KM4_COMBINATIONS)(
+    "KM4: with %s, each panel degrades by the read it was refused and by no other",
+    async (_combination, overrides, readable) => {
+      const { provider } = await connected(overrides);
+      const [overview, health, storage] = await Promise.all([
+        provider.getOverview(),
+        provider.getHealth(),
+        provider.getStorageStats(),
+      ]);
+      const size = readable.logDirs ? ON_DISK : "N/A";
+      expect(overview).toEqual({
+        version: "N/A",
+        uptime: "N/A",
+        // A refused broker-config read is no limit published, the one meaning 0 has (spec 7.1).
+        maxConnections: readable.configs ? 2147483647 : 0,
+        databaseSize: size,
+        ...(readable.logDirs ? { databaseSizeBytes: 5503 } : {}),
+        tableCount: ALL.topics.size,
+        indexCount: 0,
+      });
+      expect(health).toEqual({ databaseSize: size, cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] });
+      expect(storage).toEqual(readable.logDirs ? [STORAGE_ROW] : []);
+    },
+  );
+
+  test("each panel makes exactly the reads spec 7.1 lists, and makes them again on every load", async () => {
+    const { provider, recorded } = await connected();
+    type Call = [name: string, args: unknown[]];
+    const forcedBrokers: Call = ["admin.metadata", [{ topics: [], autocreateTopics: false, forceUpdate: true }]];
+    const listing: Call = ["admin.listTopics", []];
+    const listedTopics: Call = [
+      "admin.metadata",
+      [{ topics: [...kafkaFixture<string[]>("list-topics")].sort(), autocreateTopics: false }],
+    ];
+    const logDirs: Call = [
+      "admin.describeLogDirs",
+      [{ topics: [...ALL.topics].map(([name, topic]) => ({ name, partitions: topic.partitions.map((_, i) => i) })) }],
+    ];
+    const brokerConfigs: Call = [
+      "admin.describeConfigs",
+      [
+        {
+          resources: [{ resourceType: BROKER_RESOURCE, resourceName: "1" }],
+          includeSynonyms: false,
+          includeDocumentation: false,
+        },
+      ],
+    ];
+    /** The calls one load of a panel made, in order. */
+    const readsOf = async (load: () => Promise<unknown>) => {
+      const sent = recorded.calls.length;
+      await load();
+      return recorded.calls.slice(sent);
+    };
+    const inAnyOrder = (calls: unknown[]) => calls.map((call) => JSON.stringify(call)).sort();
+    // Health: the forced broker read, then the log-dir read, and no broker config (spec 7.1, KM6).
+    const health = [await readsOf(() => provider.getHealth()), await readsOf(() => provider.getHealth())];
+    expect(health).toEqual([
+      [forcedBrokers, listing, listedTopics, logDirs],
+      [forcedBrokers, listing, listedTopics, logDirs],
+    ]);
+    // Storage: the log-dir read alone.
+    const storage = [await readsOf(() => provider.getStorageStats()), await readsOf(() => provider.getStorageStats())];
+    expect(storage).toEqual([
+      [listing, listedTopics, logDirs],
+      [listing, listedTopics, logDirs],
+    ]);
+    // The overview: the forced broker read first, since its lowest broker is the one whose configs
+    // are read, then the topic listing, those configs and the log-dir read, in whatever order they run.
+    const overview = [await readsOf(() => provider.getOverview()), await readsOf(() => provider.getOverview())];
+    for (const [first, ...rest] of overview) {
+      expect(first).toEqual(forcedBrokers);
+      expect(inAnyOrder(rest)).toEqual(inAnyOrder([listing, brokerConfigs, listing, listedTopics, logDirs]));
+    }
+  });
+
+  test("a max.connections the broker publishes as no whole number fails the overview, never reads as no limit", async () => {
+    const { provider } = await connected({
+      "admin.describeConfigs": (request) => {
+        const answer = BROKER_ANSWERS["admin.describeConfigs"](request) as Array<{
+          configs: Array<{ name: string; value: string | null }>;
+        }>;
+        for (const config of answer[0].configs) if (config.name === "max.connections") config.value = "unlimited";
+        return answer;
       },
     });
-    const refusedOverview = await bothRefused.provider.getOverview();
-    expect(refusedOverview).toMatchObject({ maxConnections: 0, databaseSize: "N/A", tableCount: ALL.topics.size });
-    expect("databaseSizeBytes" in refusedOverview).toBe(false);
-    const configsRefused = await connected({
-      "admin.describeConfigs": () => {
-        throw libError("error-cluster-authorization");
-      },
+    const error = await provider.getOverview().catch((e) => e);
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).toMatchObject({
+      provider: "kafka",
+      message: "The broker published max.connections as a value that is not a whole number",
     });
-    const overview = await configsRefused.provider.getOverview();
-    expect(overview.maxConnections).toBe(0);
-    expect(overview.databaseSize).toContain("on disk");
   });
 
   test("storage comes from the log dirs; the surfaces the protocol cannot fill are empty; maintenance is refused", async () => {
@@ -1226,66 +1457,208 @@ describe("monitoring", () => {
 });
 
 describe("failures (spec 5.6)", () => {
+  type CapturedFailure = readonly [
+    fixture: string,
+    errorClass: new (...args: never[]) => Error,
+    fields: { readonly provider: string; readonly message: string } & Record<string, unknown>,
+  ];
+
   test.each(BROKER_READS)(
-    "%s fails when %s meets an unreachable broker, a lost connection, a timeout or a SASL failure, as the error table maps it, and a defect surfaces as itself",
-    async (_surface, member, call) => {
+    "%s fails when %s meets an unreachable broker, a lost connection, a timeout, a SASL failure or an authorization refusal KM4 does not degrade, as the error table maps each, and a defect surfaces as itself",
+    async (_surface, _readName, read, call, degradesOnRefusal) => {
+      // Only an authorization refusal can degrade a panel, and only at the two reads KM4 names: every
+      // other failure, and that refusal at any other read, fails whichever surface met it.
+      const failures: readonly CapturedFailure[] = degradesOnRefusal
+        ? NON_AUTHORIZATION_FAILURES
+        : [...NON_AUTHORIZATION_FAILURES, AUTHORIZATION_REFUSAL];
       const failed = await Promise.all(
-        NON_AUTHORIZATION_FAILURES.map(async ([fixture]) =>
-          call((await connectedThenFailing(member, libError(fixture))).provider).catch((e) => e),
+        failures.map(async ([fixture]) =>
+          call((await connectedThenFailing(read, libError(fixture))).provider).catch((e) => e),
         ),
       );
       failed.forEach((error, index) => {
-        const [, errorClass, fields] = NON_AUTHORIZATION_FAILURES[index];
+        const [, errorClass, fields] = failures[index];
         expect(error).toBeInstanceOf(errorClass);
         expect(error).toMatchObject(fields);
       });
       // A failure that is not the library's is a defect of the provider's own, never the broker's answer.
       const defect = new TypeError("a defect, not a refusal");
-      const broken = await connectedThenFailing(member, defect);
+      const broken = await connectedThenFailing(read, defect);
       expect(await call(broken.provider).catch((e) => e)).toBe(defect);
     },
   );
 
-  test("a topic listing that fails fails the overview rather than counting no topics, whichever of its two listings it is", async () => {
+  test.each(BROKER_READS.filter(([, , , , degradesOnRefusal]) => degradesOnRefusal))(
+    "%s still answers when %s is refused for want of the cluster ACL (KM4)",
+    async (_surface, _readName, read, call) => {
+      // What the panel then answers is the KM4 matrix's to pin; here, that the refusal fails nothing.
+      const [fixture] = AUTHORIZATION_REFUSAL;
+      const setup = await connectedThenFailing(read, libError(fixture));
+      await expect(call(setup.provider)).resolves.toBeDefined();
+      // The control: the refused read was asked.
+      expect(setup.recorded.calls.some(([name, args]) => name === read.member && read.carries(args[0]))).toBe(true);
+    },
+  );
+
+  test("a topic listing that fails fails the overview rather than counting no topics, whichever of its two listings it is and whatever the failure", async () => {
     // The overview lists the topics twice, for its count and for the log-dir request, so one listing
     // can fail while the other answers; a count taken from a failed listing would read as 0 topics.
+    // Neither listing is a read KM4 degrades, so the authorization refusal fails it too.
+    const failures: readonly CapturedFailure[] = [...NON_AUTHORIZATION_FAILURES, AUTHORIZATION_REFUSAL];
+    const cases = failures.flatMap((failure) => [1, 2].map((failingListing) => ({ failure, failingListing })));
     const outcomes = await Promise.all(
-      [1, 2].map(async (failingListing) => {
+      cases.map(async ({ failure: [fixture], failingListing }) => {
         let listings = 0;
-        const { provider } = await connected({
-          "admin.listTopics": () => {
-            listings++;
-            if (listings === failingListing) throw libError("error-connection-closed");
-            return kafkaFixture("list-topics");
+        const { provider } = await connected(
+          {
+            "admin.listTopics": () => {
+              listings++;
+              if (listings === failingListing) throw libError(fixture);
+              return kafkaFixture("list-topics");
+            },
           },
-        });
+          FAILURE_TIMEOUT_MS,
+        );
         const error = await provider.getOverview().catch((e) => e);
         return { error, listings };
       }),
     );
-    for (const { error, listings } of outcomes) {
-      expect(error).toBeInstanceOf(ConnectionError);
-      expect(error).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+    outcomes.forEach(({ error, listings }, index) => {
+      const [, errorClass, fields] = cases[index].failure;
+      expect(error).toBeInstanceOf(errorClass);
+      expect(error).toMatchObject(fields);
       // The control: both listings were asked, so the other one answered.
       expect(listings).toBe(2);
-    }
+    });
   });
 
   test("countObjects answers a kind whose read failed as unavailable, in the error table's words, and counts the others", async () => {
+    const failures: readonly CapturedFailure[] = [...NON_AUTHORIZATION_FAILURES, AUTHORIZATION_REFUSAL];
     const counted = await Promise.all(
-      NON_AUTHORIZATION_FAILURES.map(async ([fixture]) =>
-        (await connectedThenFailing("admin.listTopics", libError(fixture))).provider.countObjects([]),
+      failures.map(async ([fixture]) =>
+        (await connectedThenFailing(READS.topicListing, libError(fixture))).provider.countObjects([]),
       ),
     );
     counted.forEach((counts, index) => {
       expect(counts).toEqual({
-        topic: { unavailable: NON_AUTHORIZATION_FAILURES[index][2].message },
+        topic: { unavailable: failures[index][2].message },
         consumer_group: { count: 3 },
         broker: { count: 1 },
       });
     });
     const defect = new TypeError("a defect, not a refusal");
-    const broken = await connectedThenFailing("admin.listTopics", defect);
+    const broken = await connectedThenFailing(READS.topicListing, defect);
     expect(await broken.provider.countObjects([]).catch((e) => e)).toBe(defect);
   });
+});
+
+describe("delegation (spec 3.5)", () => {
+  // index.ts composes and delegates: each of these surfaces answers what the module that owns it
+  // answers over a client in the same state, and makes exactly the reads that module makes, on every
+  // call. So anything the provider put between the caller and the module (a read of its own, an
+  // argument changed, an answer reshaped or kept for the next call) shows here, whichever it is.
+  const READ_LIMITS = { resultByteBudget: KAFKA_RESULT_BYTE_BUDGET, cellLimit: KAFKA_CELL_LIMIT };
+  /** A read composed as spec 3.5 and 5.1 compose it, its time left out: the time has its own test. */
+  const composedRead =
+    (text: string) =>
+    async (client: KafkaReadClient): Promise<QueryResult> => {
+      const request = parseReadRequest(text, DEFAULT_QUERY_LIMIT);
+      const outcome = await readMessages(client, request, READ_LIMITS, AbortSignal.timeout(FAILURE_TIMEOUT_MS));
+      return toQueryResult(outcome.rows, 0, request.limit, outcome.warnings, outcome.wasLimited);
+    };
+  const untimed = (result: QueryResult): QueryResult => ({ ...result, executionTime: 0 });
+  /** A call's arguments, compared across two recorded libraries: each hands out objects whose functions are its own. */
+  const comparable = (value: unknown): unknown => {
+    if (typeof value === "function") return "[function]";
+    if (Array.isArray(value)) return value.map(comparable);
+    if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+      return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, comparable(member)]));
+    }
+    return value;
+  };
+  const WHOLE_PARTITION = '{"topic":"codec-gzip","from":"earliest","limit":3}';
+  const FROM_AN_OFFSET = '{"topic":"orders","partition":1,"from":{"offset":5},"limit":2}';
+  const CUT_TO_THE_CELL = '{"topic":"big","from":"earliest","limit":1}';
+
+  const DELEGATIONS: ReadonlyArray<
+    readonly [
+      surface: string,
+      viaProvider: (provider: KafkaProvider) => Promise<unknown>,
+      viaModule: (client: KafkaReadClient, capabilities: ProviderCapabilities) => Promise<unknown>,
+    ]
+  > = [
+    ["query, a whole partition", (p) => p.query(WHOLE_PARTITION).then(untimed), composedRead(WHOLE_PARTITION)],
+    [
+      "query, from an offset and cut by its limit",
+      (p) => p.query(FROM_AN_OFFSET).then(untimed),
+      composedRead(FROM_AN_OFFSET),
+    ],
+    [
+      "query, a record cut to the cell limit",
+      (p) => p.query(CUT_TO_THE_CELL).then(untimed),
+      composedRead(CUT_TO_THE_CELL),
+    ],
+    ["countObjects", (p) => p.countObjects([]), (c) => kafkaObjects.countObjects(c, [])],
+    ...kafkaObjects.KAFKA_OBJECT_KINDS.map(
+      (kind) =>
+        [
+          `listObjects of ${kind.id}`,
+          (p: KafkaProvider) => p.listObjects([], kind.id),
+          (c: KafkaReadClient) => kafkaObjects.listObjects(c, [], kind.id),
+        ] as const,
+    ),
+    [
+      "describeObject",
+      (p) => p.describeObject(["orders"], "topic"),
+      (c, capabilities) => kafkaObjects.describeObject(c, capabilities, ["orders"], "topic"),
+    ],
+    ["describeObjects", (p) => p.describeObjects([], "topic"), (c) => kafkaObjects.describeObjects(c, [], "topic")],
+    [
+      "describeObjects, bounded by the caller",
+      (p) => p.describeObjects([], "topic", 3),
+      (c) => kafkaObjects.describeObjects(c, [], "topic", 3),
+    ],
+    [
+      "readObjectSource of a topic, bounded by the caller",
+      (p) => p.readObjectSource(["orders"], "topic", 40),
+      (c, capabilities) => kafkaObjects.readObjectSource(c, capabilities, ["orders"], "topic", 40),
+    ],
+    [
+      "readObjectSource of a classic group",
+      (p) => p.readObjectSource(["lag-classic"], "consumer_group"),
+      (c, capabilities) => kafkaObjects.readObjectSource(c, capabilities, ["lag-classic"], "consumer_group"),
+    ],
+    [
+      "readObjectSource of a consumer-protocol group",
+      (p) => p.readObjectSource(["lag-kip848"], "consumer_group"),
+      (c, capabilities) => kafkaObjects.readObjectSource(c, capabilities, ["lag-kip848"], "consumer_group"),
+    ],
+    [
+      "readObjectSource of a broker",
+      (p) => p.readObjectSource(["1"], "broker"),
+      (c, capabilities) => kafkaObjects.readObjectSource(c, capabilities, ["1"], "broker"),
+    ],
+  ];
+
+  test.each(DELEGATIONS)(
+    "%s answers what its module answers, with the same reads, on every call",
+    async (_surface, viaProvider, viaModule) => {
+      const { provider, recorded } = await connected();
+      const capabilities = provider.getCapabilities();
+      const reference = brokerLib();
+      const client = createPlatformaticClient(kafkaConnectionOptions(CONNECTION, FAILURE_TIMEOUT_MS), reference.lib);
+      // The provider's client made connect's forced broker read, so this one makes it too: both start alike.
+      await client.metadata([]);
+      const compareOneCall = async () => {
+        const [sent, referenceSent] = [recorded.calls.length, reference.calls.length];
+        expect(await viaProvider(provider)).toEqual(await viaModule(client, capabilities));
+        const reads = recorded.calls.slice(sent);
+        expect(comparable(reads)).toEqual(comparable(reference.calls.slice(referenceSent)));
+        // The control: the module read the broker, so an equal trace is not two empty ones.
+        expect(reads.length).toBeGreaterThan(0);
+      };
+      await compareOneCall();
+      await compareOneCall();
+    },
+  );
 });
