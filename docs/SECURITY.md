@@ -407,6 +407,10 @@ These are real, current, and not oversights. Each is a decision with a reason.
   and the boundary between them is not a policy engine. Target allowlists, per-provider command
   capabilities and a locked-down deployment profile are a coherent direction and are not
   implemented.
+  A Kafka broker's metadata chooses the further hosts Studio connects to, with the connection's SASL credentials: a Kafka client reaches every broker at the address the broker advertises, so a hostile or misconfigured broker can direct Studio, with those credentials, to any host and port.
+  Use TLS with verify-full so credentials reach only hosts whose certificate the configured CA vouches for.
+  A Kafka connection refuses an SSH tunnel for the same reason: the tunnel would carry the bootstrap connection only, and every read would go to the advertised addresses directly.
+  And the Kafka client decompresses every batch of a fetch response whole, before any bound Studio applies, while the broker bounds only the compressed batch, so one response can hold its compressed size times the codec's ratio, measured at about 1,029 to 1 for gzip and 32,692 to 1 for zstd, in the one process every user shares; a hostile broker is bounded by neither, because the client buffers whatever frame length the broker announces ([`docs/providers/kafka.md`](./providers/kafka.md) section 5.4).
 - **Local login credentials are not hashed.** They arrive as `ADMIN_PASSWORD` and `USER_PASSWORD`
   environment variables, so the environment already holds the secret. Rate limiting (1.2) and the
   constant-time comparison (1.5) address the reachable part of the risk.

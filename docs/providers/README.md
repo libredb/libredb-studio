@@ -23,13 +23,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Apache Trino | `trino` | SQL (federated query engine) | none (HTTP: the client protocol, `POST /v1/statement`) | SQL (Trino) | [trino.md](./trino.md) |
 | Apache Cassandra | `cassandra` | SQL (wide-column) | `cassandra-driver` (pure JS) | SQL-shaped (CQL) | [cassandra.md](./cassandra.md) |
 | Prometheus | `prometheus` | Time series | none (HTTP: the Prometheus HTTP API, `/api/v1/*`) | PromQL | [prometheus.md](./prometheus.md) |
+| Apache Kafka | `kafka` | Stream | `@platformatic/kafka` (pure TypeScript) | JSON (a read request) | [kafka.md](./kafka.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB and Prometheus are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Prometheus and Kafka are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -184,10 +185,11 @@ PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
 
 ## SSH tunnels: bastion host key verification
 
-Any connection may reach its database through an SSH tunnel (`sshTunnel` on the connection,
+Any connection but a Kafka one may reach its database through an SSH tunnel (`sshTunnel` on the connection,
 [`src/lib/ssh/tunnel.ts`](../../src/lib/ssh/tunnel.ts)). This is the only layer that can verify who
 terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the
 connection's own SSL settings say nothing about the bastion.
+A Kafka connection refuses a tunnel: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry, so the dialog offers no SSH panel for it and the provider refuses a tunnelled connection ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
 
 **The policy is trust-on-first-use (TOFU), pinned per connection.** Not "refuse anything unknown":
 requiring a pasted fingerprint before the first connection makes tunnelling unusable for someone
@@ -248,9 +250,10 @@ grid. Each row was verified against the running container on 2026-08-19, and the
 2026-08-20 — the credentials are the ones the fixture actually accepts, not the ones its environment
 block asks for (twice those differ; see the notes).
 The Prometheus row and the `prometheus-auth` note below were verified against the running containers on 2026-09-23, by the capture `tests/fixtures/prometheus/README.md` records.
+The Apache Kafka row and the `kafka-auth` and `kafka-cluster` notes below were verified against the running containers on 2026-09-24, by the capture `tests/fixtures/kafka/README.md` records.
 
-Start the sixteen always-on services with a plain `docker compose -f database-compose.yml up -d` -
-fourteen engine containers plus the one-shot `couchbase-init` and `trino-init` seed sidecars; the `Profile` column names
+Start the eighteen always-on services with a plain `docker compose -f database-compose.yml up -d`:
+fifteen engine containers plus the one-shot `couchbase-init`, `trino-init` and `kafka-init` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -271,6 +274,7 @@ provider's integration pass.
 | Apache Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
 | Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
+| Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
@@ -285,6 +289,12 @@ with authentication off, so a password breaks a connection that works without on
 **Prometheus with basic auth is a second service, `prometheus-auth`, behind a profile of its own.**
 Start it with `docker compose -f database-compose.yml --profile prometheus-auth up -d prometheus-auth` and connect to port `9091` as user `studio` with password `studio-probe`, the throwaway credential its web config, `docker/prometheus/web-auth.yml`, holds as a bcrypt hash.
 The plain `prometheus` service on 9090 takes no credential at all ([prometheus.md §4.2](./prometheus.md#42-authentication)).
+
+**Apache Kafka has two more fixtures behind profiles of their own, and the plain `kafka` service takes no credential and no TLS.**
+`kafka` is seeded by its `kafka-init` sidecar, and its binary and transactional records by `bun docker/kafka/seed-binary.ts localhost:9092` from the host, which the sidecar cannot run.
+`kafka-cluster` is three nodes: start it with `docker compose -f database-compose.yml --profile kafka-cluster up -d` and connect to `localhost:9192`, from which the client learns the other two at 9193 and 9194.
+`kafka-auth` is TLS with SCRAM-SHA-512 and an authorizer: start it with `docker compose -f database-compose.yml --profile kafka-auth up -d kafka-auth`, create the principal `reader` with a password of your choice as the service's comment in `database-compose.yml` shows, copy its CA out of the container, and connect to port `19094` with SASL mechanism `SCRAM-SHA-512`, TLS `verify-full` and that CA.
+`reader` holds no ACL, so it sees an empty cluster and is refused the cluster reads, which is what the fixture is for ([kafka.md §6.1](./kafka.md#listing-counting-and-scale)).
 
 **Cassandra needs one field this table has no column for, and will not connect without it.** `Local
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the
