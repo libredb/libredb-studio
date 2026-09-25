@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { KafkaError, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
 import {
   createPlatformaticClient,
@@ -59,19 +60,41 @@ const connectionFailure = (host: string, port: number, nodeCode: string) =>
   });
 /** One Fetch answer carrying the partition's error code, as the client's ResponseError holds it (captured, error-offset-out-of-range). */
 const fetchRefusal = (apiId: string) =>
-  libError({ code: "PLT_KFK_RESPONSE", message: "Received response with error while executing API Fetch(v17)" }, [
+  libError({ code: "PLT_KFK_RESPONSE", message: "Received response with error while executing API Fetch(v13)" }, [
     libError({ code: "PLT_KFK_PROTOCOL", apiId, path: "/responses/0/partitions/0" }),
   ]);
-/** A fetch that failed on both of the client's attempts, its one retry spent, as its retry loop reports it (dist/clients/base/base.js). */
-const fetchFailedTwice = (attempt: () => unknown) =>
-  libError({ code: "PLT_KFK_MULTIPLE", message: "fetch failed 2 times." }, [attempt(), attempt()]);
 
-/** A metadata answer for orders whose partition 1 has the given leader. */
+/** Brokers a leader can move to, beside the capture's broker 1 at localhost:9092. */
+const OTHER_BROKERS: Array<[number, { host: string; port: number; rack: null }]> = [
+  [0, { host: "broker-0.example", port: 9090, rack: null }],
+  [2, { host: "broker-2.example", port: 9094, rack: null }],
+];
+const NODE_AT = new Map([
+  ["localhost:9092", 1],
+  ["broker-0.example:9090", 0],
+  ["broker-2.example:9094", 2],
+]);
+
+/** A metadata answer for orders whose partition 1 has the given leader, on a cluster that also lists brokers 0 and 2. */
 const ordersWithLeader = (leader: number) => {
-  const md = kafkaFixture<{ topics: Map<string, { partitions: Array<{ leader: number }> }> }>("metadata-orders");
+  const md = kafkaFixture<{
+    brokers: Map<number, { host: string; port: number; rack: string | null }>;
+    topics: Map<string, { partitions: Array<{ leader: number }> }>;
+  }>("metadata-orders");
   md.topics.get("orders")!.partitions[1].leader = leader;
+  md.brokers = new Map([...md.brokers, ...OTHER_BROKERS]);
   return md;
 };
+
+/** The node each fetch was sent to, read from the pooled connection it went out on. */
+const fetchedFrom = (calls: Array<[string, unknown[]]>) =>
+  calls
+    .filter(([name]) => name === "fetchV13")
+    .map(([, args]) => {
+      const { host, port } = (args[0] as { broker: { host: string; port: number } }).broker;
+      return NODE_AT.get(`${host}:${port}`);
+    });
+const fetchCount = (calls: Array<[string, unknown[]]>) => calls.filter(([name]) => name === "fetchV13").length;
 
 /** Every seeded topic's captured metadata, answered for the names asked, as the library answers them. */
 const ALL = kafkaFixture<{ topics: Map<string, { id: string }> } & Record<string, unknown>>("metadata-all");
@@ -87,22 +110,24 @@ const argsOf = (calls: Array<[string, unknown[]]>, name: string) =>
 
 /**
  * A client over orders whose partition 1 is led by node 1 until a forced metadata read names
- * `movedTo`, and whose first fetch fails with `failure`; every later fetch answers the capture.
+ * `movedTo`, and whose first fetch fails with `failure`, at the fetch itself or at the pooled
+ * connection it needs; every later fetch answers the capture.
  */
-const afterLeaderMove = (movedTo: number, failure: () => unknown) => {
-  let fetches = 0;
+const afterLeaderMove = (movedTo: number, failure: () => unknown, failing: "fetchV13" | "pool.get" = "fetchV13") => {
+  let attempts = 0;
   const recorded = fakeLib({
     "admin.metadata": (o) => ordersWithLeader((o as { forceUpdate?: boolean }).forceUpdate ? movedTo : 1),
-    "consumer.fetch": () => {
-      fetches++;
-      if (fetches === 1) throw failure();
-      return kafkaFixture("fetch-orders-p1-o5");
+    [failing]: (answer: unknown) => {
+      attempts++;
+      if (attempts === 1) throw failure();
+      return failing === "pool.get" ? { broker: answer } : kafkaFixture("fetch-orders-p1-o5");
     },
   });
   const client = createPlatformaticClient(OPTIONS, recorded.lib);
   return {
     read: async () => client.fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal()),
-    nodes: () => argsOf(recorded.calls, "consumer.fetch").map((o) => (o as { node: number }).node),
+    nodes: () => fetchedFrom(recorded.calls),
+    calls: recorded.calls,
   };
 };
 
@@ -128,25 +153,37 @@ const until = async (condition: () => boolean) => {
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("loadPlatformatic", () => {
-  test("mutes the protocol logger, which prints request frames under DEBUG, and hands over the four members (K3)", async () => {
+  test("mutes the protocol logger, which prints request frames under DEBUG, and hands over the six members (K3)", async () => {
     const protocol = { enabled: true };
     const library = {
       loggers: { protocol, client: { enabled: true } },
       Admin: class {},
       Consumer: class {},
       Connection: class {},
+      ConnectionPool: class {},
       consumerGroupDescribeV0: { api: { async: async () => undefined } },
+      fetchV13: { api: { async: async () => undefined } },
+      fetchV17: { api: { async: async () => undefined } },
       Producer: class {},
     };
     const lib = await loadPlatformatic(async () => library as never);
     expect(protocol.enabled).toBe(false);
     // The client logger is not the provider's to silence.
     expect(library.loggers.client.enabled).toBe(true);
-    expect(Object.keys(lib).sort()).toEqual(["Admin", "Connection", "Consumer", "consumerGroupDescribeV0"]);
+    expect(Object.keys(lib).sort()).toEqual([
+      "Admin",
+      "Connection",
+      "ConnectionPool",
+      "Consumer",
+      "consumerGroupDescribeV0",
+      "fetchV13",
+    ]);
     expect(lib.Admin).toBe(library.Admin as never);
     expect(lib.Consumer).toBe(library.Consumer as never);
     expect(lib.Connection).toBe(library.Connection as never);
+    expect(lib.ConnectionPool).toBe(library.ConnectionPool as never);
     expect(lib.consumerGroupDescribeV0).toBe(library.consumerGroupDescribeV0 as never);
+    expect(lib.fetchV13).toBe(library.fetchV13 as never);
   });
 
   test("refuses a library that no longer exports its protocol logger, rather than run with it unmuted", async () => {
@@ -155,53 +192,46 @@ describe("loadPlatformatic", () => {
 
   test("loads the installed library by default", async () => {
     const lib = await loadPlatformatic();
-    expect([typeof lib.Admin, typeof lib.Consumer, typeof lib.Connection]).toEqual([
+    expect([typeof lib.Admin, typeof lib.Consumer, typeof lib.Connection, typeof lib.ConnectionPool]).toEqual([
+      "function",
       "function",
       "function",
       "function",
     ]);
     expect(typeof lib.consumerGroupDescribeV0.api.async).toBe("function");
+    expect(typeof lib.fetchV13.api.async).toBe("function");
   });
 });
 
 describe("createPlatformaticClient", () => {
-  test("one Admin and one Consumer: autocreateTopics false on both; the Consumer gets the sentinel group, autocommit off and the classic protocol", () => {
+  test("one Admin, one Consumer and one fetch pool: autocreateTopics false on both clients; the Consumer gets the sentinel group, autocommit off and the classic protocol", () => {
     const { lib, constructed } = fakeLib();
     createPlatformaticClient(OPTIONS, lib);
-    expect(constructed.map(([n]) => n)).toEqual(["Admin", "Consumer"]);
+    expect(constructed.map(([n]) => n)).toEqual(["Admin", "Consumer", "ConnectionPool"]);
     const admin = constructed.find(([n]) => n === "Admin")![1] as Record<string, unknown>;
     const consumer = constructed.find(([n]) => n === "Consumer")![1] as Record<string, unknown>;
-    expect(admin.autocreateTopics).toBe(false);
-    expect(consumer).toMatchObject({
-      autocreateTopics: false,
-      groupId: KAFKA_SENTINEL_GROUP_ID,
-      autocommit: false,
-      groupProtocol: "classic",
-    });
-    expect(admin).toMatchObject({
+    // Whole, so an option the adapter did not mean to pass shows: no client takes a retry delay of its
+    // own, since no fetch goes through the client and so no fetch session exists to reset (spec 3.6 K8).
+    expect(admin).toEqual({
       clientId: "libredb-studio",
       bootstrapBrokers: [{ host: "localhost", port: 9092 }],
+      autocreateTopics: false,
       retries: 1,
       connectTimeout: 5000,
       requestTimeout: 5000,
     });
-  });
-
-  test("a fetch session the broker asked to reset is retried at once; every other retry keeps the library's one-second delay", () => {
-    // After a fetch answered with a partition error (OFFSET_OUT_OF_RANGE, NOT_LEADER_OR_FOLLOWER) the
-    // broker has moved its session epoch and the library has not, so the next fetch to that broker
-    // meets INVALID_FETCH_SESSION_EPOCH (measured on Kafka 4.3.1 and Redpanda v26.2.2).
-    const { lib, constructed } = fakeLib();
-    createPlatformaticClient(OPTIONS, lib);
-    const protocolError = (apiId: string) =>
-      libError({ code: "PLT_KFK_RESPONSE" }, [libError({ code: "PLT_KFK_PROTOCOL", apiId })]);
-    for (const [, options] of constructed) {
-      const delay = (options as { retryDelay: (...args: unknown[]) => number }).retryDelay;
-      expect(delay({}, "fetch", 1, 1, protocolError("INVALID_FETCH_SESSION_EPOCH"))).toBe(0);
-      expect(delay({}, "fetch", 1, 1, protocolError("FETCH_SESSION_ID_NOT_FOUND"))).toBe(0);
-      expect(delay({}, "metadata", 1, 1, leaderless())).toBe(1000);
-      expect(delay({}, "fetch", 1, 1, libError({ code: "PLT_KFK_NETWORK", message: "Connection closed" }))).toBe(1000);
-    }
+    expect(consumer).toEqual({
+      ...admin,
+      groupId: KAFKA_SENTINEL_GROUP_ID,
+      autocommit: false,
+      groupProtocol: "classic",
+    });
+    // The pool's connections carry the same transport as the clients' and nothing a client reads.
+    expect(constructed.find(([n]) => n === "ConnectionPool")![1]).toEqual({
+      id: "libredb-studio",
+      connectTimeout: 5000,
+      requestTimeout: 5000,
+    });
   });
 
   test("TLS, SNI and SASL reach the client options; a connection without them carries none", () => {
@@ -215,6 +245,8 @@ describe("createPlatformaticClient", () => {
       },
       lib,
     );
+    // The fetch pool's connections too: a read's fetch is sent on one of them (spec 3.6 K8).
+    expect(constructed.map(([n]) => n)).toEqual(["Admin", "Consumer", "ConnectionPool"]);
     for (const [, options] of constructed) {
       expect(options).toMatchObject({
         tls: { ca: "CA", rejectUnauthorized: true },
@@ -231,7 +263,7 @@ describe("createPlatformaticClient", () => {
     }
   });
 
-  test("a cluster that advertises a broker by IP gets both clients rebuilt without SNI, once", async () => {
+  test("a cluster that advertises a broker by IP gets both clients and the fetch pool rebuilt without SNI, once", async () => {
     const { lib, constructed, calls } = fakeLib({
       "admin.metadata": () => ({
         id: "c",
@@ -252,11 +284,14 @@ describe("createPlatformaticClient", () => {
     expect(admins).toEqual([true, undefined]);
     expect(constructed.filter(([n]) => n === "Consumer").length).toBe(2);
     expect(
+      constructed.filter(([n]) => n === "ConnectionPool").map(([, o]) => (o as Record<string, unknown>).tlsServerName),
+    ).toEqual([true, undefined]);
+    expect(
       calls
         .map(([n]) => n)
         .filter((n) => n.endsWith(".close"))
         .sort(),
-    ).toEqual(["admin.close", "consumer.close"]);
+    ).toEqual(["admin.close", "consumer.close", "pool.close"]);
   });
 
   test.each(["10.0.0.5", "fd00::5"])(
@@ -285,15 +320,17 @@ describe("createPlatformaticClient", () => {
       expect(constructed.map(([n, o]) => [n, (o as Record<string, unknown>).tlsServerName])).toEqual([
         ["Admin", true],
         ["Consumer", true],
+        ["ConnectionPool", true],
         ["Admin", undefined],
         ["Consumer", undefined],
+        ["ConnectionPool", undefined],
       ]);
       expect(
         calls
           .map(([n]) => n)
           .filter((n) => n.endsWith(".close"))
           .sort(),
-      ).toEqual(["admin.close", "consumer.close"]);
+      ).toEqual(["admin.close", "consumer.close", "pool.close"]);
     },
   );
 
@@ -304,7 +341,46 @@ describe("createPlatformaticClient", () => {
       lib,
     );
     await client.metadata([]);
-    expect(constructed.map(([n]) => n)).toEqual(["Admin", "Consumer"]);
+    expect(constructed.map(([n]) => n)).toEqual(["Admin", "Consumer", "ConnectionPool"]);
+  });
+
+  test("an IP broker a read's fetch first learns of rebuilds the fetch pool without SNI before the fetch connects", async () => {
+    // The address a fetch is sent to comes from the cluster's broker list, which the fetch may be the
+    // first to read on this client; it is checked the same way, so no connection names an IP as a server.
+    const { lib, constructed, calls } = fakeLib({
+      "admin.metadata": () => {
+        const md = kafkaFixture<{ brokers: Map<number, { host: string; port: number; rack: null }> }>(
+          "metadata-orders",
+        );
+        md.brokers = new Map([[1, { host: "10.0.0.5", port: 9092, rack: null }]]);
+        return md;
+      },
+    });
+    const client = createPlatformaticClient(
+      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
+      lib,
+    );
+    const orders = kafkaFixture<{ topics: Map<string, { id: string }> }>("metadata-orders").topics.get("orders")!;
+    const topic: KafkaTopicMetadata = {
+      name: "orders",
+      id: orders.id,
+      partitions: [0, 1, 2].map((partition) => ({
+        partition,
+        leader: 1,
+        leaderEpoch: 0,
+        replicas: [1],
+        isr: [1],
+        offlineReplicas: [],
+      })),
+    };
+    await client.fetch(topic, 1, big(5), signal());
+    const pools = constructed.filter(([n]) => n === "ConnectionPool").map(([, o]) => o as Record<string, unknown>);
+    expect(pools.map((o) => o.tlsServerName)).toEqual([true, undefined]);
+    // The fetch went out on the rebuilt pool, the one whose connections carry no server name.
+    const gets = calls.filter(([n]) => n === "pool.get").length;
+    const closes = calls.filter(([n]) => n === "pool.close").length;
+    expect([gets, closes]).toEqual([1, 1]);
+    expect(calls.findIndex(([n]) => n === "pool.close")).toBeLessThan(calls.findIndex(([n]) => n === "pool.get"));
   });
 
   test("every metadata read passes autocreateTopics: false; a brokers-only read is forced past the library's cache", async () => {
@@ -772,20 +848,34 @@ describe("createPlatformaticClient", () => {
   });
 
   test("fetch filters records below the requested offset and reports nextOffset past the last batch", async () => {
-    const { lib, calls } = fakeLib();
+    const { lib } = fakeLib();
     const client = createPlatformaticClient(OPTIONS, lib);
     const md = await client.metadata(["orders"]);
     const result = await client.fetch(md.topics[0], 1, big(5), signal());
     expect(result.records.map((r) => r.offset)).toEqual([5, 6, 7, 8, 9, 10, 11].map(big));
     expect(result.records.every((r) => r.partition === 1)).toBe(true);
     expect(result.nextOffset).toBe(big(12));
-    expect(argsOf(calls, "consumer.fetch")).toEqual([
-      {
-        node: 1,
-        maxWaitTime: 250,
-        maxBytes: 1024 * 1024,
-        isolationLevel: 1,
-        topics: [
+  });
+
+  test("a fetch is the adapter's own Fetch v13, READ_COMMITTED and sessionless, on a pooled connection to the leader's advertised address", async () => {
+    // Never the client's Consumer.fetch (spec 3.6 K8): its READ_COMMITTED filter throws inside the
+    // socket handler on answers a cleaned transactional log holds, and its fetch sessions collide
+    // when reads overlap. Session id 0 with epoch -1 asks for a full answer and opens no session (KIP-227).
+    const { lib, calls } = fakeLib();
+    const client = createPlatformaticClient(OPTIONS, lib);
+    const [orders] = (await client.metadata(["orders"])).topics;
+    await client.fetch(orders, 1, big(5), signal());
+    expect(argsOf(calls, "pool.get")).toEqual([{ host: "localhost", port: 9092 }]);
+    expect(calls.filter(([n]) => n === "fetchV13").map(([, args]) => args)).toEqual([
+      [
+        { broker: { host: "localhost", port: 9092 } },
+        250,
+        1,
+        1024 * 1024,
+        1,
+        0,
+        -1,
+        [
           {
             topicId: ORDERS_ID,
             partitions: [
@@ -799,19 +889,23 @@ describe("createPlatformaticClient", () => {
             ],
           },
         ],
-      },
+        [],
+        "",
+      ],
     ]);
+    // The leader's address comes from the broker list the client holds: a brokers-only read, not forced.
+    expect(argsOf(calls, "admin.metadata").at(-1)).toEqual({ topics: [], autocreateTopics: false });
   });
 
   test("the leader is found by partition number, never by position in the topic's list", async () => {
     // A caller may hand over a topic whose partitions are not listed from 0 up.
-    const { lib, calls } = fakeLib();
+    const { lib, calls } = fakeLib({ "admin.metadata": () => ordersWithLeader(2) });
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
     const onlyPartitionOne = { ...orders, partitions: orders.partitions.filter((p) => p.partition === 1) };
     const result = await client.fetch(onlyPartitionOne, 1, big(5), signal());
     expect(result.records[0].offset).toBe(big(5));
-    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([1]);
+    expect(fetchedFrom(calls)).toEqual([2]);
   });
 
   test("a partition the topic's metadata does not hold is refused before any fetch", async () => {
@@ -822,50 +916,63 @@ describe("createPlatformaticClient", () => {
     expect(error).toBeInstanceOf(KafkaError);
     expect(error.category).toBe("invalid-request");
     expect(error.message).toContain("partition 7");
-    expect(calls.some(([n]) => n === "consumer.fetch")).toBe(false);
+    expect(calls.some(([n]) => n === "fetchV13" || n === "pool.get")).toBe(false);
   });
 
-  test("fetch checks once that the broker names topics by id (Fetch 13), and refuses one that cannot", async () => {
+  test("fetch checks once that the broker answers Fetch 13, the version it sends, and refuses one whose range does not hold it", async () => {
     const { lib, calls } = fakeLib();
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
     await client.fetch(orders, 1, big(5), signal());
     await client.fetch(orders, 1, big(5), signal());
     expect(calls.filter(([n]) => n === "admin.listApis").length).toBe(1);
-    // Fetch 13 itself is enough: the first version that names a topic by id, and where Redpanda v26.2.2 stops.
-    const atThirteen = fakeLib({
-      "admin.listApis": () => [{ apiKey: 1, name: "Fetch", minVersion: 4, maxVersion: 13 }],
-    });
-    const atThirteenClient = createPlatformaticClient(OPTIONS, atThirteen.lib);
-    const read = await atThirteenClient.fetch(
-      (await atThirteenClient.metadata(["orders"])).topics[0],
-      1,
+    /** One read against a broker whose ApiVersions answer is `apis`, and what it sent. */
+    const readAgainst = async (apis: unknown) => {
+      const recorded = fakeLib({ "admin.listApis": () => apis });
+      const against = createPlatformaticClient(OPTIONS, recorded.lib);
+      const [topic] = (await against.metadata(["orders"])).topics;
+      const outcome = await against.fetch(topic, 1, big(5), signal()).catch((e: KafkaError) => e);
+      return { outcome, sent: fetchCount(recorded.calls) + argsOf(recorded.calls, "pool.get").length };
+    };
+    const fetchRange = (minVersion: number, maxVersion: number) => [
+      { apiKey: 1, name: "Fetch", minVersion, maxVersion },
+    ];
+    // Fetch 13 at either end of a range is enough: the first version that names a topic by id, and
+    // where Redpanda v26.2.2 stops.
+    const held = await Promise.all([readAgainst(fetchRange(4, 13)), readAgainst(fetchRange(13, 18))]);
+    expect(held.map(({ outcome }) => (outcome instanceof Error ? outcome : outcome.records[0].offset))).toEqual([
       big(5),
-      signal(),
-    );
-    expect(read.records[0].offset).toBe(big(5));
-    expect(atThirteen.calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
-    for (const apis of [[{ apiKey: 1, name: "Fetch", minVersion: 0, maxVersion: 12 }], []]) {
-      const old = fakeLib({ "admin.listApis": () => apis });
-      const oldClient = createPlatformaticClient(OPTIONS, old.lib);
-      const error = await oldClient
-        .fetch((await oldClient.metadata(["orders"])).topics[0], 1, big(5), signal())
-        .catch((e) => e);
-      expect(error.category).toBe("unsupported-broker");
-      expect(error.message).toContain("Fetch 13");
-      expect(old.calls.some(([n]) => n === "consumer.fetch")).toBe(false);
-    }
+      big(5),
+    ]);
+    expect(held.map(({ sent }) => sent)).toEqual([2, 2]);
+    const refused = await Promise.all([
+      readAgainst(fetchRange(0, 12)),
+      readAgainst(fetchRange(14, 18)),
+      readAgainst([]),
+    ]);
+    expect(refused.map(({ outcome }) => (outcome as KafkaError).category)).toEqual([
+      "unsupported-broker",
+      "unsupported-broker",
+      "unsupported-broker",
+    ]);
+    expect(refused.map(({ outcome }) => (outcome as KafkaError).message)).toEqual([
+      "This broker answers Fetch versions 0 to 12; a read sends Fetch 13, which Apache Kafka answers from 3.1 on",
+      "This broker answers Fetch versions 14 to 18; a read sends Fetch 13, which Apache Kafka answers from 3.1 on",
+      "This broker answers no Fetch version; a read sends Fetch 13, which Apache Kafka answers from 3.1 on",
+    ]);
+    // Refused before a connection is asked for, let alone a fetch sent.
+    expect(refused.map(({ sent }) => sent)).toEqual([0, 0, 0]);
   });
 
   test("Redpanda's captured answers read and fetch: node 0 leads every partition, and its Fetch range ends at 13", async () => {
     // Redpanda v26.2.2 runs one broker, node 0, and answers Fetch up to v13, so it sits on the
     // boundary of both refusals above: a leader of 0 is a leader (a partition with none answers
-    // -1), and Fetch 13 is the version a read needs.
+    // -1), and Fetch 13 is the version a read sends.
     const { lib, calls } = fakeLib({
       "admin.metadata": () => kafkaFixture("redpanda-metadata-orders"),
       "admin.listApis": () => kafkaFixture("redpanda-api-versions"),
       "consumer.listOffsets": () => kafkaFixture("redpanda-offsets-latest"),
-      "consumer.fetch": () => kafkaFixture("redpanda-fetch-orders-p1-o5"),
+      fetchV13: () => kafkaFixture("redpanda-fetch-orders-p1-o5"),
     });
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
@@ -881,7 +988,8 @@ describe("createPlatformaticClient", () => {
     const captured = kafkaFixture<Map<string, bigint[]>>("redpanda-offsets-latest").get("orders")!;
     expect([...offsets]).toEqual(captured.map((offset, partition) => [partition, offset]));
     const read = await client.fetch(orders, 1, big(5), signal());
-    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([0]);
+    // Node 0's advertised address, where Redpanda's one broker listens.
+    expect(argsOf(calls, "pool.get")).toEqual([{ host: "localhost", port: 29092 }]);
     expect(read.records.map((r) => r.offset)).toEqual([5, 6, 7, 8, 9, 10, 11].map(big));
     expect(read.records.every((r) => r.partition === 1)).toBe(true);
     expect(read.nextOffset).toBe(big(12));
@@ -892,60 +1000,113 @@ describe("createPlatformaticClient", () => {
     expect(read.records.map((r) => r.value)).toEqual(batch.records.slice(5).map((r) => r.value));
   });
 
-  test("a fetch sent to a leader that moved is sent once more, to the new leader", async () => {
-    let fetches = 0;
-    const { lib, calls } = fakeLib({
-      "admin.metadata": (o) => ordersWithLeader((o as { forceUpdate?: boolean }).forceUpdate ? 2 : 1),
-      "consumer.fetch": () => {
-        fetches++;
-        if (fetches === 1) throw notLeader();
-        return kafkaFixture("fetch-orders-p1-o5");
-      },
-    });
-    const client = createPlatformaticClient(OPTIONS, lib);
-    const result = await client.fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal());
+  test("a fetch sent to a leader that moved is sent once more, to the new leader's advertised address", async () => {
+    const moved = afterLeaderMove(2, notLeader);
+    const result = await moved.read();
     expect(result.records[0].offset).toBe(big(5));
-    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([1, 2]);
-    expect(argsOf(calls, "admin.metadata").at(-1)).toEqual({
+    expect(moved.nodes()).toEqual([1, 2]);
+    expect(argsOf(moved.calls, "pool.get")).toEqual([
+      { host: "localhost", port: 9092 },
+      { host: "broker-2.example", port: 9094 },
+    ]);
+    expect(argsOf(moved.calls, "admin.metadata").at(-1)).toEqual({
       topics: ["orders"],
       autocreateTopics: false,
       forceUpdate: true,
     });
   });
 
-  test("a leader the library's metadata no longer names is followed too", async () => {
-    let fetches = 0;
+  test("a leader the cluster's broker list does not name is followed where a forced re-read says it moved", async () => {
+    // Metadata lists live brokers only, so a leader that went down, or the leader of a stale copy,
+    // has no address; no fetch is sent to it, and the re-read's leader is followed, to the address
+    // the re-read lists: the copy the client held named broker 1 alone.
     const { lib, calls } = fakeLib({
-      "admin.metadata": (o) => ordersWithLeader((o as { forceUpdate?: boolean }).forceUpdate ? 2 : 1),
-      "consumer.fetch": () => {
-        fetches++;
-        if (fetches === 1) throw libError({ code: "PLT_KFK_USER", message: "Cannot find broker with node id 1" });
-        return kafkaFixture("fetch-orders-p1-o5");
+      "admin.metadata": (o) => {
+        if ((o as { forceUpdate?: boolean }).forceUpdate) return ordersWithLeader(2);
+        const held = kafkaFixture<{ topics: Map<string, { partitions: Array<{ leader: number }> }> }>(
+          "metadata-orders",
+        );
+        held.topics.get("orders")!.partitions[1].leader = 3;
+        return held;
       },
     });
     const client = createPlatformaticClient(OPTIONS, lib);
-    await client.fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal());
-    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([1, 2]);
+    const [orders] = (await client.metadata(["orders"])).topics;
+    expect(orders.partitions[1].leader).toBe(3);
+    const result = await client.fetch(orders, 1, big(5), signal());
+    expect(result.records[0].offset).toBe(big(5));
+    expect(fetchedFrom(calls)).toEqual([2]);
   });
 
-  test.each<[string, () => unknown]>([
-    [
-      "LEADER_NOT_AVAILABLE while a new leader is elected",
-      () => fetchFailedTwice(() => fetchRefusal("LEADER_NOT_AVAILABLE")),
-    ],
+  test("an IP broker a forced re-read first names rebuilds the fetch pool without SNI before the re-fetch connects", async () => {
+    let fetches = 0;
+    const { lib, constructed, calls } = fakeLib({
+      "admin.metadata": (o) => {
+        if (!(o as { forceUpdate?: boolean }).forceUpdate) return kafkaFixture("metadata-orders");
+        const moved = ordersWithLeader(2);
+        moved.brokers.set(2, { host: "10.0.0.7", port: 9094, rack: null });
+        return moved;
+      },
+      fetchV13: () => {
+        fetches++;
+        if (fetches === 1) throw notLeader();
+        return kafkaFixture("fetch-orders-p1-o5");
+      },
+    });
+    const client = createPlatformaticClient(
+      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
+      lib,
+    );
+    await client.fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal());
+    expect(
+      constructed.filter(([n]) => n === "ConnectionPool").map(([, o]) => (o as Record<string, unknown>).tlsServerName),
+    ).toEqual([true, undefined]);
+    const names = calls.map(([n]) => n);
+    // The first pool is closed after the first fetch and before the connection the second one needs.
+    expect(names.filter((n) => n === "pool.get" || n === "pool.close" || n === "fetchV13")).toEqual([
+      "pool.get",
+      "fetchV13",
+      "pool.close",
+      "pool.get",
+      "fetchV13",
+    ]);
+    expect(argsOf(calls, "pool.get").at(-1)).toEqual({ host: "10.0.0.7", port: 9094 });
+  });
+
+  test("a leader the cluster does not list, which the re-read names again, sends no fetch and is refused, to be run again", async () => {
+    const { lib, calls } = fakeLib({ "admin.metadata": () => ordersWithLeader(3) });
+    const client = createPlatformaticClient(OPTIONS, lib);
+    const error = await client
+      .fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal())
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.category).toBe("protocol");
+    expect(error.message).toContain("run the read again");
+    expect(error.message).toContain("broker 3");
+    expect(calls.some(([n]) => n === "fetchV13" || n === "pool.get")).toBe(false);
+  });
+
+  test.each<[string, "fetchV13" | "pool.get", () => unknown]>([
+    ["LEADER_NOT_AVAILABLE while a new leader is elected", "fetchV13", () => fetchRefusal("LEADER_NOT_AVAILABLE")],
     [
       "UNKNOWN_TOPIC_OR_PARTITION from a broker a reassignment took the partition from",
-      () => fetchFailedTwice(() => fetchRefusal("UNKNOWN_TOPIC_OR_PARTITION")),
+      "fetchV13",
+      () => fetchRefusal("UNKNOWN_TOPIC_OR_PARTITION"),
     ],
     [
-      "a network failure to a leader that is gone",
-      () => fetchFailedTwice(() => connectionFailure("localhost", 9092, "ECONNREFUSED")),
+      "a leader that is gone, which refuses the connection",
+      "pool.get",
+      () => connectionFailure("localhost", 9092, "ECONNREFUSED"),
     ],
-  ])("%s: the fetch is sent once more, to the leader a forced re-read names", async (_, failure) => {
-    const moved = afterLeaderMove(2, failure);
+  ])("%s: the fetch is sent once more, to the leader a forced re-read names", async (_, failing, failure) => {
+    const moved = afterLeaderMove(2, failure, failing);
     const result = await moved.read();
-    expect(moved.nodes()).toEqual([1, 2]);
     expect(result.records.map((r) => r.offset)).toEqual([5, 6, 7, 8, 9, 10, 11].map(big));
+    expect(
+      argsOf(moved.calls, "pool.get").map((b) =>
+        NODE_AT.get(`${(b as { host: string }).host}:${(b as { port: number }).port}`),
+      ),
+    ).toEqual([1, 2]);
   });
 
   test("a leader that moved to node 0 is followed there: node 0 is a broker like any other, and Redpanda's only one", async () => {
@@ -964,7 +1125,7 @@ describe("createPlatformaticClient", () => {
 
   test("a stale leader that has not moved is said as such; any other fetch failure is not retried", async () => {
     const stuck = fakeLib({
-      "consumer.fetch": () => {
+      fetchV13: () => {
         throw notLeader();
       },
     });
@@ -974,12 +1135,10 @@ describe("createPlatformaticClient", () => {
       .catch((e) => e);
     expect(stale.message).toContain("leadership moved");
     // The re-read found the leader where it was, so the fetch is not sent to it again.
-    expect(stuck.calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
+    expect(fetchCount(stuck.calls)).toBe(1);
     const range = fakeLib({
-      "consumer.fetch": () => {
-        throw libError({ code: "PLT_KFK_RESPONSE" }, [
-          libError({ code: "PLT_KFK_PROTOCOL", apiId: "OFFSET_OUT_OF_RANGE" }),
-        ]);
+      fetchV13: () => {
+        throw fetchRefusal("OFFSET_OUT_OF_RANGE");
       },
     });
     const rangeClient = createPlatformaticClient(OPTIONS, range.lib);
@@ -987,70 +1146,61 @@ describe("createPlatformaticClient", () => {
       .fetch((await rangeClient.metadata(["orders"])).topics[0], 1, big(5), signal())
       .catch((e) => e);
     expect(error.category).toBe("offset-out-of-range");
-    expect(range.calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
+    expect(fetchCount(range.calls)).toBe(1);
+    expect(
+      range.calls.some(([n, args]) => n === "admin.metadata" && (args[0] as { forceUpdate?: boolean }).forceUpdate),
+    ).toBe(false);
   });
 
-  test("two reads never have two fetches in flight: the library keeps one fetch session per broker (KIP-227)", async () => {
+  test("an answer the client could not read is protocol, named by the error's code, though the client rejects it with no code of its own", async () => {
+    // The client decompresses inside its response parser, and a batch that will not inflate fails the
+    // fetch with zlib's own error, which carries no PLT_KFK_ code (measured through a local broker below).
+    const { lib } = fakeLib({
+      fetchV13: () => {
+        throw Object.assign(new Error("incorrect header check"), { code: "Z_DATA_ERROR", errno: -3 });
+      },
+    });
+    const client = createPlatformaticClient(OPTIONS, lib);
+    const error = await client
+      .fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal())
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect([error.category, error.detail]).toEqual(["protocol", {}]);
+    expect(error.message).toContain("Z_DATA_ERROR");
+    expect(error.message).not.toContain("incorrect header check");
+  });
+
+  test("two reads fetch side by side: a fetch opens no session, so neither waits for the other", async () => {
     const { held, state, fetch } = heldFetches();
-    const { lib } = fakeLib({ "consumer.fetch": fetch });
+    const { lib } = fakeLib({ fetchV13: fetch });
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
-    const settled: string[] = [];
-    const first = client.fetch(orders, 1, big(5), signal()).then(() => settled.push("first"));
-    const second = client.fetch(orders, 1, big(5), signal()).then(() => settled.push("second"));
-    await until(() => held.length > 0);
-    await pause(20);
-    expect(held.length).toBe(1);
-    held.shift()!();
-    await until(() => held.length > 0);
-    held.shift()!();
-    await Promise.all([first, second]);
-    expect(state.most).toBe(1);
-    expect(settled).toEqual(["first", "second"]);
+    const first = client.fetch(orders, 1, big(5), signal());
+    const second = client.fetch(orders, 1, big(5), signal());
+    await until(() => held.length === 2);
+    expect(state.most).toBe(2);
+    // The second read answers while the first is still held: the answers settle in any order.
+    held.pop()!();
+    expect((await second).records[0].offset).toBe(big(5));
+    held.pop()!();
+    expect((await first).records[0].offset).toBe(big(5));
   });
 
-  test("a read its timeout stopped keeps its turn until its fetch settles, so the next fetch cannot collide with it", async () => {
+  test("a read its timeout stopped is answered at once, and the next read's fetch is sent while the stopped one is still out", async () => {
     const { held, fetch } = heldFetches();
-    const { lib, calls } = fakeLib({ "consumer.fetch": fetch });
+    const { lib } = fakeLib({ fetchV13: fetch });
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
     const controller = new AbortController();
     const stopped = client.fetch(orders, 1, big(5), controller.signal).catch((e) => e);
-    await until(() => held.length > 0);
-    const next = client.fetch(orders, 1, big(5), signal());
+    await until(() => held.length === 1);
     controller.abort();
     expect((await stopped).category).toBe("timeout");
-    await pause(20);
-    // The stopped read's fetch is still on the session, so the next one has not been sent.
-    expect(calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
-    held.shift()!();
-    await until(() => held.length > 0);
-    held.shift()!();
+    const next = client.fetch(orders, 1, big(5), signal());
+    await until(() => held.length === 2);
+    held.pop()!();
     expect((await next).records[0].offset).toBe(big(5));
-  });
-
-  test("a read stopped while it waits for its turn never sends its fetch, and the turn passes on", async () => {
-    const { held, fetch } = heldFetches();
-    const { lib, calls } = fakeLib({ "consumer.fetch": fetch });
-    const client = createPlatformaticClient(OPTIONS, lib);
-    const [orders] = (await client.metadata(["orders"])).topics;
-    const first = client.fetch(orders, 1, big(5), signal());
-    await until(() => held.length > 0);
-    const controller = new AbortController();
-    const waiting = client.fetch(orders, 1, big(5), controller.signal).catch((e) => e);
-    await pause(20);
-    controller.abort();
-    expect((await waiting).category).toBe("timeout");
-    held.shift()!();
-    await first;
-    await pause(20);
-    expect(calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
-    // The control: a later read is sent, so the stopped one released its turn.
-    const later = client.fetch(orders, 1, big(5), signal());
-    await until(() => held.length > 0);
-    held.shift()!();
-    expect((await later).records[0].offset).toBe(big(5));
-    expect(calls.filter(([n]) => n === "consumer.fetch").length).toBe(2);
+    held.pop()!();
   });
 
   test("an aborted signal rejects the fetch as a timeout and sends nothing", async () => {
@@ -1063,109 +1213,86 @@ describe("createPlatformaticClient", () => {
       .catch((e) => e);
     expect(error).toBeInstanceOf(KafkaError);
     expect(error.category).toBe("timeout");
-    expect(calls.some(([n]) => n === "consumer.fetch" || n === "admin.listApis")).toBe(false);
+    expect(calls.some(([n]) => n === "fetchV13" || n === "pool.get" || n === "admin.listApis")).toBe(false);
   });
 
-  test("a read stopped while its broker check was in flight is answered at once, not after another read's fetch", async () => {
-    const { held, fetch } = heldFetches();
-    const checks: Array<() => void> = [];
-    const { lib } = fakeLib({
-      "consumer.fetch": fetch,
-      "admin.listApis": () =>
-        new Promise((resolve) => {
-          checks.push(() => resolve(kafkaFixture("api-versions")));
-        }),
+  test.each<[string, string, () => unknown]>([
+    ["the broker's Fetch range", "admin.listApis", () => kafkaFixture("api-versions")],
+    ["the cluster's broker list", "admin.metadata", () => kafkaFixture("metadata-orders")],
+    ["a pooled connection", "pool.get", () => ({ broker: { host: "localhost", port: 9092 } })],
+  ])("a read stopped while it awaited %s is answered at once and sends no fetch", async (_, awaited, answer) => {
+    const waiting: Array<() => void> = [];
+    let armed = false;
+    const { lib, calls } = fakeLib({
+      [awaited]: () =>
+        armed
+          ? new Promise((resolve) => {
+              waiting.push(() => resolve(answer()));
+            })
+          : answer(),
     });
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
-    const first = client.fetch(orders, 1, big(5), signal());
+    armed = true;
     const controller = new AbortController();
-    const settled: string[] = [];
-    const stopped = client
-      .fetch(orders, 1, big(5), controller.signal)
-      .catch((e) => e)
-      .then((e) => {
-        settled.push("stopped");
-        return e;
-      });
-    await until(() => checks.length === 2);
-    checks.shift()!();
-    await until(() => held.length > 0);
+    const stopped = client.fetch(orders, 1, big(5), controller.signal).catch((e) => e);
+    await until(() => waiting.length === 1);
     controller.abort();
-    checks.shift()!();
-    await pause(20);
-    // The first read's fetch is still held, and the stopped read has answered anyway.
-    expect(held.length).toBe(1);
-    expect(settled).toEqual(["stopped"]);
     expect((await stopped).category).toBe("timeout");
-    held.shift()!();
-    expect((await first).records[0].offset).toBe(big(5));
+    waiting.shift()!();
+    await pause(20);
+    expect(fetchCount(calls)).toBe(0);
   });
 
-  test("a fetch the library never settles holds the turn only as long as its own two attempts could take, counted from its start", async () => {
-    // The library can leave a fetch unsettled: its READ_COMMITTED filter throws inside its socket
-    // handler on an answer that holds an empty control batch beside a listed aborted transaction
-    // (measured on Kafka 4.3.1, 2026-09-25). With timeoutMs 100, each of a fetch's two attempts
-    // connects within 100 ms and sends one request the client times out at 100 ms, with the
-    // one-second retry delay between them, so 1,400 ms after the library was handed the fetch, no
-    // request of it is left on the session.
-    const HOLD = 2 * (100 + 100) + 1000;
-    const marks: string[] = [];
-    let fetches = 0;
-    const { lib } = fakeLib({
-      "consumer.fetch": () => {
-        fetches++;
-        // The first fetch settles after 300 ms, so the stuck one starts well after it was queued.
-        if (fetches === 1) return pause(300).then(() => kafkaFixture("fetch-orders-p1-o5"));
-        if (fetches === 2) {
-          // Two marks bracket the hold from the moment the library is handed this fetch. Timers fire
-          // in the order of their deadlines, with promise work drained between them, under Bun and
-          // Node alike, so the marks do not depend on how loaded the machine is.
-          setTimeout(() => marks.push(`before the hold: ${fetches} fetches`), HOLD - 50);
-          setTimeout(() => marks.push(`after the hold: ${fetches} fetches`), HOLD + 50);
-          return new Promise(() => {});
-        }
-        return kafkaFixture("fetch-orders-p1-o5");
+  test("a read whose signal stops while a step is being asked for is answered as it waits on it, and asks for no connection", async () => {
+    // The signal stops inside the call the broker list is read with, so the step that waits on it
+    // starts on a signal that has already fired and would never hear it fire.
+    const controller = new AbortController();
+    let armed = false;
+    const { lib, calls } = fakeLib({
+      "admin.metadata": () => {
+        if (armed) controller.abort();
+        return kafkaFixture("metadata-orders");
       },
     });
-    const client = createPlatformaticClient({ ...OPTIONS, timeoutMs: 100 }, lib);
+    const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
-    const first = client.fetch(orders, 1, big(5), signal());
-    const stopped = new AbortController();
-    const stuck = client.fetch(orders, 1, big(5), stopped.signal).catch((e) => e);
-    const next = client.fetch(orders, 1, big(5), signal());
-    expect((await first).records[0].offset).toBe(big(5));
-    await until(() => fetches === 2);
-    stopped.abort();
-    expect((await stuck).category).toBe("timeout");
-    expect((await next).records[0].offset).toBe(big(5));
-    await until(() => marks.length === 2);
-    expect(marks).toEqual(["before the hold: 2 fetches", "after the hold: 3 fetches"]);
+    armed = true;
+    const error = await client.fetch(orders, 1, big(5), controller.signal).catch((e) => e);
+    expect(error.category).toBe("timeout");
+    await pause(20);
+    expect(calls.some(([n]) => n === "pool.get" || n === "fetchV13")).toBe(false);
   });
 
-  test("a hold longer than a timer can wait is held at the longest one, never cut to a millisecond", async () => {
-    // The connection dialog takes a query timeout up to 2,147,483,647 ms, the longest delay a timer
-    // takes, and four times that is past it, where Bun and Node cut a timer to 1 ms (measured on
-    // 2026-09-25): every turn would then pass on at once, as if there were no chain.
-    const { held, fetch } = heldFetches();
-    const { lib, calls } = fakeLib({ "consumer.fetch": fetch });
-    const client = createPlatformaticClient({ ...OPTIONS, timeoutMs: 2 ** 31 - 1 }, lib);
+  test("a read stopped while it awaited the forced re-read of a moved leader is answered at once and sends no second fetch", async () => {
+    const reread: Array<() => void> = [];
+    const { lib, calls } = fakeLib({
+      "admin.metadata": (o) =>
+        (o as { forceUpdate?: boolean }).forceUpdate && (o as { topics: string[] }).topics.length > 0
+          ? new Promise((resolve) => {
+              reread.push(() => resolve(ordersWithLeader(2)));
+            })
+          : ordersWithLeader(1),
+      fetchV13: () => {
+        throw notLeader();
+      },
+    });
+    const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
-    const first = client.fetch(orders, 1, big(5), signal());
-    await until(() => held.length > 0);
-    const next = client.fetch(orders, 1, big(5), signal());
-    await pause(50);
-    expect(calls.filter(([n]) => n === "consumer.fetch").length).toBe(1);
-    held.shift()!();
-    await until(() => held.length > 0);
-    held.shift()!();
-    await Promise.all([first, next]);
+    const controller = new AbortController();
+    const stopped = client.fetch(orders, 1, big(5), controller.signal).catch((e) => e);
+    await until(() => reread.length === 1);
+    controller.abort();
+    expect((await stopped).category).toBe("timeout");
+    reread.shift()!();
+    await pause(20);
+    expect(fetchedFrom(calls)).toEqual([1]);
   });
 
   test("a settled fetch leaves no listener on the read's signal, which one read shares across all its fetches", async () => {
     let fetches = 0;
     const { lib } = fakeLib({
-      "consumer.fetch": () => {
+      fetchV13: () => {
         fetches++;
         if (fetches === 2) throw fetchRefusal("OFFSET_OUT_OF_RANGE");
         return kafkaFixture("fetch-orders-p1-o5");
@@ -1178,34 +1305,6 @@ describe("createPlatformaticClient", () => {
     expect((await client.fetch(orders, 1, big(5), read.signal).catch((e) => e)).category).toBe("offset-out-of-range");
     await client.fetch(orders, 1, big(5), read.signal);
     expect(getEventListeners(read.signal, "abort")).toHaveLength(0);
-  });
-
-  test("the re-fetch to a moved leader takes its own turn, so it is never in flight beside another read's fetch", async () => {
-    const { held, state, fetch } = heldFetches();
-    let fetches = 0;
-    const { lib, calls } = fakeLib({
-      "admin.metadata": (o) => ordersWithLeader((o as { forceUpdate?: boolean }).forceUpdate ? 2 : 1),
-      "consumer.fetch": () => {
-        fetches++;
-        if (fetches === 1) throw notLeader();
-        return fetch();
-      },
-    });
-    const client = createPlatformaticClient(OPTIONS, lib);
-    const [orders] = (await client.metadata(["orders"])).topics;
-    const moved = client.fetch(orders, 1, big(5), signal());
-    const other = client.fetch(orders, 1, big(5), signal());
-    await until(() => held.length > 0);
-    await pause(20);
-    // The other read's fetch is on the session, so the re-fetch to the new leader has not been sent.
-    expect(held.length).toBe(1);
-    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([1, 1]);
-    held.shift()!();
-    await until(() => held.length > 0);
-    held.shift()!();
-    await Promise.all([moved, other]);
-    expect(state.most).toBe(1);
-    expect(argsOf(calls, "consumer.fetch").map((o) => (o as { node: number }).node)).toEqual([1, 1, 2]);
   });
 
   test("listGroups asks for both types, because the default omits KIP-848 groups (M-E)", async () => {
@@ -1681,7 +1780,7 @@ describe("createPlatformaticClient", () => {
     ]);
   });
 
-  test("close closes both clients", async () => {
+  test("close closes both clients and the fetch pool, whose connections a read's fetches went out on", async () => {
     const { lib, calls } = fakeLib();
     await createPlatformaticClient(OPTIONS, lib).close();
     expect(
@@ -1689,7 +1788,7 @@ describe("createPlatformaticClient", () => {
         .map(([n]) => n)
         .filter((n) => n.endsWith(".close"))
         .sort(),
-    ).toEqual(["admin.close", "consumer.close"]);
+    ).toEqual(["admin.close", "consumer.close", "pool.close"]);
   });
 
   test("a defect that is not a library error passes through untranslated", async () => {
@@ -1727,7 +1826,7 @@ describe("the fetch answer's batches (Review Focus 2)", () => {
   const COMMIT = [0, 0, 0, 1];
   const ABORT = [0, 0, 0, 0];
   async function fetched(response: unknown, from = 0, topic = "orders", partition = 1) {
-    const { lib } = fakeLib({ "consumer.fetch": () => response, "admin.metadata": allTopics });
+    const { lib } = fakeLib({ fetchV13: () => response, "admin.metadata": allTopics });
     const client = createPlatformaticClient(OPTIONS, lib);
     const [meta] = (await client.metadata([topic])).topics as KafkaTopicMetadata[];
     return client.fetch(meta, partition, big(from), signal());
@@ -1742,6 +1841,15 @@ describe("the fetch answer's batches (Review Focus 2)", () => {
     );
     expect(result.records.map((r) => r.offset)).toEqual([big(0)]);
     expect(result.nextOffset).toBe(big(2));
+  });
+
+  test("nextOffset is past every batch the answer holds, whatever order it lists them in", async () => {
+    // A broker lists batches in log order; an answer that does not is still read past its furthest one.
+    const result = await fetched(
+      answer([batch({ firstOffset: big(3), records: [rec(0)] }), batch({ firstOffset: big(1), records: [rec(0)] })]),
+      1,
+    );
+    expect(result.nextOffset).toBe(big(4));
   });
 
   test("a marker-only answer advances with no records", async () => {
@@ -2182,12 +2290,19 @@ describe("translateError", () => {
   });
 
   test("a Node code outside the client's connection text is no connection failure: a batch that would not decompress is protocol", () => {
-    // The library decompresses inside its response parser, so a corrupt gzip batch fails the fetch
-    // with zlib's own error, which it retries once as it retries any error it cannot classify.
+    // The library decompresses inside its response parser, so a corrupt gzip batch fails a fetch
+    // with zlib's own error: bare, as the adapter's own fetch receives it, and inside the retry
+    // report of a call the client retries.
     const corrupt = () => Object.assign(new Error("incorrect header check"), { code: "Z_DATA_ERROR", errno: -3 });
-    const error = translateError(fetchFailedTwice(corrupt), bootstrap);
-    expect([error.category, error.detail]).toEqual(["protocol", {}]);
-    expect(error.message).toContain("PLT_KFK_MULTIPLE");
+    const bare = translateError(corrupt(), bootstrap);
+    expect([bare.category, bare.detail]).toEqual(["protocol", {}]);
+    expect(bare.message).toContain("Z_DATA_ERROR");
+    const retried = translateError(
+      libError({ code: "PLT_KFK_MULTIPLE", message: "fetch failed 2 times." }, [corrupt(), corrupt()]),
+      bootstrap,
+    );
+    expect([retried.category, retried.detail]).toEqual(["protocol", {}]);
+    expect(retried.message).toContain("PLT_KFK_MULTIPLE");
   });
 
   test("an address on the bootstrap's host at another port is one the broker advertised (the kafka-cluster shape)", () => {
@@ -2296,5 +2411,308 @@ describe("translateError", () => {
   test("a KafkaError passes through unchanged", () => {
     const own = new KafkaError("invalid-request", "x");
     expect(translateError(own, bootstrap)).toBe(own);
+  });
+});
+
+/**
+ * The adapter over the installed client, against a broker this test runs on a local port.
+ * Kafka's cleaner leaves a transactional topic holding answers the client's own READ_COMMITTED
+ * filter throws on inside its socket handler, which left that fetch unsettled under Bun and in
+ * the standalone server, and ended a Node process with no uncaughtException handler (measured on
+ * Kafka 4.3.1 after log cleaning, 2026-09-25). The adapter sends its own sessionless Fetch v13,
+ * which the client parses inside its try and settles either way (spec 3.6 K8). The framing is
+ * written by hand, because no test may import the client (the seam guard, plan Task 12).
+ */
+describe("the installed client against a local broker (spec 3.6 K8)", () => {
+  const int8 = (n: number) => Buffer.from([n & 0xff]);
+  const int16 = (n: number) => {
+    const b = Buffer.alloc(2);
+    b.writeInt16BE(n);
+    return b;
+  };
+  const int32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeInt32BE(n);
+    return b;
+  };
+  const int64 = (n: number) => {
+    const b = Buffer.alloc(8);
+    b.writeBigInt64BE(BigInt(n));
+    return b;
+  };
+  const uvarint = (n: number) => {
+    const out: number[] = [];
+    let rest = n;
+    while (rest > 0x7f) {
+      out.push((rest & 0x7f) | 0x80);
+      rest >>>= 7;
+    }
+    out.push(rest);
+    return Buffer.from(out);
+  };
+  /** Zigzag, as a record's fields are written. */
+  const varint = (n: number) => uvarint((n << 1) ^ (n >> 31));
+  const TAGS = uvarint(0);
+  const compactString = (s: string | null) =>
+    s === null ? uvarint(0) : Buffer.concat([uvarint(Buffer.byteLength(s) + 1), Buffer.from(s)]);
+  const compactArray = <T>(items: readonly T[], each: (item: T) => Buffer) =>
+    Buffer.concat([uvarint(items.length + 1), ...items.map(each)]);
+  const TOPIC_ID = "3b0c8c2e-5a4f-4a8e-9d1e-2f6a7b8c9d02";
+  const TRANSACTIONAL = 0x10;
+  const CONTROL = 0x30;
+  const GZIP = 0x01;
+  const ABORT_KEY = Buffer.from([0, 0, 0, 0]);
+
+  /** One record of a magic 2 batch: no timestamp delta and no headers. */
+  const record = (offsetDelta: number, key: Buffer | null, value: Buffer | null) => {
+    const bytes = (b: Buffer | null) => (b === null ? varint(-1) : Buffer.concat([varint(b.length), b]));
+    const body = Buffer.concat([int8(0), varint(0), varint(offsetDelta), bytes(key), bytes(value), varint(0)]);
+    return Buffer.concat([varint(body.length), body]);
+  };
+  /** A magic 2 record batch; the client checks no CRC, so it is written as 0. */
+  const recordBatch = (b: {
+    baseOffset: number;
+    attributes?: number;
+    producerId?: number;
+    records?: Buffer[];
+    compressed?: Buffer;
+  }) => {
+    const records = b.records ?? [];
+    const count = b.compressed === undefined ? records.length : 1;
+    const afterLength = Buffer.concat([
+      int32(0),
+      int8(2),
+      int32(0),
+      int16(b.attributes ?? 0),
+      int32(Math.max(count - 1, 0)),
+      int64(1000),
+      int64(1000),
+      int64(b.producerId ?? -1),
+      int16(0),
+      int32(0),
+      int32(count),
+      b.compressed ?? Buffer.concat(records),
+    ]);
+    return Buffer.concat([int64(b.baseOffset), int32(afterLength.length), afterLength]);
+  };
+  const apiVersionsBody = () =>
+    Buffer.concat([
+      int16(0),
+      compactArray(
+        [
+          [18, 0, 3],
+          [3, 12, 12],
+          [1, 4, 17],
+        ],
+        ([key, min, max]) => Buffer.concat([int16(key), int16(min), int16(max), TAGS]),
+      ),
+      int32(0),
+      TAGS,
+    ]);
+  /** Metadata v12: this listener is broker 1 and leads orders' one partition. */
+  const metadataBody = (port: number) =>
+    Buffer.concat([
+      int32(0),
+      compactArray([port], (p) =>
+        Buffer.concat([int32(1), compactString("127.0.0.1"), int32(p), compactString(null), TAGS]),
+      ),
+      compactString("local-broker"),
+      int32(1),
+      compactArray(["orders"], (name) =>
+        Buffer.concat([
+          int16(0),
+          compactString(name),
+          Buffer.from(TOPIC_ID.replaceAll("-", ""), "hex"),
+          int8(0),
+          compactArray([0], (index) =>
+            Buffer.concat([
+              int16(0),
+              int32(index),
+              int32(1),
+              int32(0),
+              compactArray([1], int32),
+              compactArray([1], int32),
+              compactArray([], int32),
+              TAGS,
+            ]),
+          ),
+          int32(-2147483648),
+          TAGS,
+        ]),
+      ),
+      TAGS,
+    ]);
+  /** A Fetch answer for orders partition 0, the same bytes for v13 to v17, which differ only in optional tagged fields. */
+  const fetchBody = (batches: Buffer[], aborted: Array<[number, number]>, end: number) => {
+    const records = Buffer.concat(batches);
+    return Buffer.concat([
+      int32(0),
+      int16(0),
+      int32(0),
+      compactArray([0], () =>
+        Buffer.concat([
+          Buffer.from(TOPIC_ID.replaceAll("-", ""), "hex"),
+          compactArray([0], (index) =>
+            Buffer.concat([
+              int32(index),
+              int16(0),
+              int64(end),
+              int64(end),
+              int64(0),
+              compactArray(aborted, ([producerId, firstOffset]) =>
+                Buffer.concat([int64(producerId), int64(firstOffset), TAGS]),
+              ),
+              int32(-1),
+              uvarint(records.length + 1),
+              records,
+              TAGS,
+            ]),
+          ),
+          TAGS,
+        ]),
+      ),
+      TAGS,
+    ]);
+  };
+
+  /** A listener that answers ApiVersions, Metadata and each Fetch with `answer`, recording what each Fetch asked for. */
+  async function localBroker(answer: Buffer) {
+    const fetches: Array<{ version: number; isolationLevel: number; sessionId: number; sessionEpoch: number }> = [];
+    const sockets = new Set<Socket>();
+    let port = 0;
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => undefined);
+      let buffered = Buffer.alloc(0);
+      socket.on("data", (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        while (buffered.length >= 4 && buffered.length >= 4 + buffered.readInt32BE(0)) {
+          const frame = buffered.subarray(4, 4 + buffered.readInt32BE(0));
+          buffered = buffered.subarray(4 + frame.length);
+          const [apiKey, version, correlationId] = [frame.readInt16BE(0), frame.readInt16BE(2), frame.readInt32BE(4)];
+          // The request header: the client id as a length and its bytes, then the header's tags.
+          const body = frame.subarray(8 + 2 + frame.readInt16BE(8) + 1);
+          let reply: Buffer;
+          if (apiKey === 18) reply = Buffer.concat([int32(correlationId), apiVersionsBody()]);
+          else if (apiKey === 3) reply = Buffer.concat([int32(correlationId), TAGS, metadataBody(port)]);
+          else if (apiKey === 1) {
+            // Version 15 moved the replica id out of the body.
+            const at = version >= 15 ? 0 : 4;
+            fetches.push({
+              version,
+              isolationLevel: body.readInt8(at + 12),
+              sessionId: body.readInt32BE(at + 13),
+              sessionEpoch: body.readInt32BE(at + 17),
+            });
+            reply = Buffer.concat([int32(correlationId), TAGS, answer]);
+          } else {
+            socket.destroy();
+            return;
+          }
+          socket.write(Buffer.concat([int32(reply.length), reply]));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as AddressInfo).port;
+    const client = createPlatformaticClient(
+      { clientId: "libredb-studio", broker: { host: "127.0.0.1", port }, timeoutMs: 2000 },
+      await loadPlatformatic(),
+    );
+    return {
+      client,
+      fetches,
+      close: async () => {
+        await client.close();
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  }
+
+  /** Reads orders partition 0 from `from` through the adapter, under a signal that stops it well before bun's test timeout. */
+  async function readThrough(answer: Buffer, from: number) {
+    const broker = await localBroker(answer);
+    try {
+      const [orders] = (await broker.client.metadata(["orders"])).topics;
+      const result = await broker.client
+        .fetch(orders, 0, big(from), AbortSignal.timeout(2500))
+        .catch((error: unknown) => error as KafkaError);
+      return { result, fetches: broker.fetches };
+    } finally {
+      await broker.close();
+    }
+  }
+
+  test("an empty control batch beside a listed aborted transaction, the shape Kafka's cleaner leaves, reads its committed records", async () => {
+    // The batches of a cleaned Kafka 4.3.1 log measured on 2026-09-25: the empty control batch the
+    // cleaner kept of producer 4's last marker, producer 5's aborted batch and its ABORT marker, then plain records.
+    const { result, fetches } = await readThrough(
+      fetchBody(
+        [
+          recordBatch({ baseOffset: 11, attributes: CONTROL, producerId: 4 }),
+          recordBatch({
+            baseOffset: 12,
+            attributes: TRANSACTIONAL,
+            producerId: 5,
+            records: [record(0, Buffer.from("qa"), Buffer.from("aborted"))],
+          }),
+          recordBatch({ baseOffset: 13, attributes: CONTROL, producerId: 5, records: [record(0, ABORT_KEY, null)] }),
+          recordBatch({
+            baseOffset: 14,
+            records: [0, 1, 2].map((i) => record(i, Buffer.from(`k${i}`), Buffer.from("plain"))),
+          }),
+        ],
+        [[5, 12]],
+        17,
+      ),
+      11,
+    );
+    // A failure is thrown whole, so its category and message show.
+    if (result instanceof Error) throw result;
+    expect(result.records.map((r) => [r.offset, Buffer.from(r.key!).toString()])).toEqual([
+      [big(14), "k0"],
+      [big(15), "k1"],
+      [big(16), "k2"],
+    ]);
+    expect(result.nextOffset).toBe(big(17));
+    // On the wire: the adapter's own Fetch, version 13, READ_COMMITTED, with no fetch session.
+    expect(fetches).toEqual([{ version: 13, isolationLevel: 1, sessionId: 0, sessionEpoch: -1 }]);
+  });
+
+  test("an ABORT marker of a producer the answer does not list, beside a listed aborted transaction, reads through", async () => {
+    const { result } = await readThrough(
+      fetchBody(
+        [
+          recordBatch({ baseOffset: 0, attributes: CONTROL, producerId: 7, records: [record(0, ABORT_KEY, null)] }),
+          recordBatch({
+            baseOffset: 1,
+            attributes: TRANSACTIONAL,
+            producerId: 8,
+            records: [record(0, Buffer.from("x"), Buffer.from("aborted"))],
+          }),
+          recordBatch({ baseOffset: 2, attributes: CONTROL, producerId: 8, records: [record(0, ABORT_KEY, null)] }),
+          recordBatch({ baseOffset: 3, records: [record(0, Buffer.from("kept"), Buffer.from("plain"))] }),
+        ],
+        [[8, 1]],
+        4,
+      ),
+      0,
+    );
+    if (result instanceof Error) throw result;
+    expect(result.records.map((r) => r.offset)).toEqual([big(3)]);
+    expect(result.nextOffset).toBe(big(4));
+  });
+
+  test("a batch that will not decompress is protocol, named by zlib's code, and the read settles", async () => {
+    const { result } = await readThrough(
+      fetchBody([recordBatch({ baseOffset: 0, attributes: GZIP, compressed: Buffer.from("not gzip at all") })], [], 1),
+      0,
+    );
+    expect(result).toBeInstanceOf(KafkaError);
+    const error = result as KafkaError;
+    expect([error.category, error.detail]).toEqual(["protocol", {}]);
+    expect(error.message).toContain("Z_DATA_ERROR");
   });
 });

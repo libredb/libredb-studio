@@ -51,9 +51,15 @@ type Answer = (...args: unknown[]) => unknown;
 
 /**
  * A recorded @platformatic/kafka. Every construction lands in `constructed` and every call in
- * `calls`, as `[name, args]`, with names such as `admin.metadata` or `consumer.fetch`; an
- * override keyed by that name answers in place of the fixture. Shared by the adapter's unit
- * test and the provider's integration test.
+ * `calls`, as `[name, args]`, with names such as `admin.metadata` or `fetchV13`; an override
+ * keyed by that name answers in place of the fixture. Shared by the adapter's unit test and the
+ * provider's integration test.
+ *
+ * A read's fetch is two calls: `pool.get` with the leader's advertised `{ host, port }`, which
+ * answers a pooled connection naming that broker, and `fetchV13` with the library's positional
+ * arguments, `(connection, maxWaitMs, minBytes, maxBytes, isolationLevel, sessionId,
+ * sessionEpoch, topics, forgottenTopicsData, rackId)`, so a fetch override reads its topics at
+ * index 7 and the broker it was sent to at `args[0].broker`.
  */
 export function recordedLib(overrides: Record<string, Answer> = {}) {
   const constructed: Array<[string, unknown]> = [];
@@ -89,12 +95,15 @@ export function recordedLib(overrides: Record<string, Answer> = {}) {
   const consumer = {
     listOffsets: record("consumer.listOffsets", () => kafkaFixture("offsets-latest")),
     listOffsetsWithTimestamps: record("consumer.listOffsetsWithTimestamps", () => kafkaFixture("offsets-timestamp")),
-    fetch: record("consumer.fetch", () => kafkaFixture("fetch-orders-p1-o5")),
     close: record("consumer.close", () => undefined),
   };
   const connection = {
     connect: record("connection.connect", () => undefined),
     close: record("connection.close", () => undefined),
+  };
+  const pool = {
+    get: record("pool.get", (broker) => ({ broker })),
+    close: record("pool.close", () => undefined),
   };
   const lib: PlatformaticLib = {
     Admin: class {
@@ -115,8 +124,17 @@ export function recordedLib(overrides: Record<string, Answer> = {}) {
         return connection;
       }
     } as never,
+    ConnectionPool: class {
+      constructor(id: string, o: object) {
+        constructed.push(["ConnectionPool", { id, ...o }]);
+        return pool;
+      }
+    } as never,
     consumerGroupDescribeV0: {
       api: { async: record("consumerGroupDescribeV0", () => kafkaFixture("consumer-group-describe")) as never },
+    },
+    fetchV13: {
+      api: { async: record("fetchV13", () => kafkaFixture("fetch-orders-p1-o5")) as never },
     },
   };
   return { lib, constructed, calls };

@@ -3,9 +3,10 @@
  *
  * It calls read methods only, from the allowlist the seam guard enforces. It never
  * calls consume(): measured M-D, MANUAL-mode consume() joins the consumer group even
- * with explicit offsets and autocommit off. Reads go through Consumer.fetch, which
- * measured M-A registers no group and never contacts the group coordinator; the
- * groupId the Consumer constructor requires is a sentinel that is never sent.
+ * with explicit offsets and autocommit off. A read's records come from the adapter's own
+ * Fetch v13, sent through the library's exported protocol module on a connection from the
+ * library's pool, which names no group at all (spec 3.6 K8); the Consumer serves offsets
+ * only, and the groupId its constructor requires is a sentinel that is never sent (M-A).
  *
  * The library is injected (`lib`), so tests replace it with recorded payloads and the
  * provider loads the real one through `loadPlatformatic()`.
@@ -51,12 +52,27 @@ interface AdminLike {
 interface ConsumerLike {
   listOffsets(o: object): Promise<Map<string, bigint[]>>;
   listOffsetsWithTimestamps(o: object): Promise<Map<string, Map<number, { offset: bigint; timestamp: bigint }>>>;
-  fetch(o: object): Promise<LibFetchResponse>;
   close(): Promise<void>;
 }
 interface ConnectionLike {
   connect(host: string, port: number): Promise<void>;
   close(): Promise<void>;
+}
+/** One connection per broker address, opened on first use and dropped once closed (dist/network/connection-pool.js). */
+interface ConnectionPoolLike {
+  get(broker: { host: string; port: number }): Promise<ConnectionLike>;
+  close(): Promise<void>;
+}
+/** One topic of a Fetch request and its partitions (dist/apis/consumer/fetch-v13.d.ts, FetchRequestTopic). */
+interface LibFetchRequestTopic {
+  topicId: string;
+  partitions: Array<{
+    partition: number;
+    fetchOffset: bigint;
+    partitionMaxBytes: number;
+    currentLeaderEpoch: number;
+    lastFetchedEpoch: number;
+  }>;
 }
 interface LibMetadata {
   id: string;
@@ -168,6 +184,7 @@ export interface PlatformaticLib {
   readonly Admin: new (options: object) => AdminLike;
   readonly Consumer: new (options: object) => ConsumerLike;
   readonly Connection: new (clientId: string, options: object) => ConnectionLike;
+  readonly ConnectionPool: new (clientId: string, options: object) => ConnectionPoolLike;
   readonly consumerGroupDescribeV0: {
     readonly api: {
       readonly async: (
@@ -177,10 +194,26 @@ export interface PlatformaticLib {
       ) => Promise<unknown>;
     };
   };
+  readonly fetchV13: {
+    readonly api: {
+      readonly async: (
+        connection: ConnectionLike,
+        maxWaitMs: number,
+        minBytes: number,
+        maxBytes: number,
+        isolationLevel: number,
+        sessionId: number,
+        sessionEpoch: number,
+        topics: LibFetchRequestTopic[],
+        forgottenTopicsData: never[],
+        rackId: string,
+      ) => Promise<LibFetchResponse>;
+    };
+  };
 }
 
 /**
- * Loads the library once for the process and hands over the four members this file uses.
+ * Loads the library once for the process and hands over the six members this file uses.
  * `load` is the dynamic import; a test passes its own module in its place.
  */
 export async function loadPlatformatic(
@@ -199,7 +232,9 @@ export async function loadPlatformatic(
     Admin: lib.Admin as never,
     Consumer: lib.Consumer as never,
     Connection: lib.Connection as never,
+    ConnectionPool: lib.ConnectionPool as never,
     consumerGroupDescribeV0: lib.consumerGroupDescribeV0 as never,
+    fetchV13: lib.fetchV13 as never,
   };
 }
 
@@ -213,9 +248,17 @@ const EARLIEST_TIMESTAMP = BigInt(-2);
 const LATEST_TIMESTAMP = BigInt(-1);
 const READ_UNCOMMITTED = 0;
 const READ_COMMITTED = 1;
-/** The Fetch API, and the first version that names a topic by id (KIP-516), which is all this adapter sends. */
+/**
+ * The Fetch API, and the one version this adapter sends: the first that names a topic by id
+ * (KIP-516), which every broker from Apache Kafka 3.1 on answers, and where Redpanda v26.2.2 stops.
+ */
 const FETCH_API_KEY = 1;
-const FETCH_BY_TOPIC_ID = 13;
+const FETCH_VERSION = 13;
+/** Session id 0 with epoch -1 asks for a full answer and opens no fetch session (KIP-227). */
+const SESSIONLESS_ID = 0;
+const SESSIONLESS_EPOCH = -1;
+/** The broker answers once it holds a byte, as the library's own fetch asks (dist/clients/consumer/options.js). */
+const KAFKA_FETCH_MIN_BYTES = 1;
 
 /** Protocol errors a leaderless partition answers Metadata with (Kafka's KRaftMetadataCache). */
 const LEADERLESS = new Set(["LEADER_NOT_AVAILABLE", "LISTENER_NOT_FOUND"]);
@@ -224,33 +267,6 @@ const PARTITION_PATH = /^\/topics\/\d+\/partitions\/\d+$/;
 const STALE_LEADER = new Set(["NOT_LEADER_OR_FOLLOWER", "LEADER_NOT_AVAILABLE", "UNKNOWN_TOPIC_OR_PARTITION"]);
 /** How often the client retries a failed request, so each request is sent at most twice. */
 const RETRIES = 1;
-/** The library's own retry delay (dist/clients/base/options.js, defaultBaseOptions.retryDelay). */
-const RETRY_DELAY_MS = 1000;
-/**
- * The longest delay a timer takes. Bun and Node cut a longer one to 1 ms (measured on 2026-09-25),
- * and the connection dialog takes a query timeout up to this very value.
- */
-const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
-/** Protocol errors by which the broker asks for a new fetch session, which the library's retry opens. */
-const FETCH_SESSION_RESET = new Set(["INVALID_FETCH_SESSION_EPOCH", "FETCH_SESSION_ID_NOT_FOUND"]);
-
-/**
- * The library's retry delay, except for a fetch session the broker asked to reset, which is
- * retried at once. After a fetch answered with a partition error (OFFSET_OUT_OF_RANGE,
- * NOT_LEADER_OR_FOLLOWER) the broker has moved its session epoch and the library has not, so
- * the next fetch to that broker meets INVALID_FETCH_SESSION_EPOCH; the library then drops its
- * session and retries, and a second's wait before that would stall every read that follows on
- * that broker (measured against Apache Kafka 4.3.1 and Redpanda v26.2.2 on 2026-09-24).
- */
-function retryDelayFor(
-  _client: unknown,
-  _operationId: string,
-  _attempt: number,
-  _retries: number,
-  error: Error,
-): number {
-  return [...walk(error)].some((e) => FETCH_SESSION_RESET.has(String(e.apiId))) ? 0 : RETRY_DELAY_MS;
-}
 
 export function createPlatformaticClient(options: KafkaConnectionOptions, lib: PlatformaticLib): KafkaReadClient {
   const transport = {
@@ -261,14 +277,13 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   };
   let serverName = options.tlsServerName === true;
   const build = () => {
+    const connections = { ...transport, ...(serverName ? { tlsServerName: true } : {}) };
     const base = {
       clientId: options.clientId,
       bootstrapBrokers: [{ host: options.broker.host, port: options.broker.port }],
       autocreateTopics: false,
       retries: RETRIES,
-      retryDelay: retryDelayFor,
-      ...transport,
-      ...(serverName ? { tlsServerName: true } : {}),
+      ...connections,
     };
     return {
       admin: new lib.Admin(base),
@@ -281,20 +296,22 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
         autocommit: false,
         groupProtocol: "classic",
       }),
+      // The connections a read's fetches go out on, one per broker address, with the clients' transport.
+      fetchPool: new lib.ConnectionPool(options.clientId, connections),
     };
   };
-  let { admin, consumer } = build();
+  let { admin, consumer, fetchPool } = build();
 
   // The library applies one server-name rule to every broker connection, and an IP literal
   // is not a legal server name (Node 26 throws on one). So a cluster that advertises any
-  // broker by IP gets both clients rebuilt without SNI; such a cluster is not routed by
-  // server name anyway (spec 6.1). The first metadata read is connect()'s, before any read
-  // reaches an advertised broker.
+  // broker by IP gets both clients and the fetch pool rebuilt without SNI; such a cluster is
+  // not routed by server name anyway (spec 6.1). Every broker list the adapter reads passes
+  // here, connect()'s first and a fetch's own, before a connection reaches that broker.
   const dropServerNameForIpBrokers = async (brokers: readonly KafkaBroker[]) => {
     if (!serverName || brokers.every((b) => isIP(b.host) === 0)) return;
     serverName = false;
-    const previous = [admin, consumer];
-    ({ admin, consumer } = build());
+    const previous = [admin, consumer, fetchPool];
+    ({ admin, consumer, fetchPool } = build());
     await Promise.all(previous.map((client) => client.close()));
   };
 
@@ -369,66 +386,81 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   const readConfigs = async (resourceType: number, resourceName: string): Promise<KafkaConfigEntry[]> =>
     mapConfigs(await admin.describeConfigs(configRequest(resourceType, resourceName)), resourceType, resourceName);
 
-  let fetchByTopicIdChecked = false;
-  const requireFetchByTopicId = async (): Promise<void> => {
-    if (fetchByTopicIdChecked) return;
+  let fetchVersionChecked = false;
+  const requireFetchVersion = async (): Promise<void> => {
+    if (fetchVersionChecked) return;
     const fetchApi = (await admin.listApis()).find((api) => api.apiKey === FETCH_API_KEY);
-    if (fetchApi === undefined || fetchApi.maxVersion < FETCH_BY_TOPIC_ID) {
+    if (fetchApi === undefined || fetchApi.minVersion > FETCH_VERSION || fetchApi.maxVersion < FETCH_VERSION) {
+      const range =
+        fetchApi === undefined ? "no Fetch version" : `Fetch versions ${fetchApi.minVersion} to ${fetchApi.maxVersion}`;
       throw new KafkaError(
         "unsupported-broker",
-        `This broker answers Fetch up to version ${fetchApi?.maxVersion ?? "none"}; reading needs Fetch ${FETCH_BY_TOPIC_ID} or later (Apache Kafka 3.1 or later)`,
+        `This broker answers ${range}; a read sends Fetch ${FETCH_VERSION}, which Apache Kafka answers from 3.1 on`,
       );
     }
-    fetchByTopicIdChecked = true;
+    fetchVersionChecked = true;
   };
 
-  // One fetch in flight at a time. The library keeps one KIP-227 fetch session per broker on a
-  // Consumer (dist/clients/consumer/consumer.js), so two fetches sent together carry the same
-  // session epoch, and the broker refuses one with INVALID_FETCH_SESSION_EPOCH, which costs that
-  // read a retry and, once its one retry is spent, the read itself.
-  // A cached provider serves every tab and every user of a connection, so reads do overlap.
-  // A turn waits on the library's own promise, never on the abortable one, so a read its timeout
-  // stopped keeps its turn until its fetch has settled on the session; a read stopped while it
-  // still waited sends nothing when its turn comes.
-  // The wait is bounded, because the library can leave a fetch unsettled (see oneFetchAtATime):
-  // by the longest the fetch's two attempts take when each connects once and sends one request,
-  // with the retry delay between them, past which the client's own timers have answered every
-  // request such a fetch sent. A fetch can outlast it when it must also read the cluster's
-  // metadata, as a retry does after its connection failed, or waits on its connection behind
-  // other requests; should it then meet the next fetch on the session, the broker refuses one,
-  // and the library retries that one at once (retryDelayFor), on a new session.
-  const fetchTurn = oneFetchAtATime(
-    Math.min(
-      MAX_TIMER_DELAY_MS,
-      (RETRIES + 1) * (transport.connectTimeout + transport.requestTimeout) + RETRIES * RETRY_DELAY_MS,
-    ),
-  );
-  const fetchFrom = (topic: KafkaTopicMetadata, partition: number, offset: bigint, node: number, signal: AbortSignal) =>
-    fetchTurn(() => {
-      if (signal.aborted) throw stoppedRead();
-      return fetchNow(topic, partition, offset, node);
+  /**
+   * The brokers the cluster lists, from the library's copy when it holds one: a brokers-only read
+   * the library answers from its cache without a round trip, where the provider's own metadata([])
+   * is forced. A fetch reads its leader's advertised address here.
+   */
+  const listedBrokers = async (): Promise<readonly KafkaBroker[]> => {
+    const { brokers } = mapMetadata(await admin.metadata({ topics: [], autocreateTopics: false }));
+    await dropServerNameForIpBrokers(brokers);
+    return brokers;
+  };
+
+  // A read's fetch is the adapter's own, never the library's Consumer.fetch (spec 3.6 K8). That
+  // one hands every READ_COMMITTED answer to a filter that reads a control batch's first record
+  // and an aborted range's end unguarded, inside the socket handler, where a throw is uncaught:
+  // an answer holding an empty control batch (which Kafka's log cleaner keeps of a producer's last
+  // marker), or an unlisted producer's ABORT marker, beside a listed aborted transaction left that
+  // fetch unsettled, and ended a Node process that handles no uncaught exception (measured on Kafka
+  // 4.3.1 after log cleaning, 2026-09-25). It also keeps one KIP-227 fetch session per broker, which
+  // two reads in flight at once collide on. So a fetch here is Fetch v13, READ_COMMITTED and
+  // sessionless, on a pooled connection to the leader: the library parses the answer inside its
+  // own try and settles the call either way, no session exists to collide on, so overlapping reads
+  // run side by side, and the answer reaches only mapFetch, which applies the Java consumer's rule.
+  // A read stopped before its fetch is sent sends none.
+  const fetchFrom = async (
+    broker: KafkaBroker,
+    topic: KafkaTopicMetadata,
+    partition: number,
+    offset: bigint,
+    signal: AbortSignal,
+  ): Promise<LibFetchResponse> => {
+    const connection = await fetchPool.get({ host: broker.host, port: broker.port });
+    if (signal.aborted) throw stoppedRead();
+    const partitions = [
+      {
+        partition,
+        fetchOffset: offset,
+        partitionMaxBytes: KAFKA_FETCH_MAX_BYTES,
+        currentLeaderEpoch: -1,
+        lastFetchedEpoch: -1,
+      },
+    ];
+    const answer = lib.fetchV13.api.async(
+      connection,
+      KAFKA_FETCH_MAX_WAIT_MS,
+      KAFKA_FETCH_MIN_BYTES,
+      KAFKA_FETCH_MAX_BYTES,
+      READ_COMMITTED,
+      SESSIONLESS_ID,
+      SESSIONLESS_EPOCH,
+      [{ topicId: topic.id, partitions }],
+      [],
+      "",
+    );
+    // The library's parser rejects an answer it cannot read with the error that stopped it, such as
+    // zlib's for a batch that will not decompress, which bears no PLT_KFK_ code; it is still the
+    // broker's answer failing, never a defect of this provider's.
+    return answer.catch((error: unknown) => {
+      throw isLibraryFailure(error) ? error : translateError(error, options.broker);
     });
-  const fetchNow = (topic: KafkaTopicMetadata, partition: number, offset: bigint, node: number) =>
-    consumer.fetch({
-      node,
-      maxWaitTime: KAFKA_FETCH_MAX_WAIT_MS,
-      maxBytes: KAFKA_FETCH_MAX_BYTES,
-      isolationLevel: READ_COMMITTED,
-      topics: [
-        {
-          topicId: topic.id,
-          partitions: [
-            {
-              partition,
-              fetchOffset: offset,
-              partitionMaxBytes: KAFKA_FETCH_MAX_BYTES,
-              currentLeaderEpoch: -1,
-              lastFetchedEpoch: -1,
-            },
-          ],
-        },
-      ],
-    });
+  };
 
   return {
     metadata: (topics) => guard(async () => readMetadata(topics ?? (await readTopicNames()))),
@@ -465,34 +497,46 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
         return offsets;
       }),
 
+    // Each step waits on the read's signal as well, so a stopped read is answered at once, whatever
+    // it waited on, and sends no fetch; what it waited on settles on its own, under the client's timers.
     fetch: (topic, partition, offset, signal) =>
       guard(async () => {
         if (signal.aborted) throw stoppedRead();
         const leader = leaderOf(topic, partition);
-        await requireFetchByTopicId();
-        try {
-          return mapFetch(
-            await abortable(fetchFrom(topic, partition, offset, leader, signal), signal),
-            topic,
-            partition,
-            offset,
-          );
-        } catch (error) {
-          if (!staleLeader(error)) throw error;
-          // The library retries on the node it was given, so a leader that moved (a rolling
-          // restart, a reassignment) fails every retry. The leader is read again, once, and followed.
-          const fresh = mapMetadata(
-            await admin.metadata({ topics: [topic.name], autocreateTopics: false, forceUpdate: true }),
-          ).topics.find((t) => t.name === topic.name);
-          const moved = fresh?.partitions.find((p) => p.partition === partition)?.leader ?? -1;
-          if (fresh === undefined || moved < 0 || moved === leader) throw error;
-          return mapFetch(
-            await abortable(fetchFrom(fresh, partition, offset, moved, signal), signal),
-            fresh,
-            partition,
-            offset,
-          );
+        await abortable(requireFetchVersion(), signal);
+        // Metadata lists live brokers only, so a leader it names no broker for is down or gone:
+        // no fetch is sent to it, and it is looked for again below, as a refused fetch is.
+        const listed = (await abortable(listedBrokers(), signal)).find((b) => b.nodeId === leader);
+        let refusal: unknown;
+        if (listed !== undefined) {
+          try {
+            return mapFetch(
+              await abortable(fetchFrom(listed, topic, partition, offset, signal), signal),
+              topic,
+              partition,
+              offset,
+            );
+          } catch (error) {
+            if (!staleLeader(error)) throw error;
+            refusal = error;
+          }
         }
+        // A leader that moved (a rolling restart, a reassignment) refuses the fetch or cannot be
+        // reached. The leader is read again, once, forced, and followed to a broker the answer lists.
+        const fresh = mapMetadata(
+          await abortable(admin.metadata({ topics: [topic.name], autocreateTopics: false, forceUpdate: true }), signal),
+        );
+        await dropServerNameForIpBrokers(fresh.brokers);
+        const moved = fresh.topics.find((t) => t.name === topic.name);
+        const movedTo = moved?.partitions.find((p) => p.partition === partition)?.leader ?? -1;
+        const broker = movedTo === leader ? undefined : fresh.brokers.find((b) => b.nodeId === movedTo);
+        if (moved === undefined || broker === undefined) throw refusal ?? unlistedLeader(topic.name, partition, leader);
+        return mapFetch(
+          await abortable(fetchFrom(broker, moved, partition, offset, signal), signal),
+          moved,
+          partition,
+          offset,
+        );
       }),
 
     topicConfigs: (topic) => guard(() => readConfigs(TOPIC_RESOURCE, topic)),
@@ -554,7 +598,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
       }),
 
     close: async () => {
-      await Promise.all([admin.close(), consumer.close()]);
+      await Promise.all([admin.close(), consumer.close(), fetchPool.close()]);
     },
   };
 }
@@ -681,11 +725,14 @@ function leaderlessResponse(error: unknown): LibRawMetadata | undefined {
 
 /** A fetch that failed because the partition's leader is not where the metadata said, or cannot be reached there. */
 function staleLeader(error: unknown): boolean {
-  return [...walk(error)].some(
-    (e) =>
-      STALE_LEADER.has(String(e.apiId)) ||
-      e.code === "PLT_KFK_NETWORK" ||
-      /^Cannot find broker with node id/.test(String(e.message)),
+  return [...walk(error)].some((e) => STALE_LEADER.has(String(e.apiId)) || e.code === "PLT_KFK_NETWORK");
+}
+
+/** A leader the cluster lists no broker for, which a forced re-read names again or names no other listed broker for. */
+function unlistedLeader(topic: string, partition: number, leader: number): KafkaError {
+  return new KafkaError(
+    "protocol",
+    `Partition ${partition} of topic ${JSON.stringify(topic)} is led by broker ${leader}, which the cluster does not list as live; its leadership is moving, run the read again`,
   );
 }
 
@@ -723,16 +770,16 @@ const ABORT_MARKER = 0;
  * One partition's fetch answer to records (spec 5.2, Review Focus 2).
  *
  * - The answer's entry is the one for the fetched topic id and partition, never the first by
- *   position: the library keeps a KIP-227 fetch session per broker, and an answer that holds no
- *   entry for the partition had nothing for it, which leaves the read where it was.
+ *   position, and an answer that holds no entry for the partition had nothing for it, which
+ *   leaves the read where it was.
  * - A control batch carries one marker record, a transaction's COMMIT or ABORT. It is never a
- *   row, but its offsets still advance `nextOffset`. The library's fetch keeps markers (it
- *   leaves them to its MessagesStream, which this provider does not use).
+ *   row, but its offsets still advance `nextOffset`. The broker sends markers with the records.
  * - Under READ_COMMITTED the broker lists the aborted transactions that overlap the response.
  *   A transactional batch of a producer inside one of them is dropped until that producer's
  *   ABORT marker: the Java consumer's rule, applied per response, because the broker lists an
- *   aborted transaction again in every response that overlaps it. The library's own filter
- *   drops aborted records only when the marker is in the same response.
+ *   aborted transaction again in every response that overlaps it. This is the only filter an
+ *   answer meets: the library's own drops aborted records only when the marker is in the same
+ *   response, and throws on answers this rule reads (see fetchFrom), so it is never on the path.
  * - A LogAppendTime topic stamps the broker's time on the batch's maxTimestamp only, which is
  *   then every record's timestamp; the per-record deltas keep the producer's clock.
  */
@@ -916,43 +963,6 @@ async function describeConsumerProtocol(
 
 function stoppedRead(): KafkaError {
   return new KafkaError("timeout", "The read ran past its time limit and was stopped");
-}
-
-/**
- * Runs fetches one at a time, in the order they were asked for. Each holds the turn until the
- * library settles it, or until `holdMs` have passed since the library was handed it, whichever
- * comes first; one that throws before it reaches the library passes the turn on at once.
- * The bound is there because the library can leave a fetch unsettled: its READ_COMMITTED filter
- * reads an aborted range's end and a control batch's first record unguarded, inside its socket
- * handler, so an answer that holds an empty control batch (which Kafka's log cleaner keeps of a
- * producer's last marker), or an ABORT marker of a producer it does not list, beside a listed
- * aborted transaction throws there, after the request has left the client's own timers (measured
- * on Kafka 4.3.1 after log cleaning, 2026-09-25). Without it, that one read would stop every
- * later read on the provider.
- */
-function oneFetchAtATime(holdMs: number) {
-  let turn: Promise<void> = Promise.resolve();
-  return <T>(start: () => Promise<T>): Promise<T> => {
-    // Boxed, so the next turn waits on the hold below rather than on the fetch itself.
-    const started = turn.then(() => ({ fetch: start() }));
-    turn = started.then(
-      ({ fetch }) => settledOrAfter(fetch, holdMs),
-      () => undefined,
-    );
-    return started.then(({ fetch }) => fetch);
-  };
-}
-
-/** Resolves once `promise` settles, or once `ms` have passed, whichever comes first; never rejects. */
-function settledOrAfter(promise: Promise<unknown>, ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    const settled = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    promise.then(settled, settled);
-  });
 }
 
 /** The fetch's answer, or a timeout the moment the signal stops the read; the fetch itself settles on its own. */
