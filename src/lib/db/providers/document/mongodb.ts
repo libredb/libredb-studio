@@ -1255,7 +1255,29 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * A maintenance command runs on the database the provider is bound to, and MongoDB has no
+   * way to retarget one mid-command. A container naming a DIFFERENT database is refused
+   * rather than quietly acted on against the bound one, which is what #843 is about; the
+   * bound database itself is accepted so a caller that echoes it back still works.
+   *
+   * The comparison is against `getDatabaseName()`, the name `connect()` actually opened, and
+   * not against `config.database` alone: a connection-string connection sets no
+   * `config.database`, so comparing with it refused the database the provider IS bound to and
+   * every per-collection button on that connection answered `bound to the database ""`.
+   */
+  private assertContainerIsBound(container?: string): void {
+    const bound = this.getDatabaseName();
+    if (container && container !== bound) {
+      throw new QueryError(
+        `This connection is bound to the database "${bound}", so it cannot run maintenance in "${container}".`,
+        "mongodb",
+      );
+    }
+  }
+
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
+    this.assertContainerIsBound(container);
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {

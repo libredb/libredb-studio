@@ -2904,7 +2904,21 @@ export class MySQLProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * A maintenance target as a `database.table` identifier, qualified only when the caller's
+   * container is a database OTHER than the connected one. A MySQL statement already resolves
+   * a bare table inside the connected database, so qualifying with the same name would add a
+   * prefix the engine reads as redundant, and a container that is not a database at all is
+   * not something this engine can act on.
+   */
+  private qualifyMaintenanceTarget(target: string, container?: string): string {
+    if (container && container !== this.config.database) {
+      return `${this.escapeIdentifier(container)}.${this.escapeIdentifier(target)}`;
+    }
+    return this.escapeIdentifier(target);
+  }
+
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -2919,7 +2933,9 @@ export class MySQLProvider extends SQLBaseProvider {
           case "analyze":
           case "optimize":
           case "check": {
-            const tables = target ? this.escapeIdentifier(target) : await this.getAllTablesForMaintenance(conn);
+            const tables = target
+              ? this.qualifyMaintenanceTarget(target, container)
+              : await this.getAllTablesForMaintenance(conn);
             // An empty database joined to an empty list, and `OPTIMIZE TABLE ` alone is
             // a syntax error - measured through the provider against a database with no
             // tables on 2026-08-25: "You have an error in your SQL syntax ... near ''".

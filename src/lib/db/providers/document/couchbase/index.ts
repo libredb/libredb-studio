@@ -93,7 +93,13 @@ import {
   SCOPES_SQL,
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
-import { CouchbaseError, type CouchbaseQueryResult, type CouchbaseRow, type CouchbaseTransport } from "./transport";
+import {
+  CouchbaseError,
+  type CouchbaseQueryResult,
+  type CouchbaseRow,
+  type CouchbaseTransport,
+  type Keyspace,
+} from "./transport";
 
 // ============================================================================
 // Constants
@@ -1314,10 +1320,10 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   // Maintenance
   // ==========================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
     const { result, executionTime } = await this.measureExecution(() =>
-      this.guarded(() => this.dispatchMaintenance(transport, type, target)),
+      this.guarded(() => this.dispatchMaintenance(transport, type, target, container)),
     );
     return { ...result, executionTime };
   }
@@ -1326,12 +1332,13 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     transport: CouchbaseTransport,
     type: MaintenanceType,
     target?: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
     switch (type) {
       case "analyze":
-        return this.updateStatistics(transport, this.requireTarget(type, target));
+        return this.updateStatistics(transport, this.requireTarget(type, target), container);
       case "reindex":
-        return this.buildDeferredIndexes(transport, this.requireTarget(type, target));
+        return this.buildDeferredIndexes(transport, this.requireTarget(type, target), container);
       case "kill":
         return this.cancelRequest(transport, this.requireTarget(type, target));
     }
@@ -1354,8 +1361,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   private async updateStatistics(
     transport: CouchbaseTransport,
     target: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    const keyspace = keyspacePath(keyspaceFromDisplayName(this.bucket, target));
+    const keyspace = keyspacePath(this.maintenanceKeyspace(target, container));
 
     try {
       await transport.query(`UPDATE STATISTICS FOR ${keyspace} INDEX ALL`, { timeoutMs: this.queryTimeout });
@@ -1369,11 +1377,39 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * The keyspace a maintenance call addresses, container and all.
+   *
+   * A container is the row's `schemaName`. For this provider every Tables row is the
+   * bucket-level one: `getTableStats()` reports the bucket under BOTH `schemaName` and
+   * `tableName`, and that row means the bucket's DEFAULT collection - the placement
+   * `resolveKeyspaceOf()` gives every bucket-level catalog row (`objects.ts`). Reading that
+   * bucket back as a scope built `travel`.`travel`.`travel`, which is no keyspace at all
+   * (#1091 review). A container that is any other name is the scope the collection sits in,
+   * so it is used as one rather than parsed out of a display name: the row already knows
+   * where it lives, and `keyspaceFromDisplayName` cannot tell a scope name from a collection
+   * name that contains a dot (#772). Without a container the display-name reading stands.
+   */
+  private maintenanceKeyspace(target: string, container?: string): Keyspace {
+    if (container === this.bucket) {
+      return {
+        bucket: this.bucket,
+        scope: COUCHBASE_DEFAULT_SCOPE,
+        collection: target === this.bucket ? COUCHBASE_DEFAULT_COLLECTION : target,
+      };
+    }
+    if (container) {
+      return { bucket: this.bucket, scope: container, collection: target };
+    }
+    return keyspaceFromDisplayName(this.bucket, target);
+  }
+
   private async buildDeferredIndexes(
     transport: CouchbaseTransport,
     target: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    const keyspace = keyspaceFromDisplayName(this.bucket, target);
+    const keyspace = this.maintenanceKeyspace(target, container);
     const deferred = await transport.query(DEFERRED_INDEX_SQL, {
       args: [keyspace.bucket, keyspace.scope, keyspace.collection],
       timeoutMs: CATALOG_TIMEOUT_MS,

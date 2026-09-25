@@ -1271,6 +1271,69 @@ describe("MySQLProvider", () => {
       expect(analyzeSql).toContain("`orders`");
     });
 
+    // #772: `schemaName` on MySQL is the DATABASE, so a container is honored only when it is
+    // a database OTHER than the connected one - a statement already resolves a bare table
+    // inside the connected database, and qualifying with the same name adds nothing.
+    test("a container naming another database qualifies the target", async () => {
+      const executedStatements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        executedStatements.push(sql);
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.runMaintenance("optimize", "users", "archive");
+
+      const optimizeSql = executedStatements.find((s) => s.startsWith("OPTIMIZE TABLE"));
+      expect(optimizeSql).toBe("OPTIMIZE TABLE `archive`.`users`");
+    });
+
+    test("a container naming the connected database stays unqualified", async () => {
+      const executedStatements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        executedStatements.push(sql);
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.runMaintenance("check", "users", "testdb");
+
+      const checkSql = executedStatements.find((s) => s.startsWith("CHECK TABLE"));
+      expect(checkSql).toBe("CHECK TABLE `users`");
+    });
+
+    test("a bare target with no container keeps the connected-database reading", async () => {
+      const executedStatements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        executedStatements.push(sql);
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.runMaintenance("analyze", "users");
+
+      const analyzeSql = executedStatements.find((s) => s.startsWith("ANALYZE TABLE"));
+      expect(analyzeSql).toBe("ANALYZE TABLE `users`");
+    });
+
+    test("quotes a database and a table that carry a backtick", async () => {
+      const executedStatements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        executedStatements.push(sql);
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.runMaintenance("optimize", "us`ers", "arch`ive");
+
+      const optimizeSql = executedStatements.find((s) => s.startsWith("OPTIMIZE TABLE"));
+      expect(optimizeSql).toBe("OPTIMIZE TABLE `arch``ive`.`us``ers`");
+    });
+
     test("kill without target throws QueryError", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();

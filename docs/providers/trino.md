@@ -1601,6 +1601,9 @@ every connector decides for itself whether it implements it, and measured, the `
 answers `This connector does not support analyze` and no connector on the probe cluster implements
 it. A button that always fails is worse than a stated reason.
 
+A `container` is deliberately ignored (#772): the only operation this provider performs is `kill`,
+whose target is a query id rather than an object inside any namespace.
+
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
 Declaring that an operation EXISTS is not enough to put a button on it: two engines that

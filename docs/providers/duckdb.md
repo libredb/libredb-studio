@@ -1050,6 +1050,12 @@ per-entity control would fail at the point the user clicked it. `runMaintenance`
 withheld types **here**, naming the reason, rather than sending a statement the engine will reject
 with wording about a keyword the user never typed.
 
+`runMaintenance(type, target?, container?)` takes a `container` as the SCHEMA the row carries as
+`schemaName` (#772), the same reading PostgreSQL uses: the schema is quoted whole and prefixed to
+the quoted table name, and never recovered by splitting the target - a schema is allowed to contain
+a dot. Without one the old readings stand: `schema.table` is quoted part by part and a bare name
+falls back to `main`.
+
 ---
 
 ## 9. Capabilities & labels

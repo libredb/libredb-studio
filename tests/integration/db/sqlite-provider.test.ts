@@ -541,6 +541,19 @@ describe("SQLiteProvider", () => {
       expect(tables.rows.length).toBe(1);
     });
 
+    test("a container changes nothing here, because the file has no second namespace", async () => {
+      // #772: SQLite always resolves against the attached `main`, so the container is
+      // deliberately ignored rather than becoming a qualifier that cannot exist.
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE mt (id INTEGER PRIMARY KEY, v TEXT)");
+
+      const result = await provider.runMaintenance("analyze", "mt", "main");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("ANALYZE");
+    });
+
     test("reindex does not execute a statement smuggled through the target identifier", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();

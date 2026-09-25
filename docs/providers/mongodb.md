@@ -913,8 +913,14 @@ something was measured:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+`runMaintenance(type, target?, container?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 maps the generic operations onto MongoDB admin commands:
+
+A `container` is a DATABASE name (#772). The provider is bound to one database and no admin command
+can retarget mid-command, so the bound name is accepted and any OTHER name is refused with
+`bound to the database "<name>"` rather than quietly acted on against the wrong one. The comparison
+uses `getDatabaseName()`, the name `connect()` opened - a connection-string connection sets no
+`config.database`, and comparing with that alone refused the bound database itself.
 
 | Type | MongoDB action |
 |------|----------------|

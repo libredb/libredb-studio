@@ -1159,10 +1159,14 @@ Monitoring never hard-fails on a missing optional feature:
 
 ### 3.6 Safe maintenance targets
 
-`qualifyMaintenanceTarget()` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) quotes
-maintenance targets through `escapeIdentifier()`: a bare name defaults to the `public` schema; a
-`schema.table` target is quoted per-part. This prevents identifier injection in `VACUUM`/`ANALYZE`/
-`REINDEX` statements (which cannot use bind parameters for object names).
+`qualifyMaintenanceTarget(target, container)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts))
+quotes maintenance targets through `escapeIdentifier()`. A caller that passes a `container` (the
+`schemaName` the table row already carries) gets that schema, quoted whole, prefixed to the quoted
+table name: the schema is never recovered by splitting the name, because a schema is allowed to
+contain a dot and the split would land on the wrong side. Without a container the older readings
+stay, so a bare name defaults to the `public` schema and a `schema.table` target is quoted per-part.
+This prevents identifier injection in `VACUUM`/`ANALYZE`/`REINDEX` statements (which cannot use
+bind parameters for object names).
 
 ---
 
@@ -1613,7 +1617,7 @@ A pooled client left `idle in transaction` poisons every later user of that stor
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)),
+`runMaintenance(type, target?, container?)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)),
 with targets quoted via [§3.6](#36-safe-maintenance-targets):
 
 | Type | With target | Without target |

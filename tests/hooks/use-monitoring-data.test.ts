@@ -310,6 +310,32 @@ describe("useMonitoringData", () => {
     expect(mockToastSuccess).toHaveBeenCalled();
   });
 
+  // #772: the container travels beside the target, so a provider can act on the namespace the
+  // row named instead of guessing one from a bare name.
+  test("runMaintenance sends the container it was given", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "VACUUM completed" } },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.runMaintenance("vacuum", "users", "reporting");
+    });
+
+    const maintenanceCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/maintenance"),
+    );
+    const body = JSON.parse(maintenanceCall![1]!.body as string);
+    expect(body.target).toBe("users");
+    expect(body.container).toBe("reporting");
+  });
+
   // ── a refused operation is reported as refused, not as a green tick ────────
 
   test("runMaintenance reports an HTTP 200 carrying success:false as a failure", async () => {

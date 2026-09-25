@@ -1059,10 +1059,10 @@ export class ClickHouseProvider extends SQLBaseProvider {
   // Maintenance
   // ==========================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
     const { result, executionTime } = await this.measureExecution(() =>
-      this.guarded(() => this.dispatchMaintenance(transport, type, target)),
+      this.guarded(() => this.dispatchMaintenance(transport, type, target, container)),
     );
 
     return { ...result, executionTime };
@@ -1072,15 +1072,16 @@ export class ClickHouseProvider extends SQLBaseProvider {
     transport: ClickHouseTransport,
     type: MaintenanceType,
     target?: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
     switch (type) {
       case "optimize":
-        return this.optimizeTable(transport, this.requireTarget(type, target));
+        return this.optimizeTable(transport, this.requireTarget(type, target), container);
       // No target is legitimate here, unlike optimize: MaintenanceModal's global
       // Analyze button sends none, and a database's parts are as well defined as a
       // table's. Demanding one made a control the UI always offers always fail.
       case "analyze":
-        return this.describeParts(transport, target);
+        return this.describeParts(transport, target, container);
       case "kill":
         return this.cancelQueryById(transport, this.requireTarget(type, target));
     }
@@ -1100,7 +1101,13 @@ export class ClickHouseProvider extends SQLBaseProvider {
     return target;
   }
 
-  private qualify(target: string): string {
+  private qualify(target: string, container?: string): string {
+    // A caller-supplied container removes the dot ambiguity that `splitTarget` documents
+    // below: `database.table` cannot be told apart from a name that contains a dot, while a
+    // container is already the database on its own.
+    if (container) {
+      return `${this.escapeIdentifier(container)}.${this.escapeIdentifier(target)}`;
+    }
     const [database, table] = splitTarget(target, this.pinnedDatabase);
     return `${this.escapeIdentifier(database)}.${this.escapeIdentifier(table)}`;
   }
@@ -1113,8 +1120,9 @@ export class ClickHouseProvider extends SQLBaseProvider {
   private async optimizeTable(
     transport: ClickHouseTransport,
     target: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    await transport.query(`OPTIMIZE TABLE ${this.qualify(target)} FINAL`);
+    await transport.query(`OPTIMIZE TABLE ${this.qualify(target, container)} FINAL`);
     return { success: true, message: `Optimized ${target}` };
   }
 
@@ -1127,10 +1135,16 @@ export class ClickHouseProvider extends SQLBaseProvider {
   private async describeParts(
     transport: ClickHouseTransport,
     target?: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    // Without a target the scope is the whole pinned database, which is what the
-    // global Analyze button asks for.
-    const [database, table] = target ? splitTarget(target, this.pinnedDatabase) : [this.pinnedDatabase, undefined];
+    // Without a target the scope is the whole pinned database, which is what the global
+    // Analyze button asks for. A container states the database outright, so the name is not
+    // split to recover one; without a container the old reading stands.
+    const [database, table] = container
+      ? [container, target]
+      : target
+        ? splitTarget(target, this.pinnedDatabase)
+        : [this.pinnedDatabase, undefined];
     const scope = target ?? database;
     const where = table
       ? `database = ${literal(database)} AND table = ${literal(table)}`

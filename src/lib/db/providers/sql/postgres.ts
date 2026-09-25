@@ -4112,8 +4112,15 @@ export class PostgresProvider extends SQLBaseProvider {
    * Bare table names default to the public schema; "schema.table" is quoted
    * per-part. Returns an empty string when no target is given.
    */
-  private qualifyMaintenanceTarget(target?: string): string {
+  private qualifyMaintenanceTarget(target?: string, container?: string): string {
     if (!target) return "";
+    // An explicit container wins over anything the name appears to carry: a container can
+    // legitimately contain a dot, and splitting a name to recover it is the ambiguity this
+    // parameter exists to remove. Without one the old readings stay, so existing callers do
+    // not change behaviour.
+    if (container) {
+      return this.escapeIdentifier(container) + "." + this.escapeIdentifier(target);
+    }
     if (target.includes(".")) {
       return target
         .split(".")
@@ -4123,16 +4130,16 @@ export class PostgresProvider extends SQLBaseProvider {
     return "public." + this.escapeIdentifier(target);
   }
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
       try {
         let sql = "";
-        // Resolve target into a schema-qualified, quoted identifier (defaults to
-        // the public schema for bare names; "schema.table" is also supported).
-        const qualifiedTarget = this.qualifyMaintenanceTarget(target);
+        // Resolve target into a schema-qualified, quoted identifier: the caller's container
+        // when there is one, else "schema.table", else the public schema for bare names.
+        const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
 
         switch (type) {
           case "vacuum":

@@ -1926,7 +1926,12 @@ export class SQLiteProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * `container` is deliberately ignored: SQLite resolves a bare name against the attached
+   * database it was opened on, always `main` for this provider, and the file has no second
+   * namespace to name (#772). The parameter is accepted so the shared contract holds.
+   */
+  public async runMaintenance(type: MaintenanceType, target?: string, _container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {

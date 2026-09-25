@@ -1300,9 +1300,14 @@ Two honest zeroes in the overview, so neither reads as a measurement:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)`
+`runMaintenance(type, target?, container?)`
 ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)). `optimize` and `kill` **require**
 a target; `analyze` does not.
+
+A `container` is the DATABASE the row carries as `schemaName` (#772), used as the database outright:
+`database.table` cannot be told apart from a name that contains a dot, while a container is already
+the database on its own. Without one the old reading stands, splitting the name and falling back to
+the pinned database.
 
 | Type | ClickHouse action | Notes |
 |------|--------------------|-------|

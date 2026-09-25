@@ -848,6 +848,28 @@ describe("runMaintenance()", () => {
     await expect(provider.runMaintenance("optimize", "customers")).rejects.toThrow(/takes no target/);
   });
 
+  // #772: `schemaName` is the schema on DuckDB exactly as it is on PostgreSQL, and a caller
+  // that sends it gets that schema directly - never a re-split of the name.
+  test("a container qualifies the target instead of the main fallback", async () => {
+    provider = await seededMemoryProvider();
+
+    await expect(provider.runMaintenance("analyze", "events", "analytics")).resolves.toMatchObject({ success: true });
+  });
+
+  test("a container is used whole even when it contains a dot", async () => {
+    provider = await seededMemoryProvider();
+    await provider.query('CREATE SCHEMA "odd.schema"');
+    await provider.query('CREATE TABLE "odd.schema".events (id BIGINT)');
+
+    await expect(provider.runMaintenance("analyze", "events", "odd.schema")).resolves.toMatchObject({ success: true });
+  });
+
+  test("a bare target with no container still falls back to main", async () => {
+    provider = await seededMemoryProvider();
+
+    await expect(provider.runMaintenance("analyze", "customers")).resolves.toMatchObject({ success: true });
+  });
+
   test.each(["reindex", "check", "kill"] as const)("%s is refused with the reason it is not offered", async (type) => {
     provider = await seededMemoryProvider();
 
