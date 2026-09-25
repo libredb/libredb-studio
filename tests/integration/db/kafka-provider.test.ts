@@ -8,11 +8,18 @@
  * and is answered from what that library answered against a live broker. mock.module() is
  * deliberately not used: it is process-wide in bun and would poison sibling test files.
  *
- * Every payload was captured from `apache/kafka:4.3.1`
+ * The broker's answers were captured from the compose `kafka` service, `apache/kafka:4.3.1`
  * (`apache/kafka@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837`),
  * cluster `4L6g3nShT-eMCtK--X86sw`, seeded by `docker/kafka/seed.sh` and
- * `docker/kafka/seed-binary.ts`; each fixture's `$captured` key holds its image, cluster id,
- * capture date and the call it answers, and `tests/fixtures/kafka/README.md` lists them.
+ * `docker/kafka/seed-binary.ts`; so was the missing topic's `error-unknown-topic`. The other
+ * failures come from elsewhere, as `tests/fixtures/kafka/README.md` records. The two
+ * authorization refusals (`error-authorization`, `error-cluster-authorization`) are `kafka-auth`'s,
+ * the same image with cluster `7L6g3nShT-eMCtK--X86sw`, as the principal `reader` with no ACL, and
+ * so is the SASL failure (`error-sasl`), with a wrong password; `error-refused` was captured in
+ * that run too, but against localhost:19099, where nothing listens. The lost connection and the
+ * request timeout (`error-connection-closed`, `error-request-timeout`) were captured against local
+ * listeners with no broker behind them. Each fixture's `$captured` key holds its image, cluster id,
+ * capture date and the call it answers.
  *
  * Five answers are BUILT from a capture rather than read from one, and each says so where it is
  * built: topic configs for a topic other than `orders`, broker configs for a broker other than 1,
@@ -22,8 +29,9 @@
  * a broker list, a slow fetch or a record past the result budget. One capture answers a wider
  * request than the one it was taken for: the log-dir capture named `orders` alone, so the
  * provider's request, which names every listed topic, gets orders' 5,503 bytes on broker 1's one
- * log dir, and every size below is that one topic's, not the seeded cluster's. The four transport
- * and authorization failures are captures.
+ * log dir, and every size below is that one topic's, not the seeded cluster's. Every library
+ * failure a test throws is one of the captures above; the `TypeError`s, which stand for a defect of
+ * the provider's own, and a close that fails are built inline.
  *
  * A section number below, "spec 5.1" for example, is a section of #1088's design.
  */
@@ -33,7 +41,11 @@ import { flattenTree } from "@/components/object-tree/flatten";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
-import { KAFKA_CONTAINER_LEVELS, KAFKA_OBJECT_KINDS } from "@/lib/db/providers/stream/kafka/objects";
+import {
+  KAFKA_CONTAINER_LEVELS,
+  KAFKA_OBJECT_KINDS,
+  KAFKA_TOPIC_COLUMNS,
+} from "@/lib/db/providers/stream/kafka/objects";
 import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET } from "@/lib/db/providers/stream/kafka/read";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
@@ -182,6 +194,82 @@ async function connected(overrides: Record<string, Answer> = {}, queryTimeout?: 
   return { provider, recorded };
 }
 
+/** The query timeout the failure tests connect with, which a TimeoutError carries. */
+const FAILURE_TIMEOUT_MS = 7_000;
+
+/**
+ * A provider connected over the captured broker, after which every call of one library member
+ * fails with `failure`. Connect's own round trip is a metadata read, so that member starts failing
+ * only once connect is done, and the failure is always the surface's own.
+ */
+async function connectedThenFailing(member: string, failure: unknown) {
+  let armed = false;
+  const fail = (): never => {
+    throw failure;
+  };
+  const answer: Answer = member === "admin.metadata" ? (request) => (armed ? fail() : metadataFor(request)) : fail;
+  const setup = await connected({ [member]: answer }, FAILURE_TIMEOUT_MS);
+  armed = true;
+  return setup;
+}
+
+/**
+ * Captured failures that are not an authorization refusal, each with the error the table makes of
+ * it (spec 5.6). Only an authorization refusal degrades a cluster read (KM4), so each of these fails
+ * whichever surface met it.
+ */
+const NON_AUTHORIZATION_FAILURES = [
+  // A broker the cluster advertises at an address this server cannot reach, after the bootstrap
+  // answered: the most common Kafka connection failure behind Docker and NAT (spec 5.6).
+  [
+    "error-refused",
+    ConnectionError,
+    {
+      provider: "kafka",
+      host: "localhost",
+      port: 19099,
+      message:
+        "The broker advertised localhost:19099, which this server cannot reach; the cluster's advertised listeners must be reachable from where Studio runs",
+    },
+  ],
+  // A connection with no address in the failure is the bootstrap's.
+  [
+    "error-connection-closed",
+    ConnectionError,
+    { provider: "kafka", host: "localhost", port: 9092, message: "The broker could not be reached (connection-lost)" },
+  ],
+  [
+    "error-request-timeout",
+    TimeoutError,
+    { provider: "kafka", timeout: FAILURE_TIMEOUT_MS, message: "The broker did not answer in time" },
+  ],
+  ["error-sasl", AuthenticationError, { provider: "kafka", message: "SASL authentication failed" }],
+] as const;
+
+/**
+ * Every surface that reads the broker, each with a library call its read goes through, and each
+ * monitoring panel once for every kind of read it makes: the forced broker read, the topic listing,
+ * the lowest broker's configs and the log dirs.
+ */
+const BROKER_READS: ReadonlyArray<readonly [string, string, (provider: KafkaProvider) => Promise<unknown>]> = [
+  ["query", "consumer.listOffsets", (p) => p.query('{"topic":"codec-gzip","from":"earliest","limit":1}')],
+  ["listObjects", "admin.listTopics", (p) => p.listObjects([], "topic")],
+  ["describeObject", "admin.metadata", (p) => p.describeObject(["orders"], "topic")],
+  ["describeObjects", "admin.listTopics", (p) => p.describeObjects([], "topic")],
+  ["readObjectSource", "admin.describeConfigs", (p) => p.readObjectSource(["orders"], "topic")],
+  // The forced broker read, the listing the log-dir request names, and the log dirs themselves.
+  ["getHealth", "admin.metadata", (p) => p.getHealth()],
+  ["getHealth", "admin.listTopics", (p) => p.getHealth()],
+  ["getHealth", "admin.describeLogDirs", (p) => p.getHealth()],
+  // The forced broker read, the topic listing, the lowest broker's configs and the log dirs.
+  ["getOverview", "admin.metadata", (p) => p.getOverview()],
+  ["getOverview", "admin.listTopics", (p) => p.getOverview()],
+  ["getOverview", "admin.describeConfigs", (p) => p.getOverview()],
+  ["getOverview", "admin.describeLogDirs", (p) => p.getOverview()],
+  ["getStorageStats", "admin.listTopics", (p) => p.getStorageStats()],
+  ["getStorageStats", "admin.describeLogDirs", (p) => p.getStorageStats()],
+];
+
 const lagRows = async (provider: KafkaProvider, group: string) => {
   const doc = await provider.readObjectSource([group], "consumer_group");
   return JSON.parse((doc.parts[1] as { text: string }).text) as Array<{
@@ -263,6 +351,29 @@ describe("connect and disconnect", () => {
     expect(error).toMatchObject({ provider: "kafka", timeout: 7_000 });
   });
 
+  test("a failure carries the address the connection validated: the host lower-cased, and the default port when none is typed", async () => {
+    const typed = { ...CONNECTION, host: "LocalHost", port: undefined } as unknown as DatabaseConnection;
+    const lost = () => {
+      throw libError("error-connection-closed");
+    };
+    // The connect's own failure.
+    const refusing = brokerLib({ "admin.metadata": lost });
+    const failed = await new KafkaProvider(typed, {}, async (options) =>
+      createPlatformaticClient(options, refusing.lib),
+    )
+      .connect()
+      .catch((e) => e);
+    expect(failed).toBeInstanceOf(ConnectionError);
+    expect(failed).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+    // And a surface's, once connected.
+    const recorded = brokerLib({ "admin.listTopics": lost });
+    const provider = new KafkaProvider(typed, {}, async (options) => createPlatformaticClient(options, recorded.lib));
+    await provider.connect();
+    const later = await provider.listObjects([], "topic").catch((e) => e);
+    expect(later).toBeInstanceOf(ConnectionError);
+    expect(later).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+  });
+
   test("a close that fails after a failed connect is logged, never thrown over the connect's own failure", async () => {
     const logged = spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -296,6 +407,22 @@ describe("connect and disconnect", () => {
     await expect(provider.query('{"topic":"orders"}')).rejects.toThrow("Provider is not connected");
     expect(recorded.calls).toHaveLength(callsAfterClose);
     // A second disconnect has nothing left to close.
+    await provider.disconnect();
+    expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+  });
+
+  test("a disconnect whose close fails reports that failure, and leaves the provider disconnected all the same", async () => {
+    const refusal = new Error("close refused");
+    const { provider, recorded } = await connected({
+      "admin.close": () => {
+        throw refusal;
+      },
+    });
+    expect(await provider.disconnect().catch((e) => e)).toBe(refusal);
+    expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+    expect(provider.isConnected()).toBe(false);
+    await expect(provider.query('{"topic":"orders"}')).rejects.toThrow("Provider is not connected");
+    // It holds no client afterwards, so a second disconnect has nothing left to close.
     await provider.disconnect();
     expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
   });
@@ -542,15 +669,25 @@ describe("reads over captured payloads", () => {
     );
   });
 
-  test("the read's time is measured around the read itself", async () => {
-    const { provider } = await connected({
-      fetchV13: async (...args) => {
-        await sleep(40);
-        return fetchAnswerFor(args[7]);
-      },
-    });
-    const result = await provider.query('{"topic":"codec-gzip","from":"earliest","limit":1}');
-    expect(result.executionTime).toBeGreaterThanOrEqual(30);
+  test("the read's time is the span of the read itself on Date.now(), in milliseconds (spec 3.5)", async () => {
+    // A clock that moves only while the broker answers the fetch, so the one right answer is the 42
+    // ms the fetch took: an instant, a span that starts after the read, a constant added, another
+    // clock or another unit each answers something else.
+    let now = 1_790_000_000_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const { provider } = await connected({
+        fetchV13: (...args) => {
+          now += 42;
+          return fetchAnswerFor(args[7]);
+        },
+      });
+      const result = await provider.query('{"topic":"codec-gzip","from":"earliest","limit":1}');
+      expect(result.rows).toHaveLength(1);
+      expect(result.executionTime).toBe(42);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   test("a read past the connection's query timeout is a TimeoutError carrying that timeout, answered at once", async () => {
@@ -585,6 +722,17 @@ describe("reads over captured payloads", () => {
     // None of the three reached the broker.
     expect(recorded.calls).toHaveLength(sent);
     for (const refusal of [empty, invalid, bound]) expect(refusal.provider).toBe("kafka");
+    // Empty text and bound params need no broker, so they come before anything else, the
+    // connection check included: a provider that never connected refuses them the same way.
+    const unconnected = new KafkaProvider(CONNECTION);
+    const [emptyFirst, boundFirst] = await Promise.all([
+      unconnected.query("  \n ", [1]).catch((e) => e),
+      unconnected.query('{"topic":"orders"}', [1]).catch((e) => e),
+    ]);
+    expect(emptyFirst).toBeInstanceOf(QueryError);
+    expect(emptyFirst.message).toBe(empty.message);
+    expect(boundFirst).toBeInstanceOf(DatabaseConfigError);
+    expect(boundFirst.message).toBe(bound.message);
     // An empty parameter list binds nothing, so the request reads.
     expect((await provider.query('{"topic":"codec-gzip","from":"earliest","limit":1}', [])).rows).toHaveLength(1);
     await expect(provider.query('{"topic":"ghost"}')).rejects.toBeInstanceOf(QueryError);
@@ -663,6 +811,33 @@ describe("the object surface", () => {
       expect(refusal.message).toBe('A Kafka connection has no container level; received ["x"]');
     }
     expect(recorded.calls).toHaveLength(sent);
+  });
+
+  test("describeObject confirms the topic asked for exists, never creating it, and answers the fixed columns (spec 4.2, 4.5)", async () => {
+    const { provider, recorded } = await connected();
+    const sent = recorded.calls.length;
+    const detail = await provider.describeObject(["codec-gzip"], "topic");
+    expect(detail).toEqual({ path: ["codec-gzip"], columns: [...KAFKA_TOPIC_COLUMNS], indexes: [], foreignKeys: [] });
+    expect(detail.columns.map((column) => column.name)).toEqual([
+      "partition",
+      "offset",
+      "timestamp",
+      "key",
+      "key_encoding",
+      "value",
+      "value_encoding",
+      "headers",
+    ]);
+    // A topic deleted since the tree was listed; createErrorResponse (src/lib/api/errors.ts) answers
+    // this QueryError with a 400, where an error outside the table would be a 500.
+    const missing = await provider.describeObject(["ghost"], "topic").catch((e) => e);
+    expect(missing).toBeInstanceOf(QueryError);
+    expect(missing).toMatchObject({ provider: "kafka", message: "The topic does not exist" });
+    // One metadata read each, naming the topic asked for and no other, with topic creation off (M-B).
+    expect(recorded.calls.slice(sent)).toEqual([
+      ["admin.metadata", [{ topics: ["codec-gzip"], autocreateTopics: false }]],
+      ["admin.metadata", [{ topics: ["ghost"], autocreateTopics: false }]],
+    ]);
   });
 
   test("satisfies the object-surface contract", async () => {
@@ -1000,7 +1175,7 @@ describe("monitoring", () => {
     expect(none).toMatchObject({ provider: "kafka", message: "The broker's metadata listed no live broker" });
   });
 
-  test("the overview degrades per refused cluster read (KM4), and any other failure fails it", async () => {
+  test("the overview degrades per refused cluster read, each alone (KM4)", async () => {
     const bothRefused = await connected({
       "admin.describeConfigs": () => {
         throw libError("error-cluster-authorization");
@@ -1021,28 +1196,6 @@ describe("monitoring", () => {
     expect(overview.maxConnections).toBe(0);
     expect(overview.databaseSize).toContain("on disk");
   });
-
-  test.each(["admin.describeConfigs", "admin.describeLogDirs"])(
-    "a %s that fails for any reason but authorization fails the overview (KM4)",
-    async (failing) => {
-      const { provider } = await connected({
-        [failing]: () => {
-          throw libError("error-connection-closed");
-        },
-      });
-      const error = await provider.getOverview().catch((e) => e);
-      expect(error).toBeInstanceOf(ConnectionError);
-      expect(error).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
-      // A failure that is not the broker's is a defect, and surfaces as itself.
-      const defect = new TypeError("a defect, not a refusal");
-      const broken = await connected({
-        [failing]: () => {
-          throw defect;
-        },
-      });
-      expect(await broken.provider.getOverview().catch((e) => e)).toBe(defect);
-    },
-  );
 
   test("storage comes from the log dirs; the surfaces the protocol cannot fill are empty; maintenance is refused", async () => {
     const { provider } = await connected();
@@ -1069,5 +1222,70 @@ describe("monitoring", () => {
       },
     });
     expect(await refused.provider.getStorageStats()).toEqual([]);
+  });
+});
+
+describe("failures (spec 5.6)", () => {
+  test.each(BROKER_READS)(
+    "%s fails when %s meets an unreachable broker, a lost connection, a timeout or a SASL failure, as the error table maps it, and a defect surfaces as itself",
+    async (_surface, member, call) => {
+      const failed = await Promise.all(
+        NON_AUTHORIZATION_FAILURES.map(async ([fixture]) =>
+          call((await connectedThenFailing(member, libError(fixture))).provider).catch((e) => e),
+        ),
+      );
+      failed.forEach((error, index) => {
+        const [, errorClass, fields] = NON_AUTHORIZATION_FAILURES[index];
+        expect(error).toBeInstanceOf(errorClass);
+        expect(error).toMatchObject(fields);
+      });
+      // A failure that is not the library's is a defect of the provider's own, never the broker's answer.
+      const defect = new TypeError("a defect, not a refusal");
+      const broken = await connectedThenFailing(member, defect);
+      expect(await call(broken.provider).catch((e) => e)).toBe(defect);
+    },
+  );
+
+  test("a topic listing that fails fails the overview rather than counting no topics, whichever of its two listings it is", async () => {
+    // The overview lists the topics twice, for its count and for the log-dir request, so one listing
+    // can fail while the other answers; a count taken from a failed listing would read as 0 topics.
+    const outcomes = await Promise.all(
+      [1, 2].map(async (failingListing) => {
+        let listings = 0;
+        const { provider } = await connected({
+          "admin.listTopics": () => {
+            listings++;
+            if (listings === failingListing) throw libError("error-connection-closed");
+            return kafkaFixture("list-topics");
+          },
+        });
+        const error = await provider.getOverview().catch((e) => e);
+        return { error, listings };
+      }),
+    );
+    for (const { error, listings } of outcomes) {
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect(error).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+      // The control: both listings were asked, so the other one answered.
+      expect(listings).toBe(2);
+    }
+  });
+
+  test("countObjects answers a kind whose read failed as unavailable, in the error table's words, and counts the others", async () => {
+    const counted = await Promise.all(
+      NON_AUTHORIZATION_FAILURES.map(async ([fixture]) =>
+        (await connectedThenFailing("admin.listTopics", libError(fixture))).provider.countObjects([]),
+      ),
+    );
+    counted.forEach((counts, index) => {
+      expect(counts).toEqual({
+        topic: { unavailable: NON_AUTHORIZATION_FAILURES[index][2].message },
+        consumer_group: { count: 3 },
+        broker: { count: 1 },
+      });
+    });
+    const defect = new TypeError("a defect, not a refusal");
+    const broken = await connectedThenFailing("admin.listTopics", defect);
+    expect(await broken.provider.countObjects([]).catch((e) => e)).toBe(defect);
   });
 });
