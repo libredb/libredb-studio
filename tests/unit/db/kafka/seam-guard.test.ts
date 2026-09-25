@@ -3,12 +3,15 @@
  *
  * The read-only promise rests on facts this test keeps true: the client library is
  * imported by exactly one provider file, and elsewhere in the repository only by the
- * fixture seed; that file declares a fixed, narrow shape of the library's objects; and it
+ * fixture seed, which no file loads, since its top level writes with the library's
+ * Producer; that file declares a fixed, narrow shape of the library's objects; and it
  * calls only read methods on them. It parses every source file under the provider
  * directory from disk, so it holds as the provider grows. Both directions are proven:
  * the detector must fire on a sample that breaks each rule, and stay silent on the real
  * sources. An import counts by what it loads: the package's name, a path, a file URL or a
- * tsconfig alias that reaches the package's files, and a require function called on one.
+ * tsconfig alias that reaches the package's files, and a require function called on one,
+ * directly, through call or apply, or as a bind fixed it. The adapter and the seed are the
+ * files module names resolve to, never files whose names a module name's text spells.
  *
  * The declared shapes are the part tsc enforces: it refuses a member they do not declare,
  * on the adapter's names for its library objects and on every other name typed with a
@@ -23,18 +26,36 @@
  * pinned exports alone, and goes from there straight into the adapter's own
  * createPlatformaticClient(); outside the provider, only the pinned test files take it.
  *
- * What the guard does not refuse is TypeScript typing a value past its shape with no
- * assertion: an any that a standard-library type answers for a value handed to it (a
- * promise's rejection reason, a Map built without type arguments, the arguments object,
- * eval, and reflection such as Reflect.get, Object.getPrototypeOf or Object.create), and
- * TypeScript's unsound variance, where an array, a mutable property or a method parameter
- * hands the object on under another type; a name built at run time by other means than a
- * computed property name (a joined string handed to reflection, Object.fromEntries,
- * Object.assign, Reflect.set, an index write), which can reach any member or set any option
- * through those; and a module or a loader reached at run time, a package that loads the
- * library itself, and text another process runs. The provider may not spell a write or a
- * pinned option as a name, a string or a computed property name, and the broker-side diff
- * of the live check is the second check K4 requires.
+ * The guard is syntactic: it fails the build when an ordinary edit reaches the library
+ * outside the adapter or calls a member outside the allowlist. Code written to get past it
+ * can, in the ways below, which are stated rather than chased, since closing one form of a
+ * class leaves the next; the broker-side diff of the live check, the second check K4
+ * requires, is what sees their effect on the state it compares (the topic and group lists,
+ * every partition's offsets, every group's committed offsets, the topic and broker configs,
+ * and the ACLs on kafka-auth) wherever the live check runs such code. What the guard does
+ * not refuse: TypeScript typing a value past its shape with no assertion, through an any
+ * that a standard-library type answers for a value handed to it (a promise's rejection
+ * reason, a Map built without type arguments, the arguments object, eval, and reflection
+ * such as Reflect.get, Object.getPrototypeOf or Object.create), through TypeScript's unsound
+ * variance, where an array, a mutable property or a method parameter hands the object on
+ * under another type, and, in the adapter, through narrowing, where a member of a library
+ * object widened to object and found with `in`, or of one handed to a function whose pinned
+ * cast types what it holds, such as walk(), is narrowed by a typeof check to a function,
+ * whose call then runs it on the object; a library object or class that leaves the adapter
+ * through no export, as a global property or a thrown value, and is typed in another
+ * provider file by a cast or a type predicate, which the guard pins in the adapter alone; a
+ * global augmentation of Object or Function in a declaration tsc reads from a file git does
+ * not list, such as one git ignores that tsconfig's include takes in, or a package's own
+ * types; a name built at run time by other means than a computed property name (a joined
+ * string handed to reflection, Object.fromEntries, Object.assign, Reflect.set, an index
+ * write), which can reach any member or set any option through those; a require function
+ * reached at run time, module.require and import.meta.require alike, kept in an object or an
+ * array or answered by a function and read back, handed in from another file, or reached by
+ * reflection; outside the provider, whose files alone are refused a module name that is not
+ * a plain string and every call of a require function the guard sees, a module name computed
+ * or fixed by a bind that a name then calls; a package that loads the library itself; and
+ * text another process runs. The provider may not spell a write or a pinned option as a
+ * name, a string or a computed property name.
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -46,6 +67,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,15 +88,22 @@ const IMPORTERS = ["docker/kafka/seed-binary.ts", "src/lib/db/providers/stream/k
 /**
  * The files outside the provider that take the adapter's loader, loadPlatformatic(), and so the
  * real library: the adapter's own tests, the real TLS handshakes, and the provider's integration
- * test. Another file that imports loadPlatformatic, or the whole adapter module, fails the guard.
- * A file here that the tree does not hold is left out of the comparison, so the list also holds on
- * a branch that does not carry the integration test yet.
+ * test. Another file that imports loadPlatformatic, or the whole adapter module, fails the guard,
+ * and so does a file listed here that no longer takes it.
  */
 const LOADER_TAKERS = [
   "tests/integration/db/kafka-provider.test.ts",
   "tests/unit/db/kafka/platformatic-client.test.ts",
   "tests/unit/db/kafka/tls-handshake.test.ts",
 ];
+/** The fixture seed, a script whose top level writes records and transactions with the library's Producer. */
+const SEED = "docker/kafka/seed-binary.ts";
+/**
+ * The files that may load the fixture seed: none. It runs from the command line and is never
+ * imported, because loading it runs its writes, so a provider file or a test that loaded it would
+ * reach the library's write path. A test of the seed itself would be the one file listed here.
+ */
+const SEED_TAKERS: string[] = [];
 
 /** Members the adapter may call on the library's objects (spec 3.6 K4). */
 const ALLOWED = new Set([
@@ -407,9 +436,14 @@ function loadsLibrary(specifier: string, containing: string, root: string): bool
   return written !== undefined && inLibraryPackage(written);
 }
 
-/** Whether a module name written in `containing` resolves to the provider's adapter at `adapterPath`. */
-function resolvesTo(specifier: string, containing: string, root: string, adapterPath: string): boolean {
-  return resolvedFile(specifier, containing, root) === canonical(adapterPath);
+/**
+ * Whether a module name written in `containing` names the file at `target`: TypeScript resolves it
+ * there, or it is a file URL of it, the one spelling of a file TypeScript resolves to nothing.
+ */
+function resolvesTo(specifier: string, containing: string, root: string, target: string): boolean {
+  if (resolvedFile(specifier, containing, root) === canonical(target)) return true;
+  const written = specifier.startsWith("file:") ? fileURLToPath(specifier) : undefined;
+  return written !== undefined && existsSync(written) && canonical(written) === canonical(target);
 }
 
 /** The leftmost identifier of `a.b.c(...)`, `a[b]`, `new a.B()`, `await a.b()` or `(a as T)`. */
@@ -462,6 +496,26 @@ function memberRead(node: ts.Expression): string | undefined {
     : undefined;
 }
 
+/** What an expression reads the member `name` off, by name or by a string key: `a` in `a.m` and in `a["m"]`. */
+function readOff(node: ts.Expression, name: string): ts.Expression | undefined {
+  const expression = bare(node);
+  return (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) &&
+    memberRead(expression) === name
+    ? expression.expression
+    : undefined;
+}
+
+/** The function a bind is read off: `f` in `f.bind(t, a)`. */
+function boundFunction(node: ts.Expression): ts.Expression | undefined {
+  const expression = bare(node);
+  return ts.isCallExpression(expression) ? readOff(expression.expression, "bind") : undefined;
+}
+
+/** The function a call calls: its callee, or `f` in `f.call(t, a)` and `f.apply(t, [a])`. */
+function calledFunction(call: ts.CallExpression): ts.Expression {
+  return readOff(call.expression, "call") ?? readOff(call.expression, "apply") ?? call.expression;
+}
+
 function insideFunctionNamed(node: ts.Node, name: string): boolean {
   for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
     if (ts.isFunctionDeclaration(at) && at.name?.text === name) return true;
@@ -486,21 +540,28 @@ interface ModuleReference {
 
 /**
  * Which expressions of a file evaluate to a require function: `require`, a member named require
- * (module.require, import.meta.require), what createRequire answers, and a name the file binds to
- * one of those or to createRequire itself, through a declaration, a parameter's default, an
+ * (module.require, import.meta.require), what createRequire answers, called directly or through
+ * call or apply, a bind of any of those, and a name the file binds to one of those or to
+ * createRequire itself, or to a bind of it, through a declaration, a parameter's default, an
  * assignment, an import or a destructuring, followed until nothing new is bound.
  */
 function requireFunctions(sf: ts.SourceFile): (node: ts.Expression) => boolean {
   const loaders = new Set(["require"]);
   const makers = new Set(["createRequire"]);
-  const isMaker = (node: ts.Expression) => {
+  const isMaker = (node: ts.Expression): boolean => {
     const expression = bare(node);
-    return ts.isIdentifier(expression) ? makers.has(expression.text) : memberRead(expression) === "createRequire";
+    if (ts.isIdentifier(expression)) return makers.has(expression.text);
+    const bound = boundFunction(expression);
+    return bound === undefined ? memberRead(expression) === "createRequire" : isMaker(bound);
   };
-  const isLoader = (node: ts.Expression) => {
+  const isLoader = (node: ts.Expression): boolean => {
     const expression = bare(node);
     if (ts.isIdentifier(expression)) return loaders.has(expression.text);
-    return memberRead(expression) === "require" || (ts.isCallExpression(expression) && isMaker(expression.expression));
+    const bound = boundFunction(expression);
+    if (bound !== undefined) return isLoader(bound);
+    return (
+      memberRead(expression) === "require" || (ts.isCallExpression(expression) && isMaker(calledFunction(expression)))
+    );
   };
   for (let grew = true; grew; ) {
     grew = false;
@@ -539,10 +600,36 @@ function requireFunctions(sf: ts.SourceFile): (node: ts.Expression) => boolean {
 }
 
 /**
+ * The arguments a call hands the require function it calls, or undefined when it calls none: a
+ * call of one, directly or through call or apply, and of a bind of one, whose fixed arguments come
+ * first. An apply whose list is not written out hands none the text holds.
+ */
+function loaderArguments(
+  call: ts.CallExpression,
+  isLoader: (node: ts.Expression) => boolean,
+): ts.Expression[] | undefined {
+  const fixed = (loader: ts.Expression): ts.Expression[] => {
+    const expression = bare(loader);
+    const bound = boundFunction(expression);
+    return bound === undefined || !ts.isCallExpression(expression)
+      ? []
+      : [...fixed(bound), ...expression.arguments.slice(1)];
+  };
+  if (isLoader(call.expression)) return [...fixed(call.expression), ...call.arguments];
+  const through = readOff(call.expression, "call");
+  if (through !== undefined && isLoader(through)) return [...fixed(through), ...call.arguments.slice(1)];
+  const applied = readOff(call.expression, "apply");
+  if (applied === undefined || !isLoader(applied)) return undefined;
+  const list = call.arguments[1];
+  return [...fixed(applied), ...(list !== undefined && ts.isArrayLiteralExpression(list) ? list.elements : [])];
+}
+
+/**
  * Every module a file loads: an import, an export from another module, an import-equals, an
  * import in a type position, an import() call, and a call of a require function, whether it is
  * `require` itself, a member named require (module.require, import.meta.require), a createRequire
- * loader called in place, or a name the file binds to one of those.
+ * loader called in place, or a name the file binds to one of those, called directly, through call
+ * or apply, or as a bind fixed it.
  */
 function moduleReferences(sf: ts.SourceFile): ModuleReference[] {
   const isRequireFunction = requireFunctions(sf);
@@ -575,10 +662,10 @@ function moduleReferences(sf: ts.SourceFile): ModuleReference[] {
       const specifier = ts.isLiteralTypeNode(node.argument) ? written(node.argument.literal) : undefined;
       references.push({ node, specifier, loader: undefined, names: [] });
     } else if (ts.isCallExpression(node)) {
-      const loads = isRequireFunction(node.expression);
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword || loads) {
-        const loader = loads ? node.expression.getText(sf).replace(/\s+/g, " ") : undefined;
-        references.push({ node, specifier: written(node.arguments[0]), loader, names: undefined });
+      const handed = loaderArguments(node, isRequireFunction);
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword || handed !== undefined) {
+        const loader = handed === undefined ? undefined : node.expression.getText(sf).replace(/\s+/g, " ");
+        references.push({ node, specifier: written((handed ?? node.arguments)[0]), loader, names: undefined });
       }
     }
     ts.forEachChild(node, visit);
@@ -935,6 +1022,21 @@ function loaderTakersIn(root: string, env?: NodeJS.ProcessEnv): string[] {
 }
 
 /**
+ * The files of the repository at `root` that load its fixture seed: any module reference, one in a
+ * type position included, that names the seed's file, as TypeScript resolves it or as a file URL.
+ */
+function seedTakersIn(root: string, env?: NodeJS.ProcessEnv): string[] {
+  const seed = join(root, SEED);
+  return repositoryFiles(root, env)
+    .filter(({ path, sf }) =>
+      moduleReferences(sf).some(
+        ({ specifier }) => specifier !== undefined && resolvesTo(specifier, join(root, path), root, seed),
+      ),
+    )
+    .map(({ path }) => path);
+}
+
+/**
  * The pinned assertions and predicates an adapter's text does not write as often as the pin holds
  * them, in the pin's order. A pin the adapter no longer writes would let a new one of that text in.
  * loadPlatformatic()'s casts count here too: it is pinned whole, and none of its casts is pinned.
@@ -1177,7 +1279,7 @@ describe("Kafka seam guard", () => {
   }, 30_000);
 
   test("outside the provider, only the pinned files take the adapter's loader", () => {
-    expect(loaderTakersIn(ROOT)).toEqual(LOADER_TAKERS.filter((path) => existsSync(join(ROOT, path))));
+    expect(loaderTakersIn(ROOT)).toEqual(LOADER_TAKERS);
   }, 30_000);
 
   test("in a repository, the loader's takers are the files outside the provider that import it", () => {
@@ -1202,6 +1304,60 @@ describe("Kafka seam guard", () => {
           writeFileSync(join(repo, path), text);
         }
         expect(loaderTakersIn(repo, env)).toEqual(["tests/taker.test.ts"]);
+      });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("no file in the repository loads the fixture seed, whose top level writes with the library's Producer", () => {
+    expect(seedTakersIn(ROOT)).toEqual(SEED_TAKERS);
+  }, 30_000);
+
+  test("in a repository, the seed's takers are the files with a module reference that names its file, a file URL included", () => {
+    const repo = mkdtempSync(join(tmpdir(), "kafka-seam-guard-"));
+    const home = mkdtempSync(join(tmpdir(), "kafka-seam-guard-home-"));
+    try {
+      asHostileGitUser(home, ["tests/"], () => {
+        const env = isolatedGitEnvironment(process.env, join(home, "isolated"));
+        execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: repo, encoding: "utf8", env });
+        const seedUrl = pathToFileURL(join(repo, SEED)).href;
+        const missingUrl = pathToFileURL(join(repo, "docker", "kafka", "missing.ts")).href;
+        // The seed's file by another name: a directory link, a junction on Windows, which needs no privilege.
+        const linkedUrl = pathToFileURL(join(repo, "linked", "kafka", "seed-binary.ts")).href;
+        const files: Record<string, string> = {
+          [SEED]: "export {};\n",
+          "tests/fixtures/seed-binary.ts": "export {};\n",
+          [`${PROVIDER_PATH}/read.ts`]: 'import "../../../../../../docker/kafka/seed-binary";\n',
+          "tests/unit/by-extension.test.ts": 'await import("../../docker/kafka/seed-binary.ts");\n',
+          "tests/unit/by-js-extension.test.ts": 'export * from "../../docker/kafka/seed-binary.js";\n',
+          "tests/unit/by-require.test.ts": 'const seed = require("../../docker/kafka/seed-binary");\n',
+          "tests/unit/by-type.test.ts": 'type Seed = typeof import("../../docker/kafka/seed-binary");\n',
+          "e2e/by-url.spec.ts": `await import(${JSON.stringify(seedUrl)});\n`,
+          "e2e/by-linked-url.spec.ts": `await import(${JSON.stringify(linkedUrl)});\n`,
+          // Another file of the seed's name, a path whose text holds the seed's and reaches no file, a
+          // file URL of no file, and a run of the seed in another process, which loads nothing here.
+          "tests/unit/other-seed.test.ts": 'import "../fixtures/seed-binary";\n',
+          "tests/unit/no-such-path.test.ts": 'import "./docker/kafka/seed-binary";\n',
+          "tests/unit/missing-url.test.ts": `await import(${JSON.stringify(missingUrl)});\n`,
+          "tests/unit/runs-it.test.ts":
+            'Bun.spawnSync(["bun", "docker/kafka/seed-binary.ts"]);\n// import "../../docker/kafka/seed-binary";\n',
+        };
+        for (const [path, text] of Object.entries(files)) {
+          mkdirSync(dirname(join(repo, path)), { recursive: true });
+          writeFileSync(join(repo, path), text);
+        }
+        symlinkSync(join(repo, "docker"), join(repo, "linked"), "junction");
+        expect(seedTakersIn(repo, env)).toEqual([
+          "e2e/by-linked-url.spec.ts",
+          "e2e/by-url.spec.ts",
+          `${PROVIDER_PATH}/read.ts`,
+          "tests/unit/by-extension.test.ts",
+          "tests/unit/by-js-extension.test.ts",
+          "tests/unit/by-require.test.ts",
+          "tests/unit/by-type.test.ts",
+        ]);
       });
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -1890,6 +2046,27 @@ describe("Kafka seam guard", () => {
       'export { translateError } from "./platformatic-client";',
       [],
     ],
+    // The adapter is the file its module name resolves to, never a file whose name ends as its does.
+    [
+      "handed to the client of a module whose name ends as the adapter's does, which is not the adapter",
+      'import { createPlatformaticClient, loadPlatformatic } from "./nested/platformatic-client";\nconst make = async (o: object) => createPlatformaticClient(o, await loadPlatformatic());',
+      [DECLARES_THE_CLIENT, TAKES_THE_LIBRARY, TAKES_THE_LIBRARY],
+    ],
+    [
+      "handed straight to the client, imported from the adapter by a name TypeScript resolves to it",
+      'import { createPlatformaticClient, loadPlatformatic } from "./platformatic-client.js";\nconst make = async (o: object) => createPlatformaticClient(o, await loadPlatformatic());',
+      [],
+    ],
+    [
+      "re-exported with every name of the adapter, by a name TypeScript resolves to it",
+      'export * from "./platformatic-client.js";',
+      ["index.ts re-exports the adapter"],
+    ],
+    [
+      "left alone by a re-export of every name of a module whose name ends as the adapter's does",
+      'export * from "./nested/platformatic-client";',
+      [],
+    ],
   ])("outside the adapter, the library from loadPlatformatic() %s", (_label, source, expected) => {
     expect(violations("index.ts", source)).toEqual(expected);
   });
@@ -1914,6 +2091,14 @@ describe("Kafka seam guard", () => {
   ])("outside the adapter, createPlatformaticClient bound by %s is refused", (_label, source, expected) => {
     expect(violations("index.ts", source)).toEqual(expected);
   });
+
+  // The adapter is the one file of its name at the provider's root, never another whose path ends as its does.
+  test.each(["nested/platformatic-client.ts", "legacy-platformatic-client.ts"])(
+    "a provider file whose path ends as the adapter's does is no adapter: %s may not import the library",
+    (file) => {
+      expect(violations(file, `import { Admin } from "${LIBRARY}";`)).toEqual([`${file} imports ${LIBRARY}`]);
+    },
+  );
 
   test("a provider file in a subdirectory hands the library on through the adapter's own path", () => {
     expect(
@@ -2058,6 +2243,93 @@ describe("Kafka seam guard", () => {
       `const kafka = module["require"]("${LIBRARY}");`,
       ['read.ts loads a module through module["require"]'],
     ],
+    // A require function called through call or apply, or bound by bind, loads what it is handed
+    // (measured under Bun 1.4.2 and Node 24.14.0, 2026-09-25: each form below loads the library).
+    [
+      "require through call",
+      `const kafka = require.call(null, "${LIBRARY}");`,
+      ["read.ts loads a module through require.call"],
+    ],
+    [
+      "require through apply",
+      `const kafka = require.apply(null, ["${LIBRARY}"]);`,
+      ["read.ts loads a module through require.apply"],
+    ],
+    [
+      "call read by a string key",
+      `const kafka = require["call"](null, "${LIBRARY}");`,
+      ['read.ts loads a module through require["call"]'],
+    ],
+    [
+      "require bound by bind at the call",
+      `const kafka = require.bind(null)("${LIBRARY}");`,
+      ["read.ts loads a module through require.bind(null)"],
+    ],
+    [
+      "require bound to the module by bind",
+      `const kafka = require.bind(null, "${LIBRARY}")();`,
+      [`read.ts loads a module through require.bind(null, "${LIBRARY}")`],
+    ],
+    [
+      "require bound to the module by one bind and bound again",
+      `const kafka = require.bind(null, "${LIBRARY}").bind(null)();`,
+      [`read.ts loads a module through require.bind(null, "${LIBRARY}").bind(null)`],
+    ],
+    [
+      "require bound to the module by bind, in parentheses",
+      `const kafka = (require.bind(null, "${LIBRARY}"))();`,
+      [`read.ts loads a module through (require.bind(null, "${LIBRARY}"))`],
+    ],
+    [
+      "require bound to the module by bind and called through call",
+      `const kafka = require.bind(null, "${LIBRARY}").call(null);`,
+      [`read.ts loads a module through require.bind(null, "${LIBRARY}").call`],
+    ],
+    [
+      "require bound to the module by bind and called through apply",
+      `const kafka = require.bind(null, "${LIBRARY}").apply(null, []);`,
+      [`read.ts loads a module through require.bind(null, "${LIBRARY}").apply`],
+    ],
+    [
+      "require bound by bind and kept in a name",
+      `const load = require.bind(null);\nconst kafka = load("${LIBRARY}");`,
+      ["read.ts loads a module through load"],
+    ],
+    [
+      "a bound require called through call",
+      `const kafka = require.bind(module).call(null, "${LIBRARY}");`,
+      ["read.ts loads a module through require.bind(module).call"],
+    ],
+    [
+      "module.require through call",
+      `const kafka = module.require.call(module, "${LIBRARY}");`,
+      ["read.ts loads a module through module.require.call"],
+    ],
+    [
+      "import.meta.require through apply",
+      `const kafka = import.meta.require.apply(null, ["${LIBRARY}"]);`,
+      ["read.ts loads a module through import.meta.require.apply"],
+    ],
+    [
+      "a createRequire loader through call",
+      `const kafka = createRequire(import.meta.url).call(null, "${LIBRARY}");`,
+      ["read.ts loads a module through createRequire(import.meta.url).call"],
+    ],
+    [
+      "createRequire called through call",
+      `const kafka = createRequire.call(null, import.meta.url)("${LIBRARY}");`,
+      ["read.ts loads a module through createRequire.call(null, import.meta.url)"],
+    ],
+    [
+      "createRequire called through apply",
+      `const kafka = createRequire.apply(null, [import.meta.url])("${LIBRARY}");`,
+      ["read.ts loads a module through createRequire.apply(null, [import.meta.url])"],
+    ],
+    [
+      "createRequire bound by bind and kept in a name",
+      `const make = createRequire.bind(null);\nconst kafka = make(import.meta.url)("${LIBRARY}");`,
+      ["read.ts loads a module through make(import.meta.url)"],
+    ],
   ])("a provider file loading the library through %s is refused", (_label, source, expected) => {
     expect(violations("read.ts", source)).toEqual([...expected, `read.ts imports ${LIBRARY}`]);
     expect(importsLibrary("x.ts", source)).toBe(true);
@@ -2069,6 +2341,10 @@ describe("Kafka seam guard", () => {
     ]);
     expect(violations("read.ts", "const m = require(name);")).toEqual([
       "read.ts loads a module through require",
+      "read.ts imports a computed module name",
+    ]);
+    expect(violations("read.ts", "const m = require.apply(null, names);")).toEqual([
+      "read.ts loads a module through require.apply",
       "read.ts imports a computed module name",
     ]);
   });
@@ -2127,6 +2403,13 @@ describe("Kafka seam guard", () => {
     ["a resolution through require", `const file = require.resolve("${LIBRARY}");`],
     ["a resolution through createRequire", `const file = createRequire(import.meta.url).resolve("${LIBRARY}");`],
     ["a resolution through import.meta", `const file = import.meta.resolve("${LIBRARY}");`],
+    [
+      "a resolution through require.resolve called through call",
+      `const file = require.resolve.call(null, "${LIBRARY}");`,
+    ],
+    ["a call through call of a function that is no require function", `const k = walk.call(null, "${LIBRARY}");`],
+    ["an apply of a function that is no require function", `const k = walk.apply(null, ["${LIBRARY}"]);`],
+    ["a require bound to the module by bind and never called", `const load = require.bind(null, "${LIBRARY}");`],
     ["an import of another package", `import { Admin } from "${LIBRARY}-admin";`],
     ["a path into another package", 'import ts from "./node_modules/typescript/lib/typescript.js";'],
   ])("the importer check does not count %s", (_label, source) => {
@@ -2168,6 +2451,21 @@ describe("Kafka seam guard", () => {
     ["loadPlatformatic in a type-only import", `import type { loadPlatformatic } from "${THE_ADAPTER}";`, false],
     ["another export of the adapter", `import { translateError } from "${THE_ADAPTER}";`, false],
     ["a module of the same name elsewhere", 'import { loadPlatformatic } from "./platformatic-client";', false],
+    [
+      "a path whose text holds the adapter's and that reaches no file",
+      'import { loadPlatformatic } from "./stream/kafka/platformatic-client";',
+      false,
+    ],
+    [
+      "the adapter by a path TypeScript normalizes",
+      'import { loadPlatformatic } from "@/lib/db/providers/stream/kafka/../kafka/platformatic-client";',
+      true,
+    ],
+    [
+      "the adapter by a file URL",
+      `import { loadPlatformatic } from ${JSON.stringify(pathToFileURL(join(PROVIDER_DIR, ADAPTER)).href)};`,
+      true,
+    ],
   ])("outside the provider, a file takes the adapter's loader through %s", (_label, source, takes) => {
     const sf = ts.createSourceFile(TEST_FILE, source, ts.ScriptTarget.Latest, true);
     expect(takesTheLoader(TEST_FILE, sf, ROOT)).toBe(takes);
