@@ -2903,6 +2903,9 @@ describe("SchemaDiff", () => {
         expect(body.connection.id).toBe("remote-1");
         expect(body.kinds).toEqual(["table"]);
         expect(body.includeColumns).toBe(true);
+        // A snapshot must capture the SQL a migration will paste, while the table is still the
+        // table the snapshot describes (#1031).
+        expect(body.includeDefaultSql).toBe(true);
 
         expect(mockSaveSchemaSnapshot).toHaveBeenCalledTimes(1);
         const saved = (mockSaveSchemaSnapshot.mock.calls as unknown[][])[0][0] as Record<string, unknown>;

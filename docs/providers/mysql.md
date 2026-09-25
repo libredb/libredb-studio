@@ -944,23 +944,90 @@ On MariaDB the remaining text is decoded by `unquoteLiteral()` (`src/lib/sql/val
 Most other providers leave the engine's catalog text in that field; ClickHouse is the exception either way, because it builds a clause-naming string such as `MATERIALIZED a + b` that is neither (issue #1032).
 `defaultExpression` is the SQL text that produces it, which is what a reader emitting DDL, the schema-diff migration generator above all, must write after the word `DEFAULT`, and a provider carries it exactly where it decoded the value out of it.
 On MariaDB both are set: the catalog text is always valid SQL there, every form in the table above included, so the expression is the raw text unchanged.
-On MySQL only `defaultValue` is set, and that is deliberate: `abc` is a value and is not valid after `DEFAULT`, while `b'1'` and `0x616263` are SQL, and all three arrive with an EMPTY `EXTRA`, so nothing in the row tells them apart.
-An absent `defaultExpression` says the provider did not decode, never "there is no expression", so a reader falls back to `defaultValue` as the text; on MySQL that fallback keeps the pre-existing unquoted `DEFAULT abc` rather than inventing a quoting rule the catalog cannot justify, and whether that text is SQL stays genuinely unknown.
+On MySQL the catalog row sets only `defaultValue`, and that is deliberate: `abc` is a value and is not valid after `DEFAULT`, while `b'1'` and `0x616263` are SQL, and all three arrive with an EMPTY `EXTRA`, so nothing in the row tells them apart.
+The SQL text comes from the engine instead, `SHOW CREATE TABLE`, for a caller that asks for it: see [Default SQL from `SHOW CREATE TABLE`](#default-sql-from-show-create-table-1031) below.
+An absent `defaultExpression` says the provider did not decode, never "there is no expression", so a reader falls back to `defaultValue` as the text; on a MySQL read that did not ask, that fallback keeps the pre-existing unquoted `DEFAULT abc` rather than inventing a quoting rule the catalog cannot justify.
 
 One consequence for a stored snapshot, measured and accepted rather than repaired.
 A snapshot taken before this change stored MariaDB's catalog text in `defaultValue`, and the comparison reads the SQL text first, so `'abc'` against today's `'abc'` compares equal and reports nothing.
 A column with NO default is the exception: the old reading stored the four-character keyword `NULL` there and the current one stores neither field, so such a snapshot reports one spurious default change per no-default column, with a `MODIFY COLUMN` that changes nothing.
 Reading that keyword as absence would put back the ambiguity this section exists to remove, since `NULL` is also a value a column can really default to.
 
-One limit this does not repair, because the engine does not allow it.
-MySQL's own parenthesised expression defaults read back charset-introduced and backslash-escaped, `concat(_latin1\'x\',_latin1\'y\')`, which is not what the user wrote and is not round-trippable.
-Those pass through as reported.
-MariaDB's equivalent reads back as `concat('x','y')`, so the two servers show the same column differently, and the MySQL side is the engine's shape rather than a gap here.
+MySQL's own parenthesised expression defaults read back from the catalog charset-introduced and backslash-escaped, `concat(_latin1\'x\',_latin1\'y\')`, which is not what the user wrote and is `ER_PARSE_ERROR` after `DEFAULT`.
+`defaultValue` carries it as reported.
+The DDL read below carries `(concat(_latin1'x',_latin1'y'))` as `defaultExpression`, which the server accepts back.
+MariaDB's equivalent reads back as `concat('x','y')`, so the two servers still show the same column differently, and that is the engines' shape rather than a gap here.
+
+#### Default SQL from `SHOW CREATE TABLE` (#1031)
+
+`describeObjects(container, kind, limit, { defaultSql: true })` fills `defaultExpression` on MySQL from `SHOW CREATE TABLE`, the server's own rendering of every default as SQL it accepts back.
+SchemaDiff asks, through `includeDefaultSql` on `POST /api/db/objects/inventory`, because a migration pastes that text and a snapshot must capture it when it is taken.
+Nothing else asks.
+MariaDB never reads it, because its catalog text is already SQL (`CATALOG_DEFAULT_READING.defaultSql`).
+Measured 2026-09-23 and 2026-09-24 on MySQL 26.7.0 and MariaDB 13.0.2, through `mysql2`.
+
+**It costs one round trip per table, so it is opt-in.**
+Only a table with at least one catalog default is read, and only a described one, so the caller's `limit` bounds it.
+5000 tables, one connection, local Docker:
+
+| read | time |
+| --- | --- |
+| the four-statement bulk read, whole schema | 64 ms |
+| `SHOW CREATE TABLE` × 500 | 208 ms |
+| `SHOW CREATE TABLE` × 5000 | 2351 ms |
+| `SELECT 1` × 1000, the round-trip floor | 246 ms |
+
+About 0.47 ms per table here, which is the round trip: at a 20 ms round trip, 5000 tables with defaults cost about 100 s.
+A snapshot is a read the user starts, so SchemaDiff pays that. The agent's inventory never does.
+
+**The catalog truncates a binary default at its first zero byte.**
+
+| DDL | `COLUMN_DEFAULT` | `SHOW CREATE TABLE` | bytes after pasting `SHOW CREATE` back |
+| --- | --- | --- | --- |
+| `binary(4) DEFAULT 0x00FF0A27` | `0x` | `0x00FF0A27` | `00FF0A27` |
+| `varbinary(8) DEFAULT 0x0027005C0D` | `0x` | `'\0''\0\\\r'` | `0027005C0D` |
+| `binary(3) DEFAULT 0x000000` | `0x` | `'\0\0\0'` | `000000` |
+| `binary(2) DEFAULT 0xFF80` | `0xFF80` | `0xFF80` | `FF80` |
+| `binary(2) DEFAULT 0xC3A9` | `0xC3A9` | `'é'` | `C3A9` |
+| `binary(3) DEFAULT 'abc'` | `0x616263` | `'abc'` | `616263` |
+
+`DEFAULT 0x` is `ERROR 1064`, so before this read every binary default holding a `00` byte produced a migration the server refused.
+`defaultValue` still carries the catalog's `0x`; `defaultExpression` carries all four bytes.
+
+**Two rewrites, and everything else exactly as the server wrote it** (`portableDefaultSql()` in `src/lib/db/providers/sql/mysql-show-create.ts`):
+
+1. *A quoted number on a numeric type loses its quotes.* MySQL writes every numeric default quoted and MariaDB's catalog writes none of them quoted, so without this an unchanged default compares as changed between the two:
+
+   | `DATA_TYPE` | MySQL `SHOW CREATE` | MariaDB `COLUMN_DEFAULT`, and what MySQL's becomes |
+   | --- | --- | --- |
+   | `int` | `'42'`, `'-5'` | `42`, `-5` |
+   | `bigint` unsigned | `'18446744073709551615'` | `18446744073709551615` |
+   | `tinyint` | `'1'` | `1` |
+   | `decimal` | `'1.50'` | `1.50` |
+   | `float` | `'1500'` | `1500` |
+   | `double` | `'0.1'` | `0.1` |
+   | `year` | `'2020'` | `2020` |
+
+   The gate is the declared type, so a varchar `'42'` keeps its quotes, which are the value's. A numeric type missing from the gate stays quoted, which is still valid DDL, and `DEFAULT '42'` and `DEFAULT 42` are one default on these types.
+2. *A string literal holding a backslash escape becomes hex.* `SHOW CREATE TABLE` writes backslash escapes even for a session running `NO_BACKSLASH_ESCAPES`, and a server in that mode ACCEPTS them and stores other bytes: `varchar(10) DEFAULT 'a\\b'` stores `615C5C62` where `615C62` was meant, and `varbinary(16) DEFAULT '\0''\0\\\r'` stores `5C30275C305C5C5C72` where `0027005C0D` was meant. Hex has one meaning in both modes. A binary column takes the bytes bare. Any other column takes the `_utf8mb4` introducer, because a bare hex literal is read in the COLUMN's charset: latin1 `DEFAULT 0x5CC3A9` stores `5CC3A9`, where `DEFAULT _utf8mb4 0x5CC3A9` stores the intended `5CE9`. Measured under both modes, each of these stores the intended bytes: latin1, utf8mb4 and cp1251 `varchar`, an `enum`, and `varbinary`. Only a whole literal is rewritten; an expression default stays as written, escapes included, because an introducer inside it would change what it means.
+
+**When the text is not used.** The table keeps today's catalog reading, no `defaultExpression`, and the read carries on:
+
+- A refusal or an absence, classified exactly as the Source tab classifies them (`readSourcePart`). A column-level `GRANT SELECT (id, note)` reads both columns from the catalog and gets `ERROR 1142 SHOW command denied` from `SHOW CREATE TABLE`; a table dropped between the two reads answers 1146. Any other failure still raises.
+- DDL the reader cannot read to the end, or DDL that lacks a `DEFAULT` for a column the catalog says has one. The whole table falls back, never half of it, so one diff never compares two readings of one table.
+
+**Reading the column out of the DDL** (`showCreateColumnDefaults()`, same module) is a tokenizer rather than a search, because `DEFAULT` also appears inside a string (`COMMENT 'has DEFAULT'`, an `enum('x DEFAULT y')` member), inside a parenthesis (a `CHECK`, `GENERATED ALWAYS AS ((default(inv) + 1))`) and in the table options (`DEFAULT CHARSET=`).
+It reads the ONE primary after the top-level `DEFAULT`, which stops it at `ON UPDATE`, `COMMENT` and a versioned comment such as `/*!80023 INVISIBLE */`.
+Identifiers are read in all three quotings the server uses: backticks, the double quote under `ANSI_QUOTES`, and bare under `sql_quote_show_create=0`.
+It does not use `src/lib/sql/spans.ts`, which declines a quote behind a backslash because in text a user wrote the escaping depends on the session; this text is the server's, which always escapes with a backslash.
+
+Not measured: the wire-compatible engines this provider also serves (TiDB, StarRocks, Doris and the rest). They take the same path, and DDL the reader cannot use falls back as above.
 
 #### `describeObjects()` describes a whole folder in four statements (#789)
 
 `describeObjects(container, kind, limit?)` answers columns, indexes and foreign keys for EVERY object of
 one kind in one database, in FOUR round trips whatever the folder holds.
+The one exception is opt-in: `{ defaultSql: true }` adds a `SHOW CREATE TABLE` per table with a default, described [above](#default-sql-from-show-create-table-1031).
 The single read is three statements per object, so a folder of 200 tables cost 600.
 Measured on MySQL 26.7.0 against a 200-table database built by the commands below: **13 ms for one
 `describeObjects()` against 118 ms for 200 `describeObject()` calls**, the same 600 columns and 400 indexes.

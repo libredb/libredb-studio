@@ -15,6 +15,8 @@ import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
+import { diffSchemas } from "@/lib/schema-diff/diff-engine";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -5060,6 +5062,288 @@ describe("MySQL bulk column read", () => {
       listed.map((object) => ["cluster", "app", object.path[object.path.length - 1]]),
     );
     await provider.disconnect();
+  });
+});
+
+/**
+ * The opt-in DDL read behind SchemaDiff's default SQL (#1031).
+ *
+ * MySQL's catalog reports a default's VALUE, which is not SQL (`abc`), and truncates a binary
+ * default at its first zero byte (`0x`). `SHOW CREATE TABLE` spells every default as SQL the
+ * server accepts back. It costs one round trip per table, which is why it is OPT-IN: the
+ * default four-statement read is unchanged, and only a caller asking for `defaultSql` pays.
+ *
+ * Both fixtures are VERBATIM from MySQL 26.7.0 on 2026-09-24: the `information_schema.COLUMNS`
+ * rows and the `SHOW CREATE TABLE` text of the same two tables.
+ */
+describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
+  const DEFAULTS_COLUMNS = [
+    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
+    { column_name: "note", data_type: "varchar", is_nullable: "YES", column_default: "abc", column_key: "", extra: "" },
+    { column_name: "qty", data_type: "int", is_nullable: "YES", column_default: "42", column_key: "", extra: "" },
+    { column_name: "bin", data_type: "binary", is_nullable: "YES", column_default: "0x", column_key: "", extra: "" },
+    {
+      column_name: "path",
+      data_type: "varchar",
+      is_nullable: "YES",
+      column_default: "a\\b",
+      column_key: "",
+      extra: "",
+    },
+    {
+      column_name: "ts",
+      data_type: "timestamp",
+      is_nullable: "NO",
+      column_default: "CURRENT_TIMESTAMP",
+      column_key: "",
+      extra: "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+    },
+    {
+      column_name: "ex",
+      data_type: "varchar",
+      is_nullable: "YES",
+      column_default: "concat(_utf8mb4\\'x\\',_utf8mb4\\'y\\')",
+      column_key: "",
+      extra: "DEFAULT_GENERATED",
+    },
+    {
+      column_name: "gen",
+      data_type: "int",
+      is_nullable: "YES",
+      column_default: null,
+      column_key: "",
+      extra: "VIRTUAL GENERATED",
+    },
+  ];
+  const DEFAULTS_DDL =
+    "CREATE TABLE `defaults_1031` (\n  `id` int NOT NULL,\n  `note` varchar(20) DEFAULT 'abc',\n  `qty` int DEFAULT '42',\n  `bin` binary(4) DEFAULT 0x00FF0A27,\n  `path` varchar(20) DEFAULT 'a\\\\b',\n  `ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  `ex` varchar(20) DEFAULT (concat(_utf8mb4'x',_utf8mb4'y')),\n  `gen` int GENERATED ALWAYS AS ((`qty` + 1)) VIRTUAL,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
+  const PLAIN_COLUMNS = [
+    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
+    { column_name: "label", data_type: "varchar", is_nullable: "YES", column_default: null, column_key: "", extra: "" },
+  ];
+
+  /**
+   * The two tables' reads, with `SHOW CREATE TABLE` answered per table by `showCreate`: a DDL
+   * string, or an error to throw. Everything else is the object-surface fixture.
+   */
+  function withTables(
+    base: (sql: string, params?: unknown[]) => Promise<[unknown, unknown[] | undefined]>,
+    showCreate: Record<string, string | Error>,
+  ) {
+    return async (sql: string, params?: unknown[]): Promise<[unknown, unknown[] | undefined]> => {
+      if (sql.startsWith("SHOW CREATE TABLE")) {
+        const name = /`([^`]+)`$/.exec(sql)?.[1] ?? "";
+        const answer = showCreate[name];
+        if (answer instanceof Error) throw answer;
+        return [[{ Table: name, "Create Table": answer }], []];
+      }
+      if (sql.includes("information_schema.COLUMNS") && sql.includes("object_name")) {
+        return [
+          [
+            ...DEFAULTS_COLUMNS.map((row) => ({ object_name: "defaults_1031", ...row })),
+            ...PLAIN_COLUMNS.map((row) => ({ object_name: "plain_1031", ...row })),
+          ],
+          [],
+        ];
+      }
+      if (sql.includes("information_schema.TABLES") && sql.includes("ORDER BY TABLE_NAME")) {
+        return [[{ name: "defaults_1031" }, { name: "plain_1031" }], []];
+      }
+      if (sql.includes("object_name")) return [[], []];
+      return base(sql, params);
+    };
+  }
+
+  const refusal = (errno: number, message: string) => Object.assign(new Error(message), { errno });
+
+  async function describeWith(
+    showCreate: Record<string, string | Error>,
+    options?: { defaultSql?: boolean },
+    mariadb = false,
+    limit?: number,
+  ) {
+    const provider = await connectedTo(mariadb);
+    mockExecuteFn = withTables(objectSurfaceFixture({ mariadb }), showCreate);
+    protocolCalls = [];
+    const batch = await provider.describeObjects(["app"], "table", limit, options);
+    const showCreates = protocolCalls
+      .filter((call) => call.sql.startsWith("SHOW CREATE TABLE"))
+      .map((call) => call.sql);
+    await provider.disconnect();
+    const columns = (table: string) =>
+      new Map(
+        (batch.details.find((detail) => detail.path[1] === table)?.columns ?? []).map((column) => [
+          column.name,
+          column,
+        ]),
+      );
+    return { batch, showCreates, columns };
+  }
+
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  test("without the option nothing reads DDL and no MySQL column carries SQL text", async () => {
+    for (const options of [undefined, { defaultSql: false }]) {
+      const { showCreates, columns } = await describeWith({ defaults_1031: DEFAULTS_DDL }, options);
+
+      expect(showCreates).toEqual([]);
+      for (const column of columns("defaults_1031").values()) {
+        expect(Object.hasOwn(column, "defaultExpression")).toBe(false);
+      }
+    }
+  });
+
+  test("reads SHOW CREATE once per table that has a default, and none for a table without one", async () => {
+    const { showCreates } = await describeWith({ defaults_1031: DEFAULTS_DDL }, { defaultSql: true });
+
+    // `plain_1031` has no default in the catalog, so there is nothing its DDL could add. Its
+    // DDL does say `DEFAULT NULL` for a nullable column, which is not a default the catalog
+    // reports, and reading it would be a round trip for nothing.
+    expect(showCreates).toEqual(["SHOW CREATE TABLE `app`.`defaults_1031`"]);
+  });
+
+  test("carries each default as the SQL the server wrote, made portable, beside the catalog value", async () => {
+    const { columns } = await describeWith({ defaults_1031: DEFAULTS_DDL }, { defaultSql: true });
+    const table = columns("defaults_1031");
+
+    // The #1031 defect: the catalog's `abc` is a value, and `DEFAULT abc` is ERROR 1064.
+    expect(table.get("note")).toMatchObject({ defaultValue: "abc", defaultExpression: "'abc'" });
+    // MySQL writes `'42'`; unquoted, it is MariaDB's catalog text for the same default.
+    expect(table.get("qty")).toMatchObject({ defaultValue: "42", defaultExpression: "42" });
+    // A backslash escape becomes hex, which means the same bytes under NO_BACKSLASH_ESCAPES.
+    expect(table.get("path")).toMatchObject({ defaultValue: "a\\b", defaultExpression: "_utf8mb4 0x615C62" });
+    expect(table.get("ts")).toMatchObject({
+      defaultValue: "CURRENT_TIMESTAMP",
+      defaultExpression: "CURRENT_TIMESTAMP",
+    });
+    // The catalog's `concat(_utf8mb4\'x\',…)` is ER_PARSE_ERROR after DEFAULT; this is accepted.
+    expect(table.get("ex")?.defaultExpression).toBe("(concat(_utf8mb4'x',_utf8mb4'y'))");
+    // No default and a generated column: neither field, exactly as without the option.
+    for (const name of ["id", "gen"]) {
+      expect(Object.hasOwn(table.get(name) ?? {}, "defaultExpression")).toBe(false);
+      expect(Object.hasOwn(table.get(name) ?? {}, "defaultValue")).toBe(false);
+    }
+  });
+
+  test("a binary default the catalog truncated at its zero byte carries the whole value", async () => {
+    const { columns } = await describeWith({ defaults_1031: DEFAULTS_DDL }, { defaultSql: true });
+
+    // `binary(4) DEFAULT 0x00FF0A27` reads back from information_schema as the two characters
+    // `0x`, and `DEFAULT 0x` is ERROR 1064. The DDL has all four bytes.
+    expect(columns("defaults_1031").get("bin")).toMatchObject({ defaultValue: "0x", defaultExpression: "0x00FF0A27" });
+  });
+
+  test.each([
+    ["a refusal", refusal(1142, "SHOW command denied to user 'p_col'@'127.0.0.1' for table 'defaults_1031'")],
+    ["a table dropped between the two reads", refusal(1146, "Table 'app.defaults_1031' doesn't exist")],
+    ["DDL this cannot read", "CREATE TABLE `defaults_1031` (\n  `note` varchar(20) DEFAULT 'abc"],
+    [
+      "DDL that is missing a default the catalog reports",
+      "CREATE TABLE `defaults_1031` (\n  `id` int NOT NULL,\n  `note` varchar(20) DEFAULT 'abc'\n)",
+    ],
+  ])("%s leaves that table on today's reading and does not fail the read", async (_label, answer) => {
+    const { batch, columns } = await describeWith({ defaults_1031: answer }, { defaultSql: true });
+
+    expect(batch.details).toHaveLength(2);
+    for (const column of columns("defaults_1031").values()) {
+      expect(Object.hasOwn(column, "defaultExpression")).toBe(false);
+    }
+    expect(columns("defaults_1031").get("note")?.defaultValue).toBe("abc");
+  });
+
+  test("any other failure raises, because a lost connection is not a fact about the table", async () => {
+    const provider = await connectedTo(false);
+    mockExecuteFn = withTables(objectSurfaceFixture({ mariadb: false }), {
+      defaults_1031: refusal(2013, "Lost connection to MySQL server during query"),
+    });
+
+    await expect(provider.describeObjects(["app"], "table", undefined, { defaultSql: true })).rejects.toThrow(
+      /Lost connection/,
+    );
+    await provider.disconnect();
+  });
+
+  test("MariaDB never reads DDL: its catalog text is already SQL", async () => {
+    const { showCreates } = await describeWith({ defaults_1031: DEFAULTS_DDL }, { defaultSql: true }, true);
+
+    expect(showCreates).toEqual([]);
+  });
+
+  /**
+   * The same table on both servers, VERBATIM from MySQL 26.7.0 and MariaDB 13.0.2 on
+   * 2026-09-24: `note varchar(20) DEFAULT 'abc'` and `qty int DEFAULT 42`.
+   */
+  const PAIR_MYSQL_COLUMNS = [
+    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
+    { column_name: "note", data_type: "varchar", is_nullable: "YES", column_default: "abc", column_key: "", extra: "" },
+    { column_name: "qty", data_type: "int", is_nullable: "YES", column_default: "42", column_key: "", extra: "" },
+  ];
+  const PAIR_MYSQL_DDL =
+    "CREATE TABLE `pair_1031` (\n  `id` int NOT NULL,\n  `note` varchar(20) DEFAULT 'abc',\n  `qty` int DEFAULT '42',\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
+  const PAIR_MARIADB_COLUMNS = [
+    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
+    {
+      column_name: "note",
+      data_type: "varchar",
+      is_nullable: "YES",
+      column_default: "'abc'",
+      column_key: "",
+      extra: "",
+    },
+    { column_name: "qty", data_type: "int", is_nullable: "YES", column_default: "42", column_key: "", extra: "" },
+  ];
+
+  /** `pair_1031` as the provider describes it on one server, ready for the diff engine. */
+  async function pairOn(mariadb: boolean, options?: { defaultSql?: boolean }): Promise<DetailedObject> {
+    const provider = await connectedTo(mariadb);
+    const base = objectSurfaceFixture({ mariadb });
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith("SHOW CREATE TABLE")) return [[{ Table: "pair_1031", "Create Table": PAIR_MYSQL_DDL }], []];
+      if (sql.includes("information_schema.COLUMNS") && sql.includes("object_name")) {
+        const rows = mariadb ? PAIR_MARIADB_COLUMNS : PAIR_MYSQL_COLUMNS;
+        return [rows.map((row) => ({ object_name: "pair_1031", ...row })), []];
+      }
+      if (sql.includes("information_schema.TABLES") && sql.includes("ORDER BY TABLE_NAME"))
+        return [[{ name: "pair_1031" }], []];
+      if (sql.includes("object_name")) return [[], []];
+      return base(sql, params);
+    };
+    const [detail] = (await provider.describeObjects(["app"], "table", undefined, options)).details;
+    await provider.disconnect();
+    return { ...detail, name: "pair_1031", kind: "table" };
+  }
+
+  test("an unchanged table diffs equal from MySQL to MariaDB, the int pair and the varchar pair alike", async () => {
+    const diff = diffSchemas([await pairOn(false, { defaultSql: true })], [await pairOn(true)]);
+
+    // qty: MySQL writes `'42'` and MariaDB `42`. Unquoted on the numeric type, it stays equal,
+    // as it was before this change. note: `'abc'` on both, where it used to differ (below).
+    expect(diff.tables).toEqual([]);
+  });
+
+  test("without the DDL read the varchar pair differs, which is the false difference this removes", async () => {
+    const diff = diffSchemas([await pairOn(false)], [await pairOn(true)]);
+
+    // Today's reading, kept as the control: MySQL's catalog value `abc` against MariaDB's SQL
+    // `'abc'` for the same default. qty was already equal and stays so.
+    expect(diff.tables.flatMap((table) => table.columns.flatMap((column) => column.changes))).toEqual([
+      "Default changed: abc → 'abc'",
+    ]);
+  });
+
+  test("the caller's limit bounds the DDL reads, since only described objects are read", async () => {
+    const { showCreates, batch } = await describeWith(
+      { defaults_1031: DEFAULTS_DDL, plain_1031: DEFAULTS_DDL },
+      { defaultSql: true },
+      false,
+      1,
+    );
+
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["defaults_1031"]);
+    expect(showCreates).toEqual(["SHOW CREATE TABLE `app`.`defaults_1031`"]);
   });
 });
 
