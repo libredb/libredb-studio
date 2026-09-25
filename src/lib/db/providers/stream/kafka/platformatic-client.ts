@@ -222,8 +222,15 @@ const LEADERLESS = new Set(["LEADER_NOT_AVAILABLE", "LISTENER_NOT_FOUND"]);
 const PARTITION_PATH = /^\/topics\/\d+\/partitions\/\d+$/;
 /** Protocol errors that say the fetched partition's leader is not where the metadata said. */
 const STALE_LEADER = new Set(["NOT_LEADER_OR_FOLLOWER", "LEADER_NOT_AVAILABLE", "UNKNOWN_TOPIC_OR_PARTITION"]);
+/** How often the client retries a failed request, so each request is sent at most twice. */
+const RETRIES = 1;
 /** The library's own retry delay (dist/clients/base/options.js, defaultBaseOptions.retryDelay). */
 const RETRY_DELAY_MS = 1000;
+/**
+ * The longest delay a timer takes. Bun and Node cut a longer one to 1 ms (measured on 2026-09-25),
+ * and the connection dialog takes a query timeout up to this very value.
+ */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 /** Protocol errors by which the broker asks for a new fetch session, which the library's retry opens. */
 const FETCH_SESSION_RESET = new Set(["INVALID_FETCH_SESSION_EPOCH", "FETCH_SESSION_ID_NOT_FOUND"]);
 
@@ -258,7 +265,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
       clientId: options.clientId,
       bootstrapBrokers: [{ host: options.broker.host, port: options.broker.port }],
       autocreateTopics: false,
-      retries: 1,
+      retries: RETRIES,
       retryDelay: retryDelayFor,
       ...transport,
       ...(serverName ? { tlsServerName: true } : {}),
@@ -329,11 +336,14 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
     return metadata;
   };
 
-  /** The client's listOffsets reads a topic whole, and hangs on an internal one: refused first, with the reason (spec 4.1). */
+  /**
+   * The client's listOffsets reads a topic whole, and hangs on an internal one: refused first, with
+   * the reason (spec 4.1). The metadata answers exactly the topics asked for, on both paths.
+   */
   const readableTopic = async (topic: string): Promise<void> => {
-    const leaderless = (await readMetadata([topic])).topics
-      .filter((t) => t.name === topic)
-      .flatMap((t) => t.partitions.filter((p) => p.leader < 0).map((p) => p.partition));
+    const leaderless = (await readMetadata([topic])).topics.flatMap((t) =>
+      t.partitions.filter((p) => p.leader < 0).map((p) => p.partition),
+    );
     if (leaderless.length > 0) {
       throw new KafkaError(
         "unreadable-topic",
@@ -377,24 +387,27 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   // session epoch, and the broker refuses one with INVALID_FETCH_SESSION_EPOCH, which costs that
   // read a retry and, once its one retry is spent, the read itself.
   // A cached provider serves every tab and every user of a connection, so reads do overlap.
-  // The chain waits on the library's own promise, never on the abortable one, so a read its
-  // timeout stopped keeps its turn until its fetch has settled on the session; a read stopped
-  // while it still waited sends nothing when its turn comes.
-  let fetchTurn: Promise<unknown> = Promise.resolve();
-  const fetchFrom = (
-    topic: KafkaTopicMetadata,
-    partition: number,
-    offset: bigint,
-    node: number,
-    signal: AbortSignal,
-  ) => {
-    const turn = fetchTurn.then(() => {
+  // A turn waits on the library's own promise, never on the abortable one, so a read its timeout
+  // stopped keeps its turn until its fetch has settled on the session; a read stopped while it
+  // still waited sends nothing when its turn comes.
+  // The wait is bounded, because the library can leave a fetch unsettled (see oneFetchAtATime):
+  // by the longest the fetch's two attempts take when each connects once and sends one request,
+  // with the retry delay between them, past which the client's own timers have answered every
+  // request such a fetch sent. A fetch can outlast it when it must also read the cluster's
+  // metadata, as a retry does after its connection failed, or waits on its connection behind
+  // other requests; should it then meet the next fetch on the session, the broker refuses one,
+  // and the library retries that one at once (retryDelayFor), on a new session.
+  const fetchTurn = oneFetchAtATime(
+    Math.min(
+      MAX_TIMER_DELAY_MS,
+      (RETRIES + 1) * (transport.connectTimeout + transport.requestTimeout) + RETRIES * RETRY_DELAY_MS,
+    ),
+  );
+  const fetchFrom = (topic: KafkaTopicMetadata, partition: number, offset: bigint, node: number, signal: AbortSignal) =>
+    fetchTurn(() => {
       if (signal.aborted) throw stoppedRead();
       return fetchNow(topic, partition, offset, node);
     });
-    fetchTurn = turn.catch(() => undefined);
-    return turn;
-  };
   const fetchNow = (topic: KafkaTopicMetadata, partition: number, offset: bigint, node: number) =>
     consumer.fetch({
       node,
@@ -748,12 +761,10 @@ function mapFetch(
       nextAborted++;
     }
     if ((batch.attributes & CONTROL_BATCH) !== 0) {
-      const key = batch.records[0]?.key;
-      if (
-        key &&
-        key.byteLength >= 4 &&
-        new DataView(key.buffer, key.byteOffset, key.byteLength).getInt16(2) === ABORT_MARKER
-      ) {
+      // An empty control batch, which the log cleaner keeps of a producer's last marker, marks
+      // nothing, as the Java consumer's containsAbortMarker reads it.
+      const [marker] = batch.records;
+      if (marker !== undefined && controlType(marker.key, batch.firstOffset) === ABORT_MARKER) {
         abortedProducers.delete(batch.producerId);
       }
       continue;
@@ -774,6 +785,30 @@ function mapFetch(
     }
   }
   return { records, nextOffset };
+}
+
+/**
+ * A control record's type, read as the Java consumer's ControlRecordType.parse reads it: the key is
+ * an int16 version, never negative, then the int16 type, and a version it does not know is read by
+ * its type all the same. A key that is not that is the broker's anomaly, refused as Java refuses it,
+ * never taken for "no marker", which would keep an aborted transaction's records or drop a
+ * committed one's. A control batch holds its one record at the batch's first offset.
+ */
+function controlType(key: Uint8Array | null, offset: bigint): number {
+  if (key === null || key.byteLength < 4) {
+    throw new KafkaError(
+      "protocol",
+      `The broker sent a transaction marker at offset ${offset} whose key is not a control record's version and type`,
+    );
+  }
+  const view = new DataView(key.buffer, key.byteOffset, key.byteLength);
+  if (view.getInt16(0) < 0) {
+    throw new KafkaError(
+      "protocol",
+      `The broker sent a transaction marker at offset ${offset} with a negative version, which the Java consumer refuses as corrupt`,
+    );
+  }
+  return view.getInt16(2);
 }
 
 /** The answer's entry for the resource asked, never the first by position. */
@@ -883,6 +918,43 @@ function stoppedRead(): KafkaError {
   return new KafkaError("timeout", "The read ran past its time limit and was stopped");
 }
 
+/**
+ * Runs fetches one at a time, in the order they were asked for. Each holds the turn until the
+ * library settles it, or until `holdMs` have passed since the library was handed it, whichever
+ * comes first; one that throws before it reaches the library passes the turn on at once.
+ * The bound is there because the library can leave a fetch unsettled: its READ_COMMITTED filter
+ * reads an aborted range's end and a control batch's first record unguarded, inside its socket
+ * handler, so an answer that holds an empty control batch (which Kafka's log cleaner keeps of a
+ * producer's last marker), or an ABORT marker of a producer it does not list, beside a listed
+ * aborted transaction throws there, after the request has left the client's own timers (measured
+ * on Kafka 4.3.1 after log cleaning, 2026-09-25). Without it, that one read would stop every
+ * later read on the provider.
+ */
+function oneFetchAtATime(holdMs: number) {
+  let turn: Promise<void> = Promise.resolve();
+  return <T>(start: () => Promise<T>): Promise<T> => {
+    // Boxed, so the next turn waits on the hold below rather than on the fetch itself.
+    const started = turn.then(() => ({ fetch: start() }));
+    turn = started.then(
+      ({ fetch }) => settledOrAfter(fetch, holdMs),
+      () => undefined,
+    );
+    return started.then(({ fetch }) => fetch);
+  };
+}
+
+/** Resolves once `promise` settles, or once `ms` have passed, whichever comes first; never rejects. */
+function settledOrAfter(promise: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const settled = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    promise.then(settled, settled);
+  });
+}
+
 /** The fetch's answer, or a timeout the moment the signal stops the read; the fetch itself settles on its own. */
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -902,17 +974,48 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-const TLS_CODES =
-  /^(ERR_TLS_|ERR_SSL_|CERT_|DEPTH_ZERO_SELF_SIGNED_CERT$|SELF_SIGNED_CERT_IN_CHAIN$|UNABLE_TO_VERIFY_LEAF_SIGNATURE$|UNABLE_TO_GET_ISSUER_CERT)/;
-const NETWORK_CODES = new Set([
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "ETIMEDOUT",
-  "ECONNRESET",
-  "EAI_AGAIN",
+/**
+ * Node's names for a certificate its TLS layer refused: OpenSSL's X509_V_ERR_ names, and UNSPECIFIED
+ * for any other (X509ErrorCode in Node's src/crypto/crypto_common.cc; each name is in the node
+ * 24.14.0 binary, and a server certificate for client authentication only reached the client as
+ * INVALID_PURPOSE under Node 24.14.0 and Bun 1.4.2, measured on 2026-09-25). A handshake the TLS
+ * layer itself broke off carries an ERR_TLS_ or ERR_SSL_ code instead.
+ */
+const CERTIFICATE_CODES = new Set([
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_CRL",
+  "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+  "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+  "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+  "CERT_SIGNATURE_FAILURE",
+  "CRL_SIGNATURE_FAILURE",
+  "CERT_NOT_YET_VALID",
+  "CERT_HAS_EXPIRED",
+  "CRL_NOT_YET_VALID",
+  "CRL_HAS_EXPIRED",
+  "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+  "ERROR_IN_CERT_NOT_AFTER_FIELD",
+  "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+  "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
+  "OUT_OF_MEM",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_CHAIN_TOO_LONG",
+  "CERT_REVOKED",
+  "INVALID_CA",
+  "PATH_LENGTH_EXCEEDED",
+  "INVALID_PURPOSE",
+  "CERT_UNTRUSTED",
+  "CERT_REJECTED",
+  "HOSTNAME_MISMATCH",
+  "UNSPECIFIED",
 ]);
+const isTlsCode = (code: string) =>
+  code.startsWith("ERR_TLS_") || code.startsWith("ERR_SSL_") || CERTIFICATE_CODES.has(code);
+/** A code the runtime gave a failure, as opposed to the client's own PLT_KFK_ codes (dist/errors.js). */
+const isNodeCode = (code: unknown): code is string => typeof code === "string" && !code.startsWith("PLT_KFK_");
 /** The client's own text for one connection's failure: "Connection to <host>:<port> failed." or "... timed out." (dist/network/connection.js). */
 const CONNECTION_TARGET = /^Connection to (.+):(\d+) (failed|timed out)\.$/;
 /** A connect that timed out before the connection knew its address (dist/network/connection.js, ready()). */
@@ -975,23 +1078,29 @@ export function translateError(error: unknown, bootstrap: { host: string; port: 
   if (userMessages.some((m) => /TLS handshake failed/.test(m))) {
     return new KafkaError("tls", "The TLS handshake failed: this port may not speak TLS", { nodeCode: "ECONNRESET" });
   }
-  const tls = chain.find((e) => typeof e.code === "string" && TLS_CODES.test(e.code));
+  const tls = chain.find((e) => typeof e.code === "string" && isTlsCode(e.code));
   if (tls !== undefined) {
     return new KafkaError("tls", `The TLS handshake failed (${tls.code})`, { nodeCode: tls.code as string });
   }
-  // Transport failures. The library's TimeoutError carries NetworkError's code
-  // (PLT_KFK_NETWORK), never PLT_KFK_TIMEOUT, and no Node code (dist/errors.js), so a
-  // connect timeout and a closed connection are read from the client's own fixed text.
-  // The target comes from "Connection to <host>:<port> ...", not from the Node error:
-  // Node reports the resolved address, so "localhost" would come back as "127.0.0.1"
-  // and look like a different broker (measured M-J).
-  const errno = chain.find((e) => typeof e.code === "string" && NETWORK_CODES.has(e.code));
-  const target = messages.map((m) => CONNECTION_TARGET.exec(m)).find((match) => match !== null);
+  // Transport failures. The client wraps every failure to connect to one address in its own
+  // "Connection to <host>:<port> failed." (or "... timed out."), with the socket's error as its
+  // cause (dist/network/connection.js), so a connection failure is known by that text, whatever
+  // Node code its cause carries (EINVAL, EPERM, EADDRNOTAVAIL, ...), while a Node code anywhere
+  // else, such as zlib's for a batch that would not decompress, is no connection failure.
+  // The library's TimeoutError carries NetworkError's code (PLT_KFK_NETWORK), never
+  // PLT_KFK_TIMEOUT, and no Node code (dist/errors.js), so a connect timeout and a closed
+  // connection are read from the client's own fixed text too.
+  // The target comes from that text, not from the Node error: Node reports the resolved
+  // address, so "localhost" would come back as "127.0.0.1" and look like a different broker
+  // (measured M-J).
+  const connection = chain.find((e) => CONNECTION_TARGET.test(String(e.message ?? "")));
+  const target = CONNECTION_TARGET.exec(String(connection?.message ?? ""));
+  const causeCode = [...walk(connection?.cause)].map((e) => e.code).find(isNodeCode);
   const connectTimedOut = target?.[3] === "timed out" || messages.some((m) => READY_TIMED_OUT.test(m));
-  if (errno !== undefined || connectTimedOut || messages.some((m) => CONNECTION_LOST.test(m))) {
+  if (causeCode !== undefined || connectTimedOut || messages.some((m) => CONNECTION_LOST.test(m))) {
     const host = target?.[1] ?? bootstrap.host;
     const port = target ? Number(target[2]) : bootstrap.port;
-    const nodeCode = errno !== undefined ? String(errno.code) : connectTimedOut ? "connect-timeout" : "connection-lost";
+    const nodeCode = causeCode ?? (connectTimedOut ? "connect-timeout" : "connection-lost");
     if (host !== bootstrap.host || port !== bootstrap.port) {
       return new KafkaError(
         "advertised-unreachable",
