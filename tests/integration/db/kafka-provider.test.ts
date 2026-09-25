@@ -11,15 +11,11 @@
  * The broker's answers were captured from the compose `kafka` service, `apache/kafka:4.3.1`
  * (`apache/kafka@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837`),
  * cluster `4L6g3nShT-eMCtK--X86sw`, seeded by `docker/kafka/seed.sh` and
- * `docker/kafka/seed-binary.ts`; so was the missing topic's `error-unknown-topic`. The other
- * failures come from elsewhere, as `tests/fixtures/kafka/README.md` records. The two
- * authorization refusals (`error-authorization`, `error-cluster-authorization`) are `kafka-auth`'s,
- * the same image with cluster `7L6g3nShT-eMCtK--X86sw`, as the principal `reader` with no ACL, and
- * so is the SASL failure (`error-sasl`), with a wrong password; `error-refused` was captured in
- * that run too, but against localhost:19099, where nothing listens. The lost connection and the
- * request timeout (`error-connection-closed`, `error-request-timeout`) were captured against local
- * listeners with no broker behind them. Each fixture's `$captured` key holds its image, cluster id,
- * capture date and the call it answers.
+ * `docker/kafka/seed-binary.ts`. The captured failures come from that broker, from `kafka-auth`
+ * (the same image with cluster `7L6g3nShT-eMCtK--X86sw`, as the principal `reader` with no ACL,
+ * or with a wrong password), from Redpanda, and from local listeners with no broker behind them;
+ * each fixture's `$captured` key holds its image, cluster id, capture date and the call it answers,
+ * and `tests/fixtures/kafka/README.md` lists them.
  *
  * Five answers are BUILT from a capture rather than read from one, and each says so where it is
  * built: topic configs for a topic other than `orders`, broker configs for a broker other than 1,
@@ -30,8 +26,10 @@
  * request than the one it was taken for: the log-dir capture named `orders` alone, so the
  * provider's request, which names every listed topic, gets orders' 5,503 bytes on broker 1's one
  * log dir, and every size below is that one topic's, not the seeded cluster's. Every library
- * failure a test throws is one of the captures above; the `TypeError`s, which stand for a defect of
- * the provider's own, and a close that fails are built inline.
+ * failure a test throws is a capture; the failure tests throw every one the fixtures directory
+ * holds, found by name, and compute what each surface must answer from what the adapter itself
+ * answers at the read that failed. The `TypeError`s, which stand for a defect of the provider's own,
+ * and a close that fails are built inline.
  *
  * The recorded library answers every construction of a class with the same object, so two clients
  * would share their calls and their closes. A test therefore counts clients by the provider's own
@@ -41,19 +39,28 @@
  * the provider does not do: build no second client, degrade no read but the two KM4 names, add no read
  * to a module's, keep no answer for the next call. So those rules are pinned whole, as a class, rather
  * than one mutant at a time: the lifecycle test counts every client, the KM4 matrix answers every
- * combination of the two refusals, the failure matrix fails each read of each surface separately, and
- * the wire traces and the delegation tests compare every read a surface makes.
+ * combination of the two refusals, the failure matrix fails each read of each surface separately with
+ * every captured failure, and the wire traces and the delegation tests compare every read a surface
+ * makes. What this file can throw at a read is a capture, though, which the adapter makes into ten of
+ * the fourteen KafkaError categories, so a rule over every category, such as KM4's (only an
+ * authorization refusal degrades), cannot be reached here whole; and what its modules answer holds
+ * only the parts the captures hold. The same rules over their whole domains (every category, every
+ * part of every module answer, by identity, and every query timeout) are pinned at the provider's own
+ * seam, the KafkaReadClient interface, by tests/unit/db/kafka/provider.test.ts.
  *
  * A section number below, "spec 5.1" for example, is a section of #1088's design.
  */
 import { describe, expect, spyOn, test } from "bun:test";
+import { readdirSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 import { flattenTree } from "@/components/object-tree/flatten";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
-import type { KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
+import { KafkaError, type KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
+import { toDatabaseError } from "@/lib/db/providers/stream/kafka/errors";
 import * as kafkaObjects from "@/lib/db/providers/stream/kafka/objects";
 import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, readMessages } from "@/lib/db/providers/stream/kafka/read";
@@ -226,6 +233,20 @@ async function connected(overrides: Record<string, Answer> = {}, queryTimeout?: 
 /** The query timeout the failure tests connect with, which a TimeoutError carries. */
 const FAILURE_TIMEOUT_MS = 7_000;
 
+/** A read composed as spec 3.5 and 5.1 compose it, over one client, its time left out: the time has its own test. */
+const composedReadOf =
+  (text: string) =>
+  async (client: KafkaReadClient): Promise<QueryResult> => {
+    const request = parseReadRequest(text, DEFAULT_QUERY_LIMIT);
+    const outcome = await readMessages(
+      client,
+      request,
+      { resultByteBudget: KAFKA_RESULT_BYTE_BUDGET, cellLimit: KAFKA_CELL_LIMIT },
+      AbortSignal.timeout(FAILURE_TIMEOUT_MS),
+    );
+    return toQueryResult(outcome.rows, 0, request.limit, outcome.warnings, outcome.wasLimited);
+  };
+
 /**
  * One read a surface makes, as spec 7.1 names it, and which calls of one library member carry it: a
  * metadata call is the forced broker read when it names no topic, and a topic read when it names some.
@@ -266,89 +287,208 @@ async function connectedThenFailing(read: Read, failure: unknown) {
 }
 
 /**
- * Captured failures that are not an authorization refusal, each with the error the table makes of
- * it (spec 5.6). Only an authorization refusal degrades a cluster read (KM4), so each of these fails
- * whichever surface met it.
+ * The same captured broker behind no provider, failing the same read with the same failure object:
+ * what the adapter itself answers there is what every expectation of the failure tests is computed
+ * from. `afterConnect` leaves the first forced broker read answered, as a provider's connect had it.
  */
-const NON_AUTHORIZATION_FAILURES = [
-  // A broker the cluster advertises at an address this server cannot reach, after the bootstrap
-  // answered: the most common Kafka connection failure behind Docker and NAT (spec 5.6).
-  [
-    "error-refused",
-    ConnectionError,
-    {
-      provider: "kafka",
-      host: "localhost",
-      port: 19099,
-      message:
-        "The broker advertised localhost:19099, which this server cannot reach; the cluster's advertised listeners must be reachable from where Studio runs",
+async function referenceFailing(read: Read, failure: unknown, afterConnect = true): Promise<KafkaReadClient> {
+  let armed = !afterConnect;
+  const answer = BROKER_ANSWERS[read.member];
+  const recorded = brokerLib({
+    [read.member]: (...args) => {
+      if (armed && read.carries(args[0])) throw failure;
+      return answer(...args);
     },
-  ],
-  // A connection with no address in the failure is the bootstrap's.
-  [
-    "error-connection-closed",
-    ConnectionError,
-    { provider: "kafka", host: "localhost", port: 9092, message: "The broker could not be reached (connection-lost)" },
-  ],
-  [
-    "error-request-timeout",
-    TimeoutError,
-    { provider: "kafka", timeout: FAILURE_TIMEOUT_MS, message: "The broker did not answer in time" },
-  ],
-  ["error-sasl", AuthenticationError, { provider: "kafka", message: "SASL authentication failed" }],
-] as const;
+  });
+  const client = createPlatformaticClient(kafkaConnectionOptions(CONNECTION, FAILURE_TIMEOUT_MS), recorded.lib);
+  if (afterConnect) await client.metadata([]);
+  armed = true;
+  return client;
+}
 
 /**
- * The refusal a principal without the cluster ACLs meets (M-I): the one failure KM4 degrades on, and
- * only at two reads, the log dirs and the overview's broker configs; every other read it fails.
+ * Every failure the capture harness recorded, found by the fixtures' own naming (`error-*`, and
+ * Redpanda's `redpanda-error-*`) rather than listed by hand, so a capture added later is thrown at
+ * every read below as well (spec 11 KM4: "every captured failure"), and a defect of the provider's
+ * own, which is no library failure. What each is, and where it was captured, is its `$captured` key
+ * and the fixtures README; the error table's answer to each is computed from what the adapter makes
+ * of it at the read it meets, never restated here.
  */
-const AUTHORIZATION_REFUSAL = [
-  "error-cluster-authorization",
-  AuthenticationError,
-  { provider: "kafka", message: "The broker denied access to this cluster" },
-] as const;
+const DEFECT = "a defect of the provider's own";
+const FAILURES_THROWN: readonly string[] = [
+  ...readdirSync(join(import.meta.dir, "..", "..", "fixtures", "kafka"))
+    .filter((name) => /^(redpanda-)?error-.+\.json$/.test(name))
+    .map((name) => name.replace(/\.json$/, ""))
+    .sort(),
+  DEFECT,
+];
+const failureNamed = (name: string): unknown =>
+  name === DEFECT ? new TypeError("a defect, not a refusal") : libError(name);
+
+/** A call's end: what it answered, or what it threw. */
+type Settled = { readonly value: unknown } | { readonly error: unknown };
+const settle = (run: () => Promise<unknown>): Promise<Settled> =>
+  run().then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
+/** An error as a caller reads it: its class, its message and every field it carries. */
+const described = (error: unknown) =>
+  error instanceof Error ? { ...error, class: error.constructor.name, message: error.message } : { value: error };
+/** What a call came to, as a caller meets it. */
+type Outcome = { readonly answered: unknown } | { readonly threw: unknown };
+/** What a call came to, a failure that surfaced as itself saying so. */
+const outcomeOf = (settled: Settled, failure: unknown): Outcome =>
+  "value" in settled
+    ? { answered: settled.value }
+    : { threw: settled.error === failure ? "the failure itself" : described(settled.error) };
+/** The address this file's connection validated, which a bootstrap failure carries. */
+const BOOTSTRAP = kafkaConnectionOptions(CONNECTION, FAILURE_TIMEOUT_MS).broker;
+/** The error table's answer (spec 5.6) to what the adapter threw, with that address and the query timeout. */
+const tableAnswer = (thrown: unknown, failure: unknown) =>
+  outcomeOf({ error: toDatabaseError(thrown, BOOTSTRAP, FAILURE_TIMEOUT_MS) }, failure);
+/** KM4's one degrading failure (spec 11): an authorization refusal. */
+const isAuthorizationRefusal = (error: unknown) => error instanceof KafkaError && error.category === "authorization";
+/** A read the adapter answered although the library failed it: a leaderless partition, read through (spec 4.1). */
+const READ_THROUGH = "the read answered: the adapter read the failure through";
 
 type BrokerRead = readonly [
   surface: string,
   readName: string,
   read: Read,
   call: (provider: KafkaProvider) => Promise<unknown>,
-  degradesOnRefusal: boolean,
+  /** What the surface must come to, from what the same read comes to without the provider. */
+  expected: (reference: KafkaReadClient, capabilities: ProviderCapabilities, failure: unknown) => Promise<Outcome>,
 ];
-const brokerRead = (
+
+/**
+ * A surface that delegates: it answers what its module answers over the failing read, a failure
+ * through the error table (spec 3.5, 5.6).
+ */
+const delegated = (
   surface: string,
   read: Read,
   call: (provider: KafkaProvider) => Promise<unknown>,
-  degradesOnRefusal = false,
-): BrokerRead => [surface, read.name, read, call, degradesOnRefusal];
+  viaModule: (client: KafkaReadClient, capabilities: ProviderCapabilities) => Promise<unknown>,
+  normalize: (value: unknown) => unknown = (value) => value,
+): BrokerRead => [
+  surface,
+  read.name,
+  read,
+  async (provider) => normalize(await call(provider)),
+  async (reference, capabilities, failure) => {
+    const settled = await settle(() => viaModule(reference, capabilities));
+    return "value" in settled ? { answered: normalize(settled.value) } : tableAnswer(settled.error, failure);
+  },
+];
 
 /**
- * Every read each surface makes, each failed on its own, and whether an authorization refusal of it
- * degrades the surface (KM4) or fails it. A monitoring panel is listed once for every read spec 7.1
- * gives it, because the provider composes those reads itself; a surface that delegates is listed with
- * one read, because its module owns the rest.
+ * A panel the provider composes from the reads spec 7.1 gives it: a read the adapter fails fails the
+ * panel through the error table, but an authorization refusal of the two reads KM4 names, which
+ * degrades the panel to `degraded`; a read the adapter answers leaves the panel answering.
+ */
+const composed = (
+  surface: string,
+  read: Read,
+  call: (provider: KafkaProvider) => Promise<unknown>,
+  adapterRead: (client: KafkaReadClient) => Promise<unknown>,
+  degraded?: unknown,
+): BrokerRead => [
+  surface,
+  read.name,
+  read,
+  call,
+  async (reference, _capabilities, failure) => {
+    const settled = await settle(() => adapterRead(reference));
+    if ("value" in settled) return { answered: READ_THROUGH };
+    if (degraded !== undefined && isAuthorizationRefusal(settled.error)) return { answered: degraded };
+    return tableAnswer(settled.error, failure);
+  },
+];
+
+/** The reads each panel makes, as the adapter's own calls carrying them. */
+const forcedBrokerRead = (client: KafkaReadClient) => client.metadata([]);
+const topicListingRead = (client: KafkaReadClient) => client.listTopics();
+const listedTopicsRead = (client: KafkaReadClient) => client.metadata();
+const logDirsRead = async (client: KafkaReadClient) => client.logDirs((await client.metadata()).topics);
+const brokerConfigsRead = (client: KafkaReadClient) => client.brokerConfigs(1);
+
+/** The panels a refused cluster read degrades (KM4), each whole, over the captured broker. */
+const HEALTH_WITHOUT_LOG_DIRS = { databaseSize: "N/A", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] };
+const OVERVIEW_WITHOUT_LOG_DIRS = {
+  version: "N/A",
+  uptime: "N/A",
+  maxConnections: 2147483647,
+  databaseSize: "N/A",
+  tableCount: ALL.topics.size,
+  indexCount: 0,
+};
+const OVERVIEW_WITHOUT_BROKER_CONFIGS = {
+  version: "N/A",
+  uptime: "N/A",
+  maxConnections: 0,
+  databaseSize: "5.37 KB on disk, all replicas, internal topics excluded",
+  databaseSizeBytes: 5503,
+  tableCount: ALL.topics.size,
+  indexCount: 0,
+};
+
+const READ_REQUEST = '{"topic":"codec-gzip","from":"earliest","limit":1}';
+/** A read's result without its time, which has its own test. */
+const untimed = (value: unknown) => ({ ...(value as QueryResult), executionTime: 0 });
+
+/**
+ * Every read each surface makes, each failed on its own. A monitoring panel is listed once for every
+ * read spec 7.1 gives it, because the provider composes those reads itself; a surface that delegates
+ * is listed with one read, because its module owns the rest.
  */
 const BROKER_READS: readonly BrokerRead[] = [
-  brokerRead("query", READS.offsets, (p) => p.query('{"topic":"codec-gzip","from":"earliest","limit":1}')),
-  brokerRead("listObjects", READS.topicListing, (p) => p.listObjects([], "topic")),
-  brokerRead("describeObject", READS.topicMetadata, (p) => p.describeObject(["orders"], "topic")),
-  brokerRead("describeObjects", READS.topicListing, (p) => p.describeObjects([], "topic")),
-  brokerRead("readObjectSource", READS.topicConfigs, (p) => p.readObjectSource(["orders"], "topic")),
+  delegated("query", READS.offsets, (p) => p.query(READ_REQUEST), composedReadOf(READ_REQUEST), untimed),
+  delegated(
+    "listObjects",
+    READS.topicListing,
+    (p) => p.listObjects([], "topic"),
+    (c) => kafkaObjects.listObjects(c, [], "topic"),
+  ),
+  delegated(
+    "describeObject",
+    READS.topicMetadata,
+    (p) => p.describeObject(["orders"], "topic"),
+    (c, capabilities) => kafkaObjects.describeObject(c, capabilities, ["orders"], "topic"),
+  ),
+  delegated(
+    "describeObjects",
+    READS.topicListing,
+    (p) => p.describeObjects([], "topic"),
+    (c) => kafkaObjects.describeObjects(c, [], "topic"),
+  ),
+  delegated(
+    "readObjectSource",
+    READS.topicConfigs,
+    (p) => p.readObjectSource(["orders"], "topic"),
+    (c, capabilities) => kafkaObjects.readObjectSource(c, capabilities, ["orders"], "topic"),
+  ),
   // The forced broker read, then the log-dir read: the listing it names, their metadata, the log dirs.
-  brokerRead("getHealth", READS.forcedBrokers, (p) => p.getHealth()),
-  brokerRead("getHealth", READS.topicListing, (p) => p.getHealth()),
-  brokerRead("getHealth", READS.listedTopics, (p) => p.getHealth()),
-  brokerRead("getHealth", READS.logDirs, (p) => p.getHealth(), true),
+  composed("getHealth", READS.forcedBrokers, (p) => p.getHealth(), forcedBrokerRead),
+  composed("getHealth", READS.topicListing, (p) => p.getHealth(), topicListingRead),
+  composed("getHealth", READS.listedTopics, (p) => p.getHealth(), listedTopicsRead),
+  composed("getHealth", READS.logDirs, (p) => p.getHealth(), logDirsRead, HEALTH_WITHOUT_LOG_DIRS),
   // The forced broker read, then the topic listing, the lowest broker's configs and the log-dir read.
-  brokerRead("getOverview", READS.forcedBrokers, (p) => p.getOverview()),
-  brokerRead("getOverview", READS.topicListing, (p) => p.getOverview()),
-  brokerRead("getOverview", READS.listedTopics, (p) => p.getOverview()),
-  brokerRead("getOverview", READS.brokerConfigs, (p) => p.getOverview(), true),
-  brokerRead("getOverview", READS.logDirs, (p) => p.getOverview(), true),
+  composed("getOverview", READS.forcedBrokers, (p) => p.getOverview(), forcedBrokerRead),
+  composed("getOverview", READS.topicListing, (p) => p.getOverview(), topicListingRead),
+  composed("getOverview", READS.listedTopics, (p) => p.getOverview(), listedTopicsRead),
+  composed(
+    "getOverview",
+    READS.brokerConfigs,
+    (p) => p.getOverview(),
+    brokerConfigsRead,
+    OVERVIEW_WITHOUT_BROKER_CONFIGS,
+  ),
+  composed("getOverview", READS.logDirs, (p) => p.getOverview(), logDirsRead, OVERVIEW_WITHOUT_LOG_DIRS),
   // The log-dir read alone.
-  brokerRead("getStorageStats", READS.topicListing, (p) => p.getStorageStats()),
-  brokerRead("getStorageStats", READS.listedTopics, (p) => p.getStorageStats()),
-  brokerRead("getStorageStats", READS.logDirs, (p) => p.getStorageStats(), true),
+  composed("getStorageStats", READS.topicListing, (p) => p.getStorageStats(), topicListingRead),
+  composed("getStorageStats", READS.listedTopics, (p) => p.getStorageStats(), listedTopicsRead),
+  composed("getStorageStats", READS.logDirs, (p) => p.getStorageStats(), logDirsRead, []),
 ];
 
 const lagRows = async (provider: KafkaProvider, group: string) => {
@@ -1457,99 +1597,293 @@ describe("monitoring", () => {
 });
 
 describe("failures (spec 5.6)", () => {
-  type CapturedFailure = readonly [
-    fixture: string,
-    errorClass: new (...args: never[]) => Error,
-    fields: { readonly provider: string; readonly message: string } & Record<string, unknown>,
-  ];
-
-  test.each(BROKER_READS)(
-    "%s fails when %s meets an unreachable broker, a lost connection, a timeout, a SASL failure or an authorization refusal KM4 does not degrade, as the error table maps each, and a defect surfaces as itself",
-    async (_surface, _readName, read, call, degradesOnRefusal) => {
-      // Only an authorization refusal can degrade a panel, and only at the two reads KM4 names: every
-      // other failure, and that refusal at any other read, fails whichever surface met it.
-      const failures: readonly CapturedFailure[] = degradesOnRefusal
-        ? NON_AUTHORIZATION_FAILURES
-        : [...NON_AUTHORIZATION_FAILURES, AUTHORIZATION_REFUSAL];
-      const failed = await Promise.all(
-        failures.map(async ([fixture]) =>
-          call((await connectedThenFailing(read, libError(fixture))).provider).catch((e) => e),
-        ),
-      );
-      failed.forEach((error, index) => {
-        const [, errorClass, fields] = failures[index];
-        expect(error).toBeInstanceOf(errorClass);
-        expect(error).toMatchObject(fields);
-      });
-      // A failure that is not the library's is a defect of the provider's own, never the broker's answer.
-      const defect = new TypeError("a defect, not a refusal");
-      const broken = await connectedThenFailing(read, defect);
-      expect(await call(broken.provider).catch((e) => e)).toBe(defect);
+  /**
+   * The words each captured failure reaches a caller in, end to end (spec 5.6): the adapter's own
+   * sentence under the error table's class, never the client's message, which can carry a host and
+   * port, and the address a connection failure names: the bootstrap's, or the one the broker
+   * advertised (K2). One row per capture, held to the captures found by name, so a capture added
+   * later needs its row here. Each is thrown at a topic source's config read, which is no fetch, so
+   * the two offset refusals name no range: spec 5.6's range belongs to a fetch's refusal.
+   */
+  const CAPTURED_WORDS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+    "error-authorization": { class: "AuthenticationError", message: "The broker denied access to this topic" },
+    "error-cluster-authorization": {
+      class: "AuthenticationError",
+      message: "The broker denied access to this cluster",
     },
-  );
-
-  test.each(BROKER_READS.filter(([, , , , degradesOnRefusal]) => degradesOnRefusal))(
-    "%s still answers when %s is refused for want of the cluster ACL (KM4)",
-    async (_surface, _readName, read, call) => {
-      // What the panel then answers is the KM4 matrix's to pin; here, that the refusal fails nothing.
-      const [fixture] = AUTHORIZATION_REFUSAL;
-      const setup = await connectedThenFailing(read, libError(fixture));
-      await expect(call(setup.provider)).resolves.toBeDefined();
-      // The control: the refused read was asked.
-      expect(setup.recorded.calls.some(([name, args]) => name === read.member && read.carries(args[0]))).toBe(true);
+    "error-connect-timeout": {
+      class: "ConnectionError",
+      message:
+        "The broker advertised 10.255.255.1:9092, which this server cannot reach; the cluster's advertised listeners must be reachable from where Studio runs",
+      host: "10.255.255.1",
+      port: 9092,
     },
-  );
+    "error-connection-closed": {
+      class: "ConnectionError",
+      message: "The broker could not be reached (connection-lost)",
+      host: "localhost",
+      port: 9092,
+    },
+    "error-consumer-group-describe-mixed": {
+      class: "QueryError",
+      message: "The request to the broker failed (GROUP_ID_NOT_FOUND)",
+    },
+    "error-leaderless-list-topics": {
+      class: "QueryError",
+      message: "A partition of the topic has no leader, and the topic cannot be read until every partition has one",
+    },
+    "error-leaderless-metadata": {
+      class: "QueryError",
+      message: "A partition of the topic has no leader, and the topic cannot be read until every partition has one",
+    },
+    "error-offset-out-of-range": { class: "QueryError", message: "The offset is outside the partition's range" },
+    "error-refused": {
+      class: "ConnectionError",
+      message:
+        "The broker advertised localhost:19099, which this server cannot reach; the cluster's advertised listeners must be reachable from where Studio runs",
+      host: "localhost",
+      port: 19099,
+    },
+    "error-request-timeout": {
+      class: "TimeoutError",
+      message: "The broker did not answer in time",
+      timeout: FAILURE_TIMEOUT_MS,
+    },
+    "error-requires-tls": {
+      class: "ConnectionError",
+      message: "The broker requires TLS: turn TLS on for this connection",
+      host: "localhost",
+      port: 9092,
+    },
+    "error-sasl": { class: "AuthenticationError", message: "SASL authentication failed" },
+    "error-tls-ca": {
+      class: "ConnectionError",
+      message: "The TLS handshake failed (UNABLE_TO_VERIFY_LEAF_SIGNATURE)",
+      host: "localhost",
+      port: 9092,
+    },
+    "error-tls-handshake": {
+      class: "ConnectionError",
+      message: "The TLS handshake failed: this port may not speak TLS",
+      host: "localhost",
+      port: 9092,
+    },
+    "error-topic-authorization": { class: "AuthenticationError", message: "The broker denied access to this topic" },
+    "error-unknown-topic": { class: "QueryError", message: "The topic does not exist" },
+    // Redpanda closes the connection on a ConsumerGroupDescribe it does not offer (spec 8).
+    "redpanda-error-consumer-group-describe-mixed": {
+      class: "ConnectionError",
+      message: "The broker could not be reached (connection-lost)",
+      host: "localhost",
+      port: 9092,
+    },
+    "redpanda-error-offset-out-of-range": {
+      class: "QueryError",
+      message: "The offset is outside the partition's range",
+    },
+    "redpanda-error-unknown-topic": { class: "QueryError", message: "The topic does not exist" },
+  };
 
-  test("a topic listing that fails fails the overview rather than counting no topics, whichever of its two listings it is and whatever the failure", async () => {
-    // The overview lists the topics twice, for its count and for the log-dir request, so one listing
-    // can fail while the other answers; a count taken from a failed listing would read as 0 topics.
-    // Neither listing is a read KM4 degrades, so the authorization refusal fails it too.
-    const failures: readonly CapturedFailure[] = [...NON_AUTHORIZATION_FAILURES, AUTHORIZATION_REFUSAL];
-    const cases = failures.flatMap((failure) => [1, 2].map((failingListing) => ({ failure, failingListing })));
-    const outcomes = await Promise.all(
-      cases.map(async ({ failure: [fixture], failingListing }) => {
-        let listings = 0;
-        const { provider } = await connected(
-          {
-            "admin.listTopics": () => {
-              listings++;
-              if (listings === failingListing) throw libError(fixture);
-              return kafkaFixture("list-topics");
-            },
-          },
-          FAILURE_TIMEOUT_MS,
-        );
-        const error = await provider.getOverview().catch((e) => e);
-        return { error, listings };
+  test("every captured failure reaches a caller in the error table's words, naming the address the failure names (spec 5.6, K2)", async () => {
+    const captures = FAILURES_THROWN.filter((name) => name !== DEFECT);
+    expect(Object.keys(CAPTURED_WORDS).sort()).toEqual(captures);
+    // A topic source's config read, which every capture fails: no read there is read through.
+    const words = await Promise.all(
+      captures.map(async (name) => {
+        const { provider } = await connectedThenFailing(READS.topicConfigs, libError(name));
+        const error = await provider.readObjectSource(["orders"], "topic").catch((e) => e);
+        const {
+          class: className,
+          message,
+          host,
+          port,
+          timeout,
+          provider: stamped,
+        } = described(error) as Record<string, unknown>;
+        const address = host === undefined && port === undefined ? {} : { host, port };
+        return [
+          name,
+          { class: className, message, ...address, ...(timeout === undefined ? {} : { timeout }), stamped },
+        ];
       }),
     );
-    outcomes.forEach(({ error, listings }, index) => {
-      const [, errorClass, fields] = cases[index].failure;
-      expect(error).toBeInstanceOf(errorClass);
-      expect(error).toMatchObject(fields);
-      // The control: both listings were asked, so the other one answered.
-      expect(listings).toBe(2);
-    });
+    expect(Object.fromEntries(words)).toEqual(
+      Object.fromEntries(Object.entries(CAPTURED_WORDS).map(([name, said]) => [name, { ...said, stamped: "kafka" }])),
+    );
   });
 
-  test("countObjects answers a kind whose read failed as unavailable, in the error table's words, and counts the others", async () => {
-    const failures: readonly CapturedFailure[] = [...NON_AUTHORIZATION_FAILURES, AUTHORIZATION_REFUSAL];
-    const counted = await Promise.all(
-      failures.map(async ([fixture]) =>
-        (await connectedThenFailing(READS.topicListing, libError(fixture))).provider.countObjects([]),
-      ),
+  test("the failures thrown are every capture the fixtures hold, the KM4 refusal among them, and a defect", () => {
+    // The control that keeps the matrices below from going vacuous on a renamed fixture directory.
+    expect(FAILURES_THROWN).toContain("error-cluster-authorization");
+    expect(FAILURES_THROWN).toContain(DEFECT);
+    expect(FAILURES_THROWN.length).toBeGreaterThan(2);
+    expect(FAILURES_THROWN.filter((name) => name !== DEFECT).every((name) => kafkaFixture(name) !== undefined)).toBe(
+      true,
     );
-    counted.forEach((counts, index) => {
-      expect(counts).toEqual({
-        topic: { unavailable: failures[index][2].message },
-        consumer_group: { count: 3 },
-        broker: { count: 1 },
-      });
-    });
-    const defect = new TypeError("a defect, not a refusal");
-    const broken = await connectedThenFailing(READS.topicListing, defect);
-    expect(await broken.provider.countObjects([]).catch((e) => e)).toBe(defect);
   });
+
+  test.each(BROKER_READS)(
+    "%s, when %s meets each captured failure or a defect, answers as the adapter's own read there says: the error table's error, KM4's degraded panel, or the panel a read-through leaves",
+    async (_surface, _readName, read, call, expected) => {
+      const outcomes = await Promise.all(
+        FAILURES_THROWN.map(async (name) => {
+          // One failure object, thrown by the provider's library and by the reference's, so a failure
+          // that surfaces as itself is known by identity.
+          const failure = failureNamed(name);
+          const [{ provider }, reference] = await Promise.all([
+            connectedThenFailing(read, failure),
+            referenceFailing(read, failure),
+          ]);
+          const want = await expected(reference, provider.getCapabilities(), failure);
+          const got = outcomeOf(await settle(() => call(provider)), failure);
+          // Where the adapter read the failure through, the panel answering is what is asked of it;
+          // what it then answers is the composition's, pinned by the tests of each panel.
+          const readThrough = "answered" in want && want.answered === READ_THROUGH && "answered" in got;
+          return [name, readThrough ? want : got, want] as const;
+        }),
+      );
+      expect(Object.fromEntries(outcomes.map(([name, got]) => [name, got]))).toEqual(
+        Object.fromEntries(outcomes.map(([name, , want]) => [name, want])),
+      );
+      // The control: at every read, some captured failure fails the surface, so the matrix is no list
+      // of read-throughs.
+      expect(outcomes.some(([, , want]) => "threw" in want)).toBe(true);
+    },
+  );
+
+  test.each(BROKER_READS.filter(([, , read]) => read === READS.logDirs || read === READS.brokerConfigs))(
+    "%s still answers when %s is refused for want of the cluster ACL (KM4)",
+    async (_surface, _readName, read, call, expected) => {
+      // What the panel then answers is the matrix's to pin; here, that each captured failure the adapter
+      // reads as an authorization refusal at this read degrades the panel rather than failing it (M-I).
+      const refused = await Promise.all(
+        FAILURES_THROWN.map(async (name) => {
+          const failure = failureNamed(name);
+          const [setup, reference] = await Promise.all([
+            connectedThenFailing(read, failure),
+            referenceFailing(read, failure),
+          ]);
+          const want = await expected(reference, setup.provider.getCapabilities(), failure);
+          const got = await settle(() => call(setup.provider));
+          // The control: the refused read was asked.
+          const asked = setup.recorded.calls.some(([member, args]) => member === read.member && read.carries(args[0]));
+          return {
+            name,
+            degraded: "answered" in want && want.answered !== READ_THROUGH,
+            answered: "value" in got,
+            asked,
+          };
+        }),
+      );
+      const degraded = refused.filter((outcome) => outcome.degraded);
+      expect(degraded.map((outcome) => outcome.name)).toEqual([
+        "error-authorization",
+        "error-cluster-authorization",
+        "error-topic-authorization",
+      ]);
+      for (const outcome of degraded) expect(outcome).toMatchObject({ answered: true, asked: true });
+    },
+  );
+
+  test.each([...FAILURES_THROWN])(
+    "a connect whose forced broker read meets %s answers as the adapter's own read there says: the error table's error with the one client it built closed and none kept, or connected where the adapter reads it through",
+    async (name) => {
+      const failure = failureNamed(name);
+      const failingForced: Record<string, Answer> = {
+        "admin.metadata": (...args) => {
+          if (READS.forcedBrokers.carries(args[0])) throw failure;
+          return metadataFor(args[0]);
+        },
+      };
+      const { provider, recorded, created } = unconnected(failingForced, { queryTimeout: FAILURE_TIMEOUT_MS });
+      const reference = await settle(async () =>
+        (await referenceFailing(READS.forcedBrokers, failure, false)).metadata([]),
+      );
+      const got = outcomeOf(await settle(() => provider.connect()), failure);
+      expect(created).toHaveLength(1);
+      expect(recorded.constructed.map(([built]) => built)).toEqual(LIBRARY_CLIENTS);
+      if ("value" in reference) {
+        // A leaderless partition's metadata is read through the response its error carries (spec 4.1):
+        // the broker answered, so the connect stands.
+        expect(got).toEqual({ answered: undefined });
+        expect(provider.isConnected()).toBe(true);
+        expect(closesOf(recorded.calls)).toEqual([]);
+        return;
+      }
+      expect(got).toEqual(tableAnswer(reference.error, failure));
+      expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+      expect(provider.isConnected()).toBe(false);
+      const sent = recorded.calls.length;
+      await expect(provider.query('{"topic":"orders"}')).rejects.toThrow("Provider is not connected");
+      await provider.disconnect();
+      expect(recorded.calls).toHaveLength(sent);
+    },
+  );
+
+  test("a connect fails on every captured failure but the leaderless partitions the adapter reads through (spec 4.1)", async () => {
+    // The control of the test above: its branch that connects is taken only where the adapter's own
+    // forced read answers, and a failure it fails on is never one a connect takes for an answer.
+    const answered = await Promise.all(
+      FAILURES_THROWN.map(async (name) => {
+        const reference = await referenceFailing(READS.forcedBrokers, failureNamed(name), false);
+        return [name, "value" in (await settle(() => reference.metadata([])))] as const;
+      }),
+    );
+    expect(answered.filter(([, readThrough]) => readThrough).map(([name]) => name)).toEqual([
+      "error-leaderless-list-topics",
+      "error-leaderless-metadata",
+    ]);
+  });
+
+  test.each([...FAILURES_THROWN])(
+    "a topic listing that meets %s answers the overview as the adapter's listing there does, whichever of its two listings it is: never a count of no topics",
+    async (name) => {
+      // The overview lists the topics twice, for its count and for the log-dir request, so one listing
+      // can fail while the other answers; a count taken from a failed listing would read as 0 topics.
+      // Neither listing is a read KM4 degrades, so an authorization refusal of it fails the overview too.
+      const outcomes = await Promise.all(
+        [1, 2].map(async (failingListing) => {
+          const failure = failureNamed(name);
+          let listings = 0;
+          const { provider } = await connected(
+            {
+              "admin.listTopics": () => {
+                listings++;
+                if (listings === failingListing) throw failure;
+                return kafkaFixture("list-topics");
+              },
+            },
+            FAILURE_TIMEOUT_MS,
+          );
+          const reference = await referenceFailing(READS.topicListing, failure);
+          const want = await settle(() => reference.listTopics());
+          const got = outcomeOf(await settle(() => provider.getOverview()), failure);
+          return { want, got, failure, listings };
+        }),
+      );
+      for (const { want, got, failure, listings } of outcomes) {
+        // A listing the adapter reads through is no failure, so the overview answers; any other fails it.
+        if ("value" in want) expect("answered" in got).toBe(true);
+        else expect(got).toEqual(tableAnswer(want.error, failure));
+        // The control: both listings were asked, so the other one answered.
+        expect(listings).toBe(2);
+      }
+    },
+  );
+
+  test.each([...FAILURES_THROWN])(
+    "countObjects, when the topic listing meets %s, answers what objects.ts answers over the adapter's failing listing",
+    async (name) => {
+      const failure = failureNamed(name);
+      const [{ provider }, reference] = await Promise.all([
+        connectedThenFailing(READS.topicListing, failure),
+        referenceFailing(READS.topicListing, failure),
+      ]);
+      const want = await settle(() => kafkaObjects.countObjects(reference, []));
+      const got = outcomeOf(await settle(() => provider.countObjects([])), failure);
+      expect(got).toEqual("value" in want ? { answered: want.value } : tableAnswer(want.error, failure));
+    },
+  );
 });
 
 describe("delegation (spec 3.5)", () => {
@@ -1557,16 +1891,6 @@ describe("delegation (spec 3.5)", () => {
   // answers over a client in the same state, and makes exactly the reads that module makes, on every
   // call. So anything the provider put between the caller and the module (a read of its own, an
   // argument changed, an answer reshaped or kept for the next call) shows here, whichever it is.
-  const READ_LIMITS = { resultByteBudget: KAFKA_RESULT_BYTE_BUDGET, cellLimit: KAFKA_CELL_LIMIT };
-  /** A read composed as spec 3.5 and 5.1 compose it, its time left out: the time has its own test. */
-  const composedRead =
-    (text: string) =>
-    async (client: KafkaReadClient): Promise<QueryResult> => {
-      const request = parseReadRequest(text, DEFAULT_QUERY_LIMIT);
-      const outcome = await readMessages(client, request, READ_LIMITS, AbortSignal.timeout(FAILURE_TIMEOUT_MS));
-      return toQueryResult(outcome.rows, 0, request.limit, outcome.warnings, outcome.wasLimited);
-    };
-  const untimed = (result: QueryResult): QueryResult => ({ ...result, executionTime: 0 });
   /** A call's arguments, compared across two recorded libraries: each hands out objects whose functions are its own. */
   const comparable = (value: unknown): unknown => {
     if (typeof value === "function") return "[function]";
@@ -1587,16 +1911,16 @@ describe("delegation (spec 3.5)", () => {
       viaModule: (client: KafkaReadClient, capabilities: ProviderCapabilities) => Promise<unknown>,
     ]
   > = [
-    ["query, a whole partition", (p) => p.query(WHOLE_PARTITION).then(untimed), composedRead(WHOLE_PARTITION)],
+    ["query, a whole partition", (p) => p.query(WHOLE_PARTITION).then(untimed), composedReadOf(WHOLE_PARTITION)],
     [
       "query, from an offset and cut by its limit",
       (p) => p.query(FROM_AN_OFFSET).then(untimed),
-      composedRead(FROM_AN_OFFSET),
+      composedReadOf(FROM_AN_OFFSET),
     ],
     [
       "query, a record cut to the cell limit",
       (p) => p.query(CUT_TO_THE_CELL).then(untimed),
-      composedRead(CUT_TO_THE_CELL),
+      composedReadOf(CUT_TO_THE_CELL),
     ],
     ["countObjects", (p) => p.countObjects([]), (c) => kafkaObjects.countObjects(c, [])],
     ...kafkaObjects.KAFKA_OBJECT_KINDS.map(
