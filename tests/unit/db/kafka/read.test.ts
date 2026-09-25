@@ -22,6 +22,26 @@ const LIMITS = { resultByteBudget: 1_000_000, cellLimit: 1000 };
 const signal = new AbortController().signal;
 
 /**
+ * No read of a fake log here needs this many fetches: a read that makes more loops on a fetch that makes no
+ * progress (Review Focus 2), and the fake fails it at once, where a loop over answers that never wait would
+ * otherwise hold the event loop and hang the whole run.
+ */
+const FETCH_CEILING = 1000;
+function spinGuarded(client: ReadClient): ReadClient {
+  let fetches = 0;
+  return {
+    ...client,
+    fetch: (topic, partition, offset, fetchSignal) => {
+      fetches += 1;
+      if (fetches > FETCH_CEILING) {
+        throw new Error(`The read made more than ${FETCH_CEILING} fetches: it loops on a fetch that makes no progress`);
+      }
+      return client.fetch(topic, partition, offset, fetchSignal);
+    },
+  };
+}
+
+/**
  * A fake log: partition -> records, offsets dense from 0 unless given. `perFetch` is how
  * many records one fetch answers, from the requested offset.
  */
@@ -67,7 +87,7 @@ function fakeClient(
     },
     ...over,
   };
-  return { client, calls, offsetCalls };
+  return { client: spinGuarded(client), calls, offsetCalls };
 }
 const rec = (partition: number, offset: number, timestamp: number, value = "v"): KafkaRecord => ({
   partition,
@@ -803,6 +823,62 @@ describe("readMessages", () => {
     expect(offsetCalls).toEqual([]);
   });
 
+  test("Review Focus 1: a read that names a partition with a leader is refused too when another partition has none, before any offset is read", async () => {
+    // The client reads a topic's offsets as a whole, so partition 1's missing leader fails a read of partition 0 as well.
+    const { client, calls, offsetCalls } = fakeClient(log, {}, { 1: -1 });
+    const error = await readMessages(client, req({ partition: 0, from: { kind: "earliest" } }), LIMITS, signal).catch(
+      (e) => e,
+    );
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.category).toBe("unreadable-topic");
+    expect(error.message).toBe(
+      'Topic "orders" has no leader for partition 1; the client reads a topic\'s offsets as a whole, so the topic cannot be read until every partition has a leader',
+    );
+    expect(offsetCalls).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  test("every call a read makes names the topic it reads, and every fetch gets the topic object the metadata answered", async () => {
+    const base = fakeClient(log);
+    const asked: unknown[] = [];
+    const fetched: KafkaTopicMetadata[] = [];
+    const client: ReadClient = {
+      metadata: async (topics) => {
+        asked.push(["metadata", topics]);
+        return base.client.metadata(topics);
+      },
+      offsets: async (topic, at) => {
+        asked.push([at, topic]);
+        return base.client.offsets(topic, at);
+      },
+      offsetsForTimestamp: async (topic, timestampMs) => {
+        asked.push(["timestamp", topic]);
+        return base.client.offsetsForTimestamp(topic, timestampMs);
+      },
+      fetch: async (topic, partition, offset, fetchSignal) => {
+        fetched.push(topic);
+        return base.client.fetch(topic, partition, offset, fetchSignal);
+      },
+    };
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "timestamp", timestampMs: n(25), iso: "x" } }),
+      LIMITS,
+      signal,
+    );
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/1", "1/1", "0/2"]);
+    expect(asked).toEqual([
+      ["metadata", ["orders"]],
+      ["earliest", "orders"],
+      ["timestamp", "orders"],
+      ["latest", "orders"],
+    ]);
+    // By identity: the metadata's own object, never a copy or another topic's.
+    const answered = (await base.client.metadata(["orders"])).topics[0];
+    expect(fetched).toHaveLength(2);
+    for (const topic of fetched) expect(topic).toBe(answered);
+  });
+
   test("a partition led by broker 0 has a leader: node 0 is a broker id, only -1 means none", async () => {
     // Redpanda's single broker is node 0 (spec 8).
     const { client } = fakeClient(log, {}, { 0: 0, 1: 0 });
@@ -860,6 +936,7 @@ describe("readMessages", () => {
 
   test("the end is read after every start, so a record that arrives while the read is positioned is in it", async () => {
     // Offset 1 of partition 0 arrives while the timestamp is looked up, and it is the first record at or after it.
+    // The lookup answers a macrotask after it is asked, so an end asked for before that answer came back is still 1.
     let arrived = false;
     const reads: string[] = [];
     const { client } = fakeClient(
@@ -871,6 +948,7 @@ describe("readMessages", () => {
         },
         offsetsForTimestamp: async () => {
           reads.push("timestamp");
+          await new Promise((resolve) => setTimeout(resolve, 0));
           arrived = true;
           return new Map<number, bigint>([[0, n(1)]]);
         },
@@ -885,6 +963,33 @@ describe("readMessages", () => {
     expect(reads).toEqual(["earliest", "timestamp", "latest"]);
     expect(out.rows.map((r) => r.offset)).toEqual(["1"]);
     expect(out.warnings).toEqual([]);
+  });
+
+  test("a timestamp lookup that found no message contributes none, even when one arrives before the end is read (the stated limit)", async () => {
+    // The lookup answers past the log end, and then offset 1, at or after the instant, arrives: it lies below the end
+    // the read stops at, but the lookup answered before it existed.
+    let arrived = false;
+    const { client, calls } = fakeClient(
+      { 0: [rec(0, 0, 10), rec(0, 1, 20)] },
+      {
+        offsets: async (_t, at) => new Map<number, bigint>([[0, at === "earliest" ? n(0) : arrived ? n(2) : n(1)]]),
+        offsetsForTimestamp: async () => {
+          const answer = new Map<number, bigint>([[0, n(-1)]]);
+          arrived = true;
+          return answer;
+        },
+      },
+    );
+    const out = await readMessages(
+      client,
+      req({ from: { kind: "timestamp", timestampMs: n(15), iso: "x" } }),
+      LIMITS,
+      signal,
+    );
+    expect(out.rows).toEqual([]);
+    expect(out.warnings.map((w) => w.message)).toEqual(["No message at or after the timestamp on partition 0"]);
+    expect(out.wasLimited).toBe(false);
+    expect(calls).toEqual([]);
   });
 
   test("Review Focus 2: a fetch that answers no user record but advances (a control batch) is followed; one with no progress stops the loop", async () => {
@@ -909,13 +1014,13 @@ describe("readMessages", () => {
 
   test("a fetch that makes no progress below the end stops that partition, never silently: the result says where", async () => {
     const base = fakeClient(log);
-    const client: ReadClient = {
+    const client = spinGuarded({
       ...base.client,
       fetch: async (topic, partition, offset, fetchSignal) =>
         partition === 0 && offset === n(2)
           ? { records: [], nextOffset: offset }
           : base.client.fetch(topic, partition, offset, fetchSignal),
-    };
+    });
     const out = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
     // Partition 0 stopped at offset 2, below its end at 3; partition 1 was still read to its end.
     expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "1/0", "0/1", "1/1"]);
@@ -978,15 +1083,31 @@ describe("readMessages", () => {
 });
 
 /**
- * readMessages against a reference of spec 5.1 and 5.4 over generated logs. The reference keeps no
- * state between records: each decision is made again from every record read so far, sorted afresh,
- * so it shares none of the merge's incremental bookkeeping, and it counts a record's bytes on its own.
- * It takes the result order from compareRecords, the row shape from shapeRecord and the warning texts
- * from readWarnings, whose own tests pin them: what it decides is which records are rows, what the rows
- * hold, which warnings are owed, whether the read is limited, and which fetches the read makes.
+ * readMessages against a reference of spec 5.1 and 5.4 over generated reads, through a fake that holds the seam's
+ * contract (client.ts, KafkaReadClient). The reference keeps no state between records: each decision is made again
+ * from every record read so far, sorted afresh, so it shares none of the merge's incremental bookkeeping, and it
+ * counts a record's bytes on its own. It takes the result order from compareRecords, the row shape and a
+ * timestamp's refusal from shapeRecord, and the warning texts from readWarnings, whose own tests pin them: what it
+ * decides is which records are rows, what the rows hold, which warnings are owed, whether the read is limited,
+ * which refusal the read meets, and every call the read makes to its client.
+ *
+ * The fake answers each call a macrotask after it is made, and writes the call into the read's trace when it is
+ * made and again when it is answered or refused, with every argument: the topic it names, the position or the
+ * instant, and for a fetch whether it got the very topic object the metadata answered and the read's own signal.
+ * So which topic each call names, the order of the calls, and whether two were ever in flight at once are part of
+ * what every generated read is compared with, not only its rows. It refuses as the adapter does: an internal topic,
+ * a topic the cluster does not hold, and the offsets of a topic with a leaderless partition.
  */
-describe("readMessages against a reference of spec 5.1 and 5.4", () => {
+describe("readMessages against a reference of spec 5.1 and 5.4, through the seam's contract", () => {
   const READS = 3000;
+  /** The one topic the fake cluster holds, and an internal topic, which the client refuses (spec 4.1). */
+  const TOPIC = "orders";
+  const INTERNAL = "__consumer_offsets";
+  /** The timestamps no date can show, one past each end of the Date range (spec 5.2). */
+  const UNSHOWABLE = [BigInt("8640000000000001"), BigInt("-8640000000000001")];
+  /** How the trace names the topic object the metadata answered, and the read's own signal. */
+  const THE_TOPIC = "the metadata's topic";
+  const THE_SIGNAL = "the read's signal";
   /** Each rule the reference states, which the generated reads must each meet often enough to test it. */
   const RULES = [
     "the read was complete",
@@ -1003,6 +1124,24 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
     "a row has no value",
     "a row has a header with no name",
     "a row has a header with no value",
+    "the topic is internal",
+    "the topic does not exist",
+    "the read named a partition the topic does not have",
+    "the read named a partition of a topic with no partitions",
+    "a partition had no leader",
+    "two partitions had no leader",
+    "a read of a partition with a leader met another partition's missing leader",
+    "an offsets answer left out a partition the read covers",
+    "the timestamp answer left out a partition the read covers",
+    "an answer left out two partitions the read covers",
+    "two answers left out a partition the read covers",
+    "an offsets answer left out only partitions the read does not cover",
+    "an offset lay outside its partition's range",
+    "the read's time ran out before a fetch it still needed",
+    "the read's time ran out after the last fetch it needed",
+    "a record no date can show came into the rows held",
+    "the merge dropped a record no date can show as it arrived",
+    "the budget stopped the read before a record no date can show",
   ] as const;
   type Rule = (typeof RULES)[number];
 
@@ -1010,13 +1149,27 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
     readonly label: string;
     /** The partitions in the order the metadata lists them. */
     readonly order: readonly number[];
+    /** Each partition's leader; -1 is none (spec 4.1). */
+    readonly leaders: Readonly<Record<number, number>>;
     readonly log: Readonly<Record<number, readonly KafkaRecord[]>>;
-    readonly earliest: Readonly<Record<number, bigint>>;
-    readonly latest: Readonly<Record<number, bigint>>;
+    /** The earliest and latest answers, which can leave a partition out (spec 5.1). */
+    readonly earliest: ReadonlyMap<number, bigint>;
+    readonly latest: ReadonlyMap<number, bigint>;
+    /** The partitions the answer at a timestamp leaves out (spec 5.1). */
+    readonly timestampLeftOut: readonly number[];
     readonly request: ReadRequest;
     readonly limits: ReadLimits;
     readonly perFetch: number;
+    /** When the read's time runs out: before it starts (0), or as its n-th fetch is answered. */
+    readonly abortAt: number | undefined;
   }
+
+  /** The adapter's refusals, in words the read never writes itself, so a refusal passed on as it came is seen as such. */
+  const internalTopic = () =>
+    new KafkaError("unreadable-topic", `Topic "${INTERNAL}" is internal to Kafka and is not readable here`);
+  const unknownTopic = () => new KafkaError("unknown-topic", "The topic does not exist");
+  const leaderlessOffsets = (partitions: readonly number[]) =>
+    new KafkaError("unreadable-topic", `The client read no offsets: no leader for partition ${partitions.join(", ")}`);
 
   /** Park and Miller's generator: exact in doubles, so every run draws the same reads. */
   function draws(seed: number) {
@@ -1035,24 +1188,34 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
 
   function scenario(index: number): Scenario {
     const { int, chance, pick } = draws(20260925 + index * 7919);
-    const partitions = int(1, 4);
+    const partitions = chance(0.03) ? 0 : int(1, 4);
     const monotonic = chance(0.6);
     const sizes = pick(["uniform", "mixed", "big first"] as const);
     const log: Record<number, KafkaRecord[]> = {};
-    const earliest: Record<number, bigint> = {};
-    const latest: Record<number, bigint> = {};
+    const earliest = new Map<number, bigint>();
+    const latest = new Map<number, bigint>();
     for (let p = 0; p < partitions; p++) {
       const first = int(0, 3);
       let offset = first;
       let timestamp = int(0, 5);
       log[p] = Array.from({ length: chance(0.12) ? 0 : int(1, 7) }, () => {
         timestamp = monotonic ? timestamp + int(0, 3) : int(0, 20);
-        const valueLength =
-          sizes === "uniform" ? 20 : sizes === "mixed" ? int(0, 60) : p === 0 ? int(40, 80) : int(0, 6);
+        // Now and then a producer's clock that no date can show (spec 5.2), on a record large enough that the budget
+        // often stops a read before it.
+        const unshowable = chance(0.04);
+        const valueLength = unshowable
+          ? int(90, 200)
+          : sizes === "uniform"
+            ? 20
+            : sizes === "mixed"
+              ? int(0, 60)
+              : p === 0
+                ? int(40, 80)
+                : int(0, 6);
         const record: KafkaRecord = {
           partition: p,
           offset: n(offset),
-          timestamp: n(timestamp),
+          timestamp: unshowable ? pick(UNSHOWABLE) : n(timestamp),
           key: chance(0.35) ? null : filled(int(0, 12), "k"),
           value: chance(0.15) ? null : filled(valueLength, "v"),
           headers: Array.from(
@@ -1064,79 +1227,207 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
         offset += chance(0.25) ? 2 : 1;
         return record;
       });
-      earliest[p] = n(first);
+      earliest.set(p, n(first));
       // The latest offset the read is given: the log's end; past it, over offsets a fetch answers
       // nothing for; or before it, when records arrived after the latest offset was read.
       const records = log[p];
       const end = records.length === 0 ? first : Number(records[records.length - 1].offset) + 1;
       const shift = chance(0.7) ? 0 : chance(0.5) ? int(1, 2) : -int(1, 2);
-      latest[p] = n(Math.max(first, end + shift));
+      latest.set(p, n(Math.max(first, end + shift)));
     }
     const order = Array.from({ length: partitions }, (_, p) => p);
     if (chance(0.25)) order.reverse();
-    const named = int(0, partitions - 1);
     const kind = pick(["earliest", "latest", "latest", "offset", "timestamp"] as const);
-    const partition = kind === "offset" || chance(0.25) ? named : undefined;
-    const from: ReadStart =
-      kind === "offset"
-        ? { kind, offset: n(int(Number(earliest[named]), Number(latest[named]))) }
-        : kind === "timestamp"
-          ? { kind, timestampMs: n(int(0, 25)), iso: "x" }
-          : { kind };
+    // Now and then a partition the topic does not have (spec 5.1), and on a topic with no partitions any named one.
+    const beyond = partitions === 0 ? kind === "offset" || chance(0.5) : chance(0.04);
+    const partition = beyond
+      ? partitions + int(0, 2)
+      : partitions > 0 && (kind === "offset" || chance(0.35))
+        ? int(0, partitions - 1)
+        : undefined;
+    // Node 0 is a broker id too (spec 8), and only -1 means no leader (Review Focus 1). A read that names a partition
+    // the topic does not have meets that refusal alone: which of the two refusals comes first is no rule of the spec.
+    const leaderless = !beyond && partitions > 0 && chance(0.1);
+    const leaders: Record<number, number> = {};
+    for (const p of order) leaders[p] = leaderless && chance(0.5) ? -1 : int(0, 2);
+    if (leaderless && !order.some((p) => leaders[p] < 0)) leaders[pick(order)] = -1;
+    // Now and then offsets answers that leave a partition out (spec 5.1).
+    const holes = chance(0.15);
+    const leftOut = () => holes && chance(0.35);
+    const earliestAnswer = new Map([...earliest].filter(() => !leftOut()));
+    const latestAnswer = new Map([...latest].filter(() => !leftOut()));
+    const timestampLeftOut = order.filter(() => leftOut());
+    const named = partition ?? 0;
+    let from: ReadStart;
+    if (kind === "offset") {
+      const first = Number(earliest.get(named) ?? n(0));
+      const end = Number(latest.get(named) ?? n(0));
+      // Now and then an offset outside the partition's range (spec 5.6, its first row).
+      const at = chance(0.8) ? int(first, end) : first > 0 && chance(0.5) ? int(0, first - 1) : end + int(1, 2);
+      from = { kind, offset: n(at) };
+    } else if (kind === "timestamp") {
+      from = { kind, timestampMs: n(int(0, 25)), iso: "x" };
+    } else {
+      from = { kind };
+    }
     const limit = int(1, 6);
     const limits = {
       resultByteBudget: chance(0.35) ? 1_000_000 : int(5, 220),
       cellLimit: chance(0.5) ? 1000 : int(3, 15),
     };
     const perFetch = pick([1, 2, 3, 100]);
-    const where = partition === undefined ? "" : ` of partition ${partition}`;
+    // Now and then a topic the client refuses: an internal one, or one the cluster does not hold (spec 4.1, 4.5).
+    const topic = chance(0.02) ? INTERNAL : chance(0.02) ? "payments" : TOPIC;
+    // Now and then the read's time runs out: before it starts, or as one of its first fetches is answered.
+    const abortAt = chance(0.08) ? int(0, 3) : undefined;
+    const facets = [
+      `read ${index}: ${kind}${partition === undefined ? "" : ` of partition ${partition}`} of ${topic}`,
+      `limit ${limit}, ${perFetch} a fetch, budget ${limits.resultByteBudget}, cells ${limits.cellLimit}`,
+      ...(leaderless ? [`leaders ${JSON.stringify(leaders)}`] : []),
+      ...(holes ? ["answers that leave partitions out"] : []),
+      ...(abortAt === undefined ? [] : [`time runs out at fetch ${abortAt}`]),
+    ];
     return {
-      label: `read ${index}: ${kind}${where}, limit ${limit}, ${perFetch} a fetch, budget ${limits.resultByteBudget}, cells ${limits.cellLimit}`,
+      label: facets.join(", "),
       order,
+      leaders,
       log,
-      earliest,
-      latest,
-      request: { topic: "orders", ...(partition === undefined ? {} : { partition }), from, limit },
+      earliest: earliestAnswer,
+      latest: latestAnswer,
+      timestampLeftOut,
+      request: { topic, ...(partition === undefined ? {} : { partition }), from, limit },
       limits,
       perFetch,
+      abortAt,
     };
   }
 
-  /** The fake broker: a fetch answers up to `perFetch` records from the offset asked for, and nothing past the log. */
+  /** The fake broker's fetch: up to `perFetch` records from the offset asked for, and nothing past the log. */
   function fetchFrom(s: Scenario, partition: number, offset: bigint): KafkaFetchResult {
     const records = s.log[partition].filter((r) => r.offset >= offset).slice(0, s.perFetch);
     return { records, nextOffset: records.length === 0 ? offset : records[records.length - 1].offset + n(1) };
   }
 
-  function clientOf(s: Scenario, fetches: string[]): ReadClient {
+  /** The fake broker's offset at an instant: its first record at or after it, or -1 past the log's end. */
+  const offsetAt = (s: Scenario, partition: number, instant: bigint) =>
+    s.log[partition].find((r) => r.timestamp >= instant)?.offset ?? n(-1);
+
+  const fetchCall = (topic: string, partition: number, offset: bigint, fetchSignal: string) =>
+    `fetch(${topic}, ${partition}@${offset}, ${fetchSignal})`;
+
+  /** The fake client: the seam's contract (client.ts) over one topic, every call written into `trace`. */
+  function clientOf(s: Scenario, controller: AbortController, trace: string[]): ReadClient {
     const topic: KafkaTopicMetadata = {
-      name: "orders",
+      name: TOPIC,
       id: "id-1",
       partitions: s.order.map((partition) => ({
         partition,
-        leader: 1,
+        leader: s.leaders[partition],
         leaderEpoch: 0,
         replicas: [1],
         isr: [1],
         offlineReplicas: [],
       })),
     };
+    /** Writes the call down, answers it a macrotask later, and writes down whether it was answered or refused. */
+    const answer = async <T>(call: string, work: () => T): Promise<T> => {
+      trace.push(call);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      try {
+        const value = work();
+        trace.push(`${call}: answered`);
+        return value;
+      } catch (error) {
+        trace.push(`${call}: refused`);
+        throw error;
+      }
+    };
+    /** The client refuses an internal topic and one the cluster does not hold (spec 4.1, 4.5). */
+    const held = (name: string): KafkaTopicMetadata => {
+      if (name === INTERNAL) throw internalTopic();
+      if (name !== TOPIC) throw unknownTopic();
+      return topic;
+    };
+    /** It reads a topic's offsets as a whole, and refuses them while any partition has no leader (spec 4.1). */
+    const readable = (name: string): void => {
+      const leaderless = held(name)
+        .partitions.filter((p) => p.leader < 0)
+        .map((p) => p.partition);
+      if (leaderless.length > 0) throw leaderlessOffsets(leaderless);
+    };
+    let fetches = 0;
     return {
-      metadata: async () => ({ clusterId: "c", controllerId: 1, brokers: [], topics: [topic] }),
-      offsets: async (_t, at) => new Map(s.order.map((p) => [p, at === "earliest" ? s.earliest[p] : s.latest[p]])),
-      offsetsForTimestamp: async (_t, ts) =>
-        new Map(s.order.map((p) => [p, s.log[p].find((r) => r.timestamp >= ts)?.offset ?? n(-1)])),
-      fetch: async (_t, partition, offset) => {
-        fetches.push(`${partition}@${offset}`);
-        return fetchFrom(s, partition, offset);
-      },
+      // Every non-internal topic when no name is given (client.ts).
+      metadata: (names) =>
+        answer(`metadata(${JSON.stringify(names)})`, () => ({
+          clusterId: "c",
+          controllerId: 1,
+          brokers: [],
+          topics: (names ?? [TOPIC]).map((name) => held(name)),
+        })),
+      offsets: (name, at) =>
+        answer(`offsets(${JSON.stringify(name)}, ${at})`, () => {
+          readable(name);
+          return new Map(at === "earliest" ? s.earliest : s.latest);
+        }),
+      offsetsForTimestamp: (name, timestampMs) =>
+        answer(`offsetsForTimestamp(${JSON.stringify(name)}, ${timestampMs})`, () => {
+          readable(name);
+          const answered = s.order.filter((p) => !s.timestampLeftOut.includes(p));
+          return new Map(answered.map((p) => [p, offsetAt(s, p, timestampMs)]));
+        }),
+      fetch: (given, partition, offset, fetchSignal) =>
+        answer(
+          fetchCall(
+            given === topic ? THE_TOPIC : JSON.stringify(given),
+            partition,
+            offset,
+            fetchSignal === controller.signal ? THE_SIGNAL : "another signal",
+          ),
+          () => {
+            fetches += 1;
+            if (fetches > FETCH_CEILING) {
+              throw new Error(
+                `The read made more than ${FETCH_CEILING} fetches: it loops on a fetch that makes no progress`,
+              );
+            }
+            // The read's time runs out as this fetch is answered.
+            if (fetches === s.abortAt) controller.abort();
+            return fetchFrom(s, partition, offset);
+          },
+        ),
     };
   }
 
+  /** What a refused read says, as the test compares it: its class, its category, its words and its detail. */
+  function refusalOf(error: unknown) {
+    if (error instanceof KafkaError) {
+      return { kind: "KafkaError", category: error.category, message: error.message, detail: error.detail };
+    }
+    if (error instanceof QueryError) return { kind: "QueryError", message: error.message };
+    throw error;
+  }
+
+  /** The refusal shapeRecord gives a record whose timestamp no date can show (spec 5.2). */
+  function shapingRefusal(record: KafkaRecord, limits: ReadLimits): unknown {
+    try {
+      shapeRecord(record, limits);
+    } catch (error) {
+      return error;
+    }
+    throw new Error(`expected shapeRecord to refuse the record at offset ${record.offset}`);
+  }
+
+  /** An offset the reference plans from, which an answer it passed the gap check with always holds. */
+  function answered(answer: ReadonlyMap<number, bigint>, partition: number): bigint {
+    const offset = answer.get(partition);
+    if (offset === undefined) throw new Error(`the reference planned partition ${partition}, which an answer left out`);
+    return offset;
+  }
+
   /** Where spec 5.1 starts a partition's read; undefined when no message at or after the timestamp lies below the end. */
-  function startOf(s: Scenario, partition: number, end: bigint): bigint | undefined {
+  function startOf(s: Scenario, partition: number, first: bigint, end: bigint): bigint | undefined {
     const { from, limit } = s.request;
-    const first = s.earliest[partition];
     switch (from.kind) {
       case "earliest":
         return first;
@@ -1145,21 +1436,109 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
       case "offset":
         return from.offset;
       case "timestamp": {
-        const instant = from.timestampMs;
-        const at = s.log[partition].find((r) => r.timestamp >= instant)?.offset;
-        return at === undefined || at >= end ? undefined : at;
+        const at = offsetAt(s, partition, from.timestampMs);
+        return at < n(0) || at >= end ? undefined : at;
       }
     }
   }
 
-  /** What spec 5.1 and 5.4 say the read answers, warns and fetches; `saw` is told each rule the read meets. */
+  /** What spec 5.1 and 5.4 say the read answers or refuses, and the calls it makes; `saw` is told each rule it meets. */
   function reference(s: Scenario, saw: (rule: Rule) => void) {
     const { request, limits } = s;
+    const trace: string[] = [];
+    /** A call the read makes, and how the fake answered it, as the fake writes them down. */
+    const called = (call: string, answer = "answered") => trace.push(call, `${call}: ${answer}`);
+    const refused = (error: unknown) => ({ outcome: { refused: refusalOf(error) }, trace });
+
+    // Spec 4.1, 4.5: the read first asks for the metadata of the one topic it names. The client refuses an internal
+    // topic and one the cluster does not hold, and the read passes that refusal on as it came.
+    const metadata = `metadata(${JSON.stringify([request.topic])})`;
+    if (request.topic !== TOPIC) {
+      called(metadata, "refused");
+      saw(request.topic === INTERNAL ? "the topic is internal" : "the topic does not exist");
+      return refused(request.topic === INTERNAL ? internalTopic() : unknownTopic());
+    }
+    called(metadata);
+    // A partition the topic does not have is refused from the metadata alone, before any offset is read.
+    const count = s.order.length;
+    if (request.partition !== undefined && request.partition >= count) {
+      saw(
+        count === 0
+          ? "the read named a partition of a topic with no partitions"
+          : "the read named a partition the topic does not have",
+      );
+      const has = count === 0 ? "no partitions" : `partitions 0 to ${count - 1}`;
+      return refused(
+        new KafkaError("invalid-request", `Topic "${TOPIC}" has ${has}; partition ${request.partition} does not exist`),
+      );
+    }
+    // Review Focus 1: the client reads a topic's offsets as a whole, so a partition with no leader anywhere in the
+    // topic refuses the read, whichever partition it names, before any offset is read.
+    const leaderless = s.order.filter((p) => s.leaders[p] < 0);
+    if (leaderless.length > 0) {
+      saw("a partition had no leader");
+      if (leaderless.length > 1) saw("two partitions had no leader");
+      if (request.partition !== undefined && !leaderless.includes(request.partition)) {
+        saw("a read of a partition with a leader met another partition's missing leader");
+      }
+      return refused(
+        new KafkaError(
+          "unreadable-topic",
+          `Topic "${TOPIC}" has no leader for partition ${leaderless.join(", ")}; the client reads a topic's offsets as a whole, so the topic cannot be read until every partition has a leader`,
+        ),
+      );
+    }
+    const wanted = s.order.filter((p) => request.partition === undefined || p === request.partition);
+    // The earliest offsets, then those at the timestamp, then the latest, each asked for only once the one before it
+    // was answered: the end is read after every start (spec 5.1).
+    const atTimestamp = request.from.kind === "timestamp";
+    called(`offsets("${TOPIC}", earliest)`);
+    if (request.from.kind === "timestamp") called(`offsetsForTimestamp("${TOPIC}", ${request.from.timestampMs})`);
+    called(`offsets("${TOPIC}", latest)`);
+    // Spec 5.1: a partition the read covers that an answer it uses leaves out is refused by name, before any
+    // fetch, and a partition it does not cover may be left out.
+    const answers: Array<[string, number[]]> = [
+      ["earliest", wanted.filter((p) => !s.earliest.has(p))],
+      ["timestamp", atTimestamp ? wanted.filter((p) => s.timestampLeftOut.includes(p)) : []],
+      ["latest", wanted.filter((p) => !s.latest.has(p))],
+    ];
+    const gaps = answers.filter(([, left]) => left.length > 0);
+    if (gaps.length > 0) {
+      saw("an offsets answer left out a partition the read covers");
+      if (gaps.some(([answer]) => answer === "timestamp"))
+        saw("the timestamp answer left out a partition the read covers");
+      if (gaps.some(([, left]) => left.length > 1)) saw("an answer left out two partitions the read covers");
+      if (gaps.length > 1) saw("two answers left out a partition the read covers");
+      const said = gaps.map(([answer, left]) => `no ${answer} offset for partition ${left.join(", ")}`).join(", and ");
+      return refused(
+        new KafkaError(
+          "unreadable-topic",
+          `Topic "${TOPIC}" cannot be read: the broker reported ${said}; run the read again, or name a partition it reported offsets for`,
+        ),
+      );
+    }
+    const unasked = (p: number) =>
+      !s.earliest.has(p) || !s.latest.has(p) || (atTimestamp && s.timestampLeftOut.includes(p));
+    if (s.order.some(unasked)) saw("an offsets answer left out only partitions the read does not cover");
+
     const plans: { partition: number; start: bigint; end: bigint }[] = [];
     const pastEnd: number[] = [];
-    for (const partition of s.order.filter((p) => request.partition === undefined || p === request.partition)) {
-      const end = s.latest[partition];
-      const start = startOf(s, partition, end);
+    for (const partition of wanted) {
+      const first = answered(s.earliest, partition);
+      const end = answered(s.latest, partition);
+      const { from } = request;
+      // Spec 5.6: an offset outside the partition's range is refused, carrying the range.
+      if (from.kind === "offset" && (from.offset < first || from.offset > end)) {
+        saw("an offset lay outside its partition's range");
+        return refused(
+          new KafkaError(
+            "offset-out-of-range",
+            `Offset ${from.offset} is outside partition ${partition}'s range ${first} to ${end}`,
+            { validRange: { earliest: first, latest: end } },
+          ),
+        );
+      }
+      const start = startOf(s, partition, first, end);
       if (start === undefined) pastEnd.push(partition);
       else if (start < end) plans.push({ partition, start, end });
     }
@@ -1178,19 +1557,33 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
           r.headers.reduce((all, [name, value]) => all + size(name) + size(value), 0),
         0,
       );
+    const showable = (record: KafkaRecord) => !UNSHOWABLE.includes(record.timestamp);
     const read: KafkaRecord[] = [];
-    const fetches: string[] = [];
     const stoppedShort: { partition: number; at: bigint; end: bigint }[] = [];
     let budgetStop: { partition: number; at: bigint; unread: number[] } | undefined;
     let unfinished = false;
-    // Spec 5.4: a partition is fetched from its start, each fetch from where the one before it ended,
-    // until it has given `limit` records or reached its end, or a fetch makes no progress; the budget
-    // stops the whole read. Answers whether the budget stopped it.
+    let refusal: unknown;
+    // Spec 5.4: the read's time limit bounds its fetch loop and is looked at before each fetch; the other calls are
+    // bounded by the client's own timeouts.
+    let timeRanOut = s.abortAt === 0;
+    let fetches = 0;
+    // Spec 5.4: a partition is fetched from its start, each fetch from where the one before it ended, until it has
+    // given `limit` records or reached its end, or a fetch makes no progress; the budget stops the whole read.
+    // Answers whether the read stopped there.
     const readPartition = (plan: (typeof plans)[number], index: number): boolean => {
       let position = plan.start;
       let taken = 0;
       while (position < plan.end && taken < request.limit) {
-        fetches.push(`${plan.partition}@${position}`);
+        if (timeRanOut) {
+          saw("the read's time ran out before a fetch it still needed");
+          refusal = new KafkaError("timeout", "The read ran past its time limit and was stopped");
+          return true;
+        }
+        // One fetch at a time, with the topic object the metadata answered and the read's own signal (spec 3.5,
+        // 3.6 K8).
+        called(fetchCall(THE_TOPIC, plan.partition, position, THE_SIGNAL));
+        fetches += 1;
+        if (fetches === s.abortAt) timeRanOut = true;
         const answer = fetchFrom(s, plan.partition, position);
         if (answer.records.some((r) => r.offset >= plan.end)) saw("a fetch answered records past the end");
         for (const record of answer.records.filter((r) => r.offset < plan.end)) {
@@ -1199,17 +1592,27 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
             unfinished = true;
             break;
           }
-          // The rows held are the answer of the records read so far. A record that would be one of them
-          // stops the read when they would then pass the budget, unless it is the read's first record.
+          // The rows held are the answer of the records read so far. A record that would be one of them stops the
+          // read when they would then pass the budget, unless it is the read's first record.
           const next = answerOf([...read, record]);
-          if (read.length > 0 && next.includes(record) && bytesOf(next) > limits.resultByteBudget) {
+          const held = next.includes(record);
+          if (read.length > 0 && held && bytesOf(next) > limits.resultByteBudget) {
             saw(
               index === 0
                 ? "the budget stopped the read in the first partition read"
                 : "the budget stopped the read in a later partition",
             );
+            if (!showable(record)) saw("the budget stopped the read before a record no date can show");
             const unread = plans.slice(index + 1).map((later) => later.partition);
             budgetStop = { partition: plan.partition, at: record.offset, unread };
+            return true;
+          }
+          // Spec K5: a record is shaped as it comes into the rows held, never when the merge drops it as it arrives
+          // or the budget stops the read before it, and one no date can show is refused there (spec 5.2).
+          if (!showable(record) && !held) saw("the merge dropped a record no date can show as it arrived");
+          if (!showable(record) && held) {
+            saw("a record no date can show came into the rows held");
+            refusal = shapingRefusal(record, limits);
             return true;
           }
           read.push(record);
@@ -1231,6 +1634,8 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
     for (const [index, plan] of plans.entries()) {
       if (readPartition(plan, index)) break;
     }
+    if (refusal !== undefined) return refused(refusal);
+    if (timeRanOut) saw("the read's time ran out after the last fetch it needed");
     const answer = answerOf(read);
     const shaped = answer.map((record) => shapeRecord(record, limits));
     const truncatedCells = shaped.reduce((sum, entry) => sum + entry.truncatedCells, 0);
@@ -1249,20 +1654,27 @@ describe("readMessages against a reference of spec 5.1 and 5.4", () => {
     if (answer.some((r) => r.headers.some(([, value]) => value === null))) saw("a row has a header with no value");
     if (!wasLimited) saw("the read was complete");
     return {
-      rows: shaped.map((entry) => entry.row),
-      warnings: readWarnings({ pastEnd, stoppedShort, budgetStop, truncatedCells, limits }),
-      wasLimited,
-      fetches,
+      outcome: {
+        rows: shaped.map((entry) => entry.row),
+        warnings: readWarnings({ pastEnd, stoppedShort, budgetStop, truncatedCells, limits }),
+        wasLimited,
+      },
+      trace,
     };
   }
 
-  test("every generated read answers the reference's rows, warnings and limited flag, through the reference's fetches", async () => {
+  test("every generated read answers or is refused as the reference says, through the calls it says, one at a time", async () => {
     const scenarios = Array.from({ length: READS }, (_, index) => scenario(index));
     const reads = await Promise.all(
       scenarios.map(async (s) => {
-        const fetches: string[] = [];
-        const out = await readMessages(clientOf(s, fetches), s.request, s.limits, signal);
-        return { read: s.label, rows: out.rows, warnings: out.warnings, wasLimited: out.wasLimited, fetches };
+        const trace: string[] = [];
+        const controller = new AbortController();
+        if (s.abortAt === 0) controller.abort();
+        const outcome = await readMessages(clientOf(s, controller, trace), s.request, s.limits, controller.signal).then(
+          (out) => ({ rows: out.rows, warnings: out.warnings, wasLimited: out.wasLimited }),
+          (error: unknown) => ({ refused: refusalOf(error) }),
+        );
+        return { read: s.label, outcome, trace };
       }),
     );
     const met = new Map<Rule, number>();
