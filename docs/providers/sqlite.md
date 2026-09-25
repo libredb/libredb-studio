@@ -1045,8 +1045,10 @@ that very measurement, which is the mistake `|| 0` was making.
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
-and `reindex` targets are quoted via `escapeIdentifier()`:
+`runMaintenance(type, target?, container?)` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
+and `reindex` targets are quoted via `escapeIdentifier()`. A `container` is deliberately ignored
+(#772): SQLite resolves a bare name against the attached database it was opened on, always `main`
+for this provider, and the file has no second namespace to name.
 
 | Type | Action |
 |------|--------|

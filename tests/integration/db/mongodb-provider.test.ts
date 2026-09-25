@@ -1204,6 +1204,40 @@ describe("MongoDBProvider", () => {
       expect(result.message).toContain("Compacted");
     });
 
+    // #1091 review: the refusal compared `config.database`, and a connection-string connection
+    // sets no `config.database` - so it refused the database the provider IS bound to and every
+    // per-collection button answered `bound to the database ""`. The comparison is against the
+    // name `getDatabaseName()` resolves and `connect()` opens.
+    test("a connection-string connection accepts the database it is bound to", async () => {
+      const provider = new MongoDBProvider({
+        ...baseConfig,
+        host: undefined,
+        database: undefined,
+        connectionString: "mongodb://remote:27017/fromstring",
+      });
+      await provider.connect();
+
+      const result = await provider.runMaintenance("analyze", "users", "fromstring");
+
+      expect(result.success).toBe(true);
+      await provider.disconnect();
+    });
+
+    test("a container naming another database is refused, and the sentence names the bound one", async () => {
+      const provider = new MongoDBProvider({
+        ...baseConfig,
+        host: undefined,
+        database: undefined,
+        connectionString: "mongodb://remote:27017/fromstring",
+      });
+      await provider.connect();
+
+      await expect(provider.runMaintenance("vacuum", "users", "elsewhere")).rejects.toThrow(
+        'bound to the database "fromstring"',
+      );
+      await provider.disconnect();
+    });
+
     test("unsupported maintenance type throws", async () => {
       await expect(provider.runMaintenance("flush" as never)).rejects.toThrow();
     });

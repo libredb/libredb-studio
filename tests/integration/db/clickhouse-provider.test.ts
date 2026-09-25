@@ -1533,6 +1533,33 @@ describe("ClickHouseProvider maintenance", () => {
     expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."we""ird" FINAL');
   });
 
+  // #772: `schemaName` is the DATABASE on ClickHouse, so a container replaces the split of
+  // the name rather than being recovered from it - which is the ambiguity that matters for a
+  // name containing a dot.
+  test("a container is the database outright, and the name is not split", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "audit", "default");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "default"."audit" FINAL');
+  });
+
+  test("a container is used whole even when it contains a dot", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "audit", "my.db");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "my.db"."audit" FINAL');
+  });
+
+  test("a bare target with no container keeps the pinned-database reading", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "users");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."users" FINAL');
+  });
+
   test("analyze reports the part statistics ClickHouse keeps instead of computing new ones", async () => {
     // There is no ANALYZE: a MergeTree's statistics are its parts, and they are
     // always current. Reporting them is the honest equivalent of the operation.

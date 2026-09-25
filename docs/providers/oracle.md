@@ -1744,12 +1744,18 @@ boundary preserves those states without a falsy test that would erase a genuine 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+`runMaintenance(type, target?, container?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+
+A `container` is the OWNER the row carries as `schemaName` (#772). It moves every read off the
+`USER_*` catalogs and onto their `ALL_*` twins with the owner bound, passes that owner as the
+first `GATHER_TABLE_STATS` / `GATHER_SCHEMA_STATS` argument in place of `USER`, and qualifies
+each `ALTER INDEX "<owner>"."<index>" REBUILD`. Without one the connected user is the owner,
+which is the reading every column below used before the parameter existed.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
-| `analyze` | `DBMS_STATS.GATHER_TABLE_STATS(USER, '<t>')` | `DBMS_STATS.GATHER_SCHEMA_STATS(USER)` |
-| `optimize` | rebuild the indexes THAT TABLE owns: `SELECT INDEX_NAME FROM USER_INDEXES WHERE TABLE_NAME = :t AND INDEX_TYPE = 'NORMAL'`, then `ALTER INDEX "<i>" REBUILD` for each (own try/catch) | rebuild **every** normal user index (`USER_INDEXES`, each in its own try/catch) |
+| `analyze` | `DBMS_STATS.GATHER_TABLE_STATS(<owner>, '<t>')` | `DBMS_STATS.GATHER_SCHEMA_STATS(<owner>)` |
+| `optimize` | rebuild the indexes THAT TABLE owns: `SELECT INDEX_NAME FROM USER_INDEXES WHERE TABLE_NAME = :t AND INDEX_TYPE = 'NORMAL'` (or `ALL_INDEXES` with `OWNER = :owner`), then `ALTER INDEX "<i>" REBUILD` for each (own try/catch) | rebuild **every** normal user index (`USER_INDEXES` / `ALL_INDEXES`, each in its own try/catch) |
 | `kill` | `ALTER SYSTEM KILL SESSION '<SID,SERIAL#>'` | throws (`SID,SERIAL#` required) |
 
 `getCapabilities().maintenanceOperations = ['analyze', 'optimize', 'kill']`. Targets are

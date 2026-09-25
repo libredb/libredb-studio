@@ -618,8 +618,11 @@ describe("LibSQLProvider runMaintenance", () => {
 
     expect(await provider.runMaintenance("reindex")).toMatchObject({ success: true });
     expect(await provider.runMaintenance("reindex", "probe_customers")).toMatchObject({ success: true });
+    // #772: a container is ignored - the connection resolves names against its one
+    // attached database, exactly as sqlite.ts does.
+    expect(await provider.runMaintenance("reindex", "probe_customers", "main")).toMatchObject({ success: true });
 
-    expect(sentStatements()).toEqual(["REINDEX", 'REINDEX "probe_customers"']);
+    expect(sentStatements()).toEqual(["REINDEX", 'REINDEX "probe_customers"', 'REINDEX "probe_customers"']);
     await provider.disconnect();
   });
 

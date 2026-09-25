@@ -1289,6 +1289,20 @@ describe("TrinoProvider maintenance", () => {
     );
   });
 
+  test("a container changes nothing, because the target is a query id rather than an object", async () => {
+    // #772: the only operation here is `kill`, whose target addresses no namespace, so the
+    // container is deliberately ignored rather than turned into a qualifier.
+    const provider = await connectProvider();
+    overrideSurface("CALL system.runtime.kill_query", (id) => ({
+      body: page(id, [], [], { updateType: "CALL" }),
+    }));
+
+    const result = await provider.runMaintenance("kill", "20260820_001943_00041_chvb7", "hive");
+
+    expect(result.success).toBe(true);
+    expect(sqlWith("kill_query")).toContain("query_id => '20260820_001943_00041_chvb7'");
+  });
+
   test("says it only asked, because the target's own exchange is what observes the kill", async () => {
     const provider = await connectProvider();
     overrideSurface("CALL system.runtime.kill_query", (id) => ({ body: page(id, [], [], { updateType: "CALL" }) }));

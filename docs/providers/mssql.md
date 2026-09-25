@@ -1254,8 +1254,10 @@ boundary preserves those states without a falsy test that would erase a genuine 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
-are bracket-escaped (`]` → `]]`):
+`runMaintenance(type, target?, container?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
+are bracket-escaped (`]` → `]]`). A `container` is the SCHEMA the row carries as `schemaName`
+(#772), emitted as `[schema].[table]`; without one a bare target keeps the previous reading, where
+the connected default schema applies.
 
 | Type | With target | Without target |
 |------|-------------|----------------|

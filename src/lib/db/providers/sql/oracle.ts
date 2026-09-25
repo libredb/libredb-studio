@@ -2592,8 +2592,13 @@ export class OracleProvider extends SQLBaseProvider {
     // and this reported success in 14 ms.
     let firstFailure: string | undefined;
     for (const row of rows) {
+      // With an owner this list came from `ALL_INDEXES`, which answers for any schema, so the
+      // rebuild names that owner too: a bare `ALTER INDEX` rebuilds in the CONNECTED schema,
+      // which is not the schema the indexes were read from (#1091 review).
+      const indexName = `"${String(row.INDEX_NAME).replace(/"/g, '""')}"`;
+      const qualified = owner ? `"${owner.replace(/"/g, '""')}".${indexName}` : indexName;
       try {
-        await conn.execute(`ALTER INDEX "${String(row.INDEX_NAME).replace(/"/g, '""')}" REBUILD`);
+        await conn.execute(`ALTER INDEX ${qualified} REBUILD`);
         rebuilt++;
       } catch (error) {
         // One index failing is still a completed run (an offline tablespace or an unusable

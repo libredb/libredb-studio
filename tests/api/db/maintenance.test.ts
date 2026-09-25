@@ -163,6 +163,32 @@ describe("POST /api/db/maintenance", () => {
     expect(data.message).toBe("OK");
   });
 
+  // #772: the wire contract carries the table's container beside its target, and the route
+  // passes it through untouched. Reading only `target` was the whole defect - every provider
+  // then had to guess a namespace from a bare name.
+  test("passes the container through to the provider", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", container: "reporting", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(mockProvider.runMaintenance).toHaveBeenCalledWith("vacuum", "users", "reporting");
+  });
+
+  test("a request with no container reaches the provider with it undefined", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockProvider.runMaintenance).toHaveBeenCalledWith("vacuum", "users", undefined);
+  });
+
   // Threat: runMaintenance() has already completed by the time emitAuditEvent runs (see the route's
   // own comment). Before this fix, a broken audit sink shared the operation's try/catch, so a
   // throw here would 500 a client that must not be told to retry an operation - possibly a

@@ -1486,8 +1486,11 @@ that is what MySQL itself calls index bytes.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
-are backtick-quoted via `escapeIdentifier()`:
+`runMaintenance(type, target?, container?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
+are backtick-quoted via `escapeIdentifier()`. A `container` is the DATABASE the row carries as
+`schemaName` (#772), and it qualifies the target only when it names a database OTHER than the
+connected one: a MySQL statement already resolves a bare table inside the connected database, so
+the same name as a prefix adds nothing.
 
 | Type | With target | Without target |
 |------|-------------|----------------|

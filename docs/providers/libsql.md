@@ -864,6 +864,9 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | `check` | globally | `PRAGMA integrity_check`, and the ANSWER is read — a corrupt database reports damage in its row while the statement itself succeeds |
 | `vacuum`, `analyze`, `optimize`, `kill` | withheld | Refused by the server (§3.5); a direct API call is refused by the provider with the reason |
 
+A `container` is deliberately ignored (#772): a libSQL connection resolves names against its one
+attached database, exactly as `sqlite.ts` does.
+
 ---
 
 ## 9. Capabilities & labels
