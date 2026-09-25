@@ -98,6 +98,24 @@ const QUEUED_REPLY = "QUEUED";
 /** `PING`'s own reply, the other half of the reading above. */
 const PONG_REPLY = "PONG";
 
+/**
+ * Commands that change the CONNECTION rather than the data, refused by `query()` (#1107).
+ *
+ * `getOrCreateProvider` caches this provider per connection for the whole process and it runs
+ * every statement on one client, so connection state a statement sets is state every later
+ * request inherits, whoever sends it. MEASURED 2026-09-25 on redis 8.10.2 through ioredis
+ * 5.11.1, on a connection configured for database 2 as ACL user `ro` (`+@read`):
+ * - `SELECT 0` answered OK and every later `GET` read database 0; `MULTI` / `SELECT 0` /
+ *   `EXEC` did the same, which is why the refusal is by command and not by reply.
+ * - `RESET` answered RESET and left the connection in database 0 AND authenticated as
+ *   `default`: the read-only user could `SET` afterwards.
+ * - `AUTH default <anything>` answered OK against a stock `default nopass` and did the same.
+ * - `HELLO 3` switched the reply protocol and ioredis raised "Protocol error, got \"%\"".
+ * `SWAPDB`, `MOVE` and a script's `redis.call('SELECT', n)` were measured too and leave the
+ * connection where it was, so they are not listed.
+ */
+const SESSION_STATE_COMMANDS: ReadonlySet<string> = new Set(["SELECT", "RESET", "AUTH", "HELLO"]);
+
 // JSON query payload: { "command": "GET", "args": ["key"] }
 type RedisJsonCommand = { command: string; args?: string[] };
 
@@ -1349,6 +1367,13 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   private async runCommand(command: string, args: string[]): Promise<Omit<QueryResult, "executionTime">> {
+    if (SESSION_STATE_COMMANDS.has(command)) {
+      throw new QueryError(
+        `${command} is not run here: it would change the shared connection for every later request. ` +
+          "Pick the database in the Keys panel, or change the connection's Database field.",
+        "redis",
+      );
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (this.client as any).call(command, ...args);

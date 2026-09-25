@@ -538,6 +538,32 @@ opened before any scope was recorded still has no owner.
 The same argument applies to `sqlite` and `duckdb`, which likewise hold one handle for every
 concurrent request and ignore the scope for the same reason.
 
+### 5.2b Commands that would move the shared connection (#1107)
+
+`query()` refuses `SELECT`, `RESET`, `AUTH` and `HELLO` before they reach the server, with
+`<COMMAND> is not run here: it would change the shared connection for every later request.`
+
+The reason is the one §5.2a gives for `MULTI`: the provider is cached per connection for the whole
+process and runs every statement on ONE client (§3.6), so connection state a statement sets is the
+state every later request on that connection inherits, whoever sends it.
+Measured 2026-09-25 on redis 8.10.2 through ioredis 5.11.1, on a connection configured for database
+`2` as an ACL user with `+@read`:
+
+| Command | What it did to the shared client |
+|---------|----------------------------------|
+| `SELECT 0` | Every later `GET` read database 0 instead of the configured `database` |
+| `MULTI` / `SELECT 0` / `EXEC` | The same, which is why the refusal is by command name and not by reply |
+| `RESET` | Moved the client to database 0 AND logged it back in as `default`: the read-only user could `SET` |
+| `AUTH default <anything>` | The same against a stock `default nopass` server |
+| `HELLO 3` | Switched the reply protocol; ioredis then failed with `Protocol error, got "%"` |
+
+`SWAPDB`, `MOVE` and a script's `redis.call('SELECT', n)` were measured too and leave the client's
+database and user where they were, so they run as before.
+
+To read another database, pick it in the Keys panel (§6.2): a key opened from there runs under the
+per-run `database` field of `POST /api/db/query`, on a provider of its own, and the shared one is not
+touched. To change the database a connection reads by default, change its **Database** field (§4.1).
+
 ### 5.3 Schema-explorer menu actions
 
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that node,

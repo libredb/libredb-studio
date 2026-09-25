@@ -675,7 +675,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * There are THREE producers of `edit`: `providers/sql/postgres.ts:3201`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1279` and
- * `providers/keyvalue/redis.ts:1948`, both gated on `spec.acceptsSourceEdits === true`, which is the
+ * `providers/keyvalue/redis.ts:1973`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
@@ -687,7 +687,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
  * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
  * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
- * stated at `redis.ts:1941-1947`: the affordance is offered on a truncated part deliberately, because
+ * stated at `redis.ts:1966-1972`: the affordance is offered on a truncated part deliberately, because
  * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
  * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
@@ -707,7 +707,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3358`, `providers/keyvalue/redis.ts:2038`
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3358`, `providers/keyvalue/redis.ts:2063`
  * and `providers/sql/trino/index.ts:1473`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.
