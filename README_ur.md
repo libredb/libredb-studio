@@ -18,7 +18,7 @@
 </p>
 
 <p align="center" dir="rtl">
-  PostgreSQL project میں درج شدہ:
+  PostgreSQL project میں شامل:
   <a href="https://www.postgresql.org/about/news/libredb-studio-an-open-source-self-hosted-sql-ide-for-postgresql-in-the-browser-3368/">News</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/PostgreSQL_Clients#LibreDB_Studio">PostgreSQL Clients</a>
@@ -54,7 +54,7 @@
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
-> <span dir="rtl">یہ اردو README کمیونٹی کا ترجمہ ہے اور انگریزی نسخے سے پیچھے ہو سکتا ہے۔ فرق کی صورت میں [انگریزی نسخہ](README.md) معتبر ہے۔</span>
+> <span dir="rtl">یہ اردو README کمیونٹی کا ترجمہ ہے اور انگریزی نسخے سے پیچھے ہو سکتا ہے۔ فرق کی صورت میں [انگریزی نسخہ](README.md) درست ہے۔</span>
 
 <div dir="rtl" align="right">
 
@@ -78,17 +78,17 @@ npx @libredb/studio
 
 > <span dir="rtl">اگر browser localhost یا HTTPS سے نہیں کھلتا (مثلاً مقامی network پر `http://192.168.x.x:3000`)، تو `AUTH_COOKIE_SECURE=false` شامل کرنا ہوگا۔ ورنہ health check تو کامیاب ہو جاتا ہے، لیکن login خاموشی سے ناکام ہو کر بار بار login screen پر واپس لے آتا ہے۔</span>
 
-<span dir="rtl">کیا آپ کو Helm، Homebrew، Snap، winget یا deb/rpm چاہیے؟ نیچے [تنصیب](#تنصیب) ملاحظہ کریں۔</span>
+<span dir="rtl">کیا آپ کو Helm، Homebrew، Snap، winget یا deb/rpm چاہیے؟ نیچے [انسٹالیشن](#انسٹالیشن) دیکھیں۔</span>
 
 ## <span dir="rtl">ایک اور database tool کیوں؟</span>
 
 <span dir="rtl">آپ managed platform پر Postgres بناتے ہیں اور وہ چالیس سیکنڈ میں تیار ہو جاتا ہے۔</span>
 
-<span dir="rtl">پھر آپ دیکھنا چاہتے ہیں کہ اس کے اندر کیا ہے۔ اس کے لیے یا تو آپ internet پر ایک port کھولتے ہیں، یا desktop client نصب کر کے SSH tunnel بناتے ہیں، یا ہار مان کر command line پر واپس آ جاتے ہیں۔ database کو چالیس سیکنڈ لگے؛ اس میں جھانکنے کا راستہ بنانے میں پوری شام گزر گئی۔</span>
+<span dir="rtl">پھر آپ دیکھنا چاہتے ہیں کہ اس کے اندر کیا ہے۔ اس کے لیے یا تو آپ internet پر ایک port کھولتے ہیں، یا desktop client نصب کر کے SSH tunnel بناتے ہیں، یا ہار مان کر command line پر واپس آ جاتے ہیں۔ database کو چالیس سیکنڈ لگے؛ اس میں access کرنے کا طریقہ بنانے میں پوری شام گزر گئی۔</span>
 
-<span dir="rtl">اب اسے scale پر تصور کریں۔ application Postgres استعمال کرتی ہے، documents Mongo میں ہیں، cache Redis میں ہے، اور events ClickHouse میں ہیں۔ چار databases، چار clients، اور credentials کے چار مجموعے۔ پیر کو کوئی نیا شخص آتا ہے تو اپنی پہلی code line لکھنے سے پہلے اسے معلوم کرنا پڑتا ہے کہ کون سا data کہاں ہے، wiki اور تین private chats میں connection strings ڈھونڈنی پڑتی ہیں، VPN access کا انتظار کرنا پڑتا ہے، اور ہر engine کے لیے الگ tool نصب کرنا پڑتا ہے۔</span>
+<span dir="rtl">اب اسے scale پر سوچیں۔ application Postgres استعمال کرتی ہے، documents Mongo میں ہیں، cache Redis میں ہے، اور events ClickHouse میں ہیں۔ چار databases، چار clients، اور credentials کے چار مجموعے۔ پیر کو کوئی نیا شخص آتا ہے تو اپنی پہلی code line لکھنے سے پہلے اسے معلوم کرنا پڑتا ہے کہ کون سا data کہاں ہے، wiki اور تین private chats میں connection strings ڈھونڈنی پڑتی ہیں، VPN access کا انتظار کرنا پڑتا ہے، اور ہر engine کے لیے الگ tool نصب کرنا پڑتا ہے۔</span>
 
-<span dir="rtl">**Databases پہلے ہی منتقل ہو چکے ہیں۔** وہ Kubernetes، managed clouds اور customer VPCs میں چلے گئے ہیں جن تک bastion کے ذریعے ہی پہنچا جا سکتا ہے۔ **لیکن انہیں پڑھنے کے tools ان کے ساتھ منتقل نہیں ہوئے۔** وہ اب بھی desktop applications ہیں: بھاری، per-seat license والے، استعمال سے پہلے install ہونے والے، اور اس مفروضے پر بنے ہوئے کہ آپ کے پاس صرف ایک database، ایک laptop اور ایک ایسا شخص ہے جو کبھی device تبدیل نہیں کرتا۔</span>
+<span dir="rtl">**Databases پہلے ہی منتقل ہو چکے ہیں۔** وہ Kubernetes، managed clouds اور customer VPCs میں چلے گئے ہیں جن تک bastion کے ذریعے ہی پہنچا جا سکتا ہے۔ **لیکن انہیں پڑھنے کے tools ان کے ساتھ منتقل نہیں ہوئے۔** وہ اب بھی desktop applications ہیں: بھاری، per-seat license والے، استعمال سے پہلے install ہونے والے، اور اس  سوچ کے ساتھ بنے ہوئے کہ آپ کے پاس صرف ایک database، ایک laptop اور ایک ایسا شخص ہے جو کبھی device تبدیل نہیں کرتا۔</span>
 
 <span dir="rtl">LibreDB Studio اس کے برعکس راستہ اختیار کرتا ہے: **tool کو data کے پاس لے جایا جاتا ہے، data کو tool کے پاس نہیں۔**</span>
 
@@ -134,7 +134,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **Elasticsearch** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (`POST /_sql?format=json`، port 9200)</span> | <span dir="rtl">read-only SQL IDE، mapping پر مبنی indexes اور fields explorer، cluster health، اور ہر index کے لیے document count اور size۔ EXPLAIN نہیں، maintenance operations نہیں، اور slow queries یا sessions panels بھی نہیں۔ Elasticsearch SQL میں `OFFSET` بھی نہیں، اس لیے results کا دوسرا page نہیں مانگا جا سکتا</span> |
 | **OpenSearch** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (`POST /_plugins/_sql`، port 9200)</span> | <span dir="rtl">Elasticsearch والا ہی provider module، وہی read-only IDE اور وہی explorer۔ یہاں `LIMIT n OFFSET m` کام کرتا ہے، اس لیے pagination دستیاب ہے</span> |
 | **Apache Trino** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (client protocol، `POST /v1/statement`، port 8080)</span> | <span dir="rtl">تمام configured catalogs پر مکمل SQL IDE، connection میں مقرر catalog کے `information_schema` کے ذریعے schema tree، `system.runtime` اور `jmx` سے monitoring، `SHOW STATS` سے اصل row counts، query cancellation اور `kill_query` کے ساتھ maintenance۔ Trino query engine ہے اور data store نہیں کرتا، اس لیے کہیں بھی primary keys، foreign keys یا indexes declare نہیں کرتا: ER diagram میں lines کے بغیر boxes ہوتے ہیں، inline editing بند رہتی ہے، اور capacity panel مصنوعی size بنانے کے بجائے catalogs دکھاتا ہے۔ ناکام statements بھی HTTP 200 کے ساتھ واپس آتی ہیں؛ اور cluster میں authentication بند ہو تب بھی plain HTTP پر password رد کر دیا جاتا ہے</span> |
-| **Apache Cassandra** | <span dir="rtl">`cassandra-driver` (خالص JavaScript، native modules کے بغیر)</span> | <span dir="rtl">native protocol (port 9042) پر CQL IDE، partition اور clustering keys نشان زد keyspaces explorer، `system_views` سے summary، uptime اور چلتی ہوئی statements۔ Connection کے لیے **`localDataCenter` لازمی ہے**: اس کے بغیر driver connect کرنے سے انکار کر دیتا ہے۔ EXPLAIN نہیں (CQL grammar میں یہ keyword موجود ہی نہیں)، query cancellation نہیں (protocol میں cancel frame نہیں) اور maintenance operations نہیں (compaction، repair اور flush، `nodetool` کے JMX operations ہیں)۔ اور **یہ کوئی row count یا size نہیں دکھاتا**: Cassandra صرف disk پر پہلے سے لکھی files سے partitions کا تخمینہ (500 rows کی table کو 143 پڑھا گیا) اور MiB میں integers (19,476 bytes کی table کو `1 MiB` پڑھا جاتا ہے) دے سکتا ہے، اس لیے غلط number دکھانے کے بجائے ہم کچھ نہیں دکھاتے</span> |
+| **Apache Cassandra** | <span dir="rtl">`cassandra-driver` (خالص JavaScript، native modules کے بغیر)</span> | <span dir="rtl">native protocol (port 9042) پر CQL IDE، partition اور clustering keys نشان زد keyspaces explorer، `system_views` سے summary، uptime اور چلتی ہوئی statements۔ Connection کے لیے **`localDataCenter` لازمی ہے**: اس کے بغیر driver connect کرنے سے انکار کر دیتا ہے۔ EXPLAIN نہیں (CQL grammar میں یہ keyword موجود ہی نہیں)، query cancellation نہیں (protocol میں cancel frame نہیں) اور maintenance operations نہیں (compaction، repair اور flush، `nodetool` کے JMX operations ہیں)۔ اور **یہ کوئی row count یا size نہیں دکھاتا**: Cassandra صرف disk پر پہلے سے لکھی files سے partitions کا اندازہ (500 rows کی table کو 143 پڑھا گیا) اور MiB میں integers (19,476 bytes کی table کو `1 MiB` پڑھا جاتا ہے) دے سکتا ہے، اس لیے غلط number دکھانے کے بجائے ہم کچھ نہیں دکھاتے</span> |
 | **Prometheus** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (Prometheus HTTP API، port 9090)</span> | <span dir="rtl">PromQL editor جو text کو بغیر تبدیلی server تک بھیجتا ہے، نتائج grid اور chart tab میں (`rate(x[5m])[1h:1m]` جیسی step والی subquery timestamps پر lines کی صورت میں chart ہوتی ہے: tab پہلی series سے کھلتا ہے، Y-Axis menu سے مزید series شامل کی جا سکتی ہیں، ہر series کی ایک line، اور ایک وقت میں زیادہ سے زیادہ آٹھ lines بنتی ہیں، اس سے آگے chart "Showing first 8 of N series" دکھاتا ہے؛ لیکن chart کسی missing sample کو، اور numbers کے درمیان `NaN` یا `Inf` کو، 0 پر دکھاتا ہے، اس لیے الگ الگ وقت پر scrape ہونے والے targets کی raw range query جھوٹے صفر دکھاتی ہے)، metrics explorer جس میں label names columns اور metadata source ہیں، rule groups اور recording و alerting rules (firing alert tree میں نشان زد)، scrape pools اور targets (down target tree میں نشان زد)، اور health، version، uptime اور TSDB statistics۔ Design کے لحاظ سے صرف پڑھنے کے لیے: admin API یا remote write استعمال نہیں ہوتے، EXPLAIN نہیں (parse endpoint ابھی experimental ہے) اور maintenance operations نہیں۔ Plain HTTP پر credential رد نہیں ہوتا بلکہ بھیج دیا جاتا ہے، اس لیے جس network پر آپ کا اختیار نہ ہو وہاں TLS فعال کریں</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
@@ -167,7 +167,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 <li><span dir="rtl"><strong><span dir="ltr">Query security analysis</span></strong>: destructive statements (DELETE، DROP، TRUNCATE) کے لیے execution سے پہلے risk evaluation۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Query explanation</span></strong>: EXPLAIN plans کو سادہ زبان میں، optimization suggestions کے ساتھ۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Schema knowledge</span></strong>: connected database کا schema context کے طور پر بھیجا جاتا ہے، اس لیے explanation آپ کی اپنی tables اور columns کے نام لیتی ہے۔</span></li>
-<li><span dir="rtl"><strong><span dir="ltr">Data profiler summary</span></strong>: profiler کی فی-column statistics کی summary۔ اس context میں ہر column کے <code dir="ltr">min</code> اور <code dir="ltr">max</code> شامل ہیں، جو آپ کے data کی حقیقی values ہیں؛ <a href="docs/AGENT_DATA_FLOW.md">Agent Data Flow</a> ملاحظہ کریں۔</span></li>
+<li><span dir="rtl"><strong><span dir="ltr">Data profiler summary</span></strong>: profiler کی فی-column statistics کی summary۔ اس context میں ہر column کے <code dir="ltr">min</code> اور <code dir="ltr">max</code> شامل ہیں، جو آپ کے data کی حقیقی values ہیں؛ <a href="docs/AGENT_DATA_FLOW.md">Agent Data Flow</a> دیکھیں۔</span></li>
 </ul>
 
 ### <span dir="rtl"><span dir="ltr">Data management</span></span>
@@ -210,7 +210,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 <li><span dir="rtl"><strong><span dir="ltr">Audit log</span></strong>: organization میں چلنے والی ہر query کی مکمل history۔</span></li>
 </ul>
 
-## <span dir="rtl">تنصیب</span>
+## <span dir="rtl">انسٹالیشن</span>
 
 </div>
 
@@ -285,7 +285,7 @@ bun run test:coverage  # coverage report
 
 <span dir="rtl">Issues اور pull requests خوش آئند ہیں۔ آغاز [CONTRIBUTING.md](CONTRIBUTING.md) سے کریں۔</span>
 
-<span dir="rtl">Database engine شامل کرنے کے لیے [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) ملاحظہ کریں۔ Code، documentation اور tests ایک ہی pull request میں ساتھ چلتے ہیں۔</span>
+<span dir="rtl">Database engine شامل کرنے کے لیے [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) دیکھیں۔ Code، documentation اور tests ایک ہی pull request میں ساتھ چلتے ہیں۔</span>
 
 ## <span dir="rtl">لائسنس</span>
 
