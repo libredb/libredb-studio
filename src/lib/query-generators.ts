@@ -75,7 +75,8 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * Adding a branch would only duplicate it.
  */
 export function quoteIdentifier(name: string, capabilities: ProviderCapabilities): string {
-  // Document stores (MongoDB) don't use SQL identifier quoting.
+  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB and
+  // Kafka, which declare a JSON dialect of their own (#1088).
   if (capabilities.queryLanguage === "json") return name;
 
   // An explicit declaration wins over the port heuristic below, because the port
@@ -620,6 +621,9 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
  * statement they chose to execute and its bound is theirs: a hard bound, honoured, and not
  * paged past. Removing it would instead hand them an unbounded scan they never asked for.
  *
+ * The Kafka branch keeps a bound for the same reason, in the read request's own `limit`: 50, the
+ * click's and the request's default (#1088).
+ *
  * The PromQL branch is the exception, for the tree click's reason: PromQL has no bound to write,
  * so the text is the metric's selector, with the two range forms that widen it written as
  * comments above it (#1085).
@@ -639,6 +643,16 @@ export function generateSelectQuery(
   }
   if (capabilities.queryDialect === "redis") {
     return redisCheatsheet(tableName, columns);
+  }
+  // Kafka (#1088): ONE read request, because the tab's whole buffer is sent as one request
+  // (`handleGenerateSelect` in use-tab-manager.ts) and JSON has no comments to hold the other forms.
+  // The click reads the latest messages; this names a partition and reads it from its earliest
+  // offset, which exists on any retention, and the result's `offset` column shows the offsets the
+  // `{"offset": n}` form takes. The offset and timestamp forms are documented in
+  // docs/providers/kafka.md. The columns are the fields each message comes back with, not keys of
+  // the request, so none is written; the name goes through JSON.stringify with the rest.
+  if (capabilities.queryDialect === "kafka") {
+    return JSON.stringify({ topic: tableName, partition: 0, from: "earliest", limit: 50 }, null, 2);
   }
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};

@@ -6,6 +6,7 @@ import React from "react";
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 
@@ -1165,6 +1166,40 @@ describe("isDangerousQuery", () => {
   test("still prompts for a destructive keyword under redis", () => {
     expect(isDangerousQuery("DROP TABLE users", "redis")).toBe(true);
   });
+
+  // ── A Kafka read request only reads (#1088, section 2) ───────────────────
+  //
+  // A topic may legally be called `delete`, `drop` or `update`: a Kafka topic name is any run of
+  // a-z, A-Z, 0-9, ".", "_" and "-". The texts the tree writes for such a topic, the read request a
+  // click runs and the one Generate Read Request opens, can only read it, and the capabilities are
+  // the provider's own, so the texts below are exactly what the tree puts in the editor. Each
+  // negative is paired with the reading the same text met before a dialect named it, MongoDB's
+  // (the #427 class), which finds no operation in a read request and asks.
+
+  const kafkaCapabilities = new KafkaProvider({
+    id: "kafka-gate",
+    name: "Kafka",
+    type: "kafka",
+    host: "localhost",
+    port: 9092,
+    createdAt: new Date(0),
+  }).getCapabilities();
+
+  test.each<[string]>([["delete"], ["drop"], ["update"], ["truncate"], ["DROP"]])(
+    "does not prompt when the tree reads a topic named %s on kafka",
+    (name) => {
+      const click = generateTableQuery([name], kafkaCapabilities);
+      const buffer = generateSelectQuery([name], [], kafkaCapabilities);
+      // The premise: both texts are read requests naming the topic, and neither is a MongoDB command.
+      expect(JSON.parse(click).topic).toBe(name);
+      expect(JSON.parse(buffer).topic).toBe(name);
+      expect(isDangerousQuery(click, "mongodb")).toBe(true);
+      expect(isDangerousQuery(buffer, "mongodb")).toBe(true);
+
+      expect(isDangerousQuery(click, "kafka")).toBe(false);
+      expect(isDangerousQuery(buffer, "kafka")).toBe(false);
+    },
+  );
 
   // ── The dialect decides what the statement says (#292) ──────────────────
   //

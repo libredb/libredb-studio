@@ -63,6 +63,7 @@ mock.module("@/components/schema-explorer/ColumnList", () => ({
 
 import { TableItem } from "@/components/schema-explorer/TableItem";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // Capability fixtures are partial on purpose: TableItem reads a handful of fields, and
@@ -118,6 +119,18 @@ const libredbCaps = caps({
   supportsMaintenance: false,
   maintenanceOperations: [],
 });
+/**
+ * Kafka's own declaration (#1088), read from the provider rather than written here: JSON in a
+ * dialect of its own, a topic kind that takes no row writes, no grid row edit and no maintenance.
+ */
+const kafkaCaps: Caps = new KafkaProvider({
+  id: "kafka-table-item",
+  name: "Kafka",
+  type: "kafka",
+  host: "localhost",
+  port: 9092,
+  createdAt: new Date(0),
+}).getCapabilities();
 /**
  * Search-shaped (Elasticsearch / OpenSearch, #424 Phase 1): an index is a real,
  * addressable object — so the `tablesAreDerivedGroupings` gate does NOT catch it —
@@ -295,7 +308,7 @@ describe("TableItem", () => {
     },
   );
 
-  test.each([undefined, redisCaps, libredbCaps, caps({ queryLanguage: "promql" })])(
+  test.each([undefined, redisCaps, libredbCaps, caps({ queryLanguage: "promql" }), kafkaCaps])(
     "withholds count for unresolved or unsupported capabilities (%#)",
     (capabilities) => {
       const { queryAllByText } = render(
@@ -1065,6 +1078,23 @@ describe("TableItem", () => {
       const sqlMenu = menuOf(metricObject, { ...promqlCaps, queryLanguage: "sql" });
       expect(offered(sqlMenu)).toEqual(["Profile Table", "Generate Code"]);
       expect(sqlMenu.querySelectorAll("hr")).toHaveLength(1);
+    });
+
+    test("a Kafka topic is offered none of the three, and no rule is drawn for them (#1088)", () => {
+      const topic: DetailedObject = { name: "orders", kind: "topic", path: ["orders"], columns: [], indexes: [] };
+      const menu = menuOf(topic, kafkaCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      // The actions that name the row are still there, so an empty list is the gate and not a menu
+      // that failed to render.
+      expect(within(menu).queryByText("Select Top 50")).not.toBeNull();
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control, in the one field under test: the same declaration with the dialect removed is
+      // MongoDB's JSON, which is profiled and generates code. Generate Test Data stays withheld there
+      // too, because the topic kind declares no row writes and the engine no grid row edit.
+      const jsonMenu = menuOf(topic, { ...kafkaCaps, queryDialect: undefined });
+      expect(offered(jsonMenu)).toEqual(["Profile Table", "Generate Code"]);
+      expect(jsonMenu.querySelectorAll("hr")).toHaveLength(1);
     });
 
     test("unknown capabilities offer none of the three", () => {

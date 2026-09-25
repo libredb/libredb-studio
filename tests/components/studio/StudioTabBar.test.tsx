@@ -113,6 +113,24 @@ describe("StudioTabBar", () => {
     expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
   });
 
+  test("a Kafka tab takes the icon every non-SQL query tab takes, the same as a MongoDB tab (#1088)", () => {
+    // Correct as is: a read request is JSON, so the tab draws the document braces a MongoDB tab
+    // draws. The SQL tab is the control that the arm is not every tab's.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "Query 1", type: "sql" }),
+        createTab({ id: "tab-2", name: "orders", type: "kafka" }),
+        createTab({ id: "tab-3", name: "Query 3", type: "mongodb" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
+  });
+
   // ── Click → activate tab ──────────────────────────────────────────────
 
   test("click on tab fires onSetActiveTabId with tab id", () => {

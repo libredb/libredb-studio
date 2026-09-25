@@ -177,9 +177,10 @@ export function maintenanceControl(
  *
  * The route writes exactly two statement shapes: SQL aggregates, and a MongoDB `aggregate`
  * document with a `$sample` stage. So profiling is offered for `"sql"`, and for `"json"` only
- * when no `queryDialect` says the JSON is some other grammar. Redis and LibreDB declare
- * `"json"` with a dialect of their own, and `"promql"` is not JSON at all; before this gate the
- * route sent every one of them the MongoDB document, which only MongoDB reads (#1085).
+ * when no `queryDialect` says the JSON is some other grammar. Redis, LibreDB and Kafka declare
+ * `"json"` with a dialect of their own, a Kafka read request being JSON of this product's own
+ * schema (#1088), and `"promql"` is not JSON at all; before this gate the route sent Redis,
+ * LibreDB and Prometheus the MongoDB document, which only MongoDB reads (#1085).
  *
  * Unknown capabilities are not a permission, for the reason `maintenanceControl` gives:
  * `/api/db/provider-meta` answers with nothing both while it is in flight and when it failed.
@@ -202,9 +203,15 @@ export function offersColumnProfiling(capabilities: ProviderCapabilities | undef
  * The two languages are named rather than `"promql"` excluded, so a language added later is not
  * offered the generator until somebody decides that it should be.
  *
+ * The `"kafka"` dialect is refused by an arm of its own, for the reason PromQL is (#1088): a topic's
+ * columns are the fixed shape of a read result, not a record an application stores, and the models
+ * written over them reject the rows a read returns, a `Date` for a timestamp that arrives as an ISO
+ * string and a record type for a value that arrives as text, base64 or a Confluent schema label.
+ *
  * Unknown capabilities are not a permission, as for `offersColumnProfiling`.
  */
 export function offersCodeGeneration(capabilities: ProviderCapabilities | undefined): boolean {
+  if (capabilities?.queryDialect === "kafka") return false;
   return capabilities?.queryLanguage === "sql" || capabilities?.queryLanguage === "json";
 }
 
@@ -217,7 +224,8 @@ export function offersCodeGeneration(capabilities: ProviderCapabilities | undefi
  * some other grammar. The dialect is read for both languages rather than for JSON alone, as
  * `offersColumnProfiling` does, so that a dialect declared on a SQL engine later refuses the
  * action until somebody writes its count. Redis and LibreDB have no count
- * statement in their command grammars, and `"promql"` is not offered it either: `count()` in
+ * statement in their command grammars, Kafka's read request reads a topic's messages and counts
+ * none (#1088), and `"promql"` is not offered it either: `count()` in
  * PromQL counts series at an instant, which is not the row count this action promises.
  *
  * A derived grouping is refused on top of the language, because a Redis `user:*` row is a

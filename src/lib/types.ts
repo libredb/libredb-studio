@@ -563,7 +563,7 @@ export interface QueryTab {
    */
   resultQuery?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

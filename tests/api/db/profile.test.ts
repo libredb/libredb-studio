@@ -56,6 +56,7 @@ mock.module("@/lib/db/factory", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/profile/route");
+const { KafkaProvider } = await import("@/lib/db/providers/stream/kafka/index");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -72,6 +73,14 @@ const mongoConnection = {
   name: "Test MongoDB",
   type: "mongodb",
   connectionString: "mongodb://localhost:27017/testdb",
+};
+
+const kafkaConnection = {
+  id: "test-kafka",
+  name: "Test Kafka",
+  type: "kafka" as const,
+  host: "localhost",
+  port: 9092,
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -544,6 +553,31 @@ describe("POST /api/db/profile", () => {
     expect(data.error).not.toContain("refusal_probe_prefix");
     expect(data.error).not.toContain("refusal_probe_field");
     expect(redisProvider.query).not.toHaveBeenCalled();
+
+    // The control: MongoDB's JSON, with no dialect, is profiled with its two statements.
+    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    expect(profiled.status).toBe(200);
+    expect(mongoProvider.query).toHaveBeenCalledTimes(2);
+  });
+
+  test("refuses a Kafka connection, whose read request is JSON of its own dialect, and sends nothing (#1088)", async () => {
+    // The provider's own declaration, so the refusal is the one a topic's profile request meets.
+    const kafka = new KafkaProvider({ ...kafkaConnection, createdAt: new Date(0) }).getCapabilities();
+    const kafkaProvider = createMockProvider({ capabilities: kafka });
+    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(kafkaProvider);
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+    const body = { connection: kafkaConnection, tablePath: ["refusal_probe_topic"], columns: ["refusal_probe_key"] };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"json" in the kafka dialect');
+    expect(data.error).not.toContain("refusal_probe_topic");
+    expect(data.error).not.toContain("refusal_probe_key");
+    expect(kafkaProvider.query).not.toHaveBeenCalled();
 
     // The control: MongoDB's JSON, with no dialect, is profiled with its two statements.
     const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
