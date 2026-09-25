@@ -152,6 +152,8 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   //
   // The same workload reached through a different endpoint must not get a second budget -
   // re-verify and correct this comment again if guardRoute grows a new call site.
+  // Account administration (`/api/admin/accounts`) and TOTP enrolment (`/api/auth/totp`) share
+  // this bucket: both read and write the storage database.
   //
   // The storage family joined when AU1 moved it onto the shared 401 (2026-08-22), and that gave it
   // a limiter it never had. It belongs here rather than in a bucket of its own: under

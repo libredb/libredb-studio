@@ -4,7 +4,8 @@
  * WAL mode enabled for concurrent read performance.
  */
 
-import type { ServerStorageProvider, StorageCollection, StorageData } from "../types";
+import { accountFromRow, type AccountRow } from "../account-row";
+import type { ServerStorageProvider, StorageCollection, StorageData, StoredAccount } from "../types";
 import { STORAGE_COLLECTIONS } from "../types";
 import type BetterSqlite3 from "better-sqlite3";
 import { logger } from "@/lib/logger";
@@ -61,7 +62,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       // Enable WAL mode for better concurrent read performance
       this.db!.pragma("journal_mode = WAL");
 
-      // Create table
+      // user_storage is per-user product data. accounts is the local identity registry (#784).
       this.db!.exec(`
         CREATE TABLE IF NOT EXISTS user_storage (
           user_id    TEXT NOT NULL,
@@ -69,6 +70,16 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
           data       TEXT NOT NULL,
           updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           PRIMARY KEY (user_id, collection)
+        );
+        CREATE TABLE IF NOT EXISTS accounts (
+          email         TEXT PRIMARY KEY,
+          password_hash TEXT NOT NULL,
+          role          TEXT NOT NULL,
+          totp_secret   TEXT,
+          totp_pending  TEXT,
+          disabled      INTEGER NOT NULL DEFAULT 0,
+          created_at    TEXT NOT NULL,
+          updated_at    TEXT NOT NULL
         )
       `);
     } catch (error) {
@@ -147,6 +158,64 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       }
     });
     tx();
+  }
+
+  async listAccounts(): Promise<StoredAccount[]> {
+    this.ensureDb();
+    const rows = this.db!.prepare(
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+       FROM accounts ORDER BY email`,
+    ).all() as AccountRow[];
+    return rows.map(accountFromRow);
+  }
+
+  async getAccount(email: string): Promise<StoredAccount | null> {
+    this.ensureDb();
+    const row = this.db!.prepare(
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+       FROM accounts WHERE email = ?`,
+    ).get(email) as AccountRow | undefined;
+    return row ? accountFromRow(row) : null;
+  }
+
+  async insertAccount(account: StoredAccount): Promise<void> {
+    this.ensureDb();
+    this.db!.prepare(
+      `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      account.email,
+      account.passwordHash,
+      account.role,
+      account.totpSecret,
+      account.totpPending,
+      account.disabled ? 1 : 0,
+      account.createdAt,
+      account.updatedAt,
+    );
+  }
+
+  async updateAccount(account: StoredAccount): Promise<void> {
+    this.ensureDb();
+    this.db!.prepare(
+      `UPDATE accounts
+       SET password_hash = ?, role = ?, totp_secret = ?, totp_pending = ?, disabled = ?, updated_at = ?
+       WHERE email = ?`,
+    ).run(
+      account.passwordHash,
+      account.role,
+      account.totpSecret,
+      account.totpPending,
+      account.disabled ? 1 : 0,
+      account.updatedAt,
+      account.email,
+    );
+  }
+
+  async deleteAccount(email: string): Promise<void> {
+    this.ensureDb();
+    this.db!.prepare("DELETE FROM accounts WHERE email = ?").run(email);
+    this.db!.prepare("DELETE FROM user_storage WHERE user_id = ?").run(email);
   }
 
   async isHealthy(): Promise<boolean> {

@@ -382,4 +382,96 @@ describe("PostgresStorageProvider", () => {
     await provider.initialize();
     expect(mockPool.listenerCount("error")).toBe(1);
   });
+
+  test("initialize creates the accounts table", async () => {
+    await provider.initialize();
+    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS accounts");
+  });
+
+  test("lists and reads accounts", async () => {
+    await provider.initialize();
+    mockQuery.mockClear();
+    const row = {
+      email: "ada@example.com",
+      password_hash: "scrypt$16384$8$1$salt$key",
+      role: "admin",
+      totp_secret: "SECRET",
+      totp_pending: null,
+      disabled: 1,
+      created_at: "2026-09-25T00:00:00.000Z",
+      updated_at: "2026-09-25T00:00:00.000Z",
+    };
+    mockQuery.mockResolvedValueOnce({ rows: [row] });
+    const listed = await provider.listAccounts();
+    expect(listed).toEqual([
+      {
+        email: "ada@example.com",
+        passwordHash: row.password_hash,
+        role: "admin",
+        totpSecret: "SECRET",
+        totpPending: null,
+        disabled: true,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    ]);
+    expect((mockQuery.mock.calls as unknown[][])[0][0]).toContain("FROM accounts");
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ ...row, role: "user", disabled: 0, totp_secret: null }] });
+    const one = await provider.getAccount("ada@example.com");
+    expect(one?.role).toBe("user");
+    expect(one?.disabled).toBe(false);
+    expect(one?.totpSecret).toBeNull();
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    expect(await provider.getAccount("missing@example.com")).toBeNull();
+  });
+
+  test("rejects an accounts row whose role is not admin or user", async () => {
+    await provider.initialize();
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          email: "ada@example.com",
+          password_hash: "h",
+          role: "owner",
+          totp_secret: null,
+          totp_pending: null,
+          disabled: 0,
+          created_at: "t",
+          updated_at: "t",
+        },
+      ],
+    });
+    await expect(provider.listAccounts()).rejects.toThrow(/role owner/);
+  });
+
+  test("writes account inserts, updates and deletes", async () => {
+    await provider.initialize();
+    mockQuery.mockClear();
+    const account = {
+      email: "ada@example.com",
+      passwordHash: "scrypt$hash",
+      role: "user" as const,
+      totpSecret: null,
+      totpPending: null,
+      disabled: false,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    await provider.insertAccount(account);
+    await provider.updateAccount({ ...account, disabled: true });
+    await provider.deleteAccount(account.email);
+    const sql = (mockQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+    expect(sql[0]).toContain("INSERT INTO accounts");
+    expect(sql[1]).toContain("UPDATE accounts");
+    expect(sql[2]).toContain("DELETE FROM accounts");
+    expect(sql[3]).toContain("DELETE FROM user_storage");
+  });
+
+  test("account reads fail before initialize", async () => {
+    const fresh = new PostgresStorageProvider("postgresql://localhost:5432/test");
+    await expect(fresh.listAccounts()).rejects.toThrow(/not initialized/);
+  });
 });

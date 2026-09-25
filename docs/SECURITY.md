@@ -407,9 +407,11 @@ These are real, current, and not oversights. Each is a decision with a reason.
   and the boundary between them is not a policy engine. Target allowlists, per-provider command
   capabilities and a locked-down deployment profile are a coherent direction and are not
   implemented.
-- **Local login credentials are not hashed.** They arrive as `ADMIN_PASSWORD` and `USER_PASSWORD`
-  environment variables, so the environment already holds the secret. Rate limiting (1.2) and the
-  constant-time comparison (1.5) address the reachable part of the risk.
+- **Env-mode local passwords are not hashed.** With `STORAGE_PROVIDER=local` they arrive as
+  `ADMIN_PASSWORD` and `USER_PASSWORD`, so the environment already holds the secret. On `sqlite` or
+  `postgres` those variables only seed the account registry, and the stored value is scrypt
+  (N=16384, r=8, p=1); see [STORAGE.md](./STORAGE.md#accounts). Rate limiting (1.2) and the
+  constant-time comparison (1.5) still apply to both paths.
 - **Rate limiting is per process and every bucket is keyed on something the caller supplies.** See
   [`docs/BACKLOG.md`](./BACKLOG.md), entries H11 and H13. Two variables decide what that something
   is. `TRUST_PROXY_HEADERS` (default `true`) derives the client address from `X-Forwarded-For`,

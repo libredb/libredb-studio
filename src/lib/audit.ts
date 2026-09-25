@@ -53,7 +53,9 @@ export type AuditEventType =
   | "login_failure"
   | "logout"
   | "permission_denied"
-  | "rate_limit_exceeded";
+  | "rate_limit_exceeded"
+  /** A change to a stored local account: create, role, disable, delete, password, TOTP. */
+  | "account";
 
 /**
  * Why a reason is a closed union and never free text: it is the mechanism that makes redaction
@@ -71,6 +73,8 @@ export type AuditReason =
   | "mfa_required"
   /** A correct password, but the second factor did not verify — a wrong, expired or replayed code. */
   | "bad_totp"
+  /** A stored local account was created, changed, or removed. The verb is `action`; the subject is `target`. */
+  | "account_changed"
   | "malformed_body"
   | "no_session"
   | "insufficient_role"

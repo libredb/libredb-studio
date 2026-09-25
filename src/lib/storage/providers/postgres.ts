@@ -3,7 +3,8 @@
  * Uses the existing `pg` package (already a project dependency).
  */
 
-import type { ServerStorageProvider, StorageCollection, StorageData } from "../types";
+import { accountFromRow, type AccountRow } from "../account-row";
+import type { ServerStorageProvider, StorageCollection, StorageData, StoredAccount } from "../types";
 import { STORAGE_COLLECTIONS } from "../types";
 import { logger } from "@/lib/logger";
 
@@ -53,6 +54,16 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           data       TEXT NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (user_id, collection)
+        );
+        CREATE TABLE IF NOT EXISTS accounts (
+          email         TEXT PRIMARY KEY,
+          password_hash TEXT NOT NULL,
+          role          TEXT NOT NULL,
+          totp_secret   TEXT,
+          totp_pending  TEXT,
+          disabled      INTEGER NOT NULL DEFAULT 0,
+          created_at    TEXT NOT NULL,
+          updated_at    TEXT NOT NULL
         )
       `);
     } catch (error) {
@@ -132,6 +143,68 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     } finally {
       client.release();
     }
+  }
+
+  async listAccounts(): Promise<StoredAccount[]> {
+    this.ensurePool();
+    const { rows } = await this.pool!.query(
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+       FROM accounts ORDER BY email`,
+    );
+    return (rows as AccountRow[]).map(accountFromRow);
+  }
+
+  async getAccount(email: string): Promise<StoredAccount | null> {
+    this.ensurePool();
+    const { rows } = await this.pool!.query(
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+       FROM accounts WHERE email = $1`,
+      [email],
+    );
+    const row = (rows as AccountRow[])[0];
+    return row ? accountFromRow(row) : null;
+  }
+
+  async insertAccount(account: StoredAccount): Promise<void> {
+    this.ensurePool();
+    await this.pool!.query(
+      `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        account.email,
+        account.passwordHash,
+        account.role,
+        account.totpSecret,
+        account.totpPending,
+        account.disabled ? 1 : 0,
+        account.createdAt,
+        account.updatedAt,
+      ],
+    );
+  }
+
+  async updateAccount(account: StoredAccount): Promise<void> {
+    this.ensurePool();
+    await this.pool!.query(
+      `UPDATE accounts
+       SET password_hash = $1, role = $2, totp_secret = $3, totp_pending = $4, disabled = $5, updated_at = $6
+       WHERE email = $7`,
+      [
+        account.passwordHash,
+        account.role,
+        account.totpSecret,
+        account.totpPending,
+        account.disabled ? 1 : 0,
+        account.updatedAt,
+        account.email,
+      ],
+    );
+  }
+
+  async deleteAccount(email: string): Promise<void> {
+    this.ensurePool();
+    await this.pool!.query("DELETE FROM accounts WHERE email = $1", [email]);
+    await this.pool!.query("DELETE FROM user_storage WHERE user_id = $1", [email]);
   }
 
   async isHealthy(): Promise<boolean> {

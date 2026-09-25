@@ -166,6 +166,17 @@ CREATE TABLE IF NOT EXISTS user_storage (
 
 -- Recommended: enable WAL mode for concurrent read performance
 PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS accounts (
+  email         TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL,
+  totp_secret   TEXT,
+  totp_pending  TEXT,
+  disabled      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 ```
 
 ---
@@ -328,6 +339,17 @@ CREATE TABLE IF NOT EXISTS user_storage (
 
 -- Optional: index for faster lookups by user
 CREATE INDEX IF NOT EXISTS idx_user_storage_user_id ON user_storage (user_id);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  email         TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL,
+  totp_secret   TEXT,
+  totp_pending  TEXT,
+  disabled      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 ```
 
 #### Minimal Privileges (When Table Already Exists)
@@ -337,6 +359,7 @@ If a DBA creates the table, the app user only needs:
 ```sql
 -- Grant only data access (no DDL needed)
 GRANT SELECT, INSERT, UPDATE ON user_storage TO libredb_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON accounts TO libredb_app;
 ```
 
 ---
@@ -551,7 +574,7 @@ If the key is gone, re-enter the affected passwords; everything else about the c
 
 ## Database Schema Reference
 
-Both SQLite and PostgreSQL use the same single-table design. The table is auto-created on first request, but the full DDL is provided here for reference.
+Both SQLite and PostgreSQL use the same two tables. They are auto-created on first request, but the full DDL is provided here for reference. `user_storage` holds each person's product data. `accounts` holds local email/password identities when the server store is on.
 
 ### SQLite
 
@@ -565,6 +588,17 @@ CREATE TABLE IF NOT EXISTS user_storage (
 );
 
 PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS accounts (
+  email         TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL,
+  totp_secret   TEXT,
+  totp_pending  TEXT,
+  disabled      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 ```
 
 ### PostgreSQL
@@ -580,6 +614,17 @@ CREATE TABLE IF NOT EXISTS user_storage (
 
 -- Optional: index for faster lookups by user
 CREATE INDEX IF NOT EXISTS idx_user_storage_user_id ON user_storage (user_id);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  email         TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL,
+  totp_secret   TEXT,
+  totp_pending  TEXT,
+  disabled      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 ```
 
 ### Schema Explanation
@@ -682,7 +727,7 @@ this product does not rewrite it in place.
 
 ### 3.2 Server Database Schema
 
-Both SQLite and PostgreSQL use the same logical schema — a single table with collection-based JSON blobs:
+Both SQLite and PostgreSQL use the same logical schema — `user_storage` holds collection-based JSON blobs, and `accounts` holds the local identity registry:
 
 ```sql
 CREATE TABLE IF NOT EXISTS user_storage (
@@ -692,9 +737,20 @@ CREATE TABLE IF NOT EXISTS user_storage (
   updated_at TEXT/TIMESTAMPTZ NOT NULL,     -- Last modification time
   PRIMARY KEY (user_id, collection)
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+  email         TEXT PRIMARY KEY,  -- local login email; also the user_storage user_id
+  password_hash TEXT NOT NULL,     -- scrypt encoding, never the password
+  role          TEXT NOT NULL,     -- 'admin' or 'user'
+  totp_secret   TEXT,              -- confirmed TOTP secret, or NULL
+  totp_pending  TEXT,              -- enrolment that has not been confirmed; login ignores it
+  disabled      INTEGER NOT NULL,  -- 1 rejects login and keeps this user's rows
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 ```
 
-This design is intentionally simple:
+`user_storage` is intentionally simple:
 - **No schema migrations** needed when adding new collections
 - **One row per user per collection** — efficient upsert
 - **JSON blobs** keep the server storage schema-agnostic
@@ -823,6 +879,11 @@ interface ServerStorageProvider {
   mergeData(userId: string, data: Partial<StorageData>): Promise<void>;
   isHealthy(): Promise<boolean>;
   close(): Promise<void>;
+  listAccounts(): Promise<StoredAccount[]>;
+  getAccount(email: string): Promise<StoredAccount | null>;
+  insertAccount(account: StoredAccount): Promise<void>;
+  updateAccount(account: StoredAccount): Promise<void>;
+  deleteAccount(email: string): Promise<void>; // also deletes that email's user_storage rows
 }
 ```
 
@@ -1060,6 +1121,16 @@ Every row in `user_storage` is scoped by `user_id`:
 ### OIDC Users
 
 OIDC users (Auth0, Keycloak, Okta, Azure AD) have their `preferred_username` or email claim mapped to the same `username` field used as `user_id`. See [OIDC.md](./OIDC.md) for SSO configuration — it pairs well with server storage for team deployments.
+
+### Accounts
+
+`STORAGE_PROVIDER=sqlite` or `postgres` keeps local email/password identities in an `accounts` table next to `user_storage`. `STORAGE_PROVIDER=local` has no server database, so it keeps using `ADMIN_PASSWORD` and the optional `USER_PASSWORD` on every login. `NEXT_PUBLIC_AUTH_PROVIDER=oidc` does not read or write `accounts`: the issuer is the only identity, and a stored role cannot deny or elevate someone the issuer already named.
+
+On the first start with an empty table, `ADMIN_EMAIL` / `ADMIN_PASSWORD` (and `USER_EMAIL` / `USER_PASSWORD` when the password is set) are copied in and then left alone. Passwords are stored as scrypt (RFC 7914) with N=16384, r=8, p=1, a 16-byte salt and a 32-byte key, encoded `scrypt$<N>$<r>$<p>$<salt>$<key>`. A stored hash whose parameters differ is rewritten with the current parameters after a successful login. A failed login does not write.
+
+Further accounts are created under Admin → Accounts. Disabling an account stops login and leaves its `user_storage` rows in place, so enabling it again restores that person's connections. Deleting an account removes those rows as well, so creating the same email later does not inherit them. The last enabled admin cannot be disabled, demoted, or deleted.
+
+TOTP secrets that were set in the environment are copied onto the seeded rows. After that, enrolment is per account. See [MFA.md](./MFA.md#when-accounts-live-in-the-server-store).
 
 ---
 

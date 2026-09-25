@@ -166,4 +166,36 @@ describe("the warning", () => {
       warn.mockRestore();
     }
   });
+
+  test("account registry methods pass through without encryption", async () => {
+    const account = {
+      email: "ada@example.com",
+      passwordHash: "scrypt$hash",
+      role: "admin" as const,
+      totpSecret: null,
+      totpPending: null,
+      disabled: false,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    const listAccounts = mock(async () => [account]);
+    const getAccount = mock(async () => account);
+    const insertAccount = mock(async () => {});
+    const updateAccount = mock(async () => {});
+    const deleteAccount = mock(async () => {});
+    const inner = stubProvider({ listAccounts, getAccount, insertAccount, updateAccount, deleteAccount });
+    const wrapped = withCredentialEncryption(inner);
+
+    expect(await wrapped.listAccounts()).toEqual([account]);
+    expect(await wrapped.getAccount(account.email)).toEqual(account);
+    await wrapped.insertAccount(account);
+    await wrapped.updateAccount(account);
+    await wrapped.deleteAccount(account.email);
+
+    expect(listAccounts).toHaveBeenCalledTimes(1);
+    expect(getAccount).toHaveBeenCalledWith(account.email);
+    expect(insertAccount).toHaveBeenCalledWith(account);
+    expect(updateAccount).toHaveBeenCalledWith(account);
+    expect(deleteAccount).toHaveBeenCalledWith(account.email);
+  });
 });
