@@ -628,6 +628,9 @@ mock.module("ioredis", () => {
         this._inMulti = false;
         return "OK";
       }
+      // A server's `SELECT` moves THIS connection, the same as the method form above, so a
+      // provider that let it through `query()` would move the session here too (#1107).
+      if (cmd === "SELECT" && !this._inMulti) return this.select(Number(args[0]));
       if (cmd === "PING" && pingFailure !== null) throw pingFailure;
       // Inside a `MULTI` the server answers the status "QUEUED" INSTEAD of the command's
       // own reply and runs nothing, every command alike except the ones above. Measured on
@@ -1242,6 +1245,22 @@ describe("RedisProvider", () => {
       expect(result.rows).toBeArray();
       expect(result.rows[0].result).toBe("hello-world");
     });
+
+    test.each(["SELECT 0", '{"command":"select","args":["0"]}', "RESET", "AUTH default x", "HELLO 3"])(
+      "%s is refused and the next query still reads the configured database (#1107)",
+      async (statement) => {
+        await provider.disconnect();
+        provider = new RedisProvider({ ...baseConfig, database: "2" });
+        await provider.connect();
+        capturedCalls.length = 0;
+
+        await expect(provider.query(statement)).rejects.toThrow(/shared connection/);
+        expect(capturedCalls).toEqual([]);
+
+        await provider.query("GET mykey");
+        expect(openedClients.at(-1)!.database).toBe(2);
+      },
+    );
 
     test("empty command throws QueryError", async () => {
       await expect(provider.query("   ")).rejects.toThrow();
