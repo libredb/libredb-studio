@@ -31,7 +31,12 @@ export interface ShapeLimits {
 /** The three fields rows are ordered by, which a shaped row keeps after its record is dropped. */
 export type RecordOrder = Pick<KafkaRecord, "partition" | "offset" | "timestamp">;
 
-/** Timestamp, then partition, then offset: within one partition that is log order (spec 5.2). */
+/**
+ * Timestamp, then partition, then offset (spec 5.2). Within one partition that is log order
+ * only while the timestamps rise with the offsets, as under LogAppendTime or one producer's
+ * clock: a producer's CreateTime can go back along the log, and the rows then follow the
+ * timestamps, not the offsets.
+ */
 export function compareRecords(a: RecordOrder, b: RecordOrder): number {
   if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? -1 : 1;
   if (a.partition !== b.partition) return a.partition - b.partition;

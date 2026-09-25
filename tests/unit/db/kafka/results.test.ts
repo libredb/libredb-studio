@@ -179,6 +179,14 @@ describe("compareRecords", () => {
     expect(rows.map((r) => `${r.timestamp}/${r.partition}/${r.offset}`)).toEqual(["1/1/3", "1/1/8", "1/2/9", "2/0/1"]);
   });
 
+  test("within one partition whose CreateTime goes back along the log, rows follow the timestamps, not log order (spec 5.2)", () => {
+    const timestamps = [50, 60, 10, 20, 30];
+    const rows = timestamps
+      .map((timestamp, offset) => ({ timestamp: BigInt(timestamp), partition: 0, offset: BigInt(offset) }))
+      .sort(compareRecords);
+    expect(rows.map((r) => String(r.offset))).toEqual(["2", "3", "4", "0", "1"]);
+  });
+
   test("offsets past 2^53 that differ only in the last digit still order", () => {
     const a = { timestamp: BigInt(1), partition: 0, offset: BigInt("9007199254740993") };
     const b = { timestamp: BigInt(1), partition: 0, offset: BigInt("9007199254740992") };
