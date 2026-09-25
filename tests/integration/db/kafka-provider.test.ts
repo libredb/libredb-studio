@@ -14,12 +14,16 @@
  * `docker/kafka/seed-binary.ts`; each fixture's `$captured` key holds its image, cluster id,
  * capture date and the call it answers, and `tests/fixtures/kafka/README.md` lists them.
  *
- * Four answers are BUILT from a capture rather than read from one, and each says so where it is
- * built: topic configs for a topic other than `orders`, and the description of a classic group
- * other than `lag-classic`, which answer the one captured shape under the name asked; the
- * transactional topic's fetch, which gets back the aborted batch the client's own filter dropped
- * from the capture; and every answer a test states inline, such as a broker list, a slow fetch or
- * a record past the result budget. The four transport and authorization failures are captures.
+ * Five answers are BUILT from a capture rather than read from one, and each says so where it is
+ * built: topic configs for a topic other than `orders`, broker configs for a broker other than 1,
+ * and the description of a classic group other than `lag-classic`, which answer the one captured
+ * shape under the name asked; the transactional topic's fetch, which gets back the aborted batch
+ * the client's own filter dropped from the capture; and every answer a test states inline, such as
+ * a broker list, a slow fetch or a record past the result budget. One capture answers a wider
+ * request than the one it was taken for: the log-dir capture named `orders` alone, so the
+ * provider's request, which names every listed topic, gets orders' 5,503 bytes on broker 1's one
+ * log dir, and every size below is that one topic's, not the seeded cluster's. The four transport
+ * and authorization failures are captures.
  *
  * A section number below, "spec 5.1" for example, is a section of #1088's design.
  */
@@ -135,16 +139,18 @@ function fetchAnswerFor(topics: unknown): unknown {
 function brokerLib(overrides: Record<string, Answer> = {}) {
   return recordedLib({
     "admin.metadata": metadataFor,
-    // Topic orders and broker 1 were captured. Any other topic answers orders' captured configs
-    // under its own name, the shape a broker answers for any topic it holds.
+    // Topic orders and broker 1 were captured. Any other topic answers orders' captured configs, and
+    // any other broker broker 1's, under its own name: the shape a broker answers for any resource.
     "admin.describeConfigs": (request) => {
       const [resource] = (request as { resources: Array<{ resourceType: number; resourceName: string }> }).resources;
-      const captured =
-        resource.resourceType === BROKER_RESOURCE ? `configs-broker-${resource.resourceName}` : "configs-topic-orders";
+      const captured = resource.resourceType === BROKER_RESOURCE ? "configs-broker-1" : "configs-topic-orders";
       const answer = kafkaFixture<LibConfigResource[]>(captured);
       for (const entry of answer) entry.resourceName = resource.resourceName;
       return answer;
     },
+    // The capture of a request that named orders alone, whatever the request names: every size these
+    // tests read is orders' 5,503 bytes on broker 1's one log dir, not the seeded cluster's.
+    "admin.describeLogDirs": () => kafkaFixture("log-dirs"),
     // Only lag-classic's description was captured. lag-partial is also an Empty classic group with
     // no members (list-groups), so it answers the same shape under its own id.
     "admin.describeGroups": (request) => {
@@ -238,6 +244,9 @@ describe("connect and disconnect", () => {
     expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
     expect(provider.isConnected()).toBe(false);
     await expect(provider.query('{"topic":"orders"}')).rejects.toThrow("Provider is not connected");
+    // It holds no client afterwards, so a disconnect has nothing left to close (spec 3.6 K8).
+    await provider.disconnect();
+    expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
   });
 
   test("a connect the broker does not answer in time is a TimeoutError carrying the connection's query timeout", async () => {
@@ -765,41 +774,109 @@ describe("declarations", () => {
     });
   });
 
-  test("the statement language plan mode states carries the read request's own schema, and its examples run", () => {
-    // Plan mode's only per-engine fact about how a statement is written is this sentence, and
-    // the request schema is this product's own, so the sentence carries it (spec 6.3).
+  describe("the statement language plan mode states (spec 6.3)", () => {
+    // Plan mode states this sentence verbatim ("Write it in ..."), and it is the only per-engine fact
+    // about how a statement is written that plan mode's prompt carries, while the request schema is
+    // this product's own; so the sentence carries the schema, and each part of it is held to the
+    // parser it describes.
     const text = new KafkaProvider(CONNECTION).getLabels().statementLanguage ?? "";
-    for (const key of [
-      '"topic"',
-      '"partition"',
-      '"from"',
-      '"limit"',
-      '"earliest"',
-      '"latest"',
-      '{"offset"',
-      '{"timestamp"',
-    ]) {
-      expect(text).toContain(key);
-    }
-    // The defaults it states are the parser's, read from the parser rather than restated.
-    const defaults = parseReadRequest('{"topic":"orders"}', DEFAULT_QUERY_LIMIT);
-    expect(text).toContain(`"from" defaults to "${defaults.from.kind}", "limit" to ${defaults.limit}`);
-    expect(text).toContain(`"limit": <1 to ${DEFAULT_QUERY_LIMIT}>`);
-    // Every example it shows, cut at its matching brace, is a request the provider's parser accepts.
-    const examples: string[] = [];
-    const opening = '{"topic": "orders"';
-    for (let start = text.indexOf(opening); start !== -1; start = text.indexOf(opening, start + 1)) {
+    const parse = (request: string) => parseReadRequest(request, DEFAULT_QUERY_LIMIT);
+    const OPENING = "the JSON read request this editor executes - one object, ";
+
+    /** The text from the brace at `start` to the brace that closes it. */
+    const bracedAt = (start: number): string => {
+      if (text[start] !== "{") throw new Error(`no brace opens at ${start}`);
       let depth = 0;
       for (let end = start; end < text.length; end++) {
         if (text[end] === "{") depth++;
-        if (text[end] === "}" && --depth === 0) {
-          examples.push(text.slice(start, end + 1));
-          break;
-        }
+        if (text[end] === "}" && --depth === 0) return text.slice(start, end + 1);
       }
-    }
-    expect(examples).toHaveLength(2);
-    for (const example of examples) expect(() => parseReadRequest(example, DEFAULT_QUERY_LIMIT)).not.toThrow();
+      throw new Error(`no brace closes the one at ${start}`);
+    };
+
+    test('its shape names the four keys and every form of "from", and each form it shows is a request the parser reads', () => {
+      expect(text.startsWith(OPENING)).toBe(true);
+      // The shape, each placeholder filled as a request fills it, and none left over.
+      const filled = bracedAt(OPENING.length)
+        .replace('"<topic name>"', '"orders"')
+        .replaceAll("<n>", "0")
+        .replace('"<ISO-8601 with a zone>"', '"2026-09-23T00:00:00Z"')
+        .replace(`<1 to ${DEFAULT_QUERY_LIMIT}>`, String(DEFAULT_QUERY_LIMIT));
+      expect(filled).not.toContain("<");
+      const forms = /"from": (.+), "limit"/.exec(filled)?.[1] ?? "";
+      expect(forms).not.toBe("");
+      const requests = forms.split(" | ").map((form) => parse(filled.replace(forms, form)));
+      expect(requests.map((request) => request.from.kind)).toEqual(["earliest", "latest", "offset", "timestamp"]);
+      for (const request of requests) {
+        expect(request).toMatchObject({ topic: "orders", partition: 0, limit: DEFAULT_QUERY_LIMIT });
+      }
+      // One object, and an instant with a zone, as the shape says: the parser refuses the rest.
+      expect(() => parse('[{"topic":"orders"},{"topic":"txn"}]')).toThrow("one JSON object");
+      expect(() => parse('{"topic":"orders","from":{"timestamp":"2026-09-23T00:00:00"}}')).toThrow(
+        "ISO-8601 with a zone",
+      );
+    });
+
+    test('it says only "topic" is required, the defaults and the maximum the parser applies, and that an offset needs a partition', () => {
+      // The defaults are read from the parser rather than restated.
+      const defaults = parse('{"topic":"orders"}');
+      expect(text).toContain(', of which only "topic" is required: ');
+      expect(text).toContain(`"from" defaults to "${defaults.from.kind}", "limit" to ${defaults.limit}`);
+      expect(text).toContain(`"limit": <1 to ${DEFAULT_QUERY_LIMIT}>`);
+      expect(text).toContain('"partition" is required with an offset');
+      // The parser's own rules, which those clauses state.
+      expect(() => parse('{"partition":0,"from":"earliest","limit":1}')).toThrow('"topic" is required');
+      expect(() => parse(`{"topic":"orders","limit":${DEFAULT_QUERY_LIMIT + 1}}`)).toThrow(
+        `"limit" must be a whole number from 1 to ${DEFAULT_QUERY_LIMIT}`,
+      );
+      expect(() => parse('{"topic":"orders","from":{"offset":5}}')).toThrow('needs a "partition"');
+    });
+
+    test("every example it shows, cut at its matching brace, is a request the parser reads", () => {
+      const opening = '{"topic": "orders"';
+      const examples: string[] = [];
+      for (let start = text.indexOf(opening); start !== -1; start = text.indexOf(opening, start + 1)) {
+        examples.push(bracedAt(start));
+      }
+      expect(examples).toHaveLength(2);
+      for (const example of examples) expect(() => parse(example)).not.toThrow();
+    });
+
+    test("it says no other key is taken, and the parser refuses as a key every other name the inventory lists for a topic", async () => {
+      // Plan mode's non-SQL contract says to use no name that is not in the inventory, which lists a
+      // topic's columns; without this clause it steers a model to "offset" and "timestamp" as
+      // top-level keys, which the parser refuses (spec 6.3).
+      expect(text).toContain(" - and no other key: ");
+      expect(text).toContain('"offset" and "timestamp" go inside "from", never at the top level');
+      expect(text).toContain(
+        "the inventory's other columns (key, value, headers and their encodings) are fields each message comes back with, not keys of the request",
+      );
+      expect(text).toContain("a read request reads one topic's messages, never a consumer group's lag");
+      // The columns the inventory holds for a topic, from the provider's own bulk read. The clause
+      // accounts for each of them, so a column added to the read's shape fails here first.
+      const { provider } = await connected();
+      const [topic] = (await provider.describeObjects([], "topic")).details;
+      const columns = topic.columns.map((column) => column.name);
+      expect(columns).toEqual([
+        "partition",
+        "offset",
+        "timestamp",
+        "key",
+        "key_encoding",
+        "value",
+        "value_encoding",
+        "headers",
+      ]);
+      // "partition" is a key of the request; the parser refuses every other one at the top level, by name.
+      for (const column of columns.filter((name) => name !== "partition")) {
+        expect(() => parse(`{"topic":"orders",${JSON.stringify(column)}:5}`)).toThrow(
+          `Unknown key ${JSON.stringify(column)}`,
+        );
+      }
+      // No key names a group, and "topic" names one topic.
+      expect(() => parse('{"topic":"orders","group":"lag-classic"}')).toThrow('Unknown key "group"');
+      expect(() => parse('{"topic":["orders","txn"]}')).toThrow('"topic" is required and must be a Kafka topic name');
+    });
   });
 
   test("no presence-detected method that would do nothing (spec 5.5, 7.1)", () => {
@@ -843,6 +920,8 @@ describe("monitoring", () => {
         })),
       },
     ]);
+    // And no broker config: a principal without the Describe Cluster ACL is refused them (spec 7.1, KM6).
+    expect(argsOf(recorded.calls, "admin.describeConfigs")).toEqual([]);
   });
 
   test("health survives a principal that may not read the log dirs (M-I, KM4), and fails when the brokers cannot be read", async () => {
@@ -879,16 +958,22 @@ describe("monitoring", () => {
     expect(argsOf(recorded.calls, "admin.describeLogDirs")).toEqual([]);
   });
 
-  test("the overview reads the topic count, the lowest listed broker's max.connections and the log-dir size", async () => {
-    const brokers = new Map<number, LibBroker>([
-      [3, { host: "b3", port: 9092, rack: null }],
-      [1, { host: "b1", port: 9092, rack: null }],
-      [2, { host: "b2", port: 9092, rack: null }],
-    ]);
-    // On KRaft the controller id is a random live broker (spec 4.1), here not the lowest one.
+  test("the overview reads the topic count, the lowest broker the forced read lists, its max.connections and the log-dir size", async () => {
+    const listing = (ids: number[]) =>
+      new Map(ids.map((id): [number, LibBroker] => [id, { host: `b${id}`, port: 9092, rack: null }]));
     const { provider, recorded } = await connected({
-      "admin.metadata": (request) => ({ ...metadataFor(request), brokers, controllerId: 3 }),
+      // Only a forced read is sure to reach the broker: the client answers any other from its copy,
+      // brokers included, while every topic it names is younger there than metadataMaxAge
+      // (dist/clients/base/base.js #performMetadata), so that copy can still list broker 1, which
+      // has left. On KRaft the controller id is a random live broker (spec 4.1), here not the lowest.
+      "admin.metadata": (request) => ({
+        ...metadataFor(request),
+        brokers:
+          (request as { forceUpdate?: boolean }).forceUpdate === true ? listing([4, 2, 3]) : listing([1, 2, 3, 4]),
+        controllerId: 4,
+      }),
     });
+    const sent = recorded.calls.length;
     const overview = await provider.getOverview();
     expect(overview).toEqual({
       version: "N/A",
@@ -899,15 +984,20 @@ describe("monitoring", () => {
       tableCount: ALL.topics.size,
       indexCount: 0,
     });
+    // The broker is the forced read's lowest, and that read is the overview's first call (spec 7.1).
+    expect(recorded.calls[sent]).toEqual([
+      "admin.metadata",
+      [{ topics: [], autocreateTopics: false, forceUpdate: true }],
+    ]);
     expect(
       argsOf(recorded.calls, "admin.describeConfigs").map(
         (request) => (request as { resources: Array<{ resourceType: number; resourceName: string }> }).resources,
       ),
-    ).toEqual([[{ resourceType: BROKER_RESOURCE, resourceName: "1" }]]);
+    ).toEqual([[{ resourceType: BROKER_RESOURCE, resourceName: "2" }]]);
     const empty = await connected({ "admin.metadata": (request) => ({ ...metadataFor(request), brokers: new Map() }) });
     const none = await empty.provider.getOverview().catch((e) => e);
     expect(none).toBeInstanceOf(QueryError);
-    expect(none.message).toBe("The broker's metadata listed no live broker");
+    expect(none).toMatchObject({ provider: "kafka", message: "The broker's metadata listed no live broker" });
   });
 
   test("the overview degrades per refused cluster read (KM4), and any other failure fails it", async () => {
@@ -972,7 +1062,7 @@ describe("monitoring", () => {
     expect(await provider.getIndexStats()).toEqual([]);
     const maintenance = await provider.runMaintenance("vacuum").catch((e) => e);
     expect(maintenance).toBeInstanceOf(QueryError);
-    expect(maintenance.message).toBe("Unsupported maintenance type for Kafka: vacuum");
+    expect(maintenance).toMatchObject({ provider: "kafka", message: "Unsupported maintenance type for Kafka: vacuum" });
     const refused = await connected({
       "admin.describeLogDirs": () => {
         throw libError("error-cluster-authorization");
