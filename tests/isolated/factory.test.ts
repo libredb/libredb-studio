@@ -541,6 +541,19 @@ describe("createDatabaseProvider", () => {
     expect(provider.getCapabilities().queryLanguage).toBe("promql");
   });
 
+  test('creates provider for type "kafka"', async () => {
+    // No `database`: one connection is one cluster. The constructor validates nothing and opens
+    // nothing, since the connection's rules run in connect() before any client exists, so the
+    // provider is built, and declares its language and dialect, with no broker running.
+    const conn = makeConnection("kafka", { port: 9092, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("kafka");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("kafka");
+    expect(provider.isConnected()).toBe(false);
+  });
+
   test('creates provider for type "libredb"', async () => {
     // A path the platform owns rather than a hardcoded "/tmp/...", which is not a directory
     // on Windows at all. Nothing opens this file: `createDatabaseProvider` constructs and
@@ -869,6 +882,25 @@ describe("getOrCreateProvider cache isolation", () => {
     expect(victim.isConnected()).toBe(true);
     const rows = await victim.query("SELECT card FROM customers");
     expect(rows.rows).toHaveLength(1);
+  });
+
+  test("two connections that differ only in their SASL mechanism are never handed one provider", async () => {
+    // Kafka keeps a SCRAM credential per mechanism, so the mechanism decides which stored secret
+    // the broker checks the password against: it changes who a connection authenticates as, and
+    // `credentialDigest` frames it. The field is inert on sqlite, which is what lets the real
+    // driver stand in here: only the cache key can tell these records apart.
+    const database = join(dir, "sasl-mechanism.db");
+    const record = (saslMechanism: DatabaseConnection["saslMechanism"]) =>
+      makeConnection("sqlite", { id: "seed:events", database, user: "reader", password: "same", saslMechanism });
+
+    const none = await getOrCreateProvider(record(undefined));
+    const sha256 = await getOrCreateProvider(record("SCRAM-SHA-256"));
+    const sha512 = await getOrCreateProvider(record("SCRAM-SHA-512"));
+
+    expect(new Set([none, sha256, sha512]).size).toBe(3);
+    // The control that the cache is still a cache: the same record asked for twice is one provider.
+    expect(await getOrCreateProvider(record("SCRAM-SHA-512"))).toBe(sha512);
+    expect(await getOrCreateProvider(record(undefined))).toBe(none);
   });
 });
 
@@ -1766,7 +1798,7 @@ describe("single-writer file reuse", () => {
       database: join(dir, "..", basename(dir), "borrowed.duckdb"),
     });
     // Relative TO THE CWD, deliberately, and not to the file's own directory. `fileIdentity`
-    // normalises with `path.resolve` (src/lib/db/factory.ts:376), which resolves against
+    // normalises with `path.resolve` (src/lib/db/factory.ts:385), which resolves against
     // `process.cwd()`, so a spelling relative to anything else would name a different file and
     // this assertion would fail on every platform rather than exercise the borrow.
     //

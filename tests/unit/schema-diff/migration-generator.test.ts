@@ -1,4 +1,6 @@
 import { describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
 import type { ColumnDiff, SchemaDiff } from "@/lib/schema-diff/types";
 import type { DatabaseType } from "@/lib/types";
@@ -1027,6 +1029,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     redis: "engine-has-no-foreign-key",
     libredb: "engine-has-no-foreign-key",
     prometheus: "engine-has-no-foreign-key",
+    kafka: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1134,6 +1137,8 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   libredb: { label: "LibreDB", reason: "JSON command grammar" },
   // Not a table store (#1085): a metric is what scrapes and rules write, not a declared table.
   prometheus: { label: "Prometheus", reason: "written by scrapes and recording rules" },
+  // Not a table store (#1088): a topic holds messages, and its columns are a read's fixed shape.
+  kafka: { label: "Apache Kafka", reason: "not rows with declared columns" },
 };
 
 /**
@@ -1296,9 +1301,17 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
     test(`${dialect}: modified column emits a comment naming the limitation, never PostgreSQL DDL`, () => {
       const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);
       if (
-        ["couchbase", "druid", "elasticsearch", "opensearch", "mongodb", "redis", "libredb", "prometheus"].includes(
-          dialect,
-        )
+        [
+          "couchbase",
+          "druid",
+          "elasticsearch",
+          "opensearch",
+          "mongodb",
+          "redis",
+          "libredb",
+          "prometheus",
+          "kafka",
+        ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
       } else {
@@ -1333,10 +1346,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining ten each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining eleven each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the ten needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the eleven needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1349,6 +1362,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   opensearch: false, // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
   trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
   prometheus: false, // not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  kafka: false, // a JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1376,6 +1390,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "elasticsearch",
             "opensearch",
             "prometheus",
+            "kafka",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);
@@ -1390,6 +1405,34 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
       });
     }
   }
+});
+
+/*
+  `NO_TABLE_DDL` and `NO_TRANSACTION_WRAPPER` agree, which the wrapper set's docblock claims for
+  `prometheus` and `kafka` and which no output can show: `NO_TABLE_DDL` declines the whole diff before
+  a wrapper is written, so an id missing from the wrapper set changes no text. Measured: dropping
+  either id from the wrapper set left every test above green. So the agreement is read from the
+  module's own declarations, the one place it exists.
+*/
+describe("the engines whose table DDL is declined take no wrapper either", () => {
+  const source = readFileSync(join(import.meta.dir, "../../../src/lib/schema-diff/migration-generator.ts"), "utf8");
+  const setMembers = (name: string): string[] => {
+    const declaration = new RegExp(
+      `const ${name}: ReadonlySet<DatabaseType> = new Set<DatabaseType>\\(\\[([^\\]]*)\\]\\);`,
+    );
+    const match = declaration.exec(source);
+    if (match === null) throw new Error(`${name} is not declared as a Set literal in migration-generator.ts`);
+    return [...match[1].matchAll(/"([a-z]+)"/g)].map((member) => member[1]);
+  };
+
+  test("every id NO_TABLE_DDL declines is one NO_TRANSACTION_WRAPPER leaves unwrapped", () => {
+    const declined = setMembers("NO_TABLE_DDL");
+    const unwrapped = setMembers("NO_TRANSACTION_WRAPPER");
+    // The control that both literals were read: each names an id this file classifies above.
+    expect(declined).toContain("kafka");
+    expect(unwrapped).toContain("oracle");
+    expect(declined.filter((id) => !unwrapped.includes(id))).toEqual([]);
+  });
 });
 
 // ============================================================================

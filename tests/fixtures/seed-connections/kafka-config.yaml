@@ -1,0 +1,14 @@
+version: "1"
+
+connections:
+  - id: "test-kafka"
+    name: "Test Kafka"
+    type: kafka
+    host: broker.internal
+    port: 9092
+    user: "reader"
+    password: "${TEST_KAFKA_PASSWORD}"
+    saslMechanism: SCRAM-SHA-512
+    ssl:
+      mode: verify-full
+    roles: ["*"]

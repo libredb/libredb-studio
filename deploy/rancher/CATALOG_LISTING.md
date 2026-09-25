@@ -125,16 +125,16 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 
 LibreDB Studio is an MIT-licensed, AI-assisted open source SQL IDE that connects to
 PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
-ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and
-Prometheus directly from the browser.
+ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra,
+Prometheus and Apache Kafka directly from the browser.
 
 ## Long description
 
 LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse
 schemas and run queries across PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB,
 MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino,
-Apache Cassandra and Prometheus from a single web interface, with no desktop client to
-install. Editing
+Apache Cassandra, Prometheus and Apache Kafka from a single web interface, with no desktop
+client to install. Editing
 data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL,
 Oracle, SQL Server, SQLite, libSQL and DuckDB, table creation on those seven and Apache Trino, and
 everywhere else the controls are reported as unsupported rather than offered and then
@@ -158,9 +158,9 @@ versions are documented and validated for every release.
 
 ## Key features (bullet form, if the catalog template asks for them)
 
-- Seventeen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
+- Eighteen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
   SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
-  Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Prometheus
+  Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Prometheus, Apache Kafka
 - One-click install from the Rancher Apps catalog — deployable with default values,
   zero configuration required
 - Optional AI assistance (Gemini, OpenAI, or a self-hosted model; off by default):

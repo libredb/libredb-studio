@@ -67,6 +67,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // the `timeseries/` family. A relative that speaks the same HTTP API is recorded below only
   // once a gate-4 probe has measured one, never because the API answers.
   prometheus: true,
+  // Apache Kafka (#1088): its own provider, doc and integration test, and the first member of the
+  // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
+  // once a gate-4 probe has measured one, never because the protocol answers.
+  kafka: true,
   libredb: true,
 });
 
@@ -115,6 +119,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   redis: true,
   // A server the user already runs, reached over its HTTP API.
   prometheus: true,
+  // A cluster the user already runs, reached over the Kafka protocol.
+  kafka: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.

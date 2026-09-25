@@ -86,6 +86,10 @@ describe("quoteLiteral", () => {
     // Prometheus writes PromQL, and no SQL statement is ever built for it either, so the same
     // portable claim holds for it (#1085).
     expect(quoteLiteral("a\\b", "prometheus")).toBe("'a\\b'");
+    // A Kafka read request is JSON of its own dialect (#1088), and no SQL statement is built for
+    // it either.
+    expect(quoteLiteral("a\\b", "kafka")).toBe("'a\\b'");
+    expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
   });
 
   test("falls back to the standard form when no dialect is known", () => {
@@ -152,6 +156,8 @@ describe("positionalPlaceholder", () => {
     expect(positionalPlaceholder("libredb", 1)).toBeNull();
     // PromQL binds nothing at all (#1085 5.1), so there is no placeholder to emit.
     expect(positionalPlaceholder("prometheus", 1)).toBeNull();
+    // Nor does a Kafka read request: the provider refuses bound params outright (#1088 5.1).
+    expect(positionalPlaceholder("kafka", 1)).toBeNull();
   });
 });
 

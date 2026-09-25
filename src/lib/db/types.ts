@@ -383,8 +383,15 @@ export interface ProviderCapabilities {
    * generation is unchanged; Redis declares `"redis"` because it too says
    * `queryLanguage: "json"` while speaking neither MongoDB JSON nor SQL, and
    * silently got MongoDB commands its own driver rejected (#427).
+   *
+   * `"kafka"` is the Kafka provider's (#1088): its editor text is JSON, a read request of this
+   * product's own schema, so it declares `"json"` with this dialect rather than a language of its
+   * own. A reader keyed on `"json"` alone treats that text as MongoDB, which is the #427 class, so
+   * the member lands with an explicit arm in every reader of either field, or with a test pinning
+   * that the branch it falls into is right for Kafka. Widening this published union breaks a
+   * consumer's exhaustive switch over it, which ships with a release note, as `queryLanguage`'s did.
    */
-  queryDialect?: "libredb" | "redis";
+  queryDialect?: "libredb" | "redis" | "kafka";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

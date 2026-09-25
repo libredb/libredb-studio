@@ -610,6 +610,10 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * that never closes, which is the false prompt #297 measured on Redis. Its provider
  * extends `BaseDatabaseProvider` as well.
  *
+ * `kafka` takes a JSON read request (#1088), one object naming a topic and where to read it
+ * from, which is not SQL text either: its strings escape with a backslash as a MongoDB
+ * document's do. Its provider extends `BaseDatabaseProvider` and parses the text itself.
+ *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
@@ -634,7 +638,7 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
  * gate that never asks or a gate an operator learns to click through.
  */
-const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis", "prometheus"]);
+const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis", "prometheus", "kafka"]);
 
 /**
  * Whether this dialect's query text is SQL - the question BEFORE which SQL grammar

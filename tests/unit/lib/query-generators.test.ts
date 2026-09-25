@@ -11,6 +11,8 @@ import * as generators from "@/lib/query-generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
+import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 
 // ============================================================================
 // Helpers
@@ -1315,6 +1317,75 @@ describe("PromQL tree click (#1085)", () => {
 
   test("the metric's columns never reach the click's text", () => {
     expect(generateTableQuery(["up"], promqlCaps, hostileLabelColumns)).toBe("up");
+  });
+});
+
+// ============================================================================
+// Kafka (#1088): a topic click is a JSON read request, never a MongoDB document
+// ============================================================================
+
+/** The capabilities #1088 section 6.2 gives Kafka, varied from the SQL helper only where it says. */
+const kafkaCaps = makeCaps({
+  queryLanguage: "json",
+  queryDialect: "kafka",
+  defaultPort: 9092,
+  statementTerminator: "none",
+  supportsExplain: false,
+  supportsExternalQueryLimiting: false,
+  supportsCreateTable: false,
+  supportsInlineRowEdit: false,
+  supportsMaintenance: false,
+  supportsConnectionString: false,
+  containerLevels: [],
+});
+
+describe("Kafka tree click (#1088)", () => {
+  test("a tree click on a topic reads its latest 50 messages, as one JSON read request", () => {
+    const text = generateTableQuery(["orders"], kafkaCaps);
+    expect(text).toBe(JSON.stringify({ topic: "orders", from: "latest", limit: 50 }, null, 2));
+    expect(JSON.parse(text)).toEqual({ topic: "orders", from: "latest", limit: 50 });
+    expect(text).not.toContain('"collection"');
+    // The control: the same path on a JSON engine with no dialect is the MongoDB `find` a Kafka
+    // connection would have been sent without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateTableQuery(["orders"], mongodb))).toMatchObject({
+      collection: "orders",
+      operation: "find",
+    });
+  });
+
+  test.each([
+    ["a quote", 'or"ders'],
+    ["a backslash", "or\\ders"],
+    ["a line feed", "or\nders"],
+    ["a key-shaped name", '"},{"topic":"other'],
+    ["an Object.prototype member", "__proto__"],
+  ])("a topic named with %s is written through JSON.stringify and reads back unchanged", (_label, topic) => {
+    const text = generateTableQuery([topic], kafkaCaps);
+    const request = JSON.parse(text) as Record<string, unknown>;
+    expect(Object.keys(request)).toEqual(["topic", "from", "limit"]);
+    expect(request.topic).toBe(topic);
+    expect(text).toBe(JSON.stringify({ topic, from: "latest", limit: 50 }, null, 2));
+  });
+
+  test("the topic's own segment is read, and no column reaches the text", () => {
+    // A topic row's path is one segment (no container level), and the generator reads the object's
+    // own segment whatever it is handed, as the other JSON arms do.
+    expect(JSON.parse(generateTableQuery(["app", "orders"], kafkaCaps, sampleColumns))).toEqual({
+      topic: "orders",
+      from: "latest",
+      limit: 50,
+    });
+  });
+
+  test("the click's text is a request the provider's own parser reads as is", () => {
+    // The click auto-executes, so "runs as is" is the provider's parser reading the exact text,
+    // not a claim: the latest 50 messages of the topic, across every partition.
+    expect(parseReadRequest(generateTableQuery(["orders"], kafkaCaps), DEFAULT_QUERY_LIMIT)).toEqual({
+      topic: "orders",
+      from: { kind: "latest" },
+      limit: 50,
+    });
   });
 });
 

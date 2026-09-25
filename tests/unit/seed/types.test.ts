@@ -323,3 +323,56 @@ describe("SeedConnectionSchema: Trino's schema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("SeedConnectionSchema: Kafka's SASL mechanism", () => {
+  const kafka = {
+    id: "events",
+    name: "Events",
+    type: "kafka",
+    host: "broker.internal",
+    port: 9092,
+    user: "reader",
+    password: "reader-password",
+    ssl: { mode: "verify-full" },
+    roles: ["*"],
+  };
+
+  /**
+   * The silent half zod has (#765): an undeclared key is STRIPPED, so a seeded SCRAM connection
+   * would validate, lose its mechanism, and reach the provider as a user and password with no
+   * mechanism to send them by. Nothing fails at compile time here, so it is pinned at run time.
+   */
+  it.each(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"])("carries the %s mechanism through validation", (mechanism) => {
+    const result = SeedConnectionSchema.safeParse({ ...kafka, saslMechanism: mechanism });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.saslMechanism).toBe(mechanism);
+  });
+
+  it("leaves the mechanism absent when the seed names none", () => {
+    const result = SeedConnectionSchema.safeParse({ ...kafka, user: undefined, password: undefined });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.saslMechanism).toBeUndefined();
+  });
+
+  it.each([
+    ["a mechanism the provider does not implement", "OAUTHBEARER"],
+    ["a mechanism spelled in the wrong case", "scram-sha-512"],
+    ["an empty mechanism", ""],
+  ])("rejects %s, naming the field", (_label, mechanism) => {
+    const result = SeedConnectionSchema.safeParse({ ...kafka, saslMechanism: mechanism });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["saslMechanism"]);
+  });
+
+  it("rejects an environment reference, because the field takes a literal mechanism name", () => {
+    // A mechanism names no credential and no address, so it is not one of the fields a `${ENV}`
+    // or `${vault:...}` reference is resolved in, and the file is validated before anything is.
+    const result = SeedConnectionSchema.safeParse({ ...kafka, saslMechanism: "${KAFKA_MECHANISM}" });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["saslMechanism"]);
+  });
+});

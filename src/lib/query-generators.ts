@@ -439,10 +439,11 @@ function libredbNewlineNote(base: string): string | null {
  * instead (`PREVIEW_PAGE_SIZE` in `use-tab-manager.ts`), which leaves a user-written
  * `LIMIT n` with exactly one meaning: a hard bound we do not page past.
  *
- * The two JSON-language branches keep their own bound, and that is not an exception to
- * the rule. Neither MongoDB nor Redis can be asked for page two at all
+ * The three JSON-language branches keep their own bound, and that is not an exception to
+ * the rule. None of MongoDB, Redis and Kafka can be asked for page two at all
  * (`supportsResultPagination: false`, measured), so their bound is the only one there is
- * and no control is offered that a preview cap in the text could disengage.
+ * and no control is offered that a preview cap in the text could disengage. Kafka's is
+ * the read request's own `limit` (#1088).
  *
  * The PromQL branch writes the metric's selector and no bound at all (#1085): PromQL has no row
  * bound to write, and the provider caps the series it returns (#1085, section 5.4).
@@ -473,6 +474,12 @@ export function generateTableQuery(
     if (isPrefixGroup) return redisScan(base);
     const keyType = redisKeyType(columns);
     return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(base) : ["TYPE", base]);
+  }
+  // Kafka reads a topic through a JSON read request, not a MongoDB document: without
+  // this arm a tree click would auto-execute a `find` the provider refuses (#1088 3.3).
+  // The name goes through JSON.stringify with the rest, so no topic name leaves its string.
+  if (capabilities.queryDialect === "kafka") {
+    return JSON.stringify({ topic: tableName, from: "latest", limit: 50 }, null, 2);
   }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify(

@@ -30,6 +30,7 @@ describe("fenceTagEngine", () => {
       "cassandra",
       "duckdb",
       "prometheus",
+      "kafka",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);

@@ -35,6 +35,7 @@ import {
   connectionFieldLabel,
   getDBConfig,
   isFileBased,
+  offersSshTunnel,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -89,6 +90,52 @@ function DeclaredFieldHint({ config, field }: { readonly config: DatabaseUIConfi
     <p id={fieldHintId(field)} data-testid={fieldHintId(field)} className="text-xs text-fg-muted">
       {hint}
     </p>
+  );
+}
+
+/**
+ * A connection field an engine DECLARES as a select (#1088): the choices of its `fieldOptions`
+ * after an empty "None" choice, labelled and hinted the way every other field in this panel is.
+ * The caller binds it to that field's own state, because the dialog keeps each field in a state
+ * of its own. Kafka's SASL mechanism is the one field declared this way.
+ */
+function DeclaredFieldSelect({
+  config,
+  field,
+  fallbackLabel,
+  value,
+  onChange,
+}: {
+  readonly config: DatabaseUIConfig;
+  readonly field: ConnectionField;
+  readonly fallbackLabel: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+        <Label htmlFor={field} className="text-xs font-mediumr text-fg-muted">
+          {connectionFieldLabel(config, field, fallbackLabel)}
+        </Label>
+      </div>
+      <select
+        id={field}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-describedby={describedByHint(config, field)}
+        className="h-10 w-full rounded-md bg-panel border border-hairline focus:border-brand-tint/50 transition-all text-xs text-fg px-3"
+      >
+        <option value="">None</option>
+        {(config.fieldOptions?.[field] ?? []).map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <DeclaredFieldHint config={config} field={field} />
+    </div>
   );
 }
 
@@ -177,6 +224,8 @@ export function ConnectionModal({
     setApiKeyId,
     apiKeySecret,
     setApiKeySecret,
+    saslMechanism,
+    setSaslMechanism,
 
     // SSH Tunnel
     showSSH,
@@ -242,9 +291,8 @@ export function ConnectionModal({
 
   // What an engine DECLARES for a connection field wins over this dialog's own words (#1085): an
   // engine that names a field differently says so on `DatabaseUIConfig` instead of growing another
-  // `isX` branch above. The branches above stay the fallback: Prometheus is the one entry that
-  // declares anything, so every other engine's labels below read as they did before the
-  // declaration existed.
+  // `isX` branch above. The branches above stay the fallback, so an engine that declares nothing
+  // reads below exactly as it did before the declaration existed.
   const uiConfig = getDBConfig(type);
   const databaseLabel = connectionFieldLabel(uiConfig, "database", `${databaseFieldLabel} Name`);
 
@@ -561,6 +609,23 @@ export function ConnectionModal({
                     <DeclaredFieldHint config={uiConfig} field="host" />
                     <DeclaredFieldHint config={uiConfig} field="port" />
                   </div>
+
+                  {/*
+                    Only when the engine takes it, the same rule `buildConnection` writes it by,
+                    and drawn from the engine's declaration rather than an `isX` branch: Kafka's
+                    SASL mechanism, whose None choice writes no mechanism at all.
+                  */}
+                  {takesConnectionField(type, "saslMechanism") && (
+                    <DeclaredFieldSelect
+                      config={uiConfig}
+                      field="saslMechanism"
+                      fallbackLabel="SASL Mechanism"
+                      value={saslMechanism}
+                      onChange={(value) =>
+                        setSaslMechanism(value as NonNullable<DatabaseConnection["saslMechanism"]> | "")
+                      }
+                    />
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/*
@@ -884,7 +949,7 @@ export function ConnectionModal({
             </div>
           )}
 
-          {/* SSL/TLS & SSH Panels - only for non-file-based providers */}
+          {/* SSL/TLS & SSH Panels - only for non-file-based providers, the SSH half only where offered */}
           {!isFileBased(type) && (
             <div className="space-y-2">
               {/* SSL/TLS Toggle */}
@@ -979,144 +1044,154 @@ export function ConnectionModal({
                 )}
               </AnimatePresence>
 
-              {/* SSH Tunnel Toggle */}
-              <button
-                type="button"
-                onClick={() => setShowSSH(!showSSH)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
-              >
-                <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
-                <span>SSH Tunnel</span>
-                {sshEnabled && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-purple-tint/10 text-hue-purple border border-hue-purple-tint/20">
-                    ON
-                  </span>
-                )}
-                <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showSSH && "rotate-180")} />
-              </button>
-              <AnimatePresence>
-                {showSSH && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden"
+              {/*
+                The SSH half only where the engine offers a tunnel (#1088). A Kafka client reaches
+                every broker at the address that broker advertises, which a tunnel does not carry,
+                so its TLS panel above stays and this does not; `buildConnection` reads the same
+                rule, so a tunnel switched on under another engine is not sent either.
+              */}
+              {offersSshTunnel(type) && (
+                <>
+                  {/* SSH Tunnel Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowSSH(!showSSH)}
+                    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
                   >
-                    <div className="p-3 rounded-lg border border-hue-purple-tint/10 bg-hue-purple-tint/5 space-y-3">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sshEnabled}
-                          onChange={(e) => setSSHEnabled(e.target.checked)}
-                          className="rounded border-edge bg-panel"
-                        />
-                        <span className="text-xs font-medium text-fg-secondary">Enable SSH Tunnel</span>
-                      </label>
-                      {sshEnabled && (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                            <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-mediumr text-fg-muted">SSH Host</Label>
-                              <Input
-                                value={sshHost}
-                                onChange={(e) => setSSHHost(e.target.value)}
-                                placeholder="bastion.example.com"
-                                autoComplete="off"
-                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <Label className="text-xs font-mediumr text-fg-muted">Port</Label>
-                              <Input
-                                value={sshPort}
-                                onChange={(e) => setSSHPort(e.target.value)}
-                                autoComplete="off"
-                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs font-mono"
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-mediumr text-fg-muted">Username</Label>
-                            <Input
-                              value={sshUsername}
-                              onChange={(e) => setSSHUsername(e.target.value)}
-                              placeholder="ubuntu"
-                              autoComplete="off"
-                              className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                    <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
+                    <span>SSH Tunnel</span>
+                    {sshEnabled && (
+                      <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-purple-tint/10 text-hue-purple border border-hue-purple-tint/20">
+                        ON
+                      </span>
+                    )}
+                    <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showSSH && "rotate-180")} />
+                  </button>
+                  <AnimatePresence>
+                    {showSSH && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="p-3 rounded-lg border border-hue-purple-tint/10 bg-hue-purple-tint/5 space-y-3">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={sshEnabled}
+                              onChange={(e) => setSSHEnabled(e.target.checked)}
+                              className="rounded border-edge bg-panel"
                             />
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs font-mediumr text-fg-muted">Auth Method</Label>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setSSHAuthMethod("password")}
-                                className={cn(
-                                  "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
-                                  sshAuthMethod === "password"
-                                    ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
-                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
-                                )}
-                              >
-                                Password
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSSHAuthMethod("privateKey")}
-                                className={cn(
-                                  "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
-                                  sshAuthMethod === "privateKey"
-                                    ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
-                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
-                                )}
-                              >
-                                Private Key
-                              </button>
-                            </div>
-                          </div>
-                          {sshAuthMethod === "password" ? (
-                            <div className="space-y-1.5">
-                              <Label className="text-xs font-mediumr text-fg-muted">SSH Password</Label>
-                              <Input
-                                type="password"
-                                value={sshPassword}
-                                onChange={(e) => setSSHPassword(e.target.value)}
-                                placeholder="••••••••"
-                                autoComplete="new-password"
-                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
-                              />
-                            </div>
-                          ) : (
+                            <span className="text-xs font-medium text-fg-secondary">Enable SSH Tunnel</span>
+                          </label>
+                          {sshEnabled && (
                             <div className="space-y-3">
-                              <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Private Key (PEM)</Label>
-                                <textarea
-                                  value={sshPrivateKey}
-                                  onChange={(e) => setSSHPrivateKey(e.target.value)}
-                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
-                                  rows={4}
-                                  className="w-full rounded-md bg-panel border border-hairline focus:border-hue-purple-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
-                                />
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                <div className="md:col-span-3 space-y-1.5">
+                                  <Label className="text-xs font-mediumr text-fg-muted">SSH Host</Label>
+                                  <Input
+                                    value={sshHost}
+                                    onChange={(e) => setSSHHost(e.target.value)}
+                                    placeholder="bastion.example.com"
+                                    autoComplete="off"
+                                    className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs font-mediumr text-fg-muted">Port</Label>
+                                  <Input
+                                    value={sshPort}
+                                    onChange={(e) => setSSHPort(e.target.value)}
+                                    autoComplete="off"
+                                    className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs font-mono"
+                                  />
+                                </div>
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Passphrase (optional)</Label>
+                                <Label className="text-xs font-mediumr text-fg-muted">Username</Label>
                                 <Input
-                                  type="password"
-                                  value={sshPassphrase}
-                                  onChange={(e) => setSSHPassphrase(e.target.value)}
-                                  placeholder="Key passphrase (if encrypted)"
-                                  autoComplete="new-password"
+                                  value={sshUsername}
+                                  onChange={(e) => setSSHUsername(e.target.value)}
+                                  placeholder="ubuntu"
+                                  autoComplete="off"
                                   className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                                 />
                               </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs font-mediumr text-fg-muted">Auth Method</Label>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSSHAuthMethod("password")}
+                                    className={cn(
+                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                      sshAuthMethod === "password"
+                                        ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
+                                        : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
+                                    )}
+                                  >
+                                    Password
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSSHAuthMethod("privateKey")}
+                                    className={cn(
+                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                      sshAuthMethod === "privateKey"
+                                        ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
+                                        : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
+                                    )}
+                                  >
+                                    Private Key
+                                  </button>
+                                </div>
+                              </div>
+                              {sshAuthMethod === "password" ? (
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs font-mediumr text-fg-muted">SSH Password</Label>
+                                  <Input
+                                    type="password"
+                                    value={sshPassword}
+                                    onChange={(e) => setSSHPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    autoComplete="new-password"
+                                    className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs font-mediumr text-fg-muted">Private Key (PEM)</Label>
+                                    <textarea
+                                      value={sshPrivateKey}
+                                      onChange={(e) => setSSHPrivateKey(e.target.value)}
+                                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                      rows={4}
+                                      className="w-full rounded-md bg-panel border border-hairline focus:border-hue-purple-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs font-mediumr text-fg-muted">Passphrase (optional)</Label>
+                                    <Input
+                                      type="password"
+                                      value={sshPassphrase}
+                                      onChange={(e) => setSSHPassphrase(e.target.value)}
+                                      placeholder="Key passphrase (if encrypted)"
+                                      autoComplete="new-password"
+                                      className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                                    />
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
+              )}
             </div>
           )}
 
