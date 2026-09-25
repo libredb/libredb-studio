@@ -241,9 +241,16 @@ export async function readMessages(
 
   const { plans, pastEnd } = await planPartitions(client, topic, request);
 
-  // Up to `limit` records of each partition, merged as they arrive: the first (or, for
-  // "latest", the last) `limit` records overall are among each partition's first (or last)
-  // `limit`, and the rows held are the first (or last) `limit` of those read so far.
+  // Each partition is read in log order from its start to its end, up to `limit` records: for
+  // "latest", every record of its window, its last `limit` offsets. Merged as they arrive, the
+  // rows held are the first (or, for "latest", the last) `limit` in result order of the records
+  // read so far. No record the cut at each partition leaves unread belongs among the first (or
+  // last) `limit` of all the records from every partition's start (for "latest", its earliest
+  // offset) to its end, as long as no partition's timestamps go back along its log and every
+  // "latest" window holds `limit` records or starts at its partition's earliest offset.
+  // Otherwise one can: a producer's CreateTime can go back along the log (spec 5.2), and a
+  // transaction's markers, an aborted transaction's records and compaction leave offsets of a
+  // window with no row (spec 4.3, 5.4).
   const held: HeldRows = {
     limit: request.limit,
     keepLast: request.from.kind === "latest",
