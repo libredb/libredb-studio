@@ -699,9 +699,10 @@ export function ConnectionModal({
 
                   {/*
                     Only when the engine takes it. Druid and the two search engines address
-                    a datasource or an index by name in the statement, and libSQL addresses
-                    the whole database by URL, so none of the four has a database to name
-                    here - and `buildConnection` never wrote what this box collected.
+                    a datasource or an index by name in the statement, libSQL addresses the
+                    whole database by URL, a Prometheus server holds one TSDB, and a Kafka
+                    connection is one cluster, so none of them has a database to name here -
+                    and `buildConnection` never wrote what this box collected.
                   */}
                   {takesConnectionField(type, "database") && (
                     <div className="space-y-2">

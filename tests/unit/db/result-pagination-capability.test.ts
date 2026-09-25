@@ -129,7 +129,7 @@ describe("supportsResultPagination (#816)", () => {
    * is left with a larger preview and no control". Cassandra and Elasticsearch are exactly the
    * pair whose generated `LIMIT 50` this change removed and whose flag is false, so restricting
    * the chain to `EXPECTED[type]` would have excluded the two engines the item was written
-   * about. The split below is on a capability and never on a type-id: the three JSON grammars
+   * about. The split below is on a capability and never on a type-id: the JSON grammars
    * carry their bound inside the document the generator writes, because the limiter cannot
    * reach into one.
    */

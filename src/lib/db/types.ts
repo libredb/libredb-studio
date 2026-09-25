@@ -471,13 +471,14 @@ export interface ProviderCapabilities {
    * and the reader cannot tell them apart. On PostgreSQL an empty list means this
    * schema declares none, or that the role this connection reads with cannot see the
    * ones it declares — an empty read cannot tell those two apart, which is why the
-   * agent's relations block reports neither of them as fact; on MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase it means the
-   * engine has no such constraint in its model, so no reading of any kind could ever
-   * return one. A consumer that hedges between "the schema is like that" and "the
-   * application enforces them" is wrong in BOTH branches on those six, and #414 hit
-   * that when grounding reached them. Reading `connection.type` at the consumer was
-   * the alternative and is forbidden by `CLAUDE.md`: engine behaviour is declared by
-   * the provider that has it.
+   * agent's relations block reports neither of them as fact; on an engine that declares
+   * this `false`, such as MongoDB or Kafka, it means the engine has no such constraint in
+   * its model, so no reading of any kind could ever return one. A consumer that hedges
+   * between "the schema is like that" and "the application enforces them" is wrong in BOTH
+   * branches on every such engine, and #414 hit that when grounding reached the six that
+   * declared it first: MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase. Reading
+   * `connection.type` at the consumer was the alternative and is forbidden by `CLAUDE.md`:
+   * engine behaviour is declared by the provider that has it.
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`
    * (`src/exports/types.ts`): a required field added after the fact stops every
@@ -615,11 +616,11 @@ export interface ProviderCapabilities {
    * The container levels this engine nests its objects in, outermost first (#789).
    *
    * Absent or empty means the engine has none, and that is a claim about the engine
-   * rather than a gap in the declaration: SQLite, libSQL, Elasticsearch, OpenSearch and
-   * LibreDB address every object by a bare name, so the tree draws objects directly
-   * under the connection. One level is a database, a keyspace or a bucket; two is a
-   * catalog plus a schema. The per-engine inventory each provider declares from is on
-   * the epic, issue #789.
+   * rather than a gap in the declaration: SQLite, libSQL, Elasticsearch, OpenSearch,
+   * Prometheus, Kafka and LibreDB address every object by a bare name, so the tree draws
+   * objects directly under the connection. One level is a database, a keyspace or a
+   * bucket; two is a catalog plus a schema. The per-engine inventory each provider
+   * declares from is on the epic, issue #789.
    *
    * Read it through `containerDepth()` in `src/lib/db/object-kinds.ts` and never by
    * length here, so the empty and the absent cases cannot be answered differently by
@@ -1774,12 +1775,15 @@ export interface DatabaseObject {
  *
  * The fourth is `{ count, sampledFrom }`: a number that is REAL but BOUNDED, because the
  * provider counted what a capped read saw rather than what the engine holds. It is a
- * FLOOR, so the tree badges it `1,204+` and never `1,204`. Two engines answer this way
- * and neither does so for all of its kinds, which is why the state is per KIND and not a
- * provider-wide flag: Redis counts its key groupings from a 1000-key `SCAN` while
- * `FUNCTION LIST` is complete, and LibreDB counts `table` and `collection` from a
- * persisted catalog while `keyspace` comes from the bounded key walk. MongoDB is NOT one
- * of them: its `countObjects` tallies a complete `listCollections` (#789).
+ * FLOOR, so the tree badges it `1,204+` and never `1,204`. No engine that answers this way
+ * does so for all of its kinds, which is why the state is per KIND and not a provider-wide
+ * flag: Redis counts its key groupings from a 1000-key `SCAN` while `FUNCTION LIST` is
+ * complete, LibreDB counts `table` and `collection` from a persisted catalog while
+ * `keyspace` comes from the bounded key walk, Prometheus counts its metrics from one capped
+ * label-values read while its other kinds are counted whole, and Kafka counts its topics
+ * from one listing capped at 2,000 names while its consumer groups and brokers are counted
+ * whole. MongoDB is NOT one of them: its `countObjects` tallies a complete `listCollections`
+ * (#789).
  *
  * `sampledFrom` is the provider's own sentence for what bounded the read, phrased to
  * follow "counted from": `"one 1,000-key SCAN walk"`. It is the same discipline

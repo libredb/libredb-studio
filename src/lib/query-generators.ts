@@ -428,8 +428,8 @@ function libredbNewlineNote(base: string): string | null {
  *
  * It takes the object's PATH, because that is what addresses an object; `name` is what
  * labels it (standing ruling 2). Every dialect below that addresses by qualification gets
- * the whole path, and the three that address a single key or collection get the object's
- * own segment.
+ * the whole path, and each that addresses a single key, collection, topic or metric gets
+ * the object's own segment.
  *
  * NO SQL RETURN HERE CARRIES A ROW BOUND (#816). It used to: `LIMIT 50`, `FETCH FIRST 50
  * ROWS ONLY`, `SELECT TOP 50`. Nothing downstream could then tell that preview cap from a

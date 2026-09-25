@@ -431,10 +431,10 @@ const CASSANDRA_GRAMMAR: SqlGrammar = {
  *
  * A dialect absent from this table is at the compatibility default because its
  * rule was not established, NOT because it agrees with the default. Currently
- * absent: `couchbase`, `druid`, `libredb` and the non-SQL `mongodb`, `redis` -
- * whose providers never reach these readers on the QUERY path, though the
- * confirmation gate reads their editor text as SQL only where `readsSqlText` says
- * the text IS SQL, which for those two it does not (#297). Present for one fact and
+ * absent: `couchbase`, `druid`, `libredb` and every non-SQL dialect `NON_SQL_DIALECTS`
+ * names below - whose providers never reach these readers on the QUERY path, though
+ * the confirmation gate reads their editor text as SQL only where `readsSqlText`
+ * says the text IS SQL, which for those it does not (#297). Present for one fact and
  * undecided about another: `mysql` and `oracle` carry no established BRACKET
  * reading (see the row below), `elasticsearch` carries none either - `[` is not
  * in its grammar at all - and neither search row carries a `//` reading, because

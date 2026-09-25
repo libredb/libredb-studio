@@ -209,7 +209,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   /**
    * Read no catalog when this connection opens (#765).
    *
-   * Engine-independent, unlike the five fields above: every engine has a catalog and any
+   * Engine-independent, unlike the per-engine fields above: every engine has a catalog and any
    * of them can hold an owner too big to scan on connect, so this is not gated on `type`
    * and is not behind the Advanced accordion.
    */
