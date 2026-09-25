@@ -17,6 +17,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { WIRE_COMPATIBLE_ENGINES } from "@/lib/db/compatibility";
 
 const REPO_ROOT = join(import.meta.dir, "../..");
 const LISTING_PATH = join(REPO_ROOT, "DOCKERHUB.md");
@@ -76,4 +77,20 @@ test("the sync job publishes the file this test guards", () => {
   );
 
   expect(step.with["readme-filepath"]).toBe("./DOCKERHUB.md");
+});
+
+test("the listing's relatives section names every verified relative", () => {
+  // The section says every engine that connects through another's driver is named in it, and no
+  // other test holds it to the registry: a relative whose row was left out passed every gate.
+  const start = listing.indexOf("### Engines with no provider of their own");
+  expect(start).toBeGreaterThan(-1);
+  const rest = listing.slice(start + 1);
+  const end = rest.search(/\n#{1,3} /);
+  const section = end < 0 ? rest : rest.slice(0, end);
+  // The control: the section holds its table, so an empty slice cannot pass the names below.
+  expect(section).toContain("| Engine | Connect as | Support |");
+  const missing = WIRE_COMPATIBLE_ENGINES.filter(
+    (engine) => !section.includes(`${engine.name} |`) && !section.includes(`${engine.name} ·`),
+  );
+  expect(missing.map((engine) => engine.name)).toEqual([]);
 });

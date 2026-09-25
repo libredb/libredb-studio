@@ -552,6 +552,47 @@ docker compose -f database-compose.yml --profile kafka-auth up -d kafka-auth
 `kafka-cluster` is three nodes on ports 9192 to 9194 with every topic at replication factor 3, where several brokers and `under-replicated` are seen.
 `kafka-auth` (port 19094) is TLS with SCRAM-SHA-512 and an authorizer; its principal `reader` is created after start with a password of your choice and no ACL, for the permission and plaintext refusals; the compose file's comment gives the commands.
 
+### 11.4 The live read-only check
+
+[`tests/live/kafka-read-only.ts`](../../tests/live/kafka-read-only.ts) runs a real `KafkaProvider` over every surface against the fixtures above and fails on any change to the broker's state; the runner skips `tests/live/`, so it runs by hand.
+
+```bash
+bun tests/live/kafka-read-only.ts --tripwire        # recreates and re-seeds kafka first
+bun tests/live/kafka-read-only.ts --redpanda
+bun tests/live/kafka-read-only.ts --bootstrap localhost:9192
+bun tests/live/kafka-read-only.ts --bootstrap localhost:9192 --failover
+```
+
+It snapshots the broker before and after the run: the topic and group lists, every group's committed offsets, every partition's earliest and latest offsets, the topic and broker configs, and on `kafka-auth` the ACLs, through the broker's own tools (`rpk` on Redpanda).
+Between the two it runs the counts, the three listings and one source of each kind, a read in every `from` form and of each seeded topic, the refusals of a missing topic, an out-of-range offset and `__consumer_offsets`, the three panels, the group listing and each group's lag against the broker's own CLI, two `metadata([])` calls counted as two Metadata frames at a forwarder, a bootstrap at `::1`, a read through a bootstrap forwarder that sends no Fetch frame through it, three reads at once, and the process's sockets after `disconnect()`.
+With `--tripwire` it first reads every seeded topic on a broker never asked for a group coordinator and checks that `__consumer_offsets` is still absent.
+Its log searches for an automatic topic creation and for the never-joined group id are each paired with a control that finds that kind of line in the broker's whole log.
+
+Measured on 2026-09-25: every check passed on `kafka` (57, with the tripwire), on `redpanda` (39), on `kafka-cluster` (47), and on `kafka-auth` as `reader` (7), and every snapshot after a run equalled the one before it.
+Against the provider with one rule broken at a time, the check failed each time: a `disconnect()` that closes nothing, `autocreateTopics: true`, a `metadata([])` answered from the cache, lag that ignores the committed offset, a transaction filter that keeps aborted records, and a group listing without the `consumer` type.
+
+#### Redpanda
+
+Redpanda v26.2.2 is a full relative of this provider ([README](./README.md#wire-compatible-engines)): every surface answered, with data wherever Kafka held data, and the broker's state was unchanged by the run.
+Four things read differently from Kafka.
+Max connections reads 0, no limit published, because Redpanda's DescribeConfigs answer for a broker holds no `max.connections`.
+That answer holds nine entries where Kafka 4.3.1's holds 340, so a broker's source is short.
+The Storage panel shows no usage percentage, because its DescribeLogDirs answer carries no total or usable bytes.
+Every group reads as classic, which is right there: Redpanda answers ListGroups up to v4, which carries no group type, and has no KIP-848 consumer protocol.
+
+#### Result size (KM2)
+
+Measured in a browser against `bun dev` on 2026-09-25: `{"topic":"big","from":"earliest","limit":1}` answered one row whose value was cut at `KAFKA_CELL_LIMIT`, 65,984 bytes on the wire; `{"topic":"orders","from":"earliest","limit":500}`, over records of about 2 KB each, answered 500 rows in 966,938 bytes, rendered 67 ms after the response arrived, and the grid scrolled at a mean of 47 ms a step.
+The grid stayed responsive for both, so `KAFKA_RESULT_BYTE_BUDGET` and `KAFKA_CELL_LIMIT` keep the values of [§3.6](#36-measurements).
+
+#### Several brokers, under-replication and offline partitions (KM8)
+
+On `kafka-cluster` the Brokers folder lists nodes 1, 2 and 3, each partition of `orders` is read from its own leader, and lag on the three groups equals `kafka-consumer-groups.sh --describe`.
+With node 3 stopped, `orders` reads as `under-replicated`, the Brokers folder lists nodes 1 and 2, every partition of `orders` still reads, including one whose leader moved off node 3, and the three panels answer; after the restart every topic is `ok` again, and the broker's state before the stop equalled its state after the restart.
+`offline` was reached on a throwaway single node with two log directories whose second directory was made unreadable: the partitions on it went offline within about 10 seconds.
+There the Topics listing shows the topic `offline`, its source shows its partitions with no offsets, a read of it is refused naming the leaderless partitions, and a read of a healthy topic still answers.
+The three panels do not answer there: the broker answers DescribeLogDirs for the failed directory with `KAFKA_STORAGE_ERROR`, and the overview, health and storage fail with that error (`docs/BACKLOG.md` D125).
+
 ---
 
 ## 12. Usage examples
@@ -610,6 +651,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **No ksqlDB and no SQL over Kafka**: ksqlDB's licence forbids offering it as a competing service, most clusters do not run it, and its queries create server-side groups and topics; SQL over Kafka, if ever wanted, is a separate type-id.
 - **No agent execute mode for read requests**, out of scope for the whole #424 epic; plan mode grounds through the object surface and drafts a read request for the user to run.
 - **A client certificate the broker refuses reads as a lost connection** ([§4.3](#43-tls)).
+- **A broker with a failed log directory fails the overview, health and storage panels** with `KAFKA_STORAGE_ERROR`, where the rest of the object surface keeps working ([§11.4](#114-the-live-read-only-check), `docs/BACKLOG.md` D125).
 
 ---
 

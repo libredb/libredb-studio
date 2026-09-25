@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D124, U17 · 69
+- [Drivers and connections](#drivers-and-connections) — D1-D125, U17 · 70
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U52 · 40
@@ -1924,6 +1924,18 @@ Found 2026-09-24 while designing the Kafka provider's tunnel refusal (#1088, sec
 Not fixed there: that PR changes no other provider.
 
 **Done when:** each of the two either routes its discovered addresses through the tunnel, or refuses a tunnel with a sentence that says why, as Kafka does, and a test pins the choice for each.
+
+### D125. A Kafka broker with a failed log directory fails the three monitoring panels
+
+`logDirs` in `src/lib/db/providers/stream/kafka/platformatic-client.ts` asks every broker for its log directories, and the client throws on a directory the broker answers with an error.
+A broker whose second log directory has failed answers that directory with `KAFKA_STORAGE_ERROR`, so `getOverview`, `getHealth` and `getStorageStats` in `src/lib/db/providers/stream/kafka/index.ts` all fail with "The request to the broker failed (KAFKA_STORAGE_ERROR)", while the topic listing shows the affected topic `offline` and every other surface answers.
+Reproduced live on 2026-09-25 by `tests/live/kafka-read-only.ts --bootstrap localhost:9095` against a throwaway `apache/kafka:4.3.1` node with two log directories, the second made unreadable (`docs/providers/kafka.md` section 11.4).
+The panels could instead sum the directories that answered and name the failed one, the way the adapter already reads a metadata answer that carries a leaderless partition.
+
+Found 2026-09-25 by the Kafka provider's live read-only check (#1088, KM8).
+Not fixed there: the change is to the adapter's log-dir read, whose error table and seam guard the PR had already settled, and a failed directory is rarer than the offline partition it causes.
+
+**Done when:** a broker with one failed log directory answers the overview, health and storage panels with the directories that answered, the failed directory is named, and a test over a captured `KAFKA_STORAGE_ERROR` answer pins it.
 
 ## Value interpolation
 

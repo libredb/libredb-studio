@@ -139,7 +139,7 @@ Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs
 
 ### Engines with no provider of their own
 
-Twenty-seven further engines speak the wire protocol of one of the eighteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Engines that behave identically share a row, and all twenty-seven are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the eighteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Engines that behave identically share a row, and all twenty-eight are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -164,6 +164,7 @@ Twenty-seven further engines speak the wire protocol of one of the eighteen driv
 | SingleStore | `mysql` | Partial - every surface answers, including the five that once failed for reasons that were ours rather than SingleStore's. Row counts and sizes are missing rather than wrong, a 2000-row table reading 0 rows and 0 B, and foreign keys do not exist at all |
 | ScyllaDB | `cassandra` | Partial - the editor and the object browser work in full, and all 18 CQL types read back byte-identically to the Apache Cassandra 5.0.9 probed in the same pass. ScyllaDB has no `system_views` keyspace at all, so the overview, health, metrics, session and monitoring panels read empty rather than throw. No version is displayed, and creating a keyspace on the 2026.2 line needs `NetworkTopologyStrategy` |
 | VictoriaMetrics | `prometheus` | Partial |
+| Redpanda | `kafka` | Full |
 | Materialize · RisingWave | `postgres` | Partial |
 | Databend | `mysql` | Query editor only — SQL and a plain `EXPLAIN` run, but every parameterised read fails with *Prepare is not support in Databend*, so the object browser and all statistics panels are empty |
 
