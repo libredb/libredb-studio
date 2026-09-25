@@ -14,8 +14,9 @@
  * client's unbounded decompression; each sentence is pinned inside that one bullet, so moving it out of
  * the limitation it widens fails too.
  *
- * Two sentences live in the adapter, `platformatic-client.ts`, which only its own tests, the TLS handshake
- * tests and the integration test may import (the seam guard); this file reads that source as text instead.
+ * Three quoted values live in the adapter, `platformatic-client.ts` (the internal-topic refusal, the
+ * never-joined group id and the fetch wait), which only its own tests, the TLS handshake tests and the
+ * integration test may import (the seam guard); this file reads that source as text instead.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -26,6 +27,7 @@ import { KAFKA_DEFAULT_PORT, kafkaConnectionOptions } from "@/lib/db/providers/s
 import { overviewFrom } from "@/lib/db/providers/stream/kafka/monitoring";
 import { KAFKA_TOPIC_LIST_CAP } from "@/lib/db/providers/stream/kafka/objects";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET } from "@/lib/db/providers/stream/kafka/read";
+import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
@@ -98,9 +100,31 @@ describe("docs/providers/kafka.md quotes the bounds the code uses", () => {
     expect(rowOf(cell)).toContain(`\`${value}\``);
   });
 
-  test("the default port is the dialog's too", () => {
-    expect(String(KAFKA_DEFAULT_PORT)).toBe("9092");
-    expect(DOC).toContain("| **Default port** | `9092`");
+  test("the glosses beside the byte budget and the cell limit are the constants' own units", () => {
+    expect(rowOf("`KAFKA_RESULT_BYTE_BUDGET`")).toContain(`Bytes (${KAFKA_RESULT_BYTE_BUDGET / (1024 * 1024)} MiB)`);
+    expect(rowOf("`KAFKA_CELL_LIMIT`")).toContain(`Characters (${KAFKA_CELL_LIMIT / 1024} Ki)`);
+  });
+
+  test("the default limit is the one a request without a limit takes", () => {
+    const limit = parseReadRequest('{"topic":"orders"}', DEFAULT_QUERY_LIMIT).limit;
+    expect(rowOf("`DEFAULT_QUERY_LIMIT`")).toContain(`; the default is ${limit} |`);
+  });
+
+  test("the fetch wait is the adapter's", () => {
+    // The adapter is read as text (see the docblock); the declaration is matched whole, so a
+    // renamed or recomputed constant fails here instead of reading back nothing.
+    const wait = /^const KAFKA_FETCH_MAX_WAIT_MS = (\d+);$/m.exec(ADAPTER)?.[1];
+    expect(wait).toBeDefined();
+    expect(DOC).toContain(`A fetch waits at most ${wait} ms on the broker for new records`);
+  });
+
+  test("the default port is the dialog's and the provider's", () => {
+    const quoted = /^\| \*\*Default port\*\* \| `(\d+)`/m.exec(DOC)?.[1];
+    expect(quoted).toBeDefined();
+    expect(quoted).toBe(DB_UI_CONFIG.kafka.defaultPort);
+    expect(quoted).toBe(String(new KafkaProvider(KAFKA).getCapabilities().defaultPort));
+    expect(quoted).toBe(String(KAFKA_DEFAULT_PORT));
+    expect(rowOf("`port`")).toContain(`Default \`${quoted}\``);
   });
 });
 
@@ -163,6 +187,9 @@ describe("docs/providers/kafka.md says what the provider does not do", () => {
   });
 
   test("no SSH tunnel and no connection string, as the dialog declares", () => {
+    expect(DB_UI_CONFIG.kafka.showSshTunnel).toBe(false);
+    expect(DB_UI_CONFIG.kafka.showConnectionStringToggle).toBe(false);
+    expect(new KafkaProvider(KAFKA).getCapabilities().supportsConnectionString).toBe(false);
     expect(DOC).toContain("| **SSH tunnel** | Refused");
     expect(DOC).toContain("| **Connection string** | Not supported");
   });
