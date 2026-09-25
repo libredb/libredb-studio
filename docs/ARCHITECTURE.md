@@ -258,7 +258,7 @@ src/
 │   ├── sidebar/             # ConnectionsList, ConnectionItem
 │   ├── studio/              # StudioTabBar, QueryToolbar, BottomPanel
 │   ├── results-grid/        # ResultCard, RowDetailSheet, StatsBar
-│   ├── admin/               # AdminDashboard shell (5 section routes) + tabs/ panels
+│   ├── admin/               # AdminDashboard shell (section routes) + tabs/ panels
 │   ├── monitoring/          # MonitoringDashboard + tabs
 │   ├── object-tree/         # The desktop sidebar's lazy object tree (containers, folders, objects, columns)
 │   │   ├── ObjectTree.tsx    # Tree shell: hand-rolled window, roving tabindex, keyboard, menu anchor

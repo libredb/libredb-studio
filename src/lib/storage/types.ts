@@ -78,6 +78,35 @@ export interface ServerStorageProvider {
   isHealthy(): Promise<boolean>;
   /** Cleanup resources */
   close(): Promise<void>;
+  /** Every local account. Empty until the first seed. Not used for OIDC identities. */
+  listAccounts(): Promise<StoredAccount[]>;
+  /** One account by its stored email, or null. */
+  getAccount(email: string): Promise<StoredAccount | null>;
+  /** Insert. The email is the primary key. */
+  insertAccount(account: StoredAccount): Promise<void>;
+  /** Replace the mutable columns of an existing email. Does not rename. */
+  updateAccount(account: StoredAccount): Promise<void>;
+  /**
+   * Remove the account and its `user_storage` rows. Disabling an account does not call this:
+   * a disabled account keeps its rows so re-enabling restores them.
+   */
+  deleteAccount(email: string): Promise<void>;
+}
+
+/**
+ * One local email/password account on the server store.
+ * `passwordHash` is the scrypt encoding from src/lib/password-hash.ts, never the password.
+ * `totpPending` is an enrolment that has not been confirmed; login ignores it.
+ */
+export interface StoredAccount {
+  email: string;
+  passwordHash: string;
+  role: "admin" | "user";
+  totpSecret: string | null;
+  totpPending: string | null;
+  disabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Storage config returned by /api/storage/config */

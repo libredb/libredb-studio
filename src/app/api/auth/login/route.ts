@@ -1,6 +1,7 @@
 import { login } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
-import { getAuthUsers } from "@/lib/local-auth";
+import { rehashStoredPassword, resolveLocalAuthUsers } from "@/lib/local-accounts";
+import { needsRehash, placeholderPasswordHash, verifyPassword } from "@/lib/password-hash";
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { clientAddress } from "@/lib/api/client-address";
@@ -125,11 +126,27 @@ export async function POST(request: NextRequest) {
 
     enforceLoginLimit("login_account", accountKey, actor, ip);
 
-    const users = getAuthUsers();
-    const user = users.find((u) => u.email === submittedEmail);
-    const candidate = user?.password ?? DUMMY_PASSWORD;
-    const passwordMatches = secretsMatch(submittedPassword, candidate);
-    const matched = user && passwordMatches ? user : null;
+    const users = await resolveLocalAuthUsers();
+    // Store mode hashes. Env mode still does exactly one secretsMatch, which is what the
+    // enumeration test counts. An unknown store account verifies a placeholder hash instead, so
+    // it pays the same scrypt as a real one. A disabled account verifies and then fails closed.
+    const storeMode = users.some((entry) => entry.passwordHash !== undefined);
+    const user = storeMode
+      ? users.find((entry) => entry.email.toLowerCase() === submittedEmail.toLowerCase())
+      : users.find((entry) => entry.email === submittedEmail);
+    let passwordMatches: boolean;
+    if (storeMode) {
+      passwordMatches = await verifyPassword(
+        submittedPassword,
+        user?.passwordHash ?? (await placeholderPasswordHash()),
+      );
+      if (passwordMatches && user && !user.disabled && user.passwordHash && needsRehash(user.passwordHash)) {
+        await rehashStoredPassword(user.email, submittedPassword);
+      }
+    } else {
+      passwordMatches = secretsMatch(submittedPassword, user?.password ?? DUMMY_PASSWORD);
+    }
+    const matched = user && !user.disabled && passwordMatches ? user : null;
 
     // Second factor. Reached only once the password already matched, so answering "code required"
     // here is not the account-enumeration oracle the uniform 401 below exists to prevent: an

@@ -17,6 +17,13 @@ export interface AuthUser {
    * be protected while an automation-owned lower-privilege account is not.
    */
   totpSecret?: string;
+  /**
+   * Set when the account comes from the server store. Login verifies this instead of `password`.
+   * Absent on the env-var accounts `getAuthUsers` returns.
+   */
+  passwordHash?: string;
+  /** A stored account that must not receive a session. Env accounts are never disabled. */
+  disabled?: boolean;
 }
 
 // Single-line and module-scoped so bun's line coverage credits it cleanly (it

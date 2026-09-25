@@ -1,12 +1,12 @@
 /**
  * RFC 6238 TOTP verification for the local auth provider.
  *
- * Scope: verification only. Secrets are provisioned by the operator through
- * `ADMIN_TOTP_SECRET` / `USER_TOTP_SECRET` (src/lib/local-auth.ts), matching how every other
- * local-provider credential is configured — so there is no enrolment flow to store, no QR code
- * to mint and no new writable state on disk. That last point is the deciding one: the chart and
- * the Docker image both run happily on a read-only filesystem, and an MFA control that silently
- * degraded when the data dir was not writable would be worse than no MFA at all.
+ * Scope: verification, plus the base32 encoder enrolment uses. Operator-provisioned secrets
+ * (`ADMIN_TOTP_SECRET` / `USER_TOTP_SECRET`, src/lib/local-auth.ts) remain the whole story when
+ * `STORAGE_PROVIDER=local`, because that mode has nowhere durable to write and a factor that
+ * disappeared on a read-only filesystem would be worse than no factor. When a server store is
+ * configured, enrolment lives on the account row (src/lib/local-accounts.ts) and this module
+ * still only checks codes.
  *
  * SHA-1 is not a mistake here and must not be "upgraded": RFC 6238 §1.2 names HMAC-SHA-1 as the
  * default, and it is the only algorithm Google Authenticator, Authy, 1Password and the rest
@@ -81,6 +81,23 @@ export function decodeBase32(secret: string): Buffer | null {
   // base32 character carries no whole byte, so the HMAC key would be empty.
   if (bytes.length === 0) return null;
   return Buffer.from(bytes);
+}
+
+/** RFC 4648 base32, no padding. Enrolment uses this for a 20-byte secret (32 characters). */
+export function encodeBase32(bytes: Buffer): string {
+  let accumulator = 0;
+  let bits = 0;
+  let output = "";
+  for (const byte of bytes) {
+    accumulator = (accumulator << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      output += BASE32_ALPHABET[(accumulator >> bits) & 0x1f];
+    }
+  }
+  if (bits > 0) output += BASE32_ALPHABET[(accumulator << (5 - bits)) & 0x1f];
+  return output;
 }
 
 /** RFC 4226 HOTP: dynamic truncation of HMAC-SHA-1 over the big-endian counter. */

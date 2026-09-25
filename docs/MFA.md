@@ -110,6 +110,18 @@ having. To turn MFA off, blank or unset the variable.
 Each account is independent — protect the admin and leave an automation-owned user account on a
 password alone if that is what you need.
 
+### When accounts live in the server store
+
+`STORAGE_PROVIDER=sqlite` or `postgres` copies `ADMIN_TOTP_SECRET` and `USER_TOTP_SECRET` onto the
+account row once, while the table is empty. After that the row is the secret. Changing the
+environment variable does not change an account that already exists, and blanking it does not turn
+the factor off. Enrol from Admin → Accounts (or `POST /api/auth/totp` with `{"action":"begin"}`,
+then `{"action":"confirm","code":"123456"}`). `{"action":"disable"}` removes your own factor. An
+admin clears someone else's with `PATCH /api/admin/accounts/<email>` `{"clearTotp":true}`.
+
+`STORAGE_PROVIDER=local` has no row to write, so the environment variables stay the only switch,
+including blanking one and restarting. OIDC mode does not enrol here.
+
 ### Running both
 
 `NEXT_PUBLIC_AUTH_PROVIDER=oidc` changes what the login page renders; it does not disable

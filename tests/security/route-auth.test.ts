@@ -230,6 +230,10 @@ const ROUTES_OUTSIDE_API = ["health"];
  * different verified control is the only kind allowed here; "it has no auth" never is.
  */
 const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
+  "admin/accounts":
+    "reads and writes the app's own account registry on the storage backend (STORAGE_PROVIDER), not a user database or LLM provider",
+  "admin/accounts/[email]":
+    "same account registry as admin/accounts, one account at a time (PATCH and DELETE, no POST export)",
   "admin/audit": "reads/writes the in-process audit ring buffer only; no database or LLM provider",
   "agent/config":
     "answers whether the agent runtime is enabled, from process.env alone; no database or LLM provider (GET, no POST export). It still requires a session — a bare getSession() like connections/managed, because metering a visibility probe out of the ai bucket would spend a run's budget on rendering a panel — and tests/api/agent/config.test.ts proves an unauthenticated caller learns nothing about the flag",
@@ -242,6 +246,8 @@ const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "agent/runs/[runId]/stream":
     "follows one run's own durable ledger; no database or LLM provider (GET, no POST export). Same guardRoute path as above",
   "auth/login": "authenticates the credential itself; a session cannot be required before one exists",
+  "auth/totp":
+    "enrols a TOTP secret on the caller's own stored account; the storage backend is not a user database or LLM provider",
   "auth/logout": "clears the session cookie unconditionally; touches no provider either way",
   "auth/me": "reads the caller's own session claims only (GET, no POST export)",
   "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
@@ -418,6 +424,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/agent/model-tuning": "the per-model tuning table; data only",
     "@/lib/agent/runtime": `the run loop, and it ${PROVIDER_NAMING_HELPER} - the artifacts route imports only readAgentArtifact (the in-process ExecutionArtifactStore), and agent/runs/[runId] imports driveAgentRun, which the resume action uses to drive the run`,
     "@/lib/agent/run-service": `the run lifecycle service (pause/unpause/cancel/status), and it ${PROVIDER_NAMING_HELPER} (@/lib/db/operations/execution) - but only for releaseExecutionRun, which releases the run's in-process budget and artifacts, never a database or model`,
+    "@/lib/api/account-response": "maps account-registry failures to HTTP responses; opens nothing",
     "@/lib/api/agent-run-access": "resolves a run id to its ledger behind guardRoute; reads no provider",
     "@/lib/api/client-address": "parses the forwarded-for chain for the audit record",
     "@/lib/api/liveness": "builds the fixed liveness body; imports nothing and touches nothing",
@@ -429,7 +436,9 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/auth-compare": "constant-time credential comparison",
     "@/lib/auth-errors": "the auth failure taxonomy",
     "@/lib/config/base-path": "prefixes redirect URLs and cookie paths; these routes use no fetch or provider",
-    "@/lib/local-auth": "the local email/password credential store",
+    "@/lib/local-accounts":
+      "the local account registry on the app's storage backend; opens no user database or LLM provider",
+    "@/lib/password-hash": "scrypt for stored account passwords; no provider",
     "@/lib/logger": "structured logging",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",
     "@/lib/seed": "reads seed connection metadata from config; never connects",

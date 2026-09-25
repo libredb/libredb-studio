@@ -1,6 +1,6 @@
 import { logger } from "@/lib/logger";
 import { decryptConnections, encryptConnections } from "./connection-secrets";
-import type { ServerStorageProvider, StorageCollection, StorageData } from "./types";
+import type { ServerStorageProvider, StorageCollection, StorageData, StoredAccount } from "./types";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -80,6 +80,28 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
   mergeData(userId: string, data: Partial<StorageData>): Promise<void> {
     if (!data.connections) return this.inner.mergeData(userId, data);
     return this.inner.mergeData(userId, { ...data, connections: encryptConnections(data.connections) });
+  }
+
+  // The account registry is not a connection secret. Password hashes are already a KDF output,
+  // and the wrapper's job is the connections collection, so these pass through.
+  listAccounts(): Promise<StoredAccount[]> {
+    return this.inner.listAccounts();
+  }
+
+  getAccount(email: string): Promise<StoredAccount | null> {
+    return this.inner.getAccount(email);
+  }
+
+  insertAccount(account: StoredAccount): Promise<void> {
+    return this.inner.insertAccount(account);
+  }
+
+  updateAccount(account: StoredAccount): Promise<void> {
+    return this.inner.updateAccount(account);
+  }
+
+  deleteAccount(email: string): Promise<void> {
+    return this.inner.deleteAccount(email);
   }
 }
 

@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { claimTotpStep, clearTotpReplayState, decodeBase32, TOTP_PERIOD_SECONDS, verifyTotp } from "@/lib/totp";
+import {
+  claimTotpStep,
+  clearTotpReplayState,
+  decodeBase32,
+  encodeBase32,
+  TOTP_PERIOD_SECONDS,
+  verifyTotp,
+} from "@/lib/totp";
 import { RFC6238_SECRET as RFC_SECRET, RFC6238_SEED_ASCII } from "../../helpers/rfc6238";
 
 /** `T` values from RFC 6238 Appendix B, each paired with the low six digits of its vector. */
@@ -10,6 +17,18 @@ const RFC_VECTORS = [
   { seconds: 1234567890, code: "005924" },
   { seconds: 2000000000, code: "279037" },
 ];
+
+describe("encodeBase32", () => {
+  test("encodes the RFC 6238 seed to the same secret operators paste", () => {
+    expect(encodeBase32(Buffer.from(RFC6238_SEED_ASCII, "ascii"))).toBe(RFC_SECRET);
+  });
+
+  test("emits a final character when the last group is short of 5 bits", () => {
+    const encoded = encodeBase32(Buffer.from([0xff]));
+    expect(encoded.length).toBeGreaterThan(0);
+    expect(decodeBase32(encoded)).not.toBeNull();
+  });
+});
 
 describe("decodeBase32", () => {
   test("decodes the RFC 6238 seed back to its ASCII bytes", () => {
