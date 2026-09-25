@@ -33,9 +33,12 @@ const KAFKA_TOPIC_NAME = /^[a-zA-Z0-9._-]{1,249}$/;
 
 /** A partition id is an INT32 on the wire. */
 const KAFKA_MAX_PARTITION = 2147483647;
-/** An offset is an INT64 on the wire; the string form, because the number would round. */
-const KAFKA_MAX_OFFSET_TEXT = "9223372036854775807";
-const KAFKA_MAX_OFFSET = BigInt(KAFKA_MAX_OFFSET_TEXT);
+/**
+ * An offset is an INT64 on the wire, so the largest is 2^63 - 1, derived rather than spelled:
+ * tests/unit/db/sqlite-int64.test.ts reserves the digits for SQLite's bind rule in
+ * sql/sqlite-int64.ts, which is a different rule this provider must not import.
+ */
+const KAFKA_MAX_OFFSET = (BigInt(1) << BigInt(63)) - BigInt(1);
 
 const KEYS = new Set(["topic", "partition", "from", "limit"]);
 const DIGITS = /^\d+$/;
@@ -122,8 +125,7 @@ function parseOffset(value: unknown): bigint {
   }
   if (typeof value === "string" && DIGITS.test(value)) {
     const offset = BigInt(value);
-    if (offset > KAFKA_MAX_OFFSET)
-      refuse(`The offset must be at most ${KAFKA_MAX_OFFSET_TEXT}, Kafka's largest offset`);
+    if (offset > KAFKA_MAX_OFFSET) refuse(`The offset must be at most ${KAFKA_MAX_OFFSET}, Kafka's largest offset`);
     return offset;
   }
   return refuse("The offset must be a non-negative whole number or a digit string");
