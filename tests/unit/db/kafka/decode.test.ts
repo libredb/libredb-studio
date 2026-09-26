@@ -83,9 +83,15 @@ describe("decodeBytes", () => {
       '{"n":1e-400}',
       '{"n":0.1000000000000000055511151231257827}',
       '{"big":12345678901234567890.0}',
-      // JSON.stringify writes negative zero as 0.
+      // The exponent's other spellings, a capital E and a plus sign, overflow and underflow alike.
+      "[1E400]",
+      "[1e+400]",
+      "[-1E+400]",
+      '{"n":1E-400}',
+      // JSON.stringify writes negative zero as 0, however it was spelled.
       '{"z":-0}',
       "[-0.0]",
+      "[-0e5]",
     ]) {
       expect(decodeBytes(bytes(sent), 1000)).toEqual({ value: sent, encoding: "text", truncated: false });
     }
@@ -96,6 +102,12 @@ describe("decodeBytes", () => {
       "[1,2.5,-3,1e2,1E+2,1.10,100.0,0.1,5e-1,0.1e1,12e-1,0.00012,1.2e-4,0,0.0,5e-324,1.7976931348623157e308]";
     expect(decodeBytes(bytes(sent), 1000)).toEqual({
       value: [1, 2.5, -3, 100, 100, 1.1, 100, 0.1, 0.5, 1, 1.2, 0.00012, 0.00012, 0, 0, 5e-324, 1.7976931348623157e308],
+      encoding: "json",
+      truncated: false,
+    });
+    // Zero written with an exponent is zero, whatever the exponent: 0e400 overflows nothing.
+    expect(decodeBytes(bytes("[0e5,0.0e1,0E-3,0e400,0.0E+400]"), 1000)).toEqual({
+      value: [0, 0, 0, 0, 0],
       encoding: "json",
       truncated: false,
     });
