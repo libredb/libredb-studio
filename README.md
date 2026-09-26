@@ -563,7 +563,7 @@ Sample tables: `app.customers`, `app.products`, `app.orders`, `app.order_items`,
 
 ## Testing
 
-LibreDB Studio has a comprehensive test suite: 549 test files and 17,692 tests across seven layers, plus 79 browser tests, with **100% line coverage** enforced by CI (`bun run coverage:check`).
+LibreDB Studio has a comprehensive test suite: 549 test files and 17,692 tests across seven layers, plus 93 browser tests, with **100% line coverage** enforced by CI (`bun run coverage:check`).
 
 ### Quick Commands
 
@@ -586,7 +586,7 @@ bun tests/run-tests.ts --list
 bun tests/run-tests.ts --jobs=4          # bound the concurrency
 
 # E2E tests (requires build)
-bun run test:e2e           # Playwright browser tests (79 cases across chromium and webkit)
+bun run test:e2e           # Playwright browser tests (93 cases across chromium and webkit)
 
 # Coverage report (lcov)
 bun run test:coverage
@@ -603,11 +603,11 @@ bun run test:coverage
 | **Security** | `tests/security/` | 21 | 322 | The posture `docs/SECURITY.md` claims: route exposure, headers, audit channels, credential handling |
 | **Evals** | `tests/evals/` | 13 | 198 | LLM prompt behaviour against recorded models |
 | **Components** | `tests/components/`, `tests/isolated/` | 107 | 3,376 | UI components with `happy-dom`: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
-| **E2E** | `e2e/` | 18 | 79 | Full browser flows: login, connections, query execution, tabs, export, admin |
+| **E2E** | `e2e/` | 20 | 93 | Full browser flows: login, connections, query execution, tabs, export, admin |
 
-The Files column was counted on 2026-09-15 with `bun tests/run-tests.ts --list` for the first seven rows and `playwright test --list` for the last.
-The Tests column comes from an earlier full run the same day, over the 542 files the tree held then, so the per-layer numbers are a little below the 17,692 above: they do not yet count the seven test files this branch and the merge from main add under `tests/unit/`, nor the cases this branch adds to the runner's own test files.
-The nineteenth spec in `e2e/`, `base-path.spec.ts`, is not in that 18: it needs its own server configuration and runs as `bun run test:e2e:base-path`.
+The Files column was counted on 2026-09-15 with `bun tests/run-tests.ts --list` for the first seven rows, and both columns of the last on 2026-09-26 with `playwright test --list`, which counts a test once for each project that runs it.
+The Tests column of the first seven rows comes from an earlier full run on 2026-09-15, over the 542 files the tree held then, so the per-layer numbers are a little below the 17,692 above: they do not yet count the seven test files this branch and the merge from main add under `tests/unit/`, nor the cases this branch adds to the runner's own test files.
+The twenty-first spec in `e2e/`, `base-path.spec.ts`, is not in that 20: it needs its own server configuration and runs as `bun run test:e2e:base-path`.
 
 ### Key Details
 

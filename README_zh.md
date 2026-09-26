@@ -541,7 +541,7 @@ docker compose -f database-compose.yml --profile druid down -v
 
 ## 测试
 
-LibreDB Studio 有一套完整的测试：549 个测试文件、17,692 个测试，覆盖七个层次，另有 79 个浏览器测试，并由 CI 强制要求 **100% 行覆盖率**（`bun run coverage:check`）。
+LibreDB Studio 有一套完整的测试：549 个测试文件、17,692 个测试，覆盖七个层次，另有 93 个浏览器测试，并由 CI 强制要求 **100% 行覆盖率**（`bun run coverage:check`）。
 
 ### 常用命令
 
@@ -564,7 +564,7 @@ bun tests/run-tests.ts --list
 bun tests/run-tests.ts --jobs=4          # 限制并发数
 
 # E2E 测试（需要先构建）
-bun run test:e2e           # Playwright 浏览器测试（79 个用例，覆盖 chromium 与 webkit）
+bun run test:e2e           # Playwright 浏览器测试（93 个用例，覆盖 chromium 与 webkit）
 
 # 覆盖率报告（lcov）
 bun run test:coverage
@@ -581,11 +581,11 @@ bun run test:coverage
 | **Security** | `tests/security/` | 21 | 322 | `docs/SECURITY.md` 所声称的安全态势：路由暴露、响应头、审计通道、凭据处理 |
 | **Evals** | `tests/evals/` | 13 | 198 | LLM 提示词行为，对照录制好的模型 |
 | **Components** | `tests/components/`、`tests/isolated/` | 107 | 3,376 | 用 `happy-dom` 测试的 UI 组件：Studio、Sidebar、QueryEditor、ResultsGrid、Admin Dashboard、图表、ERD |
-| **E2E** | `e2e/` | 18 | 79 | 完整浏览器流程：登录、连接、查询执行、标签页、导出、管理后台 |
+| **E2E** | `e2e/` | 20 | 93 | 完整浏览器流程：登录、连接、查询执行、标签页、导出、管理后台 |
 
-「文件数」一列是 2026-09-15 用 `bun tests/run-tests.ts --list` 统计前七行、用 `playwright test --list` 统计最后一行的结果。
-「测试数」一列来自当天更早的一次完整运行，覆盖的是当时仓库里的 542 个文件，所以逐层数字比上面的 17,692 略低：它们还没有算上这个分支以及从 main 合并进来的七个 `tests/unit/` 下的测试文件，也没有算上这个分支给 runner 自身测试文件新增的用例。
-`e2e/` 里的第十九个 spec `base-path.spec.ts` 不在这 18 个之中：它需要自己的服务端配置，通过 `bun run test:e2e:base-path` 单独运行。
+「文件数」一列的前七行是 2026-09-15 用 `bun tests/run-tests.ts --list` 统计的结果；最后一行的两列是 2026-09-26 用 `playwright test --list` 统计的，它把一个测试按运行它的每个 project 各计一次。
+「测试数」一列的前七行来自 2026-09-15 更早的一次完整运行，覆盖的是当时仓库里的 542 个文件，所以逐层数字比上面的 17,692 略低：它们还没有算上这个分支以及从 main 合并进来的七个 `tests/unit/` 下的测试文件，也没有算上这个分支给 runner 自身测试文件新增的用例。
+`e2e/` 里的第二十一个 spec `base-path.spec.ts` 不在这 20 个之中：它需要自己的服务端配置，通过 `bun run test:e2e:base-path` 单独运行。
 
 ### 关键细节
 
