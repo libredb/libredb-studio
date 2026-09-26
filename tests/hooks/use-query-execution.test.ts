@@ -816,6 +816,48 @@ describe("useQueryExecution", () => {
     expect(tabs[0].result?.rows).toHaveLength(2);
   });
 
+  /** An EXPLAIN never owned the results panel, so landing one does not answer its error. */
+  test("an EXPLAIN that succeeds leaves the tab's run error in place", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab({ runError: 'near "SELEC": syntax error' })]);
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: { rows: [{ "QUERY PLAN": { plan: "Seq Scan" } }], fields: ["QUERY PLAN"], rowCount: 1, executionTime: 5 },
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    expect(tabs[0].explainPlan).toBeDefined();
+    expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+  });
+
+  /** The same exemption from the other side: a failed EXPLAIN takes no rows off the panel. */
+  test("an EXPLAIN that fails leaves the previous result and sets no run error", async () => {
+    const tab = createTab({
+      result: mockQueryResult,
+      resultQuery: "SELECT * FROM users",
+      allRows: mockQueryResult.rows,
+    });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({ "/api/db/query": { ok: false, status: 400, json: { error: "EXPLAIN is not allowed here" } } });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "EXPLAIN is not allowed here" });
+    expect(tabs[0].runError).toBeUndefined();
+    expect(tabs[0].result?.rows).toHaveLength(2);
+    expect(tabs[0].resultQuery).toBe("SELECT * FROM users");
+  });
+
   /** A thrown request, not a refused one, is the same failure to the reader. */
   test("a request that throws replaces the previous result too", async () => {
     const tab = createTab({
