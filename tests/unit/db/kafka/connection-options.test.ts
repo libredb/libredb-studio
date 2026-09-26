@@ -56,6 +56,10 @@ describe("kafkaConnectionOptions", () => {
       1,
     ).tls;
     expect(tls).toEqual({ ca: "CA", cert: "CERT", key: "KEY", rejectUnauthorized: true });
+    // verify-system verifies against the runtime's trust store: no CA of its own, and never unverified.
+    expect(kafkaConnectionOptions({ ...base, ssl: { mode: "verify-system" } } as DatabaseConnection, 1).tls).toEqual({
+      rejectUnauthorized: true,
+    });
     expect(
       kafkaConnectionOptions({ ...base, ssl: { mode: "require" } } as DatabaseConnection, 1).tls?.rejectUnauthorized,
     ).toBe(false);
