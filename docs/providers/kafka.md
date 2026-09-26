@@ -425,7 +425,7 @@ A broker below ListGroups v5, such as Apache Kafka before 3.8, reports no group 
 A classic group is described by `describeGroups`, and a `consumer` group by ConsumerGroupDescribe (API 69), because `describeGroups` reports a KIP-848 group as `Dead` while the broker says `Empty`, and API 69 refuses a classic one.
 A group's existence is decided by the listing, because `describeGroups` answers `Dead` for a name that does not exist.
 Lag per partition is the high watermark minus the committed offset, the log end `kafka-consumer-groups.sh --describe` measures against, for every partition of each topic the group has committed on or is assigned.
-A partition with no committed offset shows lag as `null` with the note "no committed offset", never 0 and never the whole log, and a committed topic whose latest offsets cannot be read, an internal topic or one with a leaderless partition, keeps its rows with no latest offset and the reason.
+A partition with no committed offset shows lag as `null` with the note "no committed offset", never 0 and never the whole log, and a committed or assigned topic whose latest offsets cannot be read, an internal topic, one with a leaderless partition or one the principal may not describe, keeps its rows with no latest offset and the reason.
 
 ### 6.2 Object source (#789)
 
@@ -439,6 +439,11 @@ Server text is data: a config value, a header value or a group member's client i
 | `broker` | the broker's configs | Every config with its value, its source and `readOnly`; an entry the broker marks sensitive answers `null` from the broker itself and is shown as "redacted by the broker" |
 
 A name that does not exist answers a `QueryError` naming it, and an internal topic's name answers the refusal of [§6.1](#kinds-folders-and-identity).
+
+A part whose own read the broker refuses is that refusal, and the parts that were read are kept: a refusal and an absence are different answers ([`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md)), and DescribeConfigs is a right of its own, apart from Describe.
+So a principal without DescribeConfigs on a topic sees its partitions and offsets beside a configs part that carries the refusal and no text, and one without DescribeConfigs on the cluster, which `kafka-auth`'s `reader` lacks, sees a broker's source as that one refused part.
+A topic whose offsets are refused shows its partitions without offsets and says why, as a topic with a leaderless partition does, and a group's topic the principal may not describe keeps its lag rows with no latest offset and the refusal as the reason.
+A refusal of the read that decides the object exists, the topic's metadata, the broker listing or the group listing, still fails the source, and so does any failure that is not a refusal.
 
 ### 6.3 Object edit (#789)
 

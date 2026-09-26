@@ -432,4 +432,79 @@ describe("readGroupSource", () => {
     });
     expect((await readGroupSource(failing, "lag-classic").catch((e) => e)).category).toBe("network");
   });
+
+  test("a topic the principal may not describe keeps its rows, with the broker's refusal as the reason, and the source still settles", async () => {
+    // A principal with Describe on the group and not on a topic a member is assigned: the
+    // group's own reads answer, and that topic's offsets are refused (docs/ADDING_A_PROVIDER.md,
+    // a refusal is an answer; spec 4.3, a topic whose latest offsets cannot be read keeps its rows).
+    const denied = "The broker denied access to this topic";
+    const source = await readGroupSource(
+      client({
+        describeGroup: async (listing) => ({
+          groupId: listing.groupId,
+          groupType: listing.groupType,
+          state: "Stable",
+          protocolOrAssignor: "range",
+          members: [
+            {
+              memberId: "m-1",
+              clientId: "c-1",
+              clientHost: "/10.0.0.1",
+              assignment: [{ topic: "payments", partitions: [0, 1] }],
+            },
+          ],
+        }),
+        offsets: async (topic) => {
+          if (topic === "payments") throw new KafkaError("authorization", denied);
+          return new Map([[0, n(24)]]);
+        },
+      }),
+      "lag-classic",
+    );
+    expect(source?.lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset, r.lag])).toEqual([
+      ["orders/0", "24", "23"],
+      ["payments/0", null, null],
+      ["payments/1", null, null],
+    ]);
+    for (const row of source?.lag.slice(1) ?? []) expect(row.note).toContain(denied);
+  });
+
+  test("only a refusal or an unreadable topic keeps a topic's rows: any other failure of its offsets, and the group's own reads refused, fail the source as themselves", async () => {
+    const refusal = new KafkaError("authorization", "The broker denied access to this group");
+    const offsetFailures = [
+      new KafkaError("protocol", "The request to the broker failed (UNKNOWN_SERVER_ERROR)"),
+      new TypeError("a defect, not a refusal"),
+      // Not a KafkaError, whatever it carries: only the domain's own refusal is an answer.
+      Object.assign(new Error("carries the category only"), { category: "authorization" }),
+    ];
+    const outcomes = await Promise.all([
+      ...offsetFailures.map((failure) =>
+        readGroupSource(
+          client({
+            offsets: async () => {
+              throw failure;
+            },
+          }),
+          "lag-classic",
+        ).then(
+          () => "answered",
+          (error) => error === failure,
+        ),
+      ),
+      ...(["listGroups", "describeGroup", "committedOffsets"] as const).map((read) =>
+        readGroupSource(
+          client({
+            [read]: async () => {
+              throw refusal;
+            },
+          }),
+          "lag-classic",
+        ).then(
+          () => "answered",
+          (error) => error === refusal,
+        ),
+      ),
+    ]);
+    expect(outcomes).toEqual([true, true, true, true, true, true]);
+  });
 });

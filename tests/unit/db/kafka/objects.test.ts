@@ -641,3 +641,187 @@ describe("sources", () => {
     );
   });
 });
+
+describe("a part the broker refuses is that part's refusal, and the parts it read are kept", () => {
+  // docs/ADDING_A_PROVIDER.md: "A REFUSAL and an ABSENCE are different answers and must not
+  // arrive as one": an engine that declined the read, and said so, is a part carrying
+  // `unavailable` with its sentence and no text. A least-privilege principal meets this on
+  // every source: DescribeConfigs is a right of its own, apart from Describe (spec KM4, M-I).
+  const TOPIC_REFUSAL = "The broker denied access to this topic";
+  const CLUSTER_REFUSAL = "The broker denied access to this cluster";
+  const refused = (message: string) => async (): Promise<never> => {
+    throw new KafkaError("authorization", message);
+  };
+  const CONFIGS_OF_ORDERS = [
+    { name: "cleanup.policy", value: "compact", source: "dynamic topic config", readOnly: false },
+  ];
+
+  test("a topic's configs the broker refuses are the configs part's refusal, beside the partitions it answered", async () => {
+    const doc = await readObjectSource(
+      client(["orders"], { topicConfigs: refused(TOPIC_REFUSAL) }),
+      CAPS,
+      ["orders"],
+      "topic",
+    );
+    expect(doc.parts[1]).toEqual({
+      id: "configs",
+      label: "Configs that differ from the default",
+      unavailable: TOPIC_REFUSAL,
+    });
+    expect(doc.parts[0]).toMatchObject({
+      id: "partitions",
+      label: "Partitions (offset span is latest minus earliest, not a message count)",
+    });
+    expect(JSON.parse(textOf(doc, 0))[0]).toMatchObject({ earliestOffset: "3", latestOffset: "24", offsetSpan: "21" });
+  });
+
+  test("a topic's offsets the broker refuses leave its partitions without offsets, saying why, beside the configs it answered", async () => {
+    const docs = await Promise.all(
+      (["earliest", "high-watermark"] as const).map((refusedAt) =>
+        readObjectSource(
+          client(["orders"], {
+            offsets: async (_t, at) => {
+              if (at === refusedAt) throw new KafkaError("authorization", TOPIC_REFUSAL);
+              return new Map([[0, big(3)]]);
+            },
+          }),
+          CAPS,
+          ["orders"],
+          "topic",
+        ),
+      ),
+    );
+    for (const doc of docs) {
+      expect(doc.parts[0].label).toBe(`Partitions (offsets not read: ${TOPIC_REFUSAL})`);
+      expect(JSON.parse(textOf(doc, 0))).toEqual([
+        {
+          partition: 0,
+          leader: 1,
+          leaderEpoch: 0,
+          replicas: [1, 2],
+          isr: [1, 2],
+          offlineReplicas: [],
+          earliestOffset: null,
+          latestOffset: null,
+          offsetSpan: null,
+        },
+      ]);
+      expect(JSON.parse(textOf(doc, 1))).toEqual(CONFIGS_OF_ORDERS);
+    }
+  });
+
+  test("a broker's configs the broker refuses are the source's one part, as that refusal: the broker exists, so the source answers", async () => {
+    const doc = await readObjectSource(
+      client(["a"], { brokerConfigs: refused(CLUSTER_REFUSAL) }),
+      CAPS,
+      ["1"],
+      "broker",
+    );
+    expect(doc).toEqual({
+      path: ["1"],
+      kind: "broker",
+      parts: [{ id: "configs", label: "Broker configs", unavailable: CLUSTER_REFUSAL }],
+    });
+  });
+
+  test("a caller's bound cuts the parts that were read and leaves a refusal as it is", async () => {
+    const doc = await readObjectSource(
+      client(["orders"], { topicConfigs: refused(TOPIC_REFUSAL) }),
+      CAPS,
+      ["orders"],
+      "topic",
+      40,
+    );
+    expect(doc.parts[0]).toMatchObject({ truncated: { limit: 40, reason: sourceBoundTruncationReason(40) } });
+    expect(doc.parts[1]).toEqual({
+      id: "configs",
+      label: "Configs that differ from the default",
+      unavailable: TOPIC_REFUSAL,
+    });
+  });
+
+  test("only the broker's refusal of a part's own read is an answer: any other failure there fails the source as itself", async () => {
+    const failures = [
+      new KafkaError("network", "The broker could not be reached (connection-lost)"),
+      new KafkaError("protocol", "The request to the broker failed (UNKNOWN_SERVER_ERROR)"),
+      new TypeError("a defect, not a refusal"),
+      // Not a KafkaError, whatever it carries: only the domain's own refusal is an answer.
+      Object.assign(new Error("carries the category only"), { category: "authorization" }),
+    ];
+    const failAt = (failure: unknown) => async (): Promise<never> => {
+      throw failure;
+    };
+    const sites: ReadonlyArray<(failure: unknown) => Promise<unknown>> = [
+      (failure) => readObjectSource(client(["orders"], { topicConfigs: failAt(failure) }), CAPS, ["orders"], "topic"),
+      (failure) =>
+        readObjectSource(
+          client(["orders"], {
+            offsets: async (_t, at) => (at === "earliest" ? failAt(failure)() : new Map([[0, big(3)]])),
+          }),
+          CAPS,
+          ["orders"],
+          "topic",
+        ),
+      (failure) =>
+        readObjectSource(
+          client(["orders"], {
+            offsets: async (_t, at) => (at === "high-watermark" ? failAt(failure)() : new Map([[0, big(3)]])),
+          }),
+          CAPS,
+          ["orders"],
+          "topic",
+        ),
+      (failure) => readObjectSource(client(["a"], { brokerConfigs: failAt(failure) }), CAPS, ["1"], "broker"),
+    ];
+    const outcomes = await Promise.all(
+      sites.flatMap((site) =>
+        failures.map((failure) =>
+          site(failure).then(
+            () => "answered",
+            (error) => error === failure,
+          ),
+        ),
+      ),
+    );
+    expect(outcomes).toEqual(Array.from({ length: sites.length * failures.length }, () => true));
+  });
+
+  test("a refusal of the read that decides an object exists still fails its source", async () => {
+    const topicDenied = new KafkaError("authorization", TOPIC_REFUSAL);
+    const clusterDenied = new KafkaError("authorization", CLUSTER_REFUSAL);
+    const groupDenied = new KafkaError("authorization", "The broker denied access to this group");
+    const outcomes = await Promise.all([
+      readObjectSource(
+        client(["orders"], {
+          metadata: async () => {
+            throw topicDenied;
+          },
+        }),
+        CAPS,
+        ["orders"],
+        "topic",
+      ).catch((e) => e === topicDenied),
+      readObjectSource(
+        client(["a"], {
+          metadata: async () => {
+            throw clusterDenied;
+          },
+        }),
+        CAPS,
+        ["1"],
+        "broker",
+      ).catch((e) => e === clusterDenied),
+      readObjectSource(
+        client(["a"], {
+          listGroups: async () => {
+            throw groupDenied;
+          },
+        }),
+        CAPS,
+        ["billing"],
+        "consumer_group",
+      ).catch((e) => e === groupDenied),
+    ]);
+    expect(outcomes).toEqual([true, true, true]);
+  });
+});

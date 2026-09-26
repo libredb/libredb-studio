@@ -101,8 +101,12 @@ export async function readGroupSource(
         // The high watermark, which is what kafka-consumer-groups.sh measures lag against.
         latest.set(topic, await client.offsets(topic, "high-watermark"));
       } catch (error) {
-        // An internal topic, or one with a leaderless partition: its rows stay, without a latest offset.
-        if (!(error instanceof KafkaError) || error.category !== "unreadable-topic") throw error;
+        // An internal topic, one with a leaderless partition, or one the principal may not
+        // describe, whose refusal is an answer (docs/ADDING_A_PROVIDER.md): its rows stay,
+        // without a latest offset and with the reason. Anything else fails the source.
+        const keepsRows =
+          error instanceof KafkaError && (error.category === "unreadable-topic" || error.category === "authorization");
+        if (!keepsRows) throw error;
         unreadable.set(topic, error.message);
       }
     }),

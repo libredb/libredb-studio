@@ -258,6 +258,41 @@ const renderConfigs = (entries: readonly KafkaConfigEntry[]) =>
     readOnly: c.readOnly,
   }));
 
+/** What one part's own read came to: its answer, or the broker's refusal of it in words. */
+type PartRead<T> = { readonly answer: T } | { readonly refused: string };
+
+/**
+ * A read one part of a source rests on, with the broker's refusal of it as an answer: a refusal
+ * and an absence are different answers (docs/ADDING_A_PROVIDER.md), so a principal without
+ * DescribeConfigs still sees the parts it may read, and the refused part says why. Only the
+ * domain's authorization refusal is one; any other failure fails the whole source as itself.
+ */
+async function partRead<T>(read: () => Promise<T>): Promise<PartRead<T>> {
+  try {
+    return { answer: await read() };
+  } catch (error) {
+    if (error instanceof KafkaError && error.category === "authorization") return { refused: error.message };
+    throw error;
+  }
+}
+
+const answerOf = <T>(read: PartRead<T> | undefined): T | undefined =>
+  read !== undefined && "answer" in read ? read.answer : undefined;
+
+const refusalOf = (read: PartRead<unknown> | undefined): string | undefined =>
+  read !== undefined && "refused" in read ? read.refused : undefined;
+
+/** A part from its read: the rendered answer, cut at the caller's bound, or the refusal, which has no text. */
+function partFrom<T>(
+  id: string,
+  label: string,
+  read: PartRead<T>,
+  render: (answer: T) => unknown,
+  limit: number | undefined,
+): ObjectSourcePart {
+  return "refused" in read ? { id, label, unavailable: read.refused } : part(id, label, render(read.answer), limit);
+}
+
 async function topicSource(
   client: ObjectsClient,
   path: readonly string[],
@@ -275,11 +310,15 @@ async function topicSource(
   // The client reads a topic's offsets as a whole and fails while any partition has no
   // leader, so an offline topic's source shows its partitions without offsets (spec 4.1).
   const offline = topic.partitions.filter((p) => p.leader < 0).map((p) => p.partition);
-  const [earliest, latest, configs] = await Promise.all([
-    offline.length > 0 ? undefined : client.offsets(name, "earliest"),
-    offline.length > 0 ? undefined : client.offsets(name, "high-watermark"),
-    client.topicConfigs(name),
+  const [earliestRead, latestRead, configs] = await Promise.all([
+    offline.length > 0 ? undefined : partRead(() => client.offsets(name, "earliest")),
+    offline.length > 0 ? undefined : partRead(() => client.offsets(name, "high-watermark")),
+    partRead(() => client.topicConfigs(name)),
   ]);
+  const earliest = answerOf(earliestRead);
+  const latest = answerOf(latestRead);
+  // Refused offsets leave the partitions without offsets, as an offline partition does, and say why.
+  const offsetsRefused = refusalOf(earliestRead) ?? refusalOf(latestRead);
   const partitions = topic.partitions.map((p) => {
     if (earliest === undefined || latest === undefined)
       return { ...p, earliestOffset: null, latestOffset: null, offsetSpan: null };
@@ -300,16 +339,19 @@ async function topicSource(
   const label =
     offline.length > 0
       ? `Partitions (offsets not read: partition ${offline.join(", ")} has no leader, and the client reads a topic's offsets as a whole)`
-      : "Partitions (offset span is latest minus earliest, not a message count)";
+      : offsetsRefused !== undefined
+        ? `Partitions (offsets not read: ${offsetsRefused})`
+        : "Partitions (offset span is latest minus earliest, not a message count)";
   return {
     path,
     kind,
     parts: [
       part("partitions", label, partitions, limit),
-      part(
+      partFrom(
         "configs",
         "Configs that differ from the default",
-        renderConfigs(configs.filter((c) => c.source !== DEFAULT_CONFIG_SOURCE)),
+        configs,
+        (entries) => renderConfigs(entries.filter((c) => c.source !== DEFAULT_CONFIG_SOURCE)),
         limit,
       ),
     ],
@@ -346,11 +388,10 @@ export async function readObjectSource(
       if (!metadata.brokers.some((b) => String(b.nodeId) === name)) {
         throw new KafkaError("unknown-object", `Broker ${JSON.stringify(name)} does not exist`);
       }
-      return {
-        path,
-        kind,
-        parts: [part("configs", "Broker configs", renderConfigs(await client.brokerConfigs(Number(name))), limit)],
-      };
+      // DescribeConfigs on the cluster is a right of its own (KM4): the broker exists, so a
+      // principal refused its configs is answered that refusal, not a failed source.
+      const configs = await partRead(() => client.brokerConfigs(Number(name)));
+      return { path, kind, parts: [partFrom("configs", "Broker configs", configs, renderConfigs, limit)] };
     }
     default:
       throw new KafkaError("unknown-object", `Kafka declares no object kind ${JSON.stringify(kind)}`);
