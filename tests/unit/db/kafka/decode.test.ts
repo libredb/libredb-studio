@@ -230,6 +230,33 @@ describe("decodeBytes", () => {
     });
   });
 
+  test("a cut that falls just after a whole surrogate pair keeps the pair", () => {
+    // a, U+1F600, bcd: a cut at 3 ends on U+1F600's second code unit, so the character is kept whole.
+    expect(decodeBytes(bytes(`a${FOUR_BYTE}bcd`), 3)).toEqual({
+      value: `a${FOUR_BYTE}`,
+      encoding: "text",
+      truncated: true,
+    });
+    expect(decodeHeaderName(bytes(`a${FOUR_BYTE}bcd`), 3)).toEqual({
+      value: `a${FOUR_BYTE}`,
+      encoding: "text",
+      truncated: true,
+    });
+    // [, a quote, U+1F600, xx, a quote and ]: a cut at 4 ends on the pair's second unit too.
+    expect(decodeBytes(bytes(`["${FOUR_BYTE}xx"]`), 4)).toEqual({
+      value: `["${FOUR_BYTE}`,
+      encoding: "json",
+      truncated: true,
+    });
+  });
+
+  test("the back-off covers the whole first-half range, from U+10000 to U+10FFFF", () => {
+    // Their first code units are 0xD800 and 0xDBFF, the two ends of the range a pair starts with.
+    for (const astral of ["\u{10000}", "\u{10FFFF}"]) {
+      expect(decodeBytes(bytes(`a${astral}b`), 2)).toEqual({ value: "a", encoding: "text", truncated: true });
+    }
+  });
+
   test("JSON past the cell limit but within the prefix bound keeps its label, and its cut text is shown", () => {
     const json = decodeBytes(bytes(`{"a":"${"y".repeat(30)}"}`), 20);
     expect(json).toMatchObject({ encoding: "json", truncated: true });
