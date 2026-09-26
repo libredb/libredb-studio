@@ -4,6 +4,9 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 
+// A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
+const TEST_PASSWORD = "password";
+
 const base = {
   id: "k",
   name: "k",
@@ -105,10 +108,10 @@ describe("kafkaConnectionOptions", () => {
 
   test("SASL over TLS is built from user, password and mechanism", () => {
     const options = kafkaConnectionOptions(
-      withTls({ saslMechanism: "SCRAM-SHA-512", user: "reader", password: "s3cret" }),
+      withTls({ saslMechanism: "SCRAM-SHA-512", user: "reader", password: TEST_PASSWORD }),
       1,
     );
-    expect(options.sasl).toEqual({ mechanism: "SCRAM-SHA-512", username: "reader", password: "s3cret" });
+    expect(options.sasl).toEqual({ mechanism: "SCRAM-SHA-512", username: "reader", password: TEST_PASSWORD });
   });
 
   test("K3: SASL with TLS disabled is refused, for every mechanism", () => {
@@ -216,7 +219,7 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
         ssl: TLS_ON,
         ...(mechanism === "no mechanism" ? {} : { saslMechanism: mechanism }),
         user: "someone",
-        password: "s3cret",
+        password: TEST_PASSWORD,
         [field]: value,
       });
       expect(message).toBe(`The connection's ${field} must be a string; nothing was sent`);
@@ -243,7 +246,7 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
       (
         [
           ["no user or password", {}],
-          ["a user and a password", { user: "reader", password: "s3cret" }],
+          ["a user and a password", { user: "reader", password: TEST_PASSWORD }],
         ] as const
       ).map(([label, credential]) => [JSON.stringify(mechanism), label, mechanism, credential] as const),
     ),
@@ -268,28 +271,34 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
   ])(
     "a saslMechanism that is %s is refused as an unknown mechanism, never matched loosely or coerced",
     (_label, mechanism) => {
-      expect(refusalOf({ ...base, ssl: TLS_ON, saslMechanism: mechanism, user: "reader", password: "s3cret" })).toBe(
-        UNKNOWN_MECHANISM,
-      );
+      expect(
+        refusalOf({ ...base, ssl: TLS_ON, saslMechanism: mechanism, user: "reader", password: TEST_PASSWORD }),
+      ).toBe(UNKNOWN_MECHANISM);
     },
   );
 
   test("an unknown mechanism is refused before TLS is asked for, so its refusal never quotes it", () => {
     // A secret pasted into the wrong field is the value a refusal must not repeat.
     for (const mechanism of ["hunter2", null, ""]) {
-      expect(refusalOf({ ...base, saslMechanism: mechanism, user: "reader", password: "s3cret" })).toBe(
+      expect(refusalOf({ ...base, saslMechanism: mechanism, user: "reader", password: TEST_PASSWORD })).toBe(
         UNKNOWN_MECHANISM,
       );
     }
   });
 
   test.each(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"] as const)("%s reaches the client as itself", (mechanism) => {
-    const { sasl } = mapped({ ...base, ssl: TLS_ON, saslMechanism: mechanism, user: "reader", password: "s3cret" });
-    expect(sasl).toEqual({ mechanism, username: "reader", password: "s3cret" });
+    const { sasl } = mapped({
+      ...base,
+      ssl: TLS_ON,
+      saslMechanism: mechanism,
+      user: "reader",
+      password: TEST_PASSWORD,
+    });
+    expect(sasl).toEqual({ mechanism, username: "reader", password: TEST_PASSWORD });
   });
 
   test("a user or password with no mechanism is refused as a missing mechanism, one of spaces included", () => {
-    for (const credential of [{ user: "reader" }, { password: "s3cret" }, { user: " " }, { password: " " }]) {
+    for (const credential of [{ user: "reader" }, { password: TEST_PASSWORD }, { user: " " }, { password: " " }]) {
       expect(refusalOf({ ...base, ...credential })).toBe(
         "A Kafka user or password needs a SASL mechanism: choose PLAIN or SCRAM, or clear both fields",
       );
