@@ -9,7 +9,14 @@
  * than `PREFIX_FACTOR * cellLimit` bytes is judged on its first bytes: its encoding is
  * `text` or `base64`, and it is never parsed as JSON. A decompressed record can be far
  * larger than anything the broker bounded, and decoding it whole would hold a second copy.
+ *
+ * A JSON document is answered as its parse only when the parse shows every value sent (spec
+ * 5.3): an integer JSON.parse would round is quoted before the parse, so it keeps its digits as
+ * a string (docs/ADDING_A_PROVIDER.md), and a document that repeats a member name, or holds a
+ * number no double shows as sent, is answered as its text.
  */
+import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+
 export type KafkaEncoding = "null" | "confluent" | "json" | "text" | "base64";
 
 export interface DecodedCell {
@@ -71,6 +78,70 @@ function utf8Prefix(bytes: Uint8Array, max: number): Uint8Array {
   return bytes.subarray(0, end);
 }
 
+/**
+ * The tokens of text JSON.parse accepted: a string with its escapes, a number, or a structural
+ * character. `true`, `false`, `null` and whitespace match nothing and are skipped.
+ */
+const JSON_TOKEN = /"(?:[^"\\]|\\["\\/bfnrtu])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}[\],:]/g;
+
+/** A decimal literal: a JSON number, or what String() writes for a finite double. */
+const DECIMAL_LITERAL = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
+
+/**
+ * One spelling per decimal value: the significant digits, then the power of ten that puts the
+ * point before the first of them, so `1.10`, `1.1` and `0.11e1` all read `11e1`.
+ */
+function decimalValue(literal: string): string {
+  // Only JSON number tokens and String() of a finite double reach here, and both always match.
+  const [, sign, whole, fraction = "", exponent = "0"] = DECIMAL_LITERAL.exec(literal) as RegExpExecArray;
+  const digits = whole + fraction;
+  const first = digits.search(/[1-9]/);
+  if (first < 0) return "0";
+  return `${sign}${digits.slice(first).replace(/0+$/, "")}e${Number(exponent) + whole.length - first}`;
+}
+
+/**
+ * True when a JSON number's double is the number sent, as JSON.stringify writes it back: finite
+ * (not an overflow to Infinity), not negative zero (which it writes as 0), and of the same decimal
+ * value, so no digit was lost to rounding or underflow. Another spelling of that value, such as
+ * `1.10` or `1e2`, is the same number.
+ */
+function numberShowsItsValue(token: string): boolean {
+  const value = Number(token);
+  if (!Number.isFinite(value) || Object.is(value, -0)) return false;
+  // Most tokens are spelled as String() writes them, which needs no comparison of values.
+  const written = String(value);
+  return written === token || decimalValue(written) === decimalValue(token);
+}
+
+/**
+ * True when JSON.parse of `json`, text it accepted, shows every value sent: no object repeats a
+ * member name, whose earlier values JSON.parse drops, and every number is one its double holds.
+ */
+function showsEveryValue(json: string): boolean {
+  // One entry per open container: an object's member names so far, or undefined for an array.
+  const names: Array<Set<string> | undefined> = [];
+  let previous = "";
+  for (const [token] of json.matchAll(JSON_TOKEN)) {
+    const lead = token[0];
+    if (lead === '"') {
+      const members = names.at(-1);
+      // Inside an object, a string right after `{` or `,` is a member name, decoded as JSON.parse
+      // reads it; with no escape, its text between the quotes is its name.
+      if (members !== undefined && (previous === "{" || previous === ",")) {
+        const name: string = token.includes("\\") ? JSON.parse(token) : token.slice(1, -1);
+        if (members.has(name)) return false;
+        members.add(name);
+      }
+    } else if (lead === "{") names.push(new Set());
+    else if (lead === "[") names.push(undefined);
+    else if (lead === "}" || lead === "]") names.pop();
+    else if (lead !== "," && lead !== ":" && !numberShowsItsValue(token)) return false;
+    previous = lead;
+  }
+  return true;
+}
+
 const CONFLUENT: Decoder = {
   decode: (bytes, cellLimit) => {
     if (bytes.length < CONFLUENT_HEADER_BYTES || bytes[0] !== 0x00) return undefined;
@@ -92,7 +163,14 @@ const JSON_DOCUMENT: Decoder = {
     } catch {
       return undefined;
     }
-    if (text.length <= cellLimit) return { value: parsed, encoding: "json", truncated: false };
+    // Quoted only once JSON.parse accepted the text as sent: on other text the quotes can make
+    // JSON of what is not, such as `{12345678901234567890:1}`.
+    const exact = quoteUnsafeIntegers(text);
+    // A parse that would not show every value sent leaves the value to the text rule.
+    if (!showsEveryValue(exact)) return undefined;
+    if (text.length <= cellLimit) {
+      return { value: exact === text ? parsed : JSON.parse(exact), encoding: "json", truncated: false };
+    }
     // Past the cell limit the parsed value cannot be shown whole, so its cut text is, and says so.
     return { value: cutText(text, cellLimit), encoding: "json", truncated: true };
   },

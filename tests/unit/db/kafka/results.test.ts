@@ -34,6 +34,24 @@ describe("shapeRecord", () => {
     });
   });
 
+  test("a JSON key and a JSON header value keep an integer past 2^53 exactly, as the value does", () => {
+    const { row } = shapeRecord(
+      record({
+        key: enc('{"orderId":12345678901234567890}'),
+        value: enc('{"id":9007199254740993}'),
+        headers: [[enc("json-value"), enc('{"x":12345678901234567890}')]],
+      }),
+      { cellLimit: 1000 },
+    );
+    expect(row).toMatchObject({
+      key: { orderId: "12345678901234567890" },
+      key_encoding: "json",
+      value: { id: "9007199254740993" },
+      value_encoding: "json",
+      headers: { "json-value": { x: "12345678901234567890" } },
+    });
+  });
+
   test("an offset past 2^53 keeps every digit", () => {
     const { row } = shapeRecord(record({ offset: BigInt("9007199254740993") }), { cellLimit: 1000 });
     expect(row.offset).toBe("9007199254740993");

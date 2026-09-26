@@ -350,10 +350,13 @@ Applied in order to the key, to the value and to each header value; the first ru
 
 1. `null` stays `null`, encoding `null`.
 2. At least 5 bytes whose byte 0 is `0x00` is the Confluent wire format (magic byte 0, then a 4-byte big-endian schema id): the cell is `schema id <N>, not decoded`, encoding `confluent`.
-3. Valid UTF-8 that `JSON.parse` accepts as an object or an array: the parsed value, encoding `json`.
+3. Valid UTF-8 that `JSON.parse` accepts as an object or an array, and whose parse shows every value sent: the parsed value, encoding `json`.
 4. Other valid UTF-8: the string, encoding `text`.
 5. Anything else: base64 of the value's first bytes, as many whole 3-byte groups as fit in the cell limit beside the suffix, written `<base64> (<n> bytes)`, encoding `base64`; the byte length is always in the cell, and a cut value ends on a whole group.
 
+An integer past `Number.MAX_SAFE_INTEGER` either side of zero, which `JSON.parse` would round, is quoted before the parse, the rule of [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) for 64-bit integers, so a 64-bit id keeps every digit, as a string.
+A document that repeats a member name, which `JSON.parse` answers with its last value alone, or that holds a number no double shows as sent, is answered by rule 4 as its text, exactly as sent: a number past the double's range, which the query route would send as `null`, one that underflows or loses digits, and `-0`, which it would send as `0`.
+Another spelling of the same number, such as `1.10` or `1e2`, is the same value, and so is another member order, since a JSON object is unordered.
 Rule 2 comes before rule 3 because a Confluent-framed payload can itself be valid UTF-8, so a text value that happens to start with `0x00` is labelled `confluent`: a false positive, stated here rather than guessed around.
 No Schema Registry is read and no Avro, Protobuf or JSON Schema payload is decoded; a framed value is labelled with its schema id, never guessed (`docs/BACKLOG.md`).
 UTF-8 is checked with a fatal decoder, so invalid bytes are never shown as a replacement character, and with the byte order mark kept, so a value is shown as sent and two header names differing only by the mark stay two keys.

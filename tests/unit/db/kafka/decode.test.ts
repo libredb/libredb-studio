@@ -22,6 +22,100 @@ describe("decodeBytes", () => {
     expect(decodeBytes(bytes("[1,2]"), 1000).encoding).toBe("json");
   });
 
+  test("an integer JSON.parse would round keeps every digit sent, as a string (docs/ADDING_A_PROVIDER.md)", () => {
+    expect(decodeBytes(bytes('{"id":12345678901234567890,"n":9007199254740993}'), 1000)).toEqual({
+      value: { id: "12345678901234567890", n: "9007199254740993" },
+      encoding: "json",
+      truncated: false,
+    });
+    expect(decodeBytes(bytes("[12345678901234567890,-12345678901234567890]"), 1000).value).toEqual([
+      "12345678901234567890",
+      "-12345678901234567890",
+    ]);
+    // Controls: an integer JSON.parse keeps exactly stays a number, and digits inside a string stay as they are.
+    expect(decodeBytes(bytes('{"n":9007199254740991}'), 1000).value).toEqual({ n: 9007199254740991 });
+    expect(decodeBytes(bytes('{"s":"12345678901234567890 in a string"}'), 1000).value).toEqual({
+      s: "12345678901234567890 in a string",
+    });
+  });
+
+  test("past the cell limit, a JSON value with such an integer shows its own cut text, not the quoted one", () => {
+    expect(decodeBytes(bytes('{"id":12345678901234567890}'), 10)).toEqual({
+      value: '{"id":1234',
+      encoding: "json",
+      truncated: true,
+    });
+  });
+
+  test("quoting runs only on text JSON.parse accepted: an unquoted integer name is never made JSON", () => {
+    expect(decodeBytes(bytes("{12345678901234567890:1}"), 1000)).toEqual({
+      value: "{12345678901234567890:1}",
+      encoding: "text",
+      truncated: false,
+    });
+  });
+
+  test("a repeated member name is text, since JSON.parse would keep only its last value", () => {
+    for (const sent of [
+      '{"a":1,"a":2}',
+      // The same name written with an escape.
+      '{"a":1,"\\u0061":2}',
+      // Inside a nested object, and in the outer object after a nested one closed.
+      '{"o":{"a":1,"a":2}}',
+      '{"a":{"x":1},"a":2}',
+    ]) {
+      expect(decodeBytes(bytes(sent), 1000)).toEqual({ value: sent, encoding: "text", truncated: false });
+    }
+    // Controls: one name in two objects, or at two levels, is no repeat, and a string value, in an
+    // object or an array, is not a name.
+    expect(decodeBytes(bytes('[{"a":1},{"a":2}]'), 1000).value).toEqual([{ a: 1 }, { a: 2 }]);
+    expect(decodeBytes(bytes('{"o":{"a":1},"a":2}'), 1000).value).toEqual({ o: { a: 1 }, a: 2 });
+    expect(decodeBytes(bytes('{"a":"a","b":["a","b","b"]}'), 1000).value).toEqual({ a: "a", b: ["a", "b", "b"] });
+  });
+
+  test("a number whose double is not the number sent is text: overflow, underflow, lost digits and -0", () => {
+    for (const sent of [
+      "[1e400]",
+      '{"f":1.10,"e":1e400,"z":-0}',
+      '{"n":1e-400}',
+      '{"n":0.1000000000000000055511151231257827}',
+      '{"big":12345678901234567890.0}',
+      // JSON.stringify writes negative zero as 0.
+      '{"z":-0}',
+      "[-0.0]",
+    ]) {
+      expect(decodeBytes(bytes(sent), 1000)).toEqual({ value: sent, encoding: "text", truncated: false });
+    }
+  });
+
+  test("a number spelled otherwise than JSON.stringify writes it, but of the same value, stays json", () => {
+    const sent =
+      "[1,2.5,-3,1e2,1E+2,1.10,100.0,0.1,5e-1,0.1e1,12e-1,0.00012,1.2e-4,0,0.0,5e-324,1.7976931348623157e308]";
+    expect(decodeBytes(bytes(sent), 1000)).toEqual({
+      value: [1, 2.5, -3, 100, 100, 1.1, 100, 0.1, 0.5, 1, 1.2, 0.00012, 0.00012, 0, 0, 5e-324, 1.7976931348623157e308],
+      encoding: "json",
+      truncated: false,
+    });
+  });
+
+  test("the scan that finds names and numbers skips a string whole, escaped quotes included", () => {
+    // Read without the escape, the quote before 1e400 would close the string and leave a number that overflows.
+    expect(decodeBytes(bytes('{"k":"say \\"1e400\\" twice"}'), 1000)).toEqual({
+      value: { k: 'say "1e400" twice' },
+      encoding: "json",
+      truncated: false,
+    });
+  });
+
+  test("a repeated name or a number that is not the one sent makes a value past the cell limit text too", () => {
+    // 27 bytes: past the cell limit of 10, within the prefix bound of 40, so the JSON rule judges it.
+    expect(decodeBytes(bytes(`{"a":1,"a":2,"pad":"${"y".repeat(5)}"}`), 10)).toEqual({
+      value: '{"a":1,"a"',
+      encoding: "text",
+      truncated: true,
+    });
+  });
+
   test("a JSON scalar is text, not json: a bare 42 or true reads better as what was sent", () => {
     expect(decodeBytes(bytes("42"), 1000)).toMatchObject({ value: "42", encoding: "text" });
   });
