@@ -160,6 +160,25 @@ describe("parseReadRequest", () => {
     });
   });
 
+  test("each month's last day is read and the day after it is refused, in every month of the year", () => {
+    // 2026 is no leap year. Date.parse rolls a thirty-day month's day 31 into the next month (2026-11-31 reads as
+    // 2026-12-01), so each month's length must be the parser's own, April's no more than November's.
+    const lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    lengths.forEach((last, index) => {
+      const month = String(index + 1).padStart(2, "0");
+      expect(
+        parse(JSON.stringify({ topic: "o", from: { timestamp: `2026-${month}-${last}T00:00:00Z` } })).from,
+      ).toMatchObject({ iso: `2026-${month}-${last}T00:00:00.000Z` });
+      expect(
+        refusal(JSON.stringify({ topic: "o", from: { timestamp: `2026-${month}-${last + 1}T00:00:00Z` } })).message,
+      ).toBe(`The timestamp names day ${last + 1} of a month that does not have it`);
+    });
+    // A month the year does not have makes no date at all: refused as the timestamp's form, never as a day of it.
+    for (const timestamp of ["2026-13-32T00:00:00Z", "2026-00-32T00:00:00Z", "2026-13-01T00:00:00Z"]) {
+      expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toBe(TIMESTAMP_REFUSAL);
+    }
+  });
+
   test("an instant before 1970 is refused: -1 and -2 ms are the ListOffsets sentinels for latest and earliest", () => {
     for (const timestamp of ["1969-12-31T23:59:59.999Z", "1969-12-31T23:59:59.998Z"]) {
       expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toBe(
