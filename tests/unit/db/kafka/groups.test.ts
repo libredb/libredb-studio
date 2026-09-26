@@ -443,7 +443,7 @@ describe("readGroupSource", () => {
     expect((await readGroupSource(failing, "lag-classic").catch((e) => e)).category).toBe("network");
   });
 
-  test("a topic the principal may not describe keeps its rows, with the broker's refusal as the reason, and the source still settles", async () => {
+  test("an assigned topic the principal may not describe keeps its rows, with no committed or latest offset and the broker's refusal as the reason, and the source still settles", async () => {
     // A principal with Describe on a classic group and not on a topic a member is assigned, as
     // measured on Apache Kafka 4.3.1: DescribeGroups answers the member's assignment, OffsetFetch
     // leaves that topic's committed offsets out, and its high watermark is refused
@@ -473,10 +473,10 @@ describe("readGroupSource", () => {
       "lag-classic",
     );
     const { lag } = answered(source);
-    expect(lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset, r.lag])).toEqual([
-      ["orders/0", "24", "23"],
-      ["payments/0", null, null],
-      ["payments/1", null, null],
+    expect(lag.map((r) => [`${r.topic}/${r.partition}`, r.committedOffset, r.latestOffset, r.lag])).toEqual([
+      ["orders/0", "1", "24", "23"],
+      ["payments/0", null, null, null],
+      ["payments/1", null, null, null],
     ]);
     for (const row of lag.slice(1)) expect(row.note).toContain(denied);
   });
