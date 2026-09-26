@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { callerBoundTruncationReason, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { KafkaError, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
+import { KafkaError, type KafkaConfigEntry, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
 import {
   countObjects,
   describeObject,
@@ -17,6 +17,7 @@ import {
   readObjectSource,
   topicStatus,
 } from "@/lib/db/providers/stream/kafka/objects";
+import { kafkaFixture } from "../../../helpers/kafka-fixtures";
 
 const big = (value: number) => BigInt(value);
 const CAPS = {
@@ -76,6 +77,35 @@ function client(topicNames: string[], over: Partial<ObjectsClient> = {}): Object
   };
 }
 const textOf = (doc: { parts: readonly unknown[] }, index: number) => (doc.parts[index] as { text: string }).text;
+
+/**
+ * A captured DescribeConfigs answer (tests/fixtures/kafka), as the seam hands it over: the one
+ * resource's entries, in the broker's order, with `configSource` read as `source` the way the
+ * adapter's `mapConfigs` reads it (its own test pins that mapping; this file pins what the object
+ * surface makes of the broker's real population).
+ */
+function capturedConfigs(name: "configs-broker-1" | "configs-topic-orders"): KafkaConfigEntry[] {
+  const [resource] =
+    kafkaFixture<
+      Array<{
+        configs: Array<{
+          name: string;
+          value: string | null;
+          readOnly: boolean;
+          isSensitive: boolean;
+          configSource: number;
+        }>;
+      }>
+    >(name);
+  return resource.configs.map((c) => ({
+    name: c.name,
+    value: c.value,
+    readOnly: c.readOnly,
+    isSensitive: c.isSensitive,
+    source: c.configSource,
+  }));
+}
+type ShownConfig = { name: string; value: string | null; source: string; readOnly: boolean };
 
 describe("declaration", () => {
   test("three kinds, no container level, only topic has columns, every kind has a JSON source, none writable", () => {
@@ -366,6 +396,54 @@ describe("sources", () => {
       "broker",
     );
     expect(JSON.parse(textOf(future, 0))[0].source).toBe("42");
+  });
+
+  test("broker: only an entry the broker marks sensitive and withholds reads as redacted; an unset one, and a value it sent, stay as sent", async () => {
+    const doc = await readObjectSource(
+      client(["a"], {
+        brokerConfigs: async () => [
+          { name: "ssl.keystore.password", value: null, readOnly: true, isSensitive: true, source: 4 },
+          // Unset, and not sensitive: kafka-configs.sh prints it as null too, never as a secret.
+          {
+            name: "remote.log.metadata.manager.listener.name",
+            value: null,
+            readOnly: true,
+            isSensitive: false,
+            source: 5,
+          },
+          // A value the broker did send is shown as sent (K6), whatever it marks the entry.
+          { name: "sasl.jaas.config", value: "sent anyway", readOnly: true, isSensitive: true, source: 4 },
+        ],
+      }),
+      CAPS,
+      ["1"],
+      "broker",
+    );
+    expect((JSON.parse(textOf(doc, 0)) as ShownConfig[]).map((c) => [c.name, c.value])).toEqual([
+      ["ssl.keystore.password", "redacted by the broker"],
+      ["remote.log.metadata.manager.listener.name", null],
+      ["sasl.jaas.config", "sent anyway"],
+    ]);
+  });
+
+  test("broker 1's captured configs: exactly the sensitive entries read as redacted, and every other value as the broker sent it", async () => {
+    const entries = capturedConfigs("configs-broker-1");
+    const doc = await readObjectSource(client(["a"], { brokerConfigs: async () => entries }), CAPS, ["1"], "broker");
+    const shown = JSON.parse(textOf(doc, 0)) as ShownConfig[];
+    const sensitive = entries.filter((c) => c.isSensitive);
+    const unsetPlain = entries.filter((c) => !c.isSensitive && c.value === null);
+    // The capture's own census (Apache Kafka 4.3.1): 340 entries, the 10 sensitive ones all
+    // withheld, and 42 that are simply unset, which a rule reading every null as redacted
+    // would show as secrets.
+    expect([shown.length, sensitive.length, unsetPlain.length]).toEqual([340, 10, 42]);
+    expect(sensitive.every((c) => c.value === null)).toBe(true);
+    expect(shown.filter((c) => c.value === "redacted by the broker").map((c) => c.name)).toEqual(
+      sensitive.map((c) => c.name),
+    );
+    expect(shown.find((c) => c.name === "remote.log.metadata.manager.listener.name")?.value).toBeNull();
+    expect(shown.map((c) => [c.name, c.value])).toEqual(
+      entries.map((c) => [c.name, c.isSensitive ? "redacted by the broker" : c.value]),
+    );
   });
 
   test("consumer group: the description then the lag", async () => {
