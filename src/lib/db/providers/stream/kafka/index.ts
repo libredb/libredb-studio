@@ -54,11 +54,15 @@ const defaultCreateClient = async (options: KafkaConnectionOptions): Promise<Kaf
   createPlatformaticClient(options, await loadPlatformatic());
 
 /**
- * A package that does not resolve, as Node and Bun both word it: "Cannot find module 'ajv/dist/core'"
- * for a require, "Cannot find package '@scope/name'" for an import. The Next.js server wraps an external
- * package's load failure in an Error of its own that keeps this text and drops the code, so the text is
- * what is read. A package name only, scoped or not, with or without a subpath: a path names a file
- * missing from a package that did install, which no layout of the installation explains.
+ * A package that does not resolve, in the form that names it: "Cannot find module 'ajv/dist/core'", the
+ * specifier a CommonJS require named, under Node and Bun alike, and "Cannot find package '@scope/name'"
+ * for an ES module import of a package no install holds, which Bun also writes for a subpath its
+ * installed package lacks. The measured failure takes the first form, since `ajv-draft-04` requires
+ * `ajv/dist/core` from CommonJS. The Next.js server wraps an external package's load failure in an Error
+ * of its own that keeps this text and drops the code, so the text is what is read. A package name only,
+ * scoped or not, with or without a subpath; a failure written otherwise is not read and surfaces as
+ * itself, such as Node's ES module loader's for a subpath its installed package lacks, as when the
+ * package sits at another major, which names the file by its absolute path, as it names a relative import.
  */
 const UNRESOLVED_PACKAGE = /Cannot find (?:module|package) '((?:@[\w.~-]+\/)?[\w~-][\w.~-]*(?:\/[^']*)?)'/;
 

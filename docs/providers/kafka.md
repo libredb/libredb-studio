@@ -114,6 +114,8 @@ In this repository the direct `ajv` dependency puts `ajv` 8 there (`tests/unit/d
 A host that installs the published package with bun, and whose own tree leaves an `ajv` 6 at the top of its `node_modules` (its own, or the one eslint 9 brings), needs `ajv` ^8 resolvable at its own root, for example as a dependency of its own; a host that keeps `ajv` 6 as its own dependency can install with `bun install --linker isolated` instead.
 npm nests `ajv-draft-04` beside `ajv` 8 under the client, so a host that installs with npm needs neither (measured with bun 1.4.2 and npm 11.9.0).
 Where the installation does not resolve a package the client requires, `connect()` refuses with a `DatabaseConfigError` naming it, never the runtime's own text, which carries the server's paths: `The Kafka client library could not be loaded: the module "ajv/dist/core" it requires does not resolve in this installation. See docs/providers/kafka.md section 2.5`.
+The refusal reads the runtime's error where that error names the package, which this failure's does under Node and Bun, since `ajv-draft-04` requires `ajv/dist/core` from CommonJS.
+Node's ES module loader names a subpath missing from an installed package by the file's absolute path instead, so where an ES module among the client's dependencies imports a subpath from a package installed at a major without it, a connect fails with the runtime's own error.
 
 Supported brokers: a read sends Fetch v13, the first version that names a topic by id (KIP-516), which Apache Kafka answers from 3.1 on.
 The client's own README states Apache Kafka 3.5.0 to 4.2.0 as its supported range; this provider was verified against 4.3.1.

@@ -7,17 +7,19 @@
  * fails with the runtime's resolution error: no error class of this product's, and a message that carries
  * the server's paths. `connect()` refuses that instead, with a `DatabaseConfigError` naming the package.
  *
- * The resolution errors below are the runtimes' own, raised for packages no install holds: Bun's in this
- * process, and Node's in a child process, since Node runs the standalone server and most hosts. The
- * Next.js server wraps an external package's load failure in an Error of its own, whose text is written
- * here as its runtime writes it (`externalImport` in the `[turbopack]_runtime.js` a build emits). No
- * mock.module(): the provider constructor's `createClient` parameter is the seam.
+ * The resolution errors below are the runtimes' own, raised for packages no install holds, and for a
+ * subpath a scratch installation's package lacks, the layout of that host: Bun's in this process, and
+ * Node's in a child process, since Node runs the standalone server and most hosts. The Next.js server
+ * wraps an external package's load failure in an Error of its own, whose text is written here as its
+ * runtime writes it (`externalImport` in the `[turbopack]_runtime.js` a build emits). No mock.module():
+ * the provider constructor's `createClient` parameter is the seam.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import type { KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
@@ -97,6 +99,24 @@ const scratch = mkdtempSync(path.join(tmpdir(), "kafka-library-load-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const NODE_SCRIPT = "resolution-under-node.mjs";
 
+/**
+ * A package installed at a major that lacks the subpath loaded from it, as `ajv` 6 lacks the
+ * `ajv/dist/core` that `ajv-draft-04` requires, with no `exports` map, as `ajv` 6 has none. How a runtime
+ * writes the failure depends on the module system of the module that loads the subpath.
+ */
+const INSTALLED = "libredb-studio-installed";
+const INSTALLED_SUBPATH = `${INSTALLED}/dist/core`;
+mkdirSync(path.join(scratch, "node_modules", INSTALLED), { recursive: true });
+writeFileSync(
+  path.join(scratch, "node_modules", INSTALLED, "package.json"),
+  JSON.stringify({ name: INSTALLED, version: "6.0.0", main: "index.js" }),
+);
+writeFileSync(path.join(scratch, "node_modules", INSTALLED, "index.js"), "module.exports = {};\n");
+/** A CommonJS require from inside the scratch installation, and an ES module there that imports the subpath. */
+const installationRequire = createRequire(path.join(scratch, "index.js"));
+const IMPORTS_INSTALLED_SUBPATH = path.join(scratch, "imports-installed-subpath.mjs");
+writeFileSync(IMPORTS_INSTALLED_SUBPATH, `import ${JSON.stringify(INSTALLED_SUBPATH)};\n`);
+
 interface NodeFailure {
   readonly code: string;
   readonly message: string;
@@ -105,8 +125,13 @@ interface NodeFailure {
 type LoadForm = "require" | "import";
 type NodeFailures = Readonly<Record<LoadForm, Readonly<Record<string, NodeFailure | null>>>>;
 
-/** Every specifier Node's child loads, each by require and by import. */
-const NODE_SPECIFIERS = [...ABSENT_PACKAGES.map(([specifier]) => specifier), ABSENT_ALIAS, ABSENT_FILE];
+/** Every specifier Node's child loads, each by require and by import, from inside the scratch installation. */
+const NODE_SPECIFIERS = [
+  ...ABSENT_PACKAGES.map(([specifier]) => specifier),
+  ABSENT_ALIAS,
+  ABSENT_FILE,
+  INSTALLED_SUBPATH,
+];
 
 let nodeRun: NodeFailures | undefined;
 
@@ -215,6 +240,28 @@ describe("a client library the installation cannot load", () => {
     expect(bunImport.message).toStartWith(`Cannot find package '${ABSENT_ALIAS}' imported from `);
   });
 
+  test("the runtimes' own resolution errors for a subpath the installed major lacks: a CommonJS require writes the specifier, Bun's ES module import the package, and Node's the file's absolute path", async () => {
+    const nodeRequire = nodeFailure("require", INSTALLED_SUBPATH);
+    expect(nodeRequire.code).toBe("MODULE_NOT_FOUND");
+    expect(nodeRequire.message).toStartWith(`Cannot find module '${INSTALLED_SUBPATH}'\nRequire stack:\n- `);
+    const nodeImport = nodeFailure("import", INSTALLED_SUBPATH);
+    expect(nodeImport.code).toBe("ERR_MODULE_NOT_FOUND");
+    const named = /^Cannot find module '([^']+)' imported from /.exec(nodeImport.message)?.[1] ?? "";
+    // Its last four segments, whatever the separator, since the real path differs from tmpdir()'s on macOS.
+    expect({ absolute: path.isAbsolute(named), tail: named.split(/[\\/]/).slice(-4) }).toEqual({
+      absolute: true,
+      tail: ["node_modules", INSTALLED, "dist", "core"],
+    });
+    const bunRequire = (await rejectionOf(() => installationRequire(INSTALLED_SUBPATH))) as Error & { code?: string };
+    expect(bunRequire.code).toBe("MODULE_NOT_FOUND");
+    expect(bunRequire.message).toStartWith(`Cannot find module '${INSTALLED_SUBPATH}'`);
+    const bunImport = (await rejectionOf(() => import(pathToFileURL(IMPORTS_INSTALLED_SUBPATH).href))) as Error & {
+      code?: string;
+    };
+    expect(bunImport.code).toBe("ERR_MODULE_NOT_FOUND");
+    expect(bunImport.message).toStartWith(`Cannot find package '${INSTALLED}' imported from `);
+  });
+
   const REFUSED: ReadonlyArray<readonly [label: string, fail: () => Promise<unknown>, specifier: string]> = [
     ...ABSENT_PACKAGES.flatMap(([specifier, imported, holds]) =>
       RAISED_BY.map(
@@ -226,6 +273,21 @@ describe("a client library the installation cannot load", () => {
       "the Next.js server's wrapper of Node's require, which keeps the text and drops the code",
       async () => wrappedByTheServer(asNodeError(nodeFailure("require", ABSENT_SUBPATH))),
       ABSENT_SUBPATH,
+    ],
+    [
+      "Node's require of a subpath the installed major lacks, as ajv-draft-04 requires ajv/dist/core from CommonJS",
+      async () => asNodeError(nodeFailure("require", INSTALLED_SUBPATH)),
+      INSTALLED_SUBPATH,
+    ],
+    [
+      "Bun's require of a subpath the installed major lacks",
+      () => rejectionOf(() => installationRequire(INSTALLED_SUBPATH)),
+      INSTALLED_SUBPATH,
+    ],
+    [
+      "Bun's import of a subpath the installed major lacks, which it writes as the package",
+      () => rejectionOf(() => import(pathToFileURL(IMPORTS_INSTALLED_SUBPATH).href)),
+      INSTALLED,
     ],
   ];
   test.each(REFUSED)(
@@ -263,6 +325,10 @@ describe("a client library the installation cannot load", () => {
       ([runtime, raise]) =>
         [`${runtime} of a path alias, whose empty scope no package has`, () => raise(ABSENT_ALIAS)] as const,
     ),
+    [
+      "Node's import of a subpath the installed major lacks, which its ES module loader names by the file's absolute path",
+      async () => asNodeError(nodeFailure("import", INSTALLED_SUBPATH)),
+    ],
     ["a failure of another kind", async () => new TypeError("a defect, not a resolution")],
     ["a thrown value that is no Error, whatever its text", async () => `Cannot find module '${ABSENT_SUBPATH}'`],
     [
