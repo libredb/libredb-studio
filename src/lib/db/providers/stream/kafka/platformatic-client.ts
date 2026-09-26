@@ -957,6 +957,7 @@ async function describeConsumerProtocol(
     ...(options.tls !== undefined && isIP(coordinator.host) === 0 ? { tlsServerName: true } : {}),
   });
   let response: LibGroupDescribeResponse;
+  let refused: unknown;
   try {
     await connection.connect(coordinator.host, coordinator.port);
     try {
@@ -966,21 +967,27 @@ async function describeConsumerProtocol(
         false,
       )) as LibGroupDescribeResponse;
     } catch (error) {
-      // The client throws on any per-group error code but keeps the whole response (M-F).
+      // The client throws on any per-group error code but keeps the whole response (M-F), with one
+      // protocol error per errored entry, on that entry's path.
       const carried = (error as { response?: LibGroupDescribeResponse }).response;
       if (carried === undefined) throw error;
       response = carried;
+      refused = error;
     }
   } finally {
     await connection.close();
   }
-  const group = response.groups.find((g) => g.groupId === listing.groupId);
-  if (group === undefined || group.errorCode !== 0) {
+  const index = response.groups.findIndex((g) => g.groupId === listing.groupId);
+  // The broker answers an entry for every group asked for, so none is its anomaly: the listing, which
+  // decides that the group exists (spec 4.3), named it.
+  if (index < 0) {
     throw new KafkaError(
-      "unknown-object",
-      `Consumer group ${JSON.stringify(listing.groupId)} could not be described: ${group?.errorMessage ?? "no entry"}`,
+      "protocol",
+      `The broker's consumer group description holds no entry for group ${JSON.stringify(listing.groupId)}`,
     );
   }
+  const group = response.groups[index];
+  if (group.errorCode !== 0) throw groupEntryRefusal(refused, index, group.errorCode, listing.groupId, options.broker);
   return {
     groupId: group.groupId,
     groupType: "consumer",
@@ -993,6 +1000,35 @@ async function describeConsumerProtocol(
       assignment: m.assignment.topicPartitions.map((tp) => ({ topic: tp.topicName, partitions: tp.partitions })),
     })),
   };
+}
+
+/**
+ * An API 69 entry's error, classified by its protocol error name through the error table (spec 5.6),
+ * never by the text the broker wrote: the client throws one ProtocolError per errored entry, on that
+ * entry's path (dist/apis/admin/consumer-group-describe-v0.js). A refusal of the group or of a topic it
+ * uses is authorization, and a coordinator that moved or is loading is a protocol error naming it.
+ * GROUP_ID_NOT_FOUND, which the broker answers for an id with no consumer-protocol group, is the one
+ * the adapter words itself.
+ */
+function groupEntryRefusal(
+  refused: unknown,
+  index: number,
+  errorCode: number,
+  groupId: string,
+  bootstrap: { host: string; port: number },
+): KafkaError {
+  const own = [...walk(refused)].find((e) => e.path === `/groups/${index}`);
+  // The client throws on every errored entry, so an entry it handed over with a code is its anomaly.
+  if (own === undefined)
+    return new KafkaError("protocol", `The request to the broker failed (error code ${errorCode})`);
+  if (own.apiId === "GROUP_ID_NOT_FOUND") {
+    return new KafkaError(
+      "unknown-object",
+      `Consumer group ${JSON.stringify(groupId)} could not be described: the broker holds no consumer-protocol group by that id (GROUP_ID_NOT_FOUND)`,
+      { apiId: "GROUP_ID_NOT_FOUND" },
+    );
+  }
+  return translateError(own, bootstrap);
 }
 
 function stoppedRead(): KafkaError {

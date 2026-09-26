@@ -64,6 +64,53 @@ const fetchRefusal = (apiId: string) =>
     libError({ code: "PLT_KFK_PROTOCOL", apiId, path: "/responses/0/partitions/0" }),
   ]);
 
+/** The library's own text for each protocol error the API 69 tests throw (dist/protocol/errors.js). */
+const PROTOCOL_TEXT: Record<string, string> = {
+  COORDINATOR_LOAD_IN_PROGRESS: "The coordinator is loading and hence can't process requests.",
+  COORDINATOR_NOT_AVAILABLE: "The coordinator is not available.",
+  NOT_COORDINATOR: "This is not the correct coordinator.",
+  TOPIC_AUTHORIZATION_FAILED: "Topic authorization failed.",
+  GROUP_AUTHORIZATION_FAILED: "Group authorization failed.",
+};
+/**
+ * An API 69 answer whose entries carry the errors given, thrown as the library throws it: a
+ * ResponseError carrying the whole response, with one ProtocolError per errored entry, on that entry's
+ * path (dist/apis/admin/consumer-group-describe-v0.js; captured, error-consumer-group-describe-mixed).
+ */
+const groupDescribeRefusal = (
+  entries: Array<{ groupId: string; error?: [apiId: string, apiCode: number, brokerText: string | null] }>,
+) =>
+  libError(
+    {
+      code: "PLT_KFK_RESPONSE",
+      message: "Received response with error while executing API ConsumerGroupDescribe(v0)",
+      response: {
+        groups: entries.map(({ groupId, error }) => ({
+          errorCode: error?.[1] ?? 0,
+          errorMessage: error?.[2] ?? null,
+          groupId,
+          groupState: error === undefined ? "Stable" : "",
+          assignorName: error === undefined ? "uniform" : "",
+          members: [],
+        })),
+      },
+    },
+    entries.flatMap(({ error }, index) =>
+      error === undefined
+        ? []
+        : [
+            libError({
+              code: "PLT_KFK_PROTOCOL",
+              message: PROTOCOL_TEXT[error[0]],
+              apiId: error[0],
+              apiCode: error[1],
+              serverErrorMessage: error[2],
+              path: `/groups/${index}`,
+            }),
+          ],
+    ),
+  );
+
 /** Brokers a leader can move to, beside the capture's broker 1 at localhost:9092. */
 const OTHER_BROKERS: Array<[number, { host: string; port: number; rack: null }]> = [
   [0, { host: "broker-0.example", port: 9090, rack: null }],
@@ -1681,33 +1728,129 @@ describe("createPlatformaticClient", () => {
     expect(calls.filter(([n]) => n === "connection.close").length).toBe(1);
   });
 
-  test("an API 69 entry with an error code, or no entry, is unknown-object; no coordinator is said, never guessed", async () => {
+  test("an API 69 entry answered GROUP_ID_NOT_FOUND is unknown-object in the adapter's own words, never the broker's (captured)", async () => {
+    // The capture asked for lag-kip848 and lag-classic together; lag-classic's entry, second in the
+    // answer, carries 69 with the broker's text "Group lag-classic is not a consumer group.".
+    const mixed = kafkaFixture<Record<string, unknown>>("error-consumer-group-describe-mixed");
+    const { lib, calls } = fakeLib({
+      consumerGroupDescribeV0: () => {
+        throw Object.assign(new Error(String(mixed.message)), mixed);
+      },
+      "admin.findCoordinator": () => [{ key: "lag-classic", nodeId: 1, host: "localhost", port: 9092 }],
+    });
+    const error = await createPlatformaticClient(OPTIONS, lib)
+      .describeGroup({ groupId: "lag-classic", state: "Empty", groupType: "consumer", protocolType: "consumer" })
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect([error.category, error.message, error.detail]).toEqual([
+      "unknown-object",
+      'Consumer group "lag-classic" could not be described: the broker holds no consumer-protocol group by that id (GROUP_ID_NOT_FOUND)',
+      { apiId: "GROUP_ID_NOT_FOUND" },
+    ]);
+    expect(calls.filter(([n]) => n === "connection.close").length).toBe(1);
+  });
+
+  test.each<[string, number, string | null, string, string, Record<string, string>]>([
+    [
+      "TOPIC_AUTHORIZATION_FAILED",
+      29,
+      null,
+      "authorization",
+      "The broker denied access to this topic",
+      { resource: "topic" },
+    ],
+    [
+      "TOPIC_AUTHORIZATION_FAILED",
+      29,
+      "The described group uses topics that the client is not authorized to describe.",
+      "authorization",
+      "The broker denied access to this topic",
+      { resource: "topic" },
+    ],
+    [
+      "GROUP_AUTHORIZATION_FAILED",
+      30,
+      null,
+      "authorization",
+      "The broker denied access to this group",
+      { resource: "group" },
+    ],
+    [
+      "COORDINATOR_LOAD_IN_PROGRESS",
+      14,
+      null,
+      "protocol",
+      "The request to the broker failed (COORDINATOR_LOAD_IN_PROGRESS)",
+      {},
+    ],
+    [
+      "COORDINATOR_NOT_AVAILABLE",
+      15,
+      null,
+      "protocol",
+      "The request to the broker failed (COORDINATOR_NOT_AVAILABLE)",
+      {},
+    ],
+    ["NOT_COORDINATOR", 16, null, "protocol", "The request to the broker failed (NOT_COORDINATOR)", {}],
+  ])(
+    "an API 69 entry answered %s (%d, message %p) is %s, by its protocol error name, never the broker's text (spec 5.6)",
+    async (apiId, apiCode, brokerText, category, message, detail) => {
+      // The group was listed, so it exists (spec 4.3): an entry that carries a coordinator's error or a
+      // refusal is that error, never "no entry"; the coordinator's three errors carry a null message
+      // in Kafka 4.3.1 (ConsumerGroupDescribeRequest sets only the code and the group id).
+      const { lib, calls } = fakeLib({
+        consumerGroupDescribeV0: () => {
+          throw groupDescribeRefusal([{ groupId: "g", error: [apiId, apiCode, brokerText] }]);
+        },
+        "admin.findCoordinator": () => [{ key: "g", nodeId: 1, host: "localhost", port: 9092 }],
+      });
+      const error = await createPlatformaticClient(OPTIONS, lib)
+        .describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" })
+        .catch((e) => e);
+      expect(error).toBeInstanceOf(KafkaError);
+      expect([error.category, error.message, error.detail]).toEqual([category, message, { apiId, ...detail }]);
+      expect(calls.filter(([n]) => n === "connection.close").length).toBe(1);
+    },
+  );
+
+  test("an API 69 entry's error is its own entry's, found by the group asked for, never the first error the answer holds", async () => {
+    const { lib } = fakeLib({
+      consumerGroupDescribeV0: () => {
+        throw groupDescribeRefusal([
+          { groupId: "other", error: ["GROUP_AUTHORIZATION_FAILED", 30, null] },
+          { groupId: "g", error: ["NOT_COORDINATOR", 16, null] },
+        ]);
+      },
+      "admin.findCoordinator": () => [{ key: "g", nodeId: 1, host: "localhost", port: 9092 }],
+    });
+    const error = await createPlatformaticClient(OPTIONS, lib)
+      .describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" })
+      .catch((e) => e);
+    expect([error.category, error.detail]).toEqual(["protocol", { apiId: "NOT_COORDINATOR" }]);
+  });
+
+  test("an API 69 entry with an error code the client named no protocol error for is a protocol error naming the code", async () => {
+    // The client throws on every errored entry, so an answer handed over with one is its anomaly.
+    const { lib } = fakeLib({
+      consumerGroupDescribeV0: () => ({
+        groups: [{ errorCode: 16, errorMessage: null, groupId: "g", groupState: "", assignorName: "", members: [] }],
+      }),
+      "admin.findCoordinator": () => [{ key: "g", nodeId: 1, host: "localhost", port: 9092 }],
+    });
+    const error = await createPlatformaticClient(OPTIONS, lib)
+      .describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" })
+      .catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect([error.category, error.message]).toEqual(["protocol", "The request to the broker failed (error code 16)"]);
+  });
+
+  test("an API 69 answer with no entry for the group is a protocol error saying so; no coordinator is said, never guessed", async () => {
     const listing = {
       groupId: "lag-classic",
       state: "Empty",
       groupType: "consumer" as const,
       protocolType: "consumer",
     };
-    const { lib } = fakeLib({
-      consumerGroupDescribeV0: () => ({
-        groups: [
-          {
-            errorCode: 69,
-            errorMessage: "not a consumer group",
-            groupId: "lag-classic",
-            groupState: "",
-            assignorName: "",
-            members: [],
-          },
-        ],
-      }),
-      "admin.findCoordinator": () => [{ key: "lag-classic", nodeId: 1, host: "localhost", port: 9092 }],
-    });
-    const coded = await createPlatformaticClient(OPTIONS, lib)
-      .describeGroup(listing)
-      .catch((e) => e);
-    expect(coded.category).toBe("unknown-object");
-    expect(coded.message).toContain("not a consumer group");
     const empty = fakeLib({
       consumerGroupDescribeV0: () => ({ groups: [] }),
       "admin.findCoordinator": () => [{ key: "lag-classic", nodeId: 1, host: "localhost", port: 9092 }],
@@ -1715,8 +1858,11 @@ describe("createPlatformaticClient", () => {
     const absent = await createPlatformaticClient(OPTIONS, empty.lib)
       .describeGroup(listing)
       .catch((e) => e);
-    expect(absent.category).toBe("unknown-object");
-    expect(absent.message).toContain("no entry");
+    expect(absent).toBeInstanceOf(KafkaError);
+    expect([absent.category, absent.message]).toEqual([
+      "protocol",
+      'The broker\'s consumer group description holds no entry for group "lag-classic"',
+    ]);
     const none = fakeLib({ "admin.findCoordinator": () => [] });
     expect(
       (
