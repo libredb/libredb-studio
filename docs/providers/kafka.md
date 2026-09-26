@@ -210,6 +210,7 @@ One bootstrap address is enough: the client learns every broker from the metadat
 | none | empty | No authentication |
 | none | either set | Refused with a `DatabaseConfigError` naming the missing mechanism, never a silent drop of the credential |
 | `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512` | set | SASL with that mechanism, over TLS only |
+| anything else, `null` and `""` included | set or empty | Refused with a `DatabaseConfigError` that names the three mechanisms and never the value: only an absent `saslMechanism` means none |
 | any mechanism | TLS mode `disable` | Refused with a `DatabaseConfigError` before any socket opens |
 
 PLAIN sends the password in the clear, and a Kafka credential is usually cluster-wide, so SASL of any mechanism over plaintext is refused.
@@ -501,7 +502,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 
 | Condition | Class |
 |---|---|
-| invalid request JSON, host, port, credential or TLS setting, SASL over plaintext, a credential with no mechanism, an SSH tunnel, bound params | `DatabaseConfigError`, never echoing a value |
+| invalid request JSON, host, port, credential, SASL mechanism or TLS setting, SASL over plaintext, a credential with no mechanism, an SSH tunnel, bound params | `DatabaseConfigError`, never echoing a value |
 | empty editor text | `QueryError` |
 | an unknown topic ("Unknown topic <name>.") | `QueryError`: the topic does not exist |
 | an internal topic | `QueryError`: internal to Kafka and not readable here |

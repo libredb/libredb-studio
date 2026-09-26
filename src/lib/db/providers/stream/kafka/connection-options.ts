@@ -9,8 +9,9 @@
  * uncaught exception, and its PLAIN step joins the credential into text, so `["reader"]` would
  * authenticate as `reader`. The host and port go through the shared validators, the mechanism
  * through its list, and every other field is refused, naming the field and never its value, when
- * it is not the type `DatabaseConnection` declares for it; a null reads as absent, as a JSON body
- * writes an absent field.
+ * it is not the type `DatabaseConnection` declares for it. A null reads as absent, as a JSON body
+ * writes an absent field, in every field but the mechanism: only an absent mechanism means none,
+ * so a null or empty one is refused as a name its list does not hold.
  *
  * The TLS rule `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`
  * is the Couchbase mapping, written again here rather than imported, because the
