@@ -267,6 +267,26 @@ describe("decodeBytes", () => {
     expect(decodeBytes(bytes(`{"a":"${"y".repeat(60)}"}`), 10)).toMatchObject({ encoding: "text", truncated: true });
   });
 
+  test("the prefix bound is exactly four times the cell limit: JSON one byte past it is judged as text", () => {
+    // At a limit of 10 the bound is 40 bytes, and five or six times the limit would lie past both values.
+    const at = bytes(`{"a":"${"y".repeat(32)}"}`);
+    const past = bytes(`{"a":"${"y".repeat(33)}"}`);
+    expect([at.length, past.length]).toEqual([40, 41]);
+    expect(decodeBytes(at, 10)).toEqual({ value: '{"a":"yyyy', encoding: "json", truncated: true });
+    expect(decodeBytes(past, 10)).toEqual({ value: '{"a":"yyyy', encoding: "text", truncated: true });
+  });
+
+  test("rule 4 reads the bound's bytes and no more: an invalid byte just past it is not seen, and one on it is", () => {
+    // 41 bytes at a limit of 10: the bound's 40 bytes are valid, the 41st is not.
+    expect(decodeBytes(new Uint8Array([...bytes("a".repeat(40)), 0xff]), 10)).toEqual({
+      value: "a".repeat(10),
+      encoding: "text",
+      truncated: true,
+    });
+    // Control: the invalid byte as the bound's 40th byte is inside what rule 4 checks, so rule 5 answers.
+    expect(decodeBytes(new Uint8Array([...bytes("a".repeat(39)), 0xff, 0x61]), 10).encoding).toBe("base64");
+  });
+
   test("the prefix decides validity: an invalid byte past it is not seen", () => {
     expect(decodeBytes(new Uint8Array([...bytes("a".repeat(20)), 0xff]), 2)).toMatchObject({
       value: "aa",
