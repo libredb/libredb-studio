@@ -949,7 +949,7 @@ describe("reads over captured payloads", () => {
   });
 
   test("a read past the connection's query timeout is a TimeoutError carrying that timeout, answered at once", async () => {
-    const { provider } = await connected(
+    const { provider, recorded } = await connected(
       {
         fetchV13: async (...args) => {
           await sleep(1_000);
@@ -963,6 +963,8 @@ describe("reads over captured payloads", () => {
     expect(error).toBeInstanceOf(TimeoutError);
     expect(error).toMatchObject({ provider: "kafka", timeout: 50 });
     expect(Date.now() - started).toBeLessThan(800);
+    // The read its deadline stopped is not read again: its one fetch was sent once.
+    expect(recorded.calls.filter(([name]) => name === "fetchV13")).toHaveLength(1);
   });
 
   test("refusals: empty text first, an invalid request, bound params, a missing topic, an offset outside the range", async () => {

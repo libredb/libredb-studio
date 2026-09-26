@@ -13,6 +13,10 @@
  *   that are not a refusal: a validator's DatabaseConfigError no provider stamped, a defect, and a
  *   defect that carries an authorization refusal's category without being one;
  * - every read each monitoring panel makes (spec 7.1), failed alone, and with the other KM4 read refused;
+ * - what a surface does between a failure and its answer: every failure is thrown once and then
+ *   clears, so the failed read or module, asked again, would answer, and a composition that asks it
+ *   again, or recovers from it some other way, answers where it should fail; and what was asked is
+ *   held to the success path cut at the failing step, with that step asked once;
  * - every module answer, by identity: the module functions index.ts calls are spied with spyOn and
  *   answer objects of this file's own, and the provider must hand back those very objects and hand
  *   the modules the very objects it was given (spec 3.5). Identity alone cannot see an answer handed
@@ -221,29 +225,49 @@ const LOG_DIRS: KafkaLogDir[] = deepFreeze([
 type Method = keyof KafkaReadClient;
 type Call = [method: Method, args: unknown[]];
 
-/** One read a panel makes, as spec 7.1 names it, and which calls of one client method carry it. */
+/**
+ * One read a panel makes, as spec 7.1 names it, which calls of one client method carry it, and the call
+ * a panel makes it with over this file's answers: the lowest broker the forced read lists is 2, and the
+ * log-dir request names the listed topics.
+ */
 interface ClientRead {
   readonly name: string;
   readonly method: Method;
   readonly carries: (args: readonly unknown[]) => boolean;
+  readonly call: Call;
 }
 const READS = {
   forcedBrokers: {
     name: "the forced broker read",
     method: "metadata",
     carries: (args) => Array.isArray(args[0]) && args[0].length === 0,
+    call: ["metadata", [[]]],
   },
-  listedTopics: { name: "the listed topics' metadata", method: "metadata", carries: (args) => args[0] === undefined },
-  topicListing: { name: "the topic listing", method: "listTopics", carries: () => true },
-  brokerConfigs: { name: "the lowest broker's configs", method: "brokerConfigs", carries: () => true },
-  logDirs: { name: "the log dirs", method: "logDirs", carries: () => true },
+  listedTopics: {
+    name: "the listed topics' metadata",
+    method: "metadata",
+    carries: (args) => args[0] === undefined,
+    call: ["metadata", []],
+  },
+  topicListing: { name: "the topic listing", method: "listTopics", carries: () => true, call: ["listTopics", []] },
+  brokerConfigs: {
+    name: "the lowest broker's configs",
+    method: "brokerConfigs",
+    carries: () => true,
+    call: ["brokerConfigs", [2]],
+  },
+  logDirs: { name: "the log dirs", method: "logDirs", carries: () => true, call: ["logDirs", [LISTED.topics]] },
 } satisfies Record<string, ClientRead>;
 
 interface FakeClient {
   readonly client: KafkaReadClient;
   readonly calls: Call[];
-  /** From now on, every call that carries `read` fails with `failure`, and every other call is answered. */
-  fail(read: ClientRead, failure: unknown): void;
+  /**
+   * The next call that carries `read` fails with `failure`, once: every call after it, and every other
+   * call, is answered, so a composition that asks a failed read again, or recovers from it some other
+   * way, answers where it should have failed, and its calls show what it asked.
+   */
+  failOnce(read: ClientRead, failure: unknown): void;
 }
 
 /** A KafkaReadClient that records every call and answers this file's own objects, or `answers` where given, each frozen whole. */
@@ -252,8 +276,8 @@ function fakeClient(answers: Partial<KafkaReadClient> = {}): FakeClient {
   const failing: Array<{ read: ClientRead; failure: unknown }> = [];
   const call = async (method: Method, args: unknown[], fallback: () => unknown): Promise<never> => {
     calls.push([method, args]);
-    const failed = failing.find(({ read }) => read.method === method && read.carries(args));
-    if (failed !== undefined) throw failed.failure;
+    const failed = failing.findIndex(({ read }) => read.method === method && read.carries(args));
+    if (failed !== -1) throw failing.splice(failed, 1)[0].failure;
     const answer = answers[method] as ((...values: unknown[]) => unknown) | undefined;
     return deepFreeze(await (answer === undefined ? fallback() : answer(...args))) as never;
   };
@@ -284,7 +308,7 @@ function fakeClient(answers: Partial<KafkaReadClient> = {}): FakeClient {
     logDirs: (...args) => call("logDirs", args, () => LOG_DIRS),
     close: (...args) => call("close", args, () => undefined),
   };
-  return { client, calls, fail: (read, failure) => failing.push({ read, failure }) };
+  return { client, calls, failOnce: (read, failure) => failing.push({ read, failure }) };
 }
 
 /** A provider over fake clients, not yet connected, with every client its factory built and every options object it was handed. */
@@ -326,9 +350,11 @@ interface LooseSpy {
   mockResolvedValue(value: unknown): LooseSpy;
   mockResolvedValueOnce(value: unknown): LooseSpy;
   mockRejectedValue(value: unknown): LooseSpy;
+  mockRejectedValueOnce(value: unknown): LooseSpy;
   mockReturnValue(value: unknown): LooseSpy;
   mockReturnValueOnce(value: unknown): LooseSpy;
   mockImplementation(run: (...args: never[]) => unknown): LooseSpy;
+  mockImplementationOnce(run: (...args: never[]) => unknown): LooseSpy;
   mockReset(): LooseSpy;
   mockClear(): LooseSpy;
   readonly mock: { readonly calls: unknown[][]; readonly results: Array<{ readonly value: unknown }> };
@@ -516,7 +542,7 @@ describe("query", () => {
   const TEXT = '{"topic":"orders","from":"earliest"}';
   /** The limit the parsed request carries, which is not the parser's maximum, so the two are told apart. */
   const REQUEST_LIMIT = 3;
-  const EMPTY_OUTCOME: readModule.ReadOutcome = { rows: [], warnings: [], wasLimited: false };
+  const EMPTY_OUTCOME: readModule.ReadOutcome = deepFreeze({ rows: [], warnings: [], wasLimited: false });
   /** The shaping itself, taken before any test spies on it, so an answer can be built the way it builds one. */
   const shape = resultsModule.toQueryResult;
 
@@ -620,48 +646,57 @@ describe("query", () => {
       expect(readMessages.mock.calls[0][3]).toBe(deadline.mock.results[0].value);
       expect(readMessages.mock.calls[1][3]).toBe(deadline.mock.results[1].value);
       expect(readMessages.mock.calls[1][3]).not.toBe(readMessages.mock.calls[0][3]);
-      // A read its deadline stopped is a TimeoutError carrying that same timeout (spec 5.6).
+      // A read its deadline stopped is a TimeoutError carrying that same timeout (spec 5.6), and it is
+      // not read again: the read fails once, and one asked again would answer.
       const stopped = new KafkaError("timeout", "The read ran past its time limit and was stopped");
-      readMessages.mockRejectedValue(stopped);
+      readMessages.mockRejectedValueOnce(stopped);
       expect(await outcomeOf(() => provider.query(TEXT), stopped)).toEqual(tableAnswer(stopped, queryTimeout));
+      expect(deadline.mock.calls).toEqual([[queryTimeout], [queryTimeout], [queryTimeout]]);
+      expect(readMessages.mock.calls).toHaveLength(3);
+      expect(readMessages.mock.calls[2][3]).toBe(deadline.mock.results[2].value);
     },
   );
 
-  /** Each step of a read, and how it is made to fail while the steps before it answer. */
-  const STEPS: ReadonlyArray<readonly [step: string, failWith: (failure: unknown) => void]> = [
-    [
-      "the parse",
-      (failure) => {
-        spyOnly(requestModule, "parseReadRequest").mockImplementation(() => {
-          throw failure;
-        });
-      },
-    ],
-    [
-      "the read",
-      (failure) => {
-        spyOnly(readModule, "readMessages").mockRejectedValue(failure);
-      },
-    ],
-    [
-      "the shaping",
-      (failure) => {
-        spyOnly(readModule, "readMessages").mockResolvedValue(EMPTY_OUTCOME);
-        spyOnly(resultsModule, "toQueryResult").mockImplementation(() => {
-          throw failure;
-        });
-      },
-    ],
-  ];
+  /**
+   * Each step of a read, in the order a read makes them: the parse, the read under its one deadline,
+   * and the shaping.
+   */
+  const STEPS = ["the parse", "the read", "the shaping"] as const;
 
-  test.each(
-    STEPS.flatMap(([step, failWith]) => FAILURES.map(([label, make]) => [step, label, failWith, make] as const)),
-  )("%s meeting %s fails the read with the table's error", async (_step, _label, failWith, make) => {
-    const failure = make();
-    const { provider } = await connectedOver();
-    failWith(failure);
-    expect(await outcomeOf(() => provider.query(TEXT), failure)).toEqual(tableAnswer(failure));
-  });
+  test.each(STEPS.flatMap((step, reached) => FAILURES.map(([label, make]) => [step, label, reached, make] as const)))(
+    "%s meeting %s fails the read with the table's error, each step up to it asked once and none after it",
+    async (step, _label, reached, make) => {
+      const failure = make();
+      const { provider, fake } = await connectedOver();
+      // Every step answers; the failing one fails once, and asked again would answer, so a read that
+      // asked a failed step again, or went on past it, would answer where it should fail.
+      const request = deepFreeze<requestModule.ReadRequest>({
+        topic: "orders",
+        from: { kind: "earliest" },
+        limit: REQUEST_LIMIT,
+      });
+      const parse = spyOnly(requestModule, "parseReadRequest").mockReturnValue(request);
+      const readMessages = spyOnly(readModule, "readMessages").mockResolvedValue(EMPTY_OUTCOME);
+      const toQueryResult = spyOnly(resultsModule, "toQueryResult").mockReturnValue(
+        deepFreeze(shape([], 0, REQUEST_LIMIT, [], false)),
+      );
+      const deadline = spyOnly(AbortSignal, "timeout");
+      const once = () => {
+        throw failure;
+      };
+      if (step === "the parse") parse.mockImplementationOnce(once);
+      if (step === "the read") readMessages.mockRejectedValueOnce(failure);
+      if (step === "the shaping") toQueryResult.mockImplementationOnce(once);
+      expect(await outcomeOf(() => provider.query(TEXT), failure)).toEqual(tableAnswer(failure));
+      expect(parse.mock.calls).toHaveLength(1);
+      // One read and one deadline for it, once the parse answered.
+      expect(readMessages.mock.calls).toHaveLength(reached >= 1 ? 1 : 0);
+      expect(deadline.mock.calls).toHaveLength(reached >= 1 ? 1 : 0);
+      expect(toQueryResult.mock.calls).toHaveLength(reached >= 2 ? 1 : 0);
+      // The provider reads nothing of its own: the read module is the one that reads the broker.
+      expect(fake.calls).toEqual([]);
+    },
+  );
 });
 
 // ============================================================================
@@ -796,16 +831,22 @@ describe("the object surface", () => {
   });
 
   test.each(
-    OBJECT_SURFACES.flatMap(([label, surface, call]) =>
-      FAILURES.map(([failureLabel, make]) => [label, failureLabel, surface, call, make] as const),
+    OBJECT_SURFACES.flatMap(([label, surface, call, , answer]) =>
+      FAILURES.map(([failureLabel, make]) => [label, failureLabel, surface, call, answer, make] as const),
     ),
   )(
-    "%s, when objects.ts meets %s, fails with the table's error",
-    async (_label, _failureLabel, surface, call, make) => {
+    "%s, when objects.ts meets %s, fails with the table's error, and asks it nothing more",
+    async (_label, _failureLabel, surface, call, answer, make) => {
       const failure = make();
-      const { provider } = await connectedOver();
-      spyOnly(objectsModule, surface).mockRejectedValue(failure);
+      const { provider, fake } = await connectedOver();
+      // objects.ts fails once, and asked again would answer, so a surface that asked again, to recover
+      // from the failure, would answer where it should fail.
+      const owner = spyOnly(objectsModule, surface)
+        .mockRejectedValueOnce(failure)
+        .mockResolvedValue(deepFreeze(answer()));
       expect(await outcomeOf(() => call(provider), failure)).toEqual(tableAnswer(failure));
+      expect(owner.mock.calls).toHaveLength(1);
+      expect(fake.calls).toEqual([]);
     },
   );
 });
@@ -816,29 +857,51 @@ describe("the object surface", () => {
 
 type Panel = "getHealth" | "getOverview" | "getStorageStats";
 /**
- * Each panel that reads the broker, the reads spec 7.1 gives it, and for the reads an authorization
- * refusal degrades (KM4), the panel's answer then: its mapping's answer with that one read's answer
- * replaced by the absence it degrades to, and every other read's answer kept.
+ * The reads a load of a panel asked: those it makes one after another, in their order, then those it
+ * makes together, in any order, since their order among themselves is not a rule (spec 7.1).
+ */
+type Trace = readonly [inOrder: readonly ClientRead[], together: readonly ClientRead[]];
+/** What each panel asks on a load nothing fails: the trace a failing read cuts. */
+const WHOLE: Readonly<Record<Panel, Trace>> = {
+  getHealth: [[READS.forcedBrokers, READS.listedTopics, READS.logDirs], []],
+  getOverview: [[READS.forcedBrokers], [READS.topicListing, READS.brokerConfigs, READS.listedTopics, READS.logDirs]],
+  getStorageStats: [[READS.listedTopics, READS.logDirs], []],
+};
+/**
+ * Each panel that reads the broker, the reads spec 7.1 gives it, and for each read what the panel has
+ * asked once that read failed: every read before it and every read it makes together with it, but no
+ * read that waits on its answer, and it once. For the reads an authorization refusal degrades (KM4),
+ * the panel's answer then: its mapping's answer with that one read's answer replaced by the absence it
+ * degrades to, and every other read's answer kept.
  */
 const PANELS: ReadonlyArray<
-  readonly [panel: Panel, reads: ReadonlyArray<readonly [read: ClientRead, degradedAnswer?: () => unknown]>]
+  readonly [
+    panel: Panel,
+    reads: ReadonlyArray<readonly [read: ClientRead, tracedTo: Trace, degradedAnswer?: () => unknown]>,
+  ]
 > = [
   [
     "getHealth",
-    [[READS.forcedBrokers], [READS.listedTopics], [READS.logDirs, () => monitoringModule.healthFrom(undefined)]],
+    [
+      [READS.forcedBrokers, [[READS.forcedBrokers], []]],
+      [READS.listedTopics, [[READS.forcedBrokers, READS.listedTopics], []]],
+      [READS.logDirs, WHOLE.getHealth, () => monitoringModule.healthFrom(undefined)],
+    ],
   ],
   [
     "getOverview",
     [
-      [READS.forcedBrokers],
-      [READS.topicListing],
-      [READS.listedTopics],
+      [READS.forcedBrokers, [[READS.forcedBrokers], []]],
+      [READS.topicListing, WHOLE.getOverview],
+      [READS.listedTopics, [[READS.forcedBrokers], [READS.topicListing, READS.brokerConfigs, READS.listedTopics]]],
       [
         READS.brokerConfigs,
+        WHOLE.getOverview,
         () => monitoringModule.overviewFrom({ topicCount: TOPIC_NAMES.length, brokerConfigs: [], logDirs: LOG_DIRS }),
       ],
       [
         READS.logDirs,
+        WHOLE.getOverview,
         () =>
           monitoringModule.overviewFrom({
             topicCount: TOPIC_NAMES.length,
@@ -848,8 +911,24 @@ const PANELS: ReadonlyArray<
       ],
     ],
   ],
-  ["getStorageStats", [[READS.listedTopics], [READS.logDirs, () => monitoringModule.storageFrom(undefined)]]],
+  [
+    "getStorageStats",
+    [
+      [READS.listedTopics, [[READS.listedTopics], []]],
+      [READS.logDirs, WHOLE.getStorageStats, () => monitoringModule.storageFrom(undefined)],
+    ],
+  ],
 ];
+
+/** Lets whatever a load left running settle: the fake client answers without a timer, so one turn is enough. */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Holds the calls a load made to a trace: those made one after another in order, then the rest in any order. */
+function expectTraced(calls: readonly Call[], [inOrder, together]: Trace) {
+  const inAnyOrder = (list: readonly Call[]) => list.map((c) => JSON.stringify(c)).sort();
+  expect(calls.slice(0, inOrder.length)).toEqual(inOrder.map((read) => read.call));
+  expect(inAnyOrder(calls.slice(inOrder.length))).toEqual(inAnyOrder(together.map((read) => read.call)));
+}
 
 describe("the monitoring panels", () => {
   test("each panel makes exactly the reads spec 7.1 lists, on every load, and answers its mapping's own answer over those reads' own answers", async () => {
@@ -937,16 +1016,18 @@ describe("the monitoring panels", () => {
 
   test.each(
     PANELS.flatMap(([panel, reads]) =>
-      reads.flatMap(([read, degradedAnswer]) =>
-        FAILURES.map(([label, make]) => [panel, read.name, label, read, degradedAnswer, make] as const),
+      reads.flatMap(([read, tracedTo, degradedAnswer]) =>
+        FAILURES.map(([label, make]) => [panel, read.name, label, read, tracedTo, degradedAnswer, make] as const),
       ),
     ),
   )(
-    "%s, when %s alone meets %s, degrades as KM4 says or fails with the table's error",
-    async (panel, _readName, _label, read, degradedAnswer, make) => {
+    "%s, when %s alone meets %s, degrades as KM4 says or fails with the table's error, and asks nothing again",
+    async (panel, _readName, _label, read, tracedTo, degradedAnswer, make) => {
       const failure = make();
       const { provider, fake } = await connectedOver();
-      fake.fail(read, failure);
+      // The read fails once, and asked again would answer, so a panel that asked it again, or recovered
+      // from it through another read, would answer where it should fail, and its calls would show it.
+      fake.failOnce(read, failure);
       // An authorization refusal of the log dirs or of the overview's broker configs degrades the panel
       // by that read alone, every other read's answer kept; any other failure, at any read, fails it.
       const expected =
@@ -954,8 +1035,10 @@ describe("the monitoring panels", () => {
           ? { answered: degradedAnswer() }
           : tableAnswer(failure);
       expect(await outcomeOf(() => provider[panel](), failure)).toEqual(expected);
-      // The control: the failing read was asked.
-      expect(fake.calls.some(([method, args]) => method === read.method && read.carries(args))).toBe(true);
+      // The panel asked every read before the failing one, and those it makes together with it, the
+      // failing read once, and no read that waits on its answer.
+      await settled();
+      expectTraced(fake.calls, tracedTo);
     },
   );
 
@@ -967,12 +1050,13 @@ describe("the monitoring panels", () => {
       FAILURES.map(([label, make]) => [refused.name, other.name, label, refused, other, make] as const),
     ),
   )(
-    "the overview, with %s refused for want of the cluster ACL, answers %s meeting %s as KM4 says",
+    "the overview, with %s refused for want of the cluster ACL, answers %s meeting %s as KM4 says, and asks nothing again",
     async (_refusedName, _otherName, _label, refused, other, make) => {
       const failure = make();
       const { provider, fake } = await connectedOver();
-      fake.fail(refused, new KafkaError("authorization", "The broker denied access to this cluster"));
-      fake.fail(other, failure);
+      // Each fails once, and asked again would answer.
+      fake.failOnce(refused, new KafkaError("authorization", "The broker denied access to this cluster"));
+      fake.failOnce(other, failure);
       // Both refused: no limit published and no size. Anything else at the other read fails the overview.
       const expected = isAuthorizationRefusal(failure)
         ? {
@@ -984,6 +1068,9 @@ describe("the monitoring panels", () => {
           }
         : tableAnswer(failure);
       expect(await outcomeOf(() => provider.getOverview(), failure)).toEqual(expected);
+      // Neither read waits on the other, so every read was asked, each once.
+      await settled();
+      expectTraced(fake.calls, WHOLE.getOverview);
     },
   );
 
@@ -997,7 +1084,7 @@ describe("the monitoring panels", () => {
     ).flatMap(([panel, mapping]) => FAILURES.map(([label, make]) => [panel, mapping, label, make] as const)),
   )("%s, when its mapping %s refuses with %s, fails with the table's error", async (panel, mapping, _label, make) => {
     const failure = make();
-    const { provider } = await connectedOver();
+    const { provider, fake } = await connectedOver();
     // Only the first mapping refuses; a second one would answer, so a panel that asks its mapping
     // again after a refusal, to answer something in its place, is seen.
     let mapped = 0;
@@ -1008,5 +1095,8 @@ describe("the monitoring panels", () => {
     });
     expect(await outcomeOf(() => provider[panel](), failure)).toEqual(tableAnswer(failure));
     expect(mapped).toBe(1);
+    // The mapping comes after every read, and no read was asked again.
+    await settled();
+    expectTraced(fake.calls, WHOLE[panel]);
   });
 });
