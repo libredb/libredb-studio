@@ -1621,7 +1621,9 @@ describe("createPlatformaticClient", () => {
     });
   });
 
-  test("a KIP-848 group's members are mapped from API 69, and its connection sends SNI only to a DNS host", async () => {
+  test("a KIP-848 group's members are mapped from API 69, every one in order with its assignment, and its connection sends SNI only to a DNS host", async () => {
+    // Three members, as a KIP-848 group of several consumers answers: one with no assignment, one
+    // assigned partitions of two topics, one assigned one partition; the captures hold none.
     const answer = {
       groups: [
         {
@@ -1631,6 +1633,18 @@ describe("createPlatformaticClient", () => {
           groupState: "Stable",
           assignorName: "uniform",
           members: [
+            { memberId: "m2", clientId: "c2", clientHost: "/h2", assignment: { topicPartitions: [] } },
+            {
+              memberId: "m1",
+              clientId: "c1",
+              clientHost: "/h1",
+              assignment: {
+                topicPartitions: [
+                  { topicName: "orders", partitions: [2, 0] },
+                  { topicName: "payments", partitions: [1] },
+                ],
+              },
+            },
             {
               memberId: "m",
               clientId: "c",
@@ -1653,6 +1667,16 @@ describe("createPlatformaticClient", () => {
       });
       const group = await createPlatformaticClient(tlsOptions, lib).describeGroup(listing);
       expect(group.members).toEqual([
+        { memberId: "m2", clientId: "c2", clientHost: "/h2", assignment: [] },
+        {
+          memberId: "m1",
+          clientId: "c1",
+          clientHost: "/h1",
+          assignment: [
+            { topic: "orders", partitions: [2, 0] },
+            { topic: "payments", partitions: [1] },
+          ],
+        },
         { memberId: "m", clientId: "c", clientHost: "/h", assignment: [{ topic: "orders", partitions: [1] }] },
       ]);
       const connection = constructed.find(([n]) => n === "Connection")![1] as Record<string, unknown>;
