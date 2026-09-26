@@ -910,6 +910,13 @@ describe("createPlatformaticClient", () => {
     },
   );
 
+  test("listTopics orders names by UTF-16 code unit, the same order whatever the host's locale", async () => {
+    // A locale comparison would put "_audit" and "a" before "B"; the listing, like the group listing,
+    // compares code units, so the tree and the agent inventory see one order on every host.
+    const { lib } = fakeLib({ "admin.listTopics": () => ["b", "a", "B", "_audit"] });
+    expect(await createPlatformaticClient(OPTIONS, lib).listTopics()).toEqual(["B", "_audit", "a", "b"]);
+  });
+
   test("listTopics reads names through a leaderless partition too, internal topics excluded", async () => {
     const { lib } = fakeLib({
       "admin.listTopics": () => {

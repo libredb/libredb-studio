@@ -388,7 +388,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
       if (raw === undefined) throw error;
       names = raw.topics.filter((t) => !t.isInternal).map(namedTopic);
     }
-    return names.filter((name) => !INTERNAL_TOPICS.has(name)).sort();
+    return names.filter((name) => !INTERNAL_TOPICS.has(name)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   };
 
   const readConfigs = async (resourceType: number, resourceName: string): Promise<KafkaConfigEntry[]> =>
