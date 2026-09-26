@@ -115,6 +115,42 @@ describe("computeLag", () => {
     }
   });
 
+  test("a topic the group is assigned and never committed on gives a row for every partition the latest answer names, not only the assigned ones", () => {
+    // Assigned partition 0 of the two-partition events, with no commit: a partition added
+    // before the rebalance, or a group's first moments on a topic (spec 4.3).
+    const rows = computeLag(
+      [],
+      new Map([
+        [
+          "events",
+          new Map([
+            [0, n(5)],
+            [1, n(7)],
+          ]),
+        ],
+      ]),
+      [{ topic: "events", partitions: [0] }],
+    );
+    expect(rows).toEqual([
+      {
+        topic: "events",
+        partition: 0,
+        committedOffset: null,
+        latestOffset: "5",
+        lag: null,
+        note: "no committed offset",
+      },
+      {
+        topic: "events",
+        partition: 1,
+        committedOffset: null,
+        latestOffset: "7",
+        lag: null,
+        note: "no committed offset",
+      },
+    ]);
+  });
+
   test("a topic whose latest offsets were not readable keeps its rows, with the reason", () => {
     const rows = computeLag(
       [{ topic: "__consumer_offsets", partition: 4, offset: n(9) }],
@@ -283,6 +319,51 @@ describe("readGroupSource", () => {
     for (const row of source?.lag.slice(3) ?? []) {
       expect(row.note).toContain('Topic "payments" has no leader for partition 1');
     }
+  });
+
+  test("every member's assignment is read: each member's topic with no commit is read and gives its rows", async () => {
+    const reads: string[] = [];
+    const member = (memberId: string, assignment: Array<{ topic: string; partitions: number[] }>) => ({
+      memberId,
+      clientId: memberId,
+      clientHost: "/10.0.0.1",
+      assignment,
+    });
+    const source = await readGroupSource(
+      client({
+        describeGroup: async (listing) => ({
+          groupId: listing.groupId,
+          groupType: listing.groupType,
+          state: "Stable",
+          protocolOrAssignor: "range",
+          // The first member holds nothing; the second and the third each hold a topic the group
+          // never committed on; the committed topic is no member's.
+          members: [
+            member("m-1", []),
+            member("m-2", [{ topic: "events", partitions: [0, 1] }]),
+            member("m-3", [{ topic: "audit", partitions: [0] }]),
+          ],
+        }),
+        committedOffsets: async () => [{ topic: "orders", partition: 0, offset: n(1) }],
+        offsets: async (topic, at) => {
+          reads.push(`${topic}@${at}`);
+          return topic === "events"
+            ? new Map([
+                [0, n(5)],
+                [1, n(7)],
+              ])
+            : new Map([[0, n(7)]]);
+        },
+      }),
+      "lag-classic",
+    );
+    expect(reads.sort()).toEqual(["audit@high-watermark", "events@high-watermark", "orders@high-watermark"]);
+    expect(source?.lag.map((r) => [`${r.topic}/${r.partition}`, r.lag, r.note ?? null])).toEqual([
+      ["audit/0", null, "no committed offset"],
+      ["events/0", null, "no committed offset"],
+      ["events/1", null, "no committed offset"],
+      ["orders/0", "6", null],
+    ]);
   });
 
   test("a group not in the listing answers undefined, because describeGroups says Dead for anything (M-E)", async () => {
