@@ -375,8 +375,8 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
 
   /**
    * Open a tab holding the statement for one object and RUN it, or focus the one already open
-   * for that object while its statement is unedited. Takes the object's PATH and nothing else
-   * (#789).
+   * for that object, on this connection, while its statement is unedited. A focused tab whose
+   * last run failed is run again, in place. Takes the object's PATH and nothing else (#789).
    *
    * The path is the address and the name is only a label (standing ruling 2), so the
    * lookup that finds this object's columns joins on the path, segment by segment, the
@@ -418,10 +418,18 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     ) => {
       const key = pathKey(path);
       /*
-       * A data tab already open for this object, in this database, and still on the statement
-       * it was opened with, is FOCUSED and not run again: the rule `openSourceTab` keeps for a
-       * Source tab. Measured before this, three activations of one table left three identical
-       * tabs and three reads, and clicking twice did what pressing Space twice does.
+       * A data tab already open for this object, on this connection, in this database, and still
+       * on the statement it was opened with, is FOCUSED and not run again: the rule
+       * `openSourceTab` keeps for a Source tab. Measured before this, three activations of one
+       * table left three identical tabs and three reads, and clicking twice did what pressing
+       * Space twice does.
+       *
+       * The connection is part of the match because two connections can hold the same path, and
+       * a tab opened on one can outlive the switch to another where storage is unavailable: the
+       * load effect then returns before it resets the tabs.
+       *
+       * A matched tab whose last run FAILED is run again, in that tab. It holds no rows to keep,
+       * only the error, and activating the object is the reader asking for its data.
        *
        * The query comparison is what keeps the reader's work out of reach. A tab whose
        * statement has been edited is never captured, so the activation opens a fresh one.
@@ -434,12 +442,17 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       const open = tabs.find(
         (tab) =>
           tab.origin !== undefined &&
+          tab.origin.connectionId === activeConnection?.id &&
           pathKey(tab.origin.path) === key &&
           tab.origin.databaseOverride === databaseOverride &&
           tab.query === tab.origin.query,
       );
       if (open !== undefined) {
         setActiveTabId(open.id);
+        if (open.runError !== undefined) {
+          // The same call, options and deferral as the fresh tab's run below.
+          setTimeout(() => executeQueryFn(open.query, open.id, false, { limit: PREVIEW_PAGE_SIZE }), 100);
+        }
         return;
       }
 
@@ -465,7 +478,12 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         // been: absent means "the connection's own database" and a key of `undefined` is not that.
         ...(databaseOverride === undefined ? {} : { databaseOverride }),
         // Written with the same spread rule, so the origin says "no override" by absence too.
-        origin: { path, ...(databaseOverride === undefined ? {} : { databaseOverride }), query: newQuery },
+        origin: {
+          path,
+          ...(activeConnection === null ? {} : { connectionId: activeConnection.id }),
+          ...(databaseOverride === undefined ? {} : { databaseOverride }),
+          query: newQuery,
+        },
       };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newId);
@@ -474,7 +492,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       // results run.
       setTimeout(() => executeQueryFn(newQuery, newId, false, { limit: PREVIEW_PAGE_SIZE }), 100);
     },
-    [metadata, schema, tabs],
+    [activeConnection, metadata, schema, tabs],
   );
 
   /** The same address and the same join as `handleTableClick`, without the run (#789). */

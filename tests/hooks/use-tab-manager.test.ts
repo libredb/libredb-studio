@@ -2097,6 +2097,55 @@ describe("useTabManager reuses an object's unedited data tab", () => {
     expect(executeFn).toHaveBeenCalledTimes(1);
   });
 
+  test("a matched tab whose last run failed is focused and run again, in that tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const opened = result.current.activeTabId;
+    await settle();
+    // The shape a failed run leaves: no rows, and the reason in their place.
+    act(() => result.current.updateTabById(opened, { runError: "connection reset" }));
+    act(() => result.current.setActiveTabId("default"));
+    executeFn.mockClear();
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users"]);
+    expect(result.current.activeTabId).toBe(opened);
+    expect(executeFn).toHaveBeenCalledTimes(1);
+    const query = result.current.tabs[1].query;
+    expect(executeFn).toHaveBeenCalledWith(query, opened, false, { limit: PREVIEW_PAGE_SIZE });
+  });
+
+  test("a tab opened on one connection is not reused on another holding the same path", async () => {
+    const executeFn = mock(() => {});
+    const { result, rerender } = renderHook(
+      ({ connectionId }: { connectionId: string }) =>
+        useTabManager({
+          activeConnection: makeConnection({ id: connectionId }),
+          metadata: defaultMetadata,
+          schema: testSchema,
+        }),
+      { initialProps: { connectionId: "conn-a" } },
+    );
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const onA = result.current.activeTabId;
+    // Same connection: the control, reused.
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    expect(result.current.activeTabId).toBe(onA);
+    expect(result.current.tabs).toHaveLength(2);
+
+    rerender({ connectionId: "conn-b" });
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.activeTabId).not.toBe(onA);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
   test("a different object opens its own tab", async () => {
     const executeFn = mock(() => {});
     const { result } = renderManager();

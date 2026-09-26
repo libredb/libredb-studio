@@ -599,17 +599,21 @@ export interface QueryTab {
    */
   databaseOverride?: number;
   /**
-   * The object activation that opened this tab: the object's path, the database override it was
-   * opened with, and the statement it was opened on.
+   * The object activation that opened this tab: the connection it was opened on, the object's
+   * path, the database override it was opened with, and the statement it was opened on.
    *
    * WHAT LETS A SECOND ACTIVATION FOCUS THIS TAB instead of opening another and reading the same
-   * rows again. The tab is reused only while `query` still equals `origin.query`: a tab whose
-   * statement the reader has edited is their work, and an activation must never capture it.
+   * rows again. The tab is reused only on the connection that opened it, since two connections
+   * can hold the same path, and only while `query` still equals `origin.query`: a tab whose
+   * statement the reader has edited is their work, and an activation must never capture it. A
+   * reused tab whose `runError` is set is run again in place.
    *
    * NOT PERSISTED, so a tab restored from storage carries none and is never matched: a restored
    * tab opens a fresh one on the next activation, which is what every activation did before this.
    */
   origin?: {
+    /** Absent when no connection was active; optional because this type is published. */
+    readonly connectionId?: string;
     readonly path: readonly string[];
     readonly databaseOverride?: number;
     readonly query: string;
