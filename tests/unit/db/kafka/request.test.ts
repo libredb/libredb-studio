@@ -14,6 +14,20 @@ const refusal = (text: string): KafkaError => {
   throw new Error(`expected a refusal for ${text}`);
 };
 
+/**
+ * Every refusal names the key it refuses (spec 5.1), in these words: a refusal that dropped its key's name would leave
+ * the editor saying what is wrong without saying where.
+ */
+const TOPIC_REFUSAL =
+  '"topic" is required and must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, ".", "_" and "-", other than "." and ".."';
+const FROM_REFUSAL = '"from" is "earliest", "latest", {"offset": n} or {"timestamp": "<ISO-8601 with a zone>"}';
+const OFFSET_NUMBER_REFUSAL =
+  "The offset must be a non-negative whole number; above 9007199254740991 write it as a digit string, because JSON numbers lose precision there";
+const OFFSET_REFUSAL = "The offset must be a non-negative whole number or a digit string";
+const TIMESTAMP_REFUSAL =
+  'The timestamp must be ISO-8601 with a zone, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00"';
+const limitRefusal = (maximum: number) => `"limit" must be a whole number from 1 to ${maximum}`;
+
 describe("parseReadRequest", () => {
   test("defaults: from latest, limit 50", () => {
     expect(parse('{"topic":"orders"}')).toEqual({ topic: "orders", from: { kind: "latest" }, limit: 50 });
@@ -69,9 +83,9 @@ describe("parseReadRequest", () => {
   });
 
   test("topic is required and must be a legal Kafka topic name", () => {
-    expect(refusal("{}").message).toContain("topic");
+    expect(refusal("{}").message).toBe(TOPIC_REFUSAL);
     for (const topic of ["", "a b", "a/b", "x".repeat(250), "ü", 7]) {
-      refusal(JSON.stringify({ topic }));
+      expect(refusal(JSON.stringify({ topic })).message).toBe(TOPIC_REFUSAL);
     }
     expect(parse('{"topic":"a.b_c-9"}').topic).toBe("a.b_c-9");
     expect(parse(JSON.stringify({ topic: "x".repeat(249) })).topic).toHaveLength(249);
@@ -80,9 +94,7 @@ describe("parseReadRequest", () => {
   test('"." and ".." are refused before any request, as Kafka refuses them, while other names of dots are legal', () => {
     // Kafka's Topic.validate refuses these two names on every broker, so a read of either could only fail there.
     for (const topic of [".", ".."]) {
-      expect(refusal(JSON.stringify({ topic })).message).toBe(
-        '"topic" is required and must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, ".", "_" and "-", other than "." and ".."',
-      );
+      expect(refusal(JSON.stringify({ topic })).message).toBe(TOPIC_REFUSAL);
     }
     for (const topic of ["...", ".a", "a.", "._", "-."]) {
       expect(parse(JSON.stringify({ topic })).topic).toBe(topic);
@@ -102,11 +114,13 @@ describe("parseReadRequest", () => {
 
   test("Review Focus 4: an offset number above MAX_SAFE_INTEGER is refused, with the digit-string advice", () => {
     expect(refusal('{"topic":"o","partition":0,"from":{"offset":9007199254740993}}').message).toContain("digit string");
-    refusal('{"topic":"o","partition":0,"from":{"offset":-1}}');
-    refusal('{"topic":"o","partition":0,"from":{"offset":1.5}}');
-    refusal('{"topic":"o","partition":0,"from":{"offset":"12a"}}');
-    refusal('{"topic":"o","partition":0,"from":{"offset":"-1"}}');
-    refusal('{"topic":"o","partition":0,"from":{"offset":null}}');
+    // A JSON number that is no safe whole number, and anything else that is no digit string: each names the offset.
+    for (const offset of ["9007199254740993", "-1", "1.5"]) {
+      expect(refusal(`{"topic":"o","partition":0,"from":{"offset":${offset}}}`).message).toBe(OFFSET_NUMBER_REFUSAL);
+    }
+    for (const offset of ['"12a"', '"-1"', "null", "true", '[""]']) {
+      expect(refusal(`{"topic":"o","partition":0,"from":{"offset":${offset}}}`).message).toBe(OFFSET_REFUSAL);
+    }
   });
 
   test("an offset past the Kafka INT64 maximum is refused; the maximum itself is read exactly", () => {
@@ -114,26 +128,29 @@ describe("parseReadRequest", () => {
       kind: "offset",
       offset: BigInt("9223372036854775807"),
     });
-    expect(refusal('{"topic":"o","partition":0,"from":{"offset":"9223372036854775808"}}').message).toContain(
-      "9223372036854775807",
+    expect(refusal('{"topic":"o","partition":0,"from":{"offset":"9223372036854775808"}}').message).toBe(
+      "The offset must be at most 9223372036854775807, Kafka's largest offset",
     );
   });
 
   test("Review Focus 5: a timestamp without a zone is refused", () => {
     expect(refusal('{"topic":"o","from":{"timestamp":"2026-09-23T00:00"}}').message).toContain("zone");
-    refusal('{"topic":"o","from":{"timestamp":"yesterday"}}');
-    refusal('{"topic":"o","from":{"timestamp":1790121600000}}');
-    refusal('{"topic":"o","from":{"timestamp":"2026-09-23T25:00:00Z"}}');
+    for (const timestamp of ['"2026-09-23T00:00"', '"yesterday"', "1790121600000", '"2026-09-23T25:00:00Z"', "null"]) {
+      expect(refusal(`{"topic":"o","from":{"timestamp":${timestamp}}}`).message).toBe(TIMESTAMP_REFUSAL);
+    }
   });
 
   test("a calendar day the month does not have is refused, where Date.parse would roll it into the next month", () => {
-    for (const timestamp of [
-      "2026-02-30T00:00:00Z",
-      "2026-04-31T00:00:00Z",
-      "2027-02-29T00:00:00Z",
-      "2026-09-00T00:00:00Z",
+    for (const [timestamp, day] of [
+      ["2026-02-30T00:00:00Z", "30"],
+      ["2026-04-31T00:00:00Z", "31"],
+      ["2027-02-29T00:00:00Z", "29"],
+      ["2026-09-00T00:00:00Z", "00"],
+      ["2100-02-29T00:00:00Z", "29"],
     ]) {
-      expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toContain("day");
+      expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toBe(
+        `The timestamp names day ${day} of a month that does not have it`,
+      );
     }
     expect(parse('{"topic":"o","from":{"timestamp":"2028-02-29T00:00:00Z"}}').from).toMatchObject({
       iso: "2028-02-29T00:00:00.000Z",
@@ -141,12 +158,14 @@ describe("parseReadRequest", () => {
     expect(parse('{"topic":"o","from":{"timestamp":"2000-02-29T00:00:00Z"}}').from).toMatchObject({
       iso: "2000-02-29T00:00:00.000Z",
     });
-    refusal('{"topic":"o","from":{"timestamp":"2100-02-29T00:00:00Z"}}');
   });
 
   test("an instant before 1970 is refused: -1 and -2 ms are the ListOffsets sentinels for latest and earliest", () => {
-    expect(refusal('{"topic":"o","from":{"timestamp":"1969-12-31T23:59:59.999Z"}}').message).toContain("1970");
-    refusal('{"topic":"o","from":{"timestamp":"1969-12-31T23:59:59.998Z"}}');
+    for (const timestamp of ["1969-12-31T23:59:59.999Z", "1969-12-31T23:59:59.998Z"]) {
+      expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toBe(
+        "The timestamp must be at or after 1970-01-01T00:00:00Z: Kafka reads an earlier instant as a sentinel",
+      );
+    }
     expect(parse('{"topic":"o","from":{"timestamp":"1970-01-01T00:00:00Z"}}').from).toEqual({
       kind: "timestamp",
       timestampMs: BigInt(0),
@@ -155,23 +174,27 @@ describe("parseReadRequest", () => {
   });
 
   test("an unknown from form is refused", () => {
-    refusal('{"topic":"o","from":"newest"}');
-    refusal('{"topic":"o","from":null}');
-    refusal('{"topic":"o","from":[]}');
-    refusal('{"topic":"o","from":{}}');
-    refusal('{"topic":"o","from":{"offset":1,"timestamp":"2026-09-23T00:00:00Z"},"partition":0}');
+    for (const text of [
+      '{"topic":"o","from":"newest"}',
+      '{"topic":"o","from":null}',
+      '{"topic":"o","from":[]}',
+      '{"topic":"o","from":{}}',
+      '{"topic":"o","from":{"offset":1,"timestamp":"2026-09-23T00:00:00Z"},"partition":0}',
+    ]) {
+      expect(refusal(text).message).toBe(FROM_REFUSAL);
+    }
   });
 
   test("limit is an integer from 1 to the maximum", () => {
     expect(parse('{"topic":"o","limit":500}').limit).toBe(500);
     expect(parse('{"topic":"o","limit":1}').limit).toBe(1);
     for (const limit of [0, 501, 2.5, "5", null]) {
-      expect(refusal(JSON.stringify({ topic: "o", limit })).message).toContain("from 1 to 500");
+      expect(refusal(JSON.stringify({ topic: "o", limit })).message).toBe(limitRefusal(500));
     }
   });
 
   test("the maximum is the caller's", () => {
     expect(parseReadRequest('{"topic":"o","limit":20}', 20).limit).toBe(20);
-    expect(() => parseReadRequest('{"topic":"o","limit":21}', 20)).toThrow("from 1 to 20");
+    expect(() => parseReadRequest('{"topic":"o","limit":21}', 20)).toThrow(limitRefusal(20));
   });
 });
