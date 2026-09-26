@@ -618,6 +618,45 @@ describe("sources", () => {
     }
   });
 
+  test("a broker is named by its node id's own digits: another spelling of the same number names no broker", async () => {
+    let configReads = 0;
+    const c = client(["a"], {
+      metadata: async () => ({
+        clusterId: "c",
+        controllerId: 0,
+        brokers: [
+          { nodeId: 0, host: "b0", port: 9092, rack: null },
+          { nodeId: 1, host: "b1", port: 9092, rack: null },
+        ],
+        topics: [],
+      }),
+      brokerConfigs: async () => {
+        configReads++;
+        return [];
+      },
+    });
+    // Each equals 0 or 1 as a number (Number("") and Number(" ") are 0), and none is a node id's
+    // text: a path typed by hand or written by an agent tool names no broker with it (spec 4.4).
+    const spellings = ["01", " 1", "1.0", "1e0", "+1", "0x1", "00", " 0", "-0", "0.0", "", " "];
+    const outcomes = await Promise.all(
+      spellings.map((name) =>
+        readObjectSource(c, CAPS, [name], "broker").then(
+          () => "answered",
+          (error) =>
+            error instanceof KafkaError &&
+            error.category === "unknown-object" &&
+            error.message === `Broker ${JSON.stringify(name)} does not exist`,
+        ),
+      ),
+    );
+    expect(outcomes).toEqual(spellings.map(() => true));
+    expect(configReads).toBe(0);
+    // The control: each broker's own digits answer its configs.
+    const answered = await Promise.all(["0", "1"].map((name) => readObjectSource(c, CAPS, [name], "broker")));
+    expect(answered.map((doc) => doc.path)).toEqual([["0"], ["1"]]);
+    expect(configReads).toBe(2);
+  });
+
   test("any other failure reading a topic's metadata propagates unchanged", async () => {
     const denied = new KafkaError("authorization", "The broker denied access to this topic");
     const c = client(["orders"], {
