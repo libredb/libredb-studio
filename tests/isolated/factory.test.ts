@@ -123,6 +123,10 @@ const mockPgPool = {
   on: () => {},
 };
 
+// The provider imports `types` from pg for its per-pool parsers, so the mock has to export
+// it. These rows never reach a parser, and the real registry is passed rather than a stub.
+const { types: realPgTypes } = await import("pg");
+
 mock.module("pg", () => ({
   default: {
     Pool: class {
@@ -136,6 +140,7 @@ mock.module("pg", () => ({
       return mockPgPool;
     }
   },
+  types: realPgTypes,
 }));
 
 const mockMysqlPool = {

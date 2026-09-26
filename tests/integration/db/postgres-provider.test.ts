@@ -166,12 +166,20 @@ let lastPool: MockPool | undefined;
  */
 let lastPoolConfig: Record<string, unknown> = {};
 
+/**
+ * The REAL `pg-types` registry, taken before the mock replaces `pg`. The provider's per-pool
+ * parsers delegate every type they do not own to it, so a stub here would let the tests
+ * below agree with whatever the stub returns instead of with what `pg` really parses.
+ */
+const { types: realPgTypes } = await import("pg");
+
 mock.module("pg", () => ({
   Pool: function (config: Record<string, unknown>) {
     lastPoolConfig = config;
     lastPool = new MockPool();
     return lastPool;
   },
+  types: realPgTypes,
 }));
 
 // Dynamic import AFTER mock is installed
@@ -889,6 +897,73 @@ describe("PostgresProvider", () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Per-pool type parsers
+  // --------------------------------------------------------------------------
+
+  // `pg-types` turns `date` into a Date at LOCAL midnight of the server process and reads
+  // `timestamp` as local wall-clock time, so every value then serialised as ISO UTC moved with
+  // the process TZ: under Europe/Istanbul `DATE '2026-09-01'` answered 2026-08-31T21:00:00Z,
+  // and a SQL INSERT export replayed it as the previous day. The two zoneless types now arrive
+  // as the engine's own text. Both connection forms build the pool from one shared base, and
+  // each is checked because only the base carries the parsers.
+  describe.each([
+    ["discrete fields", makePgConfig()],
+    ["connection string", makePgConfig({ connectionString: "postgresql://postgres:secret@localhost:5432/testdb" })],
+  ])("pool type parsers (%s)", (_form, config) => {
+    type GetTypeParser = (oid: number, format?: string) => (value: string) => unknown;
+    const parserFor = async (): Promise<GetTypeParser> => {
+      provider = new PostgresProvider(config);
+      await provider.connect();
+      const types = lastPoolConfig.types as { getTypeParser: GetTypeParser } | undefined;
+      expect(types).toBeDefined();
+      return types!.getTypeParser;
+    };
+
+    test("date and timestamp arrive as the engine's own text", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1082, "text")("2026-09-01")).toBe("2026-09-01");
+      expect(getTypeParser(1114, "text")("2026-09-01 10:30:00")).toBe("2026-09-01 10:30:00");
+      // `pg` passes the format, but `pg-types` treats an absent one as text, and so does this.
+      expect(getTypeParser(1082)("2026-09-01")).toBe("2026-09-01");
+      // The values a Date could not hold survive as written instead of Invalid Date or Infinity.
+      expect(getTypeParser(1082, "text")("infinity")).toBe("infinity");
+      expect(getTypeParser(1082, "text")("0044-03-15 BC")).toBe("0044-03-15 BC");
+    });
+
+    test("date[] and timestamp[] arrive as arrays of the engine's text, NULL kept", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1182, "text")("{2026-09-01,2026-09-02}")).toEqual(["2026-09-01", "2026-09-02"]);
+      expect(getTypeParser(1182, "text")("{2026-09-01,NULL}")).toEqual(["2026-09-01", null]);
+      expect(getTypeParser(1115, "text")('{"2026-09-01 10:30:00","2026-09-02 11:00:00"}')).toEqual([
+        "2026-09-01 10:30:00",
+        "2026-09-02 11:00:00",
+      ]);
+    });
+
+    // Controls: without these, a parser that answered every OID with the raw text would pass
+    // the two tests above.
+    test("every other type is delegated to pg-types unchanged", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(23, "text")("5")).toBe(5);
+      // timestamptz names an instant, so it stays a Date and serialises as the same ISO UTC
+      // string in every process TZ.
+      const instant = getTypeParser(1184, "text")("2026-09-01 10:30:00+00");
+      expect(instant).toBeInstanceOf(Date);
+      expect((instant as Date).toISOString()).toBe("2026-09-01T10:30:00.000Z");
+      expect(getTypeParser(1185, "text")('{"2026-09-01 10:30:00+00"}')).toEqual([new Date("2026-09-01T10:30:00.000Z")]);
+      // The binary format carries no text to hand back, so it is pg's own parser.
+      expect(getTypeParser(1082, "binary")).toBe(realPgTypes.getTypeParser(1082, "binary"));
+    });
+
+    // A process-wide `pg.types.setTypeParser` would reach every other `pg` user in a host
+    // that embeds `@libredb/studio`. The global registry must still parse a date as a Date.
+    test("the global pg-types registry is left alone", async () => {
+      await parserFor();
+      expect(realPgTypes.getTypeParser(1082, "text")("2026-09-01")).toBeInstanceOf(Date);
     });
   });
 

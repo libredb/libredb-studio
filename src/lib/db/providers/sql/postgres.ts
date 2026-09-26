@@ -4,7 +4,7 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig } from "pg";
+import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig, types } from "pg";
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
@@ -74,6 +74,49 @@ import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+// ============================================================================
+// Type parsers
+// ============================================================================
+
+// `pg_type` OIDs, the numbers `pg-types` registers its parsers under.
+const DATE_OID = 1082;
+const TIMESTAMP_OID = 1114;
+const DATE_ARRAY_OID = 1182;
+const TIMESTAMP_ARRAY_OID = 1115;
+// Widened to `number`: `pg-types` types the OID as an enum of scalar types, and 1009 is not one.
+const TEXT_ARRAY_OID: number = 1009;
+
+type TypeFormat = Parameters<typeof types.getTypeParser>[1];
+
+/**
+ * The per-pool parsers: `date` and `timestamp` (and their arrays) arrive as the engine's own
+ * text, and every other type is whatever `pg-types` makes of it.
+ *
+ * `pg-types` builds a `date` as a Date at LOCAL midnight of the Node process and reads a
+ * `timestamp` as local wall-clock time, and every row path then serialises that Date as ISO
+ * UTC, so the value moved with the server's TZ. Measured 2026-09-27 on postgres:18-alpine
+ * through this provider, `DATE '2026-09-01'` answered 2026-08-31T21:00:00.000Z under
+ * TZ=Europe/Istanbul and a SQL INSERT export replayed it as 2026-08-31; `'infinity'::date`
+ * became Infinity and then null, and a BC date moved by the zone's LMT offset. Neither type
+ * names an instant, so there is no Date that is right for it, and the text is exact.
+ *
+ * `timestamptz` does name one, and stays a Date: its ISO UTC string is the same in every TZ.
+ *
+ * Per pool, never `types.setTypeParser`: that registry is process-wide, and a host that embeds
+ * `@libredb/studio` has its own `pg` users. Only the text format is intercepted, because the
+ * binary one has no text to hand back. The arrays are parsed as `text[]` is, which keeps
+ * NULL elements as null.
+ */
+const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
+  getTypeParser: (oid: number, format: TypeFormat = "text") => {
+    if (format === "text") {
+      if (oid === DATE_OID || oid === TIMESTAMP_OID) return (value: string) => value;
+      if (oid === DATE_ARRAY_OID || oid === TIMESTAMP_ARRAY_OID) return types.getTypeParser(TEXT_ARRAY_OID, "text");
+    }
+    return types.getTypeParser(oid, format);
+  },
+};
 
 // ============================================================================
 // Type Definitions
@@ -2291,6 +2334,8 @@ export class PostgresProvider extends SQLBaseProvider {
       connectionTimeoutMillis: this.poolConfig.acquireTimeout,
       statement_timeout: this.queryTimeout,
       ssl: sslConfig,
+      // In the base so both connection forms below carry it.
+      types: ZONELESS_AS_TEXT,
     };
 
     if (this.config.connectionString) {

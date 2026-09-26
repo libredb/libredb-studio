@@ -1409,7 +1409,7 @@ via `POST /api/db/cancel`.
 `pg` says exactly one thing about a column's type: `field.dataTypeID`, a `pg_type` OID. There is no
 name on the wire, and no value-shaped guess can supply one — `numeric` arrives as the **string**
 `"4.99"` so that its precision survives, `bigint` arrives as a string for the same reason, and a
-`timestamp` is a string by the time the browser has read the JSON. Measured against the local
+`timestamp` arrives as the engine's own text (§5.5). Measured against the local
 dvdrental before this existed, `SELECT rental_rate, last_update, film_id FROM film` exported as
 `("rental_rate" TEXT, "last_update" TIMESTAMP, "film_id" BIGINT)`: a `numeric` typed as text, and an
 `integer` widened. Guessing from the string's SHAPE is not the answer either — it would type a text
@@ -1454,6 +1454,35 @@ The names are the base type's, without the type modifier: `character varying`, n
 schema tree shows — answers for the same column, and the modifier is not on the wire in a form worth
 reconstructing. `columnTypes` is consumed by the results grid's column labels, by the SQL-DDL export
 (which prefers a declared type over its value-shaped guess) and by the agent's state summary.
+
+### 5.5 Date and timestamp values
+
+The pool carries its own type parsers (`ZONELESS_AS_TEXT` in [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)), passed as the `types` option in `buildPoolConfig()`, so the structured form and a pasted connection string both get them.
+`date`, `date[]`, `timestamp` (without time zone) and `timestamp[]` arrive as the engine's own text, `'2026-09-01'` and `'2026-09-01 10:30:00'`, whatever the TZ of the Node process.
+`timestamptz` and `timestamptz[]` still arrive as a JavaScript `Date`, which is an instant, so the JSON the routes answer with carries its ISO UTC form, `'2026-09-01T10:30:00.000Z'`, in every TZ.
+`time` and `timetz` were already the engine's text and are unchanged.
+Every other type is what `pg-types` makes of it.
+
+The text is the server's rendering, so it follows the session's `DateStyle`; the default `ISO, MDY` gives the forms above, and `'infinity'` and `'0044-03-15 BC'` come through as written.
+
+Before this, `pg-types` built a `date` as a `Date` at local midnight of the Node process and read a `timestamp` as local wall-clock time, and the row was then serialised as ISO UTC.
+The published image runs in UTC, which hid it; `npx @libredb/studio` on a machine east or west of UTC did not.
+Measured 2026-09-27 on `postgres:18-alpine` through `PostgresProvider`, for `DATE '2026-09-01'` and `TIMESTAMP '2026-09-01 10:30:00'`:
+
+| process TZ | `date` before | `timestamp` before | `date` after | `timestamp` after |
+|---|---|---|---|---|
+| UTC | `2026-09-01T00:00:00.000Z` | `2026-09-01T10:30:00.000Z` | `2026-09-01` | `2026-09-01 10:30:00` |
+| Europe/Istanbul | `2026-08-31T21:00:00.000Z` | `2026-09-01T07:30:00.000Z` | `2026-09-01` | `2026-09-01 10:30:00` |
+| America/Los_Angeles | `2026-09-01T07:00:00.000Z` | `2026-09-01T17:30:00.000Z` | `2026-09-01` | `2026-09-01 10:30:00` |
+
+Under Europe/Istanbul the SQL INSERT export of that row, replayed into a copy of the table, stored `2026-08-31` and `07:30:00` before and the original values after.
+`'infinity'::date` used to arrive as `Infinity` and leave as `null`, and `DATE '0044-03-15 BC'` moved by the zone's local mean time offset.
+`timestamptz` answered `2026-09-01T10:30:00.000Z` under all three zones, before and after.
+
+The parsers are per pool on purpose: `pg.types.setTypeParser` is process-wide, and a host that embeds `@libredb/studio` has its own `pg` users.
+Only the text format is intercepted, since the binary one has no text to return.
+An in-process consumer of the library surface now receives strings, not `Date` objects, for these four types.
+Every relative that goes through `PostgresProvider` (the `via: "postgres"` entries in [`compatibility.ts`](../../src/lib/db/compatibility.ts)) shares the change.
 
 ---
 
