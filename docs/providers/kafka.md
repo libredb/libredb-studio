@@ -406,6 +406,7 @@ No container level: the three kind folders hang directly under the connection ro
 #### Topic columns
 
 A topic's columns are fixed, because they are the shape of a read result and not a schema the broker holds: `partition`, `offset`, `timestamp`, `key`, `key_encoding`, `value`, `value_encoding`, `headers`.
+`timestamp`, `key` and `value` are declared nullable, where a read answers null: a record written with the protocol's no-timestamp value has no timestamp, a record may carry no key, and a tombstone carries no value.
 `describeObject([topic], "topic")` answers them after confirming the topic exists, and `describeObjects([], "topic", limit)` answers them for every listed topic from the listing read alone, one round trip.
 
 #### Listing, counting and scale

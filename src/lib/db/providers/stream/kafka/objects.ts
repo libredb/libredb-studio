@@ -51,11 +51,15 @@ const TOPIC_CAP_SENTENCE = `one topic listing capped at ${KAFKA_TOPIC_LIST_CAP.t
 
 const column = (name: string, type: string): ColumnSchema => ({ name, type, nullable: true, isPrimary: false });
 
-/** The shape of a read result (spec 4.2, 5.2), not a schema the broker holds. */
+/**
+ * The shape of a read result (spec 4.2, 5.2), not a schema the broker holds. A column is
+ * nullable where a read answers null in it: a record written with the protocol's no-timestamp
+ * value, -1, has a null timestamp, a record may carry no key, and a tombstone carries no value.
+ */
 export const KAFKA_TOPIC_COLUMNS: readonly ColumnSchema[] = Object.freeze([
   { name: "partition", type: "integer", nullable: false, isPrimary: false },
   { name: "offset", type: "string", nullable: false, isPrimary: false },
-  { name: "timestamp", type: "timestamp", nullable: false, isPrimary: false },
+  column("timestamp", "timestamp"),
   column("key", "json"),
   { name: "key_encoding", type: "string", nullable: false, isPrimary: false },
   column("value", "json"),

@@ -6,8 +6,8 @@
  * `tests/unit/db/prometheus/provider-doc.test.ts`, whose shape this file follows). So every bound the
  * provider doc quotes is read back against its constant, the dialog strings against what `DB_UI_CONFIG`
  * declares, the labels and empty states against the provider's own `getLabels()`, the refusals and the
- * size label against the modules that write them, and the absent cancellation against the presence the
- * routes detect.
+ * size label against the modules that write them, the nullable topic columns against their declaration,
+ * and the absent cancellation against the presence the routes detect.
  *
  * `docs/SECURITY.md` states, in its limitation on where a `user` may connect, that a Kafka broker's
  * metadata chooses further hosts, that a Kafka connection refuses an SSH tunnel for that reason, and the
@@ -25,7 +25,7 @@ import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG } from "@/lib/d
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KAFKA_DEFAULT_PORT, kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 import { overviewFrom } from "@/lib/db/providers/stream/kafka/monitoring";
-import { KAFKA_TOPIC_LIST_CAP } from "@/lib/db/providers/stream/kafka/objects";
+import { KAFKA_TOPIC_COLUMNS, KAFKA_TOPIC_LIST_CAP } from "@/lib/db/providers/stream/kafka/objects";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET } from "@/lib/db/providers/stream/kafka/read";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -162,6 +162,15 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
     const label = size.replace(/^\S+ \S+ /, "");
     expect(label).toBe("on disk, all replicas, internal topics excluded");
     expect(DOC).toContain(`"${label}"`);
+  });
+
+  test("the nullable topic columns the doc names are the ones the topic declares", () => {
+    const nullable = KAFKA_TOPIC_COLUMNS.filter((c) => c.nullable).map((c) => `\`${c.name}\``);
+    expect(nullable.length).toBeGreaterThan(1);
+    // Matched from the start of its line, so a list that lost its first name cannot match a tail of it.
+    expect(DOC).toContain(
+      `\n${nullable.slice(0, -1).join(", ")} and ${nullable[nullable.length - 1]} are declared nullable`,
+    );
   });
 
   test("the redacted value and the internal-topic refusal are the modules' own text", () => {

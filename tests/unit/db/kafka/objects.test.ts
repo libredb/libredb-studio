@@ -17,6 +17,7 @@ import {
   readObjectSource,
   topicStatus,
 } from "@/lib/db/providers/stream/kafka/objects";
+import { shapeRecord } from "@/lib/db/providers/stream/kafka/results";
 import { kafkaFixture } from "../../../helpers/kafka-fixtures";
 
 const big = (value: number) => BigInt(value);
@@ -134,6 +135,31 @@ describe("declaration", () => {
       "value_encoding",
       "headers",
     ]);
+  });
+
+  test("a column is declared nullable exactly where a read answers null in it: a record with no timestamp, no key, or no value", () => {
+    // The tree, describeObject, the docs panel and plan-mode grounding all show this declaration,
+    // so it must match the rows a read returns (spec 5.2): the protocol's no-timestamp value, -1,
+    // reads as a null timestamp (plan D-T8-2), a record may carry no key, and a tombstone no value.
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const rows = [
+      { partition: 0, offset: big(0), timestamp: big(-1), key: null, value: null, headers: [] },
+      {
+        partition: 1,
+        offset: big(7),
+        timestamp: big(1_700_000_000_000),
+        key: bytes("k"),
+        value: bytes('{"n":1}'),
+        headers: [[bytes("trace"), null]] as Array<[Uint8Array, null]>,
+      },
+    ].map((record) => shapeRecord(record, { cellLimit: 100 }).row);
+    const answeredNull = KAFKA_TOPIC_COLUMNS.map((c) => c.name).filter((name) =>
+      rows.some((row) => row[name] === null),
+    );
+    expect(answeredNull).toEqual(["timestamp", "key", "value"]);
+    expect(KAFKA_TOPIC_COLUMNS.filter((c) => c.nullable).map((c) => c.name)).toEqual(answeredNull);
+    // The shape of every column is the read's own field, in order.
+    expect(KAFKA_TOPIC_COLUMNS.map((c) => c.name)).toEqual(Object.keys(rows[1]));
   });
 
   test("every kind's path is [name]: a missing or an extra segment is refused by the shared shape check", async () => {
