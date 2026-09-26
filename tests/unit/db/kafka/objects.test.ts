@@ -555,6 +555,42 @@ describe("sources", () => {
     expect(JSON.parse(textOf(doc, 1))[0]).toMatchObject({ lag: "4" });
   });
 
+  test("a group's existence is the listing's: an unlisted group is refused, and describing a group, having read nothing but the listing", async () => {
+    // A FindCoordinator for any group name creates __consumer_offsets on a broker that never
+    // held a group (spec Appendix B), so no group surface reads past the listing for a name it
+    // does not hold (spec 3.6 K4, 4.3).
+    const calls: string[] = [];
+    const base = client(["orders"]);
+    const record =
+      <A extends unknown[], R>(name: string, read: (...args: A) => Promise<R>) =>
+      (...args: A) => {
+        calls.push(name);
+        return read(...args);
+      };
+    const recording: ObjectsClient = {
+      metadata: record("metadata", base.metadata),
+      listTopics: record("listTopics", base.listTopics),
+      offsets: record("offsets", base.offsets),
+      topicConfigs: record("topicConfigs", base.topicConfigs),
+      brokerConfigs: record("brokerConfigs", base.brokerConfigs),
+      listGroups: record("listGroups", base.listGroups),
+      describeGroup: record("describeGroup", base.describeGroup),
+      committedOffsets: record("committedOffsets", base.committedOffsets),
+    };
+    const error = await readObjectSource(recording, CAPS, ["ghost"], "consumer_group").catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.message).toBe('Consumer group "ghost" does not exist');
+    expect(calls).toEqual(["listGroups"]);
+    calls.length = 0;
+    await describeObject(recording, CAPS, ["ghost"], "consumer_group").catch(() => undefined);
+    expect(calls.filter((name) => name !== "listGroups")).toEqual([]);
+    // The control: a listed group's source is read past the listing.
+    calls.length = 0;
+    await readObjectSource(recording, CAPS, ["billing"], "consumer_group");
+    expect(calls[0]).toBe("listGroups");
+    expect([...calls].sort()).toEqual(["committedOffsets", "describeGroup", "listGroups", "offsets"]);
+  });
+
   test("a missing name of any kind is a QueryError-mapped unknown-object naming the segment", async () => {
     for (const [kind, name] of [
       ["topic", "ghost"],

@@ -280,6 +280,38 @@ describe("readGroupSource", () => {
     expect(await readGroupSource(client(), "no-such-group")).toBeUndefined();
   });
 
+  test("a group the listing does not hold is decided by the listing alone: nothing is sent toward a group coordinator", async () => {
+    // On a broker that never held a group, a FindCoordinator for any name creates
+    // __consumer_offsets (spec Appendix B), so the listing is read first and alone (spec 3.6 K4, 4.3).
+    const calls: string[] = [];
+    const base = client();
+    const recording: GroupClient = {
+      listGroups: async () => {
+        calls.push("listGroups");
+        return base.listGroups();
+      },
+      describeGroup: async (listing) => {
+        calls.push("describeGroup");
+        return base.describeGroup(listing);
+      },
+      committedOffsets: async (groupId) => {
+        calls.push("committedOffsets");
+        return base.committedOffsets(groupId);
+      },
+      offsets: async (topic, at) => {
+        calls.push("offsets");
+        return base.offsets(topic, at);
+      },
+    };
+    expect(await readGroupSource(recording, "no-such-group")).toBeUndefined();
+    expect(calls).toEqual(["listGroups"]);
+    // The control: a listed group is described and read, and only after the listing answered.
+    calls.length = 0;
+    expect((await readGroupSource(recording, "lag-classic"))?.group.groupId).toBe("lag-classic");
+    expect(calls[0]).toBe("listGroups");
+    expect([...calls].sort()).toEqual(["committedOffsets", "describeGroup", "listGroups", "offsets"]);
+  });
+
   test("a committed internal topic keeps its rows with the reason, and the source still settles", async () => {
     const source = await readGroupSource(
       client({
