@@ -15,12 +15,17 @@
  * - every read each monitoring panel makes (spec 7.1), failed alone, and with the other KM4 read refused;
  * - every module answer, by identity: the module functions index.ts calls are spied with spyOn and
  *   answer objects of this file's own, and the provider must hand back those very objects and hand
- *   the modules the very objects it was given, so a composition that reshapes any part of an answer
- *   fails, whichever part it is (spec 3.5);
+ *   the modules the very objects it was given (spec 3.5). Identity alone cannot see an answer handed
+ *   back after a part of it was deleted or replaced in place, so every answer a spy or the fake client
+ *   gives is frozen whole, which makes such a write throw in these strict modules, and each answer is
+ *   compared after the call with a fresh copy built the same way; and each answer holds the parts a
+ *   composition could reshape (a tombstone row, warnings on a read that was not limited, pagination,
+ *   a topic's status, a count's floor, a column, a truncation, a cut part and a refused one, and every
+ *   field of a panel's answer);
  * - query timeouts on both sides of every clamp a deadline could hide behind.
- * The fake client records every call and answers objects of this file's own; it keeps the client's
- * contract (brokers in node-id order). Every spy is restored after its test. No mock.module(): it is
- * process-wide in bun.
+ * The fake client records every call and answers objects of this file's own, frozen; it keeps the
+ * client's contract (brokers in node-id order). Every spy is restored after its test. No
+ * mock.module(): it is process-wide in bun.
  *
  * A section number below, "spec 7.1" for example, is a section of #1088's design; an IX number is a
  * rule of plan Task 16's list "Rules index.ts owns".
@@ -162,6 +167,20 @@ const QUERY_TIMEOUTS = [
 // The client this file builds the provider over
 // ============================================================================
 
+/**
+ * Freezes a value and every object it holds, so a composition that writes to any part of an answer in
+ * place throws where it writes: this code runs as ES modules, which are strict, where a write to a
+ * frozen object or array throws a TypeError, and the error table hands such a defect back as itself.
+ * A byte view is left alone, since its elements cannot be frozen, and no answer here holds one.
+ */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !ArrayBuffer.isView(value)) {
+    for (const part of Object.values(value)) deepFreeze(part);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 const broker = (nodeId: number): KafkaBroker => ({ nodeId, host: `broker-${nodeId}`, port: 9092, rack: null });
 const topicNamed = (name: string): KafkaTopicMetadata => ({
   name,
@@ -172,31 +191,32 @@ const topicNamed = (name: string): KafkaTopicMetadata => ({
 /**
  * The forced broker read: the live brokers in node-id order, as the client lists them, and a
  * controller that is not the lowest, since KRaft answers a random live broker there (spec 4.1).
+ * These answers are shared by every test, and frozen like every answer the fake client gives.
  */
-const FORCED: KafkaClusterMetadata = {
+const FORCED: KafkaClusterMetadata = deepFreeze({
   clusterId: "c",
   controllerId: 4,
   brokers: [broker(2), broker(3), broker(4)],
   topics: [],
-};
+});
 /**
  * The listed topics' metadata, the read the log-dir request names: two topics where the listing names
  * three, so a count taken from it is told apart from the listing's, and a copy that still lists broker
  * 1, which has left, so a broker taken from it is told apart from the forced read's.
  */
-const LISTED: KafkaClusterMetadata = {
+const LISTED: KafkaClusterMetadata = deepFreeze({
   clusterId: "c",
   controllerId: 4,
   brokers: [broker(1), broker(2), broker(3), broker(4)],
   topics: [topicNamed("a"), topicNamed("b")],
-};
-const TOPIC_NAMES = ["a", "b", "c"];
-const BROKER_CONFIGS: KafkaConfigEntry[] = [
+});
+const TOPIC_NAMES = deepFreeze(["a", "b", "c"]);
+const BROKER_CONFIGS: KafkaConfigEntry[] = deepFreeze([
   { name: "max.connections", value: "100", readOnly: false, isSensitive: false, source: 4 },
-];
-const LOG_DIRS: KafkaLogDir[] = [
+]);
+const LOG_DIRS: KafkaLogDir[] = deepFreeze([
   { brokerId: 2, path: "/var/kafka", sizeBytes: BigInt(2048), totalBytes: BigInt(8192), usableBytes: BigInt(2048) },
-];
+]);
 
 type Method = keyof KafkaReadClient;
 type Call = [method: Method, args: unknown[]];
@@ -226,7 +246,7 @@ interface FakeClient {
   fail(read: ClientRead, failure: unknown): void;
 }
 
-/** A KafkaReadClient that records every call and answers this file's own objects, or `answers` where given. */
+/** A KafkaReadClient that records every call and answers this file's own objects, or `answers` where given, each frozen whole. */
 function fakeClient(answers: Partial<KafkaReadClient> = {}): FakeClient {
   const calls: Call[] = [];
   const failing: Array<{ read: ClientRead; failure: unknown }> = [];
@@ -235,7 +255,7 @@ function fakeClient(answers: Partial<KafkaReadClient> = {}): FakeClient {
     const failed = failing.find(({ read }) => read.method === method && read.carries(args));
     if (failed !== undefined) throw failed.failure;
     const answer = answers[method] as ((...values: unknown[]) => unknown) | undefined;
-    return (await (answer === undefined ? fallback() : answer(...args))) as never;
+    return deepFreeze(await (answer === undefined ? fallback() : answer(...args))) as never;
   };
   const client: KafkaReadClient = {
     metadata: (...args) =>
@@ -497,6 +517,8 @@ describe("query", () => {
   /** The limit the parsed request carries, which is not the parser's maximum, so the two are told apart. */
   const REQUEST_LIMIT = 3;
   const EMPTY_OUTCOME: readModule.ReadOutcome = { rows: [], warnings: [], wasLimited: false };
+  /** The shaping itself, taken before any test spies on it, so an answer can be built the way it builds one. */
+  const shape = resultsModule.toQueryResult;
 
   /**
    * Every part a read's outcome carries, each independently in every state it can take: limited or
@@ -533,15 +555,20 @@ describe("query", () => {
       const readMessages = spyOnly(readModule, "readMessages");
       const toQueryResult = spyOnly(resultsModule, "toQueryResult");
       const deadline = spyOnly(AbortSignal, "timeout");
+      const makeRequest = (): requestModule.ReadRequest => ({
+        topic: "orders",
+        from: { kind: "earliest" },
+        limit: REQUEST_LIMIT,
+      });
+      /** toQueryResult's own answer over an outcome's own parts: its rows, its warnings and its pagination. */
+      const answerOver = (outcome: readModule.ReadOutcome): QueryResult =>
+        shape(outcome.rows, 42, REQUEST_LIMIT, outcome.warnings, outcome.wasLimited);
       /** One read, with objects of its own, so an answer kept from a call before would show. */
-      const oneRead = async (label: string) => {
-        const request: requestModule.ReadRequest = {
-          topic: "orders",
-          from: { kind: "earliest" },
-          limit: REQUEST_LIMIT,
-        };
-        const outcome = make();
-        const answer: QueryResult = { rows: [{ label }], fields: [label], rowCount: 1, executionTime: -1 };
+      const oneRead = async () => {
+        // Each frozen whole: a write to any part of one, in place, throws where it is made.
+        const request = deepFreeze(makeRequest());
+        const outcome = deepFreeze(make());
+        const answer = deepFreeze(answerOver(outcome));
         parse.mockReset().mockReturnValue(request);
         // The clock moves only while the read runs, so its span is the one right execution time.
         readMessages.mockReset().mockImplementation(async () => {
@@ -551,6 +578,10 @@ describe("query", () => {
         toQueryResult.mockReset().mockReturnValue(answer);
         deadline.mockClear();
         expect(await provider.query(TEXT)).toBe(answer);
+        // And each still holds, after the read, every part it held before.
+        expect(request).toStrictEqual(makeRequest());
+        expect(outcome).toStrictEqual(make());
+        expect(answer).toStrictEqual(answerOver(make()));
         expect(parse.mock.calls).toEqual([[TEXT, DEFAULT_QUERY_LIMIT]]);
         expect(readMessages.mock.calls).toHaveLength(1);
         const [client, handedRequest, limits, signal] = readMessages.mock.calls[0];
@@ -571,8 +602,8 @@ describe("query", () => {
         // The provider reads nothing of its own: the read module is the one that reads the broker.
         expect(fake.calls).toEqual([]);
       };
-      await oneRead("the first read");
-      await oneRead("the second read");
+      await oneRead();
+      await oneRead();
     },
   );
 
@@ -645,9 +676,9 @@ type ObjectSurface = readonly [
   handed: (client: KafkaReadClient, capabilities: ReturnType<KafkaProvider["getCapabilities"]>) => unknown[],
   answer: () => unknown,
 ];
-/** Arguments no real module would accept, so only a pass-through hands them on unchanged. */
-const CONTAINER = ["a-container"];
-const PATH = ["a-topic", "a-part"];
+/** Arguments no real module would accept, so only a pass-through hands them on unchanged; frozen, so none is changed in place. */
+const CONTAINER = deepFreeze(["a-container"]);
+const PATH = deepFreeze(["a-topic", "a-part"]);
 const KIND = "a-kind";
 const SOURCE_PART: ObjectSourceDocument["parts"][number] = {
   id: "p",
@@ -657,6 +688,19 @@ const SOURCE_PART: ObjectSourceDocument["parts"][number] = {
   form: "complete",
   origin: "rendered",
 };
+/** A part the broker refused, beside the parts that were read (spec 4.4). */
+const REFUSED_PART: ObjectSourceDocument["parts"][number] = { id: "q", label: "Q", unavailable: "refused" };
+/** A detail with a column, so a composition that empties or replaces the columns has something to lose. */
+const detailOf = (name: string): ObjectDetail => ({
+  path: [name],
+  columns: [{ name: "partition", type: "int32", nullable: false, isPrimary: false }],
+  indexes: [],
+  foreignKeys: [],
+});
+/**
+ * Each answer holds the parts a composition could reshape: a count's floor, an unavailable count, a
+ * topic's status, a column, a truncation, a cut part and a refused one.
+ */
 const OBJECT_SURFACES: readonly ObjectSurface[] = [
   [
     "countObjects",
@@ -665,6 +709,7 @@ const OBJECT_SURFACES: readonly ObjectSurface[] = [
     (c) => [c, CONTAINER],
     (): Record<string, KindCount> => ({
       topic: { count: 2000, sampledFrom: "a floor" },
+      consumer_group: { count: 3 },
       broker: { unavailable: "no" },
     }),
   ],
@@ -673,35 +718,38 @@ const OBJECT_SURFACES: readonly ObjectSurface[] = [
     "listObjects",
     (p) => p.listObjects(CONTAINER, KIND),
     (c) => [c, CONTAINER, KIND],
-    (): DatabaseObject[] => [{ path: ["t"], name: "t", kind: "topic", status: "offline" }],
+    (): DatabaseObject[] => [
+      { path: ["t"], name: "t", kind: "topic", status: "offline" },
+      { path: ["u"], name: "u", kind: "topic" },
+    ],
   ],
   [
     "describeObject",
     "describeObject",
     (p) => p.describeObject(PATH, KIND),
     (c, capabilities) => [c, capabilities, PATH, KIND],
-    (): ObjectDetail => ({ path: ["t"], columns: [], indexes: [], foreignKeys: [] }),
+    (): ObjectDetail => detailOf("t"),
   ],
   [
     "describeObjects with no bound",
     "describeObjects",
     (p) => p.describeObjects(CONTAINER, KIND),
     (c) => [c, CONTAINER, KIND, undefined],
-    (): ObjectDetailBatch => ({ details: [], truncated: { limit: 0, reason: "a reason" } }),
+    (): ObjectDetailBatch => ({ details: [detailOf("t")], truncated: { limit: 1, reason: "a reason" } }),
   ],
   [
     "describeObjects bounded by the caller",
     "describeObjects",
     (p) => p.describeObjects(CONTAINER, KIND, 7),
     (c) => [c, CONTAINER, KIND, 7],
-    (): ObjectDetailBatch => ({ details: [] }),
+    (): ObjectDetailBatch => ({ details: [detailOf("t"), detailOf("u")] }),
   ],
   [
     "readObjectSource with no bound",
     "readObjectSource",
     (p) => p.readObjectSource(PATH, KIND),
     (c, capabilities) => [c, capabilities, PATH, KIND, undefined],
-    (): ObjectSourceDocument => ({ path: ["t"], kind: "topic", parts: [SOURCE_PART] }),
+    (): ObjectSourceDocument => ({ path: ["t"], kind: "topic", parts: [SOURCE_PART, REFUSED_PART] }),
   ],
   [
     "readObjectSource bounded by the caller",
@@ -711,7 +759,7 @@ const OBJECT_SURFACES: readonly ObjectSurface[] = [
     (): ObjectSourceDocument => ({
       path: ["t"],
       kind: "topic",
-      parts: [{ ...SOURCE_PART, truncated: { limit: 40, reason: "a reason" } }],
+      parts: [{ ...SOURCE_PART, truncated: { limit: 40, reason: "a reason" } }, REFUSED_PART],
     }),
   ],
 ];
@@ -721,10 +769,14 @@ describe("the object surface", () => {
     "%s answers the very object objects.ts answers, handed the caller's arguments and the provider's client, on every call",
     async (_label, surface, call, handed, answer) => {
       const { provider, fake } = await connectedOver();
-      const [first, second] = [answer(), answer()];
+      // Each frozen whole: a write to any part of one, in place, throws where it is made.
+      const [first, second] = [deepFreeze(answer()), deepFreeze(answer())];
       const owner = spyOnly(objectsModule, surface).mockResolvedValueOnce(first).mockResolvedValueOnce(second);
       expect(await call(provider)).toBe(first);
       expect(await call(provider)).toBe(second);
+      // And each still holds, after the call, every part it held before.
+      expect(first).toStrictEqual(answer());
+      expect(second).toStrictEqual(answer());
       const expected = handed(fake.client, provider.getCapabilities());
       expect(owner.mock.calls).toEqual([expected, expected]);
       for (const args of owner.mock.calls) expect(args[0]).toBe(fake.client);
@@ -735,7 +787,7 @@ describe("the object surface", () => {
 
   test("listContainers answers the very list objects.ts answers, on every call, and reads nothing", async () => {
     const { provider, fake } = await connectedOver();
-    const [first, second]: Container[][] = [[], []];
+    const [first, second]: Container[][] = [deepFreeze([]), deepFreeze([])];
     const owner = spyOnly(objectsModule, "listContainers").mockReturnValueOnce(first).mockReturnValueOnce(second);
     expect(await provider.listContainers()).toBe(first);
     expect(await provider.listContainers()).toBe(second);
@@ -802,9 +854,31 @@ const PANELS: ReadonlyArray<
 describe("the monitoring panels", () => {
   test("each panel makes exactly the reads spec 7.1 lists, on every load, and answers its mapping's own answer over those reads' own answers", async () => {
     const { provider, fake } = await connectedOver();
-    const health: HealthInfo = { databaseSize: "h", cacheHitRatio: "h", slowQueries: [], activeSessions: [] };
-    const overview = { version: "o" } as DatabaseOverview;
-    const storage: StorageStats[] = [];
+    // Each mapping answer holds every part its type has, so a composition that drops, empties or
+    // replaces one has something to lose; each is frozen whole, so a write to it in place throws.
+    const makeHealth = (): HealthInfo => ({
+      activeConnections: 7,
+      databaseSize: "2 KB on disk",
+      cacheHitRatio: "N/A",
+      slowQueries: [{ query: "q", calls: 1, avgTime: "1 ms" }],
+      activeSessions: [{ pid: 1, user: "u", database: "d", state: "s", query: "q", duration: "1 s" }],
+    });
+    const makeOverview = (): DatabaseOverview => ({
+      version: "N/A",
+      uptime: "N/A",
+      activeConnections: 7,
+      maxConnections: 100,
+      databaseSize: "2 KB on disk",
+      databaseSizeBytes: 2048,
+      tableCount: 3,
+      indexCount: 0,
+    });
+    const makeStorage = (): StorageStats[] => [
+      { name: "broker 2: /var/kafka", location: "/var/kafka", size: "2 KB", sizeBytes: 2048, usagePercent: 75 },
+    ];
+    const health = deepFreeze(makeHealth());
+    const overview = deepFreeze(makeOverview());
+    const storage = deepFreeze(makeStorage());
     const healthFrom = spyOnly(monitoringModule, "healthFrom").mockReturnValue(health);
     const overviewFrom = spyOnly(monitoringModule, "overviewFrom").mockReturnValue(overview);
     const storageFrom = spyOnly(monitoringModule, "storageFrom").mockReturnValue(storage);
@@ -842,6 +916,12 @@ describe("the monitoring panels", () => {
       expect(fake.calls).toEqual([["metadata", []], logDirsRequest]);
       expect(storageFrom.mock.calls).toHaveLength(load);
       expect(storageFrom.mock.calls[load - 1][0]).toBe(LOG_DIRS);
+
+      // Each answer still holds every part it held before. The reads' own answers the mappings were
+      // handed are the fake client's, frozen from the start.
+      expect(health).toStrictEqual(makeHealth());
+      expect(overview).toStrictEqual(makeOverview());
+      expect(storage).toStrictEqual(makeStorage());
     };
     await loadEach(1);
     await loadEach(2);
