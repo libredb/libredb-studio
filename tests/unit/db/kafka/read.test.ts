@@ -210,6 +210,141 @@ describe("readMessages", () => {
     expect(error.detail.validRange).toEqual({ earliest: n(0), latest: n(2) });
   });
 
+  /**
+   * Two partitions of offsets 0 to 9, and partition 1's log start moves to 6 as the read's first fetch of it is sent,
+   * as retention or a deletion moves it: the broker refuses that fetch as out of range, in the adapter's words.
+   */
+  function trimmedLog(over: Partial<ReadClient> = {}) {
+    const base = fakeClient({
+      0: Array.from({ length: 10 }, (_, i) => rec(0, i, i * 2)),
+      1: Array.from({ length: 10 }, (_, i) => rec(1, i, i * 2 + 1)),
+    });
+    const calls: string[] = [];
+    let trimmed = false;
+    const client: ReadClient = {
+      ...base.client,
+      offsets: async (topic, at) => {
+        calls.push(`offsets ${at}`);
+        const answer = await base.client.offsets(topic, at);
+        if (trimmed && at === "earliest") answer.set(1, n(6));
+        return answer;
+      },
+      fetch: async (topic, partition, offset, fetchSignal) => {
+        calls.push(`fetch ${partition}@${offset}`);
+        if (partition === 1) trimmed = true;
+        if (partition === 1 && offset < n(6)) {
+          throw new KafkaError("offset-out-of-range", "The offset is outside the partition's range", {
+            apiId: "OFFSET_OUT_OF_RANGE",
+          });
+        }
+        return base.client.fetch(topic, partition, offset, fetchSignal);
+      },
+      ...over,
+    };
+    return { client, calls };
+  }
+
+  test("a fetch the broker refuses as out of range is answered with the partition's range, read again once, and is never sent again", async () => {
+    const { client, calls } = trimmedLog();
+    const error = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.category).toBe("offset-out-of-range");
+    expect(error.message).toBe(
+      "The broker refused the fetch at offset 0 of partition 1 as out of range: the partition now holds 6 to its last stable offset 10, so its log moved after the read began; run the read again",
+    );
+    expect(error.detail).toEqual({ apiId: "OFFSET_OUT_OF_RANGE", validRange: { earliest: n(6), latest: n(10) } });
+    expect(calls).toEqual([
+      "offsets earliest",
+      "offsets latest",
+      "fetch 0@0",
+      "fetch 0@2",
+      "fetch 0@4",
+      "fetch 0@6",
+      "fetch 0@8",
+      "fetch 1@0",
+      "offsets earliest",
+      "offsets latest",
+    ]);
+    // A latest read's window of partition 1 starts at 5, below the log start it moves to.
+    const latest = trimmedLog();
+    const windowed = await readMessages(
+      latest.client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      LIMITS,
+      signal,
+    ).catch((e) => e);
+    expect(windowed.message).toBe(
+      "The broker refused the fetch at offset 5 of partition 1 as out of range: the partition now holds 6 to its last stable offset 10, so its log moved after the read began; run the read again",
+    );
+    expect(latest.calls.slice(-3)).toEqual(["fetch 1@5", "offsets earliest", "offsets latest"]);
+  });
+
+  test("a range read again that leaves the refused partition out is said, and no range is invented for it", async () => {
+    const reads = await Promise.all(
+      [["earliest"], ["latest"], ["earliest", "latest"]].map(async (missing) => {
+        let planned = 0;
+        const { client } = trimmedLog();
+        const leaving: ReadClient = {
+          ...client,
+          offsets: async (topic, at) => {
+            const answer = await client.offsets(topic, at);
+            planned += 1;
+            // The planning answers name both partitions; the answers read after the refusal leave partition 1 out.
+            if (planned > 2 && missing.includes(at)) answer.delete(1);
+            return answer;
+          },
+        };
+        return readMessages(leaving, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+      }),
+    );
+    expect(reads.map((error) => [error.category, error.message, error.detail])).toEqual(
+      ["earliest", "latest", "earliest or latest"].map((missing) => [
+        "offset-out-of-range",
+        `The broker refused the fetch at offset 0 of partition 1 as out of range, and then reported no ${missing} offset for it; run the read again`,
+        { apiId: "OFFSET_OUT_OF_RANGE" },
+      ]),
+    );
+  });
+
+  test("a fetch refused for any other reason is the read's refusal as it came, and reads no range", async () => {
+    const refusal = new KafkaError("network", "The broker could not be reached (ECONNRESET)");
+    const { client, calls } = trimmedLog({
+      fetch: async () => {
+        throw refusal;
+      },
+    });
+    const error = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+    expect(error).toBe(refusal);
+    expect(calls).toEqual(["offsets earliest", "offsets latest"]);
+  });
+
+  test("the range read again after a refused fetch waits on the read's time limit as every planning call does", async () => {
+    const controller = new AbortController();
+    let heldAsked: () => void = () => {};
+    const asked = new Promise<void>((resolve) => {
+      heldAsked = resolve;
+    });
+    let answers = 0;
+    const { client, calls } = trimmedLog();
+    const holding: ReadClient = {
+      ...client,
+      offsets: (topic, at) => {
+        answers += 1;
+        if (answers <= 2) return client.offsets(topic, at);
+        calls.push(`offsets ${at}, held`);
+        heldAsked();
+        return new Promise(() => {});
+      },
+    };
+    const read = readMessages(holding, req({ from: { kind: "earliest" } }), LIMITS, controller.signal).catch((e) => e);
+    await asked;
+    controller.abort();
+    const settled = await Promise.race([read, new Promise((resolve) => setTimeout(() => resolve("still waiting"), 0))]);
+    expect(settled).toBeInstanceOf(KafkaError);
+    expect((settled as KafkaError).category).toBe("timeout");
+    expect(calls.slice(-2)).toEqual(["fetch 1@0", "offsets earliest, held"]);
+  });
+
   test("a partition that does not exist is refused", async () => {
     const { client } = fakeClient(log);
     const error = await readMessages(client, req({ partition: 7 }), LIMITS, signal).catch((e) => e);
@@ -1461,7 +1596,10 @@ describe("readMessages", () => {
  * instant, and for a fetch whether it got the very topic object the metadata answered and the read's own signal.
  * So which topic each call names, the order of the calls, and whether two were ever in flight at once are part of
  * what every generated read is compared with, not only its rows. It refuses as the adapter does: an internal topic,
- * a topic the cluster does not hold, and the offsets of a topic with a leaderless partition.
+ * a topic the cluster does not hold, the offsets of a topic with a leaderless partition, and a fetch whose offset the
+ * log start has moved past. The read's time can run out before it starts, while a planning call is out, or as a fetch
+ * is answered, and the trace is taken when the read is answered, so an answer the fake gives after that is not the
+ * read's.
  */
 describe("readMessages against a reference of spec 5.1 and 5.4, through the seam's contract", () => {
   const READS = 3000;
@@ -1511,6 +1649,7 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     "the read's time ran out while the latest offsets were out",
     "the read's time ran out before a fetch it still needed",
     "the read's time ran out after the last fetch it needed",
+    "the broker refused a fetch as out of range",
     "a record no date can show came into the rows held",
     "the merge dropped a record no date can show as it arrived",
     "the budget stopped the read before a record no date can show",
@@ -1536,6 +1675,11 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     readonly abortAt: number | undefined;
     /** Or while one of the planning calls is out: its time runs out as that call is made, before it is answered. */
     readonly abortWhileAsked: PlanningStep | undefined;
+    /**
+     * The n-th fetch the broker refuses as out of range, because the partition's log start moved past the offset it
+     * asks for after the read planned it; the earliest offset answered after that is the one past it (spec 5.6).
+     */
+    readonly refuseAt: number | undefined;
   }
   /** The calls a read makes before its first fetch, in the order it makes them (spec 5.1). */
   type PlanningStep = "metadata" | "earliest" | "timestamp" | "latest";
@@ -1546,6 +1690,11 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
   const unknownTopic = () => new KafkaError("unknown-topic", "The topic does not exist");
   const leaderlessOffsets = (partitions: readonly number[]) =>
     new KafkaError("unreadable-topic", `The client read no offsets: no leader for partition ${partitions.join(", ")}`);
+  /** The adapter's refusal of a fetch the broker answered with OFFSET_OUT_OF_RANGE, which names no range. */
+  const fetchOutOfRange = () =>
+    new KafkaError("offset-out-of-range", "The offset is outside the partition's range", {
+      apiId: "OFFSET_OUT_OF_RANGE",
+    });
 
   /** Park and Miller's generator: exact in doubles, so every run draws the same reads. */
   function draws(seed: number) {
@@ -1662,6 +1811,8 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     const steps: readonly PlanningStep[] =
       kind === "timestamp" ? ["metadata", "earliest", "timestamp", "latest"] : ["metadata", "earliest", "latest"];
     const abortWhileAsked = chance(kind === "timestamp" ? 0.3 : 0.08) ? pick(steps) : undefined;
+    // Now and then the log start moves past a fetch the read sends (spec 5.6), drawn after everything else too.
+    const refuseAt = chance(0.1) ? int(1, 3) : undefined;
     const facets = [
       `read ${index}: ${kind}${partition === undefined ? "" : ` of partition ${partition}`} of ${topic}`,
       `limit ${limit}, ${perFetch} a fetch, budget ${limits.resultByteBudget}, cells ${limits.cellLimit}`,
@@ -1669,6 +1820,7 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
       ...(holes ? ["answers that leave partitions out"] : []),
       ...(abortAt === undefined ? [] : [`time runs out at fetch ${abortAt}`]),
       ...(abortWhileAsked === undefined ? [] : [`time runs out while the ${abortWhileAsked} call is out`]),
+      ...(refuseAt === undefined ? [] : [`the broker refuses fetch ${refuseAt} as out of range`]),
     ];
     return {
       label: facets.join(", "),
@@ -1683,6 +1835,7 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
       perFetch,
       abortAt,
       abortWhileAsked,
+      refuseAt,
     };
   }
 
@@ -1744,6 +1897,8 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
       if (leaderless.length > 0) throw leaderlessOffsets(leaderless);
     };
     let fetches = 0;
+    /** Each partition's log start once it has moved past a fetch the broker refused. */
+    const moved = new Map<number, bigint>();
     return {
       // Every non-internal topic when no name is given (client.ts).
       metadata: (names) =>
@@ -1762,7 +1917,10 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
           `offsets(${JSON.stringify(name)}, ${at})`,
           () => {
             readable(name);
-            return new Map(at === "earliest" ? s.earliest : s.latest);
+            if (at !== "earliest") return new Map(s.latest);
+            const answer = new Map(s.earliest);
+            for (const [partition, start] of moved) answer.set(partition, start);
+            return answer;
           },
           at === "earliest" ? "earliest" : "latest",
         ),
@@ -1793,6 +1951,11 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
             }
             // The read's time runs out as this fetch is answered.
             if (fetches === s.abortAt) controller.abort();
+            // The log start has moved past the offset this fetch asks for, so the broker refuses it.
+            if (fetches === s.refuseAt) {
+              moved.set(partition, offset + n(1));
+              throw fetchOutOfRange();
+            }
             return fetchFrom(s, partition, offset);
           },
         ),
@@ -2018,9 +2181,31 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
         }
         // One fetch at a time, with the topic object the metadata answered and the read's own signal (spec 3.5,
         // 3.6 K8).
-        called(fetchCall(THE_TOPIC, plan.partition, position, THE_SIGNAL));
+        const fetch = fetchCall(THE_TOPIC, plan.partition, position, THE_SIGNAL);
         fetches += 1;
         if (fetches === s.abortAt) timeRanOut = true;
+        if (fetches === s.refuseAt) {
+          // Spec 5.6: the broker refused the fetch as out of range, its log start having moved past it. The
+          // partition's offsets are read again, once, unless the read's time has run out, and the refusal names the
+          // range they hold now; the fetch is never sent again.
+          called(fetch, "refused");
+          saw("the broker refused a fetch as out of range");
+          if (timeRanOut) {
+            refusal = stoppedRead();
+            return true;
+          }
+          called(`offsets("${TOPIC}", earliest)`);
+          called(`offsets("${TOPIC}", latest)`);
+          const earliest = position + n(1);
+          const latest = answered(s.latest, plan.partition);
+          refusal = new KafkaError(
+            "offset-out-of-range",
+            `The broker refused the fetch at offset ${position} of partition ${plan.partition} as out of range: the partition now holds ${earliest} to its last stable offset ${latest}, so its log moved after the read began; run the read again`,
+            { apiId: "OFFSET_OUT_OF_RANGE", validRange: { earliest, latest } },
+          );
+          return true;
+        }
+        called(fetch);
         const answer = fetchFrom(s, plan.partition, position);
         if (answer.records.some((r) => r.offset >= plan.end)) saw("a fetch answered records past the end");
         for (const record of answer.records.filter((r) => r.offset < plan.end)) {

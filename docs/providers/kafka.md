@@ -322,6 +322,7 @@ Where a read starts and ends:
 
 - Every partition a read covers must be named in each offsets answer it uses, the earliest and latest offsets and, for a timestamp read, the offsets at the timestamp; a partition an answer leaves out is refused with a `QueryError` naming the topic, the partition and the answer, before any fetch, and never started from an invented offset.
 - A read stops at each partition's last stable offset, the end a read-committed fetch reaches, while a group's lag is measured to the high watermark ([§6.1](#consumer-groups-and-lag)); on a partition with an open transaction the two ends differ.
+- A fetch the broker refuses as out of range, because retention or a deletion moved the partition's log start past it after the read began, is refused with a `QueryError` naming the partition, the offset and the range the partition holds now, read again once; the fetch is never sent again, so the read has to be run again.
 - The offsets are read one answer at a time, the earliest, then those at the timestamp, then the latest, so a record written while the read is positioned lies below the end it stops at.
   A timestamp read looks each partition up once, before it reads the end, so a message written after that lookup is not in the read even when it lies below the end.
 - A transaction's COMMIT and ABORT markers and an aborted transaction's records use offsets but are never rows, so a `"latest"` read of a transactional topic, whose window is `limit` offsets per partition, can answer fewer than `limit` rows.

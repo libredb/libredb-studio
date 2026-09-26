@@ -24,7 +24,14 @@
  * makes no progress below a partition's end stops that partition, never spins, and the
  * result says where it stopped.
  */
-import { BIGINT_ZERO, KafkaError, type KafkaReadClient, type KafkaRecord, type KafkaTopicMetadata } from "./client";
+import {
+  BIGINT_ZERO,
+  KafkaError,
+  type KafkaFetchResult,
+  type KafkaReadClient,
+  type KafkaRecord,
+  type KafkaTopicMetadata,
+} from "./client";
 import type { ReadRequest, ReadStart } from "./request";
 import { compareRecords, type RecordOrder, shapeRecord } from "./results";
 
@@ -225,6 +232,44 @@ function step<T>(signal: AbortSignal, call: () => Promise<T>): Promise<T> {
   });
 }
 
+/**
+ * One fetch. The broker refuses a fetch as out of range when the partition's log moved after the read planned it,
+ * trimmed by retention or a deletion, or truncated, and its refusal names no range. So the partition's offsets are
+ * read again, once, and the refusal names the range the partition holds now (spec 5.6); the fetch is never sent
+ * again, since a read planned on a log that moved is its caller's to run again. Any other refusal is the read's as
+ * it came.
+ */
+async function fetchAt(
+  client: ReadClient,
+  topic: KafkaTopicMetadata,
+  partition: number,
+  offset: bigint,
+  signal: AbortSignal,
+): Promise<KafkaFetchResult> {
+  try {
+    return await client.fetch(topic, partition, offset, signal);
+  } catch (error) {
+    if (!(error instanceof KafkaError) || error.category !== "offset-out-of-range") throw error;
+    const refused = `The broker refused the fetch at offset ${offset} of partition ${partition} as out of range`;
+    const earliest = (await step(signal, () => client.offsets(topic.name, "earliest"))).get(partition);
+    const latest = (await step(signal, () => client.offsets(topic.name, "latest"))).get(partition);
+    if (earliest === undefined || latest === undefined) {
+      const missing = [earliest === undefined ? "earliest" : undefined, latest === undefined ? "latest" : undefined];
+      const which = missing.filter((answer) => answer !== undefined).join(" or ");
+      throw new KafkaError(
+        "offset-out-of-range",
+        `${refused}, and then reported no ${which} offset for it; run the read again`,
+        error.detail,
+      );
+    }
+    throw new KafkaError(
+      "offset-out-of-range",
+      `${refused}: the partition now holds ${earliest} to its last stable offset ${latest}, so its log moved after the read began; run the read again`,
+      { ...error.detail, validRange: { earliest, latest } },
+    );
+  }
+}
+
 /** The bytes one record holds after decompression, which is what the result budget counts. */
 function recordBytes(record: KafkaRecord): number {
   let bytes = (record.key?.byteLength ?? 0) + (record.value?.byteLength ?? 0);
@@ -321,7 +366,7 @@ export async function readMessages(
     while (position < plan.end && taken < request.limit && budgetStop === undefined) {
       if (signal.aborted) throw stopped();
       // oxlint-disable-next-line no-await-in-loop -- each fetch starts where the one before it ended.
-      const { records, nextOffset } = await client.fetch(topic, plan.partition, position, signal);
+      const { records, nextOffset } = await fetchAt(client, topic, plan.partition, position, signal);
       for (const record of records) {
         if (record.offset >= plan.end) break;
         if (taken >= request.limit) {
