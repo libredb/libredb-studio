@@ -1004,7 +1004,9 @@ describe("reads over captured payloads", () => {
     await expect(provider.query('{"topic":"ghost"}')).rejects.toBeInstanceOf(QueryError);
     const pastEnd = await provider.query('{"topic":"orders","partition":1,"from":{"offset":1000}}').catch((e) => e);
     expect(pastEnd).toBeInstanceOf(QueryError);
-    expect(pastEnd.message).toBe("Offset 1000 is outside partition 1's range 0 to 12");
+    expect(pastEnd.message).toBe(
+      "Offset 1000 is outside partition 1's readable range, 0 to its last stable offset 12, the end a read-committed read reaches",
+    );
   });
 
   test("an authorization failure from the broker is an AuthenticationError", async () => {
