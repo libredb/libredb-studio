@@ -274,7 +274,16 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
 
     try {
       clientRequest = httpsRequest(
-        { protocol, hostname, port, path, method: request.method, headers: request.headers, ...tls, ...guardedNodeOptions(hostname) },
+        {
+          protocol,
+          hostname,
+          port,
+          path,
+          method: request.method,
+          headers: request.headers,
+          ...tls,
+          ...guardedNodeOptions(hostname),
+        },
         (incoming) => {
           response = incoming;
           incoming.on("error", failWith);

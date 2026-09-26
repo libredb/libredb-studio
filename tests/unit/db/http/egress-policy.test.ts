@@ -67,7 +67,12 @@ describe("opt-in HTTP database destination policy", () => {
 
   test("refuses mixed DNS answers, mapped IPv4, and an empty result", () => {
     expect(() => assertPublicDnsAnswers([{ address: "8.8.8.8", family: 4 }])).not.toThrow();
-    expect(() => assertPublicDnsAnswers([{ address: "8.8.8.8", family: 4 }, { address: "10.0.0.5", family: 4 }])).toThrow(DatabaseConfigError);
+    expect(() =>
+      assertPublicDnsAnswers([
+        { address: "8.8.8.8", family: 4 },
+        { address: "10.0.0.5", family: 4 },
+      ]),
+    ).toThrow(DatabaseConfigError);
     expect(() => assertPublicDnsAnswers([{ address: "::ffff:7f00:1", family: 6 }])).toThrow(DatabaseConfigError);
     expect(() => assertPublicDnsAnswers([{ address: "fd00::1", family: 6 }])).toThrow(DatabaseConfigError);
     expect(() => assertPublicDnsAnswers([])).toThrow(DatabaseConfigError);
@@ -81,11 +86,13 @@ describe("opt-in HTTP database destination policy", () => {
 
   test("guards the custom TLS request path too", () => {
     process.env[flag] = "true";
-    expect(() => nodeRequestJson(
-      "https://169.254.169.254/query/service",
-      { method: "GET", headers: {} },
-      { rejectUnauthorized: true },
-    )).toThrow(DatabaseConfigError);
+    expect(() =>
+      nodeRequestJson(
+        "https://169.254.169.254/query/service",
+        { method: "GET", headers: {} },
+        { rejectUnauthorized: true },
+      ),
+    ).toThrow(DatabaseConfigError);
   });
 
   test("does not send either literal or DNS-alias loopback requests", async () => {
@@ -105,7 +112,7 @@ describe("opt-in HTTP database destination policy", () => {
       expect(await (await httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).text()).toBe("reached");
       expect(hits).toBe(1);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 });

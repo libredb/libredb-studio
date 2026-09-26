@@ -285,7 +285,12 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
   let response: Response;
   try {
     // A followed redirect would carry the credential to wherever it points.
-    response = await httpTransportFetch(url, { method: init.method, headers: init.headers, body: init.body, redirect: "manual" });
+    response = await httpTransportFetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      redirect: "manual",
+    });
   } catch (error) {
     throw networkError(error);
   }

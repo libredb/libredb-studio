@@ -14,18 +14,42 @@ const BLOCKED_CONFIG = `Invalid ${FLAG}: expected true or false`;
 
 const blocked = new BlockList();
 for (const [network, prefix] of [
-  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
-  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24],
-  ["192.0.2.0", 24], ["192.88.99.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15],
-  ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4],
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
   ["240.0.0.0", 4],
-] as const) blocked.addSubnet(network, prefix, "ipv4");
+] as const)
+  blocked.addSubnet(network, prefix, "ipv4");
 for (const [network, prefix] of [
-  ["::", 96], ["::1", 128], ["64:ff9b::", 96], ["64:ff9b:1::", 48],
-  ["100::", 64], ["100:0:0:1::", 64], ["2001::", 32], ["2001:2::", 48],
-  ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20], ["5f00::", 16],
-  ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8],
-] as const) blocked.addSubnet(network, prefix, "ipv6");
+  ["::", 96],
+  ["::1", 128],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["100::", 64],
+  ["100:0:0:1::", 64],
+  ["2001::", 32],
+  ["2001:2::", 48],
+  ["2001:db8::", 32],
+  ["2002::", 16],
+  ["3fff::", 20],
+  ["5f00::", 16],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+] as const)
+  blocked.addSubnet(network, prefix, "ipv6");
 
 /** Unset and false preserve local-first connections. Invalid opt-in values fail closed. */
 export function blockPrivateHttpHosts(): boolean {
@@ -47,11 +71,15 @@ export function assertPublicLiteralHost(host: string): void {
 
 /** All DNS answers must be safe: a mixed A/AAAA result must not be partially accepted. */
 export function assertPublicDnsAnswers(addresses: readonly LookupAddress[]): void {
-  if (addresses.length === 0 || addresses.some(({ address, family }) => {
-    if (family !== 4 && family !== 6) return true;
-    if (isIP(address) !== family) return true;
-    return blocked.check(address, family === 4 ? "ipv4" : "ipv6");
-  })) throw new DatabaseConfigError(BLOCKED_HOST);
+  if (
+    addresses.length === 0 ||
+    addresses.some(({ address, family }) => {
+      if (family !== 4 && family !== 6) return true;
+      if (isIP(address) !== family) return true;
+      return blocked.check(address, family === 4 ? "ipv4" : "ipv6");
+    })
+  )
+    throw new DatabaseConfigError(BLOCKED_HOST);
 }
 
 /** The checked DNS answer is returned to the socket itself, preventing a second lookup/rebind. */
@@ -122,11 +150,13 @@ export function httpTransportFetch(input: string | URL, init: RequestInit = {}):
         }
         const status = incoming.statusCode ?? 0;
         const noBody = [204, 205, 304].includes(status) || options.method === "HEAD";
-        resolve(new Response(noBody ? null : Readable.toWeb(body) as unknown as ReadableStream<Uint8Array>, {
-          status,
-          statusText: incoming.statusMessage,
-          headers,
-        }));
+        resolve(
+          new Response(noBody ? null : (Readable.toWeb(body) as unknown as ReadableStream<Uint8Array>), {
+            status,
+            statusText: incoming.statusMessage,
+            headers,
+          }),
+        );
       } catch (error) {
         incoming.destroy();
         reject(error);

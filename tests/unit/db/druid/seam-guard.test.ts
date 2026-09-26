@@ -63,10 +63,10 @@ const WIRE_TOKENS = [
 /**
  * Identifiers matched EXACTLY, because a substring match would fire on every
  * legitimate helper: `fetchTableStats` and `prefetchSchema` are ordinary provider
- * names, while a bare `fetch` - called, or read off `globalThis` - is the one
- * thing spec section 15, point 4 says provider logic must never do.
+ * names, while a bare `fetch` or `httpTransportFetch` belongs only in the
+ * transport. Provider logic must not send requests around that seam.
  */
-const EXACT_TOKENS = ["fetch"];
+const EXACT_TOKENS = ["fetch", "httpTransportFetch"];
 
 /**
  * Envelope fields whose names the NEUTRAL seam deliberately shares, so only the
@@ -77,7 +77,7 @@ const EXACT_TOKENS = ["fetch"];
 const STRING_TOKENS = ["persona"];
 
 /** Everything the transport must speak, and nothing else may. */
-const WIRE_VOCABULARY = [...WIRE_TOKENS, ...EXACT_TOKENS, ...STRING_TOKENS];
+const WIRE_VOCABULARY = [...WIRE_TOKENS, "httpTransportFetch", ...STRING_TOKENS];
 
 /**
  * Why the rule exists, printed on failure. Whoever trips this needs to see the
@@ -304,6 +304,7 @@ export async function readRows(origin: string, sql: string) {
     ["an auth header", "const headers = { authorization: basic };", "authorization"],
     ["an auth header spelled for HTTP", 'headers.set("Authorization", basic);', "authorization"],
     ["a direct fetch", 'await fetch(url, { method: "POST" });', "fetch"],
+    ["a guarded fetch outside the transport", "await httpTransportFetch(url);", "httpTransportFetch"],
     ["a fetch off globalThis", "await globalThis.fetch(url);", "fetch"],
   ])("flags %s", (_label, source, token) => {
     const [leak, ...rest] = findWireLeaks("index.ts", source);
