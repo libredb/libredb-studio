@@ -21,7 +21,7 @@
  * test finds which addressing fields a provider reads by the `config.<field>` pattern.
  */
 import { isIP } from "node:net";
-import type { DatabaseConnection, SSLConfig, SSLMode } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, SSLConfig, SSLMode } from "@/lib/types";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { KafkaError } from "./client";
 
@@ -74,8 +74,10 @@ export interface KafkaConnectionOptions {
 
 export function kafkaConnectionOptions(config: DatabaseConnection, timeoutMs: number): KafkaConnectionOptions {
   // The server opens a tunnel for any `enabled` JavaScript reads as true (src/lib/db/factory.ts),
-  // so a value that is not a boolean is refused rather than read as no tunnel.
-  if (optionalBoolean(config.sshTunnel?.enabled, "sshTunnel.enabled") === true) {
+  // so a value that is not a boolean is refused rather than read as no tunnel, and so is a tunnel
+  // that is not an object, as a TLS panel that is not one is.
+  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
+  if (optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true) {
     throw new KafkaError(
       "invalid-config",
       "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly",
@@ -98,11 +100,9 @@ export function kafkaConnectionOptions(config: DatabaseConnection, timeoutMs: nu
 }
 
 function tlsOptions(config: DatabaseConnection): KafkaTlsOptions | undefined {
-  const ssl: unknown = config.ssl;
-  if (ssl === undefined || ssl === null) return undefined;
-  if (typeof ssl !== "object" || Array.isArray(ssl)) throw wrongType("ssl", "an object");
   // The whole panel is checked, whatever its mode, before any of it is read.
-  const panel = ssl as Partial<Record<keyof SSLConfig, unknown>>;
+  const panel = optionalObject<keyof SSLConfig>(config.ssl, "ssl");
+  if (panel === undefined) return undefined;
   const mode = panel.mode;
   // A panel with no mode reads as a verifying one, as every provider with the Couchbase rule reads
   // it: a seed file's panel may omit the mode (src/lib/seed/types.ts).
@@ -156,6 +156,13 @@ function saslOptions(config: DatabaseConnection, tlsOn: boolean): KafkaSaslOptio
     }
   }
   return { mechanism, username, password };
+}
+
+/** A field that holds an object when it is present, never an array; null reads as absent (the file header). */
+function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
+  return value as Partial<Record<Key, unknown>>;
 }
 
 /** A field that holds a string when it is present; null reads as absent (the file header). */

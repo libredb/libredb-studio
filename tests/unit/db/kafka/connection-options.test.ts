@@ -445,6 +445,17 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
     expect(mapped({ ...base, sshTunnel: null }).broker).toEqual({ host: "broker-1", port: 9092 });
   });
 
+  test.each([
+    ["true", true],
+    ["a string", "yes"],
+    ["an array", [{ enabled: true }]],
+  ])(
+    "an sshTunnel that is %s is refused, as an ssl that is not an object is, never read as no tunnel",
+    (_label, sshTunnel) => {
+      expect(refusalOf({ ...base, sshTunnel })).toBe("The connection's sshTunnel must be an object; nothing was sent");
+    },
+  );
+
   test("an enabled tunnel is refused first, before the address or anything else is read", () => {
     expect(
       refusalOf({

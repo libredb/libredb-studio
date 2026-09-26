@@ -255,6 +255,7 @@ The dialog hides the SSH panel for Kafka through `showSshTunnel: false`, while i
 A tunnelled connection that arrives another way, from a seed or the API, is refused before any broker request with a `DatabaseConfigError`: "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly".
 There the server opens the tunnel before the provider runs, so an unreachable bastion answers with its SSH error first.
 The server opens a tunnel for any `sshTunnel.enabled` that JavaScript reads as true, such as the string `"true"`, so an `enabled` that is not a boolean is refused too, naming the field, rather than read as no tunnel.
+An `sshTunnel` that is not an object, such as `true`, is refused the same way, as an `ssl` that is not one is, though the server opens no tunnel for it.
 
 ---
 
