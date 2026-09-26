@@ -30,7 +30,6 @@
 import type {
   ColumnSchema,
   Container,
-  ContainerLevelSpec,
   DatabaseObject,
   ForeignKeySchema,
   IndexSchema,
@@ -44,14 +43,30 @@ import type {
 import { QueryError } from "@/lib/db/errors";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
-  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
-  containerDepth,
   declaredKinds,
   findKind,
   requireSourceKind,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
+
+/**
+ * libSQL's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the only path this engine accepts is the declared depth, which here
+ * is the empty one, so any segment at all is a caller holding another engine's model.
+ */
+const LIBSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "libsql",
+  label: "A libSQL",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
+
 import { comparePaths } from "@/lib/db/object-path";
 import { unquoteLiteral } from "@/lib/sql/values";
 import { readNumber, readText } from "./introspect";
@@ -399,21 +414,6 @@ export const LIBSQL_OBJECT_KINDS: readonly ObjectKindSpec[] = [
 // ============================================================================
 
 /**
- * The container levels this provider declares, sliced to the depth `containerDepth()`
- * reports.
- *
- * One reader for the whole file, so the depth and the level list can never be taken by two
- * different rules. `containerDepth()` is what decides, never `containerLevels.length`:
- * absent and empty are the same fact, and two callers reading the field by different rules
- * is how the tree and the API route came to disagree about one engine.
- *
- * On libSQL this answers the empty array, which is the engine and not a degenerate case.
- */
-function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
-  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
-}
-
-/**
  * Refuses a container path that is not the shape the DECLARATION describes.
  *
  * On libSQL the only valid container path is the empty one, and `container.length !== 0` is
@@ -427,10 +427,7 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * like a database holding nothing is the worst way to report that.
  */
 function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
-  const levels = declaredLevels(capabilities);
-  if (container.length === levels.length) return;
-  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
-  throw new QueryError(`A libSQL container path is ${shape}, received ${JSON.stringify(container)}`, "libsql");
+  assertContainerPathShape(capabilities, container, LIBSQL_CONTAINER_PATH_ENGINE);
 }
 
 /**

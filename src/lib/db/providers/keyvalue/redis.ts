@@ -71,6 +71,21 @@ import {
   type OpenQueryTransactionOutcome,
 } from "../../types";
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ * Redis's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the caller either names every declared level or is refused,
+ * because a partial path would leave a level unbound and answer an empty folder.
+ */
+const REDIS_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "redis",
+  label: "A Redis",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
 
 /**
  * The server's own words for "you asked me to discard and there is nothing queued".
@@ -317,14 +332,7 @@ function containerSegment(
  * limit of the deployment, which this function does not know without a second round trip.
  */
 function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): number {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A Redis container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "redis",
-    );
-  }
+  assertContainerPathShape(capabilities, container, REDIS_CONTAINER_PATH_ENGINE);
   const segment = containerSegment(capabilities, container, "schema");
   if (!/^\d+$/.test(segment)) {
     throw new QueryError(`A Redis database is a number, received ${JSON.stringify(segment)}`, "redis");

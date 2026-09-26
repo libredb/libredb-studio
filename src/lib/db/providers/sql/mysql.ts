@@ -56,6 +56,21 @@ import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { unquoteLiteral } from "@/lib/sql/values";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ * MySQL's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: the caller either names every declared level or is refused,
+ * because a partial path would leave a level unbound and answer an empty folder.
+ */
+const MYSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mysql",
+  label: "A MySQL",
+  shapeNames: "label",
+  shapes: "exact",
+  emptyShapes: "empty",
+};
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -1313,14 +1328,7 @@ function containerSegment(
  * position holds the schema is read off the declaration rather than assumed.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A MySQL container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "mysql",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MYSQL_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 

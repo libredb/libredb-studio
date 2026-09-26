@@ -74,6 +74,23 @@ import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+
+/**
+ * PostgreSQL's identity for the shared container-path renderer.
+ *
+ * `shapes: "exact"`: every declared level is named or the path is refused. `requireLevel` is
+ * the schema, because the reader below binds the segment by looking the level up: a matching
+ * depth over a declaration that named no schema would bind `undefined` where `$1` belongs.
+ */
+const POSTGRES_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "postgres",
+  label: "A PostgreSQL",
+  shapeNames: "id",
+  shapes: "exact",
+  emptyShapes: "empty",
+  requireLevel: "schema",
+};
 
 // ============================================================================
 // Type Definitions
@@ -1359,17 +1376,9 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * answer an empty folder that looks exactly like a schema holding nothing.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  const index = levels.findIndex((level) => level.id === "schema");
-  const segment = container.length === levels.length && index >= 0 ? container[index] : undefined;
-  if (segment === undefined) {
-    throw new QueryError(
-      `A PostgreSQL container path is [${levels.map((level) => level.id).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "postgres",
-    );
-  }
-  return segment;
+  assertContainerPathShape(capabilities, container, POSTGRES_CONTAINER_PATH_ENGINE);
+  const index = declaredLevels(capabilities).findIndex((level) => level.id === "schema");
+  return container[index];
 }
 
 /**

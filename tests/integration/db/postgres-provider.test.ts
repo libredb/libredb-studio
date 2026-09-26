@@ -5032,6 +5032,35 @@ describe("PostgreSQL bulk column read", () => {
     await provider.disconnect();
   });
 
+  /**
+   * The schema level is REQUIRED by this engine's readers, not just the depth.
+   *
+   * A declaration whose one level is called `catalog` has the depth the check wants, so a
+   * renderer that compared lengths alone would accept `["shop"]` here. PostgreSQL's readers
+   * do not read their segment by position: they look the `schema` level up and bind what
+   * they find, so with no such level the read would bind `undefined` where `$1` belongs and
+   * answer an empty folder that looks exactly like a schema holding nothing. Nothing else in
+   * this file covers it, because every other fixture declares a `schema` level.
+   */
+  test("a declaration with no schema level is refused even when the depth matches", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    try {
+      await expect(provider.describeObjects(["shop"], "table")).rejects.toThrow(
+        /A PostgreSQL container path is \[catalog\], received \["shop"\]/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
   test("a container path that is not one schema is refused, rather than read as empty", async () => {
     mockQueryFn = async () => ({ rows: [] });
     const provider = makeProvider();
