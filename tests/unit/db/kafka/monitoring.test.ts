@@ -105,6 +105,23 @@ describe("storageFrom", () => {
     expect(row).toEqual({ name: "broker 3: /d", location: "/d", size: formatBytes(0), sizeBytes: 0 });
   });
 
+  test("a full directory, 0 usable bytes of a reported total, is 100 percent; a total of 0 gives no percentage", () => {
+    // Only -1 means unreported: 0 usable bytes is what the broker reports for a full disk, the
+    // one storage state worth acting on (spec 7.1).
+    const [full, empty] = storageFrom([
+      { brokerId: 1, path: "/full", sizeBytes: big(9_000), totalBytes: big(10_000), usableBytes: big(0) },
+      { brokerId: 2, path: "/none", sizeBytes: big(0), totalBytes: big(0), usableBytes: big(0) },
+    ]);
+    expect(full).toEqual({
+      name: "broker 1: /full",
+      location: "/full",
+      size: formatBytes(9_000),
+      sizeBytes: 9_000,
+      usagePercent: 100,
+    });
+    expect(empty).toEqual({ name: "broker 2: /none", location: "/none", size: formatBytes(0), sizeBytes: 0 });
+  });
+
   test("no log dirs (refused, KM4) is no rows", () => {
     expect(storageFrom(undefined)).toEqual([]);
   });
