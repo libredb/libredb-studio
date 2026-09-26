@@ -9,6 +9,9 @@ const BOM = [0xef, 0xbb, 0xbf];
 /** U+1F600, a four-byte UTF-8 character (F0 9F 98 80) and a UTF-16 surrogate pair. */
 const FOUR_BYTE = "\u{1F600}";
 
+/** U+00A0, the no-break space (C2 A0): whitespace to trimStart, but not to JSON.parse. */
+const NO_BREAK_SPACE = "\u00A0";
+
 describe("decodeBytes", () => {
   test("null stays null", () => {
     expect(decodeBytes(null, 100)).toEqual({ value: null, encoding: "null", truncated: false });
@@ -121,7 +124,11 @@ describe("decodeBytes", () => {
     expect(decodeBytes(bytes("\n[1]"), 1000)).toEqual({ value: [1], encoding: "json", truncated: false });
     expect(decodeBytes(bytes('\t\r\n {"b":2}'), 1000)).toEqual({ value: { b: 2 }, encoding: "json", truncated: false });
     // Control: a no-break space is whitespace to trimStart but not to JSON.parse, so the value is text.
-    expect(decodeBytes(bytes(' {"a":1}'), 1000)).toEqual({ value: ' {"a":1}', encoding: "text", truncated: false });
+    expect(decodeBytes(bytes(`${NO_BREAK_SPACE}{"a":1}`), 1000)).toEqual({
+      value: `${NO_BREAK_SPACE}{"a":1}`,
+      encoding: "text",
+      truncated: false,
+    });
   });
 
   test("a JSON scalar is text, not json: a bare 42 or true reads better as what was sent", () => {
