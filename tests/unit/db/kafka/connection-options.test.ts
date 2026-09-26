@@ -69,6 +69,11 @@ describe("kafkaConnectionOptions", () => {
         1,
       ).tls?.rejectUnauthorized,
     ).toBe(false);
+    // The explicit flag wins in both directions: true makes require verify.
+    expect(
+      kafkaConnectionOptions({ ...base, ssl: { mode: "require", rejectUnauthorized: true } } as DatabaseConnection, 1)
+        .tls?.rejectUnauthorized,
+    ).toBe(true);
     expect(kafkaConnectionOptions({ ...base, ssl: { mode: "disable" } } as DatabaseConnection, 1).tls).toBeUndefined();
   });
 
