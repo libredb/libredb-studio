@@ -258,7 +258,9 @@ describe("readMessages", () => {
       signal,
     );
     expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/2"]);
-    expect(out.warnings.map((w) => w.message).join()).toContain("partition 1");
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "No message at or after the timestamp lies below the last stable offset, the end a read-committed read reaches, for partition 1 at 2",
+    ]);
   });
 
   test("a timestamp read answers the first limit messages at or after the instant, across partitions", async () => {
@@ -1103,9 +1105,77 @@ describe("readMessages", () => {
       signal,
     );
     expect(out.rows).toEqual([]);
-    expect(out.warnings.map((w) => w.message)).toEqual(["No message at or after the timestamp on partition 0"]);
+    expect(out.warnings.map((w) => w.message)).toEqual([
+      "No message at or after the timestamp lies below the last stable offset, the end a read-committed read reaches, for partition 0 at 2",
+    ]);
     expect(out.wasLimited).toBe(false);
     expect(calls).toEqual([]);
+  });
+
+  test("an open transaction holds the last stable offset below the log end: the timestamp warning and the offset refusal name it as where a read-committed read ends", async () => {
+    // Offsets 0 to 4 and 6 to 10 are plain records, and offset 5 an open transaction's: the last stable offset is 5,
+    // while the log end, the high watermark a topic's source and a group's lag show, is 11. The broker's
+    // read-committed lookup answers -1 for an instant whose first offset lies at or past the last stable offset.
+    const records = [
+      ...Array.from({ length: 5 }, (_, i) => rec(0, i, i + 1)),
+      ...Array.from({ length: 5 }, (_, i) => rec(0, i + 6, i + 20)),
+    ];
+    const open = (stable: bigint) => {
+      const asked: string[] = [];
+      const fake = fakeClient(
+        { 0: records },
+        {
+          offsets: async (_t, at) => {
+            asked.push(at);
+            return new Map([[0, at === "earliest" ? n(0) : at === "latest" ? stable : n(11)]]);
+          },
+          offsetsForTimestamp: async (_t, ts) => {
+            asked.push("timestamp");
+            const first = records.find((r) => r.timestamp >= ts)?.offset ?? n(-1);
+            return new Map([[0, first < stable ? first : n(-1)]]);
+          },
+        },
+      );
+      return { ...fake, asked };
+    };
+    // The instant of offset 6, with the transaction open.
+    const held = open(n(5));
+    const byTime = await readMessages(
+      held.client,
+      req({ from: { kind: "timestamp", timestampMs: n(20), iso: "x" } }),
+      LIMITS,
+      signal,
+    );
+    expect(byTime.rows).toEqual([]);
+    expect(byTime.warnings.map((w) => w.message)).toEqual([
+      "No message at or after the timestamp lies below the last stable offset, the end a read-committed read reaches, for partition 0 at 5",
+    ]);
+    // The read's end is the last stable offset, never the log end.
+    expect(held.asked).toEqual(["earliest", "timestamp", "latest"]);
+    const byOffset = await readMessages(
+      held.client,
+      req({ partition: 0, from: { kind: "offset", offset: n(7) } }),
+      LIMITS,
+      signal,
+    ).catch((e) => e);
+    expect(byOffset).toBeInstanceOf(KafkaError);
+    expect(byOffset.category).toBe("offset-out-of-range");
+    expect(byOffset.message).toBe(
+      "Offset 7 is outside partition 0's readable range, 0 to its last stable offset 5, the end a read-committed read reaches",
+    );
+    expect(byOffset.detail.validRange).toEqual({ earliest: n(0), latest: n(5) });
+    expect(held.calls).toEqual([]);
+    // Control: once the transaction ends, the last stable offset is the log end, and the same reads answer 6 to 10.
+    const ended = open(n(11));
+    const reads = await Promise.all([
+      readMessages(ended.client, req({ from: { kind: "timestamp", timestampMs: n(20), iso: "x" } }), LIMITS, signal),
+      readMessages(ended.client, req({ partition: 0, from: { kind: "offset", offset: n(7) } }), LIMITS, signal),
+    ]);
+    expect(reads.map((out) => out.rows.map((r) => r.offset))).toEqual([
+      ["6", "7", "8", "9", "10"],
+      ["7", "8", "9", "10"],
+    ]);
+    expect(reads.map((out) => out.warnings)).toEqual([[], []]);
   });
 
   test("Review Focus 2: a fetch that answers no user record but advances (a control batch) is followed; one with no progress stops the loop", async () => {
@@ -1640,7 +1710,7 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     if (s.order.some(unasked)) saw("an offsets answer left out only partitions the read does not cover");
 
     const plans: { partition: number; start: bigint; end: bigint }[] = [];
-    const pastEnd: number[] = [];
+    const pastEnd: { partition: number; end: bigint }[] = [];
     // Spec 5.4: a "latest" window that starts above its partition's earliest offset was placed there by the limit,
     // not by the log, so the limit leaves the offsets below it unread.
     let windowCut = false;
@@ -1648,19 +1718,20 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
       const first = answered(s.earliest, partition);
       const end = answered(s.latest, partition);
       const { from } = request;
-      // Spec 5.6: an offset outside the partition's range is refused, carrying the range.
+      // Spec 5.6: an offset outside the range a read-committed read reaches, from the earliest offset to the last
+      // stable offset, is refused, carrying that range.
       if (from.kind === "offset" && (from.offset < first || from.offset > end)) {
         saw("an offset lay outside its partition's range");
         return refused(
           new KafkaError(
             "offset-out-of-range",
-            `Offset ${from.offset} is outside partition ${partition}'s range ${first} to ${end}`,
+            `Offset ${from.offset} is outside partition ${partition}'s readable range, ${first} to its last stable offset ${end}, the end a read-committed read reaches`,
             { validRange: { earliest: first, latest: end } },
           ),
         );
       }
       const start = startOf(s, partition, first, end);
-      if (start === undefined) pastEnd.push(partition);
+      if (start === undefined) pastEnd.push({ partition, end });
       else if (start < end) plans.push({ partition, start, end });
       if (from.kind === "latest" && start !== undefined && start > first) windowCut = true;
     }
@@ -1820,9 +1891,11 @@ describe("startOffset and readWarnings, the pure rules", () => {
   });
 
   test("an offset outside the range carries the range; a timestamp past the end starts nowhere", () => {
-    expect(() => startOffset({ kind: "offset", offset: n(101) }, 3, n(0), n(100), 5, undefined)).toThrow(
-      /partition 3's range 0 to 100/,
+    const refused = thrown(() => startOffset({ kind: "offset", offset: n(101) }, 3, n(0), n(100), 5, undefined));
+    expect(refused.message).toBe(
+      "Offset 101 is outside partition 3's readable range, 0 to its last stable offset 100, the end a read-committed read reaches",
     );
+    expect(refused.detail.validRange).toEqual({ earliest: n(0), latest: n(100) });
     expect(startOffset({ kind: "timestamp", timestampMs: n(1), iso: "x" }, 0, n(0), n(9), 5, n(-1))).toBeUndefined();
     expect(startOffset({ kind: "timestamp", timestampMs: n(1), iso: "x" }, 0, n(0), n(9), 5, n(4))).toBe(n(4));
   });
@@ -1834,10 +1907,14 @@ describe("startOffset and readWarnings, the pure rules", () => {
     // Controls: one offset past either end is refused.
     expect(
       thrown(() => startOffset({ kind: "offset", offset: n(1199) }, 0, n(1200), n(1500), 5, undefined)).message,
-    ).toBe("Offset 1199 is outside partition 0's range 1200 to 1500");
+    ).toBe(
+      "Offset 1199 is outside partition 0's readable range, 1200 to its last stable offset 1500, the end a read-committed read reaches",
+    );
     expect(
       thrown(() => startOffset({ kind: "offset", offset: n(1501) }, 0, n(1200), n(1500), 5, undefined)).message,
-    ).toBe("Offset 1501 is outside partition 0's range 1200 to 1500");
+    ).toBe(
+      "Offset 1501 is outside partition 0's readable range, 1200 to its last stable offset 1500, the end a read-committed read reaches",
+    );
   });
 
   test("a timestamp offset of 0 is a start, on a partition whose log begins at 0", () => {
@@ -1862,14 +1939,14 @@ describe("startOffset and readWarnings, the pure rules", () => {
 
   test("each truncation is said, in this order", () => {
     const warnings = readWarnings({
-      pastEnd: [2],
+      pastEnd: [{ partition: 2, end: n(9) }],
       stoppedShort: [{ partition: 0, at: n(6), end: n(7) }],
       budgetStop: { partition: 1, at: n(4), unread: [3] },
       truncatedCells: 3,
       limits: { resultByteBudget: 1024, cellLimit: 10 },
     });
     expect(warnings.map((w) => w.message)).toEqual([
-      "No message at or after the timestamp on partition 2",
+      "No message at or after the timestamp lies below the last stable offset, the end a read-committed read reaches, for partition 2 at 9",
       "The broker answered no records for partition 0 at offset 6, below its end at 7, so the read stopped there; run it again",
       "The read stopped before offset 4 of partition 1, at the result budget of 1,024 bytes of record data, and did not read partition 3; narrow it with a partition, an offset or a smaller limit",
       "3 cell(s) were cut at 10 characters",
@@ -1896,15 +1973,20 @@ describe("startOffset and readWarnings, the pure rules", () => {
     ]);
   });
 
-  test("the past-end warning names every partition it applies to", () => {
+  test("the past-end warning names every partition it applies to, each with the last stable offset it looked below", () => {
     const warnings = readWarnings({
-      pastEnd: [1, 3],
+      pastEnd: [
+        { partition: 1, end: n(5) },
+        { partition: 3, end: n(12) },
+      ],
       stoppedShort: [],
       budgetStop: undefined,
       truncatedCells: 0,
       limits: LIMITS,
     });
-    expect(warnings.map((w) => w.message)).toEqual(["No message at or after the timestamp on partition 1, 3"]);
+    expect(warnings.map((w) => w.message)).toEqual([
+      "No message at or after the timestamp lies below the last stable offset, the end a read-committed read reaches, for partition 1 at 5, and for partition 3 at 12",
+    ]);
   });
 
   test("the cell limit is written with thousands separators, as the budget is", () => {

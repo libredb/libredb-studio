@@ -54,6 +54,15 @@ interface PartitionPlan {
   readonly earliest: bigint;
 }
 
+/**
+ * A partition a timestamp read found no message on below `end`, its last stable offset: the end a
+ * read-committed read reaches, which an open transaction holds below the log end.
+ */
+interface PastEnd {
+  readonly partition: number;
+  readonly end: bigint;
+}
+
 /** A partition whose fetch at `at` made no progress, below the `end` it was being read to. */
 interface StoppedShort {
   readonly partition: number;
@@ -97,9 +106,12 @@ interface HeldRows {
 /**
  * Where one partition's read starts (spec 5.1): its earliest offset; for "latest", `limit`
  * before its end, never before its earliest; the caller's offset, which must lie in
- * [earliest, end]; or the first offset at or after the timestamp. Undefined when no message
- * at or after the timestamp lies below the end, which contributes no rows: the broker answers
- * -1 past the log end, and an offset at or past `end` lies past the end this read stops at.
+ * [earliest, end]; or the first offset at or after the timestamp. `end` is the last stable
+ * offset, the end a read-committed read reaches, which an open transaction holds below the log
+ * end, so a refusal names it as that and never as the partition's range. Undefined when no
+ * message at or after the timestamp lies below the end, which contributes no rows: the broker's
+ * read-committed lookup answers -1 when the first such message lies at or past the last stable
+ * offset, and an offset at or past `end` lies past the end this read stops at.
  * A timestamp read the broker gave no offset for is refused, never taken for past the end,
  * which would say something the broker did not. Pure.
  */
@@ -122,7 +134,7 @@ export function startOffset(
       if (from.offset < earliest || from.offset > end) {
         throw new KafkaError(
           "offset-out-of-range",
-          `Offset ${from.offset} is outside partition ${partition}'s range ${earliest} to ${end}`,
+          `Offset ${from.offset} is outside partition ${partition}'s readable range, ${earliest} to its last stable offset ${end}, the end a read-committed read reaches`,
           {
             validRange: { earliest, latest: end },
           },
@@ -142,7 +154,7 @@ export function startOffset(
 
 /** The warnings a read owes its reader (spec 5.4): every truncation says what was cut. Pure. */
 export function readWarnings(input: {
-  readonly pastEnd: readonly number[];
+  readonly pastEnd: readonly PastEnd[];
   readonly stoppedShort: readonly StoppedShort[];
   readonly budgetStop: BudgetStop | undefined;
   readonly truncatedCells: number;
@@ -150,7 +162,12 @@ export function readWarnings(input: {
 }): { message: string }[] {
   const warnings: { message: string }[] = [];
   if (input.pastEnd.length > 0) {
-    warnings.push({ message: `No message at or after the timestamp on partition ${input.pastEnd.join(", ")}` });
+    // The last stable offset, never "the end of the partition": the broker can hold messages at and
+    // past it that an open transaction keeps from a read-committed read (spec 4.3, 5.1).
+    const where = input.pastEnd.map((p) => `for partition ${p.partition} at ${p.end}`);
+    warnings.push({
+      message: `No message at or after the timestamp lies below the last stable offset, the end a read-committed read reaches, ${where.join(", and ")}`,
+    });
   }
   if (input.stoppedShort.length > 0) {
     const where = input.stoppedShort.map(
@@ -333,7 +350,7 @@ async function planPartitions(
   client: ReadClient,
   topic: KafkaTopicMetadata,
   request: ReadRequest,
-): Promise<{ plans: PartitionPlan[]; pastEnd: number[] }> {
+): Promise<{ plans: PartitionPlan[]; pastEnd: PastEnd[] }> {
   const count = topic.partitions.length;
   if (request.partition !== undefined && request.partition >= count) {
     const held = count === 0 ? "no partitions" : `partitions 0 to ${count - 1}`;
@@ -379,7 +396,7 @@ async function planPartitions(
   }
 
   const plans: PartitionPlan[] = [];
-  const pastEnd: number[] = [];
+  const pastEnd: PastEnd[] = [];
   wanted.forEach((partition, index) => {
     const end = latest.offsets[index];
     const start = startOffset(
@@ -390,7 +407,7 @@ async function planPartitions(
       request.limit,
       byTimestamp?.offsets[index],
     );
-    if (start === undefined) pastEnd.push(partition);
+    if (start === undefined) pastEnd.push({ partition, end });
     // A partition with no offset from its start to its end holds nothing to read, so it has
     // no plan: it is never fetched, and never named as a partition a read left unread.
     else if (start < end) plans.push({ partition, start, end, earliest: earliest.offsets[index] });

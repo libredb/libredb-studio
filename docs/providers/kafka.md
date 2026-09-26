@@ -303,10 +303,10 @@ The `from` forms:
 - `"latest"`: the last `limit` messages, each partition starting at the larger of its earliest offset and its latest offset minus `limit`.
 - `{ "offset": n }`: requires `partition`; `n` is a non-negative whole number, or a digit string, because offsets are 64-bit, at most 9223372036854775807, Kafka's INT64.
   An offset written as a JSON number above 2^53 is refused with advice to write it as a digit string, because `JSON.parse` has already rounded it.
-  An offset outside the partition's range is a `QueryError` naming the valid range.
+  An offset outside the range a read reaches, from the partition's earliest offset to its last stable offset, is a `QueryError` naming that range; while a transaction is open on the partition, the last stable offset lies below the log end the topic's source shows, so an offset the source lists can lie past it.
 - `{ "timestamp": "<ISO-8601>" }`: each partition from the first offset whose timestamp is at or after the instant, through `listOffsetsWithTimestamps`.
   The instant must carry a zone, because the server's zone and the browser's would read it differently; it must name a day its month has, because `Date.parse` rolls 2026-02-30 into March; and it must fall at or after 1970-01-01T00:00:00Z, because ListOffsets reads -1 and -2 ms as its latest and earliest sentinels.
-  A partition with no message at or after the instant contributes no rows, and the result carries a warning naming those partitions.
+  A partition with no message at or after the instant below its last stable offset contributes no rows, and the result carries a warning naming each such partition with that offset; while a transaction is open there, messages at or after the instant can lie past it, below the log end, where a read-committed read does not reach until the transaction ends.
 
 Bound `params` are refused with a `DatabaseConfigError`: there is no binding, and ignoring them would run a different read from the one the caller built.
 Text that is empty once whitespace is removed is refused with a `QueryError`, before the request is parsed.
