@@ -322,7 +322,8 @@ Where a read starts and ends:
 
 - Every partition a read covers must be named in each offsets answer it uses, the earliest and latest offsets and, for a timestamp read, the offsets at the timestamp; a partition an answer leaves out is refused with a `QueryError` naming the topic, the partition and the answer, before any fetch, and never started from an invented offset.
 - A read stops at each partition's last stable offset, the end a read-committed fetch reaches, while a group's lag is measured to the high watermark ([§6.1](#consumer-groups-and-lag)); on a partition with an open transaction the two ends differ.
-- A fetch the broker refuses as out of range, because retention or a deletion moved the partition's log start past it after the read began, is refused with a `QueryError` naming the partition, the offset and the range the partition holds now, read again once; the fetch is never sent again, so the read has to be run again.
+- A fetch the broker refuses as out of range, because the partition's log moved after the read began, trimmed by retention or a deletion or truncated, is refused with a `QueryError` naming the partition, the offset and the range the partition holds now, read again once; the fetch is never sent again, even when that range holds the offset, so the read has to be run again.
+  When an offsets answer read again leaves the partition out, the refusal says which answer did and names no range.
 - The offsets are read one answer at a time, the earliest, then those at the timestamp, then the latest, so a record written while the read is positioned lies below the end it stops at.
   A timestamp read looks each partition up once, before it reads the end, so a message written after that lookup is not in the read even when it lies below the end.
 - A transaction's COMMIT and ABORT markers and an aborted transaction's records use offsets but are never rows, so a `"latest"` read of a transactional topic, whose window is `limit` offsets per partition, can answer fewer than `limit` rows.
@@ -545,7 +546,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 | an unknown topic ("Unknown topic <name>.") | `QueryError`: the topic does not exist |
 | an internal topic, refused by name before any request names it | `QueryError`: internal to Kafka and not readable here |
 | a partition with no leader | `QueryError` naming the leaderless partitions |
-| `OFFSET_OUT_OF_RANGE` on a fetch | `QueryError` naming the partition's valid range |
+| `OFFSET_OUT_OF_RANGE` on a fetch | `QueryError` naming the partition, the offset and the range read again once after the refusal, or the offsets answer read again that left the partition out ([§5.1](#51-the-read-request)) |
 | a broker whose Fetch range does not hold version 13 | `QueryError` naming the broker's range and the version a read sends |
 | `NOT_LEADER_OR_FOLLOWER` on a fetch already retried once against the leader read again | `QueryError`: leadership moved during the read, run it again |
 | an answer the client's parser cannot read, such as a batch that will not decompress | `QueryError` naming the parser's code, such as `Z_DATA_ERROR` |
