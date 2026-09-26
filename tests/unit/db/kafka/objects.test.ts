@@ -446,6 +446,76 @@ describe("sources", () => {
     );
   });
 
+  test("every ConfigSource number is shown in Kafka's own words, and one this build does not know as its number", async () => {
+    // The protocol's ConfigSource numbers and the names Kafka gives them, the names the
+    // client's `ConfigSources` enumeration and the synonyms `kafka-configs.sh --describe`
+    // prints, beside the words a source shows for each.
+    const kafkaSources = [
+      [0, "UNKNOWN", "unknown"],
+      [1, "DYNAMIC_TOPIC_CONFIG", "dynamic topic config"],
+      [2, "DYNAMIC_BROKER_CONFIG", "dynamic broker config"],
+      [3, "DYNAMIC_DEFAULT_BROKER_CONFIG", "dynamic default broker config"],
+      [4, "STATIC_BROKER_CONFIG", "static broker config"],
+      [5, "DEFAULT_CONFIG", "default"],
+      [6, "DYNAMIC_BROKER_LOGGER_CONFIG", "dynamic broker logger config"],
+      [7, "CLIENT_METRICS_CONFIG", "client metrics config"],
+      [8, "GROUP_CONFIG", "group config"],
+    ] as const;
+    const doc = await readObjectSource(
+      client(["a"], {
+        brokerConfigs: async () => [
+          ...kafkaSources.map(([source, name]) => ({ name, value: "v", readOnly: false, isSensitive: false, source })),
+          { name: "NEXT_SOURCE", value: "v", readOnly: false, isSensitive: false, source: 9 },
+        ],
+      }),
+      CAPS,
+      ["1"],
+      "broker",
+    );
+    expect((JSON.parse(textOf(doc, 0)) as ShownConfig[]).map((c) => [c.name, c.source])).toEqual([
+      ...kafkaSources.map(([, name, words]) => [name, words]),
+      ["NEXT_SOURCE", "9"],
+    ]);
+  });
+
+  test("the captured sources read in Kafka's words: orders' one override is a dynamic default broker config, and broker 1's are defaults, static configs and that one", async () => {
+    const topicDoc = await readObjectSource(
+      client(["orders"], { topicConfigs: async () => capturedConfigs("configs-topic-orders") }),
+      CAPS,
+      ["orders"],
+      "topic",
+    );
+    // kafka-configs.sh on the seeded broker: min.insync.replicas=1 synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:...}.
+    expect(JSON.parse(textOf(topicDoc, 1))).toEqual([
+      { name: "min.insync.replicas", value: "1", source: "dynamic default broker config", readOnly: false },
+    ]);
+    const brokerDoc = await readObjectSource(
+      client(["a"], { brokerConfigs: async () => capturedConfigs("configs-broker-1") }),
+      CAPS,
+      ["1"],
+      "broker",
+    );
+    const shown = JSON.parse(textOf(brokerDoc, 0)) as ShownConfig[];
+    const byName = new Map(shown.map((c) => [c.name, c]));
+    expect([
+      byName.get("node.id"),
+      byName.get("log.cleaner.min.compaction.lag.ms"),
+      byName.get("min.insync.replicas"),
+    ]).toEqual([
+      { name: "node.id", value: "1", source: "static broker config", readOnly: true },
+      { name: "log.cleaner.min.compaction.lag.ms", value: "0", source: "default", readOnly: false },
+      { name: "min.insync.replicas", value: "1", source: "dynamic default broker config", readOnly: false },
+    ]);
+    // Every entry of the capture, by the source it was shown with: 324 defaults, 15 static, 1 dynamic default.
+    const bySource = new Map<string, number>();
+    for (const c of shown) bySource.set(c.source, (bySource.get(c.source) ?? 0) + 1);
+    expect(Object.fromEntries(bySource)).toEqual({
+      default: 324,
+      "static broker config": 15,
+      "dynamic default broker config": 1,
+    });
+  });
+
   test("consumer group: the description then the lag", async () => {
     const doc = await readObjectSource(client(["orders"]), CAPS, ["billing"], "consumer_group");
     expect(doc.parts.map((p) => p.id)).toEqual(["group", "offsets"]);
