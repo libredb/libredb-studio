@@ -957,6 +957,26 @@ describe("KeyBrowser", () => {
       expect(fetchMock.mock.calls.length).toBe(before);
     });
 
+    test("a held key toggles the database row once, and its repeats are swallowed", async () => {
+      mockGlobalFetch(redisRoutes(page(["app:env"], "0", 1531)));
+      renderLevel();
+      await waitFor(() => {
+        expect(rows()).toEqual(["0@0", "app:*@1"]);
+      });
+      const database = () => screen.getByTestId("key-browser-database");
+
+      // The press itself toggles: the control.
+      expect(fireEvent.keyDown(database(), { key: "Enter" })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      // Each auto-repeat is another keydown, prevented all the same, and none toggles the row back.
+      // Checked after each one, because two unguarded toggles would land back where they began.
+      expect(fireEvent.keyDown(database(), { key: "Enter", repeat: true })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      expect(fireEvent.keyDown(database(), { key: " ", repeat: true })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      expect(rows()).toEqual(["0@0"]);
+    });
+
     test("says so and keeps walking when the database list cannot be read", async () => {
       mockGlobalFetch({
         "/api/db/keys/scan": page(["app:env"], "0", 31),
