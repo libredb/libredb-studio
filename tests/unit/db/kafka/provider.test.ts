@@ -395,6 +395,12 @@ function spyOnly(target: object, key: string): LooseSpy {
 const described = (error: unknown) =>
   error instanceof Error ? { ...error, class: error.constructor.name, message: error.message } : { value: error };
 
+/**
+ * Lets whatever a call left running settle, a load's reads that a failure did not wait for among them:
+ * the fake client answers without a timer, so one turn of the event loop is enough.
+ */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 /** What a call came to: what it answered, or what it threw, where a failure that surfaced as itself says so. */
 async function outcomeOf(run: () => Promise<unknown>, failure: unknown): Promise<unknown> {
   try {
@@ -611,7 +617,10 @@ describe("disconnect", () => {
     const [fake] = built;
     fake.calls.length = 0;
     const disconnecting = provider.disconnect();
-    // The close was asked, once, and the provider was already disconnected when it was.
+    // Once the turn the disconnect started in has run, the close was asked, once, and the provider was
+    // already disconnected when it was. Where in that turn the close is asked is not a rule, so the test
+    // waits the turn out rather than looking at once.
+    await settled();
     expect(fake.calls).toEqual([["close", []]]);
     expect(connectedAtClose).toBe(false);
     // While it is pending: disconnected, every surface refused as before connect(), nothing sent, and
@@ -1086,9 +1095,6 @@ const PANELS: ReadonlyArray<
     ],
   ],
 ];
-
-/** Lets whatever a load left running settle: the fake client answers without a timer, so one turn is enough. */
-const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Holds the calls a load made to a trace: those made one after another in order, then the rest in any order. */
 function expectTraced(calls: readonly Call[], [inOrder, together]: Trace) {
