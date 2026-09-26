@@ -1862,7 +1862,7 @@ Found 2026-09-23 while designing the Kafka provider (#1088, section 2).
 
 ### D122. Requests to `platformatic/kafka`, drafted for the maintainer and not filed
 
-The Kafka provider (#1088) works around, or states, eleven behaviours of `@platformatic/kafka` 2.11.0, each measured while it was built.
+The Kafka provider (#1088) works around, or states, twelve behaviours of `@platformatic/kafka` 2.11.0, each measured while it was built.
 Each is drafted below as an upstream issue, for the maintainer to approve, reword or drop; none has been posted anywhere.
 
 1. **An Admin method for ConsumerGroupDescribe (API 69).**
@@ -1902,6 +1902,11 @@ Each is drafted below as an upstream issue, for the maintainer to approve, rewor
     `#onSaslAuthenticationValidation` in `dist/network/connection.js` arms `reauthenticate()` at 80% of whatever session lifetime a SaslAuthenticate answer carries (KIP-368), and each re-authentication arms it again, for as long as the connection is open, with no floor; the provider states it (`docs/providers/kafka.md` section 4.2), since `authBytesValidator` never sees the lifetime.
     Measured on 2026-09-26 on one connection over five idle seconds with a lifetime of 1 ms: 3,926 re-authentications under Node 24.14.0 and 3,005 under Bun 1.4.2 with PLAIN, and 1,559 and 1,609 with SCRAM-SHA-512 at about 60% of a core, where a lifetime of 0 or of one hour made none; closing the connection stops the loop.
     Draft: "Please apply a floor to the session lifetime a SaslAuthenticate answer sets, with an option, and fail or clamp a lifetime below it, so a broker cannot drive a connection's re-authentication in a loop."
+12. **`ajv-draft-04` loaded at import time.**
+   The entry re-exports the schema registries, whose module imports `ajv-draft-04` at module scope, so every import of the client loads it, and `ajv-draft-04` requires `ajv/dist/core` from where it is installed.
+   bun hoists it beside an `ajv` 6 at the top of a host's `node_modules` (oven-sh/bun#17297, open), and the whole client then fails to load, schema registry or not; the provider refuses such a connect with a `DatabaseConfigError` naming the module, and a comment for the bun issue is drafted beside this one.
+   Measured on 2026-09-26 on packed installs of the package with bun 1.4.2, under Node 24.14.0 and Bun 1.4.2, while npm 11.9.0 nests it beside `ajv` 8 (plan Task 21, finding r2-contract-1).
+   Draft: "Load ajv-draft-04 when a draft-04 JSON Schema is first compiled, so a client that uses no schema registry does not depend on where the package manager puts it."
 
 Found 2026-09-23 to 2026-09-26 while building the Kafka provider (#1088, sections 3.6 and 12).
 Not filed: an outward report makes claims about another project's code, so each goes out only with the maintainer's approval.

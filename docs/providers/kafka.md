@@ -108,7 +108,12 @@ Its `consume()` in MANUAL mode, with explicit offsets and `autocommit: false`, j
 All four codecs, gzip, snappy, lz4 and zstd, decode with no native addon: snappy and lz4 come from WebAssembly, gzip and zstd from `node:zlib`, and the optional `@node-rs/crc32` falls back to WebAssembly.
 `@confluentinc/kafka-javascript` was ruled out because its group-free `assign()` is a librdkafka native addon that fails under Bun, which runs this repository's tests, and `kafkajs` because it cannot read without joining a group and has had no functional commit since 2023.
 The Next.js build keeps the package external (`serverExternalPackages` in `next.config.ts`), because its optional native CRC32C addon stops Turbopack; external, the library resolves the addon at run time and falls back to WebAssembly without it.
-The package also needs `ajv` 8 at the top of `node_modules`, which the direct `ajv` dependency guarantees (`tests/unit/db/kafka/dependency-resolution.test.ts`).
+The client loads `ajv-draft-04` at import time, and `ajv-draft-04` requires `ajv/dist/core`, which `ajv` 6 does not have, from where it is installed.
+bun hoists `ajv-draft-04` to the top of `node_modules`, so the `ajv` there must be 8.
+In this repository the direct `ajv` dependency puts `ajv` 8 there (`tests/unit/db/kafka/dependency-resolution.test.ts`), which fixes this repository's own install only.
+A host that installs the published package with bun, and whose own tree leaves an `ajv` 6 at the top of its `node_modules` (its own, or the one eslint 9 brings), needs `ajv` ^8 resolvable at its own root, for example as a dependency of its own; a host that keeps `ajv` 6 as its own dependency can install with `bun install --linker isolated` instead.
+npm nests `ajv-draft-04` beside `ajv` 8 under the client, so a host that installs with npm needs neither (measured with bun 1.4.2 and npm 11.9.0).
+Where the installation does not resolve a package the client requires, `connect()` refuses with a `DatabaseConfigError` naming it, never the runtime's own text, which carries the server's paths: `The Kafka client library could not be loaded: the module "ajv/dist/core" it requires does not resolve in this installation. See docs/providers/kafka.md section 2.5`.
 
 Supported brokers: a read sends Fetch v13, the first version that names a topic by id (KIP-516), which Apache Kafka answers from 3.1 on.
 The client's own README states Apache Kafka 3.5.0 to 4.2.0 as its supported range; this provider was verified against 4.3.1.
@@ -543,6 +548,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 | Condition | Class |
 |---|---|
 | invalid request JSON, host, port, credential, SASL mechanism or TLS setting, SASL over plaintext, a credential with no mechanism, an SSH tunnel, bound params | `DatabaseConfigError`, never echoing a value |
+| a package the client library requires that the installation does not resolve, at connect ([§2.5](#25-the-client-and-why)) | `DatabaseConfigError` naming the package, never the runtime's text, which carries the server's paths |
 | empty editor text | `QueryError` |
 | an unknown topic ("Unknown topic <name>.") | `QueryError`: the topic does not exist |
 | an internal topic, refused by name before any request names it | `QueryError`: internal to Kafka and not readable here |
@@ -571,7 +577,7 @@ An error that did not come from the client, such as a defect in the provider's o
 | File | Owns |
 |---|---|
 | [`tests/integration/db/kafka-provider.test.ts`](../../tests/integration/db/kafka-provider.test.ts) | The provider end to end over the real adapter, with the recorded library of `tests/helpers/kafka-fixtures.ts` injected through the constructor's `createClient` parameter, so only the broker is fake; the answers are the captures of `tests/fixtures/kafka/` |
-| `tests/unit/db/kafka/` | One file per module: `client`, `connection-options`, `request`, `decode`, `results`, `read` (the fetch loop against a reference over generated logs), `groups`, `objects`, `monitoring`, `errors`, `platformatic-client` (the adapter over the recorded library, and sessionless fetches against a local broker), `provider` (the composition over a fake `KafkaReadClient`), `tls-handshake` (real handshakes, and live transport failures against local listeners), `seam-guard` (K4), `dependency-resolution` and `provider-doc` (this document against the code) |
+| `tests/unit/db/kafka/` | One file per module: `client`, `connection-options`, `request`, `decode`, `results`, `read` (the fetch loop against a reference over generated logs), `groups`, `objects`, `monitoring`, `errors`, `platformatic-client` (the adapter over the recorded library, and sessionless fetches against a local broker), `provider` (the composition over a fake `KafkaReadClient`), `provider-library-load` (a client library the installation cannot load, over the runtimes' own resolution errors), `tls-handshake` (real handshakes, and live transport failures against local listeners), `seam-guard` (K4), `dependency-resolution` and `provider-doc` (this document against the code) |
 
 No `mock.module()` anywhere in this suite: it is process-wide in Bun.
 The captured answers live in [`tests/fixtures/kafka/`](../../tests/fixtures/kafka/), and its README says how each was taken, with the image digests and cluster ids.

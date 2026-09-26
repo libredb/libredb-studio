@@ -53,6 +53,30 @@ import { toQueryResult } from "./results";
 const defaultCreateClient = async (options: KafkaConnectionOptions): Promise<KafkaReadClient> =>
   createPlatformaticClient(options, await loadPlatformatic());
 
+/**
+ * A package that does not resolve, as Node and Bun both word it: "Cannot find module 'ajv/dist/core'"
+ * for a require, "Cannot find package '@scope/name'" for an import. The Next.js server wraps an external
+ * package's load failure in an Error of its own that keeps this text and drops the code, so the text is
+ * what is read. A package name only, scoped or not, with or without a subpath: a path names a file
+ * missing from a package that did install, which no layout of the installation explains.
+ */
+const UNRESOLVED_PACKAGE = /Cannot find (?:module|package) '((?:@[\w.~-]+\/)?[\w~-][\w.~-]*(?:\/[^']*)?)'/;
+
+/**
+ * The refusal of a client library that cannot load because the installation does not resolve a package
+ * it requires (spec 3.2): a host that installs with bun can hold an ajv 6 where the library's
+ * `ajv-draft-04` looks for ajv 8. It names the package and never quotes the runtime's text, which
+ * carries the server's paths. Anything else answers undefined, and surfaces as itself.
+ */
+function unloadableLibrary(error: unknown): KafkaError | undefined {
+  const specifier = error instanceof Error ? UNRESOLVED_PACKAGE.exec(error.message)?.[1] : undefined;
+  if (specifier === undefined) return undefined;
+  return new KafkaError(
+    "invalid-config",
+    `The Kafka client library could not be loaded: the module "${specifier}" it requires does not resolve in this installation. See docs/providers/kafka.md section 2.5`,
+  );
+}
+
 /** Every read is held to the same bounds (spec 5.4, K5). */
 const READ_LIMITS: ReadLimits = { resultByteBudget: KAFKA_RESULT_BYTE_BUDGET, cellLimit: KAFKA_CELL_LIMIT };
 
@@ -160,7 +184,11 @@ export class KafkaProvider extends BaseDatabaseProvider {
       // Refused before any client exists: an address that is not one, SASL without TLS, a
       // credential SASL cannot carry, an SSH tunnel (spec 3.6 K1, K3, 6.1).
       this.connectionOptions = kafkaConnectionOptions(this.config, this.queryTimeout);
-      client = await this.createClient(this.connectionOptions);
+      // The library loads with the first client, so a package the installation cannot resolve fails
+      // here, and only here is it the library's (spec 3.2).
+      client = await this.createClient(this.connectionOptions).catch((error: unknown) => {
+        throw unloadableLibrary(error) ?? error;
+      });
       // One forced read of the brokers proves a broker answers the protocol at this address, with
       // this credential, while the user is still looking at the connection form.
       await client.metadata([]);

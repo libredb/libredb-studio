@@ -198,6 +198,25 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
     expect(DOC).toContain(message);
   });
 
+  test("the refusal of a client library the installation cannot load is the one connect() raises", async () => {
+    // The resolution failure section 2.5 describes, which this repository's own install never meets.
+    const unresolved = Object.assign(new Error("Cannot find module 'ajv/dist/core'"), { code: "MODULE_NOT_FOUND" });
+    const provider = new KafkaProvider({ ...KAFKA, user: undefined, password: undefined }, {}, async () => {
+      throw unresolved;
+    });
+    let message = "";
+    try {
+      await provider.connect();
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toStartWith('The Kafka client library could not be loaded: the module "ajv/dist/core"');
+    expect(DOC).toContain(`\`${message}\``);
+    // The section the refusal sends a reader to is the one that states what a host needs.
+    expect(message).toEndWith("See docs/providers/kafka.md section 2.5");
+    expect(DOC).toContain("\n### 2.5 The client, and why\n");
+  });
+
   test("the size label is the one the overview writes", () => {
     const size = overviewFrom({ topicCount: 0, brokerConfigs: [], logDirs: [] }).databaseSize;
     const label = size.replace(/^\S+ \S+ /, "");
