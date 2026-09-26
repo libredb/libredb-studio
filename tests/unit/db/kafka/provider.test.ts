@@ -15,8 +15,10 @@
  * - every read each monitoring panel makes (spec 7.1), failed alone, and with the other KM4 read refused;
  * - what a surface does between a failure and its answer: every failure is thrown once and then
  *   clears, so the failed read or module, asked again, would answer, and a composition that asks it
- *   again, or recovers from it some other way, answers where it should fail; and what was asked is
- *   held to the success path cut at the failing step, with that step asked once;
+ *   again, or recovers from it some other way, answers where it should fail; what was asked is held
+ *   to the success path cut at the failing step, with that step asked once; and the one client (spec
+ *   3.6 K8) is neither closed nor replaced by the failure, so the next call runs on it, and a connect
+ *   whose client factory fails asks it once;
  * - every module answer, by identity: the module functions index.ts calls are spied with spyOn and
  *   answer objects of this file's own, and the provider must hand back those very objects and hand
  *   the modules the very objects it was given (spec 3.5). Identity alone cannot see an answer handed
@@ -502,13 +504,23 @@ describe("connect", () => {
   );
 
   test.each(FAILURES)(
-    "a connect whose client factory meets %s answers the table's error, with nothing to close",
+    "a connect whose client factory meets %s answers the table's error, with nothing to close, and asks the factory once",
     async (_label, make) => {
       const failure = make();
+      // The factory fails once, and asked again would build a client, so a connect that asked it again
+      // would connect where it should fail.
+      let asked = 0;
+      const built: FakeClient[] = [];
       const provider = new KafkaProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT_MS }, async () => {
-        throw failure;
+        asked++;
+        if (asked === 1) throw failure;
+        const fake = fakeClient();
+        built.push(fake);
+        return fake.client;
       });
       expect(await outcomeOf(() => provider.connect(), failure)).toEqual(tableAnswer(failure));
+      expect(asked).toBe(1);
+      expect(built).toEqual([]);
       expect(provider.isConnected()).toBe(false);
       expect(await outcomeOf(() => provider.getHealth(), undefined)).toEqual(NOT_CONNECTED);
     },
@@ -637,7 +649,7 @@ describe("query", () => {
     "with a query timeout of %s, each read runs under its own deadline of AbortSignal.timeout of exactly that timeout, and its timeout refusal carries it",
     async (_label, timeout) => {
       const queryTimeout = timeout ?? DEFAULT_QUERY_TIMEOUT;
-      const { provider } = await connectedOver(timeout === undefined ? {} : { queryTimeout: timeout });
+      const { provider, built } = await connectedOver(timeout === undefined ? {} : { queryTimeout: timeout });
       const deadline = spyOnly(AbortSignal, "timeout");
       const readMessages = spyOnly(readModule, "readMessages").mockResolvedValue(EMPTY_OUTCOME);
       await provider.query(TEXT);
@@ -654,6 +666,12 @@ describe("query", () => {
       expect(deadline.mock.calls).toEqual([[queryTimeout], [queryTimeout], [queryTimeout]]);
       expect(readMessages.mock.calls).toHaveLength(3);
       expect(readMessages.mock.calls[2][3]).toBe(deadline.mock.results[2].value);
+      // The one client (spec 3.6 K8): the stopped read built none and closed none, and the next read
+      // runs on it.
+      expect(built).toHaveLength(1);
+      expect(built[0].calls).toEqual([]);
+      await provider.query(TEXT);
+      expect(readMessages.mock.calls[3][0]).toBe(built[0].client);
     },
   );
 
@@ -667,7 +685,7 @@ describe("query", () => {
     "%s meeting %s fails the read with the table's error, each step up to it asked once and none after it",
     async (step, _label, reached, make) => {
       const failure = make();
-      const { provider, fake } = await connectedOver();
+      const { provider, fake, built } = await connectedOver();
       // Every step answers; the failing one fails once, and asked again would answer, so a read that
       // asked a failed step again, or went on past it, would answer where it should fail.
       const request = deepFreeze<requestModule.ReadRequest>({
@@ -675,11 +693,10 @@ describe("query", () => {
         from: { kind: "earliest" },
         limit: REQUEST_LIMIT,
       });
+      const answer = deepFreeze(shape([], 0, REQUEST_LIMIT, [], false));
       const parse = spyOnly(requestModule, "parseReadRequest").mockReturnValue(request);
       const readMessages = spyOnly(readModule, "readMessages").mockResolvedValue(EMPTY_OUTCOME);
-      const toQueryResult = spyOnly(resultsModule, "toQueryResult").mockReturnValue(
-        deepFreeze(shape([], 0, REQUEST_LIMIT, [], false)),
-      );
+      const toQueryResult = spyOnly(resultsModule, "toQueryResult").mockReturnValue(answer);
       const deadline = spyOnly(AbortSignal, "timeout");
       const once = () => {
         throw failure;
@@ -693,8 +710,14 @@ describe("query", () => {
       expect(readMessages.mock.calls).toHaveLength(reached >= 1 ? 1 : 0);
       expect(deadline.mock.calls).toHaveLength(reached >= 1 ? 1 : 0);
       expect(toQueryResult.mock.calls).toHaveLength(reached >= 2 ? 1 : 0);
-      // The provider reads nothing of its own: the read module is the one that reads the broker.
+      // The provider reads nothing of its own, the read module is the one that reads the broker, so
+      // the one client (spec 3.6 K8) was sent nothing, a close included; the failure built no other,
+      // and the next read runs on it.
       expect(fake.calls).toEqual([]);
+      expect(built).toHaveLength(1);
+      expect(provider.isConnected()).toBe(true);
+      expect(await provider.query(TEXT)).toBe(answer);
+      expect(readMessages.mock.calls.at(-1)?.[0]).toBe(built[0].client);
     },
   );
 });
@@ -838,15 +861,20 @@ describe("the object surface", () => {
     "%s, when objects.ts meets %s, fails with the table's error, and asks it nothing more",
     async (_label, _failureLabel, surface, call, answer, make) => {
       const failure = make();
-      const { provider, fake } = await connectedOver();
+      const { provider, fake, built } = await connectedOver();
       // objects.ts fails once, and asked again would answer, so a surface that asked again, to recover
       // from the failure, would answer where it should fail.
-      const owner = spyOnly(objectsModule, surface)
-        .mockRejectedValueOnce(failure)
-        .mockResolvedValue(deepFreeze(answer()));
+      const answered = deepFreeze(answer());
+      const owner = spyOnly(objectsModule, surface).mockRejectedValueOnce(failure).mockResolvedValue(answered);
       expect(await outcomeOf(() => call(provider), failure)).toEqual(tableAnswer(failure));
       expect(owner.mock.calls).toHaveLength(1);
+      // The one client (spec 3.6 K8) was sent nothing, a close included; the failure built no other,
+      // and the next call runs on it.
       expect(fake.calls).toEqual([]);
+      expect(built).toHaveLength(1);
+      expect(provider.isConnected()).toBe(true);
+      expect(await call(provider)).toBe(answered);
+      expect(owner.mock.calls[1][0]).toBe(built[0].client);
     },
   );
 });
@@ -928,6 +956,30 @@ function expectTraced(calls: readonly Call[], [inOrder, together]: Trace) {
   const inAnyOrder = (list: readonly Call[]) => list.map((c) => JSON.stringify(c)).sort();
   expect(calls.slice(0, inOrder.length)).toEqual(inOrder.map((read) => read.call));
   expect(inAnyOrder(calls.slice(inOrder.length))).toEqual(inAnyOrder(together.map((read) => read.call)));
+}
+
+/**
+ * What each panel answers on a load nothing fails: its mapping's own answer over this file's answers,
+ * from the mappings taken before any test spies on them, so an expectation never asks a spy.
+ */
+const WHOLE_ANSWER: Readonly<Record<Panel, () => unknown>> = (({ healthFrom, overviewFrom, storageFrom }) => ({
+  getHealth: () => healthFrom(LOG_DIRS),
+  getOverview: () => overviewFrom({ topicCount: TOPIC_NAMES.length, brokerConfigs: BROKER_CONFIGS, logDirs: LOG_DIRS }),
+  getStorageStats: () => storageFrom(LOG_DIRS),
+}))(monitoringModule);
+
+/**
+ * The one client (spec 3.6 K8) once a panel met a failure: the failure built no other and closed none,
+ * which a trace holding no close says, and the next load runs on that client and answers what a load
+ * nothing fails answers.
+ */
+async function expectOneClientAfter(provider: KafkaProvider, built: readonly FakeClient[], panel: Panel) {
+  expect(built).toHaveLength(1);
+  expect(provider.isConnected()).toBe(true);
+  const [fake] = built;
+  fake.calls.length = 0;
+  expect(await outcomeOf(() => provider[panel](), undefined)).toEqual({ answered: WHOLE_ANSWER[panel]() });
+  expectTraced(fake.calls, WHOLE[panel]);
 }
 
 describe("the monitoring panels", () => {
@@ -1024,7 +1076,7 @@ describe("the monitoring panels", () => {
     "%s, when %s alone meets %s, degrades as KM4 says or fails with the table's error, and asks nothing again",
     async (panel, _readName, _label, read, tracedTo, degradedAnswer, make) => {
       const failure = make();
-      const { provider, fake } = await connectedOver();
+      const { provider, fake, built } = await connectedOver();
       // The read fails once, and asked again would answer, so a panel that asked it again, or recovered
       // from it through another read, would answer where it should fail, and its calls would show it.
       fake.failOnce(read, failure);
@@ -1039,6 +1091,7 @@ describe("the monitoring panels", () => {
       // failing read once, and no read that waits on its answer.
       await settled();
       expectTraced(fake.calls, tracedTo);
+      await expectOneClientAfter(provider, built, panel);
     },
   );
 
@@ -1053,7 +1106,7 @@ describe("the monitoring panels", () => {
     "the overview, with %s refused for want of the cluster ACL, answers %s meeting %s as KM4 says, and asks nothing again",
     async (_refusedName, _otherName, _label, refused, other, make) => {
       const failure = make();
-      const { provider, fake } = await connectedOver();
+      const { provider, fake, built } = await connectedOver();
       // Each fails once, and asked again would answer.
       fake.failOnce(refused, new KafkaError("authorization", "The broker denied access to this cluster"));
       fake.failOnce(other, failure);
@@ -1071,6 +1124,7 @@ describe("the monitoring panels", () => {
       // Neither read waits on the other, so every read was asked, each once.
       await settled();
       expectTraced(fake.calls, WHOLE.getOverview);
+      await expectOneClientAfter(provider, built, "getOverview");
     },
   );
 
@@ -1084,19 +1138,17 @@ describe("the monitoring panels", () => {
     ).flatMap(([panel, mapping]) => FAILURES.map(([label, make]) => [panel, mapping, label, make] as const)),
   )("%s, when its mapping %s refuses with %s, fails with the table's error", async (panel, mapping, _label, make) => {
     const failure = make();
-    const { provider, fake } = await connectedOver();
-    // Only the first mapping refuses; a second one would answer, so a panel that asks its mapping
-    // again after a refusal, to answer something in its place, is seen.
-    let mapped = 0;
-    spyOnly(monitoringModule, mapping).mockImplementation(() => {
-      mapped++;
-      if (mapped === 1) throw failure;
-      return [];
+    const { provider, fake, built } = await connectedOver();
+    // Only the first mapping refuses; the mapping itself answers after, so a panel that asks its
+    // mapping again after a refusal, to answer something in its place, is seen.
+    const mapped = spyOnly(monitoringModule, mapping).mockImplementationOnce(() => {
+      throw failure;
     });
     expect(await outcomeOf(() => provider[panel](), failure)).toEqual(tableAnswer(failure));
-    expect(mapped).toBe(1);
+    expect(mapped.mock.calls).toHaveLength(1);
     // The mapping comes after every read, and no read was asked again.
     await settled();
     expectTraced(fake.calls, WHOLE[panel]);
+    await expectOneClientAfter(provider, built, panel);
   });
 });
