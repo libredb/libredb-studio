@@ -1187,6 +1187,101 @@ describe("internal topics, never named to the broker (spec 4.1, 4.5)", () => {
     },
   );
 
+  // A broker before Apache Kafka 3.9 marks only __consumer_offsets and __transaction_state internal (its
+  // Topic.INTERNAL_TOPICS) and lets a user create __share_group_state, which it lists as an ordinary topic
+  // (measured on 3.8.0), as a broker of another vendor may list any of the three, and the library leaves
+  // out only what the broker marks. Built here: the captured listing with the three names and a control,
+  // payments, each listed as ordinary, and payments described as orders' captured shape under its own id.
+  const LISTED = [...kafkaFixture<string[]>("list-topics"), ...INTERNAL, "payments"];
+  const PAYMENTS = { ...ALL.topics.get("orders")!, id: "payments-topic-id" };
+  const metadataWithPayments = (request: unknown): LibMetadata => {
+    const topics = new Map([...ALL.topics, ["payments", PAYMENTS]]);
+    const wanted = (request as { topics: string[] }).topics;
+    if (wanted.some((name) => !topics.has(name))) throw libError("error-unknown-topic");
+    return { ...ALL, topics: new Map([...topics].filter(([name]) => wanted.includes(name))) };
+  };
+  /** The captured leaderless listing, its carried answers BUILT to list every name of LISTED as an ordinary topic. */
+  const leaderlessListing = () => {
+    const failure = libError("error-leaderless-list-topics");
+    const carry = (error: unknown): void => {
+      const e = error as { response?: { topics: Array<Record<string, unknown>> }; errors?: unknown[] };
+      if (e.response !== undefined) {
+        const [shape] = e.response.topics;
+        e.response.topics = LISTED.map((name, index) => ({ ...shape, name, topicId: `t${index}`, isInternal: false }));
+      }
+      for (const child of e.errors ?? []) carry(child);
+    };
+    carry(failure);
+    return failure;
+  };
+  const namesAnInternalTopic = (args: unknown[]) => {
+    const text = JSON.stringify(args, (_key, value) => (typeof value === "bigint" ? value.toString() : value));
+    return INTERNAL.some((name) => text.includes(name));
+  };
+
+  test.each<[string, Answer]>([
+    ["the library's listing", () => [...LISTED]],
+    [
+      "the listing a leaderless partition's error carries",
+      () => {
+        throw leaderlessListing();
+      },
+    ],
+  ])(
+    "%s holding the internal names as ordinary topics leaves them out: the tree, the counts and every panel answer, and no request names them",
+    async (_, listing) => {
+      const { provider, recorded } = await connected({
+        "admin.listTopics": listing,
+        "admin.metadata": metadataWithPayments,
+      });
+      const listedTopics = [...kafkaFixture<string[]>("list-topics"), "payments"].sort();
+      expect((await provider.listObjects([], "topic")).map((o) => o.name)).toEqual(listedTopics);
+      expect(await provider.countObjects([])).toEqual({
+        topic: { count: 11 },
+        consumer_group: { count: 3 },
+        broker: { count: 1 },
+      });
+      const size = "5.37 KB on disk, all replicas, internal topics excluded";
+      expect(await provider.getHealth()).toEqual({
+        databaseSize: size,
+        cacheHitRatio: "N/A",
+        slowQueries: [],
+        activeSessions: [],
+      });
+      expect(await provider.getOverview()).toEqual({
+        ...OVERVIEW_WITHOUT_BROKER_CONFIGS,
+        maxConnections: 2147483647,
+        tableCount: 11,
+      });
+      expect(await provider.getStorageStats()).toEqual([
+        {
+          name: "broker 1: /tmp/kafka-logs",
+          location: "/tmp/kafka-logs",
+          size: "5.37 KB",
+          sizeBytes: 5503,
+          usagePercent: 79,
+        },
+      ]);
+      // The control: the listed topics reach the log-dir request, payments among them, and no internal one.
+      const logDirRequests = argsOf(recorded.calls, "admin.describeLogDirs") as Array<{
+        topics: Array<{ name: string }>;
+      }>;
+      expect(logDirRequests).toHaveLength(3);
+      for (const request of logDirRequests) expect(request.topics.map((t) => t.name).sort()).toEqual(listedTopics);
+      // A read of each still meets the refusal by name, and asks the library nothing.
+      const sent = recorded.calls.length;
+      const reads = await Promise.all(
+        INTERNAL.map((name) => provider.query(JSON.stringify({ topic: name })).catch((e: unknown) => e)),
+      );
+      reads.forEach((error, index) => {
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error).toMatchObject({ provider: "kafka", message: refusal(INTERNAL[index]) });
+      });
+      expect(recorded.calls.slice(sent)).toEqual([]);
+      expect(recorded.calls.filter(([, args]) => namesAnInternalTopic(args))).toEqual([]);
+    },
+  );
+
   test("a group committed on an internal topic keeps its rows there, with no latest offset and the reason, and no request names the topic", async () => {
     const { provider, recorded } = await connected({
       // lag-classic's own entry, with offsets committed on __consumer_offsets too, as a group that

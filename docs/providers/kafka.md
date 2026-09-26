@@ -412,7 +412,8 @@ No container level: the three kind folders hang directly under the connection ro
 - Partitions are not a kind: the tree cannot nest children under an object, so a partition kind would be one flat folder holding every partition of every topic; partitions live in the topic's source, and a partition worth acting on surfaces as the topic's `status`.
 - Lag is not a status: any threshold would be the product's invention, so lag lives in the group's source.
 - Internal topics (`__consumer_offsets`, `__transaction_state`, `__share_group_state`, the set Apache Kafka's own `Topic.isInternal` reads) are neither listed nor readable.
-  The listing leaves them out, the client's metadata cache answers their names with nothing, and its `listOffsets` on one throws inside its socket handler.
+  The listing leaves them out by name, even where the broker lists one as an ordinary topic: a broker before Apache Kafka 3.9 marks only the first two internal and lets a user create a `__share_group_state` topic, which it lists as ordinary, and such a topic is left out and refused here like the internal one.
+  The client's metadata cache answers their names with nothing, and its `listOffsets` on one throws inside its socket handler.
   A read, a description or a source that names one is refused by that name before any request names it, because a broker before Apache Kafka 2.8 creates a missing internal topic for any Metadata request that names it, whatever `allowAutoTopicCreation` and `auto.create.topics.enable` say.
   The refusal is a `QueryError` such as: `Topic "__consumer_offsets" is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here`.
   A topic the broker marks internal that this set does not hold, which the client's metadata answers with nothing too, is refused in the same words.

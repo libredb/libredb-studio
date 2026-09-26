@@ -751,6 +751,71 @@ describe("createPlatformaticClient", () => {
     expect(await createPlatformaticClient(OPTIONS, lib).listTopics()).toEqual(["orders"]);
   });
 
+  test.each<[string, (listed: string[]) => Record<string, () => unknown>]>([
+    ["the library's listing", (listed) => ({ "admin.listTopics": () => [...listed] })],
+    [
+      "the listing a leaderless partition's error carries",
+      (listed) => ({
+        "admin.listTopics": () => {
+          const topics = listed.map((name, index) => ({ ...RAW_OFFLINE.topics[1], name, topicId: `t${index}` }));
+          throw libError({ code: "PLT_KFK_MULTIPLE", message: "Listing topics failed." }, [
+            leaderless({ ...RAW_OFFLINE, topics }),
+          ]);
+        },
+      }),
+    ],
+  ])(
+    "listTopics leaves Kafka's internal topics out of %s by name, though the broker lists each as ordinary (spec 4.1)",
+    async (_, answers) => {
+      // A broker before Apache Kafka 3.9 marks only __consumer_offsets and __transaction_state internal
+      // (its Topic.INTERNAL_TOPICS) and lets a user create __share_group_state, which it lists as an
+      // ordinary topic (measured on 3.8.0), as a broker of another vendor may list any of the three, and
+      // the library leaves out only what the broker marks. Listed, the name would meet the refusal by
+      // name at the metadata read that follows every listing, and fail the Topics folder and every panel.
+      // The controls only look like internal names, and stay listed.
+      const listed = [
+        "payments",
+        ...INTERNAL_TOPICS,
+        "__consumer_offsets_mirror",
+        "__Consumer_Offsets",
+        "_consumer_offsets",
+        "orders",
+      ];
+      const { lib } = fakeLib(answers(listed));
+      expect(await createPlatformaticClient(OPTIONS, lib).listTopics()).toEqual([
+        "__Consumer_Offsets",
+        "__consumer_offsets_mirror",
+        "_consumer_offsets",
+        "orders",
+        "payments",
+      ]);
+    },
+  );
+
+  test("a leaderless listing leaves out a topic the broker marks internal, though Kafka's set does not name it", async () => {
+    // The library drops a topic its answer marks internal from its own listing, and the listing a
+    // leaderless partition's error carries is that answer raw, so the adapter drops it there itself.
+    const vendorInternal = { ...RAW_OFFLINE.topics[0], name: "__vendor_internal", topicId: "t9" };
+    const { lib } = fakeLib({
+      "admin.listTopics": () => {
+        throw libError({ code: "PLT_KFK_MULTIPLE", message: "Listing topics failed." }, [
+          leaderless({ ...RAW_OFFLINE, topics: [RAW_OFFLINE.topics[1], vendorInternal] }),
+        ]);
+      },
+    });
+    expect(await createPlatformaticClient(OPTIONS, lib).listTopics()).toEqual(["orders"]);
+  });
+
+  test("metadata with no names reads every listed topic but Kafka's internal ones, which no request names, though the broker lists them as ordinary", async () => {
+    const { lib, calls } = fakeLib({
+      "admin.listTopics": () => ["codec-gzip", ...INTERNAL_TOPICS, "orders"],
+      "admin.metadata": allTopics,
+    });
+    const md = await createPlatformaticClient(OPTIONS, lib).metadata();
+    expect(md.topics.map((t) => t.name)).toEqual(["codec-gzip", "orders"]);
+    expect(argsOf(calls, "admin.metadata")).toEqual([{ topics: ["codec-gzip", "orders"], autocreateTopics: false }]);
+  });
+
   test("listTopics answers every name sorted, whatever order the listing holds, on both paths (the seam's contract)", async () => {
     // A broker lists topics in its own order (neither Kafka 4.3.1 nor Redpanda v26.2.2 sorts
     // them), and only the library's success path sorts. The orders below are neither sorted

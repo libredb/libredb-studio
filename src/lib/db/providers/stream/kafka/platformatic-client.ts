@@ -372,18 +372,23 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
     }
   };
 
-  /** Every non-internal topic name; a leaderless partition anywhere is read through, as metadata is. */
+  /**
+   * Every topic name but the internal ones; a leaderless partition anywhere is read through, as
+   * metadata is. The library leaves out only what the broker marks internal, and a broker before
+   * Apache Kafka 3.9 marks no __share_group_state, which a user may create there and it then lists as
+   * ordinary (measured on 3.8.0), so Kafka's set is left out by name too (spec 4.1): listed, the name
+   * would meet the refusal by name at the metadata read that follows every listing.
+   */
   const readTopicNames = async (): Promise<string[]> => {
+    let names: string[];
     try {
-      return (await admin.listTopics()).sort();
+      names = await admin.listTopics();
     } catch (error) {
       const raw = leaderlessResponse(error);
       if (raw === undefined) throw error;
-      return raw.topics
-        .filter((t) => !t.isInternal)
-        .map(namedTopic)
-        .sort();
+      names = raw.topics.filter((t) => !t.isInternal).map(namedTopic);
     }
+    return names.filter((name) => !INTERNAL_TOPICS.has(name)).sort();
   };
 
   const readConfigs = async (resourceType: number, resourceName: string): Promise<KafkaConfigEntry[]> =>

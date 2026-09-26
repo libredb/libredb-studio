@@ -231,6 +231,11 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
     const names = [...(declared ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     expect(names).toEqual(["__consumer_offsets", "__transaction_state", "__share_group_state"]);
     expect(DOC).toContain(`- Internal topics (${names.map((name) => `\`${name}\``).join(", ")}, the set`);
+    // The listing leaves the set out by name, not by the broker's mark alone (a broker before 3.9 marks
+    // no __share_group_state), which the adapter's own tests pin and the doc says in that bullet.
+    expect(bulletOf(DOC, "Internal topics")).toContain(
+      "The listing leaves them out by name, even where the broker lists one as an ordinary topic",
+    );
   });
 
   test("the never-joined group id is the adapter's", () => {
