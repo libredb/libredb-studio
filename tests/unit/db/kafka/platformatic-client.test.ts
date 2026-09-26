@@ -2009,17 +2009,37 @@ describe("createPlatformaticClient", () => {
     expect((await client.brokerConfigs(1)).map((c) => c.name)).toEqual(["max.connections"]);
   });
 
-  test("log dirs sum each directory's partition sizes, per broker, for the topics named", async () => {
+  test("log dirs sum each directory's partition sizes, one row per broker and directory, in the answer's order, for the topics named", async () => {
+    // Two brokers, the first listed with two log directories, each directory with its own path, sizes
+    // and totals, the second summing two topics' partitions: the captures hold one broker with one
+    // directory, while a cluster answers an entry per broker and a broker may hold several directories.
     const { lib, calls } = fakeLib({
       "admin.describeLogDirs": () => [
         {
-          broker: 1,
+          broker: 2,
           results: [
             {
               logDir: "/a",
               totalBytes: big(100),
               usableBytes: big(40),
               topics: [{ partitions: [{ partitionSize: big(5) }, { partitionSize: big(7) }] }],
+            },
+            {
+              logDir: "/b",
+              totalBytes: big(300),
+              usableBytes: big(200),
+              topics: [{ partitions: [{ partitionSize: big(11) }] }, { partitions: [{ partitionSize: big(13) }] }],
+            },
+          ],
+        },
+        {
+          broker: 1,
+          results: [
+            {
+              logDir: "/c",
+              totalBytes: big(-1),
+              usableBytes: big(-1),
+              topics: [{ partitions: [{ partitionSize: big(17) }] }],
             },
           ],
         },
@@ -2028,7 +2048,9 @@ describe("createPlatformaticClient", () => {
     const client = createPlatformaticClient(OPTIONS, lib);
     const [orders] = (await client.metadata(["orders"])).topics;
     expect(await client.logDirs([orders])).toEqual([
-      { brokerId: 1, path: "/a", sizeBytes: big(12), totalBytes: big(100), usableBytes: big(40) },
+      { brokerId: 2, path: "/a", sizeBytes: big(12), totalBytes: big(100), usableBytes: big(40) },
+      { brokerId: 2, path: "/b", sizeBytes: big(24), totalBytes: big(300), usableBytes: big(200) },
+      { brokerId: 1, path: "/c", sizeBytes: big(17), totalBytes: big(-1), usableBytes: big(-1) },
     ]);
     expect(argsOf(calls, "admin.describeLogDirs")).toEqual([{ topics: [{ name: "orders", partitions: [0, 1, 2] }] }]);
   });

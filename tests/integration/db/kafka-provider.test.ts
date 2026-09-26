@@ -1287,6 +1287,35 @@ describe("a group committed on several topics (spec 4.3, 4.4)", () => {
   });
 });
 
+describe("several brokers and log directories (spec 7.1)", () => {
+  test("storage has a row per broker and log directory, and the overview's size is the sum over all of them", async () => {
+    // The capture holds one broker with one log directory. Built here: broker 2 with two directories,
+    // listed first, and broker 1 with one that reports no total or usable bytes.
+    const dir = (logDir: string, totalBytes: number, usableBytes: number, sizes: number[]) => ({
+      logDir,
+      totalBytes: BigInt(totalBytes),
+      usableBytes: BigInt(usableBytes),
+      topics: [{ partitions: sizes.map((size) => ({ partitionSize: BigInt(size) })) }],
+    });
+    const { provider } = await connected({
+      "admin.describeLogDirs": () => [
+        { broker: 2, results: [dir("/a", 4000, 1000, [1024, 1024]), dir("/b", 8000, 6000, [512])] },
+        { broker: 1, results: [dir("/c", -1, -1, [3072])] },
+      ],
+    });
+    expect(await provider.getStorageStats()).toEqual([
+      { name: "broker 2: /a", location: "/a", size: "2 KB", sizeBytes: 2048, usagePercent: 75 },
+      { name: "broker 2: /b", location: "/b", size: "512 B", sizeBytes: 512, usagePercent: 25 },
+      { name: "broker 1: /c", location: "/c", size: "3 KB", sizeBytes: 3072 },
+    ]);
+    const overview = await provider.getOverview();
+    expect([overview.databaseSize, overview.databaseSizeBytes]).toEqual([
+      "5.5 KB on disk, all replicas, internal topics excluded",
+      5632,
+    ]);
+  });
+});
+
 describe("declarations", () => {
   test("capabilities and labels are the spec's, and the refresh pattern matches no read request", async () => {
     const { provider } = await connected();
