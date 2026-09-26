@@ -976,6 +976,23 @@ describe("reads over captured payloads", () => {
     const invalid = await provider.query("{}").catch((e) => e);
     expect(invalid).toBeInstanceOf(DatabaseConfigError);
     expect(invalid.message).toContain('"topic" is required');
+    // Empty text is text that is empty once whitespace is removed, and nothing more: one character
+    // that is not whitespace is a request, which the parser reads and refuses.
+    const oneCharacter = await provider.query(" { ").catch((e) => e);
+    expect(oneCharacter).toBeInstanceOf(DatabaseConfigError);
+    expect(oneCharacter.message).toBe("The read request is not valid JSON");
+    // And a request reaches the parser as written, never trimmed: a no-break space, which trim()
+    // removes and JSON does not allow, before or after a request makes it text the parser refuses.
+    const noBreakSpace = String.fromCodePoint(0xa0);
+    const padded = await Promise.all(
+      [`${noBreakSpace}{"topic":"codec-gzip"}`, `{"topic":"codec-gzip"}${noBreakSpace}`].map((text) =>
+        provider.query(text).catch((e) => e),
+      ),
+    );
+    for (const refusal of padded) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect(refusal.message).toBe("The read request is not valid JSON");
+    }
     const bound = await provider.query('{"topic":"orders"}', [1]).catch((e) => e);
     expect(bound).toBeInstanceOf(DatabaseConfigError);
     expect(bound.message).toBe("Bound params are not supported: a Kafka read request has no placeholders");
@@ -989,7 +1006,9 @@ describe("reads over captured payloads", () => {
     }
     // None of them reached the broker.
     expect(recorded.calls).toHaveLength(sent);
-    for (const refusal of [empty, invalid, bound, ...boundEmptyValues]) expect(refusal.provider).toBe("kafka");
+    for (const refusal of [empty, invalid, oneCharacter, ...padded, bound, ...boundEmptyValues]) {
+      expect(refusal.provider).toBe("kafka");
+    }
     // Empty text and bound params need no broker, so they come before anything else, the
     // connection check included: a provider that never connected refuses them the same way.
     const unconnected = new KafkaProvider(CONNECTION);
