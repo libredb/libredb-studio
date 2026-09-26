@@ -416,8 +416,8 @@ describe("the domains this file walks", () => {
 
   test("every method the provider defines is classified, so no surface escapes the tables below", () => {
     const classified = {
-      // Declarations and lifecycle: "connect" below, and the integration test's "declarations" and
-      // "connect and disconnect" blocks.
+      // Declarations and lifecycle: "connect" and "disconnect" below, and the integration test's
+      // "declarations" and "connect and disconnect" blocks.
       lifecycle: ["constructor", "getCapabilities", "getLabels", "connect", "disconnect"],
       // What the composition keeps to itself.
       helpers: ["bootstrap", "guarded", "readLogDirs", "readBrokerConfigs"],
@@ -544,6 +544,67 @@ describe("connect", () => {
       expect(logged.mock.calls).toEqual([["[DB:kafka] connect cleanup failed: close refused"]]);
     },
   );
+});
+
+// ============================================================================
+// disconnect (IX-07)
+// ============================================================================
+
+describe("disconnect", () => {
+  /** Every surface of the provider, called as a caller would; each would read the broker or answer, connected. */
+  const SURFACES: ReadonlyArray<(provider: KafkaProvider) => Promise<unknown>> = [
+    (p) => p.query('{"topic":"orders"}'),
+    (p) => p.listContainers(),
+    (p) => p.countObjects([]),
+    (p) => p.listObjects([], "topic"),
+    (p) => p.describeObject(["orders"], "topic"),
+    (p) => p.describeObjects([], "topic"),
+    (p) => p.readObjectSource(["orders"], "topic"),
+    (p) => p.getHealth(),
+    (p) => p.getOverview(),
+    (p) => p.getStorageStats(),
+    (p) => p.getPerformanceMetrics(),
+    (p) => p.getSlowQueries(),
+    (p) => p.getActiveSessions(),
+    (p) => p.getTableStats(),
+    (p) => p.getIndexStats(),
+    (p) => p.runMaintenance("vacuum"),
+  ];
+
+  test("a disconnect is disconnected and lets go of its client before it closes it: while the close is pending, every surface refuses with the base's sentence and sends nothing, and a second disconnect closes nothing", async () => {
+    let release: () => void = () => {};
+    let connectedAtClose: boolean | undefined;
+    // A close that stays pending until the test lets it settle, and that sees the provider as it
+    // stands when the close is asked.
+    const { provider, built } = providerOver(undefined, {
+      close: () => {
+        connectedAtClose = provider.isConnected();
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    await provider.connect();
+    const [fake] = built;
+    fake.calls.length = 0;
+    const disconnecting = provider.disconnect();
+    // The close was asked, once, and the provider was already disconnected when it was.
+    expect(fake.calls).toEqual([["close", []]]);
+    expect(connectedAtClose).toBe(false);
+    // While it is pending: disconnected, every surface refused as before connect(), nothing sent, and
+    // a second disconnect, which holds no client, closes nothing.
+    expect(provider.isConnected()).toBe(false);
+    const refusals = await Promise.all(SURFACES.map((call) => outcomeOf(() => call(provider), undefined)));
+    expect(refusals).toEqual(SURFACES.map(() => NOT_CONNECTED));
+    await provider.disconnect();
+    expect(fake.calls).toEqual([["close", []]]);
+    // Released, the first disconnect settles, and still nothing more was sent or built.
+    release();
+    await disconnecting;
+    expect(provider.isConnected()).toBe(false);
+    expect(fake.calls).toEqual([["close", []]]);
+    expect(built).toHaveLength(1);
+  });
 });
 
 // ============================================================================
