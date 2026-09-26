@@ -71,6 +71,7 @@ const PROTOCOL_TEXT: Record<string, string> = {
   NOT_COORDINATOR: "This is not the correct coordinator.",
   TOPIC_AUTHORIZATION_FAILED: "Topic authorization failed.",
   GROUP_AUTHORIZATION_FAILED: "Group authorization failed.",
+  UNKNOWN_SERVER_ERROR: "The server experienced an unexpected error when processing the request.",
 };
 /**
  * An API 69 answer whose entries carry the errors given, thrown as the library throws it: a
@@ -1901,6 +1902,8 @@ describe("createPlatformaticClient", () => {
       {},
     ],
     ["NOT_COORDINATOR", 16, null, "protocol", "The request to the broker failed (NOT_COORDINATOR)", {}],
+    // The one negative code: a coordinator that met an unexpected exception (dist/protocol/errors.js, -1).
+    ["UNKNOWN_SERVER_ERROR", -1, null, "protocol", "The request to the broker failed (UNKNOWN_SERVER_ERROR)", {}],
   ])(
     "an API 69 entry answered %s (%d, message %p) is %s, by its protocol error name, never the broker's text (spec 5.6)",
     async (apiId, apiCode, brokerText, category, message, detail) => {
