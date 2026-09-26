@@ -27,6 +27,15 @@ describe("computeLag", () => {
     expect(rows.map((r) => r.lag)).toEqual(["24", "12", "14"]);
   });
 
+  test("a commit past the log end is a negative lag, as kafka-consumer-groups.sh prints it, never 0 and never null", () => {
+    // Measured on the scratch broker: committed 100 on a partition whose log end is 3 prints LAG -97.
+    const rows = computeLag(
+      [{ topic: "orders", partition: 0, offset: n(100) }],
+      new Map([["orders", new Map([[0, n(3)]])]]),
+    );
+    expect(rows).toEqual([{ topic: "orders", partition: 0, committedOffset: "100", latestOffset: "3", lag: "-97" }]);
+  });
+
   test("no committed offset is null lag with a note, never 0 and never the whole log", () => {
     const rows = computeLag(
       [{ topic: "orders", partition: 1, offset: n(-1) }],
