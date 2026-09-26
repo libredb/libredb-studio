@@ -180,6 +180,46 @@ describe("decodeBytes", () => {
     });
   });
 
+  test("a cell of exactly the limit is whole, and one character more is cut", () => {
+    expect(decodeBytes(bytes("x".repeat(10)), 10)).toEqual({
+      value: "x".repeat(10),
+      encoding: "text",
+      truncated: false,
+    });
+    // [1,2,3,45] is 10 characters.
+    expect(decodeBytes(bytes("[1,2,3,45]"), 10)).toEqual({ value: [1, 2, 3, 45], encoding: "json", truncated: false });
+    // "schema id 42, not decoded" is 25 characters.
+    expect(decodeBytes(new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x2a]), 25)).toEqual({
+      value: "schema id 42, not decoded",
+      encoding: "confluent",
+      truncated: false,
+    });
+    expect(decodeHeaderName(bytes("n".repeat(10)), 10)).toEqual({
+      value: "n".repeat(10),
+      encoding: "text",
+      truncated: false,
+    });
+    // Controls: one character past the limit.
+    expect(decodeBytes(bytes("x".repeat(11)), 10)).toEqual({
+      value: "x".repeat(10),
+      encoding: "text",
+      truncated: true,
+    });
+    expect(decodeBytes(bytes("[1,2,3,456]"), 10)).toEqual({ value: "[1,2,3,456", encoding: "json", truncated: true });
+  });
+
+  test("at the provider's 64 KiB cell limit, a text value and a JSON value of exactly the limit are whole", () => {
+    const limit = 64 * 1024;
+    expect(decodeBytes(bytes("x".repeat(limit)), limit)).toEqual({
+      value: "x".repeat(limit),
+      encoding: "text",
+      truncated: false,
+    });
+    // Two brackets and two quotes around limit - 4 characters.
+    const inner = "y".repeat(limit - 4);
+    expect(decodeBytes(bytes(`["${inner}"]`), limit)).toEqual({ value: [inner], encoding: "json", truncated: false });
+  });
+
   test("the cell cut never keeps half of a surrogate pair, which would render as a character never sent", () => {
     // a, U+1F600, b is a, then the two UTF-16 code units of U+1F600, then b: a cut at 2 would end inside the pair.
     expect(decodeBytes(bytes(`a${FOUR_BYTE}b`), 2)).toEqual({ value: "a", encoding: "text", truncated: true });
