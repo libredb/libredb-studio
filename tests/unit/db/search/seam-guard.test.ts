@@ -235,10 +235,9 @@ function isKindConstantValue(node: ts.Node): boolean {
 /**
  * Identifiers matched EXACTLY, because a substring match would fire on every
  * legitimate helper: `prefetchMappings` is an ordinary provider name, while a bare
- * `fetch` - called, or read off `globalThis` - is the one thing only the transport
- * may do (`http-transport.ts:984-996`: "the only place `fetch` is called").
+ * `fetch` or `httpTransportFetch` belongs only in the transport.
  */
-const EXACT_TOKENS = ["fetch"];
+const EXACT_TOKENS = ["fetch", "httpTransportFetch"];
 
 /**
  * Statuses whose appearance in provider logic means someone is classifying a
@@ -251,7 +250,7 @@ const EXACT_TOKENS = ["fetch"];
 const HTTP_STATUS_CODES = [400, 401, 403, 404, 405, 406, 409, 500, 502, 503];
 
 /** Everything the transport must speak, so a silent detector cannot pass. */
-const SPOKEN_VOCABULARY = [...WIRE_TOKENS, ...ENVELOPE_KEYS, ...EXACT_TOKENS];
+const SPOKEN_VOCABULARY = [...WIRE_TOKENS, ...ENVELOPE_KEYS, "httpTransportFetch"];
 
 /** Everything nobody may speak, the transport included. */
 const UNSPOKEN_VOCABULARY = [...UNUSED_WIRE_TOKENS, ...UNUSED_ENVELOPE_KEYS];
@@ -523,6 +522,7 @@ export async function readIndices(origin: string) {
     ["ES|QL, which is deliberately unused", 'await post("/_query", body);', "/_query"],
     ["an error member nothing reads", 'const causes = error["root_cause"];', "root_cause"],
     ["a direct fetch", 'await fetch(url, { method: "POST" });', "fetch"],
+    ["a guarded fetch outside the transport", "await httpTransportFetch(url);", "httpTransportFetch"],
     // The kind-id exemption is NARROW, and these four prove where it stops. A kind id
     // is allowed as the value of a SEARCH_KIND_ constant and nowhere else.
     ["the _cat name column read as a key", 'const name = row["index"];', "index"],

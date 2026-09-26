@@ -22,6 +22,7 @@ import { promises as dns, type SrvRecord } from "node:dns";
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import { quoteIdentifier } from "./keyspace";
@@ -284,7 +285,12 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
   let response: Response;
   try {
     // A followed redirect would carry the credential to wherever it points.
-    response = await fetch(url, { method: init.method, headers: init.headers, body: init.body, redirect: "manual" });
+    response = await httpTransportFetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      redirect: "manual",
+    });
   } catch (error) {
     throw networkError(error);
   }
@@ -302,6 +308,7 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
   const options: HttpsRequestOptions = {
     protocol: target.protocol,
     hostname: target.hostname,
+    ...guardedNodeOptions(target.hostname),
     port: target.port,
     path: `${target.pathname}${target.search}`,
     method: init.method,

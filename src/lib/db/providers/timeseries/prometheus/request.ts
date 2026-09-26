@@ -37,6 +37,7 @@ import type { ClientRequest, IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { urlToHttpOptions } from "node:url";
 import { rejectRedirect } from "@/lib/db/http/endpoint";
+import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { SSLConfig } from "@/lib/types";
 
 /** One request, built whole by the caller. */
@@ -216,7 +217,7 @@ async function readCapped(body: Response["body"], maxBytes: number): Promise<str
 async function sendPlain(request: OutboundRequest): Promise<InboundResponse> {
   let response: Response;
   try {
-    response = await globalThis.fetch(request.url, {
+    response = await httpTransportFetch(request.url, {
       method: request.method,
       headers: request.headers,
       body: request.body,
@@ -273,7 +274,16 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
 
     try {
       clientRequest = httpsRequest(
-        { protocol, hostname, port, path, method: request.method, headers: request.headers, ...tls },
+        {
+          protocol,
+          hostname,
+          port,
+          path,
+          method: request.method,
+          headers: request.headers,
+          ...tls,
+          ...guardedNodeOptions(hostname),
+        },
         (incoming) => {
           response = incoming;
           incoming.on("error", failWith);
