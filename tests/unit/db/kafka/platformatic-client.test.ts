@@ -2004,6 +2004,39 @@ describe("createPlatformaticClient", () => {
     ]);
   });
 
+  test("a config's readOnly is the broker's own, whatever the entry's sensitivity (captured, configs-broker-1)", async () => {
+    // Every other test's entries are writable, so a mapping that wrote readOnly false, or copied
+    // isSensitive into it, passed them all while a broker's source showed no read-only config.
+    const [captured] = kafkaFixture<Array<{ configs: Array<{ readOnly: boolean }> }>>("configs-broker-1");
+    const configs = await createPlatformaticClient(OPTIONS, fakeLib().lib).brokerConfigs(1);
+    const named = (name: string) => configs.find((c) => c.name === name);
+    expect(named("offsets.topic.num.partitions")).toEqual({
+      name: "offsets.topic.num.partitions",
+      value: "50",
+      readOnly: true,
+      isSensitive: false,
+      source: 5,
+    });
+    // Sensitive and writable, then sensitive and read-only: the broker withholds both values.
+    expect(named("ssl.key.password")).toEqual({
+      name: "ssl.key.password",
+      value: null,
+      readOnly: false,
+      isSensitive: true,
+      source: 5,
+    });
+    expect(named("delegation.token.secret.key")).toEqual({
+      name: "delegation.token.secret.key",
+      value: null,
+      readOnly: true,
+      isSensitive: true,
+      source: 5,
+    });
+    const readOnly = captured.configs.filter((c) => c.readOnly).length;
+    expect(readOnly).toBe(241);
+    expect(configs.filter((c) => c.readOnly)).toHaveLength(readOnly);
+  });
+
   test("configs are read from the answer's entry for the resource asked; an answer without it is a protocol error", async () => {
     const { lib } = fakeLib({ "admin.describeConfigs": () => kafkaFixture("configs-broker-1") });
     const error = await createPlatformaticClient(OPTIONS, lib)
