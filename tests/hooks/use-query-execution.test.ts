@@ -838,7 +838,10 @@ describe("useQueryExecution", () => {
     expect(tabs[0].result).toBeNull();
   });
 
-  /** The owner's scope: a cancellation keeps today's behaviour and is not an error. */
+  /**
+   * The owner's scope: a cancellation keeps today's behaviour and is not an error. This is
+   * the shape a server-side cancel arrives in, `createErrorResponse`'s 499 and its code.
+   */
   test("a cancelled run leaves the previous result and sets no error", async () => {
     const tab = createTab({
       result: mockQueryResult,
@@ -847,7 +850,11 @@ describe("useQueryExecution", () => {
     });
     const { tabs, setTabs } = mutableTabs([tab]);
     mockGlobalFetch({
-      "/api/db/query": { ok: false, status: 400, json: { error: "Query was cancelled by the user" } },
+      "/api/db/query": {
+        ok: false,
+        status: 499,
+        json: { error: "Query was cancelled", code: "QUERY_CANCELLED", statusCode: 499 },
+      },
     });
     const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
     const { result } = renderHook(() => useQueryExecution(params));
@@ -858,6 +865,34 @@ describe("useQueryExecution", () => {
 
     expect(tabs[0].runError).toBeUndefined();
     expect(tabs[0].result?.rows).toHaveLength(2);
+  });
+
+  /**
+   * The word is not the signal. A message that only CONTAINS "cancelled" was read as a
+   * cancellation and kept the previous statement's rows, so an engine refusing a column or
+   * an enum value of that name looked like a cancel the user never asked for.
+   */
+  test('an engine error naming a "cancelled" column is a failure, not a cancellation', async () => {
+    const tab = createTab({
+      result: mockQueryResult,
+      resultQuery: "SELECT * FROM users",
+      allRows: mockQueryResult.rows,
+    });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({
+      "/api/db/query": { ok: false, status: 400, json: { error: 'column "cancelled" does not exist' } },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT cancelled FROM users");
+    });
+
+    expect(tabs[0].runError).toBe('column "cancelled" does not exist');
+    expect(tabs[0].result).toBeNull();
+    expect(tabs[0].allRows).toBeUndefined();
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: 'column "cancelled" does not exist' });
   });
 
   /**
@@ -2105,7 +2140,8 @@ describe("useQueryExecution", () => {
 
   // ── "Query was cancelled" message handling ─────────────────────────────
 
-  test('shows cancellation toast for "Query was cancelled" error message', async () => {
+  test('a "Query was cancelled" message without the code is an error, not a cancellation', async () => {
+    // No server path sends this: a cancel is always the 499 and its code below.
     mockGlobalFetch({
       "/api/db/query": { ok: false, status: 500, json: { error: "Query was cancelled by user" } },
     });
@@ -2117,8 +2153,8 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("SELECT pg_sleep(60)");
     });
 
-    // Should show cancellation toast, not generic error
-    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "Query was cancelled by user" });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
   test("handles QUERY_CANCELLED response code from API", async () => {
