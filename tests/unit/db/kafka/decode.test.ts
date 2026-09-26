@@ -116,6 +116,14 @@ describe("decodeBytes", () => {
     });
   });
 
+  test("JSON whitespace before an object or an array does not stop it being JSON, as it does not stop JSON.parse", () => {
+    expect(decodeBytes(bytes(' {"a":1}'), 1000)).toEqual({ value: { a: 1 }, encoding: "json", truncated: false });
+    expect(decodeBytes(bytes("\n[1]"), 1000)).toEqual({ value: [1], encoding: "json", truncated: false });
+    expect(decodeBytes(bytes('\t\r\n {"b":2}'), 1000)).toEqual({ value: { b: 2 }, encoding: "json", truncated: false });
+    // Control: a no-break space is whitespace to trimStart but not to JSON.parse, so the value is text.
+    expect(decodeBytes(bytes(' {"a":1}'), 1000)).toEqual({ value: ' {"a":1}', encoding: "text", truncated: false });
+  });
+
   test("a JSON scalar is text, not json: a bare 42 or true reads better as what was sent", () => {
     expect(decodeBytes(bytes("42"), 1000)).toMatchObject({ value: "42", encoding: "text" });
   });
