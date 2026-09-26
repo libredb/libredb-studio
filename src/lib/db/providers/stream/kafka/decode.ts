@@ -78,68 +78,189 @@ function utf8Prefix(bytes: Uint8Array, max: number): Uint8Array {
   return bytes.subarray(0, end);
 }
 
+/** The character codes the scan of JSON text below reads. */
+const QUOTE = '"'.charCodeAt(0);
+const BACKSLASH = "\\".charCodeAt(0);
+const OPEN_OBJECT = "{".charCodeAt(0);
+const CLOSE_OBJECT = "}".charCodeAt(0);
+const OPEN_ARRAY = "[".charCodeAt(0);
+const CLOSE_ARRAY = "]".charCodeAt(0);
+const COMMA = ",".charCodeAt(0);
+const COLON = ":".charCodeAt(0);
+const MINUS = "-".charCodeAt(0);
+const PLUS = "+".charCodeAt(0);
+const POINT = ".".charCodeAt(0);
+const LOWER_E = "e".charCodeAt(0);
+const UPPER_E = "E".charCodeAt(0);
+const DIGIT_ZERO = "0".charCodeAt(0);
+const DIGIT_NINE = "9".charCodeAt(0);
+
+function isDigit(code: number): boolean {
+  return code >= DIGIT_ZERO && code <= DIGIT_NINE;
+}
+
+/** What the scan finds a JSON value to be. */
+const NOT_SHOWN = 0;
+const SHOWN = 1;
+/** Shown once `quoteUnsafeIntegers` has quoted the integers JSON.parse would round. */
+const SHOWN_ONCE_QUOTED = 2;
+type Shown = typeof NOT_SHOWN | typeof SHOWN | typeof SHOWN_ONCE_QUOTED;
+
 /**
- * The tokens of text JSON.parse accepted: a string with its escapes, a number, or a structural
- * character. `true`, `false`, `null` and whitespace match nothing and are skipped.
+ * The fewest digits an integer past `Number.MAX_SAFE_INTEGER` has. An integer of fewer digits is exact as
+ * a double; one of this many or more is exact or lies past it, and then `quoteUnsafeIntegers` quotes it,
+ * so either way its digits are shown.
  */
-const JSON_TOKEN = /"(?:[^"\\]|\\["\\/bfnrtu])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}[\],:]/g;
+const SAFE_INTEGER_DIGITS = String(Number.MAX_SAFE_INTEGER).length;
+
+/**
+ * A decimal of at most `EXACT_DIGITS` significant digits inside the normal range is the value of the
+ * double nearest it, so no double is made to check it: no two such decimals round to one double (DBL_DIG
+ * of IEEE 754 binary64), and String() of that double, the shortest decimal that rounds to it, is the one
+ * sent. A mantissa of at most `EXACT_MANTISSA_DIGITS` digits and an exponent of at most
+ * `EXACT_EXPONENT_DIGITS` keep a nonzero decimal between 1e-119 and 1e119, well inside that range, which
+ * runs from about 2.2e-308 to 1.8e308.
+ */
+const EXACT_DIGITS = 15;
+const EXACT_MANTISSA_DIGITS = 20;
+const EXACT_EXPONENT_DIGITS = 2;
 
 /** A decimal literal: a JSON number, or what String() writes for a finite double. */
 const DECIMAL_LITERAL = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
 
 /**
- * One spelling per decimal value: the significant digits, then the power of ten that puts the
+ * One spelling per nonzero decimal value: the significant digits, then the power of ten that puts the
  * point before the first of them, so `1.10`, `1.1` and `0.11e1` all read `11e1`.
  */
 function decimalValue(literal: string): string {
-  // Only JSON number tokens and String() of a finite double reach here, and both always match.
+  // Only nonzero JSON number tokens and String() of a finite nonzero double reach here, and both match.
   const [, sign, whole, fraction = "", exponent = "0"] = DECIMAL_LITERAL.exec(literal) as RegExpExecArray;
   const digits = whole + fraction;
   const first = digits.search(/[1-9]/);
-  if (first < 0) return "0";
   return `${sign}${digits.slice(first).replace(/0+$/, "")}e${Number(exponent) + whole.length - first}`;
 }
 
 /**
- * True when a JSON number's double is the number sent, as JSON.stringify writes it back: finite
- * (not an overflow to Infinity), not negative zero (which it writes as 0), and of the same decimal
- * value, so no digit was lost to rounding or underflow. Another spelling of that value, such as
- * `1.10` or `1e2`, is the same number.
+ * True when the double of `token`, a JSON number that is not zero, is the number sent, as
+ * JSON.stringify writes it back: finite (not an overflow to Infinity), not zero (an underflow, which
+ * it writes as 0) and of the same decimal value, so no digit was lost to rounding.
  */
-function numberShowsItsValue(token: string): boolean {
+function doubleShows(token: string): boolean {
   const value = Number(token);
-  if (!Number.isFinite(value) || Object.is(value, -0)) return false;
+  if (!Number.isFinite(value) || value === 0) return false;
   // Most tokens are spelled as String() writes them, which needs no comparison of values.
   const written = String(value);
   return written === token || decimalValue(written) === decimalValue(token);
 }
 
 /**
- * True when JSON.parse of `json`, text it accepted, shows every value sent: no object repeats a
- * member name, whose earlier values JSON.parse drops, and every number is one its double holds.
+ * Whether the double of the JSON number `json[start, end)` is the number sent. Another spelling of that
+ * value, such as `1.10` or `1e2`, is the same number, and every spelling of zero is zero, but `-0` is
+ * not: JSON.stringify writes it as 0. An integer of `SAFE_INTEGER_DIGITS` digits or more is shown once
+ * quoted, as its digits.
  */
-function showsEveryValue(json: string): boolean {
+function numberShown(json: string, start: number, end: number): Shown {
+  const negative = json.charCodeAt(start) === MINUS;
+  // The digits before the exponent, the point left out: how many, whether a point is among them, and
+  // where the first and the last digit that is not 0 are.
+  let digits = 0;
+  let point = false;
+  let first = -1;
+  let last = -1;
+  let index = negative ? start + 1 : start;
+  for (; index < end; index++) {
+    const code = json.charCodeAt(index);
+    if (code === POINT) point = true;
+    else if (!isDigit(code)) break;
+    else {
+      if (code !== DIGIT_ZERO) {
+        if (first < 0) first = digits;
+        last = digits;
+      }
+      digits++;
+    }
+  }
+  if (first < 0) return negative ? NOT_SHOWN : SHOWN;
+  // An integer, with no point and no exponent, of that many digits is exact or quoted.
+  if (!point && index === end && digits >= SAFE_INTEGER_DIGITS) return SHOWN_ONCE_QUOTED;
+  // The digits of the exponent, past its e or E and its sign, if any.
+  let exponentDigits = 0;
+  if (index < end) {
+    const sign = json.charCodeAt(index + 1);
+    exponentDigits = end - index - (sign === MINUS || sign === PLUS ? 2 : 1);
+  }
+  if (last - first < EXACT_DIGITS && digits <= EXACT_MANTISSA_DIGITS && exponentDigits <= EXACT_EXPONENT_DIGITS) {
+    return SHOWN;
+  }
+  return doubleShows(json.slice(start, end)) ? SHOWN : NOT_SHOWN;
+}
+
+function isNumberCharacter(code: number): boolean {
+  return isDigit(code) || code === POINT || code === LOWER_E || code === UPPER_E || code === PLUS || code === MINUS;
+}
+
+/** The index just past the JSON number that starts at `start`. */
+function numberEnd(json: string, start: number): number {
+  let index = start + 1;
+  while (isNumberCharacter(json.charCodeAt(index))) index++;
+  return index;
+}
+
+/** The index just past the JSON string that opens at `start`: an escape takes the character after it. */
+function stringEnd(json: string, start: number): number {
+  let index = start + 1;
+  while (index < json.length) {
+    const code = json.charCodeAt(index);
+    if (code === QUOTE) break;
+    index += code === BACKSLASH ? 2 : 1;
+  }
+  return index + 1;
+}
+
+/**
+ * Whether JSON.parse of `json`, text it accepted, shows every value sent: no object repeats a member
+ * name, whose earlier values JSON.parse drops, and every number is one its double holds, or holds once
+ * the quoting has run. It walks the text once, by character code, since it runs over every value the
+ * JSON rule judges, and gives a number a double only when its digits cannot settle it.
+ */
+function valuesShown(json: string): Shown {
   // One entry per open container: an object's member names so far, or undefined for an array.
   const names: Array<Set<string> | undefined> = [];
-  let previous = "";
-  for (const [token] of json.matchAll(JSON_TOKEN)) {
-    const lead = token[0];
-    if (lead === '"') {
+  // The last string, number or structural character read; whitespace and the letters of true, false
+  // and null leave it as it is.
+  let previous = 0;
+  let shown: Shown = SHOWN;
+  let index = 0;
+  while (index < json.length) {
+    const code = json.charCodeAt(index);
+    if (code === QUOTE) {
+      const end = stringEnd(json, index);
       const members = names.at(-1);
       // Inside an object, a string right after `{` or `,` is a member name, decoded as JSON.parse
       // reads it; with no escape, its text between the quotes is its name.
-      if (members !== undefined && (previous === "{" || previous === ",")) {
-        const name: string = token.includes("\\") ? JSON.parse(token) : token.slice(1, -1);
-        if (members.has(name)) return false;
+      if (members !== undefined && (previous === OPEN_OBJECT || previous === COMMA)) {
+        const raw = json.slice(index + 1, end - 1);
+        const name: string = raw.includes("\\") ? JSON.parse(json.slice(index, end)) : raw;
+        if (members.has(name)) return NOT_SHOWN;
         members.add(name);
       }
-    } else if (lead === "{") names.push(new Set());
-    else if (lead === "[") names.push(undefined);
-    else if (lead === "}" || lead === "]") names.pop();
-    else if (lead !== "," && lead !== ":" && !numberShowsItsValue(token)) return false;
-    previous = lead;
+      index = end;
+    } else if (code === MINUS || isDigit(code)) {
+      const end = numberEnd(json, index);
+      const number = numberShown(json, index, end);
+      if (number === NOT_SHOWN) return NOT_SHOWN;
+      if (number === SHOWN_ONCE_QUOTED) shown = SHOWN_ONCE_QUOTED;
+      index = end;
+    } else {
+      index++;
+      if (code === OPEN_OBJECT) names.push(new Set());
+      else if (code === OPEN_ARRAY) names.push(undefined);
+      else if (code === CLOSE_OBJECT || code === CLOSE_ARRAY) names.pop();
+      else if (code !== COMMA && code !== COLON) continue;
+    }
+    previous = code;
   }
-  return true;
+  return shown;
 }
 
 const CONFLUENT: Decoder = {
@@ -163,13 +284,14 @@ const JSON_DOCUMENT: Decoder = {
     } catch {
       return undefined;
     }
-    // Quoted only once JSON.parse accepted the text as sent: on other text the quotes can make
-    // JSON of what is not, such as `{12345678901234567890:1}`.
-    const exact = quoteUnsafeIntegers(text);
     // A parse that would not show every value sent leaves the value to the text rule.
-    if (!showsEveryValue(exact)) return undefined;
+    const shown = valuesShown(text);
+    if (shown === NOT_SHOWN) return undefined;
     if (text.length <= cellLimit) {
-      return { value: exact === text ? parsed : JSON.parse(exact), encoding: "json", truncated: false };
+      // Quoted only once JSON.parse accepted the text as sent: on other text the quotes can make
+      // JSON of what is not, such as `{12345678901234567890:1}`.
+      const value = shown === SHOWN ? parsed : JSON.parse(quoteUnsafeIntegers(text));
+      return { value, encoding: "json", truncated: false };
     }
     // Past the cell limit the parsed value cannot be shown whole, so its cut text is, and says so.
     return { value: cutText(text, cellLimit), encoding: "json", truncated: true };

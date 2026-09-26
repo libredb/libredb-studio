@@ -35,6 +35,9 @@ describe("decodeBytes", () => {
       "12345678901234567890",
       "-12345678901234567890",
     ]);
+    // Sixteen digits, the fewest an integer past Number.MAX_SAFE_INTEGER has, with no longer integer beside them.
+    expect(decodeBytes(bytes("[9007199254740993]"), 1000).value).toEqual(["9007199254740993"]);
+    expect(decodeBytes(bytes('{"n":-9007199254740993}'), 1000).value).toEqual({ n: "-9007199254740993" });
     // Controls: an integer JSON.parse keeps exactly stays a number, and digits inside a string stay as they are.
     expect(decodeBytes(bytes('{"n":9007199254740991}'), 1000).value).toEqual({ n: 9007199254740991 });
     expect(decodeBytes(bytes('{"s":"12345678901234567890 in a string"}'), 1000).value).toEqual({
@@ -66,6 +69,10 @@ describe("decodeBytes", () => {
       // Inside a nested object, and in the outer object after a nested one closed.
       '{"o":{"a":1,"a":2}}',
       '{"a":{"x":1},"a":2}',
+      // After an array value, with JSON whitespace around the names, and a name ending in an escaped backslash.
+      '{"a":[1],"a":2}',
+      '{ "a" : 1 , "a" : 2 }',
+      '{"a\\\\":1,"a\\\\":2}',
     ]) {
       expect(decodeBytes(bytes(sent), 1000)).toEqual({ value: sent, encoding: "text", truncated: false });
     }
@@ -88,6 +95,15 @@ describe("decodeBytes", () => {
       "[1e+400]",
       "[-1E+400]",
       '{"n":1E-400}',
+      // Sixteen significant digits no double holds.
+      "[8.000000000000001]",
+      // Just past the largest double, and fifteen digits a subnormal double cannot hold.
+      "[1.8e308]",
+      "[1.23456789012345e-310]",
+      // Below the range through the zeros of a fraction alone, with no exponent.
+      `[0.${"0".repeat(330)}1]`,
+      // An exponent makes nineteen digits no integer, so the quoting leaves them to be rounded.
+      "[1234567890123456789e0]",
       // JSON.stringify writes negative zero as 0, however it was spelled.
       '{"z":-0}',
       "[-0.0]",
@@ -102,6 +118,25 @@ describe("decodeBytes", () => {
       "[1,2.5,-3,1e2,1E+2,1.10,100.0,0.1,5e-1,0.1e1,12e-1,0.00012,1.2e-4,0,0.0,5e-324,1.7976931348623157e308]";
     expect(decodeBytes(bytes(sent), 1000)).toEqual({
       value: [1, 2.5, -3, 100, 100, 1.1, 100, 0.1, 0.5, 1, 1.2, 0.00012, 0.00012, 0, 0, 5e-324, 1.7976931348623157e308],
+      encoding: "json",
+      truncated: false,
+    });
+    // Seventeen significant digits of one double spelled otherwise than String() writes it: with
+    // trailing zeros, with an exponent, and with a capital E.
+    expect(decodeBytes(bytes("[0.30000000000000004000,30000000000000004e-17,1.7976931348623157E308]"), 1000)).toEqual({
+      value: [0.30000000000000004, 0.30000000000000004, 1.7976931348623157e308],
+      encoding: "json",
+      truncated: false,
+    });
+    // At the edges of what a double holds exactly: fifteen significant digits near the largest double and
+    // among the subnormal ones, and sixteen or seventeen that are the shortest spelling of their double.
+    expect(
+      decodeBytes(
+        bytes("[9.99999999999999e307,1.23456789012345e-309,-123456789012345,8.000000000000002,0.30000000000000004]"),
+        1000,
+      ),
+    ).toEqual({
+      value: [9.99999999999999e307, 1.23456789012345e-309, -123456789012345, 8.000000000000002, 0.30000000000000004],
       encoding: "json",
       truncated: false,
     });
