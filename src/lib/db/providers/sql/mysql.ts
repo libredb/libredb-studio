@@ -16,6 +16,7 @@ import {
   type IndexSchema,
   type KindCount,
   type ObjectDetail,
+  type DescribeObjectsOptions,
   type ObjectDetailBatch,
   type ObjectKindSpec,
   type ObjectSourceDocument,
@@ -56,6 +57,7 @@ import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { unquoteLiteral } from "@/lib/sql/values";
+import { portableDefaultSql, showCreateColumnDefaults } from "./mysql-show-create";
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -1756,11 +1758,16 @@ interface CatalogDefaultReading {
   readonly absence: "sql-null" | "null-keyword";
   /** Whether a string default arrives evaluated, or as the SQL literal as written. */
   readonly literal: "evaluated" | "as-written";
+  /**
+   * Where a default's SQL text comes from: the catalog row itself, or - on the flavour whose
+   * catalog carries none - `SHOW CREATE TABLE`, read only for a caller that asks (#1031).
+   */
+  readonly defaultSql: "catalog" | "show-create";
 }
 
 const CATALOG_DEFAULT_READING: Record<MySQLFlavour, CatalogDefaultReading> = {
-  mysql: { absence: "sql-null", literal: "evaluated" },
-  mariadb: { absence: "null-keyword", literal: "as-written" },
+  mysql: { absence: "sql-null", literal: "evaluated", defaultSql: "show-create" },
+  mariadb: { absence: "null-keyword", literal: "as-written", defaultSql: "catalog" },
 };
 
 /**
@@ -1812,9 +1819,10 @@ function catalogDefault(
   }
   // MySQL reports the VALUE, and no column of the row says whether that text is also SQL:
   // `abc` is a value and is not valid after DEFAULT, while `b'1'` and `0x616263` ARE SQL,
-  // and all three arrive with an EMPTY `EXTRA`. So this flavour declares no SQL text at all
-  // rather than a guessed one. Do not "complete" this arm without a measurement that tells
-  // the two apart.
+  // and all three arrive with an EMPTY `EXTRA`. So the CATALOG row declares no SQL text
+  // rather than a guessed one. The text comes from the engine instead, `SHOW CREATE TABLE`,
+  // for a caller that asks for it (`defaultSql: "show-create"`, #1031), and is filled in by
+  // `objectDetailFromRows`. Do not guess it here from the value or the type.
   return { defaultValue: raw };
 }
 
@@ -1842,14 +1850,22 @@ function objectDetailFromRows(
   schema: string,
   rows: DetailRows,
   reading: CatalogDefaultReading,
+  ddlDefaults?: ReadonlyMap<string, string>,
 ): ObjectDetail {
-  const columns: ColumnSchema[] = rows.columns.map((row) => ({
-    name: row.column_name,
-    type: row.data_type,
-    nullable: row.is_nullable === "YES",
-    isPrimary: row.column_key === "PRI",
-    ...catalogDefault(row.column_default, row.extra, reading),
-  }));
+  const columns: ColumnSchema[] = rows.columns.map((row) => {
+    const catalog = catalogDefault(row.column_default, row.extra, reading);
+    // Only for a column the catalog says HAS a default: the DDL says `DEFAULT NULL` for a
+    // nullable column with none, and that is not a default the column was given (#1031).
+    const ddl = catalog.defaultValue === undefined ? undefined : ddlDefaults?.get(row.column_name);
+    return {
+      name: row.column_name,
+      type: row.data_type,
+      nullable: row.is_nullable === "YES",
+      isPrimary: row.column_key === "PRI",
+      ...catalog,
+      ...(ddl === undefined ? {} : { defaultExpression: portableDefaultSql(ddl, row.data_type) }),
+    };
+  });
 
   const byIndex = new Map<string, IndexSchema>();
   for (const row of rows.indexes) {
@@ -2578,8 +2594,18 @@ export class MySQLProvider extends SQLBaseProvider {
    * on path. The three detail reads may carry rows for the extra `limit + 1` object; they
    * are dropped here rather than by a fourth bound, since the target list is what says which
    * objects the answer is about.
+   *
+   * `defaultSql` adds ONE `SHOW CREATE TABLE` per described table that has a default, on the
+   * flavour whose catalog spells no default as SQL (#1031, `readDefaultSql`). It is the one
+   * read here that grows with the folder, which is why only a caller that asks pays it, and
+   * the caller's `limit` bounds it, since only described objects are read.
    */
-  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+  public async describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+    options?: DescribeObjectsOptions,
+  ): Promise<ObjectDetailBatch> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     // Two questions, asked in order, and only the DECLARATION answers the first, for the
@@ -2627,6 +2653,12 @@ export class MySQLProvider extends SQLBaseProvider {
       );
       const indexes = byObjectName(await this.runObjectQuery<DetailIndexRow[]>(conn, statements.indexes, detailParams));
 
+      const reading = CATALOG_DEFAULT_READING[this.measuredFlavour];
+      const ddlDefaults =
+        options?.defaultSql === true && reading.defaultSql === "show-create"
+          ? await this.readDefaultSql(conn, schema, described, columns, reading)
+          : undefined;
+
       const details = described
         .map((row) =>
           objectDetailFromRows(
@@ -2637,7 +2669,8 @@ export class MySQLProvider extends SQLBaseProvider {
               foreignKeys: foreignKeys.get(row.name) ?? [],
               indexes: indexes.get(row.name) ?? [],
             },
-            CATALOG_DEFAULT_READING[this.measuredFlavour],
+            reading,
+            ddlDefaults?.get(row.name),
           ),
         )
         .sort((left, right) => comparePaths(left.path, right.path));
@@ -2645,6 +2678,49 @@ export class MySQLProvider extends SQLBaseProvider {
     } finally {
       conn.release();
     }
+  }
+
+  /**
+   * Each described table's default SQL, read from `SHOW CREATE TABLE` (#1031), keyed by table
+   * then column. A table is absent from the answer whenever its text cannot be trusted, and
+   * an absent table keeps today's catalog reading - no `defaultExpression` - rather than
+   * failing a read that was going to succeed:
+   *
+   * - A table with no catalog default is never read: its DDL has nothing to add.
+   * - A refusal or an absence is `readSourcePart`'s own classification, so this read and the
+   *   Source tab agree about what a refusal is. Measured: a column-level `GRANT SELECT (cols)`
+   *   reads the catalog and is refused `SHOW CREATE TABLE` with 1142, and a table dropped
+   *   between the catalog read and this one answers 1146. Anything else still raises.
+   * - Text `showCreateColumnDefaults` cannot read to the end, or that lacks a DEFAULT for a
+   *   column the catalog says has one, leaves the WHOLE table on the catalog: half a table
+   *   on each reading would put both readings into one diff.
+   *
+   * ONE ROUND TRIP PER TABLE, sequential on the connection the three catalog reads used. That
+   * is the N+1 shape this method's caller exists to avoid, taken on deliberately and only when
+   * asked: see `DescribeObjectsOptions`.
+   */
+  private async readDefaultSql(
+    conn: PoolConnection,
+    schema: string,
+    described: readonly ObjectRow[],
+    columns: ReadonlyMap<string, readonly DetailColumnRow[]>,
+    reading: CatalogDefaultReading,
+  ): Promise<Map<string, ReadonlyMap<string, string>>> {
+    const plan = MYSQL_SOURCE_PART_PLANS.table[0];
+    const answer = new Map<string, ReadonlyMap<string, string>>();
+    for (const row of described) {
+      const withDefault = (columns.get(row.name) ?? []).filter(
+        (column) => catalogDefault(column.column_default, column.extra, reading).defaultValue !== undefined,
+      );
+      if (withDefault.length === 0) continue;
+      const address = `${this.escapeIdentifier(schema)}.${this.escapeIdentifier(row.name)}`;
+      const read = await this.readSourcePart(conn, plan, address);
+      if (read.outcome !== "text") continue;
+      const defaults = showCreateColumnDefaults(read.text);
+      if (defaults === undefined || withDefault.some((column) => !defaults.has(column.column_name))) continue;
+      answer.set(row.name, defaults);
+    }
+    return answer;
   }
 
   /**

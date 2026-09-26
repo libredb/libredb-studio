@@ -1139,6 +1139,52 @@ describe("POST /api/db/objects/inventory", () => {
     });
   });
 
+  test("includeDefaultSql asks describeObjects for default SQL, and only then is an options argument passed", async () => {
+    // #1031: MySQL's catalog spells a default as a value, so the SQL text costs one DDL read per
+    // table. Only SchemaDiff asks. The call without the flag is byte-for-byte the call above.
+    const describeObjects = mock<DatabaseProvider["describeObjects"]>(async () => ({ details: [] }));
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () => [object(["app", "orders"], "table")]),
+      describeObjects,
+    });
+
+    await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, includeColumns: true, includeDefaultSql: true },
+      }) as never,
+    );
+
+    expect(describeObjects.mock.calls[0]).toEqual([["app"], "table", 1, { defaultSql: true }]);
+  });
+
+  test.each([
+    [
+      "is not a boolean",
+      { includeColumns: true, includeDefaultSql: "true" },
+      '"includeDefaultSql" must be true or false',
+    ],
+    [
+      "comes without includeColumns, where there is no column to carry it",
+      { includeDefaultSql: true },
+      '"includeDefaultSql" needs "includeColumns": default SQL is carried on the columns',
+    ],
+  ])("includeDefaultSql that %s is a caller mistake", async (_label, flags, error) => {
+    activeProvider = objectProvider({
+      listContainers: mock(async () => []),
+      listObjects: mock(async () => []),
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection, ...flags } }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(error);
+  });
+
   test("includeColumns must be a boolean, and anything else is a caller mistake", async () => {
     // Answering the cheap read to a caller who is about to render an empty column list is the
     // silent degradation this surface exists to avoid.

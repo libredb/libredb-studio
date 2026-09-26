@@ -6,6 +6,7 @@ import {
   INVENTORY_LIMIT,
   INVENTORY_PAIR_LIMIT,
   INVENTORY_TRUNCATION_REASON,
+  ObjectRouteError,
   optionalBoolean,
   optionalContainerList,
   optionalStringArray,
@@ -59,6 +60,13 @@ export const dynamic = "force-dynamic";
  * provider cannot return more detail than this route is willing to carry, and a provider that
  * bounded its own read says so in its own `truncated` - which is joined into this answer, because
  * a short column read is exactly as much a bounded inventory as a short listing.
+ *
+ * `includeDefaultSql` is the one read here that is NOT bounded by the pair count (#1031). It asks
+ * each `describeObjects` for `defaultSql`, which on MySQL is one `SHOW CREATE TABLE` per table with
+ * a default, because that catalog spells a default as a value rather than as SQL. SchemaDiff asks,
+ * since a migration pastes the text and a snapshot must capture it when taken; every other reader
+ * does not, and gets exactly the call it got before. It needs `includeColumns`, since the text is
+ * carried on the columns, and asking for it alone is a caller mistake rather than a silent no-op.
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body): Promise<ObjectInventory> => {
@@ -98,6 +106,13 @@ export async function POST(req: NextRequest) {
     let columnBound: ObjectInventory["truncated"];
 
     const includeColumns = optionalBoolean(body, "includeColumns");
+    const includeDefaultSql = optionalBoolean(body, "includeDefaultSql");
+    if (includeDefaultSql && !includeColumns) {
+      throw new ObjectRouteError(
+        '"includeDefaultSql" needs "includeColumns": default SQL is carried on the columns',
+        400,
+      );
+    }
     const describeObjects = provider.describeObjects.bind(provider);
 
     const objects: DatabaseObject[] = [];
@@ -119,7 +134,10 @@ export async function POST(req: NextRequest) {
       // budget: describing a folder this read already had to cut short would buy columns for
       // objects the caller is not being given.
       if (includeColumns && objects.length > before) {
-        const batch = await describeObjects(pair.container, pair.kind, objects.length - before);
+        const bound = objects.length - before;
+        const batch = includeDefaultSql
+          ? await describeObjects(pair.container, pair.kind, bound, { defaultSql: true })
+          : await describeObjects(pair.container, pair.kind, bound);
         details.push(...batch.details);
         // The provider's own bound, kept in the provider's own words. It is reported even when the
         // listing above fitted, because a complete list of objects whose columns were cut is still
