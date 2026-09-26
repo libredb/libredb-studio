@@ -22,12 +22,15 @@
  * - every module answer, by identity: the module functions index.ts calls are spied with spyOn and
  *   answer objects of this file's own, and the provider must hand back those very objects and hand
  *   the modules the very objects it was given (spec 3.5). Identity alone cannot see an answer handed
- *   back after a part of it was deleted or replaced in place, so every answer a spy or the fake client
- *   gives is frozen whole, which makes such a write throw in these strict modules, and each answer is
- *   compared after the call with a fresh copy built the same way; and each answer holds the parts a
- *   composition could reshape (a tombstone row, warnings on a read that was not limited, pagination,
- *   a topic's status, a count's floor, a column, a truncation, a cut part and a refused one, and every
- *   field of a panel's answer);
+ *   back after a part of it was deleted or replaced in place, so every answer of this file's own that
+ *   a spy or the fake client gives is frozen whole, which makes such a write throw in these strict
+ *   modules, and each answer is compared after the call with a fresh copy built the same way. And
+ *   each answer these tests give holds the parts a composition could lose: a request and a panel's
+ *   answer hold every field their types declare, which tsc holds (Whole below); the shaping's answer
+ *   is toQueryResult's own, over an outcome holding a tombstone row, warnings on a read that was not
+ *   limited, and pagination; and objects.ts's answers hold every part objects.ts writes into one (a
+ *   topic's status, a count's floor and an unavailable count, a column, a truncation, a cut part and
+ *   a refused one);
  * - query timeouts on both sides of every clamp a deadline could hide behind.
  * The fake client records every call and answers objects of this file's own, frozen; it keeps the
  * client's contract (brokers in node-id order). Every spy is restored after its test. No
@@ -186,6 +189,13 @@ function deepFreeze<T>(value: T): T {
   }
   return value;
 }
+
+/**
+ * T with every member required, at every depth. An answer that satisfies it holds every part its type
+ * declares, so a composition that deletes or replaces any of them in place has something to lose, and
+ * tsc refuses the answer once its type declares a part it does not hold.
+ */
+type Whole<T> = T extends Date ? T : T extends object ? { [K in keyof T]-?: Whole<T[K]> } : T;
 
 const broker = (nodeId: number): KafkaBroker => ({ nodeId, host: `broker-${nodeId}`, port: 9092, rack: null });
 const topicNamed = (name: string): KafkaTopicMetadata => ({
@@ -465,7 +475,7 @@ describe("connect", () => {
       expect(connectedDuringRead).toBe(false);
       expect(provider.isConnected()).toBe(true);
       // It keeps that client: the next surface hands its module the very client the factory built.
-      const listObjects = spyOnly(objectsModule, "listObjects").mockResolvedValue([]);
+      const listObjects = spyOnly(objectsModule, "listObjects").mockResolvedValue(deepFreeze([]));
       await provider.listObjects([], "topic");
       expect(listObjects.mock.calls[0][0]).toBe(built[0].client);
     },
@@ -612,9 +622,20 @@ describe("disconnect", () => {
 // ============================================================================
 
 describe("query", () => {
-  const TEXT = '{"topic":"orders","from":"earliest"}';
+  const TEXT = '{"topic":"orders","partition":0,"from":{"offset":"120"},"limit":3}';
   /** The limit the parsed request carries, which is not the parser's maximum, so the two are told apart. */
   const REQUEST_LIMIT = 3;
+  /**
+   * The request the spied parse answers for TEXT, whole: a partition and a start with an offset, every
+   * part its type declares, which tsc holds.
+   */
+  const makeRequest = (): requestModule.ReadRequest =>
+    ({
+      topic: "orders",
+      partition: 0,
+      from: { kind: "offset", offset: BigInt(120) },
+      limit: REQUEST_LIMIT,
+    }) satisfies Whole<requestModule.ReadRequest>;
   const EMPTY_OUTCOME: readModule.ReadOutcome = deepFreeze({ rows: [], warnings: [], wasLimited: false });
   /** The shaping itself, taken before any test spies on it, so an answer can be built the way it builds one. */
   const shape = resultsModule.toQueryResult;
@@ -654,11 +675,6 @@ describe("query", () => {
       const readMessages = spyOnly(readModule, "readMessages");
       const toQueryResult = spyOnly(resultsModule, "toQueryResult");
       const deadline = spyOnly(AbortSignal, "timeout");
-      const makeRequest = (): requestModule.ReadRequest => ({
-        topic: "orders",
-        from: { kind: "earliest" },
-        limit: REQUEST_LIMIT,
-      });
       /** toQueryResult's own answer over an outcome's own parts: its rows, its warnings and its pagination. */
       const answerOver = (outcome: readModule.ReadOutcome): QueryResult =>
         shape(outcome.rows, 42, REQUEST_LIMIT, outcome.warnings, outcome.wasLimited);
@@ -749,11 +765,7 @@ describe("query", () => {
       const { provider, fake, built } = await connectedOver();
       // Every step answers; the failing one fails once, and asked again would answer, so a read that
       // asked a failed step again, or went on past it, would answer where it should fail.
-      const request = deepFreeze<requestModule.ReadRequest>({
-        topic: "orders",
-        from: { kind: "earliest" },
-        limit: REQUEST_LIMIT,
-      });
+      const request = deepFreeze(makeRequest());
       const answer = deepFreeze(shape([], 0, REQUEST_LIMIT, [], false));
       const parse = spyOnly(requestModule, "parseReadRequest").mockReturnValue(request);
       const readMessages = spyOnly(readModule, "readMessages").mockResolvedValue(EMPTY_OUTCOME);
@@ -817,8 +829,12 @@ const detailOf = (name: string): ObjectDetail => ({
   foreignKeys: [],
 });
 /**
- * Each answer holds the parts a composition could reshape: a count's floor, an unavailable count, a
- * topic's status, a column, a truncation, a cut part and a refused one.
+ * Each answer holds every part objects.ts writes into one of its kind: a count's floor, an unavailable
+ * count, a topic's status, a column as objects.ts writes one, a truncation, a cut part and a refused
+ * one. It holds none of the optional parts the shared types declare that objects.ts never writes (a row
+ * count, a size, a column's base type and defaults, an index, a foreign key, an edit offer): deleting
+ * one of those in place changes nothing, and holding every field of types every provider shares would
+ * make each field another engine adds to them fail this file until it is copied here.
  */
 const OBJECT_SURFACES: readonly ObjectSurface[] = [
   [
@@ -1046,28 +1062,41 @@ async function expectOneClientAfter(provider: KafkaProvider, built: readonly Fak
 describe("the monitoring panels", () => {
   test("each panel makes exactly the reads spec 7.1 lists, on every load, and answers its mapping's own answer over those reads' own answers", async () => {
     const { provider, fake } = await connectedOver();
-    // Each mapping answer holds every part its type has, so a composition that drops, empties or
-    // replaces one has something to lose; each is frozen whole, so a write to it in place throws.
-    const makeHealth = (): HealthInfo => ({
-      activeConnections: 7,
-      databaseSize: "2 KB on disk",
-      cacheHitRatio: "N/A",
-      slowQueries: [{ query: "q", calls: 1, avgTime: "1 ms" }],
-      activeSessions: [{ pid: 1, user: "u", database: "d", state: "s", query: "q", duration: "1 s" }],
-    });
-    const makeOverview = (): DatabaseOverview => ({
-      version: "N/A",
-      uptime: "N/A",
-      activeConnections: 7,
-      maxConnections: 100,
-      databaseSize: "2 KB on disk",
-      databaseSizeBytes: 2048,
-      tableCount: 3,
-      indexCount: 0,
-    });
-    const makeStorage = (): StorageStats[] => [
-      { name: "broker 2: /var/kafka", location: "/var/kafka", size: "2 KB", sizeBytes: 2048, usagePercent: 75 },
-    ];
+    // Each mapping answer holds every field its type declares, which tsc holds, so a composition that
+    // drops, empties or replaces one has something to lose; each is frozen whole, so a write to it in
+    // place throws.
+    const makeHealth = (): HealthInfo =>
+      ({
+        activeConnections: 7,
+        databaseSize: "2 KB on disk",
+        cacheHitRatio: "N/A",
+        slowQueries: [{ query: "q", calls: 1, avgTime: "1 ms" }],
+        activeSessions: [{ pid: 1, user: "u", database: "d", state: "s", query: "q", duration: "1 s" }],
+      }) satisfies Whole<HealthInfo>;
+    const makeOverview = (): DatabaseOverview =>
+      ({
+        version: "N/A",
+        uptime: "N/A",
+        startTime: new Date(1_790_000_000_000),
+        activeConnections: 7,
+        maxConnections: 100,
+        databaseSize: "2 KB on disk",
+        databaseSizeBytes: 2048,
+        tableCount: 3,
+        indexCount: 0,
+      }) satisfies Whole<DatabaseOverview>;
+    const makeStorage = (): StorageStats[] =>
+      [
+        {
+          name: "broker 2: /var/kafka",
+          location: "/var/kafka",
+          size: "2 KB",
+          sizeBytes: 2048,
+          usagePercent: 75,
+          walSize: "1 KB",
+          walSizeBytes: 1024,
+        },
+      ] satisfies Whole<StorageStats[]>;
     const health = deepFreeze(makeHealth());
     const overview = deepFreeze(makeOverview());
     const storage = deepFreeze(makeStorage());
