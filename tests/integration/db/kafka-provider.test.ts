@@ -1159,6 +1159,89 @@ describe("the object surface", () => {
   });
 });
 
+describe("internal topics, never named to the broker (spec 4.1, 4.5)", () => {
+  // Kafka's own list (Topic.isInternal in 4.3.1). A broker before Apache Kafka 2.8 creates a missing
+  // internal topic for any Metadata request that names one, whatever allowAutoTopicCreation and
+  // auto.create.topics.enable say, so no surface may send a request that names one.
+  const INTERNAL = ["__consumer_offsets", "__transaction_state", "__share_group_state"];
+  const refusal = (name: string) =>
+    `Topic ${JSON.stringify(name)} is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here`;
+  const SURFACES_NAMING_A_TOPIC: ReadonlyArray<
+    readonly [string, (provider: KafkaProvider, name: string) => Promise<unknown>]
+  > = [
+    ["a read", (provider, name) => provider.query(JSON.stringify({ topic: name }))],
+    ["describeObject", (provider, name) => provider.describeObject([name], "topic")],
+    ["readObjectSource", (provider, name) => provider.readObjectSource([name], "topic")],
+  ];
+
+  test.each(INTERNAL.flatMap((name) => SURFACES_NAMING_A_TOPIC.map(([surface]) => [name, surface])))(
+    "%s: %s answers the internal-topic refusal and the library is asked nothing",
+    async (name, surface) => {
+      const { provider, recorded } = await connected();
+      const sent = recorded.calls.length;
+      const ask = SURFACES_NAMING_A_TOPIC.find(([named]) => named === surface)![1];
+      const error = await ask(provider, name).catch((e) => e);
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error).toMatchObject({ provider: "kafka", message: refusal(name) });
+      expect(recorded.calls.slice(sent)).toEqual([]);
+    },
+  );
+
+  test("a group committed on an internal topic keeps its rows there, with no latest offset and the reason, and no request names the topic", async () => {
+    const { provider, recorded } = await connected({
+      // lag-classic's own entry, with offsets committed on __consumer_offsets too, as a group that
+      // reads that topic, such as a lag monitor's, commits them.
+      "admin.listConsumerGroupOffsets": (request) => {
+        const asked = (request as { groups: string[] }).groups;
+        const answer = kafkaFixture<CommittedAnswer>("committed-offsets").filter((g) => asked.includes(g.groupId));
+        for (const entry of answer) {
+          entry.topics.push({
+            name: "__consumer_offsets",
+            partitions: [
+              { partitionIndex: 1, committedOffset: BigInt(9) },
+              { partitionIndex: 0, committedOffset: BigInt(7) },
+            ],
+          });
+        }
+        return answer;
+      },
+    });
+    const sent = recorded.calls.length;
+    const rows = await lagRows(provider, "lag-classic");
+    // Each whole row, the latest offset included, which lagRows does not type.
+    const internalRows: unknown[] = rows.filter((r) => r.topic === "__consumer_offsets");
+    expect(internalRows).toEqual([
+      {
+        topic: "__consumer_offsets",
+        partition: 0,
+        committedOffset: "7",
+        latestOffset: null,
+        lag: null,
+        note: `latest offset not read: ${refusal("__consumer_offsets")}`,
+      },
+      {
+        topic: "__consumer_offsets",
+        partition: 1,
+        committedOffset: "9",
+        latestOffset: null,
+        lag: null,
+        note: `latest offset not read: ${refusal("__consumer_offsets")}`,
+      },
+    ]);
+    // The control: the group's other topic keeps its lag, read at the high watermark.
+    expect(rows.filter((r) => r.topic === "orders").map((r) => r.lag)).toHaveLength(3);
+    expect(rows.filter((r) => r.topic === "orders").every((r) => r.lag !== null)).toBe(true);
+    const named = recorded.calls
+      .slice(sent)
+      .filter(([, args]) =>
+        JSON.stringify(args, (_key, value) => (typeof value === "bigint" ? value.toString() : value)).includes(
+          "__consumer_offsets",
+        ),
+      );
+    expect(named).toEqual([]);
+  });
+});
+
 describe("declarations", () => {
   test("capabilities and labels are the spec's, and the refresh pattern matches no read request", async () => {
     const { provider } = await connected();

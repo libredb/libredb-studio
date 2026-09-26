@@ -183,6 +183,15 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
     expect(DOC).toContain(internal);
   });
 
+  test("the internal topics the doc names are the ones the adapter refuses by name", () => {
+    // Matched whole, so a renamed or recomputed set fails here instead of reading back nothing.
+    const declared = /^const INTERNAL_TOPICS: ReadonlySet<string> = new Set\(\[([^\]]*)\]\);$/m.exec(ADAPTER)?.[1];
+    expect(declared).toBeDefined();
+    const names = [...(declared ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    expect(names).toEqual(["__consumer_offsets", "__transaction_state", "__share_group_state"]);
+    expect(DOC).toContain(`- Internal topics (${names.map((name) => `\`${name}\``).join(", ")}, the set`);
+  });
+
   test("the never-joined group id is the adapter's", () => {
     expect(ADAPTER).toContain('export const KAFKA_SENTINEL_GROUP_ID = "libredb-studio-never-joined";');
     expect(DOC).toContain("`libredb-studio-never-joined`");

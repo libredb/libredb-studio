@@ -327,6 +327,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   };
 
   const readMetadata = async (names: readonly string[]): Promise<KafkaClusterMetadata> => {
+    refuseInternalTopics(names);
     // A copy, because the library sorts the array it is given in place (dist/clients/base/base.js,
     // the deduplication key), and the caller's list is the caller's. An empty list reads brokers
     // only, which the library would answer from its cache with no round trip: forced, so connect
@@ -355,7 +356,9 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
 
   /**
    * The client's listOffsets reads a topic whole, and hangs on an internal one: refused first, with
-   * the reason (spec 4.1). The metadata answers exactly the topics asked for, on both paths.
+   * the reason (spec 4.1), by name in readMetadata and, for a topic the broker marks internal that
+   * Kafka's list does not hold, by the answer. The metadata answers exactly the topics asked for, on
+   * both paths.
    */
   const readableTopic = async (topic: string): Promise<void> => {
     const leaderless = (await readMetadata([topic])).topics.flatMap((t) =>
@@ -501,6 +504,8 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
     // it waited on, and sends no fetch; what it waited on settles on its own, under the client's timers.
     fetch: (topic, partition, offset, signal) =>
       guard(async () => {
+        // The forced re-read of a moved leader below names the topic in a Metadata request.
+        refuseInternalTopics([topic.name]);
         if (signal.aborted) throw stoppedRead();
         const leader = leaderOf(topic, partition);
         await abortable(requireFetchVersion(), signal);
@@ -539,7 +544,11 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
         );
       }),
 
-    topicConfigs: (topic) => guard(() => readConfigs(TOPIC_RESOURCE, topic)),
+    topicConfigs: (topic) =>
+      guard(async () => {
+        refuseInternalTopics([topic]);
+        return readConfigs(TOPIC_RESOURCE, topic);
+      }),
 
     brokerConfigs: (nodeId) => guard(() => readConfigs(BROKER_RESOURCE, String(nodeId))),
 
@@ -581,6 +590,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
 
     logDirs: (topics) =>
       guard(async () => {
+        refuseInternalTopics(topics.map((t) => t.name));
         const answer = await admin.describeLogDirs({
           topics: topics.map((t) => ({ name: t.name, partitions: t.partitions.map((p) => p.partition) })),
         });
@@ -623,6 +633,30 @@ function internalTopic(name: string): KafkaError {
     "unreadable-topic",
     `Topic ${JSON.stringify(name)} is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here`,
   );
+}
+
+/**
+ * Kafka's internal topics: the set Apache Kafka's own Topic.isInternal reads
+ * (org.apache.kafka.common.internals.Topic, INTERNAL_TOPICS in 4.3.1: the group metadata, the
+ * transaction state and the share-group state topics), matched whole and by case, as Kafka does.
+ */
+const INTERNAL_TOPICS: ReadonlySet<string> = new Set([
+  "__consumer_offsets",
+  "__transaction_state",
+  "__share_group_state",
+]);
+
+/**
+ * Refuses an internal topic by name, before any request names it (spec 4.1, 4.5). A broker before
+ * Apache Kafka 2.8 creates a missing internal topic for any Metadata request that names it, whatever
+ * allowAutoTopicCreation and auto.create.topics.enable say (KafkaApis.getTopicMetadata in 2.7.2;
+ * 2.8.0 answers UNKNOWN_TOPIC_OR_PARTITION instead), so refusing it once the answer comes back is too
+ * late there. The answer's own mark stays the second guard, for a topic the broker marks internal
+ * that this list does not hold.
+ */
+function refuseInternalTopics(names: readonly string[]): void {
+  const internal = names.find((name) => INTERNAL_TOPICS.has(name));
+  if (internal !== undefined) throw internalTopic(internal);
 }
 
 function mapMetadata(md: LibMetadata): KafkaClusterMetadata {

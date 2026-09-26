@@ -144,6 +144,7 @@ The diff catches a future client version whose read path starts joining a group,
 
 The broker's default `auto.create.topics.enable=true` is live: a metadata read of a missing topic with `autocreateTopics: true` created it in the measurement.
 So `platformatic-client.ts` passes `autocreateTopics: false` on every metadata read, explicitly rather than by the client default, and a missing topic answers a `QueryError` saying the topic does not exist.
+A missing internal topic is the exception on a broker before Apache Kafka 2.8, which creates it for any Metadata request that names it, whatever `allowAutoTopicCreation` and `auto.create.topics.enable` say, so no request the provider sends names one ([§6.1](#kinds-folders-and-identity)).
 
 ### 3.4 One client per connection, and no fetch session
 
@@ -396,8 +397,11 @@ No container level: the three kind folders hang directly under the connection ro
 
 - Partitions are not a kind: the tree cannot nest children under an object, so a partition kind would be one flat folder holding every partition of every topic; partitions live in the topic's source, and a partition worth acting on surfaces as the topic's `status`.
 - Lag is not a status: any threshold would be the product's invention, so lag lives in the group's source.
-- Internal topics (`__consumer_offsets`, `__transaction_state`, `__share_group_state`) are neither listed nor readable.
-  The listing leaves them out, and the client's metadata cache answers their names with nothing, while its `listOffsets` on one throws inside its socket handler, so a read or a source of an internal name is refused before the client is asked, with a `QueryError` such as: `Topic "__consumer_offsets" is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here`.
+- Internal topics (`__consumer_offsets`, `__transaction_state`, `__share_group_state`, the set Apache Kafka's own `Topic.isInternal` reads) are neither listed nor readable.
+  The listing leaves them out, the client's metadata cache answers their names with nothing, and its `listOffsets` on one throws inside its socket handler.
+  A read, a description or a source that names one is refused by that name before any request names it, because a broker before Apache Kafka 2.8 creates a missing internal topic for any Metadata request that names it, whatever `allowAutoTopicCreation` and `auto.create.topics.enable` say.
+  The refusal is a `QueryError` such as: `Topic "__consumer_offsets" is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here`.
+  A topic the broker marks internal that this set does not hold, which the client's metadata answers with nothing too, is refused in the same words.
 - A partition with no leader is answered by Kafka with LEADER_NOT_AVAILABLE or LISTENER_NOT_FOUND, and the client throws on any partition error while keeping the whole answer on its error, so the adapter reads the metadata and the topic listing from that answer: the tree lists the topic `offline`, and the counts, the overview, health and storage keep working.
   The client reads a topic's offsets as a whole, so a read of that topic is refused with a `QueryError` naming the leaderless partitions, and its source shows its partitions without offsets and says why.
 - The Brokers folder lists the live brokers only, because the Metadata answer names no broker that is down, and marks no controller: on KRaft the answer's controller id is a random live broker, and with dedicated controllers the controller is never a listed broker.
@@ -517,7 +521,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 | invalid request JSON, host, port, credential, SASL mechanism or TLS setting, SASL over plaintext, a credential with no mechanism, an SSH tunnel, bound params | `DatabaseConfigError`, never echoing a value |
 | empty editor text | `QueryError` |
 | an unknown topic ("Unknown topic <name>.") | `QueryError`: the topic does not exist |
-| an internal topic | `QueryError`: internal to Kafka and not readable here |
+| an internal topic, refused by name before any request names it | `QueryError`: internal to Kafka and not readable here |
 | a partition with no leader | `QueryError` naming the leaderless partitions |
 | `OFFSET_OUT_OF_RANGE` on a fetch | `QueryError` naming the partition's valid range |
 | a broker whose Fetch range does not hold version 13 | `QueryError` naming the broker's range and the version a read sends |

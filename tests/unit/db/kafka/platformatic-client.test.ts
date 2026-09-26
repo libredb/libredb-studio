@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
 import { type AddressInfo, createServer, type Socket } from "node:net";
-import { KafkaError, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
+import { KafkaError, type KafkaReadClient, type KafkaTopicMetadata } from "@/lib/db/providers/stream/kafka/client";
 import {
   createPlatformaticClient,
   KAFKA_SENTINEL_GROUP_ID,
@@ -107,6 +107,32 @@ const ORDERS_ID = ALL.topics.get("orders")!.id;
 /** Every call's first argument, for one recorded method. */
 const argsOf = (calls: Array<[string, unknown[]]>, name: string) =>
   calls.filter(([called]) => called === name).map(([, args]) => args[0]);
+
+/**
+ * Kafka's internal topics, the set Apache Kafka's own Topic.isInternal reads in 4.3.1
+ * (org.apache.kafka.common.internals.Topic, INTERNAL_TOPICS), and the refusal each one answers.
+ */
+const INTERNAL_TOPICS = ["__consumer_offsets", "__transaction_state", "__share_group_state"];
+const internalRefusal = (name: string) =>
+  `Topic ${JSON.stringify(name)} is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here`;
+/** A topic's metadata under another name, which only a caller that built it could hand over. */
+const topicNamed = (name: string): KafkaTopicMetadata => ({
+  name,
+  id: ORDERS_ID,
+  partitions: [{ partition: 0, leader: 1, leaderEpoch: 0, replicas: [1], isr: [1], offlineReplicas: [] }],
+});
+/** Every seam method that names a topic, as a caller asks it about one. */
+const NAMING_CALLS = new Map<string, (client: KafkaReadClient, name: string) => Promise<unknown>>([
+  ["metadata", (client, name) => client.metadata([name])],
+  ["metadata among other names", (client, name) => client.metadata(["orders", name])],
+  ["offsets at the earliest", (client, name) => client.offsets(name, "earliest")],
+  ["offsets at the latest", (client, name) => client.offsets(name, "latest")],
+  ["offsets at the high watermark", (client, name) => client.offsets(name, "high-watermark")],
+  ["offsetsForTimestamp", (client, name) => client.offsetsForTimestamp(name, big(5))],
+  ["fetch", (client, name) => client.fetch(topicNamed(name), 0, big(0), signal())],
+  ["topicConfigs", (client, name) => client.topicConfigs(name)],
+  ["logDirs", (client, name) => client.logDirs([topicNamed("orders"), topicNamed(name)])],
+]);
 
 /**
  * A client over orders whose partition 1 is led by node 1 until a forced metadata read names
@@ -516,21 +542,57 @@ describe("createPlatformaticClient", () => {
     );
   });
 
-  test("an internal topic, which the library answers as undefined, is refused in words", async () => {
+  test.each(INTERNAL_TOPICS.flatMap((name) => [...NAMING_CALLS.keys()].map((call) => [name, call])))(
+    "%s is refused by name at %s, and no request names it (spec 4.1, 4.5)",
+    async (name, call) => {
+      // A broker before Apache Kafka 2.8 creates a missing internal topic for any Metadata request
+      // that names it, whatever allowAutoTopicCreation and auto.create.topics.enable say (2.7's
+      // KafkaApis.getTopicMetadata), and the library's listOffsets on one never settles: so the name
+      // is refused before the library is asked anything, and the library records no call at all.
+      const { lib, calls } = fakeLib();
+      const error = await NAMING_CALLS.get(call)!(createPlatformaticClient(OPTIONS, lib), name).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(KafkaError);
+      expect(error).toMatchObject({ category: "unreadable-topic", message: internalRefusal(name) });
+      expect(calls).toEqual([]);
+    },
+  );
+
+  test.each(["__consumer_offsets_mirror", "_consumer_offsets", "__Consumer_Offsets", "__confluent.support.metrics"])(
+    "%s only looks like an internal topic, and every seam method asks the library about it as about any other",
+    async (name) => {
+      // The control of the refusal above: the set is Kafka's own, matched whole and by case, so a
+      // topic a user or a vendor named with Kafka's prefix is read as any topic is.
+      const asked = await Promise.all(
+        [...NAMING_CALLS].map(async ([call, ask]) => {
+          const { lib, calls } = fakeLib();
+          await ask(createPlatformaticClient(OPTIONS, lib), name).catch(() => undefined);
+          return [call, calls.length > 0];
+        }),
+      );
+      expect(asked).toEqual([...NAMING_CALLS.keys()].map((call) => [call, true]));
+    },
+  );
+
+  test("a topic the broker marks internal and Kafka's list does not name, which the library answers as undefined, is refused in words all the same", async () => {
+    // The second guard: the library's metadata cache skips every topic the broker marks internal
+    // and answers its name with undefined (dist/clients/base/base.js), a vendor's internal topic too.
     const { lib } = fakeLib({
       "admin.metadata": () => ({
         id: "c",
         controllerId: 1,
         brokers: new Map(),
-        topics: new Map([["__consumer_offsets", undefined]]),
+        topics: new Map([["__vendor_internal", undefined]]),
       }),
     });
     const error = await createPlatformaticClient(OPTIONS, lib)
-      .metadata(["__consumer_offsets"])
+      .metadata(["__vendor_internal"])
       .catch((e) => e);
     expect(error).toBeInstanceOf(KafkaError);
     expect(error.category).toBe("unreadable-topic");
-    expect(error.message).toContain("internal");
+    expect(error.message).toBe(internalRefusal("__vendor_internal"));
   });
 
   test("a leaderless partition's metadata is read from the response its error carries, as leader -1", async () => {
@@ -554,17 +616,20 @@ describe("createPlatformaticClient", () => {
     ]);
   });
 
-  test("a leaderless answer holds exactly the topics asked for, and refuses an internal one in words", async () => {
+  test("a leaderless answer holds exactly the topics asked for, and refuses one it marks internal in words", async () => {
+    // The raw answer's own mark is the second guard here: a name Kafka's list holds never gets this
+    // far, so the topic it marks internal is one of a vendor's.
+    const vendorInternal = { ...RAW_OFFLINE.topics[0], name: "__vendor_internal" };
     const { lib } = fakeLib({
       "admin.metadata": () => {
-        throw leaderless();
+        throw leaderless({ ...RAW_OFFLINE, topics: [...RAW_OFFLINE.topics, vendorInternal] });
       },
     });
     const client = createPlatformaticClient(OPTIONS, lib);
-    const internal = await client.metadata(["orders", "__consumer_offsets"]).catch((e) => e);
+    const internal = await client.metadata(["orders", "__vendor_internal"]).catch((e) => e);
     expect(internal).toBeInstanceOf(KafkaError);
     expect(internal.category).toBe("unreadable-topic");
-    expect(internal.message).toContain("internal");
+    expect(internal.message).toBe(internalRefusal("__vendor_internal"));
     const missing = await client.metadata(["orders", "payments"]).catch((e) => e);
     expect(missing.category).toBe("protocol");
     expect(missing.message).toContain('"payments"');
@@ -790,22 +855,25 @@ describe("createPlatformaticClient", () => {
     expect(calls.some(([n]) => n.startsWith("consumer.listOffsets"))).toBe(false);
   });
 
-  test("offsets of an internal topic are refused before the library is asked, which would never settle", async () => {
+  test("offsets of a topic the broker marks internal are refused before the library's listOffsets is asked, which would never settle", async () => {
+    // The second guard on the offsets path, for a name Kafka's list does not hold (the refusal by
+    // name, above, sends nothing at all).
     const { lib, calls } = fakeLib({
       "admin.metadata": () => ({
         id: "c",
         controllerId: 1,
         brokers: new Map(),
-        topics: new Map([["__consumer_offsets", undefined]]),
+        topics: new Map([["__vendor_internal", undefined]]),
       }),
     });
     const client = createPlatformaticClient(OPTIONS, lib);
-    for (const read of [
-      () => client.offsets("__consumer_offsets", "latest"),
-      () => client.offsetsForTimestamp("__consumer_offsets", big(5)),
-    ]) {
-      expect((await read().catch((e) => e)).category).toBe("unreadable-topic");
-    }
+    const refusals = await Promise.all(
+      [
+        () => client.offsets("__vendor_internal", "latest"),
+        () => client.offsetsForTimestamp("__vendor_internal", big(5)),
+      ].map((read) => read().catch((e) => e.message)),
+    );
+    expect(refusals).toEqual([internalRefusal("__vendor_internal"), internalRefusal("__vendor_internal")]);
     expect(calls.some(([n]) => n.startsWith("consumer.listOffsets"))).toBe(false);
   });
 
