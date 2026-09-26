@@ -169,7 +169,7 @@ describe("kafkaConnectionOptions", () => {
  * past every caller, and its PLAIN step joins the credential into text, so `["reader"]` would
  * authenticate as `reader`.
  */
-describe("kafkaConnectionOptions, a field that is not the type DatabaseConnection declares", () => {
+describe("kafkaConnectionOptions, each field as a caller may write it: another type, null, empty or a near miss", () => {
   /** The message of the refusal the options raise for this connection, which is a configuration refusal. */
   const refusalOf = (connection: unknown): string => {
     let thrown: unknown;
@@ -246,6 +246,79 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
   );
 
   test.each([
+    ["in lower case", "plain"],
+    ["in mixed case", "Scram-Sha-512"],
+    ["with a leading space", " PLAIN"],
+    ["with a trailing space", "SCRAM-SHA-256 "],
+    ["an Object.prototype member", "toString"],
+    ["a number", 1],
+    ["false", false],
+    ["true", true],
+    ["an array holding a mechanism", ["PLAIN"]],
+    ["an object", {}],
+  ])(
+    "a saslMechanism that is %s is refused as an unknown mechanism, never matched loosely or coerced",
+    (_label, mechanism) => {
+      expect(refusalOf({ ...base, ssl: TLS_ON, saslMechanism: mechanism, user: "reader", password: "s3cret" })).toBe(
+        UNKNOWN_MECHANISM,
+      );
+    },
+  );
+
+  test("an unknown mechanism is refused before TLS is asked for, so its refusal never quotes it", () => {
+    // A secret pasted into the wrong field is the value a refusal must not repeat.
+    for (const mechanism of ["hunter2", null, ""]) {
+      expect(refusalOf({ ...base, saslMechanism: mechanism, user: "reader", password: "s3cret" })).toBe(
+        UNKNOWN_MECHANISM,
+      );
+    }
+  });
+
+  test.each(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"] as const)("%s reaches the client as itself", (mechanism) => {
+    const { sasl } = mapped({ ...base, ssl: TLS_ON, saslMechanism: mechanism, user: "reader", password: "s3cret" });
+    expect(sasl).toEqual({ mechanism, username: "reader", password: "s3cret" });
+  });
+
+  test("a user or password with no mechanism is refused as a missing mechanism, one of spaces included", () => {
+    for (const credential of [{ user: "reader" }, { password: "s3cret" }, { user: " " }, { password: " " }]) {
+      expect(refusalOf({ ...base, ...credential })).toBe(
+        "A Kafka user or password needs a SASL mechanism: choose PLAIN or SCRAM, or clear both fields",
+      );
+    }
+  });
+
+  test("the dialog's empty user and password are no credential: no SASL and no refusal", () => {
+    // The dialog writes both fields for Kafka, empty when the connection authenticates with nothing.
+    expect(mapped({ ...base, user: "", password: "" })).toEqual({
+      clientId: "libredb-studio",
+      broker: { host: "broker-1", port: 9092 },
+      timeoutMs: 1,
+    });
+  });
+
+  test.each([
+    ["absent", undefined],
+    ["null", null],
+    ["empty", ""],
+    ["an array holding a host", ["broker-1"]],
+  ])("a host that is %s is refused by the shared validator, never defaulted or coerced", (_label, host) => {
+    expect(() => mapped({ ...base, host })).toThrow(DatabaseConfigError);
+  });
+
+  test("the client is handed the host the validator answers, an IPv6 literal without its brackets", () => {
+    expect(mapped({ ...base, host: "[::1]" }).broker.host).toBe("::1");
+    expect(mapped({ ...base, host: "Broker-1.Example" }).broker.host).toBe("broker-1.example");
+    // A bracketed literal is an IP literal too, which is no legal server name.
+    expect(mapped({ ...base, host: "[::1]", ssl: TLS_ON }).tlsServerName).toBeUndefined();
+  });
+
+  test("a null port reads as absent, so the default, and the client is handed the port the validator answers", () => {
+    expect(mapped({ ...base, port: null }).broker.port).toBe(9092);
+    expect(mapped({ ...base, port: "9093" }).broker.port).toBe(9093);
+    expect(() => mapped({ ...base, port: "" })).toThrow(DatabaseConfigError);
+  });
+
+  test.each([
     ["true", true],
     ["false", false],
     ["a string", "require"],
@@ -270,6 +343,10 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
     ["an array holding a mode", ["disable"]],
     ["a number", 1],
     ["a boolean", true],
+    // Only null reads as absent: these are no mode either.
+    ["an empty string", ""],
+    ["false", false],
+    ["zero", 0],
   ])("an ssl.mode that is %s is refused, naming the modes it may be", (_label, mode) => {
     expect(refusalOf({ ...base, ssl: { mode } })).toBe(
       "The connection's ssl.mode must be disable, require, verify-system, verify-ca or verify-full; nothing was sent",
@@ -291,10 +368,17 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
     expect(message).not.toContain(shown);
   });
 
-  test("an empty or null CA, certificate or key is left out, as a panel with nothing pasted", () => {
-    expect(mapped({ ...base, ssl: { mode: "verify-ca", caCert: "", clientCert: null, clientKey: "" } }).tls).toEqual({
-      rejectUnauthorized: true,
-    });
+  test.each(
+    (["caCert", "clientCert", "clientKey"] as const).flatMap((field) =>
+      (
+        [
+          ["empty", ""],
+          ["null", null],
+        ] as const
+      ).map(([label, value]) => [field, label, value] as const),
+    ),
+  )("an ssl.%s that is %s is left out, as a panel with nothing pasted", (field, _label, value) => {
+    expect(mapped({ ...base, ssl: { mode: "verify-ca", [field]: value } }).tls).toEqual({ rejectUnauthorized: true });
   });
 
   test.each([
@@ -315,9 +399,11 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
   });
 
   test("the panel is checked whatever its mode, disable included", () => {
-    expect(refusalOf({ ...base, ssl: { mode: "disable", clientKey: 1001 } })).toBe(
-      "The connection's ssl.clientKey must be a string; nothing was sent",
-    );
+    for (const field of ["caCert", "clientCert", "clientKey"] as const) {
+      expect(refusalOf({ ...base, ssl: { mode: "disable", [field]: 1001 } })).toBe(
+        `The connection's ssl.${field} must be a string; nothing was sent`,
+      );
+    }
     expect(refusalOf({ ...base, ssl: { mode: "disable", rejectUnauthorized: "no" } })).toBe(
       "The connection's ssl.rejectUnauthorized must be true or false; nothing was sent",
     );
@@ -336,10 +422,38 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
     },
   );
 
+  test.each([
+    ["an empty string", ""],
+    ["zero", 0],
+  ])(
+    "an sshTunnel.enabled that is %s is refused for its type too, though the server opens no tunnel for it",
+    (_label, enabled) => {
+      expect(refusalOf({ ...base, sshTunnel: { enabled, host: "bastion", port: 22, username: "u" } })).toBe(
+        "The connection's sshTunnel.enabled must be true or false; nothing was sent",
+      );
+    },
+  );
+
   test("an sshTunnel.enabled that is null reads as absent, as a tunnel switched off", () => {
     expect(mapped({ ...base, sshTunnel: { enabled: null, host: "bastion", port: 22, username: "u" } }).broker).toEqual({
       host: "broker-1",
       port: 9092,
     });
+  });
+
+  test("an sshTunnel that is null reads as absent, as no tunnel", () => {
+    expect(mapped({ ...base, sshTunnel: null }).broker).toEqual({ host: "broker-1", port: 9092 });
+  });
+
+  test("an enabled tunnel is refused first, before the address or anything else is read", () => {
+    expect(
+      refusalOf({
+        ...base,
+        host: "a:1",
+        ssl: "on",
+        saslMechanism: null,
+        sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u" },
+      }),
+    ).toStartWith("Kafka does not run through an SSH tunnel");
   });
 });
