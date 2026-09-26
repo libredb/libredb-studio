@@ -1661,6 +1661,26 @@ describe("createPlatformaticClient", () => {
     }
   });
 
+  test("the API 69 connection carries the SASL and TLS options the clients carry, the same objects, and neither without them (spec 4.3)", async () => {
+    // Built from the same options object as the clients: without the SASL options, a SASL listener
+    // closes the connection, and every consumer-protocol group's source reads as an unreachable broker.
+    const listing = { groupId: "lag-kip848", state: "Empty", groupType: "consumer" as const, protocolType: "consumer" };
+    const sasl = { mechanism: "SCRAM-SHA-512" as const, username: "u", password: "p" };
+    const tls = { rejectUnauthorized: true };
+    const secured = fakeLib();
+    await createPlatformaticClient({ ...OPTIONS, tls, sasl, tlsServerName: true }, secured.lib).describeGroup(listing);
+    const clients = secured.constructed.map(([name, options]) => [name, options as Record<string, unknown>] as const);
+    expect(clients.map(([name]) => name)).toEqual(["Admin", "Consumer", "ConnectionPool", "Connection"]);
+    for (const [, options] of clients) {
+      expect(options.sasl).toBe(sasl);
+      expect(options.tls).toBe(tls);
+    }
+    const plain = fakeLib();
+    await createPlatformaticClient(OPTIONS, plain.lib).describeGroup(listing);
+    const connection = plain.constructed.find(([n]) => n === "Connection")![1] as object;
+    expect(Object.keys(connection).sort()).toEqual(["connectTimeout", "id", "requestTimeout"]);
+  });
+
   test("API 69 throws a ResponseError carrying the response; the group's own entry is read from it (M-F)", async () => {
     const mixed = kafkaFixture<Record<string, unknown>>("error-consumer-group-describe-mixed");
     const { lib } = fakeLib({
