@@ -2103,10 +2103,23 @@ export class MySQLProvider extends SQLBaseProvider {
       keepAliveInitialDelay: 10000,
     };
 
+    // Without a zone, mysql2 reads DATE and DATETIME in the Node process's local zone and the
+    // row then serialises as ISO UTC, so the value moves with the server's TZ. Measured under
+    // TZ=Europe/Istanbul on MySQL 8.4: a pasted connection string answered `DATE '2026-09-01'`
+    // as 2026-08-31T21:00:00.000Z, the previous day, while the structured form, the only one
+    // that set this, answered 2026-09-01.
+    const timezone = this.options.timezone ?? "Z";
+
     if (this.config.connectionString) {
+      // A `?timezone=` written into the string is the user's own choice, and mysql2 lets an
+      // option beat the `uri` (`ConnectionConfig` skips every uri key the options already
+      // set), so the default is passed only when the string names no zone of its own.
+      const connectionString = this.config.connectionString;
+      const namesTimezone = new URL(connectionString).searchParams.has("timezone");
       return {
         ...baseConfig,
-        uri: this.config.connectionString,
+        ...(namesTimezone ? {} : { timezone }),
+        uri: connectionString,
       };
     }
 
@@ -2118,7 +2131,7 @@ export class MySQLProvider extends SQLBaseProvider {
       password: this.config.password,
       database: this.config.database,
       ssl: this.buildSSLConfig(),
-      timezone: this.options.timezone ?? "Z",
+      timezone,
     };
   }
 

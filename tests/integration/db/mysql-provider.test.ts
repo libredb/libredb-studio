@@ -2300,6 +2300,71 @@ describe("MySQLProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Session time zone
+  // --------------------------------------------------------------------------
+
+  describe("timezone", () => {
+    /**
+     * Measured 2026-09-27 against MySQL 8.4 through this provider under TZ=Europe/Istanbul:
+     * the structured form read `DATE '2026-09-01'` as 2026-09-01T00:00:00.000Z, while the same
+     * server behind a pasted connection string answered 2026-08-31T21:00:00.000Z, the previous
+     * day, because only the structured form set `timezone` and mysql2 otherwise reads DATE and
+     * DATETIME in the Node process's local zone.
+     */
+    test("a pasted connection string reads dates in UTC, as the structured form does", async () => {
+      provider = new MySQLProvider(
+        makeMySQLConfig({ connectionString: "mysql://example-user:example-fake-db-pw@localhost:3306/testdb" }),
+      );
+      await provider.connect();
+      expect(lastPoolConfig.timezone).toBe("Z");
+    });
+
+    test("the structured form still defaults to UTC", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(lastPoolConfig.timezone).toBe("Z");
+    });
+
+    test("an explicit timezone option reaches both forms", async () => {
+      provider = new MySQLProvider(makeMySQLConfig(), { timezone: "+03:00" });
+      await provider.connect();
+      expect(lastPoolConfig.timezone).toBe("+03:00");
+      await provider.disconnect();
+      provider = new MySQLProvider(
+        makeMySQLConfig({ connectionString: "mysql://example-user:example-fake-db-pw@localhost:3306/testdb" }),
+        { timezone: "+03:00" },
+      );
+      await provider.connect();
+      expect(lastPoolConfig.timezone).toBe("+03:00");
+    });
+
+    /**
+     * The default must not beat a `?timezone=` the user wrote into the string. The recorded
+     * config alone cannot show that, because mysql2 resolves `uri` against the options inside
+     * its own `ConnectionConfig`, and there an OPTION wins over the same key in the uri. So the
+     * recorded config is handed to the REAL one (only `mysql2/promise` is mocked in this file).
+     */
+    test("a connection string's own ?timezone= still wins over the default", async () => {
+      const { ConnectionConfig } = (await import("mysql2")) as unknown as {
+        ConnectionConfig: new (options: Record<string, unknown>) => { timezone: string };
+      };
+      provider = new MySQLProvider(
+        makeMySQLConfig({
+          connectionString: "mysql://example-user:example-fake-db-pw@localhost:3306/testdb?timezone=%2B03:00",
+        }),
+      );
+      await provider.connect();
+      expect(new ConnectionConfig(lastPoolConfig).timezone).toBe("+03:00");
+      // Control: without the query parameter the same resolution lands on the default.
+      provider = new MySQLProvider(
+        makeMySQLConfig({ connectionString: "mysql://example-user:example-fake-db-pw@localhost:3306/testdb" }),
+      );
+      await provider.connect();
+      expect(new ConnectionConfig(lastPoolConfig).timezone).toBe("Z");
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Wide integers (BIGINT past 2^53)
   // --------------------------------------------------------------------------
 

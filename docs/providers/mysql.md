@@ -332,8 +332,8 @@ EVERY integer into a string — `SELECT 5` becomes `"5"`, `COUNT(*)` becomes `"3
 were never wrong.
 
 **The option is the FIRST entry in `baseConfig`, which is what makes it cover both connection forms.**
-The connection-string branch returns `{ ...baseConfig, uri }` and takes the discrete-fields branch not
-at all ([§4.2](#42-connection-pooling)), so an option added beside `timezone` or the SSL config would
+The connection-string branch returns `{ ...baseConfig, timezone, uri }` and takes the discrete-fields branch not
+at all ([§4.2](#42-connection-pooling)), so an option added beside the SSL config would
 apply to a host/port connection and silently not to a pasted URI.
 
 **Both wire protocols answer the same shape.** Re-measured in the same pass with the option on: the
@@ -379,15 +379,21 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 | `queueLimit` | `0` (unbounded queue) | fixed |
 | `enableKeepAlive` | `true` | fixed |
 | `keepAliveInitialDelay` | `10000` ms | fixed |
-| `timezone` | `'Z'` | `ProviderOptions.timezone ?? 'Z'` (discrete form only — see below) |
+| `timezone` | `'Z'` | `ProviderOptions.timezone ?? 'Z'`, both forms; a connection string's own `?timezone=` wins (see below) |
 
 > ⚠️ Only `max` from `DEFAULT_POOL_CONFIG` is honored. `min`, `idleTimeout`, and `acquireTimeout`
 > are **not** mapped (the mysql2 pool model differs from `pg`), and `queryTimeout` is **not** applied
 > (see [§3.5](#35-no-server-side-query-timeout)).
 >
-> ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, uri }`
-> and takes the discrete-fields branch **not at all** — so `timezone`, `ssl`/`connection.ssl`, and
+> ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, timezone, uri }`
+> and takes the discrete-fields branch **not at all**, so `ssl`/`connection.ssl` and
 > cloud SSL auto-detect are **ignored**; those settings must be encoded in the URI itself.
+>
+> `timezone` is the exception, and applies to the connection string too.
+> mysql2 lets an option beat the same key in the `uri` (its `ConnectionConfig` skips every uri key the options already set), so the default is left out when the string carries its own `?timezone=`, and that value wins.
+> Without a zone mysql2 reads `DATE` and `DATETIME` in the Node process's local zone.
+> Measured 2026-09-27 on `mysql:8.4` under `TZ=Europe/Istanbul`, before the fix: the structured form read `DATE '2026-09-01'` as `2026-09-01T00:00:00.000Z` and a pasted connection string read it as `2026-08-31T21:00:00.000Z`, the previous day, with `TIMESTAMP '2026-09-01 10:30:00'` at `07:30`.
+> After it, both forms answer `2026-09-01T00:00:00.000Z` and `2026-09-01T10:30:00.000Z`, and a string with `?timezone=%2B03:00` read under `TZ=UTC` answers `2026-08-31T21:00:00.000Z`, the zone it asked for.
 
 `connect()` is idempotent. Unlike the PostgreSQL provider, MySQL exposes **no** `getPoolStats()`.
 
