@@ -18,7 +18,14 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import { applySourceBound, assertObjectPathShape, callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
-import { KafkaError, type KafkaConfigEntry, type KafkaReadClient, type KafkaTopicMetadata } from "./client";
+import {
+  KafkaError,
+  type KafkaConfigEntry,
+  type KafkaReadClient,
+  type KafkaTopicMetadata,
+  type PartRead,
+  partRead,
+} from "./client";
 import { readGroupSource } from "./groups";
 
 export const KAFKA_CONTAINER_LEVELS: ContainerLevels = Object.freeze([] as const);
@@ -262,24 +269,6 @@ const renderConfigs = (entries: readonly KafkaConfigEntry[]) =>
     readOnly: c.readOnly,
   }));
 
-/** What one part's own read came to: its answer, or the broker's refusal of it in words. */
-type PartRead<T> = { readonly answer: T } | { readonly refused: string };
-
-/**
- * A read one part of a source rests on, with the broker's refusal of it as an answer: a refusal
- * and an absence are different answers (docs/ADDING_A_PROVIDER.md), so a principal without
- * DescribeConfigs still sees the parts it may read, and the refused part says why. Only the
- * domain's authorization refusal is one; any other failure fails the whole source as itself.
- */
-async function partRead<T>(read: () => Promise<T>): Promise<PartRead<T>> {
-  try {
-    return { answer: await read() };
-  } catch (error) {
-    if (error instanceof KafkaError && error.category === "authorization") return { refused: error.message };
-    throw error;
-  }
-}
-
 const answerOf = <T>(read: PartRead<T> | undefined): T | undefined =>
   read !== undefined && "answer" in read ? read.answer : undefined;
 
@@ -378,12 +367,18 @@ export async function readObjectSource(
       const source = await readGroupSource(client, name);
       if (source === undefined)
         throw new KafkaError("unknown-object", `Consumer group ${JSON.stringify(name)} does not exist`);
+      // A refused description holds no assignment, so the lag covers the committed topics alone, and says so.
+      const assignments = "answer" in source.lag ? refusalOf(source.group) : undefined;
+      const lagLabel =
+        assignments === undefined
+          ? "Committed offsets and lag"
+          : `Committed offsets and lag (assignments not read: ${assignments})`;
       return {
         path,
         kind,
         parts: [
-          part("group", "Group", source.group, limit),
-          part("offsets", "Committed offsets and lag", source.lag, limit),
+          partFrom("group", "Group", source.group, (group) => group, limit),
+          partFrom("offsets", lagLabel, source.lag, (rows) => rows, limit),
         ],
       };
     }

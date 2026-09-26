@@ -443,7 +443,11 @@ A name that does not exist answers a `QueryError` naming it, and an internal top
 
 A part whose own read the broker refuses is that refusal, and the parts that were read are kept: a refusal and an absence are different answers ([`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md)), and DescribeConfigs is a right of its own, apart from Describe.
 So a principal without DescribeConfigs on a topic sees its partitions and offsets beside a configs part that carries the refusal and no text, and one without DescribeConfigs on the cluster, which `kafka-auth`'s `reader` lacks, sees a broker's source as that one refused part.
-A topic whose offsets are refused shows its partitions without offsets and says why, as a topic with a leaderless partition does, and a group's topic the principal may not describe keeps its lag rows with no latest offset and the refusal as the reason.
+A topic whose offsets are refused shows its partitions without offsets and says why, as a topic with a leaderless partition does.
+A group's two parts rest on two reads, its description and its committed offsets, and the broker can refuse either for a group it lists: ConsumerGroupDescribe refuses a consumer-protocol group whole while a member holds a topic the principal may not describe, and a principal that lists groups by its Describe on the cluster alone is refused both reads of every group.
+A refused description is the group part's refusal, and the lag part then holds the rows of the committed offsets alone, since no assignment was read, and its label says so.
+Refused committed offsets are the lag part's refusal, and no high watermark is read for it, since rows with no committed offset read would call every assigned partition uncommitted.
+A group's topic the principal may not describe keeps its lag rows with no latest offset and the refusal as the reason.
 A refusal of the read that decides the object exists, the topic's metadata, the broker listing or the group listing, still fails the source, and so does any failure that is not a refusal.
 
 ### 6.3 Object edit (#789)

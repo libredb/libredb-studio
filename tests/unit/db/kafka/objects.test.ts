@@ -784,6 +784,7 @@ describe("a part the broker refuses is that part's refusal, and the parts it rea
   // every source: DescribeConfigs is a right of its own, apart from Describe (spec KM4, M-I).
   const TOPIC_REFUSAL = "The broker denied access to this topic";
   const CLUSTER_REFUSAL = "The broker denied access to this cluster";
+  const GROUP_REFUSAL = "The broker denied access to this group";
   const refused = (message: string) => async (): Promise<never> => {
     throw new KafkaError("authorization", message);
   };
@@ -873,6 +874,88 @@ describe("a part the broker refuses is that part's refusal, and the parts it rea
       label: "Configs that differ from the default",
       unavailable: TOPIC_REFUSAL,
     });
+    // A group's source the same way, whichever of its two parts was refused.
+    const group = await readObjectSource(
+      client(["orders"], { describeGroup: refused(TOPIC_REFUSAL) }),
+      CAPS,
+      ["billing"],
+      "consumer_group",
+      40,
+    );
+    expect(group.parts[0]).toEqual({ id: "group", label: "Group", unavailable: TOPIC_REFUSAL });
+    expect(group.parts[1]).toMatchObject({ truncated: { limit: 40, reason: sourceBoundTruncationReason(40) } });
+    expect(textOf(group, 1)).toHaveLength(40);
+  });
+
+  test("a group's description the broker refuses is the group part's refusal, and the lag part holds the committed offsets alone and says the assignments were not read", async () => {
+    // Measured on Apache Kafka 4.3.1: ConsumerGroupDescribe refuses a consumer-protocol group whole,
+    // TOPIC_AUTHORIZATION_FAILED with no members, while a member holds a topic the principal may not
+    // describe, and OffsetFetch still answers the committed offsets the principal may read.
+    const doc = await readObjectSource(
+      client(["orders"], { describeGroup: refused(TOPIC_REFUSAL) }),
+      CAPS,
+      ["billing"],
+      "consumer_group",
+    );
+    expect(doc.parts[0]).toEqual({ id: "group", label: "Group", unavailable: TOPIC_REFUSAL });
+    expect(doc.parts[1]).toMatchObject({
+      id: "offsets",
+      label: `Committed offsets and lag (assignments not read: ${TOPIC_REFUSAL})`,
+      language: "json",
+      form: "complete",
+      origin: "rendered",
+    });
+    expect(JSON.parse(textOf(doc, 1))).toEqual([
+      { topic: "orders", partition: 0, committedOffset: "20", latestOffset: "24", lag: "4" },
+    ]);
+    // The control: the description answered, the lag part's label says nothing was left unread.
+    const whole = await readObjectSource(client(["orders"]), CAPS, ["billing"], "consumer_group");
+    expect(whole.parts.map((p) => p.label)).toEqual(["Group", "Committed offsets and lag"]);
+  });
+
+  test("a group's committed offsets the broker refuses are the lag part's refusal, beside the group it described, and no high watermark is read", async () => {
+    let offsetReads = 0;
+    const doc = await readObjectSource(
+      client(["orders"], {
+        committedOffsets: refused(GROUP_REFUSAL),
+        offsets: async () => {
+          offsetReads++;
+          return new Map([[0, big(24)]]);
+        },
+      }),
+      CAPS,
+      ["billing"],
+      "consumer_group",
+    );
+    expect(doc.parts[0]).toMatchObject({ id: "group", label: "Group" });
+    expect(JSON.parse(textOf(doc, 0))).toEqual({
+      groupId: "billing",
+      groupType: "classic",
+      state: "Stable",
+      protocolOrAssignor: "range",
+      members: [],
+    });
+    expect(doc.parts[1]).toEqual({ id: "offsets", label: "Committed offsets and lag", unavailable: GROUP_REFUSAL });
+    expect(offsetReads).toBe(0);
+  });
+
+  test("a listed group whose reads the broker refuses both answers two refusals, each in its own read's words: the source answers", async () => {
+    // Measured on Apache Kafka 4.3.1: a principal with Describe on the cluster lists every group, and is
+    // refused each group's description and committed offsets (GROUP_AUTHORIZATION_FAILED).
+    const doc = await readObjectSource(
+      client(["orders"], { describeGroup: refused(TOPIC_REFUSAL), committedOffsets: refused(GROUP_REFUSAL) }),
+      CAPS,
+      ["billing"],
+      "consumer_group",
+    );
+    expect(doc).toEqual({
+      path: ["billing"],
+      kind: "consumer_group",
+      parts: [
+        { id: "group", label: "Group", unavailable: TOPIC_REFUSAL },
+        { id: "offsets", label: "Committed offsets and lag", unavailable: GROUP_REFUSAL },
+      ],
+    });
   });
 
   test("only the broker's refusal of a part's own read is an answer: any other failure there fails the source as itself", async () => {
@@ -907,6 +990,15 @@ describe("a part the broker refuses is that part's refusal, and the parts it rea
           "topic",
         ),
       (failure) => readObjectSource(client(["a"], { brokerConfigs: failAt(failure) }), CAPS, ["1"], "broker"),
+      (failure) =>
+        readObjectSource(client(["orders"], { describeGroup: failAt(failure) }), CAPS, ["billing"], "consumer_group"),
+      (failure) =>
+        readObjectSource(
+          client(["orders"], { committedOffsets: failAt(failure) }),
+          CAPS,
+          ["billing"],
+          "consumer_group",
+        ),
     ];
     const outcomes = await Promise.all(
       sites.flatMap((site) =>

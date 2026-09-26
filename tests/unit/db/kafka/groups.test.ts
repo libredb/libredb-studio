@@ -4,6 +4,15 @@ import { computeLag, type GroupClient, readGroupSource } from "@/lib/db/provider
 
 const n = (value: number) => BigInt(value);
 
+/** A listed group's source whose two parts both answered, as their answers; a refused part fails the test. */
+function answered(source: Awaited<ReturnType<typeof readGroupSource>>) {
+  if (source === undefined) throw new Error("the group's source answered undefined");
+  if (!("answer" in source.group) || !("answer" in source.lag)) {
+    throw new Error(`a part of the group's source was refused: ${JSON.stringify(source)}`);
+  }
+  return { group: source.group.answer, lag: source.lag.answer };
+}
+
 describe("computeLag", () => {
   test("latest minus committed, equal to kafka-consumer-groups.sh for the M-E fixture", () => {
     const latest = new Map([
@@ -212,9 +221,9 @@ describe("readGroupSource", () => {
   });
 
   test("existence comes from the listing, and the description is dispatched with the listing", async () => {
-    const source = await readGroupSource(client(), "lag-kip848");
-    expect(source?.group.protocolOrAssignor).toBe("uniform");
-    expect(source?.lag[0].lag).toBe("23");
+    const source = answered(await readGroupSource(client(), "lag-kip848"));
+    expect(source.group.protocolOrAssignor).toBe("uniform");
+    expect(source.lag[0].lag).toBe("23");
   });
 
   test("lag is measured against the high watermark", async () => {
@@ -256,7 +265,7 @@ describe("readGroupSource", () => {
       "lag-classic",
     );
     expect(reads).toEqual(["events@high-watermark"]);
-    expect(source?.lag).toEqual([
+    expect(answered(source).lag).toEqual([
       {
         topic: "events",
         partition: 0,
@@ -309,14 +318,15 @@ describe("readGroupSource", () => {
       }),
       "lag-classic",
     );
-    expect(source?.lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset])).toEqual([
+    const { lag } = answered(source);
+    expect(lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset])).toEqual([
       ["orders/0", "4"],
       ["orders/1", "6"],
       ["orders/2", null],
       ["payments/0", null],
       ["payments/1", null],
     ]);
-    for (const row of source?.lag.slice(3) ?? []) {
+    for (const row of lag.slice(3)) {
       expect(row.note).toContain('Topic "payments" has no leader for partition 1');
     }
   });
@@ -358,7 +368,7 @@ describe("readGroupSource", () => {
       "lag-classic",
     );
     expect(reads.sort()).toEqual(["audit@high-watermark", "events@high-watermark", "orders@high-watermark"]);
-    expect(source?.lag.map((r) => [`${r.topic}/${r.partition}`, r.lag, r.note ?? null])).toEqual([
+    expect(answered(source).lag.map((r) => [`${r.topic}/${r.partition}`, r.lag, r.note ?? null])).toEqual([
       ["audit/0", null, "no committed offset"],
       ["events/0", null, "no committed offset"],
       ["events/1", null, "no committed offset"],
@@ -397,7 +407,7 @@ describe("readGroupSource", () => {
     expect(calls).toEqual(["listGroups"]);
     // The control: a listed group is described and read, and only after the listing answered.
     calls.length = 0;
-    expect((await readGroupSource(recording, "lag-classic"))?.group.groupId).toBe("lag-classic");
+    expect(answered(await readGroupSource(recording, "lag-classic")).group.groupId).toBe("lag-classic");
     expect(calls[0]).toBe("listGroups");
     expect([...calls].sort()).toEqual(["committedOffsets", "describeGroup", "listGroups", "offsets"]);
   });
@@ -412,7 +422,7 @@ describe("readGroupSource", () => {
       }),
       "lag-classic",
     );
-    expect(source?.lag).toEqual([
+    expect(answered(source).lag).toEqual([
       {
         topic: "__consumer_offsets",
         partition: 0,
@@ -434,9 +444,10 @@ describe("readGroupSource", () => {
   });
 
   test("a topic the principal may not describe keeps its rows, with the broker's refusal as the reason, and the source still settles", async () => {
-    // A principal with Describe on the group and not on a topic a member is assigned: the
-    // group's own reads answer, and that topic's offsets are refused (docs/ADDING_A_PROVIDER.md,
-    // a refusal is an answer; spec 4.3, a topic whose latest offsets cannot be read keeps its rows).
+    // A principal with Describe on a classic group and not on a topic a member is assigned, as
+    // measured on Apache Kafka 4.3.1: DescribeGroups answers the member's assignment, OffsetFetch
+    // leaves that topic's committed offsets out, and its high watermark is refused
+    // (docs/ADDING_A_PROVIDER.md, a refusal is an answer; spec 4.3, such a topic keeps its rows).
     const denied = "The broker denied access to this topic";
     const source = await readGroupSource(
       client({
@@ -461,50 +472,177 @@ describe("readGroupSource", () => {
       }),
       "lag-classic",
     );
-    expect(source?.lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset, r.lag])).toEqual([
+    const { lag } = answered(source);
+    expect(lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset, r.lag])).toEqual([
       ["orders/0", "24", "23"],
       ["payments/0", null, null],
       ["payments/1", null, null],
     ]);
-    for (const row of source?.lag.slice(1) ?? []) expect(row.note).toContain(denied);
+    for (const row of lag.slice(1)) expect(row.note).toContain(denied);
   });
 
-  test("only a refusal or an unreadable topic keeps a topic's rows: any other failure of its offsets, and the group's own reads refused, fail the source as themselves", async () => {
-    const refusal = new KafkaError("authorization", "The broker denied access to this group");
-    const offsetFailures = [
+  test("a failure that is no refusal fails the source as itself, at a topic's offsets, the description and the committed offsets alike, and so does a refusal of the listing", async () => {
+    const failures = [
       new KafkaError("protocol", "The request to the broker failed (UNKNOWN_SERVER_ERROR)"),
+      new KafkaError("network", "The broker could not be reached (connection-lost)"),
       new TypeError("a defect, not a refusal"),
       // Not a KafkaError, whatever it carries: only the domain's own refusal is an answer.
       Object.assign(new Error("carries the category only"), { category: "authorization" }),
     ];
-    const outcomes = await Promise.all([
-      ...offsetFailures.map((failure) =>
-        readGroupSource(
-          client({
-            offsets: async () => {
-              throw failure;
-            },
-          }),
-          "lag-classic",
-        ).then(
-          () => "answered",
-          (error) => error === failure,
+    const outcomes = await Promise.all(
+      (["offsets", "describeGroup", "committedOffsets"] as const).flatMap((read) =>
+        failures.map((failure) =>
+          readGroupSource(
+            client({
+              [read]: async () => {
+                throw failure;
+              },
+            }),
+            "lag-classic",
+          ).then(
+            () => "answered",
+            (error) => error === failure,
+          ),
         ),
       ),
-      ...(["listGroups", "describeGroup", "committedOffsets"] as const).map((read) =>
-        readGroupSource(
-          client({
-            [read]: async () => {
-              throw refusal;
-            },
-          }),
-          "lag-classic",
-        ).then(
-          () => "answered",
-          (error) => error === refusal,
-        ),
-      ),
+    );
+    expect(outcomes).toEqual(Array.from({ length: 3 * failures.length }, () => true));
+    // The listing decides the group exists (spec 4.3), so its refusal is the source's own.
+    const listingRefused = new KafkaError("authorization", "The broker denied access to this group");
+    const refused = await readGroupSource(
+      client({
+        listGroups: async () => {
+          throw listingRefused;
+        },
+      }),
+      "lag-classic",
+    ).catch((error) => error);
+    expect(refused).toBe(listingRefused);
+  });
+});
+
+describe("readGroupSource, a part whose own read the broker refuses (spec 4.4)", () => {
+  // docs/ADDING_A_PROVIDER.md: a refusal and an absence are different answers, and must not arrive as
+  // one. Measured on Apache Kafka 4.3.1 with StandardAuthorizer: a consumer-protocol group whose member
+  // holds a topic the principal may not describe is refused whole by ConsumerGroupDescribe
+  // (TOPIC_AUTHORIZATION_FAILED, no members) while OffsetFetch answers the committed offsets the
+  // principal may read, and a principal that lists groups by its Describe on the cluster alone is
+  // refused both reads of every group (GROUP_AUTHORIZATION_FAILED).
+  const TOPIC_REFUSAL = "The broker denied access to this topic";
+  const GROUP_REFUSAL = "The broker denied access to this group";
+  const listing = { groupId: "billing", state: "Stable", groupType: "consumer" as const, protocolType: "consumer" };
+  const description = {
+    groupId: "billing",
+    groupType: "consumer" as const,
+    state: "Stable",
+    protocolOrAssignor: "uniform",
+    members: [
+      {
+        memberId: "m-1",
+        clientId: "c-1",
+        clientHost: "/10.0.0.1",
+        assignment: [
+          { topic: "orders", partitions: [0, 1] },
+          { topic: "events", partitions: [0] },
+        ],
+      },
+    ],
+  };
+  const refusedWith = (message: string) => async (): Promise<never> => {
+    throw new KafkaError("authorization", message);
+  };
+  /** A client over one listed group, recording each high watermark it is asked for. */
+  const recording = (over: Partial<GroupClient> = {}) => {
+    const reads: string[] = [];
+    const client: GroupClient = {
+      listGroups: async () => [listing],
+      describeGroup: async () => description,
+      committedOffsets: async () => [{ topic: "orders", partition: 0, offset: n(1) }],
+      offsets: async (topic, at) => {
+        reads.push(`${topic}@${at}`);
+        return new Map([
+          [0, n(24)],
+          [1, n(12)],
+        ]);
+      },
+      ...over,
+    };
+    return { client, reads };
+  };
+
+  test("a description the broker refuses is the group part's refusal, and the lag is the committed offsets' alone, with no assignment", async () => {
+    const { client, reads } = recording({ describeGroup: refusedWith(TOPIC_REFUSAL) });
+    const source = await readGroupSource(client, "billing");
+    expect(source?.group).toEqual({ refused: TOPIC_REFUSAL });
+    // Every partition of the committed topic, each to its high watermark; the assigned-only topic is
+    // not known, since the refused description holds no assignment.
+    expect(source?.lag).toEqual({
+      answer: [
+        { topic: "orders", partition: 0, committedOffset: "1", latestOffset: "24", lag: "23" },
+        {
+          topic: "orders",
+          partition: 1,
+          committedOffset: null,
+          latestOffset: "12",
+          lag: null,
+          note: "no committed offset",
+        },
+      ],
+    });
+    expect(reads).toEqual(["orders@high-watermark"]);
+    // The control: the description answered, its assigned-only topic is read and has its rows.
+    const control = recording();
+    const whole = answered(await readGroupSource(control.client, "billing"));
+    expect(whole.group).toBe(description);
+    expect(control.reads.sort()).toEqual(["events@high-watermark", "orders@high-watermark"]);
+    expect(whole.lag.map((row) => `${row.topic}/${row.partition}`)).toEqual([
+      "events/0",
+      "events/1",
+      "orders/0",
+      "orders/1",
     ]);
-    expect(outcomes).toEqual([true, true, true, true, true, true]);
+  });
+
+  test("committed offsets the broker refuses are the lag part's refusal, beside the description as the client answered it, and no high watermark is read", async () => {
+    const { client, reads } = recording({ committedOffsets: refusedWith(GROUP_REFUSAL) });
+    const source = await readGroupSource(client, "billing");
+    expect(source?.lag).toEqual({ refused: GROUP_REFUSAL });
+    // The description is handed on as the client answered it, the very object.
+    if (source === undefined || !("answer" in source.group)) throw new Error("the description was not answered");
+    expect(source.group.answer).toBe(description);
+    // Lag with no committed offset read would show every assigned partition as "no committed
+    // offset", which the broker never said, so no high watermark is read for it.
+    expect(reads).toEqual([]);
+  });
+
+  test("a group both of whose reads the broker refuses answers two refusals, each in its own read's words", async () => {
+    const { client, reads } = recording({
+      describeGroup: refusedWith(TOPIC_REFUSAL),
+      committedOffsets: refusedWith(GROUP_REFUSAL),
+    });
+    expect(await readGroupSource(client, "billing")).toEqual({
+      group: { refused: TOPIC_REFUSAL },
+      lag: { refused: GROUP_REFUSAL },
+    });
+    expect(reads).toEqual([]);
+  });
+
+  test("a refused part never hides the other read's failure: the source fails with it", async () => {
+    const failure = new KafkaError("network", "The broker could not be reached (connection-lost)");
+    const failing = async (): Promise<never> => {
+      throw failure;
+    };
+    const outcomes = await Promise.all([
+      readGroupSource(
+        recording({ describeGroup: refusedWith(TOPIC_REFUSAL), committedOffsets: failing }).client,
+        "billing",
+      ).catch((error) => error),
+      readGroupSource(
+        recording({ describeGroup: failing, committedOffsets: refusedWith(GROUP_REFUSAL) }).client,
+        "billing",
+      ).catch((error) => error),
+    ]);
+    expect(outcomes).toEqual([failure, failure]);
+    expect(outcomes.every((error) => error === failure)).toBe(true);
   });
 });

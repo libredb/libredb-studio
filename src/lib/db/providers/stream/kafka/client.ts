@@ -49,6 +49,24 @@ export class KafkaError extends Error {
   }
 }
 
+/** What one read that one part of an answer rests on came to: its answer, or the broker's refusal of it in words. */
+export type PartRead<T> = { readonly answer: T } | { readonly refused: string };
+
+/**
+ * A read one part of an answer rests on, with the broker's refusal of it as an answer: a refusal and
+ * an absence are different answers (docs/ADDING_A_PROVIDER.md), so a principal the broker refuses one
+ * read still sees the parts it may read, and the refused part says why (spec 4.4). Only the domain's
+ * authorization refusal is one; any other failure, of another category or none, rejects as itself.
+ */
+export async function partRead<T>(read: () => Promise<T>): Promise<PartRead<T>> {
+  try {
+    return { answer: await read() };
+  } catch (error) {
+    if (error instanceof KafkaError && error.category === "authorization") return { refused: error.message };
+    throw error;
+  }
+}
+
 /** Shared bigint constants, so no module spells a literal (see the file header). */
 export const BIGINT_ZERO = BigInt(0);
 export const BIGINT_ONE = BigInt(1);

@@ -9,6 +9,8 @@ import {
   type KafkaCommittedOffset,
   type KafkaGroupDescription,
   type KafkaReadClient,
+  type PartRead,
+  partRead,
 } from "./client";
 
 export interface LagRow {
@@ -84,14 +86,30 @@ export function computeLag(
 
 export type GroupClient = Pick<KafkaReadClient, "listGroups" | "describeGroup" | "committedOffsets" | "offsets">;
 
+/**
+ * A listed group's two parts (spec 4.4), each as its own read came to: the description, and the lag
+ * over the committed offsets. The broker's refusal of either read is that part's answer and the other
+ * part is kept: Apache Kafka 4.3.1 refuses a consumer-protocol group's description whole while a
+ * member holds a topic the principal may not describe, and still answers its committed offsets, and a
+ * principal that lists groups by its Describe on the cluster alone is refused both (measured). The
+ * listing decides the group exists, so its refusal, and every failure that is no refusal, still raise.
+ */
 export async function readGroupSource(
   client: GroupClient,
   groupId: string,
-): Promise<{ group: KafkaGroupDescription; lag: LagRow[] } | undefined> {
+): Promise<{ group: PartRead<KafkaGroupDescription>; lag: PartRead<LagRow[]> } | undefined> {
   const listing = (await client.listGroups()).find((g) => g.groupId === groupId);
   if (listing === undefined) return undefined;
-  const [group, committed] = await Promise.all([client.describeGroup(listing), client.committedOffsets(groupId)]);
-  const assigned = group.members.flatMap((member) => member.assignment);
+  const [group, committedRead] = await Promise.all([
+    partRead(() => client.describeGroup(listing)),
+    partRead(() => client.committedOffsets(groupId)),
+  ]);
+  // Lag with no committed offset read would call every assigned partition uncommitted, which the
+  // broker never said: the lag part is the refusal, and no high watermark is read for it.
+  if ("refused" in committedRead) return { group, lag: committedRead };
+  const committed = committedRead.answer;
+  // A refused description holds no assignment: the rows are the committed topics' alone.
+  const assigned = "answer" in group ? group.answer.members.flatMap((member) => member.assignment) : [];
   const topics = [...new Set([...committed.map((c) => c.topic), ...assigned.map((a) => a.topic)])];
   const latest = new Map<string, ReadonlyMap<number, bigint>>();
   const unreadable = new Map<string, string>();
@@ -101,8 +119,8 @@ export async function readGroupSource(
         // The high watermark, which is what kafka-consumer-groups.sh measures lag against.
         latest.set(topic, await client.offsets(topic, "high-watermark"));
       } catch (error) {
-        // An internal topic, one with a leaderless partition, or one the principal may not
-        // describe, whose refusal is an answer (docs/ADDING_A_PROVIDER.md): its rows stay,
+        // An internal topic, one with a leaderless partition, or an assigned one the principal may
+        // not describe, whose refusal is an answer (docs/ADDING_A_PROVIDER.md): its rows stay,
         // without a latest offset and with the reason. Anything else fails the source.
         const keepsRows =
           error instanceof KafkaError && (error.category === "unreadable-topic" || error.category === "authorization");
@@ -111,5 +129,5 @@ export async function readGroupSource(
       }
     }),
   );
-  return { group, lag: computeLag(committed, latest, assigned, unreadable) };
+  return { group, lag: { answer: computeLag(committed, latest, assigned, unreadable) } };
 }
