@@ -26,6 +26,9 @@ const OFFSET_NUMBER_REFUSAL =
 const OFFSET_REFUSAL = "The offset must be a non-negative whole number or a digit string";
 const TIMESTAMP_REFUSAL =
   'The timestamp must be ISO-8601 with a zone, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00"';
+const PARTITION_REFUSAL = '"partition" must be a whole number from 0 to 2147483647';
+const unknownKeyRefusal = (key: string) =>
+  `Unknown key ${JSON.stringify(key)} in the read request; the keys are topic, partition, from and limit`;
 const limitRefusal = (maximum: number) => `"limit" must be a whole number from 1 to ${maximum}`;
 
 describe("parseReadRequest", () => {
@@ -77,9 +80,9 @@ describe("parseReadRequest", () => {
     expect(message).not.toContain("nope");
   });
 
-  test("an unknown key is refused and named", () => {
-    expect(refusal('{"topic":"o","offset":1}').message).toContain('"offset"');
-    expect(refusal('{"topic":"o","__proto__":{}}').message).toContain('"__proto__"');
+  test("an unknown key is refused and named, beside the keys a request takes", () => {
+    expect(refusal('{"topic":"o","offset":1}').message).toBe(unknownKeyRefusal("offset"));
+    expect(refusal('{"topic":"o","__proto__":{}}').message).toBe(unknownKeyRefusal("__proto__"));
   });
 
   test("topic is required and must be a legal Kafka topic name", () => {
@@ -88,6 +91,8 @@ describe("parseReadRequest", () => {
       expect(refusal(JSON.stringify({ topic })).message).toBe(TOPIC_REFUSAL);
     }
     expect(parse('{"topic":"a.b_c-9"}').topic).toBe("a.b_c-9");
+    // Capitals and digits are legal too, and a name is read as written.
+    expect(parse('{"topic":"Orders.EU_2026-Q3"}').topic).toBe("Orders.EU_2026-Q3");
     expect(parse(JSON.stringify({ topic: "x".repeat(249) })).topic).toHaveLength(249);
   });
 
@@ -103,13 +108,24 @@ describe("parseReadRequest", () => {
 
   test("partition must be a non-negative integer a Kafka INT32 carries", () => {
     for (const partition of [-1, 1.5, "0", null, 2147483648]) {
-      expect(refusal(JSON.stringify({ topic: "o", partition })).message).toContain('"partition"');
+      expect(refusal(JSON.stringify({ topic: "o", partition })).message).toBe(PARTITION_REFUSAL);
     }
     expect(parse('{"topic":"o","partition":2147483647}').partition).toBe(2147483647);
   });
 
   test("an offset needs a partition", () => {
-    expect(refusal('{"topic":"o","from":{"offset":1}}').message).toContain("partition");
+    expect(refusal('{"topic":"o","from":{"offset":1}}').message).toBe(
+      'Reading from an offset needs a "partition": offsets are per partition',
+    );
+  });
+
+  test("offset 0 is an offset, as a JSON number and as a digit string", () => {
+    for (const offset of ["0", '"0"']) {
+      expect(parse(`{"topic":"o","partition":0,"from":{"offset":${offset}}}`).from).toEqual({
+        kind: "offset",
+        offset: BigInt(0),
+      });
+    }
   });
 
   test("Review Focus 4: an offset number above MAX_SAFE_INTEGER is refused, with the digit-string advice", () => {
@@ -118,7 +134,7 @@ describe("parseReadRequest", () => {
     for (const offset of ["9007199254740993", "-1", "1.5"]) {
       expect(refusal(`{"topic":"o","partition":0,"from":{"offset":${offset}}}`).message).toBe(OFFSET_NUMBER_REFUSAL);
     }
-    for (const offset of ['"12a"', '"-1"', "null", "true", '[""]']) {
+    for (const offset of ['"12a"', '"-1"', '""', '" 1"', "null", "true", '[""]']) {
       expect(refusal(`{"topic":"o","partition":0,"from":{"offset":${offset}}}`).message).toBe(OFFSET_REFUSAL);
     }
   });
@@ -137,6 +153,19 @@ describe("parseReadRequest", () => {
     expect(refusal('{"topic":"o","from":{"timestamp":"2026-09-23T00:00"}}').message).toContain("zone");
     for (const timestamp of ['"2026-09-23T00:00"', '"yesterday"', "1790121600000", '"2026-09-23T25:00:00Z"', "null"]) {
       expect(refusal(`{"topic":"o","from":{"timestamp":${timestamp}}}`).message).toBe(TIMESTAMP_REFUSAL);
+    }
+  });
+
+  test("an instant to the minute, or with a fraction of up to three decimals, is read to the millisecond", () => {
+    for (const [timestamp, iso] of [
+      ["2026-09-23T00:00Z", "2026-09-23T00:00:00.000Z"],
+      ["2026-09-23T03:00+03:00", "2026-09-23T00:00:00.000Z"],
+      ["2026-09-22T21:00-03:00", "2026-09-23T00:00:00.000Z"],
+      ["2026-09-23T00:00:00.5Z", "2026-09-23T00:00:00.500Z"],
+      ["2026-09-23T00:00:00.25Z", "2026-09-23T00:00:00.250Z"],
+      ["2026-09-23T00:00:00.125Z", "2026-09-23T00:00:00.125Z"],
+    ]) {
+      expect(parse(JSON.stringify({ topic: "o", from: { timestamp } })).from).toMatchObject({ kind: "timestamp", iso });
     }
   });
 
@@ -180,7 +209,14 @@ describe("parseReadRequest", () => {
   });
 
   test("an instant before 1970 is refused: -1 and -2 ms are the ListOffsets sentinels for latest and earliest", () => {
-    for (const timestamp of ["1969-12-31T23:59:59.999Z", "1969-12-31T23:59:59.998Z"]) {
+    // -3 to -5 ms are sentinels too (the client's ListOffsetTimestamps names them MAX, EARLIEST_LOCAL and
+    // LATEST_TIERED), and any earlier instant is refused alike.
+    for (const timestamp of [
+      "1969-12-31T23:59:59.999Z",
+      "1969-12-31T23:59:59.998Z",
+      "1969-12-31T23:59:59.997Z",
+      "1969-01-01T00:00:00Z",
+    ]) {
       expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toBe(
         "The timestamp must be at or after 1970-01-01T00:00:00Z: Kafka reads an earlier instant as a sentinel",
       );
