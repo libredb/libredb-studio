@@ -1242,6 +1242,51 @@ describe("internal topics, never named to the broker (spec 4.1, 4.5)", () => {
   });
 });
 
+describe("a group committed on several topics (spec 4.3, 4.4)", () => {
+  test("its source shows lag rows for every partition of each topic it committed on, each read at its own high watermark", async () => {
+    // Every captured group committed on one topic. lag-classic's entry gains codec-gzip, whose one
+    // partition's captured high watermark is 20, committed at 7.
+    const { provider, recorded } = await connected({
+      "admin.listConsumerGroupOffsets": (request) => {
+        const asked = (request as { groups: string[] }).groups;
+        const answer = kafkaFixture<CommittedAnswer>("committed-offsets").filter((g) => asked.includes(g.groupId));
+        for (const entry of answer) {
+          entry.topics.push({ name: "codec-gzip", partitions: [{ partitionIndex: 0, committedOffset: BigInt(7) }] });
+        }
+        return answer;
+      },
+    });
+    const sent = recorded.calls.length;
+    const rows = await lagRows(provider, "lag-classic");
+    const latest = kafkaFixture<Map<string, bigint[]>>("offsets-latest").get("orders") ?? [];
+    const committed = kafkaFixture<CommittedAnswer>("committed-offsets")
+      .find((g) => g.groupId === "lag-classic")
+      ?.topics.find((t) => t.name === "orders")?.partitions;
+    const orders = [...(committed ?? [])]
+      .sort((a, b) => a.partitionIndex - b.partitionIndex)
+      .map((p) => ({
+        topic: "orders",
+        partition: p.partitionIndex,
+        committedOffset: p.committedOffset.toString(),
+        latestOffset: latest[p.partitionIndex].toString(),
+        lag: (latest[p.partitionIndex] - p.committedOffset).toString(),
+      }));
+    expect(orders).toHaveLength(3);
+    const whole: unknown[] = rows;
+    expect(whole).toEqual([
+      { topic: "codec-gzip", partition: 0, committedOffset: "7", latestOffset: "20", lag: "13" },
+      ...orders,
+    ]);
+    // Each topic's high watermark read on its own: the log end, read uncommitted.
+    expect(argsOf(recorded.calls.slice(sent), "consumer.listOffsets")).toEqual(
+      expect.arrayContaining([
+        { topics: ["codec-gzip"], timestamp: BigInt(-1), isolationLevel: 0 },
+        { topics: ["orders"], timestamp: BigInt(-1), isolationLevel: 0 },
+      ]),
+    );
+  });
+});
+
 describe("declarations", () => {
   test("capabilities and labels are the spec's, and the refresh pattern matches no read request", async () => {
     const { provider } = await connected();

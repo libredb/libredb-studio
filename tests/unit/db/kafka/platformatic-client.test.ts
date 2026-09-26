@@ -1926,6 +1926,39 @@ describe("createPlatformaticClient", () => {
     ).toBe("protocol");
   });
 
+  test("committed offsets are every partition of every topic the group's entry holds, in the answer's order (spec 4.3)", async () => {
+    // Every capture's group committed on one topic; a real group commits on several, and a source that
+    // kept the first would drop every other topic's lag rows. lag-classic's captured entry gains a
+    // second topic with two partitions, listed out of order.
+    const answer =
+      kafkaFixture<
+        Array<{
+          groupId: string;
+          topics: Array<{ name: string; partitions: Array<{ partitionIndex: number; committedOffset: bigint }> }>;
+        }>
+      >("committed-offsets");
+    const own = answer.find((g) => g.groupId === "lag-classic")!;
+    own.topics.push({
+      name: "payments",
+      partitions: [
+        { partitionIndex: 1, committedOffset: big(4) },
+        { partitionIndex: 0, committedOffset: big(9) },
+      ],
+    });
+    const { lib } = fakeLib({ "admin.listConsumerGroupOffsets": () => [own] });
+    const orders = own.topics[0].partitions.map((p) => ({
+      topic: "orders",
+      partition: p.partitionIndex,
+      offset: p.committedOffset,
+    }));
+    expect(orders).toHaveLength(3);
+    expect(await createPlatformaticClient(OPTIONS, lib).committedOffsets("lag-classic")).toEqual([
+      ...orders,
+      { topic: "payments", partition: 1, offset: big(4) },
+      { topic: "payments", partition: 0, offset: big(9) },
+    ]);
+  });
+
   test("configs are asked for with no key list, which the protocol reads as every key: Redpanda answers an empty list with none", async () => {
     const { lib, calls } = fakeLib();
     const client = createPlatformaticClient(OPTIONS, lib);
