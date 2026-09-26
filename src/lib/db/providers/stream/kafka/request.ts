@@ -133,8 +133,13 @@ function parseOffset(value: unknown): bigint {
   return refuse("The offset must be a non-negative whole number or a digit string");
 }
 
+/**
+ * The one form ISO_INSTANT reads, named in full: Date.parse reads other spellings too, a finer fraction among
+ * them, which it cuts to the millisecond, so a record less than a millisecond before the instant would read as
+ * at or after it.
+ */
 const TIMESTAMP_FORM =
-  'The timestamp must be ISO-8601 with a zone, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00"';
+  'The timestamp must be ISO-8601 with a zone, as YYYY-MM-DDThh:mm with optional seconds of at most three decimals, then Z, +hh:mm or -hh:mm, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00"';
 
 function parseTimestamp(value: unknown): ReadStart {
   const match = typeof value === "string" ? ISO_INSTANT.exec(value) : null;

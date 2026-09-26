@@ -25,7 +25,7 @@ const OFFSET_NUMBER_REFUSAL =
   "The offset must be a non-negative whole number; above 9007199254740991 write it as a digit string, because JSON numbers lose precision there";
 const OFFSET_REFUSAL = "The offset must be a non-negative whole number or a digit string";
 const TIMESTAMP_REFUSAL =
-  'The timestamp must be ISO-8601 with a zone, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00"';
+  'The timestamp must be ISO-8601 with a zone, as YYYY-MM-DDThh:mm with optional seconds of at most three decimals, then Z, +hh:mm or -hh:mm, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00"';
 const PARTITION_REFUSAL = '"partition" must be a whole number from 0 to 2147483647';
 const unknownKeyRefusal = (key: string) =>
   `Unknown key ${JSON.stringify(key)} in the read request; the keys are topic, partition, from and limit`;
@@ -166,6 +166,23 @@ describe("parseReadRequest", () => {
       ["2026-09-23T00:00:00.125Z", "2026-09-23T00:00:00.125Z"],
     ]) {
       expect(parse(JSON.stringify({ topic: "o", from: { timestamp } })).from).toMatchObject({ kind: "timestamp", iso });
+    }
+  });
+
+  test("other spellings Date.parse reads are refused as the timestamp's form, a finer fraction above all", () => {
+    // Bun 1.4.2, Node 24.14.0 and Node 26.7.0 each read every one of these; the first two they cut to the millisecond,
+    // so a record less than a millisecond before the instant would read as at or after it: refused, never cut.
+    for (const timestamp of [
+      "2026-09-23T00:00:00.1239Z",
+      "2026-09-23T00:00:00.123456Z",
+      "+002026-09-23T00:00:00Z",
+      "2026-09-23T00:00:00z",
+      "2026-09-23t00:00:00Z",
+      "2026-09-23 00:00:00Z",
+      "2026-09-23T00:00:00+0300",
+    ]) {
+      expect(Number.isNaN(Date.parse(timestamp))).toBe(false);
+      expect(refusal(JSON.stringify({ topic: "o", from: { timestamp } })).message).toBe(TIMESTAMP_REFUSAL);
     }
   });
 
