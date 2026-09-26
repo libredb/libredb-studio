@@ -411,6 +411,17 @@ describe("aggregateData", () => {
 
 describe("groupByDate", () => {
   const iso = "2025-06-15T14:30:45Z";
+  // groupByDate reads local fields, so these UTC fixtures name the expected day only at UTC.
+  // Held there rather than inherited: off CI's UTC they failed, "day with zero-padding" in
+  // every zone west of UTC and "hour" and "day" at UTC+14.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "UTC";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
 
   test("groups by hour", () => {
     const result = groupByDate(iso, "hour");
