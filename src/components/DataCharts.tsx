@@ -385,7 +385,10 @@ export function aggregateData(
 }
 
 export function groupByDate(dateStr: string, grouping: DateGrouping): string {
-  const date = new Date(dateStr);
+  // A bare ISO date ("2026-09-01", how PostgreSQL hands over a `date`) parses as UTC
+  // midnight, the previous evening west of UTC, while the local getters below read the
+  // viewer's zone. Spelling it as local midnight keeps the calendar day it names.
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T00:00:00` : dateStr);
   if (isNaN(date.getTime())) return dateStr;
   switch (grouping) {
     case "hour":
