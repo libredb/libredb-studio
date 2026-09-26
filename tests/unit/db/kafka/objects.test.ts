@@ -117,6 +117,12 @@ describe("declaration", () => {
       ["consumer_group", "group", false],
       ["broker", "config", false],
     ]);
+    // The folders the tree draws (spec 4.1): Topics, Consumer Groups and Brokers.
+    expect(KAFKA_OBJECT_KINDS.map((k) => [k.label, k.labelPlural])).toEqual([
+      ["Topic", "Topics"],
+      ["Consumer Group", "Consumer Groups"],
+      ["Broker", "Brokers"],
+    ]);
     for (const kind of KAFKA_OBJECT_KINDS) {
       expect(kind).toMatchObject({ hasSource: true, sourceLanguage: "json" });
       expect(kind.acceptsRowWrites).toBeUndefined();
@@ -134,6 +140,18 @@ describe("declaration", () => {
       "value",
       "value_encoding",
       "headers",
+    ]);
+    // Declared whole: the docs panel, the ER view and plan mode's grounding show each column's
+    // type and nullability, and no column is a key.
+    expect(KAFKA_TOPIC_COLUMNS).toEqual([
+      { name: "partition", type: "integer", nullable: false, isPrimary: false },
+      { name: "offset", type: "string", nullable: false, isPrimary: false },
+      { name: "timestamp", type: "timestamp", nullable: true, isPrimary: false },
+      { name: "key", type: "json", nullable: true, isPrimary: false },
+      { name: "key_encoding", type: "string", nullable: false, isPrimary: false },
+      { name: "value", type: "json", nullable: true, isPrimary: false },
+      { name: "value_encoding", type: "string", nullable: false, isPrimary: false },
+      { name: "headers", type: "json", nullable: false, isPrimary: false },
     ]);
   });
 
@@ -168,6 +186,7 @@ describe("declaration", () => {
         const error = await describeObject(client(["a"]), CAPS, path, kind).catch((e) => e);
         expect(error).toBeInstanceOf(QueryError);
         expect(error.message).toBe(`A Kafka "${kind}" path is [name], received ${JSON.stringify(path)}`);
+        expect(error.provider).toBe("kafka");
         await expect(readObjectSource(client(["a"]), CAPS, path, kind)).rejects.toThrow(
           `A Kafka "${kind}" path is [name]`,
         );
@@ -183,6 +202,14 @@ describe("topicStatus", () => {
     expect(topicStatus(topic("t", [partition(0)]))).toBeUndefined();
     expect(topicStatus(topic("t", [partition(0, { isr: [1] })]))).toBe("under-replicated");
     expect(topicStatus(topic("t", [partition(0, { isr: [1] }), partition(1, { leader: -1 })]))).toBe("offline");
+  });
+
+  test("any one partition decides, and node 0 is a leader like any other", () => {
+    // One short ISR among healthy partitions is enough (spec 4.1: "if any partition").
+    expect(topicStatus(topic("t", [partition(0), partition(1, { isr: [1] }), partition(2)]))).toBe("under-replicated");
+    expect(topicStatus(topic("t", [partition(0), partition(1, { leader: -1 })]))).toBe("offline");
+    // Only -1 means no leader: Redpanda's one broker is node 0 (spec 8).
+    expect(topicStatus(topic("t", [partition(0, { leader: 0, replicas: [0], isr: [0] })]))).toBeUndefined();
   });
 });
 
@@ -261,9 +288,42 @@ describe("counting and listing", () => {
     expect(await listObjects(client([]), [], "topic")).toEqual([]);
   });
 
+  test("a healthy topic's row leaves status unset, a group's row is its id, and an empty cluster's listing is the listing alone", async () => {
+    const [healthy] = await listObjects(client(["a"]), [], "topic");
+    expect(healthy).toEqual({ path: ["a"], name: "a", kind: "topic" });
+    expect("status" in healthy).toBe(false);
+    expect(await listObjects(client([]), [], "consumer_group")).toEqual([
+      { path: ["billing"], name: "billing", kind: "consumer_group" },
+    ]);
+    // No topic, so no metadata read for their status: the listing alone answers (spec 4.3).
+    const reads: string[] = [];
+    const empty = client([], {
+      listTopics: async () => {
+        reads.push("listTopics");
+        return [];
+      },
+      metadata: async () => {
+        reads.push("metadata");
+        return { clusterId: "c", controllerId: 1, brokers: [], topics: [] };
+      },
+    });
+    expect(await listObjects(empty, [], "topic")).toEqual([]);
+    expect(reads).toEqual(["listTopics"]);
+  });
+
   test("a non-empty container, or a kind Kafka does not declare, is refused", async () => {
     await expect(listObjects(client([]), ["x"], "topic")).rejects.toThrow(KafkaError);
     await expect(listObjects(client([]), [], "partition")).rejects.toThrow(KafkaError);
+    // Every container-taking surface: one connection is one cluster, with no container level (spec 4.1).
+    const refusals = await Promise.all([
+      countObjects(client(["a"]), ["x"]).catch((e) => e),
+      describeObjects(client(["a"]), ["x"], "topic").catch((e) => e),
+    ]);
+    for (const error of refusals) {
+      expect(error).toBeInstanceOf(KafkaError);
+      expect(error.category).toBe("unknown-object");
+      expect(error.message).toBe('A Kafka connection has no container level; received ["x"]');
+    }
   });
 });
 
@@ -350,6 +410,8 @@ describe("sources", () => {
       source: "dynamic topic config",
       readOnly: false,
     });
+    // Indented as the Source tab shows it, two spaces a level.
+    expect(textOf(doc, 1)).toBe(JSON.stringify(configs, null, 2));
     expect(doc.parts[0]).toMatchObject({ language: "json", form: "complete", origin: "rendered" });
     expect(doc.parts.every((p) => !("truncated" in p))).toBe(true);
   });
@@ -378,7 +440,9 @@ describe("sources", () => {
     });
     const doc = await readObjectSource(c, CAPS, ["orders"], "topic");
     expect(offsetReads).toBe(0);
-    expect(doc.parts[0].label).toContain("partition 1 has no leader");
+    expect(doc.parts[0].label).toBe(
+      "Partitions (offsets not read: partition 1 has no leader, and the client reads a topic's offsets as a whole)",
+    );
     expect(JSON.parse(textOf(doc, 0))[1]).toMatchObject({
       partition: 1,
       leader: -1,
@@ -591,7 +655,10 @@ describe("sources", () => {
 
   test("consumer group: the description then the lag", async () => {
     const doc = await readObjectSource(client(["orders"]), CAPS, ["billing"], "consumer_group");
-    expect(doc.parts.map((p) => p.id)).toEqual(["group", "offsets"]);
+    expect(doc.parts.map((p) => [p.id, p.label])).toEqual([
+      ["group", "Group"],
+      ["offsets", "Committed offsets and lag"],
+    ]);
     expect(JSON.parse(textOf(doc, 1))[0]).toMatchObject({ lag: "4" });
   });
 
@@ -646,6 +713,7 @@ describe("sources", () => {
 
   test("a broker is named by its node id's own digits: another spelling of the same number names no broker", async () => {
     let configReads = 0;
+    const asked: number[] = [];
     const c = client(["a"], {
       metadata: async () => ({
         clusterId: "c",
@@ -656,8 +724,9 @@ describe("sources", () => {
         ],
         topics: [],
       }),
-      brokerConfigs: async () => {
+      brokerConfigs: async (nodeId) => {
         configReads++;
+        asked.push(nodeId);
         return [];
       },
     });
@@ -677,10 +746,11 @@ describe("sources", () => {
     );
     expect(outcomes).toEqual(spellings.map(() => true));
     expect(configReads).toBe(0);
-    // The control: each broker's own digits answer its configs.
+    // The control: each broker's own digits answer its configs, read from that node.
     const answered = await Promise.all(["0", "1"].map((name) => readObjectSource(c, CAPS, [name], "broker")));
     expect(answered.map((doc) => doc.path)).toEqual([["0"], ["1"]]);
     expect(configReads).toBe(2);
+    expect(asked.sort()).toEqual([0, 1]);
   });
 
   test("any other failure reading a topic's metadata propagates unchanged", async () => {

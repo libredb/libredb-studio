@@ -122,6 +122,15 @@ describe("storageFrom", () => {
     expect(empty).toEqual({ name: "broker 2: /none", location: "/none", size: formatBytes(0), sizeBytes: 0 });
   });
 
+  test("the usage percentage is the used share rounded to the nearest whole percent", () => {
+    const [twoThirds, oneThird] = storageFrom([
+      { brokerId: 1, path: "/a", sizeBytes: big(0), totalBytes: big(3), usableBytes: big(1) },
+      { brokerId: 1, path: "/b", sizeBytes: big(0), totalBytes: big(3), usableBytes: big(2) },
+    ]);
+    // 66.67 and 33.33 percent used: neither a floor (66) nor a ceiling (34) is the nearest.
+    expect([twoThirds.usagePercent, oneThird.usagePercent]).toEqual([67, 33]);
+  });
+
   test("no log dirs (refused, KM4) is no rows", () => {
     expect(storageFrom(undefined)).toEqual([]);
   });
