@@ -179,6 +179,18 @@ describe("counting and listing", () => {
     expect((await listObjects(client(names), [], "topic")).length).toBe(KAFKA_TOPIC_LIST_CAP);
   });
 
+  test("at exactly the cap nothing is cut: the count is exact and every name is listed", async () => {
+    const names = Array.from({ length: KAFKA_TOPIC_LIST_CAP }, (_, i) => `t${String(i).padStart(5, "0")}`);
+    // No sampledFrom: at N the count is exact, and a floor is never reported as one (spec 3.5, 4.3).
+    expect((await countObjects(client(names), [])).topic).toEqual({ count: KAFKA_TOPIC_LIST_CAP });
+    expect((await listObjects(client(names), [], "topic")).map((row) => row.name)).toEqual(names);
+    // The control: one name more is the floor.
+    expect((await countObjects(client([...names, "t99999"]), [])).topic).toEqual({
+      count: KAFKA_TOPIC_LIST_CAP,
+      sampledFrom: "one topic listing capped at 2,000 names",
+    });
+  });
+
   test("a kind the broker refuses is unavailable in its words, and the other kinds are still counted", async () => {
     const denied = client(["a"], {
       listGroups: async () => {
@@ -265,6 +277,27 @@ describe("describe", () => {
     expect(both.truncated).toEqual({
       limit: 10,
       reason: `${callerBoundTruncationReason(10)}, and the listing is one topic listing capped at 2,000 names`,
+    });
+  });
+
+  test("a batch at exactly a bound is whole: the topic cap, and a caller's limit equal to the count, cut nothing", async () => {
+    // Plan mode's inventory walk stops at the first batch that reports a cut (spec 4.3), so a
+    // whole batch reported as cut would ground no consumer group and no broker (KM1).
+    const names = Array.from({ length: KAFKA_TOPIC_LIST_CAP }, (_, i) => `t${String(i).padStart(5, "0")}`);
+    const atCap = await describeObjects(client(names), [], "topic");
+    expect(atCap.details.map((d) => d.path)).toEqual(names.map((name) => [name]));
+    expect("truncated" in atCap).toBe(false);
+    const atBoth = await describeObjects(client(names), [], "topic", KAFKA_TOPIC_LIST_CAP);
+    expect(atBoth.details).toHaveLength(KAFKA_TOPIC_LIST_CAP);
+    expect("truncated" in atBoth).toBe(false);
+    const atLimit = await describeObjects(client(["a", "b", "c"]), [], "topic", 3);
+    expect(atLimit).toEqual({
+      details: ["a", "b", "c"].map((name) => ({
+        path: [name],
+        columns: KAFKA_TOPIC_COLUMNS,
+        indexes: [],
+        foreignKeys: [],
+      })),
     });
   });
 });
