@@ -426,7 +426,9 @@ A broker below ListGroups v5, such as Apache Kafka before 3.8, reports no group 
 A classic group is described by `describeGroups`, and a `consumer` group by ConsumerGroupDescribe (API 69), because `describeGroups` reports a KIP-848 group as `Dead` while the broker says `Empty`, and API 69 refuses a classic one.
 A group's existence is decided by the listing, because `describeGroups` answers `Dead` for a name that does not exist.
 Lag per partition is the high watermark minus the committed offset, the log end `kafka-consumer-groups.sh --describe` measures against, for every partition of each topic the group has committed on or is assigned.
-A partition with no committed offset shows lag as `null` with the note "no committed offset", never 0 and never the whole log, and a committed or assigned topic whose latest offsets cannot be read, an internal topic, one with a leaderless partition or one the principal may not describe, keeps its rows with no latest offset and the reason.
+A partition with no committed offset shows lag as `null` with the note "no committed offset", never 0 and never the whole log, and a committed or assigned topic whose latest offsets cannot be read, an internal topic or one with a leaderless partition, keeps its rows with no latest offset and the reason.
+The broker leaves every topic the principal may not describe out of a group's committed offsets, with no error, and the protocol gives the provider no way to see it: such a topic the group only committed on has no rows, and one a member of a classic group is assigned keeps its rows with no committed or latest offset and the broker's refusal as the reason.
+A consumer-protocol group with a member assigned such a topic is refused its whole description, which its source shows as that refusal ([§6.2](#62-object-source-789)).
 
 ### 6.2 Object source (#789)
 
@@ -447,7 +449,7 @@ A topic whose offsets are refused shows its partitions without offsets and says 
 A group's two parts rest on two reads, its description and its committed offsets, and the broker can refuse either for a group it lists: ConsumerGroupDescribe refuses a consumer-protocol group whole while a member holds a topic the principal may not describe, and a principal that lists groups by its Describe on the cluster alone is refused both reads of every group.
 A refused description is the group part's refusal, and the lag part then holds the rows of the committed offsets alone, since no assignment was read, and its label says so.
 Refused committed offsets are the lag part's refusal, and no high watermark is read for it, since rows with no committed offset read would call every assigned partition uncommitted.
-A group's topic the principal may not describe keeps its lag rows with no latest offset and the refusal as the reason.
+An assigned topic whose high watermark is refused keeps its rows with no committed or latest offset and the refusal as the reason ([§6.1](#consumer-groups-and-lag)).
 A refusal of the read that decides the object exists, the topic's metadata, the broker listing or the group listing, still fails the source, and so does any failure that is not a refusal.
 
 ### 6.3 Object edit (#789)
