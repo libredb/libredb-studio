@@ -318,31 +318,92 @@ describe("readMessages", () => {
     expect(calls).toEqual(["offsets earliest", "offsets latest"]);
   });
 
-  test("the range read again after a refused fetch waits on the read's time limit as every planning call does", async () => {
-    const controller = new AbortController();
-    let heldAsked: () => void = () => {};
-    const asked = new Promise<void>((resolve) => {
-      heldAsked = resolve;
-    });
-    let answers = 0;
+  /**
+   * The offsets read again after a refused fetch, each held in turn: the earliest is the read's third offsets call and
+   * the latest its fourth, after the two it planned from. The calls a read has made when the held one is out end so.
+   */
+  const REREAD_CALLS = [
+    ["earliest", 3, ["fetch 1@0", "offsets earliest, held"]],
+    ["latest", 4, ["fetch 1@0", "offsets earliest", "offsets latest, held"]],
+  ] as const;
+
+  test.each(
+    REREAD_CALLS.flatMap(([held, at, last]) =>
+      (["answer", "failure"] as const).map((how) => [held, how, at, last] as const),
+    ),
+  )(
+    "the %s offsets read again after a refused fetch wait on the read's time limit as every planning call does, and nothing is asked once the %s comes",
+    async (_held, how, at, last) => {
+      const controller = new AbortController();
+      let heldAsked: () => void = () => {};
+      const asked = new Promise<void>((resolve) => {
+        heldAsked = resolve;
+      });
+      let release: () => void = () => {};
+      let answers = 0;
+      const { client, calls } = trimmedLog();
+      const holding: ReadClient = {
+        ...client,
+        offsets: (topic, which) => {
+          answers += 1;
+          if (answers < at) return client.offsets(topic, which);
+          calls.push(`offsets ${which}, held`);
+          heldAsked();
+          // What the broker would answer now, which the fake writes down nowhere: partition 1's log starts at 6 since the
+          // refusal, and both partitions end at 10. Or the client's own failure.
+          const late = new Map<number, bigint>();
+          late.set(0, which === "earliest" ? n(0) : n(10));
+          late.set(1, which === "earliest" ? n(6) : n(10));
+          return new Promise((resolve, reject) => {
+            release = () => (how === "answer" ? resolve(late) : reject(new Error("the client's own timer")));
+          });
+        },
+      };
+      const read = readMessages(holding, req({ from: { kind: "earliest" } }), LIMITS, controller.signal).catch(
+        (e) => e,
+      );
+      await asked;
+      controller.abort();
+      // At once: before a macrotask can run, while the held answer is still out.
+      const settled = await Promise.race([
+        read,
+        new Promise((resolve) => setTimeout(() => resolve("still waiting"), 0)),
+      ]);
+      expect(settled).toBeInstanceOf(KafkaError);
+      expect((settled as KafkaError).category).toBe("timeout");
+      expect((settled as KafkaError).message).toBe("The read ran past its time limit and was stopped");
+      expect(calls.slice(-last.length)).toEqual([...last]);
+      const made = [...calls];
+      // The held answer, or the failure, arrives later and goes nowhere: no offsets are read again, and the fetch is
+      // not sent again.
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toEqual(made);
+    },
+  );
+
+  test("a refused fetch whose range read again still holds its offset is refused naming that range, and is never sent again", async () => {
+    // The offsets read after the refusal put partition 1's log start back at 0, below the offset the broker refused,
+    // as a log truncated and written again would: the read names that range and stops, and never fetches it again.
     const { client, calls } = trimmedLog();
-    const holding: ReadClient = {
+    const holdsIt: ReadClient = {
       ...client,
-      offsets: (topic, at) => {
-        answers += 1;
-        if (answers <= 2) return client.offsets(topic, at);
-        calls.push(`offsets ${at}, held`);
-        heldAsked();
-        return new Promise(() => {});
+      offsets: async (topic, at) => {
+        const answer = await client.offsets(topic, at);
+        if (at === "earliest") answer.set(1, n(0));
+        return answer;
       },
     };
-    const read = readMessages(holding, req({ from: { kind: "earliest" } }), LIMITS, controller.signal).catch((e) => e);
-    await asked;
-    controller.abort();
-    const settled = await Promise.race([read, new Promise((resolve) => setTimeout(() => resolve("still waiting"), 0))]);
-    expect(settled).toBeInstanceOf(KafkaError);
-    expect((settled as KafkaError).category).toBe("timeout");
-    expect(calls.slice(-2)).toEqual(["fetch 1@0", "offsets earliest, held"]);
+    const error = await readMessages(holdsIt, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.category).toBe("offset-out-of-range");
+    expect(error.message).toBe(
+      "The broker refused the fetch at offset 0 of partition 1 as out of range: the partition now holds 0 to its last stable offset 10, so its log moved after the read began; run the read again",
+    );
+    expect(error.detail).toEqual({ apiId: "OFFSET_OUT_OF_RANGE", validRange: { earliest: n(0), latest: n(10) } });
+    expect(calls.slice(-3)).toEqual(["fetch 1@0", "offsets earliest", "offsets latest"]);
+    expect(calls.filter((call) => call.startsWith("fetch 1@"))).toEqual(["fetch 1@0"]);
   });
 
   test("a partition that does not exist is refused", async () => {
