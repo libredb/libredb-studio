@@ -85,6 +85,27 @@ describe("computeLag", () => {
     ]);
   });
 
+  test("the assignment alone gives rows: an assigned partition the latest answer leaves out, and every assigned partition of a topic whose offsets were not read", () => {
+    const leaderless = 'Topic "payments" has no leader for partition 1';
+    const rows = computeLag(
+      [],
+      // The latest answer names partition 0 of b only; payments has no latest answer at all.
+      new Map([["b", new Map([[0, n(7)]])]]),
+      [
+        { topic: "b", partitions: [0, 1] },
+        { topic: "payments", partitions: [0, 1] },
+      ],
+      new Map([["payments", leaderless]]),
+    );
+    expect(rows.map((r) => `${r.topic}/${r.partition}`)).toEqual(["b/0", "b/1", "payments/0", "payments/1"]);
+    expect(rows[1]).toMatchObject({ topic: "b", partition: 1, committedOffset: null, latestOffset: null, lag: null });
+    expect(rows[1].note).toContain("no committed offset");
+    for (const row of rows.slice(2)) {
+      expect(row).toMatchObject({ topic: "payments", committedOffset: null, latestOffset: null, lag: null });
+      expect(row.note).toContain(leaderless);
+    }
+  });
+
   test("a topic whose latest offsets were not readable keeps its rows, with the reason", () => {
     const rows = computeLag(
       [{ topic: "__consumer_offsets", partition: 4, offset: n(9) }],
@@ -208,6 +229,51 @@ describe("readGroupSource", () => {
         note: "no committed offset",
       },
     ]);
+  });
+
+  test("a member's assigned topic with a leaderless partition keeps a row per assigned partition, and an assigned partition the latest answer leaves out is a row", async () => {
+    const source = await readGroupSource(
+      client({
+        describeGroup: async (listing) => ({
+          groupId: listing.groupId,
+          groupType: listing.groupType,
+          state: "Stable",
+          protocolOrAssignor: "range",
+          members: [
+            {
+              memberId: "m-1",
+              clientId: "c-1",
+              clientHost: "/10.0.0.1",
+              assignment: [
+                { topic: "payments", partitions: [0, 1] },
+                { topic: "orders", partitions: [2] },
+              ],
+            },
+          ],
+        }),
+        committedOffsets: async () => [],
+        offsets: async (topic) => {
+          if (topic === "payments") {
+            throw new KafkaError("unreadable-topic", 'Topic "payments" has no leader for partition 1');
+          }
+          return new Map([
+            [0, n(4)],
+            [1, n(6)],
+          ]);
+        },
+      }),
+      "lag-classic",
+    );
+    expect(source?.lag.map((r) => [`${r.topic}/${r.partition}`, r.latestOffset])).toEqual([
+      ["orders/0", "4"],
+      ["orders/1", "6"],
+      ["orders/2", null],
+      ["payments/0", null],
+      ["payments/1", null],
+    ]);
+    for (const row of source?.lag.slice(3) ?? []) {
+      expect(row.note).toContain('Topic "payments" has no leader for partition 1');
+    }
   });
 
   test("a group not in the listing answers undefined, because describeGroups says Dead for anything (M-E)", async () => {
