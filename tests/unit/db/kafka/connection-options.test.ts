@@ -50,6 +50,15 @@ describe("kafkaConnectionOptions", () => {
     }
   });
 
+  test("K1: the address is refused before the TLS panel or the mechanism is read", () => {
+    // Each of these is refused by its own rule, as a KafkaError, when the address passes.
+    const rest = { ssl: "on", saslMechanism: "hunter2", user: "u", password: "p" };
+    for (const address of [{ host: "a:1" }, { port: 0 }]) {
+      const connection = { ...base, ...address, ...rest } as unknown as DatabaseConnection;
+      expect(() => kafkaConnectionOptions(connection, 1)).toThrow(DatabaseConfigError);
+    }
+  });
+
   test("TLS maps the panel, with the Couchbase rejectUnauthorized rule", () => {
     const tls = kafkaConnectionOptions(
       { ...base, ssl: { mode: "verify-ca", caCert: "CA", clientCert: "CERT", clientKey: "KEY" } } as DatabaseConnection,
