@@ -628,6 +628,9 @@ export function StudioWorkspace({
    * deleting the counter killed one. What announces the re-read here is the pane's own
    * `object-source-loading` region, which is an `output` element carrying an implicit
    * `role="status"`, so a screen reader is told the same thing by the surface that knows it.
+   * A failed query run follows the same rule: `useQueryAdapter` still raises its toast, and what a
+   * host's user actually sees is the results panel's own `run-failure` block, rendered from the
+   * tab's `runError` in place of the previous run's rows.
    *
    * The DRAFT is not dropped here either. The pane drops it itself, keyed on the part its plan
    * was built for, which is a key this shell does not hold and must not guess.

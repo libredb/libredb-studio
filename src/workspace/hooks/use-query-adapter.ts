@@ -237,6 +237,7 @@ export function useQueryAdapter({
               currentOffset: result.rows.length,
               isExecuting: false,
               isLoadingMore: false,
+              runError: undefined,
             };
           }),
         );
@@ -253,11 +254,21 @@ export function useQueryAdapter({
         // flags or raising a toast for a run nobody is waiting for is the same write.
         if (cancelledRef.current || !ownsTab()) return;
 
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        // The failure REPLACES the previous result, as it does in `use-query-execution`: the
+        // rows on screen were fetched by another statement, and a reader of one must never be
+        // handed the other's (#881). This shell mounts no Toaster, so the inline block the
+        // results panel renders for `runError` is the only failure signal a host's user sees.
         setTabs((prev) =>
           prev.map((t) =>
             t.id === targetTabId
               ? {
                   ...t,
+                  result: null,
+                  resultQuery: undefined,
+                  allRows: undefined,
+                  currentOffset: 0,
+                  runError: errorMessage,
                   isExecuting: false,
                   isLoadingMore: false,
                 }
@@ -265,7 +276,6 @@ export function useQueryAdapter({
           ),
         );
 
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       }
     },
@@ -342,6 +352,7 @@ export function useQueryAdapter({
                 currentOffset: result.rows.length,
                 isExecuting: false,
                 isLoadingMore: false,
+                runError: undefined,
               };
             }),
           );
@@ -352,11 +363,18 @@ export function useQueryAdapter({
         .catch((error) => {
           if (cancelledRef.current || !ownsTab()) return;
 
+          // Replaces the previous result, for the reason the catch in `executeQuery` states.
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
           setTabs((prev) =>
             prev.map((t) =>
               t.id === activeTabId
                 ? {
                     ...t,
+                    result: null,
+                    resultQuery: undefined,
+                    allRows: undefined,
+                    currentOffset: 0,
+                    runError: errorMessage,
                     isExecuting: false,
                     isLoadingMore: false,
                   }
@@ -364,7 +382,6 @@ export function useQueryAdapter({
             ),
           );
 
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
           toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
         });
     },
@@ -589,6 +606,7 @@ export function useQueryAdapter({
               currentOffset: result.rows.length,
               isExecuting: false,
               isLoadingMore: false,
+              runError: undefined,
             };
           }),
         );
@@ -599,11 +617,18 @@ export function useQueryAdapter({
       .catch((error) => {
         if (cancelledRef.current || !ownsTab()) return;
 
+        // Replaces the previous result, for the reason the catch in `executeQuery` states.
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         setTabs((prev) =>
           prev.map((t) =>
             t.id === tabId
               ? {
                   ...t,
+                  result: null,
+                  resultQuery: undefined,
+                  allRows: undefined,
+                  currentOffset: 0,
+                  runError: errorMessage,
                   isExecuting: false,
                   isLoadingMore: false,
                 }
@@ -611,7 +636,6 @@ export function useQueryAdapter({
           ),
         );
 
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       });
 

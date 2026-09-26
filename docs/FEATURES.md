@@ -17,6 +17,11 @@
 ### 2. Multi-Tab Query Management
 *   **Workspace Tabs:** Open multiple queries simultaneously in separate tabs.
 *   **Independent Results:** Each tab maintains its own execution state and results grid.
+*   **Failed Runs Stay Visible:** A run that fails replaces the tab's previous result with the error, in the results panel, so the rows on screen always belong to the statement that last ran.
+    The notification still appears, and the next successful run clears the error.
+    A failed Load More is the exception, because only the next page failed: the rows already loaded stay.
+    A cancelled run leaves the previous result as it was.
+    The embedded workspace shows the same inline error, which is its only failure signal, because it mounts no notification area.
 *   **Persistent Tabs:** Switch between tasks without losing your work.
 
 ### 3. Pro Data Grid (Excel-Style)
