@@ -1266,6 +1266,185 @@ describe("readMessages", () => {
     expect(seen).toHaveLength(3);
     expect(seen.every((fetchSignal) => fetchSignal === controller.signal)).toBe(true);
   });
+
+  /**
+   * A fake whose planning answers the test holds: the step named `held` answers only when the test releases it,
+   * with the answer it would have given or with a failure, and every call is written down as it is made.
+   */
+  function heldPlanning(held: "metadata" | "earliest" | "timestamp" | "latest") {
+    const base = fakeClient(log);
+    const calls: string[] = [];
+    let asked: () => void = () => {};
+    const heldAsked = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    let release: (answer: "answer" | "failure") => void = () => {};
+    const hold = <T>(step: typeof held, answer: () => Promise<T>): Promise<T> => {
+      calls.push(step);
+      if (step !== held) return answer();
+      asked();
+      return new Promise<T>((resolve, reject) => {
+        release = (how) => (how === "answer" ? answer().then(resolve) : reject(new Error("the client's own timer")));
+      });
+    };
+    const client: ReadClient = {
+      metadata: (topics) => hold("metadata", () => base.client.metadata(topics)),
+      offsets: (topic, at) => hold(at === "earliest" ? "earliest" : "latest", () => base.client.offsets(topic, at)),
+      offsetsForTimestamp: (topic, ts) => hold("timestamp", () => base.client.offsetsForTimestamp(topic, ts)),
+      fetch: (topic, partition, offset, fetchSignal) => {
+        calls.push("fetch");
+        return base.client.fetch(topic, partition, offset, fetchSignal);
+      },
+    };
+    return { client, calls, heldAsked, release: (how: "answer" | "failure") => release(how) };
+  }
+
+  const macrotask = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const PLANNING_CALLS = [
+    ["metadata", ["metadata"]],
+    ["earliest", ["metadata", "earliest"]],
+    ["timestamp", ["metadata", "earliest", "timestamp"]],
+    ["latest", ["metadata", "earliest", "timestamp", "latest"]],
+  ] as const;
+
+  test.each(
+    PLANNING_CALLS.flatMap(([held, asked]) =>
+      (["answer", "failure"] as const).map((how) => [held, how, asked] as const),
+    ),
+  )(
+    "a read its time limit stops while the %s answer is out is answered at once, and makes no call after it, even once the %s comes",
+    async (held, how, asked) => {
+      const planning = heldPlanning(held);
+      const controller = new AbortController();
+      const read = readMessages(
+        planning.client,
+        req({ from: { kind: "timestamp", timestampMs: n(25), iso: "x" } }),
+        LIMITS,
+        controller.signal,
+      ).then(
+        () => "answered",
+        (error: unknown) => error,
+      );
+      await planning.heldAsked;
+      controller.abort();
+      // At once: before a macrotask can run, while the held answer is still out.
+      const settled = await Promise.race([read, macrotask().then(() => "still waiting")]);
+      expect(settled).toBeInstanceOf(KafkaError);
+      expect((settled as KafkaError).category).toBe("timeout");
+      expect((settled as KafkaError).message).toBe("The read ran past its time limit and was stopped");
+      expect(planning.calls).toEqual([...asked]);
+      // The held answer, or the client's own failure, arrives later and goes nowhere: no later call is made.
+      planning.release(how);
+      await macrotask();
+      await macrotask();
+      expect(planning.calls).toEqual([...asked]);
+    },
+  );
+
+  test("every listener a planning step puts on the read's signal is taken off once the step is answered", async () => {
+    const controller = new AbortController();
+    const listening = new Set<unknown>();
+    let added = 0;
+    const { addEventListener, removeEventListener } = controller.signal;
+    controller.signal.addEventListener = ((type: string, listener: unknown, options?: unknown) => {
+      if (type === "abort") {
+        added += 1;
+        listening.add(listener);
+      }
+      return addEventListener.call(
+        controller.signal,
+        type,
+        listener as EventListener,
+        options as AddEventListenerOptions,
+      );
+    }) as AbortSignal["addEventListener"];
+    controller.signal.removeEventListener = ((type: string, listener: unknown, options?: unknown) => {
+      if (type === "abort") listening.delete(listener);
+      return removeEventListener.call(
+        controller.signal,
+        type,
+        listener as EventListener,
+        options as EventListenerOptions,
+      );
+    }) as AbortSignal["removeEventListener"];
+    const out = await readMessages(
+      fakeClient(log).client,
+      req({ from: { kind: "timestamp", timestampMs: n(25), iso: "x" } }),
+      LIMITS,
+      controller.signal,
+    );
+    expect(out.rows).toHaveLength(3);
+    // The metadata, the earliest offsets, the lookup at the timestamp and the latest offsets.
+    expect(added).toBe(4);
+    expect(listening.size).toBe(0);
+    // And once a step fails: the read is refused with the step's failure, and its listener is off too.
+    const failing = fakeClient(log, {
+      offsets: async () => {
+        throw new KafkaError("network", "the broker could not be reached");
+      },
+    });
+    const error = await readMessages(failing.client, req({}), LIMITS, controller.signal).catch((e) => e);
+    expect(error.message).toBe("the broker could not be reached");
+    expect(added).toBe(6);
+    expect(listening.size).toBe(0);
+  });
+
+  test("a read whose time limit runs out while a planning call is being made is refused at once as well", async () => {
+    const controller = new AbortController();
+    const base = fakeClient(log);
+    const client: ReadClient = {
+      ...base.client,
+      // The signal stops inside the call, before it returns its answer, which comes 50 ms later.
+      metadata: (topics) => {
+        controller.abort();
+        return new Promise((resolve) => setTimeout(resolve, 50)).then(() => base.client.metadata(topics));
+      },
+    };
+    const read = readMessages(client, req({}), LIMITS, controller.signal).catch((e) => e);
+    const settled = await Promise.race([read, macrotask().then(() => "still waiting")]);
+    expect(settled).toBeInstanceOf(KafkaError);
+    expect((settled as KafkaError).category).toBe("timeout");
+    expect(base.offsetCalls).toEqual([]);
+  });
+
+  test("a read whose time limit ran out before it started makes no call at all", async () => {
+    const planning = heldPlanning("metadata");
+    const error = await readMessages(
+      planning.client,
+      req({ from: { kind: "timestamp", timestampMs: n(25), iso: "x" } }),
+      LIMITS,
+      AbortSignal.abort(),
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(KafkaError);
+    expect(error.category).toBe("timeout");
+    expect(planning.calls).toEqual([]);
+  });
+
+  test("a planning step that answers before the time limit leaves the read to go on, and its failure is the read's", async () => {
+    // Control for the tests above: the same held steps, released before any abort, answer the read as usual.
+    const planning = heldPlanning("latest");
+    const controller = new AbortController();
+    const read = readMessages(
+      planning.client,
+      req({ from: { kind: "timestamp", timestampMs: n(25), iso: "x" } }),
+      LIMITS,
+      controller.signal,
+    );
+    await planning.heldAsked;
+    planning.release("answer");
+    const out = await read;
+    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/1", "1/1", "0/2"]);
+    expect(planning.calls).toEqual(["metadata", "earliest", "timestamp", "latest", "fetch", "fetch"]);
+    const failing = heldPlanning("earliest");
+    const refused = readMessages(failing.client, req({}), LIMITS, new AbortController().signal).catch((e) => e);
+    await failing.heldAsked;
+    failing.release("failure");
+    const error = await refused;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("the client's own timer");
+    expect(failing.calls).toEqual(["metadata", "earliest"]);
+  });
 });
 
 /**
@@ -1325,6 +1504,11 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     "two answers left out a partition the read covers",
     "an offsets answer left out only partitions the read does not cover",
     "an offset lay outside its partition's range",
+    "the read's time ran out before it started",
+    "the read's time ran out while the metadata was out",
+    "the read's time ran out while the earliest offsets were out",
+    "the read's time ran out while the timestamp lookup was out",
+    "the read's time ran out while the latest offsets were out",
     "the read's time ran out before a fetch it still needed",
     "the read's time ran out after the last fetch it needed",
     "a record no date can show came into the rows held",
@@ -1350,7 +1534,11 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     readonly perFetch: number;
     /** When the read's time runs out: before it starts (0), or as its n-th fetch is answered. */
     readonly abortAt: number | undefined;
+    /** Or while one of the planning calls is out: its time runs out as that call is made, before it is answered. */
+    readonly abortWhileAsked: PlanningStep | undefined;
   }
+  /** The calls a read makes before its first fetch, in the order it makes them (spec 5.1). */
+  type PlanningStep = "metadata" | "earliest" | "timestamp" | "latest";
 
   /** The adapter's refusals, in words the read never writes itself, so a refusal passed on as it came is seen as such. */
   const internalTopic = () =>
@@ -1466,14 +1654,21 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     const perFetch = pick([1, 2, 3, 100]);
     // Now and then a topic the client refuses: an internal one, or one the cluster does not hold (spec 4.1, 4.5).
     const topic = chance(0.02) ? INTERNAL : chance(0.02) ? "payments" : TOPIC;
-    // Now and then the read's time runs out: before it starts, or as one of its first fetches is answered.
-    const abortAt = chance(0.08) ? int(0, 3) : undefined;
+    // Now and then the read's time runs out: before it starts, or as one of its first fetches is answered. Often
+    // enough that the fetch-loop rules still meet their count beside the planning calls' draw below.
+    const abortAt = chance(0.12) ? int(0, 3) : undefined;
+    // Or while a planning call is out (spec 5.4), drawn last so that every draw above keeps its value, and more
+    // often on a timestamp read, the one read that makes all four.
+    const steps: readonly PlanningStep[] =
+      kind === "timestamp" ? ["metadata", "earliest", "timestamp", "latest"] : ["metadata", "earliest", "latest"];
+    const abortWhileAsked = chance(kind === "timestamp" ? 0.3 : 0.08) ? pick(steps) : undefined;
     const facets = [
       `read ${index}: ${kind}${partition === undefined ? "" : ` of partition ${partition}`} of ${topic}`,
       `limit ${limit}, ${perFetch} a fetch, budget ${limits.resultByteBudget}, cells ${limits.cellLimit}`,
       ...(leaderless ? [`leaders ${JSON.stringify(leaders)}`] : []),
       ...(holes ? ["answers that leave partitions out"] : []),
       ...(abortAt === undefined ? [] : [`time runs out at fetch ${abortAt}`]),
+      ...(abortWhileAsked === undefined ? [] : [`time runs out while the ${abortWhileAsked} call is out`]),
     ];
     return {
       label: facets.join(", "),
@@ -1487,6 +1682,7 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
       limits,
       perFetch,
       abortAt,
+      abortWhileAsked,
     };
   }
 
@@ -1517,9 +1713,13 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
         offlineReplicas: [],
       })),
     };
-    /** Writes the call down, answers it a macrotask later, and writes down whether it was answered or refused. */
-    const answer = async <T>(call: string, work: () => T): Promise<T> => {
+    /**
+     * Writes the call down, answers it a macrotask later, and writes down whether it was answered or refused. The
+     * read's time runs out as the scenario's planning call is made, while its answer is still out.
+     */
+    const answer = async <T>(call: string, work: () => T, step?: PlanningStep): Promise<T> => {
       trace.push(call);
+      if (step !== undefined && step === s.abortWhileAsked) controller.abort();
       await new Promise((resolve) => setTimeout(resolve, 0));
       try {
         const value = work();
@@ -1547,23 +1747,35 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     return {
       // Every non-internal topic when no name is given (client.ts).
       metadata: (names) =>
-        answer(`metadata(${JSON.stringify(names)})`, () => ({
-          clusterId: "c",
-          controllerId: 1,
-          brokers: [],
-          topics: (names ?? [TOPIC]).map((name) => held(name)),
-        })),
+        answer(
+          `metadata(${JSON.stringify(names)})`,
+          () => ({
+            clusterId: "c",
+            controllerId: 1,
+            brokers: [],
+            topics: (names ?? [TOPIC]).map((name) => held(name)),
+          }),
+          "metadata",
+        ),
       offsets: (name, at) =>
-        answer(`offsets(${JSON.stringify(name)}, ${at})`, () => {
-          readable(name);
-          return new Map(at === "earliest" ? s.earliest : s.latest);
-        }),
+        answer(
+          `offsets(${JSON.stringify(name)}, ${at})`,
+          () => {
+            readable(name);
+            return new Map(at === "earliest" ? s.earliest : s.latest);
+          },
+          at === "earliest" ? "earliest" : "latest",
+        ),
       offsetsForTimestamp: (name, timestampMs) =>
-        answer(`offsetsForTimestamp(${JSON.stringify(name)}, ${timestampMs})`, () => {
-          readable(name);
-          const answered = s.order.filter((p) => !s.timestampLeftOut.includes(p));
-          return new Map(answered.map((p) => [p, offsetAt(s, p, timestampMs)]));
-        }),
+        answer(
+          `offsetsForTimestamp(${JSON.stringify(name)}, ${timestampMs})`,
+          () => {
+            readable(name);
+            const answered = s.order.filter((p) => !s.timestampLeftOut.includes(p));
+            return new Map(answered.map((p) => [p, offsetAt(s, p, timestampMs)]));
+          },
+          "timestamp",
+        ),
       fetch: (given, partition, offset, fetchSignal) =>
         answer(
           fetchCall(
@@ -1630,6 +1842,16 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     }
   }
 
+  /** The read's refusal once its time limit stops it (spec 5.4). */
+  const stoppedRead = () => new KafkaError("timeout", "The read ran past its time limit and was stopped");
+  /** The rule each planning call meets when the read's time runs out while it is out. */
+  const TIMED_OUT_WHILE: Readonly<Record<PlanningStep, Rule>> = {
+    metadata: "the read's time ran out while the metadata was out",
+    earliest: "the read's time ran out while the earliest offsets were out",
+    timestamp: "the read's time ran out while the timestamp lookup was out",
+    latest: "the read's time ran out while the latest offsets were out",
+  };
+
   /** What spec 5.1 and 5.4 say the read answers or refuses, and the calls it makes; `saw` is told each rule it meets. */
   function reference(s: Scenario, saw: (rule: Rule) => void) {
     const { request, limits } = s;
@@ -1637,10 +1859,25 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     /** A call the read makes, and how the fake answered it, as the fake writes them down. */
     const called = (call: string, answer = "answered") => trace.push(call, `${call}: ${answer}`);
     const refused = (error: unknown) => ({ outcome: { refused: refusalOf(error) }, trace });
+    /**
+     * Spec 5.4: every step of a read waits on its signal, so a read whose time runs out while a planning call is out
+     * is refused at once, before that call is answered, and makes no call after it.
+     */
+    const timedOut = (step: PlanningStep, call: string) => {
+      trace.push(call);
+      saw(TIMED_OUT_WHILE[step]);
+      return refused(stoppedRead());
+    };
 
+    // Spec 5.4: a read whose time ran out before it started makes no call at all.
+    if (s.abortAt === 0) {
+      saw("the read's time ran out before it started");
+      return refused(stoppedRead());
+    }
     // Spec 4.1, 4.5: the read first asks for the metadata of the one topic it names. The client refuses an internal
     // topic and one the cluster does not hold, and the read passes that refusal on as it came.
     const metadata = `metadata(${JSON.stringify([request.topic])})`;
+    if (s.abortWhileAsked === "metadata") return timedOut("metadata", metadata);
     if (request.topic !== TOPIC) {
       called(metadata, "refused");
       saw(request.topic === INTERNAL ? "the topic is internal" : "the topic does not exist");
@@ -1680,9 +1917,17 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     // The earliest offsets, then those at the timestamp, then the latest, each asked for only once the one before it
     // was answered: the end is read after every start (spec 5.1).
     const atTimestamp = request.from.kind === "timestamp";
-    called(`offsets("${TOPIC}", earliest)`);
-    if (request.from.kind === "timestamp") called(`offsetsForTimestamp("${TOPIC}", ${request.from.timestampMs})`);
-    called(`offsets("${TOPIC}", latest)`);
+    const earliestCall = `offsets("${TOPIC}", earliest)`;
+    if (s.abortWhileAsked === "earliest") return timedOut("earliest", earliestCall);
+    called(earliestCall);
+    if (request.from.kind === "timestamp") {
+      const lookup = `offsetsForTimestamp("${TOPIC}", ${request.from.timestampMs})`;
+      if (s.abortWhileAsked === "timestamp") return timedOut("timestamp", lookup);
+      called(lookup);
+    }
+    const latestCall = `offsets("${TOPIC}", latest)`;
+    if (s.abortWhileAsked === "latest") return timedOut("latest", latestCall);
+    called(latestCall);
     // Spec 5.1: a partition the read covers that an answer it uses leaves out is refused by name, before any
     // fetch, and a partition it does not cover may be left out.
     const answers: Array<[string, number[]]> = [
@@ -1756,9 +2001,8 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     let budgetStop: { partition: number; at: bigint; unread: number[] } | undefined;
     let unfinished = false;
     let refusal: unknown;
-    // Spec 5.4: the read's time limit bounds its fetch loop and is looked at before each fetch; the other calls are
-    // bounded by the client's own timeouts.
-    let timeRanOut = s.abortAt === 0;
+    // Spec 5.4: the read's time limit is looked at before each fetch, and a fetch takes the read's signal itself.
+    let timeRanOut = false;
     let fetches = 0;
     // Spec 5.4: a partition is fetched from its start, each fetch from where the one before it ended, until it has
     // given `limit` records or reached its end, or a fetch makes no progress; the budget stops the whole read.
@@ -1867,11 +2111,18 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
         const trace: string[] = [];
         const controller = new AbortController();
         if (s.abortAt === 0) controller.abort();
-        const outcome = await readMessages(clientOf(s, controller, trace), s.request, s.limits, controller.signal).then(
-          (out) => ({ rows: out.rows, warnings: out.warnings, wasLimited: out.wasLimited }),
-          (error: unknown) => ({ refused: refusalOf(error) }),
+        // The trace as it stood when the read was answered: an answer the fake gives after that, to a call the read
+        // stopped waiting on, is not the read's.
+        const [outcome, calls] = await readMessages(
+          clientOf(s, controller, trace),
+          s.request,
+          s.limits,
+          controller.signal,
+        ).then(
+          (out) => [{ rows: out.rows, warnings: out.warnings, wasLimited: out.wasLimited }, [...trace]] as const,
+          (error: unknown) => [{ refused: refusalOf(error) }, [...trace]] as const,
         );
-        return { read: s.label, outcome, trace };
+        return { read: s.label, outcome, trace: calls };
       }),
     );
     const met = new Map<Rule, number>();

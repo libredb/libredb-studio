@@ -391,7 +391,7 @@ A decompressed-size cap is requested upstream as a draft recorded in `docs/BACKL
 ### 5.5 Timeout and cancellation
 
 A read runs under the connection's query timeout through an `AbortSignal`, and every other client call is bounded by the client's connect and request timeouts, set to the same value; a timeout is a `TimeoutError`.
-Each step of a read also waits on the read's signal, so a read its timeout stops is answered at once, whatever it waited on, and sends no further fetch.
+Each step of a read also waits on the read's signal, the metadata and offsets it plans from as well as each fetch, so a read its timeout stops is answered at once, whatever it waited on, and makes no further call; a read whose timeout ran out before it started makes none at all.
 There is no `cancelQuery`: both routes detect cancellation by presence, a presence-detected method exists only where it does its job, and a read is bounded by its limit, its budgets and its timeout, with no long server-side evaluation to stop.
 
 ### 5.6 EXPLAIN

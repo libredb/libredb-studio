@@ -193,6 +193,38 @@ export function readWarnings(input: {
   return warnings;
 }
 
+/** The read's refusal once its time limit stops it (spec 5.4). */
+function stopped(): KafkaError {
+  return new KafkaError("timeout", "The read ran past its time limit and was stopped");
+}
+
+/**
+ * One step of the read that is not a fetch, waiting on the read's signal as well as on its answer (spec
+ * 5.4): a read its signal has stopped makes no call, and a read the signal stops while the answer is out
+ * is refused at once, whatever it waited on. The call still settles on its own, under the client's
+ * timers, and its late answer or failure goes nowhere. A fetch takes the signal itself (client.ts).
+ */
+function step<T>(signal: AbortSignal, call: () => Promise<T>): Promise<T> {
+  if (signal.aborted) return Promise.reject(stopped());
+  const answer = call();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(stopped());
+    signal.addEventListener("abort", onAbort, { once: true });
+    // A signal that stopped while the call was being made has fired its event already.
+    if (signal.aborted) onAbort();
+    answer.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 /** The bytes one record holds after decompression, which is what the result budget counts. */
 function recordBytes(record: KafkaRecord): number {
   let bytes = (record.key?.byteLength ?? 0) + (record.value?.byteLength ?? 0);
@@ -253,12 +285,12 @@ export async function readMessages(
   limits: ReadLimits,
   signal: AbortSignal,
 ): Promise<ReadOutcome> {
-  const metadata = await client.metadata([request.topic]);
+  const metadata = await step(signal, () => client.metadata([request.topic]));
   const topic = metadata.topics.find((t) => t.name === request.topic);
   if (topic === undefined)
     throw new KafkaError("unknown-topic", `Topic ${JSON.stringify(request.topic)} does not exist`);
 
-  const { plans, pastEnd } = await planPartitions(client, topic, request);
+  const { plans, pastEnd } = await planPartitions(client, topic, request, signal);
 
   // Each partition is read in log order from its start to its end, up to `limit` records: for
   // "latest", every record of its window, its last `limit` offsets. Merged as they arrive, the
@@ -287,7 +319,7 @@ export async function readMessages(
     let position = plan.start;
     let taken = 0;
     while (position < plan.end && taken < request.limit && budgetStop === undefined) {
-      if (signal.aborted) throw new KafkaError("timeout", "The read ran past its time limit and was stopped");
+      if (signal.aborted) throw stopped();
       // oxlint-disable-next-line no-await-in-loop -- each fetch starts where the one before it ended.
       const { records, nextOffset } = await client.fetch(topic, plan.partition, position, signal);
       for (const record of records) {
@@ -350,6 +382,7 @@ async function planPartitions(
   client: ReadClient,
   topic: KafkaTopicMetadata,
   request: ReadRequest,
+  signal: AbortSignal,
 ): Promise<{ plans: PartitionPlan[]; pastEnd: PastEnd[] }> {
   const count = topic.partitions.length;
   if (request.partition !== undefined && request.partition >= count) {
@@ -373,12 +406,13 @@ async function planPartitions(
     .filter((partition) => request.partition === undefined || partition === request.partition);
   // The end is read last, after every start: a record written while the read is positioned
   // then lies inside it, and the first offset at a timestamp lies below the end.
-  const earliest = offsetsOf(await client.offsets(topic.name, "earliest"), wanted);
+  const { from } = request;
+  const earliest = offsetsOf(await step(signal, () => client.offsets(topic.name, "earliest")), wanted);
   const byTimestamp =
-    request.from.kind === "timestamp"
-      ? offsetsOf(await client.offsetsForTimestamp(topic.name, request.from.timestampMs), wanted)
+    from.kind === "timestamp"
+      ? offsetsOf(await step(signal, () => client.offsetsForTimestamp(topic.name, from.timestampMs)), wanted)
       : undefined;
-  const latest = offsetsOf(await client.offsets(topic.name, "latest"), wanted);
+  const latest = offsetsOf(await step(signal, () => client.offsets(topic.name, "latest")), wanted);
 
   const answers: ReadonlyArray<readonly [string, readonly number[]]> = [
     ["earliest", earliest.left],
