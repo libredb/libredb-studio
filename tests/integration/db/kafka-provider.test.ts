@@ -437,6 +437,47 @@ const READ_REQUEST = '{"topic":"codec-gzip","from":"earliest","limit":1}';
 /** A read's result without its time, which has its own test. */
 const untimed = (value: unknown) => ({ ...(value as QueryResult), executionTime: 0 });
 
+/** The code points from `from` to `to`, both included. */
+const codePoints = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+/**
+ * Every character trim() removes, ECMAScript's WhiteSpace and LineTerminator: the whitespace spec 5.1
+ * removes before it asks whether any text is left.
+ */
+const WHITESPACE = [
+  ...codePoints(0x09, 0x0d),
+  0x20,
+  0xa0,
+  0x1680,
+  ...codePoints(0x2000, 0x200a),
+  0x2028,
+  0x2029,
+  0x202f,
+  0x205f,
+  0x3000,
+  0xfeff,
+];
+/**
+ * Characters trim() keeps that a test of emptiness could take for whitespace: every other C0 and C1
+ * control character (the C1 set holds U+0085, whitespace to Unicode's White_Space property), the
+ * Mongolian vowel separator (a space before Unicode 6.3) and the zero-width characters.
+ */
+const BLANK_LOOKING = [
+  ...codePoints(0x00, 0x08),
+  ...codePoints(0x0e, 0x1f),
+  ...codePoints(0x7f, 0x9f),
+  0x180e,
+  ...codePoints(0x200b, 0x200d),
+  0x2060,
+];
+/** A code point as Unicode writes it, so a failing case names its character. */
+const codePointName = (code: number) => `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+/** A refusal as a caller reads it: its class, its message and the provider it names. */
+const refusalOf = (error: unknown) => [
+  (error as Error).constructor.name,
+  (error as Error).message,
+  (error as { provider?: string }).provider,
+];
+
 /**
  * Every read each surface makes, each failed on its own. A monitoring panel is listed once for every
  * read spec 7.1 gives it, because the provider composes those reads itself; a surface that delegates
@@ -993,6 +1034,27 @@ describe("reads over captured payloads", () => {
       expect(refusal).toBeInstanceOf(DatabaseConfigError);
       expect(refusal.message).toBe("The read request is not valid JSON");
     }
+    // The whitespace is every character trim() removes, and no other: each alone, and all of them at
+    // once, is empty text, the non-ASCII ones (a no-break space, a line separator, a byte order mark)
+    // included, and nothing reaches the broker; each character trim() keeps that a test of emptiness
+    // could take for whitespace is text the parser reads and refuses. The lists are held to trim() itself.
+    expect(codePoints(0, 0xffff).filter((code) => String.fromCodePoint(code).trim() === "")).toEqual(WHITESPACE);
+    expect(BLANK_LOOKING.filter((code) => String.fromCodePoint(code).trim() === "")).toEqual([]);
+    const whitespaceTexts = [
+      ...WHITESPACE.map((code) => [codePointName(code), String.fromCodePoint(code)] as const),
+      ["all of them at once", String.fromCodePoint(...WHITESPACE)] as const,
+    ];
+    const refusedAsEmpty = await Promise.all(
+      whitespaceTexts.map(async ([name, text]) => [name, refusalOf(await provider.query(text).catch((e) => e))]),
+    );
+    expect(refusedAsEmpty).toEqual(whitespaceTexts.map(([name]) => [name, refusalOf(empty)]));
+    const parsed = await Promise.all(
+      BLANK_LOOKING.map(async (code) => [
+        codePointName(code),
+        refusalOf(await provider.query(String.fromCodePoint(code)).catch((e) => e)),
+      ]),
+    );
+    expect(parsed).toEqual(BLANK_LOOKING.map((code) => [codePointName(code), refusalOf(oneCharacter)]));
     const bound = await provider.query('{"topic":"orders"}', [1]).catch((e) => e);
     expect(bound).toBeInstanceOf(DatabaseConfigError);
     expect(bound.message).toBe("Bound params are not supported: a Kafka read request has no placeholders");
@@ -1020,6 +1082,11 @@ describe("reads over captured payloads", () => {
     expect(emptyFirst.message).toBe(empty.message);
     expect(boundFirst).toBeInstanceOf(DatabaseConfigError);
     expect(boundFirst.message).toBe(bound.message);
+    // So is every empty text above, whatever its whitespace.
+    const refusedFirst = await Promise.all(
+      whitespaceTexts.map(async ([name, text]) => [name, refusalOf(await unconnected.query(text).catch((e) => e))]),
+    );
+    expect(refusedFirst).toEqual(whitespaceTexts.map(([name]) => [name, refusalOf(empty)]));
     // An empty parameter list binds nothing, so the request reads.
     expect((await provider.query('{"topic":"codec-gzip","from":"earliest","limit":1}', [])).rows).toHaveLength(1);
     await expect(provider.query('{"topic":"ghost"}')).rejects.toBeInstanceOf(QueryError);
