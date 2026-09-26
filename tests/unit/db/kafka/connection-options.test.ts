@@ -184,6 +184,7 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
   };
   const mapped = (connection: unknown) => kafkaConnectionOptions(connection as DatabaseConnection, 1);
   const TLS_ON = { mode: "verify-full", caCert: "CA" };
+  const UNKNOWN_MECHANISM = "The SASL mechanism must be PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512";
   /** Each value, and the text of it a message that echoed it would carry. */
   const NOT_A_STRING = [
     ["a number", 1001, "1001"],
@@ -222,6 +223,27 @@ describe("kafkaConnectionOptions, a field that is not the type DatabaseConnectio
       password: "",
     });
   });
+
+  /**
+   * The mechanism is the one field whose null is no absence: only an absent mechanism means none. The
+   * dialog's None writes no mechanism at all and a seed file's null or "" is refused when it loads, so
+   * either reaches the options only from a caller who wrote it, and it is a name the list does not hold.
+   */
+  test.each(
+    ([null, ""] as const).flatMap((mechanism) =>
+      (
+        [
+          ["no user or password", {}],
+          ["a user and a password", { user: "reader", password: "s3cret" }],
+        ] as const
+      ).map(([label, credential]) => [JSON.stringify(mechanism), label, mechanism, credential] as const),
+    ),
+  )(
+    "a saslMechanism of %s with %s over TLS is refused as an unknown mechanism, never read as none",
+    (_shown, _label, mechanism, credential) => {
+      expect(refusalOf({ ...base, ssl: TLS_ON, saslMechanism: mechanism, ...credential })).toBe(UNKNOWN_MECHANISM);
+    },
+  );
 
   test.each([
     ["true", true],
