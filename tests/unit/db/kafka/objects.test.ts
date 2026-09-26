@@ -80,10 +80,12 @@ function client(topicNames: string[], over: Partial<ObjectsClient> = {}): Object
 const textOf = (doc: { parts: readonly unknown[] }, index: number) => (doc.parts[index] as { text: string }).text;
 
 /**
- * A captured DescribeConfigs answer (tests/fixtures/kafka), as the seam hands it over: the one
- * resource's entries, in the broker's order, with `configSource` read as `source` the way the
- * adapter's `mapConfigs` reads it (its own test pins that mapping; this file pins what the object
- * surface makes of the broker's real population).
+ * A captured DescribeConfigs answer (tests/fixtures/kafka): the one resource's entries in the broker's
+ * own order, with `configSource` read as `source` the way the adapter's `mapConfigs` reads it. That is
+ * not what the seam hands over: `mapConfigs` also sorts the entries by name, and neither capture is in
+ * name order. This file pins what the object surface makes of the broker's real population; the
+ * adapter's own test pins the sort and a default entry's mapping, and no test of this file pins how
+ * `mapConfigs` reads `isSensitive` or a source other than the default.
  */
 function capturedConfigs(name: "configs-broker-1" | "configs-topic-orders"): KafkaConfigEntry[] {
   const [resource] =
