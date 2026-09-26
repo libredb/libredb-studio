@@ -52,7 +52,7 @@ for (const [network, prefix] of [
   blocked.addSubnet(network, prefix, "ipv6");
 
 /** Unset and false preserve local-first connections. Invalid opt-in values fail closed. */
-export function blockPrivateHttpHosts(): boolean {
+function blockPrivateHttpHosts(): boolean {
   const value = process.env[FLAG]?.trim().toLowerCase();
   if (value === undefined || value === "" || value === "false" || value === "off" || value === "0") return false;
   if (value === "true" || value === "on" || value === "1") return true;
