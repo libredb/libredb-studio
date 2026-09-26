@@ -66,7 +66,7 @@ import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/s
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, readMessages } from "@/lib/db/providers/stream/kafka/read";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import { KAFKA_RESULT_FIELDS, toQueryResult } from "@/lib/db/providers/stream/kafka/results";
-import type { ProviderCapabilities, ProviderOptions, QueryResult } from "@/lib/db/types";
+import type { ObjectSourceDocument, ProviderCapabilities, ProviderOptions, QueryResult } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection } from "@/lib/types";
 import { kafkaFixture, recordedLib } from "../../helpers/kafka-fixtures";
@@ -1603,13 +1603,20 @@ describe("failures (spec 5.6)", () => {
    * port, and the address a connection failure names: the bootstrap's, or the one the broker
    * advertised (K2). One row per capture, held to the captures found by name, so a capture added
    * later needs its row here. Each is thrown at a topic source's config read, which is no fetch, so
-   * the two offset refusals name no range: spec 5.6's range belongs to a fetch's refusal.
+   * the two offset refusals name no range: spec 5.6's range belongs to a fetch's refusal. An
+   * authorization refusal at that read is the configs part's refusal, in the same words, and no error
+   * (spec 4.4), so its row is that part.
    */
   const CAPTURED_WORDS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
-    "error-authorization": { class: "AuthenticationError", message: "The broker denied access to this topic" },
+    "error-authorization": {
+      id: "configs",
+      label: "Configs that differ from the default",
+      unavailable: "The broker denied access to this topic",
+    },
     "error-cluster-authorization": {
-      class: "AuthenticationError",
-      message: "The broker denied access to this cluster",
+      id: "configs",
+      label: "Configs that differ from the default",
+      unavailable: "The broker denied access to this cluster",
     },
     "error-connect-timeout": {
       class: "ConnectionError",
@@ -1668,7 +1675,11 @@ describe("failures (spec 5.6)", () => {
       host: "localhost",
       port: 9092,
     },
-    "error-topic-authorization": { class: "AuthenticationError", message: "The broker denied access to this topic" },
+    "error-topic-authorization": {
+      id: "configs",
+      label: "Configs that differ from the default",
+      unavailable: "The broker denied access to this topic",
+    },
     "error-unknown-topic": { class: "QueryError", message: "The topic does not exist" },
     // Redpanda closes the connection on a ConsumerGroupDescribe it does not offer (spec 8).
     "redpanda-error-consumer-group-describe-mixed": {
@@ -1691,7 +1702,9 @@ describe("failures (spec 5.6)", () => {
     const words = await Promise.all(
       captures.map(async (name) => {
         const { provider } = await connectedThenFailing(READS.topicConfigs, libError(name));
-        const error = await provider.readObjectSource(["orders"], "topic").catch((e) => e);
+        const settled = await settle(() => provider.readObjectSource(["orders"], "topic"));
+        // A refusal there is the configs part's own answer (spec 4.4), beside the partitions part.
+        if ("value" in settled) return [name, (settled.value as ObjectSourceDocument).parts[1]];
         const {
           class: className,
           message,
@@ -1699,7 +1712,7 @@ describe("failures (spec 5.6)", () => {
           port,
           timeout,
           provider: stamped,
-        } = described(error) as Record<string, unknown>;
+        } = described(settled.error) as Record<string, unknown>;
         const address = host === undefined && port === undefined ? {} : { host, port };
         return [
           name,
@@ -1707,8 +1720,14 @@ describe("failures (spec 5.6)", () => {
         ];
       }),
     );
+    // Every error carries the provider's stamp; a refused part is no error and carries none.
     expect(Object.fromEntries(words)).toEqual(
-      Object.fromEntries(Object.entries(CAPTURED_WORDS).map(([name, said]) => [name, { ...said, stamped: "kafka" }])),
+      Object.fromEntries(
+        Object.entries(CAPTURED_WORDS).map(([name, said]) => [
+          name,
+          "class" in said ? { ...said, stamped: "kafka" } : said,
+        ]),
+      ),
     );
   });
 
