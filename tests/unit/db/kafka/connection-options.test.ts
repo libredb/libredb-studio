@@ -102,6 +102,20 @@ describe("kafkaConnectionOptions", () => {
       expect(() => kafkaConnectionOptions({ ...base, saslMechanism: mechanism, user: "u", password: "p" }, 1)).toThrow(
         /requires TLS/,
       );
+      // A TLS panel set to disable is plaintext too, which a seed file or the API can send; the
+      // dialog sends no panel for it.
+      expect(() =>
+        kafkaConnectionOptions(
+          {
+            ...base,
+            ssl: { mode: "disable" },
+            saslMechanism: mechanism,
+            user: "u",
+            password: "p",
+          } as DatabaseConnection,
+          1,
+        ),
+      ).toThrow(`${mechanism} requires TLS`);
     }
   });
 
