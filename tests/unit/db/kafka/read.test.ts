@@ -283,7 +283,7 @@ describe("readMessages", () => {
     const reads = await Promise.all(
       [["earliest"], ["latest"], ["earliest", "latest"]].map(async (missing) => {
         let planned = 0;
-        const { client } = trimmedLog();
+        const { client, calls } = trimmedLog();
         const leaving: ReadClient = {
           ...client,
           offsets: async (topic, at) => {
@@ -294,16 +294,35 @@ describe("readMessages", () => {
             return answer;
           },
         };
-        return readMessages(leaving, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+        const error = await readMessages(leaving, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+        return { error, calls };
       }),
     );
-    expect(reads.map((error) => [error.category, error.message, error.detail])).toEqual(
+    expect(reads.map(({ error }) => [error.category, error.message, error.detail])).toEqual(
       ["earliest", "latest", "earliest or latest"].map((missing) => [
         "offset-out-of-range",
         `The broker refused the fetch at offset 0 of partition 1 as out of range, and then reported no ${missing} offset for it; run the read again`,
         { apiId: "OFFSET_OUT_OF_RANGE" },
       ]),
     );
+    // Each answer is read again once, the one that left the partition out included, and the fetch is not sent again.
+    for (const { calls } of reads) {
+      expect(calls.slice(calls.indexOf("fetch 1@0"))).toEqual(["fetch 1@0", "offsets earliest", "offsets latest"]);
+    }
+  });
+
+  test("a fetch failure that is no KafkaError passes as it came, even one carrying the out-of-range category's name", async () => {
+    // Spec 5.6: a failure that did not come from the client, such as a defect of the provider's own, is rethrown
+    // untouched and never read as the broker's refusal.
+    const defect = Object.assign(new Error("a defect of the provider's own"), { category: "offset-out-of-range" });
+    const { client, calls } = trimmedLog({
+      fetch: async () => {
+        throw defect;
+      },
+    });
+    const error = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal).catch((e) => e);
+    expect(error).toBe(defect);
+    expect(calls).toEqual(["offsets earliest", "offsets latest"]);
   });
 
   test("a fetch refused for any other reason is the read's refusal as it came, and reads no range", async () => {
@@ -1394,23 +1413,31 @@ describe("readMessages", () => {
     expect(fetches).toBe(4);
   });
 
-  test("a fetch that makes no progress below the end stops that partition, never silently: the result says where", async () => {
-    const base = fakeClient(log);
-    const client = spinGuarded({
-      ...base.client,
-      fetch: async (topic, partition, offset, fetchSignal) =>
-        partition === 0 && offset === n(2)
-          ? { records: [], nextOffset: offset }
-          : base.client.fetch(topic, partition, offset, fetchSignal),
-    });
-    const out = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
-    // Partition 0 stopped at offset 2, below its end at 3; partition 1 was still read to its end.
-    expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "1/0", "0/1", "1/1"]);
-    expect(out.warnings.map((w) => w.message)).toEqual([
-      "The broker answered no records for partition 0 at offset 2, below its end at 3, so the read stopped there; run it again",
-    ]);
-    expect(out.wasLimited).toBe(true);
-  });
+  test.each([
+    ["the offset it asked for", (offset: bigint) => offset],
+    // Outside the seam's contract, which never answers below the offset asked for: no progress all the same, and the
+    // warning names where the read stood, never the offset the answer went back to.
+    ["an offset below the one it asked for", (offset: bigint) => offset - n(1)],
+  ])(
+    "a fetch that makes no progress below the end, answering %s as its next offset, stops that partition, never silently: the result says where",
+    async (_answer, next) => {
+      const base = fakeClient(log);
+      const client = spinGuarded({
+        ...base.client,
+        fetch: async (topic, partition, offset, fetchSignal) =>
+          partition === 0 && offset === n(2)
+            ? { records: [], nextOffset: next(offset) }
+            : base.client.fetch(topic, partition, offset, fetchSignal),
+      });
+      const out = await readMessages(client, req({ from: { kind: "earliest" } }), LIMITS, signal);
+      // Partition 0 stopped at offset 2, below its end at 3; partition 1 was still read to its end.
+      expect(out.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/0", "1/0", "0/1", "1/1"]);
+      expect(out.warnings.map((w) => w.message)).toEqual([
+        "The broker answered no records for partition 0 at offset 2, below its end at 3, so the read stopped there; run it again",
+      ]);
+      expect(out.wasLimited).toBe(true);
+    },
+  );
 
   test("an aborted signal stops before the next fetch", async () => {
     const controller = new AbortController();
