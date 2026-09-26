@@ -355,7 +355,10 @@ export function ObjectTree({
           break;
         case "Enter":
         case " ":
-          activate(row);
+          // A held key auto-repeats, and every repeat is another keydown: without this one long
+          // press opened a data tab per repeat. The repeat still falls through to
+          // `preventDefault`, so a held Space does not scroll the sidebar either.
+          if (!event.repeat) activate(row);
           break;
         // The two ways a keyboard asks for a context menu. Neither is part of the W3C tree
         // pattern, which says nothing about row actions; both are what the platform already

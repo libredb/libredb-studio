@@ -374,8 +374,9 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   );
 
   /**
-   * Open a tab holding the statement for one object and RUN it. Takes the object's PATH
-   * and nothing else (#789).
+   * Open a tab holding the statement for one object and RUN it, or focus the one already open
+   * for that object while its statement is unedited. Takes the object's PATH and nothing else
+   * (#789).
    *
    * The path is the address and the name is only a label (standing ruling 2), so the
    * lookup that finds this object's columns joins on the path, segment by segment, the
@@ -415,11 +416,37 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
        */
       databaseOverride?: number,
     ) => {
+      const key = pathKey(path);
+      /*
+       * A data tab already open for this object, in this database, and still on the statement
+       * it was opened with, is FOCUSED and not run again: the rule `openSourceTab` keeps for a
+       * Source tab. Measured before this, three activations of one table left three identical
+       * tabs and three reads, and clicking twice did what pressing Space twice does.
+       *
+       * The query comparison is what keeps the reader's work out of reach. A tab whose
+       * statement has been edited is never captured, so the activation opens a fresh one.
+       *
+       * Read from the committed `tabs`, as `openSourceTab` reads it. Two activations inside one
+       * React batch both miss and both open, which no gesture reaches: separate DOM events flush
+       * between them. The id is not derived from the address the way a Source tab's is, because
+       * an edited tab and a fresh one for the same object must be able to stand side by side.
+       */
+      const open = tabs.find(
+        (tab) =>
+          tab.origin !== undefined &&
+          pathKey(tab.origin.path) === key &&
+          tab.origin.databaseOverride === databaseOverride &&
+          tab.query === tab.origin.query,
+      );
+      if (open !== undefined) {
+        setActiveTabId(open.id);
+        return;
+      }
+
       const capabilities = metadata?.capabilities;
       const tableName = objectSegment(path);
       // Look the object up exactly as handleGenerateSelect does: the Redis generator is
       // type-aware, and the sampled key type lives on the schema node's `type` column (#427).
-      const key = pathKey(path);
       const table = schema.find((t) => pathKey(t.path) === key);
       const columns = columnsOverride ?? table?.columns ?? [];
       const newQuery = capabilities
@@ -437,6 +464,8 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         // Spread rather than written, so an ordinary activation's tab is the record it has always
         // been: absent means "the connection's own database" and a key of `undefined` is not that.
         ...(databaseOverride === undefined ? {} : { databaseOverride }),
+        // Written with the same spread rule, so the origin says "no override" by absence too.
+        origin: { path, ...(databaseOverride === undefined ? {} : { databaseOverride }), query: newQuery },
       };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newId);
@@ -445,7 +474,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       // results run.
       setTimeout(() => executeQueryFn(newQuery, newId, false, { limit: PREVIEW_PAGE_SIZE }), 100);
     },
-    [metadata, schema],
+    [metadata, schema, tabs],
   );
 
   /** The same address and the same join as `handleTableClick`, without the run (#789). */

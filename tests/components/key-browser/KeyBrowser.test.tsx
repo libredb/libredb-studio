@@ -600,6 +600,24 @@ describe("KeyBrowser", () => {
       expect(opened).toHaveLength(2);
     });
 
+    test("a held key activates once, and its repeats are still swallowed", async () => {
+      // Every auto-repeat of a held Enter or Space arrives as another keydown, so without the
+      // guard one long press opened a tab per repeat.
+      const opened: Array<[string, string | null]> = [];
+      mockGlobalFetch({ "/api/db/keys/scan": page(["app:env"], "0", 1, { "app:env": "string" }) });
+      renderBrowser(CAPABILITY, (key, type) => opened.push([key, type]));
+      await waitFor(() => {
+        expect(rows()).toEqual(["app:*@0"]);
+      });
+      fireEvent.click(screen.getByText("app:*"));
+
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: " " })).toBe(false);
+      // `false` is a keydown whose default was prevented, so a repeat never scrolls the list.
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: " ", repeat: true })).toBe(false);
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: "Enter", repeat: true })).toBe(false);
+      expect(opened).toEqual([["app:env", "string"]]);
+    });
+
     test("is not actionable when nobody is listening", async () => {
       const fetchMock = mockGlobalFetch({
         "/api/db/keys/scan": page(["app:env"], "0", 1, { "app:env": "string" }),
