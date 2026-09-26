@@ -222,6 +222,14 @@ A `null` in either reads as an absent field.
 The client's protocol logger prints the first bytes of every request frame when `DEBUG` names it (`plt:kafka:protocol`, or `DEBUG=*`), and a SASL PLAIN frame carries the password, so `platformatic-client.ts` mutes that logger when it loads the client, while the client's own logger keeps its lines.
 OAUTHBEARER, GSSAPI and AWS MSK IAM are not offered: a pasted bearer token expires within hours and v1 has no refresh flow (`docs/BACKLOG.md`).
 
+**Accepted limitation: the broker chooses how much work a SCRAM exchange takes.**
+A SCRAM exchange runs PBKDF2 over the password as many times as the broker's first SCRAM answer asks, and the client checks only the lower bound, 4,096.
+Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations (`ScramMechanism`'s maximum, which its controller and its storage tool enforce), so a larger count comes only from a hostile broker ([§4.4](#44-the-broker-chooses-where-studio-connects-next)) or from one in the middle of a connection whose certificate is not verified, as TLS mode `require` leaves it.
+Each exchange holds a thread of the runtime's pool for as long as its count takes, measured at about 2.9 million SHA-512 iterations a second under Node 24.14.0 and 3.3 million under Bun 1.4.2, so the largest count the message can carry, 2,147,483,647, takes about 11 to 12 minutes.
+The client retries a failed connect once, so a connect asks for the work twice, and the work goes on after the connect has timed out and after the client is closed.
+Node's pool has four threads unless `UV_THREADPOOL_SIZE` says otherwise, and every file read, DNS lookup and crypto call of the one Studio process every user shares waits for a free thread: with four such exchanges running under Node, a file read took 4,490 ms instead of 1 ms.
+The client offers no hook that runs before that work short of replacing its SCRAM implementation, which this provider does not own, so the exposure is stated rather than bounded; TLS `verify-full` keeps it to brokers whose certificate the configured CA vouches for, and a cap on the iteration count is requested upstream as a draft recorded in `docs/BACKLOG.md`.
+
 ### 4.3 TLS
 
 | `ssl.mode` | What happens |
@@ -667,6 +675,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 
 - **The broker chooses further hosts, with the connection's credentials** ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), and a Kafka connection takes no SSH tunnel ([§4.5](#45-no-ssh-tunnel)).
 - **The client decompresses a whole answer before any bound applies** ([§5.4](#54-bounds)).
+- **The broker chooses how much work a SCRAM exchange takes** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
 - **A malformed answer can end a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
 - **A read the budget stops answers older rows than the newest that would fit** ([§5.4](#54-bounds)).
 - **Past `KAFKA_TOPIC_LIST_CAP` topics, plan mode grounds topics only** (`docs/BACKLOG.md` B89).

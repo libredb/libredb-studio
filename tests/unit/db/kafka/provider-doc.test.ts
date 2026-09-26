@@ -87,6 +87,27 @@ describe("docs/SECURITY.md states the Kafka widening of the any-host limitation"
     expect(limitation).toContain("decompresses every batch of a fetch response whole");
     expect(limitation).toContain("about 1,029 to 1 for gzip and 32,692 to 1 for zstd");
   });
+
+  test("the SCRAM work a broker chooses is stated as accepted, beside the decompression", () => {
+    expect(limitation).toContain(
+      "The Kafka client's SCRAM exchange runs PBKDF2 over the password as many times as the broker's first SCRAM answer asks, checking only the lower bound, while Apache Kafka 4.3.1 stores no credential above 16,384 iterations",
+    );
+  });
+});
+
+describe("docs/providers/kafka.md states the client's exposures to a hostile broker", () => {
+  test("the SCRAM work, with its measured cost, and why the provider does not bound it", () => {
+    const section = DOC.slice(DOC.indexOf("### 4.2 "), DOC.indexOf("### 4.3 "));
+    expect(section).toContain("**Accepted limitation: the broker chooses how much work a SCRAM exchange takes.**");
+    expect(section).toContain("the client checks only the lower bound, 4,096");
+    expect(section).toContain("Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations");
+    expect(section).toContain(
+      "a cap on the iteration count is requested upstream as a draft recorded in `docs/BACKLOG.md`",
+    );
+    expect(bulletOf(DOC, "**The broker chooses how much work a SCRAM exchange takes**")).toContain(
+      "[§4.2](#42-authentication-and-never-in-the-clear-k3)",
+    );
+  });
 });
 
 describe("docs/providers/kafka.md quotes the bounds the code uses", () => {

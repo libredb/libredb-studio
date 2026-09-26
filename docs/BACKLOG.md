@@ -1862,7 +1862,7 @@ Found 2026-09-23 while designing the Kafka provider (#1088, section 2).
 
 ### D122. Requests to `platformatic/kafka`, drafted for the maintainer and not filed
 
-The Kafka provider (#1088) works around nine behaviours of `@platformatic/kafka` 2.11.0, each measured while it was built.
+The Kafka provider (#1088) works around, or states, ten behaviours of `@platformatic/kafka` 2.11.0, each measured while it was built.
 Each is drafted below as an upstream issue, for the maintainer to approve, reword or drop; none has been posted anywhere.
 
 1. **An Admin method for ConsumerGroupDescribe (API 69).**
@@ -1894,8 +1894,12 @@ Each is drafted below as an upstream issue, for the maintainer to approve, rewor
 9. **The socket's error dropped on close.**
    A request in flight on a connection whose socket failed rejects with a bare "Connection closed" (`#onError` and `#onClose` in `dist/network/connection.js`), and the pool's error listener only drops the connection, so the socket's error, such as the TLS alert of a broker that refuses the client's certificate under TLS 1.3, reaches no caller; the provider can only report a lost connection.
    Draft: "Carry the socket's error as the cause of the request's rejection."
+10. **No upper bound on the SCRAM iteration count.**
+    `performAuthentication` in `dist/protocol/sasl/scram-sha.js` checks the server-first message's iteration count against a minimum only (4,096) and runs PBKDF2 over the password with whatever count the broker asks, on the runtime's thread pool, where it goes on after the connect has timed out and the client is closed, while Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations (`ScramMechanism`); the provider states it (`docs/providers/kafka.md` section 4.2), since the client's only hooks either replace the whole mechanism or run after the PBKDF2.
+    Measured on 2026-09-26: 4,000,000 SHA-512 iterations took 1,367 ms under Node 24.14.0 and 1,233 ms under Bun 1.4.2, a connect asked for them twice, and with four such exchanges running under Node a file read took 4,490 ms.
+    Draft: "Please bound the iteration count a SCRAM server-first message may ask for, with an option that defaults to a sane maximum such as Apache Kafka's own 16,384, and fail the authentication past it before PBKDF2 runs."
 
-Found 2026-09-23 to 2026-09-25 while building the Kafka provider (#1088, sections 3.6 and 12).
+Found 2026-09-23 to 2026-09-26 while building the Kafka provider (#1088, sections 3.6 and 12).
 Not filed: an outward report makes claims about another project's code, so each goes out only with the maintainer's approval.
 
 **Done when:** each draft is filed upstream, reworded or dropped by the maintainer's decision, and the item records the issue link or the reason; a fix that ships upstream is followed by removing the provider's workaround where it has one.
