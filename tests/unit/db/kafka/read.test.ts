@@ -781,6 +781,122 @@ describe("readMessages", () => {
     ).toBe(true);
   });
 
+  test("a latest read of a partition holding more than limit records is limited, with no warning: the limit placed its window", async () => {
+    // Offsets 0 to 11: the window of 5 is 7 to 11, and the limit, not the log, leaves 0 to 6 unread.
+    const twelve = { 0: Array.from({ length: 12 }, (_, i) => rec(0, i, i + 1)) };
+    const one = await readMessages(
+      fakeClient(twelve).client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      LIMITS,
+      signal,
+    );
+    expect(one.rows.map((r) => r.offset)).toEqual(["7", "8", "9", "10", "11"]);
+    expect(one.wasLimited).toBe(true);
+    expect(one.warnings).toEqual([]);
+    // The same window beside an empty partition: the merge drops nothing, and the limit still left 0 to 6 unread.
+    const beside = await readMessages(
+      fakeClient({ ...twelve, 1: [] }).client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      LIMITS,
+      signal,
+    );
+    expect(beside.rows.map((r) => `${r.partition}/${r.offset}`)).toEqual(["0/7", "0/8", "0/9", "0/10", "0/11"]);
+    expect(beside.wasLimited).toBe(true);
+    expect(beside.warnings).toEqual([]);
+    // One offset more than the limit: the window starts one above the earliest offset, and offset 0 is left unread.
+    const six = await readMessages(
+      fakeClient({ 0: Array.from({ length: 6 }, (_, i) => rec(0, i, i + 1)) }).client,
+      req({ from: { kind: "latest" }, limit: 5 }),
+      LIMITS,
+      signal,
+    );
+    expect(six.rows.map((r) => r.offset)).toEqual(["1", "2", "3", "4", "5"]);
+    expect(six.wasLimited).toBe(true);
+  });
+
+  test("an offset or a timestamp read that starts above the earliest offset and reads to the end is not limited: the caller placed its start", async () => {
+    const twelve = { 0: Array.from({ length: 12 }, (_, i) => rec(0, i, i + 1)) };
+    const reads = await Promise.all([
+      readMessages(
+        fakeClient(twelve).client,
+        req({ partition: 0, from: { kind: "offset", offset: n(9) }, limit: 5 }),
+        LIMITS,
+        signal,
+      ),
+      readMessages(
+        fakeClient(twelve).client,
+        req({ from: { kind: "timestamp", timestampMs: n(10), iso: "x" }, limit: 5 }),
+        LIMITS,
+        signal,
+      ),
+    ]);
+    expect(reads.map((out) => out.rows.map((r) => r.offset))).toEqual([
+      ["9", "10", "11"],
+      ["9", "10", "11"],
+    ]);
+    expect(reads.map((out) => out.wasLimited)).toEqual([false, false]);
+  });
+
+  test("a latest read whose window starts at its partition's earliest offset reads the whole partition and is not limited", async () => {
+    // Five offsets under a limit of 5 and of 6, and a trimmed partition of offsets 3 to 7 under a limit of 5.
+    const reads = await Promise.all([
+      readMessages(
+        fakeClient({ 0: Array.from({ length: 5 }, (_, i) => rec(0, i, i + 1)) }).client,
+        req({ from: { kind: "latest" }, limit: 5 }),
+        LIMITS,
+        signal,
+      ),
+      readMessages(
+        fakeClient({ 0: Array.from({ length: 5 }, (_, i) => rec(0, i, i + 1)) }).client,
+        req({ from: { kind: "latest" }, limit: 6 }),
+        LIMITS,
+        signal,
+      ),
+      readMessages(
+        fakeClient({ 0: Array.from({ length: 5 }, (_, i) => rec(0, i + 3, i + 1)) }).client,
+        req({ from: { kind: "latest" }, limit: 5 }),
+        LIMITS,
+        signal,
+      ),
+    ]);
+    expect(reads.map((out) => out.rows.map((r) => r.offset))).toEqual([
+      ["0", "1", "2", "3", "4"],
+      ["0", "1", "2", "3", "4"],
+      ["3", "4", "5", "6", "7"],
+    ]);
+    expect(reads.map((out) => out.wasLimited)).toEqual([false, false, false]);
+    expect(reads.map((out) => out.warnings)).toEqual([[], [], []]);
+  });
+
+  test("a latest window that holds only transaction markers, with records before it, answers no row and is limited", async () => {
+    // Offsets 0 to 4 are records and 5 to 9 transaction markers: a fetch at 5 answers no record and moves past them.
+    const base = fakeClient(
+      { 0: Array.from({ length: 5 }, (_, i) => rec(0, i, i + 1)) },
+      {
+        offsets: async (_t, at) => new Map([[0, at === "earliest" ? n(0) : n(10)]]),
+      },
+    );
+    const fetched: string[] = [];
+    const client: ReadClient = {
+      ...base.client,
+      fetch: async (topic, partition, offset, fetchSignal) => {
+        fetched.push(`${partition}@${offset}`);
+        return offset >= n(5)
+          ? { records: [], nextOffset: n(10) }
+          : base.client.fetch(topic, partition, offset, fetchSignal);
+      },
+    };
+    const out = await readMessages(client, req({ from: { kind: "latest" }, limit: 5 }), LIMITS, signal);
+    expect(out.rows).toEqual([]);
+    expect(fetched).toEqual(["0@5"]);
+    expect(out.wasLimited).toBe(true);
+    expect(out.warnings).toEqual([]);
+    // Control: a window of 10 starts at the earliest offset, reads the five records and is not limited.
+    const whole = await readMessages(client, req({ from: { kind: "latest" }, limit: 10 }), LIMITS, signal);
+    expect(whole.rows.map((r) => r.offset)).toEqual(["0", "1", "2", "3", "4"]);
+    expect(whole.wasLimited).toBe(false);
+  });
+
   test("a record a fetch answers at or past the end the read planned is never a row and never a cut", async () => {
     // Offsets 3 and 4 arrived after the latest offset, 3, was read, and one fetch answers all five.
     const base = fakeClient(
@@ -1114,6 +1230,8 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     "the merge left a read record out",
     "the row limit left a partition's record unread inside a fetch",
     "the row limit stopped a partition before its end",
+    "only a latest window the limit started above its earliest offset limited it",
+    "a latest read took every window from its earliest offset",
     "the budget stopped the read in the first partition read",
     "the budget stopped the read in a later partition",
     "a fetch made no progress",
@@ -1523,6 +1641,9 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
 
     const plans: { partition: number; start: bigint; end: bigint }[] = [];
     const pastEnd: number[] = [];
+    // Spec 5.4: a "latest" window that starts above its partition's earliest offset was placed there by the limit,
+    // not by the log, so the limit leaves the offsets below it unread.
+    let windowCut = false;
     for (const partition of wanted) {
       const first = answered(s.earliest, partition);
       const end = answered(s.latest, partition);
@@ -1541,6 +1662,7 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
       const start = startOf(s, partition, first, end);
       if (start === undefined) pastEnd.push(partition);
       else if (start < end) plans.push({ partition, start, end });
+      if (from.kind === "latest" && start !== undefined && start > first) windowCut = true;
     }
     // Spec 5.2 and 5.4: the rows a read answers of the records it has read, and the bytes they hold.
     const answerOf = (records: readonly KafkaRecord[]) => {
@@ -1639,12 +1761,16 @@ describe("readMessages against a reference of spec 5.1 and 5.4, through the seam
     const answer = answerOf(read);
     const shaped = answer.map((record) => shapeRecord(record, limits));
     const truncatedCells = shaped.reduce((sum, entry) => sum + entry.truncatedCells, 0);
-    const wasLimited =
+    const limitedOtherwise =
       budgetStop !== undefined ||
       stoppedShort.length > 0 ||
       truncatedCells > 0 ||
       answer.length < read.length ||
       unfinished;
+    const wasLimited = limitedOtherwise || windowCut;
+    if (windowCut && !limitedOtherwise)
+      saw("only a latest window the limit started above its earliest offset limited it");
+    if (request.from.kind === "latest" && !wasLimited) saw("a latest read took every window from its earliest offset");
     if (answer.length < read.length) saw("the merge left a read record out");
     if (pastEnd.length > 0) saw("a timestamp lay past a partition's end");
     if (shaped.filter((entry) => entry.truncatedCells > 0).length > 1) saw("cells were cut in more than one row");

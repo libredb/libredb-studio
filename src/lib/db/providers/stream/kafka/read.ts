@@ -50,6 +50,8 @@ interface PartitionPlan {
   readonly partition: number;
   readonly start: bigint;
   readonly end: bigint;
+  /** The partition's earliest offset, below which a "latest" window the limit placed leaves offsets unread. */
+  readonly earliest: bigint;
 }
 
 /** A partition whose fetch at `at` made no progress, below the `end` it was being read to. */
@@ -262,6 +264,9 @@ export async function readMessages(
   let budgetStop: BudgetStop | undefined;
   let partitionCut = false;
   for (const [index, plan] of plans.entries()) {
+    // A "latest" window that starts above the partition's earliest offset was placed there by the
+    // limit, not by the log, so the limit leaves the offsets below it unread (spec 5.4).
+    if (request.from.kind === "latest" && plan.start > plan.earliest) partitionCut = true;
     let position = plan.start;
     let taken = 0;
     while (position < plan.end && taken < request.limit && budgetStop === undefined) {
@@ -388,7 +393,7 @@ async function planPartitions(
     if (start === undefined) pastEnd.push(partition);
     // A partition with no offset from its start to its end holds nothing to read, so it has
     // no plan: it is never fetched, and never named as a partition a read left unread.
-    else if (start < end) plans.push({ partition, start, end });
+    else if (start < end) plans.push({ partition, start, end, earliest: earliest.offsets[index] });
   });
   return { plans, pastEnd };
 }

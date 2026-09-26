@@ -371,6 +371,7 @@ A fetch's `maxBytes` does not bound its answer: the broker always returns the fi
 So the bounds are the provider's own, and each sets `wasLimited` when it cuts a read; the budget, the cell limit and a fetch that makes no progress also carry a warning naming what was cut.
 
 - **The row limit**: a partition stops at `limit` of its records or at its end, and the result holds at most `limit` rows across partitions; a limit that leaves records unread sets `wasLimited` with no warning, because asking for `limit` rows is asking for that cut.
+  A `"latest"` window that starts above its partition's earliest offset is such a cut, since the limit placed its start, so it sets `wasLimited` even when a transactional topic's markers leave its offsets fewer than `limit` rows.
 - **The result budget**, `KAFKA_RESULT_BYTE_BUDGET`, counts the record bytes of the rows the result holds, never a row the merge dropped: at every point of the read the result holds only the rows it would answer if the read ended there, a row that falls out of them is dropped as it falls out, and a record that sorts past them is never shaped.
   Each record is shaped once, as it arrives, and only its row is kept.
   The first record is always kept, so a read never answers nothing because one record is larger than the budget; such a record is decoded from its prefix only and cut to the cell limit.
