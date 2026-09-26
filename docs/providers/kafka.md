@@ -230,6 +230,12 @@ The client retries a failed connect once, so a connect asks for the work twice, 
 Node's pool has four threads unless `UV_THREADPOOL_SIZE` says otherwise, and every file read, DNS lookup and crypto call of the one Studio process every user shares waits for a free thread: with four such exchanges running under Node, a file read took 4,490 ms instead of 1 ms.
 The client offers no hook that runs before that work short of replacing its SCRAM implementation, which this provider does not own, so the exposure is stated rather than bounded; TLS `verify-full` keeps it to brokers whose certificate the configured CA vouches for, and a cap on the iteration count is requested upstream as a draft recorded in `docs/BACKLOG.md`.
 
+**Accepted limitation: the broker chooses how often a connection authenticates again.**
+A broker that answers a SASL authentication with a session lifetime (KIP-368; on Apache Kafka `connections.max.reauth.ms`, which defaults to 0, no lifetime) has the client authenticate again at 80% of it, and again after each time, for as long as the connection is open, with no floor on the lifetime.
+Measured on one connection over five idle seconds with a lifetime of 1 ms: 3,926 re-authentications under Node 24.14.0 and 3,005 under Bun 1.4.2 with PLAIN, 11 to 14% of a core, and 1,559 and 1,609 with SCRAM-SHA-512 at 4,096 iterations, about 60% of a core, where a lifetime of 0 or of one hour made none.
+Every connection the provider holds carries the connection's SASL options, the `Admin`'s, the `Consumer`'s, the fetch pool's and a consumer-protocol group description's alike, and a cached provider keeps its connections until it is disconnected or evicted, which the factory's sweep, every five minutes, does once the provider has been idle for 30 minutes, so a hostile or misconfigured broker can keep that much of the one Studio process busy per connection for as long; closing a connection stops its loop.
+The client applies the lifetime inside its connection, where the adapter's only hook, `authBytesValidator`, sees an answer's bytes and never its lifetime, so the exposure is stated rather than bounded, and a floor on the session lifetime the client honours is requested upstream as a draft recorded in `docs/BACKLOG.md`.
+
 ### 4.3 TLS
 
 | `ssl.mode` | What happens |
@@ -676,6 +682,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **The broker chooses further hosts, with the connection's credentials** ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), and a Kafka connection takes no SSH tunnel ([§4.5](#45-no-ssh-tunnel)).
 - **The client decompresses a whole answer before any bound applies** ([§5.4](#54-bounds)).
 - **The broker chooses how much work a SCRAM exchange takes** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
+- **The broker chooses how often a connection authenticates again** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
 - **A malformed answer can end a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
 - **A read the budget stops answers older rows than the newest that would fit** ([§5.4](#54-bounds)).
 - **Past `KAFKA_TOPIC_LIST_CAP` topics, plan mode grounds topics only** (`docs/BACKLOG.md` B89).

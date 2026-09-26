@@ -93,6 +93,12 @@ describe("docs/SECURITY.md states the Kafka widening of the any-host limitation"
       "The Kafka client's SCRAM exchange runs PBKDF2 over the password as many times as the broker's first SCRAM answer asks, checking only the lower bound, while Apache Kafka 4.3.1 stores no credential above 16,384 iterations",
     );
   });
+
+  test("the re-authentication a broker's session lifetime drives is stated as accepted, beside the SCRAM work", () => {
+    expect(limitation).toContain(
+      "A broker that answers a SASL authentication with a session lifetime (KIP-368) has the Kafka client authenticate again at 80% of it, for as long as the connection is open and with no floor",
+    );
+  });
 });
 
 describe("docs/providers/kafka.md states the client's exposures to a hostile broker", () => {
@@ -105,6 +111,20 @@ describe("docs/providers/kafka.md states the client's exposures to a hostile bro
       "a cap on the iteration count is requested upstream as a draft recorded in `docs/BACKLOG.md`",
     );
     expect(bulletOf(DOC, "**The broker chooses how much work a SCRAM exchange takes**")).toContain(
+      "[§4.2](#42-authentication-and-never-in-the-clear-k3)",
+    );
+  });
+
+  test("the re-authentication loop a session lifetime drives, with its measured cost, and why the provider does not bound it", () => {
+    const section = DOC.slice(DOC.indexOf("### 4.2 "), DOC.indexOf("### 4.3 "));
+    expect(section).toContain(
+      "**Accepted limitation: the broker chooses how often a connection authenticates again.**",
+    );
+    expect(section).toContain("has the client authenticate again at 80% of it, and again after each time");
+    expect(section).toContain(
+      "a floor on the session lifetime the client honours is requested upstream as a draft recorded in `docs/BACKLOG.md`",
+    );
+    expect(bulletOf(DOC, "**The broker chooses how often a connection authenticates again**")).toContain(
       "[§4.2](#42-authentication-and-never-in-the-clear-k3)",
     );
   });
