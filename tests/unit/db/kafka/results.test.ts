@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import type { KafkaRecord } from "@/lib/db/providers/stream/kafka/client";
+import { KAFKA_CELL_LIMIT } from "@/lib/db/providers/stream/kafka/read";
 import {
   compareRecords,
   KAFKA_RESULT_FIELDS,
@@ -162,17 +163,18 @@ describe("shapeRecord", () => {
       key: null,
       key_encoding: "null",
     });
-    expect(shapeRecord(record({ headers: [[null, enc("v")]] }), { cellLimit: 10 }).row.headers).toEqual({ null: "v" });
+    // A limit the cell fits in, since {"null":"v"} is 12 characters.
+    expect(shapeRecord(record({ headers: [[null, enc("v")]] }), { cellLimit: 100 }).row.headers).toEqual({ null: "v" });
   });
 
-  test("truncated cells are counted, header names and values included", () => {
+  test("truncated cells are counted per cell: the value, and the headers cell once, whatever it cut", () => {
     const shaped = shapeRecord(
       record({ value: enc("z".repeat(40)), headers: [[enc("n".repeat(20)), enc("w".repeat(20))]] }),
       {
         cellLimit: 10,
       },
     );
-    expect(shaped.truncatedCells).toBe(3);
+    expect(shaped.truncatedCells).toBe(2);
     // Control: the same record under a limit that fits every cell cuts nothing.
     expect(
       shapeRecord(record({ value: enc("z".repeat(40)), headers: [[enc("n".repeat(20)), enc("w".repeat(20))]] }), {
@@ -183,6 +185,97 @@ describe("shapeRecord", () => {
 
   test("a truncated key is counted too", () => {
     expect(shapeRecord(record({ key: enc("k".repeat(20)) }), { cellLimit: 10 }).truncatedCells).toBe(1);
+  });
+});
+
+describe("the headers cell is one cell, bounded by the cell limit (spec 5.4)", () => {
+  /** The text the grid renders for the headers cell. */
+  const rendered = (row: Record<string, unknown>) => JSON.stringify(row.headers).length;
+
+  test("150 header values of 60,000 bytes answer a headers cell within the limit, and the cut is counted", () => {
+    const value = "x".repeat(60_000);
+    const { row, truncatedCells } = shapeRecord(
+      record({ headers: Array.from({ length: 150 }, (_, i) => [enc(`h${i}`), enc(value)] as const) }),
+      { cellLimit: KAFKA_CELL_LIMIT },
+    );
+    expect(rendered(row)).toBeLessThanOrEqual(KAFKA_CELL_LIMIT);
+    // The first header fits whole; the second would pass the limit, so it and every later one are left out.
+    expect(row.headers).toEqual({ h0: value });
+    expect(truncatedCells).toBe(1);
+  });
+
+  test("a headers cell of exactly the limit is whole, and one character past it is cut", () => {
+    // {"a":"xxxxxxxxxxxx"} is 20 characters.
+    const whole = shapeRecord(record({ headers: [[enc("a"), enc("x".repeat(12))]] }), { cellLimit: 20 });
+    expect(whole.row.headers).toEqual({ a: "x".repeat(12) });
+    expect(rendered(whole.row)).toBe(20);
+    expect(whole.truncatedCells).toBe(0);
+    const past = shapeRecord(record({ headers: [[enc("a"), enc("x".repeat(13))]] }), { cellLimit: 20 });
+    expect(past.row.headers).toEqual({});
+    expect(past.truncatedCells).toBe(1);
+  });
+
+  test("headers join in arrival order, and the first that does not fit ends the cell, though a later one would fit", () => {
+    const { row, truncatedCells } = shapeRecord(
+      record({
+        headers: [
+          [enc("a"), enc("x".repeat(5))],
+          [enc("b"), enc("y".repeat(20))],
+          [enc("c"), enc("z")],
+        ],
+      }),
+      { cellLimit: 30 },
+    );
+    expect(row.headers).toEqual({ a: "xxxxx" });
+    expect(truncatedCells).toBe(1);
+  });
+
+  test("a repeated name's brackets are counted, so its values stop where the cell does", () => {
+    const repeated = [
+      [enc("t"), enc("1")],
+      [enc("t"), enc("2")],
+      [enc("t"), enc("3")],
+    ] as const;
+    // {"t":["1","2","3"]} is 19 characters, {"t":["1","2"]} 15, and {"t":"1"} 9.
+    expect(shapeRecord(record({ headers: repeated }), { cellLimit: 19 }).row.headers).toEqual({ t: ["1", "2", "3"] });
+    const cut = shapeRecord(record({ headers: repeated }), { cellLimit: 18 });
+    expect(cut.row.headers).toEqual({ t: ["1", "2"] });
+    expect(cut.truncatedCells).toBe(1);
+    expect(shapeRecord(record({ headers: repeated }), { cellLimit: 14 }).row.headers).toEqual({ t: "1" });
+  });
+
+  test("the size is the text the grid renders: escapes, a JSON value, a null value and the separators", () => {
+    const headers = [
+      [enc('q"'), enc('a"b')],
+      [enc("j"), enc('{"a":1}')],
+      [enc("n"), null],
+    ] as const;
+    // {"q\"":"a\"b","j":{"a":1},"n":null} is 35 characters.
+    const whole = shapeRecord(record({ headers }), { cellLimit: 35 });
+    expect(whole.row.headers).toEqual({ 'q"': 'a"b', j: { a: 1 }, n: null });
+    expect(rendered(whole.row)).toBe(35);
+    expect(whole.truncatedCells).toBe(0);
+    const cut = shapeRecord(record({ headers }), { cellLimit: 34 });
+    expect(cut.row.headers).toEqual({ 'q"': 'a"b', j: { a: 1 } });
+    expect(cut.truncatedCells).toBe(1);
+  });
+
+  test("the count is per cell: a cut key, a cut value and a cut headers cell are three", () => {
+    const heavy = record({
+      key: enc("k".repeat(20)),
+      value: enc("z".repeat(40)),
+      headers: [
+        [enc("n".repeat(20)), enc("w".repeat(20))],
+        [enc("m"), enc("v")],
+      ],
+    });
+    const shaped = shapeRecord(heavy, { cellLimit: 10 });
+    expect(shaped.truncatedCells).toBe(3);
+    expect(shaped.row.headers).toEqual({});
+    // Control: a limit that fits every cell cuts nothing and keeps every header.
+    const fits = shapeRecord(heavy, { cellLimit: 1000 });
+    expect(fits.truncatedCells).toBe(0);
+    expect(fits.row.headers).toEqual({ ["n".repeat(20)]: "w".repeat(20), m: "v" });
   });
 });
 

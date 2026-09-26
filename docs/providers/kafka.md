@@ -338,8 +338,9 @@ One row per record, with the fields `partition`, `offset`, `timestamp`, `key`, `
   It is the record's Kafka timestamp: the producer's CreateTime, or on a topic whose `message.timestamp.type` is `LogAppendTime`, the broker's append time, which the broker writes only into the batch's `maxTimestamp`, so the provider reads it from there as the Java client does.
   A record whose timestamp is the protocol's no-timestamp value, -1, has a null timestamp, never the instant one millisecond before the epoch.
   A timestamp outside the range a JavaScript `Date` holds is refused with a `QueryError` naming the partition, the offset and the timestamp.
-- `headers` is an object from header name to decoded value, each name an own key, so a header named `__proto__` or `toString` is a header like any other; a name repeated in one record becomes an array in arrival order, so no header is lost.
+- `headers` is an object from header name to decoded value, each name an own key, so a header named `__proto__` or `toString` is a header like any other; a name repeated in one record becomes an array in arrival order, so no header the cell holds is lost.
   A header value of `null` stays `null`.
+  The headers are one cell under `KAFKA_CELL_LIMIT`, like the key and the value: they join it in arrival order while the JSON the grid renders for it stays within the limit, and the first header that would pass it ends the cell, with every header after it, as a cut cell, so a record's headers never answer more than one cell's worth of text, however many it carries.
 - Reads are read-committed: a COMMIT or ABORT marker is never a row, a record of an aborted transaction is dropped by the Java consumer's rule, including when the ABORT marker lies in a later response, and a marker still advances the read past its offset.
   An empty control batch, which the log cleaner keeps of a producer's last marker, marks nothing, and a marker whose key is not an int16 version and an int16 type, or whose version is negative, is refused with a `QueryError` naming its offset, never read as no marker.
 - A result the provider bounded reports `wasLimited: true` with `hasMore: false` on its `pagination`: no offset can page a Kafka read.
@@ -379,7 +380,7 @@ So the bounds are the provider's own, and each sets `wasLimited` when it cuts a 
   Its warning names the offset it stopped before and each later partition with offsets left to read, a partition whose window holds only transaction markers included, since only reading it could tell.
   Answering the newest rows that fit instead would read every partition's window whatever the record size; that trade is recorded in `docs/BACKLOG.md`.
 - **No progress**: a fetch that makes no progress below a partition's end stops that partition rather than spin, and the result names the partition, the offset it stopped at and its end.
-- **The cell limit**, `KAFKA_CELL_LIMIT` ([§5.3](#53-decoding)).
+- **The cell limit**, `KAFKA_CELL_LIMIT`, bounds each of a row's three decoded cells, the key, the value and the headers ([§5.2](#52-result-shape), [§5.3](#53-decoding)).
 
 **Accepted limitation: decompression before any bound (K5).**
 The client decompresses every batch of a fetch answer whole, synchronously and with no output cap, before any provider bound applies, and the broker bounds only the compressed batch (`max.message.bytes` is "after compression").

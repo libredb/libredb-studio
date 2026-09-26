@@ -59,27 +59,60 @@ function toIsoTimestamp(record: KafkaRecord): string | null {
   return new Date(Number(record.timestamp)).toISOString();
 }
 
+/** `{}`, the text of a headers cell that holds no header. */
+const EMPTY_HEADERS_LENGTH = 2;
+
+/**
+ * The headers cell, one cell like the key and the value (spec 5.4): the headers in arrival order,
+ * while the text the grid renders for the cell, its JSON, stays within the cell limit. The first
+ * header that would pass the limit ends the cell, so no header after it is decoded, and the cell
+ * is cut. A header whose name or value was itself cut at the limit can never fit, so it ends the
+ * cell too.
+ */
+function headersCell(
+  headers: KafkaRecord["headers"],
+  cellLimit: number,
+): { value: Record<string, unknown>; truncated: boolean } {
+  // Grouped in a Map and emitted with Object.fromEntries, which defines every name as an
+  // own property: a name such as "__proto__" or "toString" is a header like any other, and
+  // a plain object's `in` or assignment would lose it or merge it with Object.prototype.
+  const grouped = new Map<string, unknown[]>();
+  let length = EMPTY_HEADERS_LENGTH;
+  let truncated = false;
+  for (const [rawName, rawValue] of headers) {
+    // The protocol forbids a null header name, so "null" here documents a broker that sent one.
+    const name = String(decodeHeaderName(rawName, cellLimit).value);
+    const value = decodeBytes(rawValue, cellLimit).value;
+    const values = grouped.get(name);
+    const added =
+      JSON.stringify(value).length +
+      (values === undefined
+        ? // `,"name":` before a new name's value, with no comma before the first name.
+          Number(grouped.size > 0) + JSON.stringify(name).length + 1
+        : // `,` before another value of a name already held, and the array's brackets at its second.
+          1 + (values.length === 1 ? 2 : 0));
+    if (length + added > cellLimit) {
+      truncated = true;
+      break;
+    }
+    length += added;
+    if (values === undefined) grouped.set(name, [value]);
+    else values.push(value);
+  }
+  return {
+    // A name repeated in one record becomes an array in arrival order, so no header the cell holds is lost.
+    value: Object.fromEntries([...grouped].map(([name, values]) => [name, values.length === 1 ? values[0] : values])),
+    truncated,
+  };
+}
+
 export function shapeRecord(
   record: KafkaRecord,
   limits: ShapeLimits,
 ): { row: Record<string, unknown>; truncatedCells: number } {
   const key = decodeBytes(record.key, limits.cellLimit);
   const value = decodeBytes(record.value, limits.cellLimit);
-  let truncatedCells = Number(key.truncated) + Number(value.truncated);
-  // Grouped in a Map and emitted with Object.fromEntries, which defines every name as an
-  // own property: a name such as "__proto__" or "toString" is a header like any other, and
-  // a plain object's `in` or assignment would lose it or merge it with Object.prototype.
-  const grouped = new Map<string, unknown[]>();
-  for (const [rawName, rawValue] of record.headers) {
-    const name = decodeHeaderName(rawName, limits.cellLimit);
-    const decoded = decodeBytes(rawValue, limits.cellLimit);
-    truncatedCells += Number(name.truncated) + Number(decoded.truncated);
-    // The protocol forbids a null header name, so "null" here documents a broker that sent one.
-    const headerName = String(name.value);
-    const values = grouped.get(headerName);
-    if (values === undefined) grouped.set(headerName, [decoded.value]);
-    else values.push(decoded.value);
-  }
+  const headers = headersCell(record.headers, limits.cellLimit);
   return {
     row: {
       partition: record.partition,
@@ -89,12 +122,9 @@ export function shapeRecord(
       key_encoding: key.encoding,
       value: value.value,
       value_encoding: value.encoding,
-      // A name repeated in one record becomes an array in arrival order, so no header is lost.
-      headers: Object.fromEntries(
-        [...grouped].map(([name, values]) => [name, values.length === 1 ? values[0] : values]),
-      ),
+      headers: headers.value,
     },
-    truncatedCells,
+    truncatedCells: Number(key.truncated) + Number(value.truncated) + Number(headers.truncated),
   };
 }
 
