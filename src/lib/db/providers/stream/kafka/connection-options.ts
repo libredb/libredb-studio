@@ -2,6 +2,16 @@
  * Maps a saved connection to the client's options (spec 6.1), after the checks of
  * spec 3.6 K1 and K3. Pure: no socket opens here.
  *
+ * Every field read here is checked before it is used, because a connection sent to the API
+ * arrives as the caller wrote it (`resolveConnection` hands an inline connection on untouched)
+ * and the client checks none of it: its SCRAM step reads the user as a string inside its socket
+ * handler, where a number throws past every caller and ends a Node process that handles no
+ * uncaught exception, and its PLAIN step joins the credential into text, so `["reader"]` would
+ * authenticate as `reader`. The host and port go through the shared validators, the mechanism
+ * through its list, and every other field is refused, naming the field and never its value, when
+ * it is not the type `DatabaseConnection` declares for it; a null reads as absent, as a JSON body
+ * writes an absent field.
+ *
  * The TLS rule `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`
  * is the Couchbase mapping, written again here rather than imported, because the
  * isolation rule forbids importing another provider (spec 3.5). docs/BACKLOG.md D37
@@ -11,13 +21,22 @@
  * test finds which addressing fields a provider reads by the `config.<field>` pattern.
  */
 import { isIP } from "node:net";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, SSLConfig, SSLMode } from "@/lib/types";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { KafkaError } from "./client";
 
 export type KafkaSaslMechanism = "PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512";
 
 const KAFKA_SASL_MECHANISMS: readonly KafkaSaslMechanism[] = Object.freeze(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"]);
+
+/** Every mode `SSLMode` names: a record, so a mode added there fails the typecheck here until this mapping answers for it. */
+const KAFKA_TLS_MODES: Readonly<Record<SSLMode, true>> = Object.freeze({
+  disable: true,
+  require: true,
+  "verify-system": true,
+  "verify-ca": true,
+  "verify-full": true,
+});
 
 export const KAFKA_DEFAULT_PORT = 9092;
 
@@ -54,7 +73,9 @@ export interface KafkaConnectionOptions {
 }
 
 export function kafkaConnectionOptions(config: DatabaseConnection, timeoutMs: number): KafkaConnectionOptions {
-  if (config.sshTunnel?.enabled === true) {
+  // The server opens a tunnel for any `enabled` JavaScript reads as true (src/lib/db/factory.ts),
+  // so a value that is not a boolean is refused rather than read as no tunnel.
+  if (optionalBoolean(config.sshTunnel?.enabled, "sshTunnel.enabled") === true) {
     throw new KafkaError(
       "invalid-config",
       "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly",
@@ -77,20 +98,34 @@ export function kafkaConnectionOptions(config: DatabaseConnection, timeoutMs: nu
 }
 
 function tlsOptions(config: DatabaseConnection): KafkaTlsOptions | undefined {
-  const ssl = config.ssl;
-  if (ssl === undefined || ssl.mode === "disable") return undefined;
+  const ssl: unknown = config.ssl;
+  if (ssl === undefined || ssl === null) return undefined;
+  if (typeof ssl !== "object" || Array.isArray(ssl)) throw wrongType("ssl", "an object");
+  // The whole panel is checked, whatever its mode, before any of it is read.
+  const panel = ssl as Partial<Record<keyof SSLConfig, unknown>>;
+  const mode = panel.mode;
+  // A panel with no mode reads as a verifying one, as every provider with the Couchbase rule reads
+  // it: a seed file's panel may omit the mode (src/lib/seed/types.ts).
+  if (mode !== undefined && mode !== null && !(typeof mode === "string" && Object.hasOwn(KAFKA_TLS_MODES, mode))) {
+    throw wrongType("ssl.mode", "disable, require, verify-system, verify-ca or verify-full");
+  }
+  const ca = optionalString(panel.caCert, "ssl.caCert");
+  const cert = optionalString(panel.clientCert, "ssl.clientCert");
+  const key = optionalString(panel.clientKey, "ssl.clientKey");
+  const rejectUnauthorized = optionalBoolean(panel.rejectUnauthorized, "ssl.rejectUnauthorized");
+  if (mode === "disable") return undefined;
   return {
-    ...(ssl.caCert ? { ca: ssl.caCert } : {}),
-    ...(ssl.clientCert ? { cert: ssl.clientCert } : {}),
-    ...(ssl.clientKey ? { key: ssl.clientKey } : {}),
-    rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require",
+    ...(ca ? { ca } : {}),
+    ...(cert ? { cert } : {}),
+    ...(key ? { key } : {}),
+    rejectUnauthorized: rejectUnauthorized ?? mode !== "require",
   };
 }
 
 function saslOptions(config: DatabaseConnection, tlsOn: boolean): KafkaSaslOptions | undefined {
   const mechanism = config.saslMechanism;
-  const username = config.user ?? "";
-  const password = config.password ?? "";
+  const username = optionalString(config.user, "user") ?? "";
+  const password = optionalString(config.password, "password") ?? "";
   if (mechanism === undefined) {
     if (username !== "" || password !== "") {
       throw new KafkaError(
@@ -121,4 +156,23 @@ function saslOptions(config: DatabaseConnection, tlsOn: boolean): KafkaSaslOptio
     }
   }
   return { mechanism, username, password };
+}
+
+/** A field that holds a string when it is present; null reads as absent (the file header). */
+function optionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw wrongType(field, "a string");
+  return value;
+}
+
+/** A field that holds a boolean when it is present; null reads as absent (the file header). */
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") throw wrongType(field, "true or false");
+  return value;
+}
+
+/** Names the field and what it must be, never the value it holds, which can be a credential. */
+function wrongType(field: string, expected: string): KafkaError {
+  return new KafkaError("invalid-config", `The connection's ${field} must be ${expected}; nothing was sent`);
 }

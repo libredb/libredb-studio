@@ -159,7 +159,7 @@ Both depend on exports the client does not document as public API; the seam guar
 ### 3.5 A host that embeds the provider factory
 
 The client handles some answers inside its socket handler, where an exception is uncaught.
-The adapter keeps every input known to throw there away from the client: it refuses an internal topic ([§6.1](#kinds-folders-and-identity)) and a group that is not a consumer group ([§6.1](#consumer-groups-and-lag)) before the call, and a read's answer never reaches the client's READ_COMMITTED filter ([§3.4](#34-one-client-per-connection-and-no-fetch-session)).
+The adapter keeps every input known to throw there away from the client: it refuses an internal topic ([§6.1](#kinds-folders-and-identity)), a group that is not a consumer group ([§6.1](#consumer-groups-and-lag)) and a SASL user that is not a string ([§4.2](#42-authentication-and-never-in-the-clear-k3)) before the call, and a read's answer never reaches the client's READ_COMMITTED filter ([§3.4](#34-one-client-per-connection-and-no-fetch-session)).
 A malformed answer, which a hostile broker can send ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), can still throw there on the client's other calls: for example a consumer group member whose assignment is shorter than its version and count, which the client's `describeGroups` decodes unchecked.
 In the standalone server, whose Next.js router server registers an `uncaughtException` handler, the exception is logged and that one call never settles until its timeout.
 A host that embeds the package's provider factory, `createDatabaseProvider` or `getOrCreateProvider` from `src/exports/providers.ts`, in a Node process that installs no `uncaughtException` handler, ends the process instead.
@@ -215,6 +215,8 @@ One bootstrap address is enough: the client learns every broker from the metadat
 PLAIN sends the password in the clear, and a Kafka credential is usually cluster-wide, so SASL of any mechanism over plaintext is refused.
 That is stricter than the Prometheus provider, which sends a credential over plain HTTP.
 A CR, LF or NUL in `user` or `password` is refused with a `DatabaseConfigError` that names the field and never contains the value, and nothing is trimmed silently.
+A `user` or `password` that is not a string, such as a number or an array in a connection sent to the API, which reaches the provider as it came, is refused the same way, whatever the mechanism, and is never coerced: the client's SCRAM step reads the user as a string inside its socket handler, where a number throws and ends a Node process that installs no `uncaughtException` handler ([§3.5](#35-a-host-that-embeds-the-provider-factory)), and its PLAIN step joins the credential into text, so `["reader"]` would authenticate as `reader`.
+A `null` in either reads as an absent field.
 The client's protocol logger prints the first bytes of every request frame when `DEBUG` names it (`plt:kafka:protocol`, or `DEBUG=*`), and a SASL PLAIN frame carries the password, so `platformatic-client.ts` mutes that logger when it loads the client, while the client's own logger keeps its lines.
 OAUTHBEARER, GSSAPI and AWS MSK IAM are not offered: a pasted bearer token expires within hours and v1 has no refresh flow (`docs/BACKLOG.md`).
 
@@ -227,6 +229,9 @@ OAUTHBEARER, GSSAPI and AWS MSK IAM are not offered: a pasted bearer token expir
 | `verify-system`, `verify-ca`, `verify-full` | Certificate verified against the supplied CA or, without one, the runtime's trust store |
 
 `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` reach the client as `ca`, `cert` and `key`, and `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`, the Couchbase rule written again here by the isolation rule (`docs/BACKLOG.md` D37).
+The panel is checked whole, whatever its mode, before any of it is read: an `ssl` that is not an object, a `mode` the table does not name, a `caCert`, `clientCert` or `clientKey` that is not a string, or a `rejectUnauthorized` that is not a boolean is refused with a `DatabaseConfigError` naming the field and never its value.
+Such a panel is never guessed at: read as it came, `ssl: false` would turn TLS on, and a certificate that is not a string would reach Node, whose `TypeError` can quote the value.
+A `null` reads as an absent field, and a panel with no `mode`, which a seed file may carry, is read as a verifying one.
 With TLS on and a DNS name as the host, the client sends each connection's own host as its TLS server name (SNI) through its `tlsServerName` option, which SNI-routed listeners need; Node sends none without the option.
 An IP literal is no legal server name, and Node 26, the production runtime, throws on one, so when the first metadata read shows a broker advertised by IP literal, the adapter rebuilds its clients without the option: a cluster that advertises IP literals is not routed by server name.
 A handshake or verification failure is a `ConnectionError` carrying the Node error code, and no connection is retried without TLS.
@@ -249,6 +254,7 @@ A tunnel forwards one address, and the client reaches every broker at the addres
 The dialog hides the SSH panel for Kafka through `showSshTunnel: false`, while it keeps the TLS panel, and `buildConnection` writes `sshTunnel` only for a type that offers the panel (`offersSshTunnel`), so a tunnel left in the dialog's state by another connection is dropped.
 A tunnelled connection that arrives another way, from a seed or the API, is refused before any broker request with a `DatabaseConfigError`: "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly".
 There the server opens the tunnel before the provider runs, so an unreachable bastion answers with its SSH error first.
+The server opens a tunnel for any `sshTunnel.enabled` that JavaScript reads as true, such as the string `"true"`, so an `enabled` that is not a boolean is refused too, naming the field, rather than read as no tunnel.
 
 ---
 
@@ -494,7 +500,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 
 | Condition | Class |
 |---|---|
-| invalid request JSON, host, port or credential, SASL over plaintext, a credential with no mechanism, an SSH tunnel, bound params | `DatabaseConfigError`, never echoing a value |
+| invalid request JSON, host, port, credential or TLS setting, SASL over plaintext, a credential with no mechanism, an SSH tunnel, bound params | `DatabaseConfigError`, never echoing a value |
 | empty editor text | `QueryError` |
 | an unknown topic ("Unknown topic <name>.") | `QueryError`: the topic does not exist |
 | an internal topic | `QueryError`: internal to Kafka and not readable here |
