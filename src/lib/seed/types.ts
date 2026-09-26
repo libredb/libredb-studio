@@ -43,6 +43,7 @@ const SeedDatabaseType = z.enum([
   "libsql",
   "duckdb",
   "prometheus",
+  "kafka",
 ]);
 
 export const SeedDefaultsSchema = z.object({
@@ -93,6 +94,15 @@ export const SeedConnectionSchema = z
     // no error. Refuse at parse instead.
     apiKeyId: z.string().optional(),
     apiKeySecret: z.string().optional(),
+    // Kafka only (#1088): which SASL mechanism checks `user` and `password`, absent meaning none.
+    // Declared, because zod strips an undeclared key and a seeded SCRAM connection would then reach
+    // the provider as a credential with no mechanism, which it refuses. Kept in step with the union
+    // on DatabaseConnection by hand, as the SSL modes above are. A mechanism names no credential
+    // and no address, so it is not a field a `${ENV}` or `${vault:...}` reference is resolved in
+    // (RESOLVABLE_FIELDS in credential-resolver.ts), and the file is validated before anything is
+    // resolved: this enum refuses a reference here at load, naming the field. No type refine: the
+    // field is inert on every other engine, and nothing falls back silently when it is absent.
+    saslMechanism: z.enum(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"]).optional(),
     schema: z.string().optional(),
     // Read no catalog when this connection opens (#765). Declarable in the seed file
     // because the deployment that ships a 40,000-object owner is the one that knows, and

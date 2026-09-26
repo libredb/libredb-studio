@@ -88,7 +88,13 @@ export type DatabaseType =
   // and an optional credential: `user` and `password` are HTTP Basic, and a password with no
   // user is sent as a bearer token. VictoriaMetrics speaks the same API and is recorded as a
   // relative of this id, never as an id of its own.
-  | "prometheus";
+  | "prometheus"
+  // Apache Kafka (#1088). A message log browsed read-only over the Kafka protocol, the first
+  // member of the `stream/` family. Its editor text is a JSON read request, so it declares
+  // `queryLanguage: "json"` with a `queryDialect` of its own. The connection is one bootstrap
+  // address plus TLS and an optional SASL credential, `saslMechanism` below naming how `user` and
+  // `password` are checked; the client learns every other broker from the cluster's metadata.
+  | "kafka";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -265,6 +271,16 @@ export interface DatabaseConnection {
    * is a field of its own rather than a reuse of `database`.
    */
   authSource?: string;
+  /**
+   * Kafka: the SASL mechanism that checks `user` and `password`, absent meaning none (#1088).
+   *
+   * A mechanism NAME, never a credential, and not a refinement either: a broker keeps a SCRAM
+   * credential per mechanism, so the same user and password are a different principal's secret
+   * under each, and a credential sent with no mechanism has no way to be sent at all, which the
+   * provider refuses rather than dropping. PLAIN and both SCRAM mechanisms require TLS there.
+   * OAUTHBEARER and GSSAPI are not offered.
+   */
+  saslMechanism?: "PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512";
   /**
    * Read no catalog when this connection opens.
    *
@@ -547,7 +563,7 @@ export interface QueryTab {
    */
   resultQuery?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

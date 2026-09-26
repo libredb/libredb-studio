@@ -6,7 +6,7 @@ Guidance for Claude Code in this repo — conventions, rules, and gotchas only. 
 
 ## Project Overview
 
-Web-based SQL IDE for cloud-native teams: seventeen external engines, plus the embedded LibreDB store — `EXTERNAL_DATABASE_TYPES` in [`src/lib/db/compatibility.ts`](src/lib/db/compatibility.ts) is the external-engine list, never a prose enumeration — plus AI query assistance. It runs **two ways** — standalone Next.js app and published npm package — and the two render different chrome, so a UI change verified in one is not verified in the other.
+Web-based SQL IDE for cloud-native teams: eighteen external engines, plus the embedded LibreDB store (`EXTERNAL_DATABASE_TYPES` in [`src/lib/db/compatibility.ts`](src/lib/db/compatibility.ts) is the external-engine list, never a prose enumeration), plus AI query assistance. It runs **two ways**, as a standalone Next.js app and as a published npm package, and the two render different chrome, so a UI change verified in one is not verified in the other.
 
 ## Branching & PRs
 
@@ -81,7 +81,7 @@ A clean local pass is still not a guarantee: the same job also runs `build:lib` 
 > - **One directory may serve two type-ids** — `sql/search/` is both `elasticsearch` and `opensearch` (#424). Docs and tests stay 1:1 anyway: the invariant is per type-id.
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 
-- **DB abstraction:** Strategy Pattern. SQL-dialect providers extend `SQLBaseProvider`; the non-SQL ones (`mongodb`, `redis`, `couchbase`, `libredb`) extend `BaseDatabaseProvider` directly, and `SQLBaseProvider` itself extends it. Inside `src/lib/db`, never branch on the type id — drive behaviour through capabilities/labels. Three `=== "mongodb"` branches survive in the UI layer as known debt (`src/hooks/use-connection-form.ts`, `src/lib/editor/tab-language.ts`, `src/components/ConnectionModal.tsx`); do not add a fourth.
+- **DB abstraction:** Strategy Pattern. SQL-dialect providers extend `SQLBaseProvider`; the non-SQL ones (`mongodb`, `redis`, `couchbase`, `prometheus`, `kafka`, `libredb`) extend `BaseDatabaseProvider` directly, and `SQLBaseProvider` itself extends it. Inside `src/lib/db`, never branch on the type id; drive behaviour through capabilities/labels. Three `=== "mongodb"` branches survive in the UI layer as known debt (`src/hooks/use-connection-form.ts`, `src/lib/editor/tab-language.ts`, `src/components/ConnectionModal.tsx`); do not add a fourth.
 - **Auth:** `NEXT_PUBLIC_AUTH_PROVIDER` = `local` (email/password) or `oidc` (PKCE → the same JWT cookie); `src/proxy.ts` enforces RBAC (admin vs user). [`docs/OIDC.md`](docs/OIDC.md).
 - **Storage:** write-through cache — localStorage serves reads, `useStorageSync` pushes mutations to the server (debounced). `STORAGE_PROVIDER` (server-side only) = `local` | `sqlite` | `postgres`. [`docs/STORAGE.md`](docs/STORAGE.md).
 - **API routes:** all backend in `src/app/api/`, except `/health`, which is a route at the app root so the plainest liveness path exists; JWT-protected except the public set in [`src/proxy.ts`](src/proxy.ts) — `/login`, `/api/auth/*`, `/health`, `/api/health`, `/api/db/health`, `/api/storage/config`, `/_next`, `/favicon.ico` and static assets — plus an agent-drive path gated by a bearer token instead of the JWT. `src/proxy.ts` is the authority; do not restate the list elsewhere.

@@ -39,6 +39,14 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "promql" }))).toBe("promql");
   });
 
+  test("Kafka gets a kafka tab, not the MongoDB one its queryLanguage json would give (#1088)", () => {
+    // The dialect is read before the language: a Kafka read request is JSON of this product's own
+    // schema, never a MongoDB document.
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe("kafka");
+    // The control: the same declaration with the dialect removed is MongoDB's.
+    expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
+  });
+
   test("missing capabilities fall back to sql", () => {
     expect(resolveTabType(undefined)).toBe("sql");
     expect(resolveTabType(null)).toBe("sql");
@@ -52,5 +60,14 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType("libredb")).toBe("libredb");
     expect(editorLanguageForTabType("redis")).toBe("redis");
     expect(editorLanguageForTabType("promql")).toBe("promql");
+    expect(editorLanguageForTabType("kafka")).toBe("json");
+  });
+
+  test("a Kafka tab renders in Monaco's built-in json mode, and no language of its own (#1088)", () => {
+    // Its read request is JSON, so it takes the mode a MongoDB tab takes rather than the SQL
+    // fallback, and no Monaco language is registered for it (#1088, section 3.3).
+    expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "kafka" })))).toBe(
+      "json",
+    );
   });
 });

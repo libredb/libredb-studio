@@ -1,0 +1,15 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "consumerGroupDescribeV0.api.async(conn, [\"lag-kip848\", \"lag-classic\"], false)"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Connection closed",
+  "code": "PLT_KFK_NETWORK",
+  "canRetry": true,
+  "class": "NetworkError"
+ }
+}

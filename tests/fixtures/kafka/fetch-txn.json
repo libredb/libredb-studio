@@ -1,0 +1,192 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumer.fetch(txn partition 0 offset 0, READ_COMMITTED)"
+ },
+ "outcome": "pass",
+ "payload": {
+  "throttleTimeMs": 0,
+  "errorCode": 0,
+  "sessionId": 924070985,
+  "nodeEndpoints": [],
+  "responses": [
+   {
+    "topicId": "ebe23a9f-4a0f-4026-840f-b2dc37c57e57",
+    "partitions": [
+     {
+      "partitionIndex": 0,
+      "errorCode": 0,
+      "highWatermark": {
+       "$bigint": "6"
+      },
+      "lastStableOffset": {
+       "$bigint": "6"
+      },
+      "logStartOffset": {
+       "$bigint": "0"
+      },
+      "divergingEpoch": {
+       "epoch": -1,
+       "endOffset": {
+        "$bigint": "-1"
+       }
+      },
+      "currentLeader": {
+       "leaderId": -1,
+       "leaderEpoch": -1
+      },
+      "snapshotId": {
+       "endOffset": {
+        "$bigint": "-1"
+       },
+       "epoch": -1
+      },
+      "abortedTransactions": [
+       {
+        "producerId": {
+         "$bigint": "9"
+        },
+        "firstOffset": {
+         "$bigint": "3"
+        }
+       }
+      ],
+      "preferredReadReplica": -1,
+      "records": [
+       {
+        "firstOffset": {
+         "$bigint": "0"
+        },
+        "length": 113,
+        "partitionLeaderEpoch": 0,
+        "magic": 2,
+        "crc": 1329463123,
+        "attributes": 16,
+        "lastOffsetDelta": 1,
+        "firstTimestamp": {
+         "$bigint": "1790275801689"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275801689"
+        },
+        "producerId": {
+         "$bigint": "9"
+        },
+        "producerEpoch": 0,
+        "firstSequence": 0,
+        "records": [
+         {
+          "length": 31,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": null,
+          "value": {
+           "$bytes": "eyJ0eG4iOiJjb21taXR0ZWQiLCJuIjoxfQ=="
+          },
+          "headers": []
+         },
+         {
+          "length": 31,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 1,
+          "key": null,
+          "value": {
+           "$bytes": "eyJ0eG4iOiJjb21taXR0ZWQiLCJuIjoyfQ=="
+          },
+          "headers": []
+         }
+        ]
+       },
+       {
+        "firstOffset": {
+         "$bigint": "2"
+        },
+        "length": 66,
+        "partitionLeaderEpoch": 0,
+        "magic": 2,
+        "crc": 3896692454,
+        "attributes": 48,
+        "lastOffsetDelta": 0,
+        "firstTimestamp": {
+         "$bigint": "1790275801717"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275801717"
+        },
+        "producerId": {
+         "$bigint": "9"
+        },
+        "producerEpoch": 0,
+        "firstSequence": -1,
+        "records": [
+         {
+          "length": 16,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": {
+           "$bytes": "AAAAAQ=="
+          },
+          "value": {
+           "$bytes": "AAAAAAAA"
+          },
+          "headers": []
+         }
+        ]
+       },
+       {
+        "firstOffset": {
+         "$bigint": "5"
+        },
+        "length": 66,
+        "partitionLeaderEpoch": 0,
+        "magic": 2,
+        "crc": 1693170293,
+        "attributes": 48,
+        "lastOffsetDelta": 0,
+        "firstTimestamp": {
+         "$bigint": "1790275802718"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275802718"
+        },
+        "producerId": {
+         "$bigint": "9"
+        },
+        "producerEpoch": 0,
+        "firstSequence": -1,
+        "records": [
+         {
+          "length": 16,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": {
+           "$bytes": "AAAAAA=="
+          },
+          "value": {
+           "$bytes": "AAAAAAAA"
+          },
+          "headers": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

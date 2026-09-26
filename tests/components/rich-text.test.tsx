@@ -159,6 +159,7 @@ describe("renderProse code hand-off to the editor", () => {
       "druid",
       "trino",
       "prometheus",
+      "kafka",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) {

@@ -20,14 +20,14 @@
  *   basic contribution, and `json` IS THE ONE THAT IS NOT: measured on 0.56.0, of the 89 basic ids
  *   `css`, `html` and `typescript` are present and `json` is absent. That single absence is the
  *   whole reason the rich half of this guard is load-bearing, because `json` is the declared
- *   language of eleven source-bearing kinds across the two search products, MongoDB and Prometheus,
- *   and a guard that extracted only the 89 would report all eleven as unregistered.
+ *   language of fourteen source-bearing kinds across the two search products, MongoDB, Prometheus
+ *   and Kafka, and a guard that extracted only the 89 would report all fourteen as unregistered.
  *
  *   CORRECTED IN FIX ROUND 1 AND THE OLD WORDING IS RECORDED HERE ON PURPOSE. This paragraph
  *   previously said all four rich ids were absent from the 89, which is false for three of them.
  *   A maintainer who checked that sentence, found `css` in `basic`, and concluded the paragraph
  *   was wrong about the mechanism could delete the `readdirSync` half, which silently unregisters
- *   `json` and un-guards those eleven kinds. The four `basic.has(...)` assertions in the first test
+ *   `json` and un-guards those fourteen kinds. The four `basic.has(...)` assertions in the first test
  *   below now pin each of the four ids individually, so the sentence cannot go stale again in
  *   silence: a monaco bump that moves any of them fails here rather than in prose.
  *
@@ -210,7 +210,7 @@ describe("the installed editor's language ids", () => {
     for (const id of ["plsql", "tsql", "cql"]) expect([...basic]).not.toContain(id);
 
     // The rich languages, read from their own directory rather than assumed into the set above.
-    // `json` lives here, and it is the declared language of eleven source-bearing kinds.
+    // `json` lives here, and it is the declared language of fourteen source-bearing kinds.
     expect(rich).toEqual(["css", "html", "json", "typescript"]);
     // Each of the four rich ids pinned INDIVIDUALLY against the basic set, which is the assertion
     // that would have caught the false sentence this docblock used to carry. Three of the four are
@@ -249,7 +249,7 @@ describe("the installed editor's language ids", () => {
     // first.
     expect(declared.map((entry) => entry.where)).toContain("mysql/package");
     expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
-    expect(declared).toHaveLength(66);
+    expect(declared).toHaveLength(69);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

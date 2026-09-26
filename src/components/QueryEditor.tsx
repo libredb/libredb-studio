@@ -308,7 +308,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       try {
         let formatted: string;
         if (language === "json") {
-          // JSON formatting for MongoDB queries
+          // JSON formatting, for MongoDB queries and Kafka read requests alike. A read request is
+          // read from JSON.parse's value alone, so its formatted text reads as the typed one (#1088).
           const parsed = JSON.parse(currentValue);
           formatted = JSON.stringify(parsed, null, 2);
         } else if (language === "sql") {
@@ -526,13 +527,19 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       }
     }, [monaco, language, schemaCompletionCache, databaseType]);
 
-    // MongoDB JSON completion provider
+    // MongoDB JSON completion provider, for MongoDB's JSON only (#1088). A json editor also holds
+    // JSON of a dialect of its own, a Kafka read request, and there the provider's snippets are
+    // MongoDB documents that dialect refuses, while its field items offer a topic's result columns
+    // as if they were keys of the request. So it registers only where the declared capabilities name
+    // no dialect, the rule `offersColumnProfiling` reads, and still where none are passed, as the
+    // published component's callers always had it.
+    const completesMongoDB = capabilities?.queryDialect === undefined;
     useEffect(() => {
-      if (monaco && language === "json") {
+      if (monaco && language === "json" && completesMongoDB) {
         const disposable = registerMongoDBCompletionProvider(monaco, schemaCompletionCache);
         return () => disposable.dispose();
       }
-    }, [monaco, language, schemaCompletionCache]);
+    }, [monaco, language, schemaCompletionCache, completesMongoDB]);
 
     // Every model change reaches here: a keystroke, and equally the writes Format, Clear
     // and the imperative setValue make, since Monaco reports those through the same

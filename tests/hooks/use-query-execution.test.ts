@@ -22,6 +22,8 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
@@ -1043,6 +1045,48 @@ describe("useQueryExecution", () => {
         capabilities: {
           ...mockMetadata.capabilities,
           queryLanguage: "promql",
+          supportsExplain: false,
+          explainFormat: undefined,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(singleCall).toBeDefined();
+    expect(JSON.parse(singleCall![1]!.body as string).sql).toBe(buffer);
+  });
+
+  test("executeQuery keeps a Kafka buffer on /api/db/query whole, semicolons and all (#1088)", async () => {
+    // A Kafka tab's whole buffer is ONE read request, which the provider parses as JSON. Under the
+    // connection's SQL grammar the `;` below separates two statements, so a splitter that ran
+    // would send each object on its own, two reads the user never wrote as one request.
+    // `dialectIsSql` keeps it off: the declared language is JSON, whatever its dialect.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const buffer = '{"topic": "orders", "from": "latest"};\n{"topic": "payments", "from": "latest"}';
+    // The premise: the splitter the hook asks does read this buffer as two statements.
+    expect(isMultiStatement(buffer, resolveSqlGrammar(mockConnection.type))).toBe(true);
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: {
+          ...mockMetadata.capabilities,
+          queryLanguage: "json",
+          queryDialect: "kafka",
           supportsExplain: false,
           explainFormat: undefined,
         },

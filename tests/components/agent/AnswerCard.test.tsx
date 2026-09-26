@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis",
+  queryDialect?: "libredb" | "redis" | "kafka",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -262,6 +262,29 @@ describe("AnswerCard — a plan run's statement", () => {
     const sqlBlock = sql.getByTestId("agent-answer-statement");
     expect(sqlBlock.className).toContain("border-hue-blue/40");
     expect(sqlBlock.className).not.toContain("border-hue-indigo/40");
+  });
+
+  test("tints a Kafka read request as JSON, the mode its editor tab renders in (#1088)", () => {
+    // Correct as is: the request is JSON, typed in a `kafka` tab that renders in Monaco's `json`
+    // mode, so the draft takes JSON's accent. No guard here reads it, as for PromQL.
+    const kafkaDraft = planTimeline({
+      sql: '{"topic": "orders", "from": "latest", "limit": 50}',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const kafka = render(<AnswerCard timeline={kafkaDraft} capabilities={capabilitiesFor("json", "kafka")} />);
+    const block = kafka.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("json");
+    expect(block.className).toContain("border-hue-cyan/40");
+    cleanup();
+
+    // The control: another JSON dialect keeps its own accent, so the class above is Kafka's reading
+    // and not every dialect's.
+    const redis = render(<AnswerCard timeline={kafkaDraft} capabilities={capabilitiesFor("json", "redis")} />);
+    const redisBlock = redis.getByTestId("agent-answer-statement");
+    expect(redisBlock.getAttribute("data-language")).toBe("redis");
+    expect(redisBlock.className).not.toContain("border-hue-cyan/40");
   });
 
   test("with no capabilities to hand, the guard's reach decides the language rather than a default of SQL", () => {

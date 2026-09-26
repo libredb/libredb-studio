@@ -18,6 +18,7 @@ import {
   LibSQLIcon,
   DuckDBIcon,
   PrometheusIcon,
+  KafkaIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -50,6 +51,9 @@ export interface DatabaseUIConfig {
     // Elasticsearch only (#708): an API key pair, sent in preference to user/password.
     | "apiKeyId"
     | "apiKeySecret"
+    // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
+    // `fieldOptions` below declares.
+    | "saslMechanism"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -64,6 +68,20 @@ export interface DatabaseUIConfig {
    * the user reaches an error (#1085). Read through `connectionFieldHint`.
    */
   fieldHints?: Partial<Record<ConnectionField, string>>;
+  /**
+   * The choices of a field the connection dialog draws as a select rather than a text box, each a
+   * stored value and its label, offered after an empty "None" choice that stores nothing (#1088).
+   * The dialog draws the select where the engine takes the field, the same condition
+   * `buildConnection` writes it on, so an entry that declares options names the field in
+   * `connectionFields` too. Only Kafka's SASL mechanism is declared this way; a per-type boolean in
+   * `ConnectionModal.tsx` is what this replaces.
+   */
+  fieldOptions?: Partial<Record<ConnectionField, readonly { readonly value: string; readonly label: string }[]>>;
+  /**
+   * `false` where this engine's connections may not carry an SSH tunnel (#1088), absent meaning the
+   * dialog offers the tunnel. Read through `offersSshTunnel`, never directly.
+   */
+  showSshTunnel?: false;
 }
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
@@ -331,6 +349,37 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
   },
+  kafka: {
+    icon: KafkaIcon,
+    // Kafka's own mark is black, which is no identity hue at all. `hue-green` is a declared base
+    // identity hue no engine here carries (purple, the other free one, is VisualExplain's AI accent),
+    // and the distinct-colour assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-hue-green",
+    label: "Apache Kafka",
+    // The broker port a stock install listens on, and the same number under TLS: a secured
+    // listener serves on whatever port its operator chose.
+    defaultPort: "9092",
+    // No URI convention to paste: a Kafka client takes a bootstrap address, and nothing in
+    // connection-string-parser.ts reads a Kafka URI.
+    showConnectionStringToggle: false,
+    // No SSH tunnel: a tunnel forwards one address, and a Kafka client reads from every broker at
+    // the address the broker advertises (docs/providers/kafka.md). Read through offersSshTunnel, so
+    // the dialog neither offers a tunnel nor sends one left in its state; the provider still
+    // refuses a tunnelled connection that arrives another way.
+    showSshTunnel: false,
+    // No database field: one connection is one cluster (docs/providers/kafka.md). The SASL
+    // mechanism is a select declared here, not an isKafka branch in the dialog.
+    connectionFields: ["host", "port", "saslMechanism", "user", "password"],
+    fieldLabels: { saslMechanism: "SASL mechanism" },
+    fieldHints: { saslMechanism: "PLAIN and SCRAM require TLS" },
+    fieldOptions: {
+      saslMechanism: [
+        { value: "PLAIN", label: "PLAIN" },
+        { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
+        { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
+      ],
+    },
+  },
   libredb: {
     icon: LibreDBIcon,
     color: "text-hue-violet",
@@ -374,6 +423,23 @@ export function isFileBased(type: DatabaseType): boolean {
  */
 export function takesConnectionField(type: DatabaseType, field: ConnectionField): boolean {
   return DB_UI_CONFIG[type].connectionFields.includes(field);
+}
+
+/**
+ * Whether this engine's connections may carry an SSH tunnel: false only where the entry
+ * declares `showSshTunnel: false`, which Kafka does, because a tunnel forwards one address and
+ * a Kafka client reaches every broker at the address the broker advertises.
+ *
+ * One rule, two readers, as `takesConnectionField` is: the connection modal renders the SSH
+ * toggle only when this says so, and `buildConnection` writes `sshTunnel` only when this says
+ * so. The second reader is the one that matters: the dialog keeps a tunnel switched on under
+ * another type in its state, and a hidden panel would leave no control to turn it off. A
+ * file-based engine answers true and has its panel hidden by `isFileBased` instead; a tunnel
+ * left in the dialog's state is saved on it but inert, because no tunnel opens for a
+ * connection without a host and port (docs/BACKLOG.md records the dialog's SSH state).
+ */
+export function offersSshTunnel(type: DatabaseType): boolean {
+  return DB_UI_CONFIG[type].showSshTunnel !== false;
 }
 
 /**

@@ -1,0 +1,76 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumer.fetch(orders partition 1 offset 1000)"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Received response with error while executing API Fetch(v17)",
+  "code": "PLT_KFK_RESPONSE",
+  "response": {
+   "throttleTimeMs": 0,
+   "errorCode": 0,
+   "sessionId": 924070985,
+   "nodeEndpoints": [],
+   "responses": [
+    {
+     "topicId": "ae5fd052-88d6-4c94-ac08-d450f3fe6a48",
+     "partitions": [
+      {
+       "partitionIndex": 1,
+       "errorCode": 1,
+       "highWatermark": {
+        "$bigint": "-1"
+       },
+       "lastStableOffset": {
+        "$bigint": "-1"
+       },
+       "logStartOffset": {
+        "$bigint": "-1"
+       },
+       "divergingEpoch": {
+        "epoch": -1,
+        "endOffset": {
+         "$bigint": "-1"
+        }
+       },
+       "currentLeader": {
+        "leaderId": -1,
+        "leaderEpoch": -1
+       },
+       "snapshotId": {
+        "endOffset": {
+         "$bigint": "-1"
+        },
+        "epoch": -1
+       },
+       "abortedTransactions": null,
+       "preferredReadReplica": -1,
+       "records": []
+      }
+     ]
+    }
+   ]
+  },
+  "class": "ResponseError",
+  "errors": [
+   {
+    "message": "The requested offset is not within the range of offsets maintained by the server.",
+    "code": "PLT_KFK_PROTOCOL",
+    "apiId": "OFFSET_OUT_OF_RANGE",
+    "apiCode": 1,
+    "serverErrorMessage": null,
+    "canRetry": false,
+    "hasStaleMetadata": false,
+    "needsRejoin": false,
+    "producerFenced": false,
+    "rebalanceInProgress": false,
+    "unknownMemberId": false,
+    "path": "/responses/0/partitions/0",
+    "class": "ProtocolError"
+   }
+  ]
+ }
+}

@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting seventeen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL and Prometheus
+description: Web-based SQL IDE for cloud-native teams supporting eighteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus and Apache Kafka
 type: application
-version: 0.1.68
+version: 0.1.69
 appVersion: "0.16.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -42,11 +42,18 @@ keywords:
   # and `promql` is what an evaluator looking for a PromQL client types.
   - prometheus
   - promql
+  # One keyword only, like duckdb above: `kafka` is the type-id and also the word an evaluator
+  # looking for a Kafka client types, so there is no second spelling to catch.
+  - kafka
   # A relative, not a provider: VictoriaMetrics answers the Prometheus HTTP API and connects as
   # `prometheus` at the tier its gate-4 probe measured (docs/providers/README.md). The first
   # wire-compatible relative given a keyword, because an evaluator looking for a VictoriaMetrics
   # client types that name and not the driver's.
   - victoriametrics
+  # A relative of `kafka`, as VictoriaMetrics is of `prometheus`: Redpanda answers the Kafka
+  # protocol and connects as `kafka` at the tier its live read-only check measured
+  # (docs/providers/README.md), and an evaluator looking for a Redpanda client types that name.
+  - redpanda
   - web-ide
 maintainers:
   - name: cevheri
@@ -144,6 +151,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
+    - "Chart metadata only: names one more engine, Apache Kafka, in the description, the keywords and the README, and adds a keyword for Redpanda, which connects through it. The appVersion stays 0.16.2, and the deployed image is the same one 0.1.68 installs, which has neither the Prometheus nor the Kafka provider; both arrive with the next application release. No template, value or default moves in this chart version"
     - "Chart metadata only: names one more engine, Prometheus, in the description, the keywords and the README, and adds a keyword for VictoriaMetrics, which connects through it. The appVersion stays 0.16.2, and the deployed image is the same one 0.1.67 installs, which has no Prometheus provider; the provider arrives with the next application release. No template, value or default moves in this chart version"
     - "A connection id sent by the caller no longer selects a cached database provider. Any signed-in account that named another session's connection id was handed that session's already-open provider, with its credentials, and could disconnect it; the cache key is now derived from the stored connection, the server it resolves to and a digest of its credentials. Reported privately as GHSA-3wh2-8x78-jfw4 and scored 8.8"
     - "A seed connection sent inline that claims a seed id is now resolved through the same role filter as a seed id sent on its own, so a role that may not reach a seed connection can no longer reach it by naming it inline"

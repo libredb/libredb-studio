@@ -199,6 +199,13 @@ rm -rf "$STAGE_PAYLOAD"/node_modules/@img/*musl*
 # addon alone would keep the 70 MB and lose the function.
 rm -rf "$STAGE_PAYLOAD"/node_modules/@duckdb/*-musl
 
+# The Kafka client's @node-rs/crc32 is the fourth: bun installs its -gnu and
+# -musl bindings side by side, and the musl crc32.linux-<arch>-musl.node needs
+# libc.so (musl), which linuxdeploy cannot resolve here. The client falls back
+# to its WebAssembly CRC32C without the native module, so the prune costs no
+# function and needs no positive check.
+rm -rf "$STAGE_PAYLOAD"/node_modules/@node-rs/*-musl
+
 # ...and the positive half: a missing bindings package leaves the DuckDB
 # provider dead in the bundle while every other surface looks healthy.
 if [ ! -f "$STAGE_PAYLOAD/node_modules/@duckdb/node-bindings-linux-${ARCH}/duckdb.node" ]; then

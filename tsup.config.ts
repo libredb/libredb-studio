@@ -44,6 +44,7 @@ export default defineConfig({
     "cassandra-driver",
     "mongodb",
     "ioredis",
+    "@platformatic/kafka",
     "@libredb/libredb",
     // SSH and crypto
     "ssh2",

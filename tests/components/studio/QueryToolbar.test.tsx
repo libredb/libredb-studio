@@ -431,6 +431,28 @@ describe("QueryToolbar", () => {
     expect(sql.queryByText("BEGIN")).not.toBeNull();
   });
 
+  test("No transaction, sandbox, edit or import controls for a Kafka connection (#1088)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and a Kafka read request
+    // is JSON in a dialect of its own, which no transaction, sandbox or import could reach.
+    const kafkaMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "json", queryDialect: "kafka" },
+      labels: { ...sqlLabels, entityName: "Topic", entityNamePlural: "Topics" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: kafkaMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    // The control: the toolbar still rendered its run control, so the absent group is the gate.
+    expect(queryByText("RUN")).not.toBeNull();
+    cleanup();
+
+    // And the same props on SQL draw the group, so the handlers above were servable.
+    const sql = render(<QueryToolbar {...createDefaultProps()} />);
+    expect(sql.queryByText("BEGIN")).not.toBeNull();
+  });
+
   test("Query label always shown", () => {
     // With connection
     const props1 = createDefaultProps();

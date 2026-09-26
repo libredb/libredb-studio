@@ -120,6 +120,15 @@ describe("which connection a run may be started on", () => {
     expect(startableId(browserCopy(server, { password: "different" }), loaded(server))).toBeNull();
   });
 
+  test("a Kafka copy that authenticates by another SASL mechanism is not startable by the seed id", () => {
+    // A broker keeps a SCRAM credential per mechanism, so the same user and password under another
+    // mechanism are another principal's secret (#1088): the mechanism is a resolution field.
+    const server = descriptor({ type: "kafka", port: 9092, database: undefined, saslMechanism: "SCRAM-SHA-512" });
+    expect(startableId(browserCopy(server), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { saslMechanism: "SCRAM-SHA-256" }), loaded(server))).toBeNull();
+    expect(startableId(browserCopy(server, { saslMechanism: undefined }), loaded(server))).toBeNull();
+  });
+
   // The field a hand-written comparison forgets: it changes which role the agent
   // executes as, which is the whole point of the least-privilege profile (#328).
   test("a copy carrying its own agent credentials is not startable", () => {

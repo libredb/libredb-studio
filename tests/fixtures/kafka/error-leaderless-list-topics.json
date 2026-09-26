@@ -1,0 +1,167 @@
+{
+ "$captured": {
+  "image": "scratch kafka-fake-broker.mjs (ApiVersions v3, Metadata v12)",
+  "clusterId": "fake-leaderless-cluster",
+  "date": "2026-09-24T18:56:28.640Z",
+  "surface": "admin.listTopics() against a broker whose orders partition 1 has no leader"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Listing topics failed.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "metadata failed 2 times.",
+    "code": "PLT_KFK_MULTIPLE",
+    "class": "MultipleErrors",
+    "errors": [
+     {
+      "message": "Received response with error while executing API Metadata(v12)",
+      "code": "PLT_KFK_RESPONSE",
+      "response": {
+       "throttleTimeMs": 0,
+       "brokers": [
+        {
+         "nodeId": 1,
+         "host": "127.0.0.1",
+         "port": 44529,
+         "rack": null
+        }
+       ],
+       "clusterId": "fake-leaderless-cluster",
+       "controllerId": 1,
+       "topics": [
+        {
+         "errorCode": 0,
+         "name": "orders",
+         "topicId": "3b0c8c2e-5a4f-4a8e-9d1e-2f6a7b8c9d01",
+         "isInternal": false,
+         "partitions": [
+          {
+           "errorCode": 0,
+           "partitionIndex": 0,
+           "leaderId": 1,
+           "leaderEpoch": 0,
+           "replicaNodes": [
+            1
+           ],
+           "isrNodes": [
+            1
+           ],
+           "offlineReplicas": []
+          },
+          {
+           "errorCode": 5,
+           "partitionIndex": 1,
+           "leaderId": -1,
+           "leaderEpoch": 0,
+           "replicaNodes": [
+            1
+           ],
+           "isrNodes": [],
+           "offlineReplicas": [
+            1
+           ]
+          }
+         ],
+         "topicAuthorizedOperations": -2147483648
+        }
+       ]
+      },
+      "class": "ResponseError",
+      "errors": [
+       {
+        "message": "There is no leader for this topic-partition as we are in the middle of a leadership election.",
+        "code": "PLT_KFK_PROTOCOL",
+        "apiId": "LEADER_NOT_AVAILABLE",
+        "apiCode": 5,
+        "serverErrorMessage": null,
+        "canRetry": true,
+        "hasStaleMetadata": true,
+        "needsRejoin": false,
+        "producerFenced": false,
+        "rebalanceInProgress": false,
+        "unknownMemberId": false,
+        "path": "/topics/0/partitions/1",
+        "class": "ProtocolError"
+       }
+      ]
+     },
+     {
+      "message": "Received response with error while executing API Metadata(v12)",
+      "code": "PLT_KFK_RESPONSE",
+      "response": {
+       "throttleTimeMs": 0,
+       "brokers": [
+        {
+         "nodeId": 1,
+         "host": "127.0.0.1",
+         "port": 44529,
+         "rack": null
+        }
+       ],
+       "clusterId": "fake-leaderless-cluster",
+       "controllerId": 1,
+       "topics": [
+        {
+         "errorCode": 0,
+         "name": "orders",
+         "topicId": "3b0c8c2e-5a4f-4a8e-9d1e-2f6a7b8c9d01",
+         "isInternal": false,
+         "partitions": [
+          {
+           "errorCode": 0,
+           "partitionIndex": 0,
+           "leaderId": 1,
+           "leaderEpoch": 0,
+           "replicaNodes": [
+            1
+           ],
+           "isrNodes": [
+            1
+           ],
+           "offlineReplicas": []
+          },
+          {
+           "errorCode": 5,
+           "partitionIndex": 1,
+           "leaderId": -1,
+           "leaderEpoch": 0,
+           "replicaNodes": [
+            1
+           ],
+           "isrNodes": [],
+           "offlineReplicas": [
+            1
+           ]
+          }
+         ],
+         "topicAuthorizedOperations": -2147483648
+        }
+       ]
+      },
+      "class": "ResponseError",
+      "errors": [
+       {
+        "message": "There is no leader for this topic-partition as we are in the middle of a leadership election.",
+        "code": "PLT_KFK_PROTOCOL",
+        "apiId": "LEADER_NOT_AVAILABLE",
+        "apiCode": 5,
+        "serverErrorMessage": null,
+        "canRetry": true,
+        "hasStaleMetadata": true,
+        "needsRejoin": false,
+        "producerFenced": false,
+        "rebalanceInProgress": false,
+        "unknownMemberId": false,
+        "path": "/topics/0/partitions/1",
+        "class": "ProtocolError"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

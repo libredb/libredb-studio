@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D119, U17 · 64
+- [Drivers and connections](#drivers-and-connections) — D1-D125, U17 · 70
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U49 · 37
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U52 · 40
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC7 · 4
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B88 · 29
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B89 · 30
 
 ---
 
@@ -341,6 +341,7 @@ Restored 2026-08-27 from `35294140`.
 Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
 fifth of five instances of one gap, and the fix already exists in the codebase.
 Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
+Amended 2026-09-25: the mapping now exists three times, the third in the Kafka provider (#1088), deliberate for the same reason.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -362,11 +363,15 @@ It is not a copy of the Couchbase helper: it adds what that helper lacks, an `Ab
 Neither follows a redirect: Prometheus refuses one on both paths through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts`, and Couchbase does on its `fetch` path since #1086, while its `node:https` path reports a 3xx as an HTTP failure (`docs/providers/couchbase.md` section 4.4).
 So the consolidation this entry asks for now has two sources to reconcile rather than one pattern to copy, and the shared helper should start from the Prometheus shape, which is the superset, and adopt `rejectRedirect` on its TLS path as that shape does.
 
+**A third mapping exists, by the same decision.**
+The Kafka provider (#1088, section 3.5) maps the TLS panel in `tlsOptions` of `src/lib/db/providers/stream/kafka/connection-options.ts`, `ca`, `cert` and `key` from the panel and the same `rejectUnauthorized` rule, because that PR too was decided to touch no other provider.
+It is a mapping only: the TLS connection is the Kafka client's own, over `node:tls`, so there is no request path to share, and it adds the server-name rule a Kafka client needs (SNI for a DNS host, none for an IP literal).
+
 Not a defect in what any of them measures - it is a field the form offers and the transport
 discards, which is the kind of silence a security setting must not have.
 
 **Done when:** the TLS material mapping and the TLS request path exist once, outside any provider directory.
-Couchbase and Prometheus both route through it and keep their own copies no longer.
+Couchbase and Prometheus both route through it and keep their own copies no longer, and Kafka takes its material mapping from it.
 Every `fetch` transport that reads `ssl.mode` today (ClickHouse, Druid, Elasticsearch/OpenSearch, Trino, libSQL) routes TLS through it.
 One test per transport pins that a supplied CA and a `verify-*` mode reach the request options, plus one that a `require` mode does not verify.
 
@@ -1834,6 +1839,117 @@ A primary key column is not nullable by definition, so that half needs no catalo
 
 **Done when:** on RisingWave a `NOT NULL` column and a primary key column both read as not nullable, every other engine reads the same nullability as before, measured live, and a test pins both halves.
 
+### D120. Kafka connections take no OAUTHBEARER, so Azure Event Hubs and Confluent OAuth are out of reach
+
+`saslMechanism` on `DatabaseConnection` (`src/lib/types.ts`) and `SeedConnectionSchema` (`src/lib/seed/types.ts`) take `PLAIN`, `SCRAM-SHA-256` and `SCRAM-SHA-512` only, and `saslOptions` in `src/lib/db/providers/stream/kafka/connection-options.ts` refuses anything else.
+The client does implement OAUTHBEARER: `@platformatic/kafka` 2.11.0 ships `dist/protocol/sasl/oauth-bearer.js`, and its connection takes a `token` or an `authenticate` callback (`dist/network/connection.js`).
+Azure Event Hubs' Kafka endpoint and Confluent Cloud's OAuth sign in only that way, so neither can be browsed today.
+A token pasted into the password box would expire within hours, and this product has no refresh flow, which is why v1 left the mechanism out (#1088, section 2); GSSAPI and AWS MSK IAM are out for the same reason and a native dependency or SigV4 signing each.
+
+Found 2026-09-23 while designing the Kafka provider (#1088).
+
+**Done when:** a Kafka connection can authenticate with OAUTHBEARER through a token source that refreshes before expiry, the credential is classified secret where the token lives, and a test drives an expiring token through a refresh.
+
+### D121. Kafka values in Avro, Protobuf or JSON Schema show their schema id, not their fields
+
+`decode.ts` in `src/lib/db/providers/stream/kafka/` labels a value that starts with the Confluent wire format (magic byte 0, then a 4-byte schema id) as `schema id <N>, not decoded`, encoding `confluent`, and reads no Schema Registry, so a topic written with a registry serializer shows no field of any record.
+The client ships a registry reader (`dist/registries/confluent-schema-registry.js`), but decoding needs the registry's address and credentials as connection fields, and each of the three formats its own decoder.
+The labelling rule also has a stated false positive, a text value that happens to start with `0x00` (`docs/providers/kafka.md` section 5.3), which a registry lookup would settle.
+
+Found 2026-09-23 while designing the Kafka provider (#1088, section 2).
+
+**Done when:** a Kafka connection can name a Schema Registry, a framed value is decoded against the schema its id names, a value the registry does not know keeps the `confluent` label, and a test pins each format over a captured payload.
+
+### D122. Requests to `platformatic/kafka`, drafted for the maintainer and not filed
+
+The Kafka provider (#1088) works around, or states, twelve behaviours of `@platformatic/kafka` 2.11.0, each measured while it was built.
+Each is drafted below as an upstream issue, for the maintainer to approve, reword or drop; none has been posted anywhere.
+
+1. **An Admin method for ConsumerGroupDescribe (API 69).**
+   `Admin.describeGroups` reports a KIP-848 group as `Dead` while the broker says `Empty`, so describing a `consumer`-protocol group needs API 69, which the Admin does not offer; the provider sends it through the exported `consumerGroupDescribeV0` on a one-off `Connection`.
+   Draft: "Please add an Admin method for ConsumerGroupDescribe (KIP-848), so a consumer-protocol group can be described without the raw protocol module."
+2. **A cap on decompressed size.**
+   `dist/protocol/compression.js` and `dist/protocol/records.js` decompress every batch of a fetch answer whole, synchronously and with no output cap, and the broker bounds only the compressed batch, so one answer can grow by the codec's ratio, measured at about 1,029 to 1 for gzip and 32,692 to 1 for zstd.
+   Draft: "Please add an option that bounds the decompressed bytes of a fetch answer and fails the fetch past it."
+   Wrapping the exported `compressionsAlgorithms` table in the meantime is left to the maintainer's decision.
+3. **Group decoding that trusts the member metadata.**
+   `describeGroups` decodes each member's metadata as a consumer subscription whatever the group's protocol type, and a member's assignment without checking its length, and a parse error there, thrown in a response callback, escapes the call's promise: for a Kafka Connect or Schema Registry group, or a malformed assignment, the call never settles where uncaught exceptions are handled and a Node process that installs no handler exits.
+   Draft: "describeGroups should decode member metadata only for protocol type `consumer` or empty, check lengths, and reject its promise on a parse error."
+4. **Internal topics in the metadata cache.**
+   The metadata cache answers an internal topic's name with `undefined` (`dist/clients/base/base.js`), and `listOffsets` dereferences it inside the socket handler, with the same unsettled call.
+   Draft: "listOffsets on an internal topic should reject with an error rather than throw inside the socket handler."
+5. **`tlsServerName` and IP literals.**
+   With `tlsServerName: true` the client sends the connection's host as the server name even when it is an IP literal, which Node 26 and Bun refuse with `ERR_INVALID_ARG_VALUE` and Node 24 warns on (DEP0123); the provider rebuilds its clients without the option when a broker is advertised by IP.
+   Draft: "Skip SNI for a host that is an IP literal, as RFC 6066 requires."
+6. **A fetch session epoch left behind.**
+   A fetch answered with a partition error leaves the client's fetch session epoch behind the broker's, so the next fetch to that broker meets INVALID_FETCH_SESSION_EPOCH; the provider's own fetches open no session.
+   Draft: "After a fetch that answers a partition error, the session epoch should follow the broker's, or the session be reset."
+7. **`isolationLevel` typed as a string.**
+   `Consumer.listOffsets` declares `isolationLevel` a string while its allowed values are numbers, so the client's strict mode refuses every isolation level; the provider runs the default mode, which validates no option.
+   Draft: "The listOffsets option schema should accept the numeric isolation levels it documents."
+8. **The READ_COMMITTED filter throws in the socket handler.**
+   `#filterUncommittedMessages` in `dist/clients/consumer/consumer.js` reads `batch.records[0].key` and `abortedRanges.get(producerId)[1]` unguarded, in the response callback the socket data handler calls outside any try, so an empty control batch, which Kafka's log cleaner keeps of a transactions V2 producer's last marker, or an ABORT marker of a producer the answer does not list, beside a listed aborted transaction, throws a TypeError out of the handler after the request left the client's timers; that fetch never settles in a process that handles uncaught exceptions, and a Node process that installs none exits.
+   Measured on 2026-09-25 on a cleaned Kafka 4.3.1 log and against a local broker under Node 24.14.0 and Bun 1.4.2; the provider sends its own Fetch v13 instead.
+   Draft: "Guard the control-batch and aborted-range reads of the READ_COMMITTED filter, and reject the fetch rather than throw from the socket handler."
+9. **The socket's error dropped on close.**
+   A request in flight on a connection whose socket failed rejects with a bare "Connection closed" (`#onError` and `#onClose` in `dist/network/connection.js`), and the pool's error listener only drops the connection, so the socket's error, such as the TLS alert of a broker that refuses the client's certificate under TLS 1.3, reaches no caller; the provider can only report a lost connection.
+   Draft: "Carry the socket's error as the cause of the request's rejection."
+10. **No upper bound on the SCRAM iteration count.**
+    `performAuthentication` in `dist/protocol/sasl/scram-sha.js` checks the server-first message's iteration count against a minimum only (4,096) and runs PBKDF2 over the password with whatever count the broker asks, on the runtime's thread pool, where it goes on after the connect has timed out and the client is closed, while Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations (`ScramMechanism`); the provider states it (`docs/providers/kafka.md` section 4.2), since the client's only hooks either replace the whole mechanism or run after the PBKDF2.
+    Measured on 2026-09-26: 4,000,000 SHA-512 iterations took 1,367 ms under Node 24.14.0 and 1,233 ms under Bun 1.4.2, a connect asked for them twice, and with four such exchanges running under Node a file read took 4,490 ms.
+    Draft: "Please bound the iteration count a SCRAM server-first message may ask for, with an option that defaults to a sane maximum such as Apache Kafka's own 16,384, and fail the authentication past it before PBKDF2 runs."
+11. **No floor on the SASL session lifetime.**
+    `#onSaslAuthenticationValidation` in `dist/network/connection.js` arms `reauthenticate()` at 80% of whatever session lifetime a SaslAuthenticate answer carries (KIP-368), and each re-authentication arms it again, for as long as the connection is open, with no floor; the provider states it (`docs/providers/kafka.md` section 4.2), since `authBytesValidator` never sees the lifetime.
+    Measured on 2026-09-26 on one connection over five idle seconds with a lifetime of 1 ms: 3,926 re-authentications under Node 24.14.0 and 3,005 under Bun 1.4.2 with PLAIN, and 1,559 and 1,609 with SCRAM-SHA-512 at about 60% of a core, where a lifetime of 0 or of one hour made none; closing the connection stops the loop.
+    Draft: "Please apply a floor to the session lifetime a SaslAuthenticate answer sets, with an option, and fail or clamp a lifetime below it, so a broker cannot drive a connection's re-authentication in a loop."
+12. **`ajv-draft-04` loaded at import time.**
+   The entry re-exports the schema registries, whose module imports `ajv-draft-04` at module scope, so every import of the client loads it, and `ajv-draft-04` requires `ajv/dist/core` from where it is installed.
+   bun hoists it beside an `ajv` 6 at the top of a host's `node_modules` (oven-sh/bun#17297, open), and the whole client then fails to load, schema registry or not; the provider refuses such a connect with a `DatabaseConfigError` naming the module, and a comment for the bun issue is drafted beside this one.
+   Measured on 2026-09-26 on packed installs of the package with bun 1.4.2, under Node 24.14.0 and Bun 1.4.2, while npm 11.9.0 nests it beside `ajv` 8 (plan Task 21, finding r2-contract-1).
+   Draft: "Load ajv-draft-04 when a draft-04 JSON Schema is first compiled, so a client that uses no schema registry does not depend on where the package manager puts it."
+
+Found 2026-09-23 to 2026-09-26 while building the Kafka provider (#1088, sections 3.6 and 12).
+Not filed: an outward report makes claims about another project's code, so each goes out only with the maintainer's approval.
+
+**Done when:** each draft is filed upstream, reworded or dropped by the maintainer's decision, and the item records the issue link or the reason; a fix that ships upstream is followed by removing the provider's workaround where it has one.
+
+### D123. A Kafka read the budget stops answers older rows than the newest that would fit
+
+`readMessages` in `src/lib/db/providers/stream/kafka/read.ts` reads a topic's partitions one after another, each forward from its start, and the result byte budget stops the whole read.
+So a `"latest"` read whose early partitions hold large records can stop before it reads a partition whose newer rows alone would fit, and answers older rows than an unbounded read would; its warning names where it stopped and the partitions it did not read (`docs/providers/kafka.md` section 5.4).
+Reproduced by the displaced-rows case of `tests/unit/db/kafka/read.test.ts`, "a latest read can be stopped although the rows an unbounded read answers would fit": five 200-byte records of partition 0 and five 10-byte newer records of partition 1, under a 650-byte budget, answer partition 0's offsets 0 to 2, where the unbounded read answers partition 1's five rows, 50 bytes.
+The alternative is to hold, in place of stopping, the rows of the answer's near end that fit, which answers the rows an unbounded read answers whenever they fit, whatever the partition order.
+Its cost is reading every partition's window, up to `limit` records each, whatever the record size, where the stop bounds the fetched work too (K5).
+
+Found 2026-09-25 while building the Kafka provider (#1088, section 5.4).
+Not fixed there: the trade between bounded work and a complete window is a design decision, not a defect of either rule.
+
+**Done when:** a ruling chooses between the stop and the held window, and either the displaced-rows case answers partition 1's rows, or the stop stays with the reason recorded beside the rule in `read.ts`.
+
+### D124. Cassandra and Couchbase also reach addresses the server advertises, which an SSH tunnel does not carry
+
+The Kafka provider refuses an SSH tunnel because a Kafka client reaches every broker at the address the broker advertises (#1088, section 6.1); two other providers discover addresses the same way and take a tunnel anyway.
+`cassandraClientOptions` in `src/lib/db/providers/sql/cassandra/driver-transport.ts` gives the driver the configured host as its one contact point, and the driver discovers the rest of the ring from the node's peers table, whose addresses a tunnel to one host does not forward.
+`pickQueryEndpoint` in `src/lib/db/providers/document/couchbase/http-transport.ts` takes the query service's address from the cluster's node map, so behind a tunnel the management port goes through it and the query service is asked for at the node's own name; D52 records the same discovery handing back an address a port mapping does not reach.
+Read from the code, not measured through a tunnel.
+
+Found 2026-09-24 while designing the Kafka provider's tunnel refusal (#1088, section 6.1).
+Not fixed there: that PR changes no other provider.
+
+**Done when:** each of the two either routes its discovered addresses through the tunnel, or refuses a tunnel with a sentence that says why, as Kafka does, and a test pins the choice for each.
+
+### D125. A Kafka broker with a failed log directory fails the three monitoring panels
+
+`logDirs` in `src/lib/db/providers/stream/kafka/platformatic-client.ts` asks every broker for its log directories, and the client throws on a directory the broker answers with an error.
+A broker whose second log directory has failed answers that directory with `KAFKA_STORAGE_ERROR`, so `getOverview`, `getHealth` and `getStorageStats` in `src/lib/db/providers/stream/kafka/index.ts` all fail with "The request to the broker failed (KAFKA_STORAGE_ERROR)", while the topic listing shows the affected topic `offline` and every other surface answers.
+Reproduced live on 2026-09-25 by `tests/live/kafka-read-only.ts --bootstrap localhost:9095` against a throwaway `apache/kafka:4.3.1` node with two log directories, the second made unreadable (`docs/providers/kafka.md` section 11.4).
+The panels could instead sum the directories that answered and name the failed one, the way the adapter already reads a metadata answer that carries a leaderless partition.
+
+Found 2026-09-25 by the Kafka provider's live read-only check (#1088, KM8).
+Not fixed there: the change is to the adapter's log-dir read, whose error table and seam guard the PR had already settled, and a failed directory is rarer than the offline partition it causes.
+
+**Done when:** a broker with one failed log directory answers the overview, health and storage panels with the directories that answered, the failed directory is named, and a test over a captured `KAFKA_STORAGE_ERROR` answer pins it.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -2568,7 +2684,7 @@ Not fixed in #1085: registering Redis differently changes how every Redis tab is
 
 `src/components/studio/StudioMobileHeader.tsx` renders the Import Data item with `onClick={onImport}`, disabled only while no connection is active, and `src/components/Studio.tsx` hands it `onImport` unconditionally.
 The desktop toolbar withholds the same action off SQL: `src/components/studio/QueryToolbar.tsx` draws its Import control only when `metadata?.capabilities.queryLanguage === "sql"`.
-`src/components/DataImportModal.tsx` writes `CREATE TABLE` and `INSERT INTO` text and hands it to its `onImport`, which `src/components/Studio.tsx` wires to `executeQuery`, so on a phone a MongoDB, Redis, LibreDB or Prometheus connection can open the dialog and send SQL text to an engine that speaks none.
+`src/components/DataImportModal.tsx` writes `CREATE TABLE` and `INSERT INTO` text and hands it to its `onImport`, which `src/components/Studio.tsx` wires to `executeQuery`, so on a phone a MongoDB, Redis, LibreDB, Prometheus or Apache Kafka connection can open the dialog and send SQL text to an engine that speaks none.
 Read from the code, not measured on a device: the engine is expected to answer with a parse error and write nothing.
 
 Found 2026-09-23 while classifying the shared surfaces for the Prometheus provider (#1085, section 3.2).
@@ -2725,6 +2841,40 @@ Found 2026-09-24 by the #1113 review.
 Not fixed in #1113: the fixed width before it was cut at that setting too, so this is not a regression of that change.
 
 **Done when:** the header width follows the root font size, either by scaling the result or by stating the constants in rem, and a test at a 20px root pins a name that is shown whole.
+
+### U50. The connection dialog carries the SSH tunnel of one connection into the next
+
+`useConnectionForm` in `src/hooks/use-connection-form.ts` loads the SSH state on an edit only when the edited connection has a tunnel (`if (editConnection.sshTunnel?.enabled)`), and its reset on close clears none of the SSH state, so the switch, the bastion's host, port and user, and its password, private key and passphrase stay in the hook from one dialog to the next.
+Reproduced 2026-09-25 with a scratch hook test, not committed: after editing a PostgreSQL connection with a tunnel and closing the dialog, `sshEnabled` was still `true` and `sshPassword` still the bastion's password, and editing a PostgreSQL connection without a tunnel then showed `sshEnabled` `true` and the first connection's `sshHost`.
+`buildConnection` writes `sshTunnel` whenever `sshEnabled` is set and the type offers the panel, so saving that second connection gives it the first one's tunnel, credentials included.
+A Kafka connection is kept out by the `offersSshTunnel` gate of `buildConnection`, and a file-based engine, whose panel `isFileBased` hides, stores the leftover tunnel inertly, because no tunnel opens for a connection without a host and port.
+
+Found 2026-09-24 while adding the Kafka connection's tunnel gate (#1088, section 6.1).
+Not fixed there: the reset is shared by every engine's dialog.
+
+**Done when:** loading an edit target sets every SSH field from it, the reset on close clears them, and a hook test edits a tunnelled connection, closes the dialog, edits one without a tunnel and finds the switch off and every SSH field empty.
+
+### U51. The admin Operations list says "No tables found." beside an overview that counts tables
+
+`OperationsTab.tsx` in `src/components/admin/tabs/` answers an empty table list with "No tables found." whenever no `tableStatsCaption` scopes it, while the monitoring Tables tab, `TablesTab.tsx` in `src/components/monitoring/tabs/`, answers the same empty list beside an overview whose `tableCount` is above 0 with "No table statistics available." (`statsAbsent`), because the statistics are absent rather than the tables.
+Redis shows it today, and Apache Kafka does too, whose `getTableStats` answers `[]` because a topic has no honest message count while its overview counts every topic (#1088, section 7.1).
+Reproduced by the committed tests: "an empty list keeps its empty-state copy under a caption, and one beside a counted overview carries none" in `tests/components/admin/OperationsTab.test.tsx` pins "No tables found." beside `tableCount: 344`, and `tests/components/monitoring/TablesTab.test.tsx` pins "No table statistics available." for the same shape.
+D111, MySQL's capped list, is a different defect of the same list: there the list holds rows, and a search outside them answers "No tables found.".
+
+Found 2026-09-24 while classifying #1104's diff for the Kafka provider (#1088).
+Not fixed there: the list and its copy are shared by every engine.
+
+**Done when:** the Operations list answers an empty list beside a counted overview as the Tables tab does, and the Operations test pins it.
+
+### U52. A Kafka read request gets no completion or validation in the editor
+
+A Kafka tab renders in Monaco's built-in `json` mode with no schema, and `QueryEditor.tsx` in `src/components/` registers the MongoDB completion provider only where no JSON dialect is declared, so a read request gets bracket matching and JSON syntax errors and nothing about its own keys.
+An unknown key, a misplaced `offset`, or a timestamp without a zone is found only when the request runs and the provider refuses it (`docs/providers/kafka.md` section 5.1).
+`monaco.languages.json.jsonDefaults.setDiagnosticsOptions` takes a JSON schema per model, which could carry the request's schema of `parseReadRequest` in `src/lib/db/providers/stream/kafka/request.ts`; nothing in `src/` calls it today.
+
+Found 2026-09-23 while designing the Kafka provider (#1088, section 3.3).
+
+**Done when:** a Kafka tab offers the request's keys and `from` forms as completions and marks an unknown key or a wrong type before the run, from one schema a test holds equal to what `parseReadRequest` accepts, and no other `json` tab takes that schema.
 
 ## Dependencies
 
@@ -2920,6 +3070,15 @@ Four of the eight doc sentences mirror the comments; the other four have no code
 - `docs/providers/mysql.md`, section 12.1, on what "the other sixteen provider test files would receive", where there are eighteen provider test files.
 - `docs/providers/postgres.md`, section 3.1.4, "this is the line the fifteen other providers are read against", written when the implementations were sixteen.
   Each of these four counts one short now.
+
+Amended 2026-09-25: the Kafka provider (#1088) made the shipped type-ids nineteen, served by eighteen implementations, and each count above is now one further behind.
+It edits none of these files, and it leaves as they were these fleet counts in comments that the list above did not hold, found by the numeral grep over `src`, `tests` and `e2e`:
+- `src/lib/api/object-route.ts`, the source-bound slicer's docblock: "all sixteen providers cut through `applySourceBound`".
+- `src/lib/db/types.ts`: "Sixteen engines answer `listObjects` from a stored definition", in the key-scan docblock #1095 wrote, and "fourteen of the seventeen type ids on day one", in the `buildObjectEdit` docblock.
+- `src/components/sidebar/Sidebar.tsx`, #1095's key-tab docblock: "the other sixteen shipped type ids are untouched by it".
+- `src/lib/agent/schema-stats.ts`, the no-statistics docblock: "on the twelve type-ids whose inventory comes from their own provider", which are seventeen now.
+- `tests/unit/db/duckdb/seam-guard.test.ts`, the header: "the fourteen engines that are not DuckDB".
+- `e2e/login.spec.ts` and `tests/components/LoginPage.test.tsx`: "forty named products" and the "twenty-six" relatives, written for the gap each test closes and true of the registry then.
 
 Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: that PR edits another provider's doc only where a shared surface it changed alters what the doc describes, and no count here is about such a surface; the four comments sit in other providers' directories, which it does not edit, so their mirrors stay with them to change together.
@@ -4126,3 +4285,16 @@ Found 2026-09-24 while checking the VictoriaMetrics relative after #1104.
 Not fixed there: both rules of the walk are documented decisions (the `walkObjectInventory` docblock), so changing either is a ruling rather than a fix.
 
 **Done when:** a ruling chooses between recording a refused kind in the inventory, with the engine's sentence, while keeping the kinds that were read, and keeping the whole-capture refusal with a message that names the refused kind rather than an unreachable server; and a test drives the walk over a provider whose one kind's listing throws.
+
+### B89. On a Kafka cluster past the topic cap, plan mode grounds topics and nothing else
+
+The grounding walk, `walkObjectInventory` in `src/lib/agent/tools.ts`, ends at the first truncated `describeObjects` batch, as B84 records for Prometheus, and stops at its object budget, `INVENTORY_LIMIT` (5,000) in `src/lib/db/inventory-bounds.ts`.
+The Kafka provider (#1088) declares its kinds as topics, consumer groups, brokers, the order the tree draws its folders in, and its topic listing is capped at `KAFKA_TOPIC_LIST_CAP` (2,000) in `src/lib/db/providers/stream/kafka/objects.ts`, below the object budget, with its topic batch marked truncated past the cap.
+So on a cluster with more than 2,000 topics a plan run's inventory holds 2,000 topics and no consumer group or broker, and on a smaller cluster with more consumer groups than the budget leaves after its topics it holds no broker.
+The inventory's `truncated` tells the run that the reading is incomplete; what it cannot reach is the groups' lag and the brokers a question about consumers or the cluster needs.
+Pinned through the real walk over the Kafka module's own object functions by the KM1 cases of `tests/unit/lib/agent/context-snapshot.test.ts`, since no live fixture reaches 2,000 topics.
+
+Found 2026-09-24 while designing the Kafka provider (#1088, section 11, KM1).
+Not fixed there: reordering the kinds would reorder the tree, and a per-kind share of the object budget changes every engine that grounds through its provider, the trade B84 already records, so a fix of the walk closes both.
+
+**Done when:** a plan run against a Kafka cluster past the topic cap holds its consumer groups and brokers, with a test that drives the grounding walk over a provider whose first kind's batch is truncated and asserts that the later kinds are still read.

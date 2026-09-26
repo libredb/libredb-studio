@@ -11,7 +11,7 @@ import {
   SSLConfig,
   SSHTunnelConfig,
 } from "@/lib/types";
-import { getDBConfig } from "@/lib/db-ui-config";
+import { getDBConfig, offersSshTunnel } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { newLocalId } from "@/lib/ids";
 
@@ -61,6 +61,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   instanceName: "edited",
   localDataCenter: "edited",
   authSource: "edited",
+  // The select owns it, so choosing None on an edit has to CLEAR it. `preserved` would keep a
+  // mechanism the user took away, and send the credential by it.
+  saslMechanism: "edited",
   // The checkbox owns it, so unticking it has to CLEAR it. `preserved` would make the
   // box unticked on screen while the saved connection still skipped its scan.
   skipObjectScan: "edited",
@@ -200,10 +203,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // that way under its "Beats"/"Logstash" format.
   const [apiKeyId, setApiKeyId] = useState("");
   const [apiKeySecret, setApiKeySecret] = useState("");
+  // Kafka's SASL mechanism (#1088), chosen from the select its UI entry declares; "" is the
+  // select's None, which writes no mechanism at all.
+  const [saslMechanism, setSaslMechanism] = useState<NonNullable<DatabaseConnection["saslMechanism"]> | "">("");
   /**
    * Read no catalog when this connection opens (#765).
    *
-   * Engine-independent, unlike the four fields above: every engine has a catalog and any
+   * Engine-independent, unlike the per-engine fields above: every engine has a catalog and any
    * of them can hold an owner too big to scan on connect, so this is not gated on `type`
    * and is not behind the Advanced accordion.
    */
@@ -270,6 +276,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // show empty fields, not the last one edited.
       setApiKeyId(editConnection.apiKeyId || "");
       setApiKeySecret(editConnection.apiKeySecret || "");
+      // Overwritten for the same reason: a connection that names no mechanism must show None,
+      // not the last one edited, or that mechanism is saved onto it.
+      setSaslMechanism(editConnection.saslMechanism ?? "");
       // Overwritten, not set only when true: a connection that reads its catalog has to
       // show an unticked box, or the previously edited connection's choice is saved onto
       // it and the catalog silently stops being read.
@@ -347,6 +356,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // cluster, possibly a different owner's - as a principal nobody chose for it.
         setApiKeyId("");
         setApiKeySecret("");
+        // A leftover mechanism would send the next connection's credentials by a mechanism
+        // nobody chose for it, which the broker answers as a failed login.
+        setSaslMechanism("");
         // A leftover choice would open the next connection with no object list and no
         // explanation, which reads as an engine that answered nothing.
         setSkipObjectScan(false);
@@ -419,7 +431,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
           ? editConnection.color
           : ENVIRONMENT_COLORS[environment],
       ...(sslConfig ? { ssl: sslConfig } : {}),
-      ...(sshConfig ? { sshTunnel: sshConfig } : {}),
+      // Only for an engine that offers the tunnel (#1088). A type switch keeps the SSH state, so a
+      // tunnel switched on under another engine would otherwise reach a Kafka connection while its
+      // panel, and so the one control that turns it off, is hidden. `sshTunnel` is form-owned, so
+      // an edit saved without it also clears a stored one.
+      ...(sshConfig && offersSshTunnel(type) ? { sshTunnel: sshConfig } : {}),
       ...(getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === "connectionString"
         ? {
             connectionString,
@@ -435,6 +451,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(type === "mongodb" && authSource ? { authSource } : {}),
       ...(addressedFields.has("apiKeyId") && apiKeyId ? { apiKeyId } : {}),
       ...(addressedFields.has("apiKeySecret") && apiKeySecret ? { apiKeySecret } : {}),
+      // Written only for an engine that takes it and only when one is chosen: a mechanism left
+      // behind by a switch to another engine is not sent, and None writes nothing.
+      ...(addressedFields.has("saslMechanism") && saslMechanism ? { saslMechanism } : {}),
       // Written only when it says something, like every other optional field here: a
       // stored `false` is noise on every connection ever saved.
       ...(skipObjectScan ? { skipObjectScan } : {}),
@@ -471,6 +490,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     authSource,
     apiKeyId,
     apiKeySecret,
+    saslMechanism,
     skipObjectScan,
   ]);
 
@@ -702,6 +722,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "libsql",
     "duckdb",
     "prometheus",
+    "kafka",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);
@@ -772,6 +793,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setApiKeyId,
     apiKeySecret,
     setApiKeySecret,
+    saslMechanism,
+    setSaslMechanism,
     skipObjectScan,
     setSkipObjectScan,
 

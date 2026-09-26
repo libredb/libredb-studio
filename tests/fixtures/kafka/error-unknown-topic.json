@@ -1,0 +1,15 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.metadata({ topics: [\"no-such-topic\"], autocreateTopics: false })"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Unknown topic no-such-topic.",
+  "code": "PLT_KFK_USER",
+  "canRetry": false,
+  "class": "UserError"
+ }
+}

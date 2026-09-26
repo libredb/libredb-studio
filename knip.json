@@ -16,7 +16,8 @@
   "ignoreDependencies": [
     "tailwindcss",
     "@workflow/world-postgres",
-    "@ai-sdk/anthropic"
+    "@ai-sdk/anthropic",
+    "ajv"
   ],
   "ignoreBinaries": [
     "genhtml",
