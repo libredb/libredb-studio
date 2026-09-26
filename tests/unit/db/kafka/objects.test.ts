@@ -328,8 +328,9 @@ describe("sources", () => {
     expect(doc.parts.every((p) => !("truncated" in p))).toBe(true);
   });
 
-  test("an offline topic's source shows its partitions without offsets, and says why", async () => {
+  test("an offline topic's source shows its partitions without offsets, and says why, and still its configs", async () => {
     let offsetReads = 0;
+    let configReads = 0;
     const c = client(["orders"], {
       metadata: async () => ({
         clusterId: "c",
@@ -340,6 +341,13 @@ describe("sources", () => {
       offsets: async () => {
         offsetReads++;
         return new Map();
+      },
+      topicConfigs: async () => {
+        configReads++;
+        return [
+          { name: "retention.ms", value: "604800000", readOnly: false, isSensitive: false, source: 5 },
+          { name: "cleanup.policy", value: "compact", readOnly: false, isSensitive: false, source: 1 },
+        ];
       },
     });
     const doc = await readObjectSource(c, CAPS, ["orders"], "topic");
@@ -352,6 +360,12 @@ describe("sources", () => {
       latestOffset: null,
       offsetSpan: null,
     });
+    // Only the offsets are withheld (spec 4.4): DescribeConfigs does not depend on leadership.
+    expect(configReads).toBe(1);
+    expect(doc.parts[1]).toMatchObject({ id: "configs", label: "Configs that differ from the default" });
+    expect(JSON.parse(textOf(doc, 1))).toEqual([
+      { name: "cleanup.policy", value: "compact", source: "dynamic topic config", readOnly: false },
+    ]);
   });
 
   test("a partition the offsets answer does not name has no offset and says so, never an invented 0", async () => {
