@@ -116,7 +116,7 @@ function DeclaredFieldSelect({
     <div className="space-y-2">
       <div className="flex items-center gap-2 mb-1">
         <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-        <Label htmlFor={field} className="text-xs font-mediumr text-fg-muted">
+        <Label htmlFor={field} className="text-xs font-medium text-fg-muted">
           {connectionFieldLabel(config, field, fallbackLabel)}
         </Label>
       </div>
@@ -327,7 +327,7 @@ export function ConnectionModal({
             {!isEditMode && (
               <button
                 onClick={() => setShowPasteInput(!showPasteInput)}
-                className="flex items-center gap-1.5 text-xs font-mediumr text-brand hover:text-brand-bright transition-colors px-2 py-1 rounded-md hover:bg-brand-tint/10"
+                className="flex items-center gap-1.5 text-xs font-medium text-brand hover:text-brand-bright transition-colors px-2 py-1 rounded-md hover:bg-brand-tint/10"
               >
                 <ClipboardPaste strokeWidth={1.5} className="w-3 h-3" />
                 Paste URL
@@ -346,7 +346,7 @@ export function ConnectionModal({
               className="mb-6 overflow-hidden"
             >
               <div className="p-3 rounded-lg border border-brand-tint/20 bg-brand-tint/5 space-y-2">
-                <Label className="text-xs font-mediumr text-brand">Paste Connection URL</Label>
+                <Label className="text-xs font-medium text-brand">Paste Connection URL</Label>
                 <div className="flex gap-2">
                   <Input
                     value={pasteInput}
@@ -376,7 +376,7 @@ export function ConnectionModal({
           <div className="space-y-2">
             <div className="flex items-center gap-2 mb-1">
               <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-              <Label htmlFor="name" className="text-xs font-mediumr text-fg-muted">
+              <Label htmlFor="name" className="text-xs font-medium text-fg-muted">
                 Connection Name
               </Label>
             </div>
@@ -390,7 +390,7 @@ export function ConnectionModal({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="queryTimeout" className="text-xs font-mediumr text-fg-muted">
+            <Label htmlFor="queryTimeout" className="text-xs font-medium text-fg-muted">
               Query Timeout (ms)
             </Label>
             <Input
@@ -426,7 +426,7 @@ export function ConnectionModal({
                 aria-describedby="skipObjectScan-hint"
                 className="rounded border-edge bg-panel"
               />
-              <span className="text-xs font-mediumr text-fg-muted">Do not read the object list on connect</span>
+              <span className="text-xs font-medium text-fg-muted">Do not read the object list on connect</span>
             </label>
             <p id="skipObjectScan-hint" className="text-xs text-fg-muted">
               The editor still works. The object panel offers a load action instead.
@@ -435,14 +435,14 @@ export function ConnectionModal({
 
           {/* Environment Selector */}
           <div className="space-y-2">
-            <Label className="text-xs font-mediumr text-fg-muted">Environment</Label>
+            <Label className="text-xs font-medium text-fg-muted">Environment</Label>
             <div className="flex flex-wrap items-center gap-2">
               {(Object.keys(ENVIRONMENT_COLORS) as ConnectionEnvironment[]).map((env) => (
                 <button
                   key={env}
                   onClick={() => setEnvironment(env)}
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
                     environment === env
                       ? "border-edge bg-fill text-fg"
                       : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
@@ -528,7 +528,7 @@ export function ConnectionModal({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Link strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="connectionString" className="text-xs font-mediumr text-fg-muted">
+                      <Label htmlFor="connectionString" className="text-xs font-medium text-fg-muted">
                         {connectionFieldLabel(uiConfig, "connectionString", "Connection URI")}
                       </Label>
                     </div>
@@ -545,7 +545,7 @@ export function ConnectionModal({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
+                      <Label htmlFor="database" className="text-xs font-medium text-fg-muted">
                         {databaseLabel} (optional override)
                       </Label>
                     </div>
@@ -583,7 +583,7 @@ export function ConnectionModal({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Globe strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="host" className="text-xs font-mediumr text-fg-muted">
+                      <Label htmlFor="host" className="text-xs font-medium text-fg-muted">
                         {connectionFieldLabel(uiConfig, "host", "Host & Instance")}
                       </Label>
                     </div>
@@ -637,7 +637,7 @@ export function ConnectionModal({
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
                           <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                          <Label htmlFor="user" className="text-xs font-mediumr text-fg-muted">
+                          <Label htmlFor="user" className="text-xs font-medium text-fg-muted">
                             {connectionFieldLabel(uiConfig, "user", "Username")}
                           </Label>
                         </div>
@@ -656,7 +656,7 @@ export function ConnectionModal({
                     <div className={takesConnectionField(type, "user") ? "space-y-2" : "space-y-2 md:col-span-2"}>
                       <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="password" className="text-xs font-mediumr text-fg-muted">
+                        <Label htmlFor="password" className="text-xs font-medium text-fg-muted">
                           {connectionFieldLabel(uiConfig, "password", passwordFieldLabel)}
                         </Label>
                       </div>
@@ -708,7 +708,7 @@ export function ConnectionModal({
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
+                        <Label htmlFor="database" className="text-xs font-medium text-fg-muted">
                           {databaseLabel}
                         </Label>
                       </div>
@@ -739,7 +739,7 @@ export function ConnectionModal({
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="schema" className="text-xs font-mediumr text-fg-muted">
+                        <Label htmlFor="schema" className="text-xs font-medium text-fg-muted">
                           {connectionFieldLabel(uiConfig, "schema", "Schema Name")}
                         </Label>
                       </div>
@@ -909,7 +909,7 @@ export function ConnectionModal({
                     <div className="p-3 rounded-lg border border-hue-orange-tint/10 bg-hue-orange-tint/5 space-y-3">
                       {type === "oracle" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-fg-muted">
+                          <Label className="text-xs font-medium text-fg-muted">
                             {connectionFieldLabel(uiConfig, "serviceName", "Service Name")}
                           </Label>
                           <Input
@@ -927,7 +927,7 @@ export function ConnectionModal({
                       )}
                       {type === "mssql" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-fg-muted">
+                          <Label className="text-xs font-medium text-fg-muted">
                             {connectionFieldLabel(uiConfig, "instanceName", "Instance Name")}
                           </Label>
                           <Input
@@ -978,7 +978,7 @@ export function ConnectionModal({
                   >
                     <div className="p-3 rounded-lg border border-hue-emerald-tint/10 bg-hue-emerald-tint/5 space-y-3">
                       <div className="space-y-2">
-                        <Label className="text-xs font-mediumr text-fg-muted">SSL Mode</Label>
+                        <Label className="text-xs font-medium text-fg-muted">SSL Mode</Label>
                         <div className="flex flex-wrap gap-1.5">
                           {(["disable", "require", "verify-system", "verify-ca", "verify-full"] as SSLMode[]).map(
                             (mode) => (
@@ -987,7 +987,7 @@ export function ConnectionModal({
                                 type="button"
                                 onClick={() => setSSLMode(mode)}
                                 className={cn(
-                                  "px-2.5 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                  "px-2.5 py-1.5 rounded-md text-xs font-medium transition-all border",
                                   sslMode === mode
                                     ? "border-hue-emerald-tint/30 bg-hue-emerald-tint/10 text-hue-emerald"
                                     : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
@@ -1005,7 +1005,7 @@ export function ConnectionModal({
                       {sslMode !== "disable" && (
                         <div className="space-y-3">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-mediumr text-fg-muted">CA Certificate (PEM)</Label>
+                            <Label className="text-xs font-medium text-fg-muted">CA Certificate (PEM)</Label>
                             <textarea
                               value={caCert}
                               onChange={(e) => setCaCert(e.target.value)}
@@ -1017,7 +1017,7 @@ export function ConnectionModal({
                           {(sslMode === "verify-ca" || sslMode === "verify-full") && (
                             <>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Client Certificate (PEM)</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Client Certificate (PEM)</Label>
                                 <textarea
                                   value={clientCert}
                                   onChange={(e) => setClientCert(e.target.value)}
@@ -1027,7 +1027,7 @@ export function ConnectionModal({
                                 />
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Client Private Key (PEM)</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Client Private Key (PEM)</Label>
                                 <textarea
                                   value={clientKey}
                                   onChange={(e) => setClientKey(e.target.value)}
@@ -1090,7 +1090,7 @@ export function ConnectionModal({
                             <div className="space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                                 <div className="md:col-span-3 space-y-1.5">
-                                  <Label className="text-xs font-mediumr text-fg-muted">SSH Host</Label>
+                                  <Label className="text-xs font-medium text-fg-muted">SSH Host</Label>
                                   <Input
                                     value={sshHost}
                                     onChange={(e) => setSSHHost(e.target.value)}
@@ -1100,7 +1100,7 @@ export function ConnectionModal({
                                   />
                                 </div>
                                 <div className="space-y-1.5">
-                                  <Label className="text-xs font-mediumr text-fg-muted">Port</Label>
+                                  <Label className="text-xs font-medium text-fg-muted">Port</Label>
                                   <Input
                                     value={sshPort}
                                     onChange={(e) => setSSHPort(e.target.value)}
@@ -1110,7 +1110,7 @@ export function ConnectionModal({
                                 </div>
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Username</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Username</Label>
                                 <Input
                                   value={sshUsername}
                                   onChange={(e) => setSSHUsername(e.target.value)}
@@ -1120,13 +1120,13 @@ export function ConnectionModal({
                                 />
                               </div>
                               <div className="space-y-2">
-                                <Label className="text-xs font-mediumr text-fg-muted">Auth Method</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Auth Method</Label>
                                 <div className="flex gap-2">
                                   <button
                                     type="button"
                                     onClick={() => setSSHAuthMethod("password")}
                                     className={cn(
-                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
                                       sshAuthMethod === "password"
                                         ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
                                         : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
@@ -1138,7 +1138,7 @@ export function ConnectionModal({
                                     type="button"
                                     onClick={() => setSSHAuthMethod("privateKey")}
                                     className={cn(
-                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
                                       sshAuthMethod === "privateKey"
                                         ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
                                         : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
@@ -1150,7 +1150,7 @@ export function ConnectionModal({
                               </div>
                               {sshAuthMethod === "password" ? (
                                 <div className="space-y-1.5">
-                                  <Label className="text-xs font-mediumr text-fg-muted">SSH Password</Label>
+                                  <Label className="text-xs font-medium text-fg-muted">SSH Password</Label>
                                   <Input
                                     type="password"
                                     value={sshPassword}
@@ -1163,7 +1163,7 @@ export function ConnectionModal({
                               ) : (
                                 <div className="space-y-3">
                                   <div className="space-y-1.5">
-                                    <Label className="text-xs font-mediumr text-fg-muted">Private Key (PEM)</Label>
+                                    <Label className="text-xs font-medium text-fg-muted">Private Key (PEM)</Label>
                                     <textarea
                                       value={sshPrivateKey}
                                       onChange={(e) => setSSHPrivateKey(e.target.value)}
@@ -1173,7 +1173,7 @@ export function ConnectionModal({
                                     />
                                   </div>
                                   <div className="space-y-1.5">
-                                    <Label className="text-xs font-mediumr text-fg-muted">Passphrase (optional)</Label>
+                                    <Label className="text-xs font-medium text-fg-muted">Passphrase (optional)</Label>
                                     <Input
                                       type="password"
                                       value={sshPassphrase}

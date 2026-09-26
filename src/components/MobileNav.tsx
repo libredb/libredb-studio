@@ -46,7 +46,7 @@ export function MobileNav({ activeTab, onTabChange, onOpenAgent }: MobileNavProp
                   icon would otherwise render visibly thinner than its siblings. */}
               <Icon strokeWidth={1.5} className="w-5 h-5" />
             </div>
-            {/* `font-mediumr` was a typo Tailwind emitted nothing for; the agent
+            {/* `font-medium` was a typo Tailwind emitted nothing for; the agent
                 label added below would otherwise render at a different weight. */}
             <span className="text-xs font-medium">{tab.label}</span>
             {isActive && <div className="absolute -top-1 w-1 h-1 bg-brand rounded-full" />}
