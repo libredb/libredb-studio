@@ -28,8 +28,10 @@ export interface ReadRequest {
 
 const KAFKA_DEFAULT_READ_LIMIT = 50;
 
-/** Kafka's own legal topic name. */
+/** Kafka's own legal topic name: 1 to 249 of these characters, other than the two names below. */
 const KAFKA_TOPIC_NAME = /^[a-zA-Z0-9._-]{1,249}$/;
+/** Names Kafka's Topic.validate refuses although their characters are legal, so no topic holds one. */
+const KAFKA_RESERVED_TOPIC_NAMES: ReadonlySet<string> = new Set([".", ".."]);
 
 /** A partition id is an INT32 on the wire. */
 const KAFKA_MAX_PARTITION = 2147483647;
@@ -69,9 +71,9 @@ export function parseReadRequest(text: string, maxLimit: number): ReadRequest {
   }
 
   const topic = request.topic;
-  if (typeof topic !== "string" || !KAFKA_TOPIC_NAME.test(topic)) {
+  if (typeof topic !== "string" || !KAFKA_TOPIC_NAME.test(topic) || KAFKA_RESERVED_TOPIC_NAMES.has(topic)) {
     refuse(
-      '"topic" is required and must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, ".", "_" and "-"',
+      '"topic" is required and must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, ".", "_" and "-", other than "." and ".."',
     );
   }
 

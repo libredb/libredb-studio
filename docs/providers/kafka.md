@@ -292,7 +292,7 @@ Each line above is one request; the editor sends its whole buffer as one.
 
 | Key | Required | Meaning |
 |---|---|---|
-| `topic` | Yes | A string matching `^[a-zA-Z0-9._-]{1,249}$`, Kafka's legal topic name |
+| `topic` | Yes | A string matching `^[a-zA-Z0-9._-]{1,249}$`, other than `.` and `..`: Kafka's legal topic name |
 | `partition` | No | A whole number from 0 to 2147483647, Kafka's INT32; absent means every partition of the topic |
 | `from` | No | Where each partition starts; default `"latest"` (below) |
 | `limit` | No | A whole number from 1 to 500 (`DEFAULT_QUERY_LIMIT`), default 50, counted across all partitions; `"limit": null` is a wrong type, never the default |

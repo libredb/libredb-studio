@@ -77,6 +77,18 @@ describe("parseReadRequest", () => {
     expect(parse(JSON.stringify({ topic: "x".repeat(249) })).topic).toHaveLength(249);
   });
 
+  test('"." and ".." are refused before any request, as Kafka refuses them, while other names of dots are legal', () => {
+    // Kafka's Topic.validate refuses these two names on every broker, so a read of either could only fail there.
+    for (const topic of [".", ".."]) {
+      expect(refusal(JSON.stringify({ topic })).message).toBe(
+        '"topic" is required and must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, ".", "_" and "-", other than "." and ".."',
+      );
+    }
+    for (const topic of ["...", ".a", "a.", "._", "-."]) {
+      expect(parse(JSON.stringify({ topic })).topic).toBe(topic);
+    }
+  });
+
   test("partition must be a non-negative integer a Kafka INT32 carries", () => {
     for (const partition of [-1, 1.5, "0", null, 2147483648]) {
       expect(refusal(JSON.stringify({ topic: "o", partition })).message).toContain('"partition"');
