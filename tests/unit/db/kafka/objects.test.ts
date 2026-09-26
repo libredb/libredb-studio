@@ -662,6 +662,69 @@ describe("sources", () => {
     expect(JSON.parse(textOf(doc, 1))[0]).toMatchObject({ lag: "4" });
   });
 
+  const BILLING = {
+    groupId: "billing",
+    groupType: "classic" as const,
+    state: "Stable",
+    protocolOrAssignor: "range",
+    members: [
+      {
+        memberId: "m-1",
+        clientId: "billing-service",
+        clientHost: "/10.0.0.1",
+        assignment: [{ topic: "orders", partitions: [0] }],
+      },
+    ],
+  };
+
+  test("consumer group: the group part is the description as the client answered it, members and assignments included, and the lag part is the lag rows, each whole", async () => {
+    const doc = await readObjectSource(
+      client(["orders"], { describeGroup: async () => BILLING }),
+      CAPS,
+      ["billing"],
+      "consumer_group",
+    );
+    // Indented as the Source tab shows it, two spaces a level, and whole: server text is data (K6).
+    expect(textOf(doc, 0)).toBe(JSON.stringify(BILLING, null, 2));
+    expect(JSON.parse(textOf(doc, 1))).toEqual([
+      { topic: "orders", partition: 0, committedOffset: "20", latestOffset: "24", lag: "4" },
+    ]);
+    for (const part of doc.parts)
+      expect(part).toMatchObject({ language: "json", form: "complete", origin: "rendered" });
+  });
+
+  test("a caller's source bound cuts each part of a group's source and marks it; a part within the bound is not marked", async () => {
+    const reading = (limit?: number) =>
+      readObjectSource(
+        client(["orders"], { describeGroup: async () => BILLING }),
+        CAPS,
+        ["billing"],
+        "consumer_group",
+        limit,
+      );
+    const whole = await reading();
+    const cut = await reading(30);
+    for (const index of [0, 1]) {
+      expect(textOf(cut, index)).toBe(textOf(whole, index).slice(0, 30));
+      expect(cut.parts[index]).toMatchObject({ truncated: { limit: 30, reason: sourceBoundTruncationReason(30) } });
+    }
+    const longest = Math.max(textOf(whole, 0).length, textOf(whole, 1).length);
+    expect((await reading(longest)).parts.every((p) => !("truncated" in p))).toBe(true);
+  });
+
+  test("a caller's source bound cuts each part of a topic's source and marks it; a part within the bound is not marked", async () => {
+    const reading = (limit?: number) => readObjectSource(client(["orders"]), CAPS, ["orders"], "topic", limit);
+    const whole = await reading();
+    const cut = await reading(30);
+    for (const index of [0, 1]) {
+      expect(textOf(whole, index).length).toBeGreaterThan(30);
+      expect(textOf(cut, index)).toBe(textOf(whole, index).slice(0, 30));
+      expect(cut.parts[index]).toMatchObject({ truncated: { limit: 30, reason: sourceBoundTruncationReason(30) } });
+    }
+    const longest = Math.max(textOf(whole, 0).length, textOf(whole, 1).length);
+    expect((await reading(longest)).parts.every((p) => !("truncated" in p))).toBe(true);
+  });
+
   test("a group's existence is the listing's: an unlisted group is refused, and describing a group, having read nothing but the listing", async () => {
     // A FindCoordinator for any group name creates __consumer_offsets on a broker that never
     // held a group (spec Appendix B), so no group surface reads past the listing for a name it
