@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.68 \
+  --version 0.1.69 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -626,6 +626,10 @@ helm uninstall libredb
 | `agent.modelTuning.existingConfigMap` | A ConfigMap holding measured per-model settings to layer over the ones the image ships with. Naming a source is what enables the feature — there is no separate flag — and this one is the natural home for a document you were handed: `kubectl create configmap my-tuning --from-file=model-tuning.json`. Mounted read-only at `/app/model-tuning` and named to the app through `AGENT_MODEL_TUNING_PATH` | `""` |
 | `agent.modelTuning.document` | The same document inline, rendered into a ConfigMap by this chart and converted to JSON. For a short overlay; `existingConfigMap` wins when both are given | `{}` |
 | `agent.modelTuning.configMapKey` | The key the document sits under, which is also the file name it is mounted as | `model-tuning.json` |
+| `mcp.enabled` | Serve the MCP endpoint at `/api/mcp` (docs/MCP.md). `false` writes no `LIBREDB_MCP_*` variable; `true` writes all four as strings and requires `mcp.url` and `mcp.tokenLabel`, and the render fails without them | `false` |
+| `mcp.url` | The address MCP clients use, which every token is bound to: an absolute http(s) URL ending in `/api/mcp`, with `config.basePath` when one is set | `""` |
+| `mcp.tokenLabel` | Any non-empty value; changing it revokes every MCP token at once, which is the only revocation | `""` |
+| `mcp.tokenTtlDays` | Days a minted MCP token stays valid, 1 to 365 | `30` |
 | `persistence.enabled` | Enable PVC | `false` |
 | `persistence.size` | PVC size | `1Gi` |
 | `persistence.emptyDirSizeLimit` | Cap the `/app/data` emptyDir used when persistence is off (e.g. `512Mi`); empty means unlimited | `""` |

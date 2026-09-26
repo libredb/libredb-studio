@@ -428,8 +428,11 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  *
  * The profile stays in the key because the two caches' isolation is per profile: an
  * `agent-read-only` acquisition may never be served what `agent-operations` opened.
+ *
+ * Exported for one caller that must join concurrent first acquisitions on exactly this key
+ * without deriving a second one: src/lib/mcp/context.ts.
  */
-async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
+export async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
   const key = await providerCacheKey(connection);
   return `${profile.length}:${profile}${key}`;
 }
@@ -626,7 +629,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
  * statements, so it is served only where the engine itself can bound one, and only
- * `postgres.ts` and `sqlite.ts` implement that. `agent-operations` sends no statement
+ * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB
+ * and SQL Server (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

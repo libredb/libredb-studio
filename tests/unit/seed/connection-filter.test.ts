@@ -58,6 +58,24 @@ describe("filterByRoles: the no-scan choice", () => {
   });
 });
 
+describe("the MCP opt-in", () => {
+  it("is carried through to the managed connection, because the mapper is a hand-written field list", () => {
+    const [managed] = filterByRoles([{ ...baseConn, mcp: true }], ["admin"]);
+    expect(managed.mcp).toBe(true);
+  });
+
+  it("stays absent for a seed that does not opt in", () => {
+    const [managed] = filterByRoles([{ ...baseConn }], ["admin"]);
+    expect(managed.mcp).toBeUndefined();
+  });
+
+  it("is never merged from defaults: absent when the connection omits it, true when it sets it", () => {
+    const defaults: SeedDefaults = { managed: true, environment: "production" };
+    expect(mergeDefaults({ ...baseConn }, defaults).mcp).toBeUndefined();
+    expect(mergeDefaults({ ...baseConn, mcp: true }, defaults).mcp).toBe(true);
+  });
+});
+
 describe("filterByRoles: engine-specific fields", () => {
   it("carries a Cassandra connection's data centre through to the managed connection", () => {
     // The one field `cassandra-driver` refuses to start without. Dropped here, a

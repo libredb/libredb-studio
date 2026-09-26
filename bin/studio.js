@@ -41,6 +41,7 @@ import {
   DEFAULT_PORT,
   startupUrl,
   LauncherUsageError,
+  mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
   preservePayloadData,
@@ -327,6 +328,10 @@ function startServer(payloadDir, port, host) {
   // per-user directory keeps one history across folders and upgrades; an operator
   // who sets the variable keeps whatever they set.
   if (!env.WORKFLOW_LOCAL_DATA_DIR) env.WORKFLOW_LOCAL_DATA_DIR = resolveLedgerDir(os.homedir());
+  // The MCP endpoint's canonical address (#246), which every token is bound to: derived from the
+  // address and port this server is about to take, unless the operator set one, such as a public
+  // address behind a reverse proxy.
+  if (!env.LIBREDB_MCP_URL?.trim()) env.LIBREDB_MCP_URL = mcpUrlFor(env.HOSTNAME, env.PORT);
   // Log-line contract: npx-engine-smoke.yml parses the resolved version from
   // "Starting LibreDB Studio <version> " - keep the prefix stable.
   console.log(`Starting LibreDB Studio ${pkg.version} on ${startupUrl(env.HOSTNAME, env.PORT)}`);

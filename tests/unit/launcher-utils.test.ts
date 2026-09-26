@@ -16,6 +16,7 @@ import {
   extractArchive,
   extractionCommand,
   LauncherUsageError,
+  mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
   preservePayloadData,
@@ -598,6 +599,17 @@ describe("startupUrl", () => {
   });
 });
 
+describe("mcpUrlFor (#246)", () => {
+  test.each([
+    ["127.0.0.1", "3000", "http://127.0.0.1:3000/api/mcp"],
+    ["::", "3000", "http://[::1]:3000/api/mcp"],
+    ["0.0.0.0", "4123", "http://127.0.0.1:4123/api/mcp"],
+    [undefined, undefined, "http://127.0.0.1:3000/api/mcp"],
+  ])("derives the canonical MCP URL for host %p and port %p", (host, port, expected) => {
+    expect(mcpUrlFor(host, port)).toBe(expected);
+  });
+});
+
 describe("resolveBindAddress (issue #813)", () => {
   /*
     Named rather than numbered, because the rows move: the pair carrying the issue
@@ -815,5 +827,58 @@ describe("launcher bind address", () => {
     // The container named after itself, which is the one shape the HOSTNAME rule
     // costs (#813, @cevheri).
     expect(startWith({ HOSTNAME: os.hostname(), LIBREDB_BIND: "0.0.0.0" })).toContain("BIND=0.0.0.0\n");
+  });
+});
+
+/**
+ * The MCP address the launcher hands the server (#246), read back from a real launcher process,
+ * on the harness of `launcher bind address` above: the stub payload prints what it was given.
+ */
+describe("launcher MCP URL", () => {
+  function launch(args: string[], overrides: Record<string, string> = {}): string {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+
+    const home = fs.mkdtempSync(path.join(tempDir, "mcp-url-"));
+    const root = path.resolve(import.meta.dir, "../..");
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), 'console.log("MCP_URL=" + process.env.LIBREDB_MCP_URL);');
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const env = { ...process.env };
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME", "LIBREDB_MCP_URL"])
+      delete env[name];
+    Object.assign(env, overrides);
+    const run = Bun.spawnSync(
+      [node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js"), ...args],
+      { env, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
+    return run.stdout.toString();
+  }
+
+  test("derives it from --host and --port when the operator set none", () => {
+    expect(launch(["--host", "0.0.0.0", "--port", "4123"])).toContain("MCP_URL=http://127.0.0.1:4123/api/mcp\n");
+  });
+
+  test("follows the bind address, so a changed --host changes it", () => {
+    expect(launch(["--host", "::"])).toContain("MCP_URL=http://[::1]:3000/api/mcp\n");
+  });
+
+  test("treats a whitespace-only LIBREDB_MCP_URL as unset and derives it", () => {
+    expect(launch(["--port", "4123"], { LIBREDB_MCP_URL: "   " })).toContain("MCP_URL=http://127.0.0.1:4123/api/mcp\n");
+  });
+
+  test("leaves an operator's own LIBREDB_MCP_URL untouched", () => {
+    const own = "https://studio.example.com/tools/libredb/api/mcp";
+    expect(launch(["--port", "4123"], { LIBREDB_MCP_URL: own })).toContain(`MCP_URL=${own}\n`);
   });
 });

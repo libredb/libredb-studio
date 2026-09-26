@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D119, U17 · 64
+- [Drivers and connections](#drivers-and-connections) — D1–D122, U17 · 67
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U49 · 37
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U51 · 39
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3–DOC7 · 4
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
@@ -42,6 +42,7 @@ None of it is a GitHub issue.
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B88 · 29
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
 ---
 
@@ -1473,7 +1474,7 @@ checker rather than two copies of it.
 
 `CTE_PK_INFO` and `CTE_FK_INFO` in `src/lib/db/providers/sql/postgres.ts` read
 `information_schema.table_constraints`, which PostgreSQL defines as showing only constraints on
-tables a currently enabled role owns.
+tables the current user owns or holds some privilege other than `SELECT` on.
 A connection made as an ordinary `SELECT`-only role therefore sees every column and every index and
 NO key at all, and the answer is a claim rather than an absence: `describeObject` returns
 `isPrimary: false` on every column and `foreignKeys: []`.
@@ -1485,6 +1486,8 @@ and the bulk statement beside it, so the ER diagram, the mobile schema explorer 
 `includeColumns` answer have carried it too.
 What the object tree changed is that the key mark is now on screen, where an absent key reads as a
 table without one.
+The MCP server's `inspect_schema` (#246) carries it as well, and there it is not a corner case either: `docs/MCP.md` requires a least-privilege principal, and `src/lib/mcp/tools/inspect-schema.ts` copies `column.isPrimary` into `is_primary_key`.
+Measured 2026-09-26 in the PR #1070 live check: as a `SELECT`-only `mcp_reader`, `inspect_schema` with `include_indexes: true` answered `is_primary_key: false` for `mcp_events.id` while listing `mcp_events_pkey` among its indexes, and `information_schema.table_constraints` answered 0 primary keys for `mcp_events` to that role and 1 to `postgres`.
 
 Measured 2026-09-22 against PostgreSQL 18 holding `dvdrental`, `public.film`, tables owned by
 `postgres`, probed through `POST /api/db/objects/describe`:
@@ -1833,6 +1836,32 @@ Changing the nullability source changes the column read on every PostgreSQL wire
 A primary key column is not nullable by definition, so that half needs no catalog at all.
 
 **Done when:** on RisingWave a `NOT NULL` column and a primary key column both read as not nullable, every other engine reads the same nullability as before, measured live, and a test pins both halves.
+
+### D120. Concurrent first acquisitions of one connection and profile each open a provider
+
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:715-812`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:809`).
+Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
+The editor and agent paths reach this function the same way.
+`/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
+
+**Done when:** the factory deduplicates in-flight acquisitions itself, MCP's own map is removed, and a test pins that N concurrent first acquisitions construct one provider.
+
+### D121. Two seed-loading paths drop a connection without telling the caller
+
+`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:89-99`).
+The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:57-59`, `:68-70`).
+Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
+
+**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:17-33`), or a recorded decision says why a partial list is the right answer.
+
+### D122. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
+
+`queryReadOnly` takes no signal (`src/lib/db/types.ts:951`), and `cancelQuery` cannot find its statement.
+When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, and on SQLite while blocking the process (A1).
+A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
+This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
+
+**Done when:** `queryReadOnly` accepts an `AbortSignal`, each of the four providers stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
 
 ## Value interpolation
 
@@ -2726,6 +2755,37 @@ Not fixed in #1113: the fixed width before it was cut at that setting too, so th
 
 **Done when:** the header width follows the root font size, either by scaling the result or by stating the constants in rem, and a test at a 20px root pins a name that is shown whole.
 
+### U50. The development server's built-in MCP endpoint answers without a session
+
+`next dev` serves its own MCP endpoint at `/_next/mcp`, and `src/proxy.ts` lets every path that starts with `/_next` through without a session.
+With `bun dev` bound beyond loopback, that endpoint answers anyone who can reach the port.
+Measured 2026-09-26 on Next.js 16.3.5 in the PR #1070 live check: with `HOSTNAME=0.0.0.0 PORT=3100 bun dev --hostname 0.0.0.0 --port 3100`, a `POST /_next/mcp` from the LAN address with no cookie answered `initialize`, `tools/list` and `tools/call` for `get_project_metadata` with 200, and the last one returned the absolute project path.
+Only a request carrying a foreign `Origin` was refused, with 403.
+The production build does not serve the endpoint; `/api/mcp`, Studio's own MCP server, is a different route and was not involved.
+
+Repro: `HOSTNAME=0.0.0.0 PORT=3100 bun dev --hostname 0.0.0.0 --port 3100`, then from another host `curl -X POST http://<lan-ip>:3100/_next/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_project_metadata","arguments":{}}}'`.
+
+Found 2026-09-26 by the PR #1070 live check.
+Not fixed in #1070: the endpoint is the framework's, and whether to gate it in the proxy or to document it is a decision about the dev server, not about Studio's MCP server.
+
+**Done when:** the endpoint is unreachable without a session on a development server bound beyond loopback, or the development docs state the exposure where a contributor meets it.
+
+### U51. The agent rail keeps a pending start, and the last run, from the connection before a switch
+
+Two cases, both reproduced in a browser in the PR #1070 live check on 2026-09-26.
+
+- **The consent step outlives a connection switch.** Select Live SQLite, choose Agent mode, type an objective and press Start, so the step reads "This run will open as Analyze on Live SQLite". Click Live PostgreSQL in the sidebar: the rail header changes to "on Live PostgreSQL" and the step stays. Pressing "Start run" opens the run on `seed:live-sqlite`.
+- **The previous connection's last run stays on screen.** Run plan mode on Live DuckDB, then click Live SQLite. The rail says "on Live SQLite" and "Connection changed, so this question started a new conversation", and still shows the DuckDB run and its outcome.
+
+Nothing runs in the wrong place: `ConsentCard` is bound to the snapshot on purpose (`src/components/agent/ConsentCard.tsx`, the `connectionName` docblock), so its sentence names the connection the run opens on.
+The defect is that the rail then shows two different connections at once, and a user who reads the header rather than the step starts a run somewhere else than they think.
+`pendingStart` in `src/components/agent/AgentRail.tsx` is not cleared when the shell's connection changes.
+
+Found 2026-09-26 by the PR #1070 live check.
+Not fixed in #1070: the PR does not touch the agent rail.
+
+**Done when:** a connection switch either closes the consent step or keeps it with the rail header naming the step's connection, the rail stops showing the previous connection's run after the switch, and a component test pins both across a connection change.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -3350,10 +3410,6 @@ Two things keep it open rather than settled.
 The CodeQL check reports SUCCESS because alerts do not fail the job, so a green rollup hides this.
 And the code does not exist on `main`: it arrives only if #1070 merges, and a dismissal must be made against the merged location.
 
-Related and separate: the test that claims to cover this (`tests/unit/mcp/serializer.test.ts:104`) cannot fail for the flagged branch, because its payload has no `://` and so never reaches the `[^/\s]+@` quantifier.
-A catastrophic variant of the same rule measured 0.06 ms on that payload, inside its 100 ms budget, and 653 ms on `"http://"` plus 37 characters.
-That one is the contributor's to fix and was raised on #1070.
-
 **Done when:** alert 536 carries a written ruling, either dismissed as a false positive with the reason recorded, or the expression narrowed so the alert closes on its own.
 
 ---
@@ -3362,7 +3418,7 @@ That one is the contributor's to fix and was raised on #1070.
 
 Each was decided while building the operation/policy layer, not overlooked.
 
-### A1. A SQLite agent statement can block the runtime for its whole duration
+### A1. A SQLite agent or MCP statement can block the runtime for its whole duration
 
 `sqlite.ts`'s `queryReadOnly` enforces `statementTimeoutMs` as a post-execution deadline: the result of
 an overrunning statement is refused, but the statement is never preempted. SQLite has no
@@ -3373,8 +3429,9 @@ Because both drivers are synchronous, a hostile recursive CTE blocks the whole r
 Same property as the normal SQLite query path, but the input source differs in kind: there the SQL
 comes from an authenticated operator, here from an agent.
 
-**Done when:** either driver exposes an interrupt/progress hook, or agent SQLite execution moves to a
-worker that can be killed on deadline.
+`/api/mcp`'s `run_read_query` reaches the same path, `queryReadOnly` under `agent-read-only`, with SQL from an external MCP client, and `docs/MCP.md` states the risk.
+
+**Done when:** either driver exposes an interrupt or progress hook, or agent and MCP SQLite execution moves to a worker that can be killed on deadline.
 
 ### A2. `VACUUM INTO` can create an empty file at an agent-chosen path
 
@@ -4126,3 +4183,24 @@ Found 2026-09-24 while checking the VictoriaMetrics relative after #1104.
 Not fixed there: both rules of the walk are documented decisions (the `walkObjectInventory` docblock), so changing either is a ruling rather than a fix.
 
 **Done when:** a ruling chooses between recording a refused kind in the inventory, with the engine's sentence, while keeping the kinds that were read, and keeping the whole-capture refusal with a message that names the refused kind rather than an unreachable server; and a test drives the walk over a provider whose one kind's listing throws.
+
+---
+
+## MCP server deferrals (#246)
+
+Each was decided when PR #1070's MCP server was redesigned, not overlooked.
+
+### MCP1. MCP clients authenticate with a static bearer token, not OAuth
+
+Phase 1 of `/api/mcp` accepts only a bearer token that Studio mints for one user (`src/lib/mcp/token.ts`).
+The MCP authorization specification is optional, but an HTTP implementation that supports authorization should follow it, and a hosted client such as claude.ai or ChatGPT needs OAuth to act for one person.
+No protected resource metadata document is served, because one without an authorization server is non-conformant.
+
+Two tests belong to this work and are written first:
+
+- The metadata document's `resource` equals the canonical MCP URL, `basePath` included, and its `authorization_servers` is not empty.
+- The `resource_metadata` in the 401 challenge points at the document that is served.
+
+Under a `basePath`, the root `/.well-known/` path cannot be served by a route inside the app; a redirect, a rewrite to an absolute URL or a proxy in front can serve it, and a live test pins the one chosen.
+
+**Done when:** an authorization server issues tokens audience-bound to the canonical MCP URL, `/api/mcp` validates them, the metadata document and the challenge pointer exist, and the two tests above pass.

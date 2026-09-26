@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting seventeen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL and Prometheus
 type: application
-version: 0.1.68
+version: 0.1.69
 appVersion: "0.16.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -144,6 +144,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
+    - "Adds an mcp block (enabled, url, tokenLabel, tokenTtlDays) for the MCP server at /api/mcp. It writes nothing by default, so an install that never mentions it renders as before; enabled, it writes the four LIBREDB_MCP_* variables and refuses to render without url or tokenLabel. The appVersion stays 0.16.2, whose image has no MCP server, so the block takes effect with the application release that ships it"
     - "Chart metadata only: names one more engine, Prometheus, in the description, the keywords and the README, and adds a keyword for VictoriaMetrics, which connects through it. The appVersion stays 0.16.2, and the deployed image is the same one 0.1.67 installs, which has no Prometheus provider; the provider arrives with the next application release. No template, value or default moves in this chart version"
     - "A connection id sent by the caller no longer selects a cached database provider. Any signed-in account that named another session's connection id was handed that session's already-open provider, with its credentials, and could disconnect it; the cache key is now derived from the stored connection, the server it resolves to and a digest of its credentials. Reported privately as GHSA-3wh2-8x78-jfw4 and scored 8.8"
     - "A seed connection sent inline that claims a seed id is now resolved through the same role filter as a seed id sent on its own, so a role that may not reach a seed connection can no longer reach it by naming it inline"

@@ -1,6 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { pinMcpTestEnvironment } from "../helpers/mcp-fixtures";
+import { legacyPost } from "../helpers/mcp-harness";
+import { mintTestToken, useMcpChannel } from "../helpers/mcp-token";
 import { discoverRoutes } from "./helpers/discover-routes";
 
 /**
@@ -33,6 +36,8 @@ mock.module("@/lib/llm", () => ({ createLLMProvider: mockCreateLLMProvider }));
 // per user, not per route, which is exactly what the rotation test below asserts.
 const { POST: explain } = await import("@/app/api/ai/explain/route");
 const { POST: describeSchema } = await import("@/app/api/ai/describe-schema/route");
+const { POST: dbQuery } = await import("@/app/api/db/query/route");
+const mcp = await import("@/app/api/mcp/route");
 
 function aiRequest(): Request {
   return new Request("http://localhost:3000/api/ai/explain", {
@@ -228,6 +233,86 @@ describe("every AI route enforces the shared budget", () => {
 
         expect(res.status).toBe(429);
       }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+/**
+ * POST /api/mcp spends the same query budget as the database routes, keyed on the user its token
+ * was minted for, which is the key guardRoute uses for that user's session (#246). This file's
+ * getSession mock answers u@libredb.org, so the database routes below spend that user's budget.
+ */
+describe("the query budget, shared by POST /api/mcp and the database routes", () => {
+  let restoreChannel: () => void = () => {};
+
+  const dbQueryRequest = () =>
+    new Request("http://localhost:3000/api/db/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  const mcpPost = (token: string) => legacyPost({ jsonrpc: "2.0", method: "notifications/initialized" }, { token });
+
+  beforeAll(() => {
+    pinMcpTestEnvironment();
+  });
+
+  beforeEach(() => {
+    restoreChannel = useMcpChannel();
+    process.env.RATE_LIMIT_QUERY_MAX = "2";
+  });
+
+  afterEach(() => {
+    restoreChannel();
+    delete process.env.RATE_LIMIT_QUERY_MAX;
+  });
+
+  test("a user who spent it through /api/db/query gets 429 with Retry-After from /api/mcp, and another user does not", async () => {
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 2; i += 1) expect((await dbQuery(dbQueryRequest() as never)).status).toBe(400);
+      const refused = await mcp.POST(mcpPost(await mintTestToken({ username: "u@libredb.org", role: "user" })));
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get("retry-after")).toBeTruthy();
+      expect(await refused.json()).toMatchObject({ code: "RATE_LIMITED" });
+      expect(
+        (await mcp.POST(mcpPost(await mintTestToken({ username: "other@libredb.org", role: "user" })))).status,
+      ).toBe(202);
+      mockGetSession.mockImplementation(async () => ({ role: "user", username: "other@libredb.org" }));
+      expect((await dbQuery(dbQueryRequest() as never)).status).toBe(400);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a user who spent it through /api/mcp gets 429 from /api/db/query, and another user does not", async () => {
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const token = await mintTestToken({ username: "u@libredb.org", role: "user" });
+      for (let i = 0; i < 2; i += 1) expect((await mcp.POST(mcpPost(token))).status).toBe(202);
+      expect((await dbQuery(dbQueryRequest() as never)).status).toBe(429);
+      expect(
+        (await mcp.POST(mcpPost(await mintTestToken({ username: "other@libredb.org", role: "user" })))).status,
+      ).toBe(202);
+      mockGetSession.mockImplementation(async () => ({ role: "user", username: "other@libredb.org" }));
+      expect((await dbQuery(dbQueryRequest() as never)).status).toBe(400);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("the trip through /api/mcp writes one rate_limit_exceeded line for the token's user", async () => {
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const token = await mintTestToken({ username: "u@libredb.org", role: "user" });
+      for (let i = 0; i < 6; i += 1) await mcp.POST(mcpPost(token));
+      const trips = spy.mock.calls
+        .map((call) => JSON.parse(call[0] as string) as Record<string, unknown>)
+        .filter((line) => line.event === "rate_limit_exceeded");
+      expect(trips).toHaveLength(1);
+      expect(trips[0]).toMatchObject({ actor: "u@libredb.org", bucket: "query", route: "POST /api/mcp" });
     } finally {
       spy.mockRestore();
     }

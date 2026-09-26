@@ -164,6 +164,13 @@ Two components are described below and a claim true of one can be false of the o
 *   **A verdict beside the status:** a run that ended `succeeded` may still have answered nothing, so the rail says "Run answered" or "Run did not answer" and names what was missing.
 *   **Your own model, standalone only:** Gemini, OpenAI, Ollama or any OpenAI-compatible endpoint through the existing `LLM_*` settings; the embedded `@libredb/studio` package carries no agent surface. See [Agent Guide](AGENT_GUIDE.md), [Agent Data Flow](AGENT_DATA_FLOW.md) and [Agent Runtime](AGENT.md).
 
+### 19. MCP Server for your own AI client (off by default)
+*   **Your own client:** Claude Code, Codex, Cursor, VS Code or Gemini CLI connect to `/api/mcp` with a token each user mints on the settings screen.
+*   **Three read-only tools:** `list_connections` and `inspect_schema` on every engine, and `run_read_query` on PostgreSQL, SQLite, DuckDB and SQL Server.
+*   **Opted-in connections only:** only the seed connections an operator opts in with `mcp: true`, filtered by the token's role; the database credentials stay on the server.
+*   **Bounded and audited:** every result is bounded to 32 KiB and marked as untrusted data, and every call is audited.
+*   **Setup:** client configuration and limits are in [`docs/MCP.md`](MCP.md).
+
 ## Roadmap
 
 Upcoming phases are tracked in the [Roadmap section of the README](../README.md#roadmap).

@@ -319,6 +319,14 @@ describe("proxy", () => {
       expect(matcher.test(AGENT_DRIVE_PATH)).toBe(true);
     });
 
+    test("the matcher routes both MCP paths through proxy(), so an edit that drops them fails here", () => {
+      const matcher = new RegExp(`^${config.matcher[0]}$`);
+      expect(matcher.test("/api/mcp")).toBe(true);
+      expect(matcher.test("/api/mcp/token")).toBe(true);
+      // The control: the same compiled matcher skips a dotted path.
+      expect(matcher.test("/.well-known/oauth-protected-resource")).toBe(false);
+    });
+
     test("the drive path is not public: no credential redirects to /login", async () => {
       const res = await proxy(createNextRequest(AGENT_DRIVE_PATH));
 

@@ -225,6 +225,14 @@ A read-only investigation agent: a model drafts SQL against a connected database
 
 Full behaviour, the tool set, what bounds a run, the HTTP surface and the honest limitations: [`docs/AGENT.md`](AGENT.md).
 
+### 4.10. MCP Server (`src/lib/mcp/`, off by default)
+
+An MCP endpoint at `/api/mcp` for AI clients of the user's own, served by the official MCP TypeScript SDK: `createMcpHandler` at module scope and one `McpServer` per request, in revision 2026-07-28 and, statelessly, 2025-11-25 and 2025-06-18.
+It authenticates with a scoped bearer token each user mints on the settings screen, signed with a key derived from `JWT_SECRET` under a configured label, and never with the session cookie; `src/proxy.ts` and the route both check the Origin, the Host on a loopback bind, and the token.
+Its three tools reach only seed connections opted in with `mcp: true`, through `acquireExecutionProfileProvider` alone, bound every result to 32 KiB behind an untrusted-content notice, and write `mcp_operation` audit events, the decision before any provider.
+It is standalone-only: nothing under `src/lib/mcp/` or `src/app/` is reachable from the package's entry points, which a package-boundary test asserts.
+Full behaviour, client configuration and limits: [`docs/MCP.md`](MCP.md).
+
 ## 5. Directory Structure
 
 ```
@@ -237,6 +245,7 @@ src/
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   ├── connections/    # managed/ — built-in (seeded) connections listing
 │   │   ├── agent/          # Agent runs, stream, artifacts, drive (404 unless enabled — §4.9)
+│   │   ├── mcp/            # MCP endpoint (bearer token, 404 unless enabled) and token/ (minting)
 │   │   └── admin/          # Fleet health, audit
 │   ├── admin/              # Admin dashboard (RBAC protected) — layout.tsx renders the
 │   │   │                   #   shell; one route per section, each independently
@@ -285,6 +294,7 @@ src/
     │   ├── factory.ts       # Provider factory
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
+    ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder,
     │                       # and the LibreDB + Redis command languages

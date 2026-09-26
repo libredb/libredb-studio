@@ -244,6 +244,33 @@ agent:
     configMapKey: "model-tuning.json"
 
 # =============================================================================
+# MCP server (#246)
+# =============================================================================
+# An AI client of the user's own (Claude Code, Codex, Cursor, VS Code, Gemini CLI)
+# reads schemas and runs bounded read-only SQL at /api/mcp, with a token each user
+# mints on the settings screen. The endpoint stays disabled, and nothing below is
+# written, until enabled is true. An image built before the MCP server shipped
+# ignores all four variables. Guide, client configuration and limits: docs/MCP.md.
+mcp:
+  # -- Serve /api/mcp. false (the default) writes no LIBREDB_MCP_* variable, and the
+  # endpoint answers an authenticated request with 404. true writes all four
+  # variables below as strings and requires url and tokenLabel: the render fails
+  # without them.
+  enabled: false
+  # -- The address MCP clients use, which every token is bound to: an absolute
+  # http(s) URL ending in /api/mcp, with config.basePath when one is set, and no
+  # user name, password, query or fragment, such as
+  # https://studio.example.com/api/mcp
+  url: ""
+  # -- Any non-empty value. The token signing key is derived from the JWT secret
+  # under it, so changing it revokes every MCP token at once, which is the only
+  # revocation there is. To offboard a person, stop them signing in, then change
+  # it once ten minutes have passed, since minting needs a sign-in that recent.
+  tokenLabel: ""
+  # -- How many days a minted token stays valid, from 1 to 365.
+  tokenTtlDays: 30
+
+# =============================================================================
 # Persistence — PVC for SQLite storage mode
 # =============================================================================
 persistence:

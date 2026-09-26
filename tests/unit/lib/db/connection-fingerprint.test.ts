@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:574-581` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:577-584` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:574` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:577` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is

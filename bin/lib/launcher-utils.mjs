@@ -27,6 +27,20 @@ export function startupUrl(hostname, port) {
 }
 
 /**
+ * The canonical MCP address the launcher hands the server when the operator set none (#246): the
+ * startup URL of the address and port the server binds, plus /api/mcp. Every MCP token is bound to
+ * it, so a changed --host or --port invalidates the tokens minted before. A prebuilt payload
+ * cannot be relocated under a basePath at runtime, so none is added.
+ *
+ * @param {string | null | undefined} hostname
+ * @param {string | number | null | undefined} port
+ * @returns {string}
+ */
+export function mcpUrlFor(hostname, port) {
+  return `${startupUrl(hostname, port)}/api/mcp`;
+}
+
+/**
  * An environment value as a trimmed string, so `undefined`, an empty value and
  * whitespace are one case rather than three at each call site.
  *

@@ -17,6 +17,7 @@ import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:
 import { SignJWT } from "jose";
 import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 import { AGENT_DRIVE_HEADER, mintAgentDriveToken } from "@/lib/agent/drive-token";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
@@ -68,6 +69,17 @@ afterEach(() => {
 });
 
 describe("POST /api/agent/drive", () => {
+  test("an MCP token is not a drive credential (#246)", async () => {
+    const restoreChannel = useMcpChannel();
+    try {
+      const res = await POST(driveRequest({ token: await mintTestToken() }));
+      expect(res.status).toBe(401);
+      expect(mockDriveAgentRun).not.toHaveBeenCalled();
+    } finally {
+      restoreChannel();
+    }
+  });
+
   test("a valid credential drives the run it names", async () => {
     const res = await POST(driveRequest({ token: await mintAgentDriveToken(RUN_ID) }));
     const body = await parseResponseJSON<{ runId: string; status: string }>(res);

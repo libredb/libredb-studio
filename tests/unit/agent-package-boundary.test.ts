@@ -419,3 +419,41 @@ describe("the embedded workspace declares no agent capability", () => {
     ]);
   });
 });
+
+describe("no MCP server module or package reaches the published package (#246)", () => {
+  /**
+   * The MCP server is standalone-only: its modules live under src/lib/mcp/, its routes and its
+   * settings page under src/app/, and its screen under src/components/mcp/, and none of them,
+   * nor any @modelcontextprotocol package, may be reached from a tsup entry point. Asserted on
+   * the source graph for the reason the header of this file gives. Two edits of the MCP work do
+   * reach the package and are expected to: src/lib/db/factory.ts, which the package re-exports,
+   * and the AuditEvent type of src/lib/audit.ts.
+   */
+  const MCP_OWNED = [/^src\/lib\/mcp\//, /^src\/app\//, /^src\/components\/mcp\//];
+  const isMcpOwned = (file: string): boolean => MCP_OWNED.some((pattern) => pattern.test(relative(file)));
+
+  test("the walk reaches the factory the package re-exports, so an empty walk cannot pass", () => {
+    expect([...emitted.reached].map(relative)).toContain("src/lib/db/factory.ts");
+  });
+
+  test("the path rule recognises an MCP module, so the assertions below can fail", () => {
+    expect(isMcpOwned(path.join(ROOT, "src/lib/mcp/server.ts"))).toBe(true);
+    expect(isMcpOwned(path.join(ROOT, "src/app/api/mcp/route.ts"))).toBe(true);
+    expect(isMcpOwned(path.join(ROOT, "src/components/mcp/McpSettings.tsx"))).toBe(true);
+    expect(isMcpOwned(path.join(ROOT, "src/lib/db/factory.ts"))).toBe(false);
+  });
+
+  test.each([
+    ["code", emitted],
+    ["declarations", declared],
+  ] as const)("no file the %s walk reaches is an MCP module", (_kind, walk) => {
+    expect([...walk.reached].filter(isMcpOwned).map(relative)).toEqual([]);
+  });
+
+  test.each([
+    ["code", emitted],
+    ["declarations", declared],
+  ] as const)("no package the %s walk reaches is an @modelcontextprotocol package", (_kind, walk) => {
+    expect([...walk.packages].filter((name) => name.startsWith("@modelcontextprotocol/"))).toEqual([]);
+  });
+});

@@ -5,12 +5,14 @@ import { SignJWT } from "jose";
 import nextConfig from "../../next.config";
 import { securityHeaders } from "@/lib/security/headers";
 import { proxy } from "@/proxy";
+import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, mintAgentDriveToken } from "@/lib/agent/drive-token";
+import { mintTestToken, useMcpChannel } from "../helpers/mcp-token";
 
 /**
- * Threat: a response path that escapes the headers. proxy() has nine return statements; a new
+ * Threat: a response path that escapes the headers. proxy() has eleven return statements; a new
  * branch that forgets withSecurityHeaders() ships a document with no CSP and no clickjacking
- * defence, and nothing else in the suite would notice. Eight of the nine are driven here; the
- * ninth - the Origin-mismatch 403 - is driven in csrf-origin.test.ts:86 ("still carries the
+ * defence, and nothing else in the suite would notice. Ten of the eleven are driven here; the
+ * eleventh - the Origin-mismatch 403 - is driven in csrf-origin.test.ts:86 ("still carries the
  * security headers, so the 403 is not a hole of its own"), since that branch's own threat model
  * belongs with the rest of the Origin-check suite.
  */
@@ -73,6 +75,27 @@ describe("every response the proxy returns carries the security headers", () => 
 
   test("the redirect that follows a failed JWT verification", async () => {
     expectHardened(await proxy(request("/", "expired-or-invalid-token")));
+  });
+
+  test("the agent drive callback a valid drive token passes through", async () => {
+    const drive = request(AGENT_DRIVE_PATH);
+    drive.headers.set(AGENT_DRIVE_HEADER, await mintAgentDriveToken("arun_0123456789abcdef"));
+    expectHardened(await proxy(drive));
+  });
+
+  test("each answer of the MCP branch: the SDK's 403, the 401 challenge and the pass-through", async () => {
+    const restore = useMcpChannel();
+    try {
+      const mcp = (headers: Record<string, string>) =>
+        new NextRequest("http://localhost:3000/api/mcp", { headers: { host: "localhost:3000", ...headers } });
+      const refused = await proxy(mcp({ origin: "http://evil.example" }));
+      const challenged = await proxy(mcp({}));
+      const admitted = await proxy(mcp({ authorization: `Bearer ${await mintTestToken()}` }));
+      expect([refused.status, challenged.status, admitted.headers.get("x-middleware-next")]).toEqual([403, 401, "1"]);
+      for (const response of [refused, challenged, admitted]) expectHardened(response);
+    } finally {
+      restore();
+    }
   });
 });
 

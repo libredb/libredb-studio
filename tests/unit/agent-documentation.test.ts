@@ -30,7 +30,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
+import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HISTORY_MAX_CONVERSATIONS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { getDBConfig } from "@/lib/db-ui-config";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -417,5 +419,37 @@ describe("the chart says the zero-config durable backend is single-instance", ()
 
   test("the operator's verbatim chart copy still matches the source chart", () => {
     expect(operatorCopyViolations(ROOT)).toEqual([]);
+  });
+});
+
+describe("every agent-mode engine sentence is the one engine list (#246)", () => {
+  /**
+   * AGENT_EXECUTION_ENGINES is the list, and every sentence that names the engines agent mode and
+   * run_read_query execute on is derived from it. These three said PostgreSQL and SQLite long after
+   * DuckDB and SQL Server joined, which no test could see. Every line break is joined away first,
+   * with the comment marker that continues it, if any, and the indentation around it, so a
+   * sentence may wrap where the file wraps: in a docblock, in a # comment, or in a block comment
+   * whose lines carry no marker at all, as the seed loader's does.
+   */
+  const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
+  const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
+
+  test("the derived list is today's four engines", () => {
+    expect(list).toBe("PostgreSQL, SQLite, DuckDB and SQL Server");
+  });
+
+  test(".env.example states it, and says plan mode is grounded on every engine", () => {
+    const env = prose(".env.example");
+    expect(env).toContain(`AGENT MODE EXECUTES STATEMENTS ON ${list.toUpperCase()} ONLY.`);
+    expect(env).toContain("grounded on every engine");
+    expect(env).not.toContain("POSTGRESQL AND SQLITE ONLY");
+  });
+
+  test("the factory's profile comment states it", () => {
+    expect(prose("src/lib/db/factory.ts")).toContain(`implement that: ${list} (`);
+  });
+
+  test("the seed loader's sample comment states it", () => {
+    expect(prose("src/lib/seed/index.ts")).toContain(`Agent mode executes statements on ${list};`);
   });
 });

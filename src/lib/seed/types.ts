@@ -49,6 +49,13 @@ export const SeedDefaultsSchema = z.object({
   managed: z.boolean().optional(),
   environment: ConnectionEnvironmentSchema.optional(),
   ssl: SSLConfigSchema,
+  // Refused rather than stripped (#246): a default would opt every later connection in to MCP.
+  mcp: z
+    .never({
+      error:
+        "mcp is set per connection and never in defaults: add mcp: true to each seed connection an MCP client may use",
+    })
+    .optional(),
 });
 
 export const SeedConnectionSchema = z
@@ -101,6 +108,11 @@ export const SeedConnectionSchema = z
     // schema fails SILENTLY when a field is missing: zod strips an unknown key, so a seed
     // file setting it would round-trip as `undefined` with no error anywhere.
     skipObjectScan: z.boolean().optional(),
+    // Visible to MCP clients (#246). Per connection and never a default, because a file-wide
+    // default would turn the opt-in into an opt-out for every connection the file later gains.
+    // Declared for the reason skipObjectScan is: zod strips an undeclared key silently, and a seed
+    // file's opt-in would validate and vanish. src/lib/seed/connection-filter.ts copies it.
+    mcp: z.boolean().optional(),
   })
   .superRefine((conn, ctx) => {
     if (conn.type === "elasticsearch") return;
@@ -131,4 +143,6 @@ export interface ManagedConnection extends DatabaseConnection {
   managed: boolean;
   roles: string[];
   seedId: string;
+  /** Visible to MCP clients (#246); absent on the built-in samples, which never opt in. */
+  mcp?: boolean;
 }

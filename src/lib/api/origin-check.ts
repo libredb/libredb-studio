@@ -119,6 +119,21 @@ function configuredHosts(): string[] {
   return hosts;
 }
 
+/**
+ * The host names of ALLOWED_ORIGINS, without ports and with IPv6 bracketed: the shape the MCP
+ * SDK's Origin and Host allowlists compare (#246). Built on configuredHosts() so this file stays
+ * the only parser of the variable and its "*" warning. An entry that does not parse as a host can
+ * match no Origin or Host the SDK parses, so it names nothing here.
+ */
+export function configuredOriginHostnames(): string[] {
+  const hostnames: string[] = [];
+  for (const host of configuredHosts()) {
+    const candidate = `http://${host}`;
+    if (URL.canParse(candidate)) hostnames.push(new URL(candidate).hostname);
+  }
+  return hostnames;
+}
+
 export function checkOrigin(request: { method: string; headers: Headers }): OriginCheckResult {
   const expectedHost = selfHost(request.headers);
 

@@ -17,6 +17,15 @@ export type AuditEventType =
    */
   | "agent_operation"
   /**
+   * An MCP endpoint operation (#246): for a tool call, one event for the decision and, when the
+   * decision allowed the call, one for its outcome, joined by one correlation id; for minting a
+   * token, one event before the token is signed. Distinct from agent_operation on purpose: an MCP
+   * call comes from a client of the user's own with a token of its own, and an operator has to be
+   * able to tell it from an agent run and from an editor statement. The user field carries the
+   * token's verified username, never client text.
+   */
+  | "mcp_operation"
+  /**
    * A tree-driven DDL: one event for the decision to apply an edited definition and one for
    * what the engine did with it, joined by one correlation id (#789 Phase 3).
    *
@@ -126,6 +135,38 @@ export type AuditReason =
   // never wanted a session, so recording one vocabulary for both would make a
   // forged drive token indistinguishable in the trail from an expired login.
   | "no_agent_drive_token"
+  // The MCP endpoint (#246). The first three are its identity refusals, written by src/proxy.ts
+  // or by the route when the proxy was bypassed: a bearer that is missing, malformed, forged,
+  // expired, revoked or foreign (one code covers missing and invalid, as no_agent_drive_token
+  // does); any bearer while LIBREDB_MCP_TOKEN_LABEL is unset, or a token that verifies while
+  // LIBREDB_MCP_URL is unset or invalid; and a Host the loopback-bind check refused.
+  | "mcp_token_invalid"
+  | "mcp_channel_unconfigured"
+  | "mcp_host_not_allowed"
+  // The rest are mcp_operation reasons, each with one meaning. Arguments that failed the tool's
+  // input schema, which the SDK refuses before any handler runs and the route records.
+  | "mcp_invalid_arguments"
+  // A connection id outside the token's opted-in connections, the same for one that exists and
+  // one that does not.
+  | "mcp_connection_not_visible"
+  // A statement the execution fence refused before any provider was reached.
+  | "mcp_statement_refused"
+  // A named schema the connection does not have; an outcome, since the lookup needs the provider.
+  | "mcp_schema_not_found"
+  // offset above zero on a query the provider did not rewrite, so it could not be paged.
+  | "mcp_offset_unsupported"
+  // The request's signal aborted before or during the call.
+  | "mcp_cancelled"
+  // The call's deadline passed, including a provider's time-budget refusal and any failure that
+  // settled after the deadline.
+  | "mcp_timeout"
+  // A provider budget refusal (rows, bytes, a value SQL Server cut, a serialised result), or one
+  // row larger than the result cap.
+  | "mcp_result_too_large"
+  // Any other provider or acquisition failure.
+  | "mcp_execution_failed"
+  // The seed file could not be loaded, so no connection could be resolved.
+  | "mcp_connections_unreadable"
   // The object edit path (#789 Phase 3). Eight codes for one apply's decidable outcomes, mapped
   // from `ObjectEditOutcome` by a total record in src/lib/db/object-edit.ts, so a new outcome
   // with no reading here fails to compile. `object_edit_plan_invalid` is the analogue of
@@ -171,8 +212,9 @@ export interface AuditEvent {
    * execution, never a session, a user or a token, so it stays safe to log
    * while remaining the key an operator groups by.
    *
-   * Set by `agent_operation` events and by `object_edit` events, which are the two paths that
-   * emit a decision and an outcome as two records of one action (#789 Phase 3).
+   * Set by `agent_operation` events, by `object_edit` events, and by `mcp_operation` tool events,
+   * the three paths that emit a decision and an outcome as two records of one action (#789 Phase 3,
+   * #246).
    */
   correlationId?: string;
 }

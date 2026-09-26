@@ -13,6 +13,7 @@
   - [Database API](#database-api)
   - [AI API](#ai-api)
   - [Agent API](#agent-api)
+  - [MCP API](#mcp-api)
   - [Storage API](#storage-api)
   - [Connections API](#connections-api)
   - [Admin API](#admin-api)
@@ -87,8 +88,11 @@ The middleware (`src/proxy.ts`) gates every route: all of them require a valid `
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
 Unauthenticated requests to any other (middleware-gated) route are redirected to `/login`. A few allowlisted handlers self-check instead and return JSON — e.g. `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+`/api/mcp` is the exception: without a valid bearer token it answers 401 with `WWW-Authenticate`, never a redirect (see the [MCP API](#mcp-api) below).
 
-**One route is session-less without being public: `POST /api/agent/drive`.** It is deliberately *not* on the list above — a path-shaped exemption would admit anything that can reach the port. It carries a server-minted, single-purpose credential instead, verified by the middleware and again by the handler (see the [Agent API](#agent-api) below).
+**Two routes are session-less without being public: `POST /api/agent/drive` and `/api/mcp`.**
+Neither is on the list above, because a path-shaped exemption would admit anything that can reach the port.
+Each carries a server-minted credential of its own instead, verified by the middleware and again by the handler: the drive callback a single-purpose credential (see the [Agent API](#agent-api) below), and the MCP endpoint a scoped bearer token (see the [MCP API](#mcp-api) below).
 
 ---
 
@@ -1514,6 +1518,59 @@ one: `401 { "error": "A valid agent drive credential is required" }`, audited as
 message is not retryable, so a queue should stop delivering it).
 
 Nothing in the product produces a drive delivery yet, so this route's callers today are its tests.
+
+---
+
+### MCP API
+
+The MCP endpoint for AI clients of your own ([`docs/MCP.md`](MCP.md)).
+It is off by default (`LIBREDB_MCP_ENABLED`), and it authenticates with a scoped bearer token, never the session cookie.
+
+#### `POST /api/mcp`
+
+A JSON-RPC message of MCP revision 2026-07-28, 2025-11-25 or 2025-06-18, sent with `Authorization: Bearer <your-mcp-token>` and `Content-Type: application/json`.
+The answers, in the order they are checked:
+
+| Status | Body | When |
+|---|---|---|
+| 403 | JSON-RPC `-32000`: `Invalid Origin: <host>`, `Invalid Host: <host>` or `Missing Host header` | The `Origin` is not on the MCP allowlist, or on a loopback bind the `Host` is not |
+| 401 | `{"error":"invalid_token","error_description":"..."}` with `WWW-Authenticate: Bearer error="invalid_token", error_description="...", scope="mcp:read"` | No bearer, or one that does not verify |
+| 404 | `{"error":"MCP is not enabled on this server"}` | `LIBREDB_MCP_ENABLED` is off |
+| 500 | `{"error":"..."}` naming `LIBREDB_MCP_ENABLED` or `NEXT_PUBLIC_APP_VERSION`, or the OAuth `server_error` body | An unrecognized switch value, an unset server version, or a server fault during verification |
+| 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` | The per-user query budget is spent |
+| 415, 413, 400 | JSON-RPC `-32000`, `-32700`, `-32600` or `-32020` | A body that is not JSON, over 4 MiB, unreadable or invalid, a batch, or a standard header outside visible ASCII or missing after `initialize` |
+| 404 | JSON-RPC `-32601`, `Method not found` | `subscriptions/listen`, which this server does not implement |
+| 200, 202 | The SDK's JSON-RPC answer, as JSON or as an event stream; 202 for a notification | Everything else |
+
+#### `GET /api/mcp`, `DELETE /api/mcp`
+
+After the same Origin, Host, bearer, switch and version checks, 405 with the SDK's JSON-RPC body and `Allow: POST`: the server keeps no session and offers no stream.
+Neither is metered.
+
+#### `GET /api/mcp/token`
+
+The MCP channel's status for the signed-in user, which the settings screen reads; session-checked and never metered.
+
+```text
+{ "state": "off" | "misconfigured" | "ready", "problems": [ "..." ], "url": "https://studio.example.com/api/mcp" | null, "tokenTtlDays": 30 | null, "visibleConnections": 2 | null }
+```
+
+Each problem names one variable and its fix, never the configured value.
+`visibleConnections` is how many `mcp: true` seed connections your role reaches, and `null`, with a problem, when the seed file cannot be read.
+It never returns a token.
+
+#### `POST /api/mcp/token`
+
+Mints a token for the signed-in user and role; it reads no body field and spends one slot of the query budget.
+
+| Status | Body |
+|---|---|
+| 200 | `{ "token": "...", "expiresAt": "<ISO 8601>", "url": "..." }` with `Cache-Control: no-store`; the token appears in no other response |
+| 401 | `{ "error": "Authentication required" }` |
+| 403 | `{ "error": "Sign in again to create a token: a token can only be created within 10 minutes of signing in." }`, with `Cache-Control: no-store`, when the session was signed in more than ten minutes ago |
+| 409 | `{ "error": "MCP tokens cannot be issued on this server", "problems": [ "..." ] }` |
+| 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` |
+| 500 | `{ "error": "The token was not issued because its audit record could not be written." }` |
 
 ---
 

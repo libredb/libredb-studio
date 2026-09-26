@@ -35,6 +35,19 @@ at all (docs/BACKLOG.md B16), so this is refused rather than rendered broken (#3
 {{- if and .Values.persistence.fixPermissions (include "libredb-studio.adaptOpenShiftSecurityContext" .) }}
 {{- fail "persistence.fixPermissions cannot be combined with the OpenShift security-context adaptation: restricted-v2 rejects the root init container, and the pod's UID/GID come from the namespace range rather than podSecurityContext, so the chown would target the wrong owner. On OpenShift, use a storage class whose volumes the kubelet applies fsGroup to (or pre-chown the volume) and leave persistence.fixPermissions=false; set global.compatibility.openshift.adaptSecurityContext=disabled only if this is not an OpenShift cluster" }}
 {{- end }}
+{{- /*
+The MCP server (#246) accepts a token only when both channel values are set, and only the
+operator knows the public address and its basePath, so an enabled block without them is refused
+rather than rendered as an endpoint that accepts nothing. `default dict` keeps a values set that
+predates the block, as an upgrade with --reuse-values carries, rendering as before.
+*/}}
+{{- $mcp := .Values.mcp | default dict }}
+{{- if and (get $mcp "enabled") (not (get $mcp "url")) }}
+{{- fail "mcp.enabled is true but mcp.url is empty: set it to the address MCP clients use, such as https://studio.example.com/api/mcp, including config.basePath when one is set" }}
+{{- end }}
+{{- if and (get $mcp "enabled") (not (get $mcp "tokenLabel")) }}
+{{- fail "mcp.enabled is true but mcp.tokenLabel is empty: set it to any value, and change it to revoke every MCP token at once" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -270,6 +283,22 @@ spec:
             {{- if include "libredb-studio.agentTuningSet" . }}
             - name: AGENT_MODEL_TUNING_PATH
               value: "/app/model-tuning/{{ include "libredb-studio.agentTuningKey" . }}"
+            {{- end }}
+            {{- /* The MCP server (#246): nothing by default, and all four variables as strings
+                   when mcp.enabled is true; the guards at the top of this file have already
+                   refused an enabled block without url or tokenLabel. Written before extraEnv,
+                   like the agent flag, so an extraEnv entry of the same name still wins. */}}
+            {{- with (.Values.mcp | default dict) }}
+            {{- if .enabled }}
+            - name: LIBREDB_MCP_ENABLED
+              value: "true"
+            - name: LIBREDB_MCP_URL
+              value: {{ .url | quote }}
+            - name: LIBREDB_MCP_TOKEN_LABEL
+              value: {{ .tokenLabel | quote }}
+            - name: LIBREDB_MCP_TOKEN_TTL_DAYS
+              value: {{ .tokenTtlDays | default 30 | quote }}
+            {{- end }}
             {{- end }}
             {{- /* The agent's ledger directory, set by the chart because the image a
                    default install pulls does not yet set it. image.tag defaults to
