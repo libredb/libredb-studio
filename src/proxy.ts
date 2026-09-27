@@ -243,6 +243,11 @@ export const config = {
      * carry the CSP or HSTS.
      */
     "/((?!api/storage/config|_next/static|_next/image|.*\\..*).*)",
+    // The dot exclusion above is for static assets, and an API path is never one: this entry puts
+    // an API path with a dot back under the Origin check and the security headers. An email in
+    // /api/admin/accounts/<email> is the case that needs it. proxy() may still take such a path for
+    // a static asset and skip its login redirect; the route's own session check is the boundary.
+    "/api/(.*\\..*)",
     // The catch-all requires a slash after basePath. Next compiles this explicit
     // root matcher to also cover the bare mount path (for example /tools/libredb).
     "/",

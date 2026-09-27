@@ -117,6 +117,22 @@ describe("the matcher", () => {
     // assertion exists to catch.
     expect(config.matcher[0]).not.toContain("api/db/health");
   });
+
+  test("still runs for an API path with a dot in it, such as an email in /api/admin/accounts/<email>", () => {
+    // The dot exclusion is for static assets. An API path is never one, and skipping it dropped
+    // the Origin check and the CSP from PATCH and DELETE on an account whose email has a dot.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { config } = require("@/proxy") as { config: { matcher: string[] } };
+    const matchers = config.matcher.map((entry) => new RegExp(`^${entry}$`));
+    const covered = (pathname: string) => matchers.some((matcher) => matcher.test(pathname));
+
+    expect(covered("/api/admin/accounts/bob@example.com")).toBe(true);
+    expect(covered("/api/admin/accounts/first.last@example.co.uk")).toBe(true);
+    for (const pathname of SKIPPED_PATHS) {
+      expect({ pathname, covered: covered(pathname) }).toEqual({ pathname, covered: false });
+    }
+    expect(covered("/api/storage/config")).toBe(false);
+  });
 });
 
 /**
