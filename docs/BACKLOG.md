@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 73
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 42
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 41
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3-DOC8 · 5
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
@@ -2803,26 +2803,6 @@ Found 2026-09-24 by the #1113 review.
 Not fixed in #1113: the fixed width before it was cut at that setting too, so this is not a regression of that change.
 
 **Done when:** the header width follows the root font size, either by scaling the result or by stating the constants in rem, and a test at a 20px root pins a name that is shown whole.
-
-### U50. The connection dialog carries the SSH tunnel and TLS settings of one edit target into the next
-
-`useConnectionForm` in `src/hooks/use-connection-form.ts` loads the SSH state on an edit only when the edited connection has a tunnel (`if (editConnection.sshTunnel?.enabled)`), and the TLS state only when it has an `ssl` block (`if (editConnection.ssl)`).
-Its reset on close puts every field of `CONNECTION_FORM_DEFAULTS` back only when no edit target is left (#1125), because closing on an edit target keeps that target's state on purpose.
-So when a host replaces one edit target with another without passing `null` in between, with the dialog open or closed, the second connection opens with the first one's tunnel switch, bastion host, port, user, password, private key and passphrase, and its TLS mode, CA certificate, client certificate and client key.
-`buildConnection` writes `sshTunnel` whenever `sshEnabled` is set and the type offers the panel, and `ssl` whenever `sslMode` is not `disable`, so saving the second connection gives it the first one's tunnel and certificates, private key included.
-The same block sets `serviceName`, `instanceName` and the MongoDB connection-string mode only when the target carries them, so an Oracle or SQL Server target without a service or instance name is saved with the previous one's, and a MongoDB target addressed by host, after one addressed by URI, is saved with an empty `connectionString` and no host, port, user or password.
-Measured 2026-09-27 with a scratch hook test, not committed: the tunnel and TLS leak with the target kept across the close, swapped while open and swapped while closed, and the other three with the target kept across the close.
-A Kafka connection is kept out of the tunnel by the `offersSshTunnel` gate of `buildConnection`, and a file-based engine, whose panel `isFileBased` hides, stores the leftover tunnel inertly, because no tunnel opens for a connection without a host and port.
-
-The standalone app does not reach it: its one `ConnectionModal` mount, in `src/components/Studio.tsx`, clears `editingConnection` together with `isOpen` in both `onClose` and `onConnect`, so every edit target passes through `null` and the reset runs.
-The embedded `StudioWorkspace` mounts no `ConnectionModal`.
-A host of the published `ConnectionModal` (`@libredb/studio/components`, from `src/exports/components.ts`) that keeps or swaps `editConnection` does reach it.
-
-Found 2026-09-24 while adding the Kafka connection's tunnel gate (#1088, section 6.1).
-Not fixed there: the reset is shared by every engine's dialog.
-Narrowed by #1125 to the edit path: closing the dialog on a new connection resets every field of `CONNECTION_FORM_DEFAULTS`.
-
-**Done when:** loading an edit target sets every field of `CONNECTION_FORM_DEFAULTS` from it or back to its default, and a hook test edits a tunnelled TLS connection, closes the dialog with the target kept, edits one with neither and finds the tunnel off, TLS at `disable` and every SSH and TLS field at its default.
 
 ### U51. The admin Operations list says "No tables found." beside an overview that counts tables
 
