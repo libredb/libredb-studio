@@ -1522,7 +1522,7 @@ export interface MonitoringData {
    * which is a different fact from an empty array or a zero - StarRocks 3.3 has no
    * `information_schema.PROCESSLIST`, so `activeSessions` is absent there while an idle
    * PostgreSQL answers `[]`. Rendering the first as the second would claim a measurement
-   * the engine refused to make (the very error QueriesTab.tsx:68 documents for
+   * the engine refused to make (the very error `QueriesTab` in `src/components/monitoring/tabs/QueriesTab.tsx` documents for
    * `slowQueries`). A consumer therefore gates on the field being present, and shows the
    * `errors` entry in place of that panel.
    */
@@ -1619,7 +1619,9 @@ export interface ObjectKindSpec {
    * role would never withhold a twisty a relation deserved; it would withhold those five and
    * grant one it should not. Oracle's `sequence` is that one, and it is the case that settles the
    * whole question: same kind id as PostgreSQL's, opposite answer, because that provider gates on
-   * the role (`oracle.ts:2000`) and PostgreSQL gates on `RELKIND_BY_KIND` (`postgres.ts:2970`).
+   * the role in `OracleProvider.describeObject()` (`src/lib/db/providers/sql/oracle.ts`) and
+   * PostgreSQL gates on `RELKIND_BY_KIND` in `PostgresProvider.describeObject()`
+   * (`src/lib/db/providers/sql/postgres.ts`).
    * A rule written above the providers is wrong for at least one engine whichever way it is
    * written, so the provider declares and nothing else decides.
    *
@@ -1993,7 +1995,7 @@ export type ObjectPartEdit = { readonly offered: true } | { readonly offered: fa
  *
  * CLOSED rather than an open string, against this repository's own precedent for
  * `ObjectKindSpec.id`, and the cost is that a host whose engine has a seventh mechanism has
- * nothing to name. It is closed anyway because `src/lib/db/operations/execution.ts:21-26` states
+ * nothing to name. It is closed anyway because the module docblock in `src/lib/db/operations/execution.ts` states
  * the audit's rule, that "the audited action is the registry-RESOLVED descriptor id, never the
  * caller's raw operation string", and this value is what an apply's audit event carries in
  * `action`.
@@ -2227,8 +2229,8 @@ export interface ObjectEditPlan {
   /**
    * A digest of the SERVER this plan was built against, not of the connection's id.
    *
-   * MEASURED, `src/lib/seed/resolve-connection.ts:21-23` returns an inline connection object
-   * verbatim, `id` included, and the browser drove it: a made-up id with different credentials
+   * `resolveConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed inline
+   * connection object verbatim, `id` included, and the browser drove it: a made-up id with different credentials
    * connected as them. So `connection.id` is a string the caller typed on the majority path, and
    * binding to it would be vacuous for exactly the case the binding exists for. The fingerprint
    * is a hash over a length-framed walk of the RESOLVED connection's `type`, `host`, `port`,
@@ -2436,7 +2438,7 @@ export type ObjectEditOutcome =
    *
    * There is NO `retryable` field on this type and no retry advice in it. MEASURED: a PostgreSQL
    * DDL timeout answers HTTP 499 `QUERY_CANCELLED` "Query was cancelled", and Trino mints a
-   * `TimeoutError` directly (`trino/index.ts:680`) which the generic mapper answers 408
+   * `TimeoutError` directly (`TrinoProvider.mapTrinoError()` in `src/lib/db/providers/sql/trino/index.ts`) which the generic mapper answers 408
    * `retryable: true`. A client that retries an apply whose disposition is unknown applies twice.
    */
   | {

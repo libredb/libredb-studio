@@ -15,7 +15,7 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
  * `hostKeyFingerprint`, which records what this connection TRUSTS rather than where it goes.
  *
  * `enabled` is in because the tunnel branch in `getOrCreateProvider`
- * (`src/lib/db/factory.ts:586`) tests exactly that flag: a switched-off tunnel is not a route at
+ * (`src/lib/db/factory.ts`) tests exactly that flag: a switched-off tunnel is not a route at
  * all, and an absent `sshTunnel` frames to the empty string, which no present tunnel can produce.
  *
  * EXPORTED FOR THE TUNNEL POOL, which keys a forward on this exact string (`poolKey` in
@@ -34,8 +34,8 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
 /**
  * A digest of the SERVER a plan was built against, and NEVER of the connection's id (#789 Phase 3).
  *
- * MEASURED, `src/lib/seed/resolve-connection.ts:21-23` returns an inline connection object
- * verbatim, `id` included, and the browser drove it: a made-up id with different credentials
+ * `resolveConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed inline
+ * connection object verbatim, `id` included, and the browser drove it: a made-up id with different credentials
  * connected as them. So `connection.id` is a string the caller typed on the majority path, and
  * binding a plan to it would be vacuous for exactly the case the binding exists for.
  *
@@ -64,27 +64,33 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * `2dedca1a0ad45abdfb01427f0e1df3130e59617c5658058cbcf4852297f888c7` on both sides.
  *
  * - `connectionString` OVERRIDES the field-by-field form outright and is not merged with it.
- *   `src/lib/db/providers/sql/postgres.ts:2070-2074` returns `{ ...baseConfig, connectionString }`
- *   and never reaches the `host`/`port`/`user`/`database` branch below it. The same shape is at
- *   `mysql.ts:1948-1951` (`uri`), `oracle.ts:1521-1522`, `sqlite.ts:1175-1178`,
- *   `document/mongodb.ts:794-795`, `libsql/index.ts:116-120`, `clickhouse/index.ts:402-422` and
- *   `document/couchbase/index.ts:478`. PostgreSQL is the LIVE population: it declares two editable
- *   kinds.
+ *   `PostgresProvider.buildPoolConfig()` in `src/lib/db/providers/sql/postgres.ts` returns `{ ...baseConfig, connectionString }`
+ *   and never reaches the `host`/`port`/`user`/`database` branch below it. URI handling is also in
+ *   `MySQLProvider.buildPoolConfig()` in `src/lib/db/providers/sql/mysql.ts` (`uri`),
+ *   `OracleProvider.getConnectString()` in `src/lib/db/providers/sql/oracle.ts`,
+ *   `SQLiteProvider.getDatabasePath()` in `src/lib/db/providers/sql/sqlite.ts`,
+ *   `MongoDBProvider.buildConnectionString()` in `src/lib/db/providers/document/mongodb.ts`,
+ *   `resolveConnection()` in `src/lib/db/providers/sql/libsql/index.ts` and
+ *   `src/lib/db/providers/sql/clickhouse/index.ts`, and `CouchbaseProvider.hostFromConnectionString()`
+ *   in `src/lib/db/providers/document/couchbase/index.ts`. PostgreSQL is the LIVE population:
+ *   it declares two editable kinds.
  * - `schema` is Trino's session schema and is sent as the `X-Trino-Schema` submission header
- *   (`trino/http-transport.ts:710` and `:885`), which is what an UNQUALIFIED name in the applied
+ *   (`TrinoHttpTransport` constructor and `submitHeaders()` in `src/lib/db/providers/sql/trino/http-transport.ts`), which is what an UNQUALIFIED name in the applied
  *   statement resolves against. Trino declares an editable kind, so this population is live too.
  *   The normal path is qualified: measured on Trino 476, `SHOW CREATE FUNCTION` answers
  *   `memory.app.plus_one`, so the case needs a user edit that drops the qualification, which the
  *   pane cannot stop and the seal is not entitled to assume away.
- * - `serviceName` is Oracle's connect-string tail, `oracle.ts:1527-1536` building
+ * - `serviceName` is Oracle's connect-string tail, `OracleProvider.getConnectString()` in
+ *   `src/lib/db/providers/sql/oracle.ts` building
  *   `host:port/serviceName`, so it selects WHICH DATABASE on that listener.
  * - `sshTunnel` is the ROUTE and not a credential. `getOrCreateProvider`
- *   (`src/lib/db/factory.ts:586-593`) REWRITES `host` and `port` to the tunnel's local endpoint
+ *   (`src/lib/db/factory.ts`) REWRITES `host` and `port` to the tunnel's local endpoint
  *   before the provider is constructed, so with a tunnel enabled the bastion, and not the record's
  *   own `host`, decides which machine the sealed statement reaches. Only the four route values are
  *   framed, by `tunnelRoute` above. Live under the day-one editable set: any of the three engines
  *   can carry one.
- * - `instanceName` is a MSSQL NAMED INSTANCE, `mssql.ts:1652-1655`, resolved by the SQL Server
+ * - `instanceName` is a MSSQL NAMED INSTANCE, set by `MSSQLProvider.buildConfig()` in
+ *   `src/lib/db/providers/sql/mssql.ts` and resolved by the SQL Server
  *   Browser to a different server process, typically on a port that is not the one in the record.
  *
  * WHICH `host` AND `port`, AND WHY IT IS THE FAR END (X23). That same rewrite made the tunnelled
