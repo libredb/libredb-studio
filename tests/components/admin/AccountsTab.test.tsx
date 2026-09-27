@@ -117,8 +117,20 @@ describe("AccountsTab", () => {
     fireEvent.click(view.getByTestId("role-user@libredb.org"));
     fireEvent.click(view.getByTestId("disabled-admin@libredb.org"));
     fireEvent.click(view.getByTestId("clear-totp-admin@libredb.org"));
+    // Delete removes the account's saved connections as well, so it asks first.
     fireEvent.click(view.getByTestId("delete-user@libredb.org"));
+    await waitFor(() => expect(view.getByRole("alertdialog")).toBeTruthy());
+    expect(view.getByRole("alertdialog").textContent).toContain("user@libredb.org");
+    expect(view.getByRole("alertdialog").textContent).toContain("saved connections");
+    fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+
+    fireEvent.click(view.getByTestId("delete-user@libredb.org"));
+    await waitFor(() => expect(view.getByRole("alertdialog")).toBeTruthy());
+    fireEvent.click(view.getByRole("button", { name: "Delete account" }));
     await waitFor(() => expect(calls.some((call) => call.method === "DELETE")).toBe(true));
+    expect(calls.find((call) => call.method === "DELETE")?.path).toBe("/api/admin/accounts/user%40libredb.org");
 
     fireEvent.change(view.getByLabelText("Email"), { target: { value: "new@example.com" } });
     fireEvent.change(view.getByLabelText("Password"), { target: { value: "long-enough" } });

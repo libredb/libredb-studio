@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { appFetch } from "@/lib/config/base-path";
@@ -28,6 +38,7 @@ export function AccountsTab() {
   const [secret, setSecret] = useState<string | null>(null);
   const [otpauthUrl, setOtpauthUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,7 +240,7 @@ export function AccountsTab() {
                     variant="outline"
                     size="sm"
                     data-testid={`delete-${account.email}`}
-                    onClick={() => void remove(account.email)}
+                    onClick={() => setPendingDelete(account.email)}
                   >
                     Delete
                   </Button>
@@ -239,6 +250,30 @@ export function AccountsTab() {
           ))}
         </tbody>
       </table>
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent className="bg-surface border-hairline-strong">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-fg">Delete account?</AlertDialogTitle>
+            <AlertDialogDescription className="text-fg-tertiary">
+              <span className="font-mono text-fg">{pendingDelete}</span> can no longer sign in, and its saved
+              connections, history and saved queries are removed. This cannot be undone. Disable the account instead to
+              keep them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-hairline-strong text-fg-tertiary">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDelete) void remove(pendingDelete);
+                setPendingDelete(null);
+              }}
+              className="bg-danger-solid text-white hover:bg-danger-solid-hover"
+            >
+              Delete account
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => void onCreate(event)}>
         <Input
           aria-label="Email"
