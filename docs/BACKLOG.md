@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Documentation](#documentation) — DOC3-DOC8 · 5
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H12 · 3
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
@@ -3335,6 +3335,16 @@ through the anon bucket like every other `permission_denied` line.
 
 **Done when:** the verification-failure arm of that catch emits an audit event naming the route and
 the reason, distinct from a missing token, with the row 1.4 residual in `docs/SECURITY.md` deleted.
+
+### H14. A 500 hands the caller the raw error message, including a storage database address
+
+The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` returns `error.message` verbatim for any error it does not classify.
+With `STORAGE_PROVIDER=postgres` and the database unreachable, `POST /api/auth/login` and the account routes answer `{"error":"connect ECONNREFUSED 127.0.0.1:55432"}` (measured against a local container), which tells an unauthenticated caller the internal address of the store.
+Found by the red-team pass on #1122, where the account registry made the login route depend on the store; the branch itself predates that PR and serves every route.
+
+Not fixed there because the branch is shared: some routes rely on the message reaching the caller, and changing it is a behaviour change across the API surface that needs its own audit of which errors are meant to be shown.
+
+**Done when:** an unclassified error answers a fixed message with its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
 
 ---
 

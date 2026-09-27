@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,6 +70,28 @@ describe("the last enabled admin under concurrent changes", () => {
       });
     }
   }
+
+  test("a refused change is audited as a failure that names the acting admin", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await changeAccount(ENV_ADMIN, "second@libredb.org", { role: "user" });
+      await expect(changeAccount(ENV_ADMIN, ENV_ADMIN, { disabled: true })).rejects.toMatchObject({ status: 409 });
+      await expect(removeAccount(ENV_ADMIN, "nobody@libredb.org")).rejects.toMatchObject({ status: 404 });
+      await expect(
+        createAccount(ENV_ADMIN, { email: "second@libredb.org", password: "second-pass-1", role: "user" }),
+      ).rejects.toMatchObject({ status: 409 });
+      const refused = (log.mock.calls as unknown[][])
+        .map((call) => JSON.parse(String(call[0])) as Record<string, string>)
+        .filter((entry) => entry.event === "account" && entry.outcome === "failure");
+      expect(refused.map(({ action, route, actor, reason }) => ({ action, route, actor, reason }))).toEqual([
+        { action: "change", route: ENV_ADMIN, actor: ENV_ADMIN, reason: "account_refused" },
+        { action: "delete", route: "nobody@libredb.org", actor: ENV_ADMIN, reason: "account_refused" },
+        { action: "create", route: "second@libredb.org", actor: ENV_ADMIN, reason: "account_refused" },
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
 
   test("a change that keeps an admin is not held back by the check", async () => {
     await createAccount(ENV_ADMIN, { email: "someone@libredb.org", password: "someone-pass-1", role: "user" });

@@ -84,6 +84,8 @@ export type AuditReason =
   | "bad_totp"
   /** A stored local account was created, changed, or removed. The verb is `action`; the subject is `target`. */
   | "account_changed"
+  /** An admin's create, change or delete of a stored account was refused: bad input, no such account, or the last enabled admin. */
+  | "account_refused"
   | "malformed_body"
   | "no_session"
   | "insufficient_role"

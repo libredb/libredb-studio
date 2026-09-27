@@ -362,7 +362,7 @@ export async function listPublicAccounts(): Promise<PublicAccount[]> {
   return (await provider.listAccounts()).map(toPublic);
 }
 
-export async function createAccount(actor: string, body: unknown): Promise<PublicAccount> {
+async function createAccountOrRefuse(actor: string, body: unknown): Promise<PublicAccount> {
   const provider = await requireAccountStore();
   if (!isRecord(body)) throw new AccountError(400, EMAIL_INVALID);
   const email = readEmail(body.email);
@@ -436,7 +436,7 @@ export interface ChangedAccount {
   sessionVersion: number;
 }
 
-export async function changeAccount(actor: string, email: string, body: unknown): Promise<ChangedAccount> {
+async function changeAccountOrRefuse(actor: string, email: string, body: unknown): Promise<ChangedAccount> {
   const provider = await requireAccountStore();
   const patch = readPatch(body);
   const current = await provider.getAccount(email);
@@ -467,7 +467,7 @@ export async function changeAccount(actor: string, email: string, body: unknown)
   return { account: toPublic(next), sessionVersion: next.sessionVersion };
 }
 
-export async function removeAccount(actor: string, email: string): Promise<void> {
+async function removeAccountOrRefuse(actor: string, email: string): Promise<void> {
   const provider = await requireAccountStore();
   const current = await provider.getAccount(email);
   if (!current) throw new AccountError(404, ACCOUNT_NOT_FOUND);
@@ -485,6 +485,46 @@ export async function ownFactorStatus(email: string): Promise<OwnFactorStatus> {
   const current = await provider.getAccount(email);
   if (!current) throw new AccountError(404, NOT_IN_STORE);
   return { available: true, enabled: current.totpSecret !== null };
+}
+
+/**
+ * A refused admin change is written to the audit log too, so an attempt to remove the last admin,
+ * or to act on an account that does not exist, is on the record with the admin who made it.
+ */
+async function auditedRefusal<T>(actor: string, action: string, target: unknown, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof AccountError) {
+      try {
+        emitAuditEvent({
+          type: "account",
+          action,
+          target: typeof target === "string" ? target : "",
+          user: actor,
+          result: "failure",
+          reason: "account_refused",
+        });
+      } catch (auditError) {
+        logger.error("Failed to record account audit event", auditError, { route: "accounts" });
+      }
+    }
+    throw error;
+  }
+}
+
+export async function createAccount(actor: string, body: unknown): Promise<PublicAccount> {
+  return auditedRefusal(actor, "create", isRecord(body) ? body.email : undefined, () =>
+    createAccountOrRefuse(actor, body),
+  );
+}
+
+export async function changeAccount(actor: string, email: string, body: unknown): Promise<ChangedAccount> {
+  return auditedRefusal(actor, "change", email, () => changeAccountOrRefuse(actor, email, body));
+}
+
+export async function removeAccount(actor: string, email: string): Promise<void> {
+  return auditedRefusal(actor, "delete", email, () => removeAccountOrRefuse(actor, email));
 }
 
 function otpauthUrl(email: string, secret: string): string {
