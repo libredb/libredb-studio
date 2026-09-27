@@ -3768,16 +3768,9 @@ not compile until it does.
 
 ### B4. `mapDatabaseError` classifies on a substring a table or column name can satisfy
 
-The timeout-versus-cancel half of this entry is **resolved** (#1145): `mapDatabaseError` now recognises
-PostgreSQL's `canceling statement due to statement timeout` and `due to lock timeout` **before** its
-cancellation branch and returns a `TimeoutError` carrying the engine's own text, so a `statement_timeout`
-answers HTTP 408 `TIMEOUT_ERROR` like every other engine's timeout, while only `pg_cancel_backend`'s
-`due to user request` stays a `QueryCancelledError` at 499. The editor's consumers and the agent's
-repairable classification were revisited against that new signal.
-
-What remains open is the **wider imprecision the same mapper has, which the agent's
-repairable-versus-environment split inherits.** Classification is **substring** matching on the engine's
-message, so an identifier can decide the class. Verified against the live mapper:
+`mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
+decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
+Verified against the live mapper:
 
 - `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
   relation is treated as an environment fault and ends the run.
@@ -3793,9 +3786,7 @@ consumer sees the error, so no consumer can correct it.
 
 **Done when:** classification no longer depends on a substring a table or column name can satisfy.
 Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
-each provider already has access to its own — the #1145 fix still reads message text rather than the
-`57014`/`55P03` SQLSTATE, and moving it to the code is the same work this entry now tracks for the rest
-of the mapper.
+each provider already has access to its own.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 
