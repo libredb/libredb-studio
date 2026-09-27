@@ -380,47 +380,32 @@ One test per transport pins that a supplied CA and a `verify-*` mode reach the r
 
 ### D39. A slow-query source nobody could read is still a row, and on the other path it is silence
 
-Found 2026-08-27 by the audit that closed the curated health projection's cap-as-count defect. #512
-removed MySQL's fabricated "Performance schema not available" row; three providers still ship the
-same shape, in the same field:
+Found 2026-08-27 by the audit that closed the curated health projection's cap-as-count defect.
+#512 removed MySQL's fabricated "Performance schema not available" row; four providers still ship the same shape, in the same field:
 
-- `src/lib/db/providers/sql/postgres.ts:1241` - a database without `pg_stat_statements` answers
-  `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
-- `src/lib/db/providers/document/mongodb.ts:785` - a database whose profiler is off answers
-  `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch
-  at `:830` answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
-- `src/lib/db/providers/sql/sqlite.ts:707-717` - EVERY SQLite database answers two synthetic rows,
-  `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
+- `getHealth()` in `src/lib/db/providers/sql/postgres.ts`: a database without `pg_stat_statements` answers `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
+- `getHealth()` in `src/lib/db/providers/document/mongodb.ts`: a database whose profiler is off answers `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch of the same method answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
+- `getHealth()` in `src/lib/db/providers/sql/sqlite.ts`: EVERY SQLite database answers two synthetic rows, `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
+- `readHealth()` in `src/lib/db/providers/sql/libsql/introspect.ts`: every libSQL database answers the same two synthetic rows, `Integrity: OK|FAILED` and `Journal Mode: <mode>`.
 
-A sentence wearing a row's clothes is the fabrication the absence rule (#477) forbids, and here it is
-worse than a zero: a caller counting the list gets 1, 1 and 2 rather than 0. Nothing counts it in the
-app any more - the agent's curated reading stopped, and `HealthInfo.slowQueries` now has no
-production consumer at all - but `POST /api/db/health` serialises the whole `HealthInfo`
-(`docs/API_DOCS.md`), so anyone embedding `@libredb/studio` and reading that body inherits all three.
+A sentence wearing a row's clothes is the fabrication the absence rule (#477) forbids, and here it is worse than a zero: a caller counting the list gets 1, 1, 2 and 2 rather than 0.
+Nothing counts it in the app any more - the agent's curated reading stopped, and `HealthInfo.slowQueries` now has no production consumer at all - but `POST /api/db/health` serialises the whole `HealthInfo` (`docs/API_DOCS.md`), so anyone embedding `@libredb/studio` and reading that body inherits all four.
 
 **The fix is a type change with a 15-type-id blast radius, which is why it is here and not in #512's
 PR.** `HealthInfo.slowQueries` is a required `SlowQuery[]` (`src/lib/db/types.ts`) with no field a
-reason could travel in, so "nobody could look" has no representation. Making it optional the way
-`activeConnections` already is touches every provider, every provider doc and every provider test
-file, and falsifies `src/lib/db/compatibility.ts:267`, `docs/providers/postgres.md:164`,
-`tests/integration/db/postgres-provider.test.ts:1325`, `tests/integration/db/sqlite-provider.test.ts`
-and `tests/helpers/sqlite-node-harness.ts:104`, all of which pin the current sentences.
+reason could travel in, so "nobody could look" has no representation.
+Making it optional the way `activeConnections` already is touches every provider, every provider doc and every provider test file, and falsifies the AlloyDB Omni caveat in `WIRE_COMPATIBLE_ENGINES` (`src/lib/db/compatibility.ts`), section "3.5 Resilient monitoring" of `docs/providers/postgres.md`, the test "pg_stat_statements fallback when extension is not enabled" in `tests/integration/db/postgres-provider.test.ts`, `tests/integration/db/sqlite-provider.test.ts`, `tests/integration/db/sqlite-node-harness.ts`, `tests/integration/db/libsql-provider.test.ts` and `tests/unit/db/libsql/introspect.test.ts`, all of which pin the current sentences.
 
-**The other path swallows instead of fabricating, and that is not better.** On the `slow-queries`
-reading the agent actually uses, `src/lib/db/providers/keyvalue/redis.ts:622-624` and
-`src/lib/db/providers/document/mongodb.ts:1041-1043` `return []` from their catch where MySQL now
-rejects. So a denied grant reaches the model as an empty reading, and the run prompt tells it
-`"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query,
-no unused index is what a healthy server looks like"` (`src/lib/agent/investigation.ts:1485`). It
-also costs the operator the reason: `getMonitoringData` records `errors.slowQueries` from a REJECTION
-(`src/lib/db/base-provider.ts:147`), and a resolved `[]` records nothing, so the panel says "no slow
-queries" where the truth is that the profiler is off.
+**The other path swallows instead of fabricating, and that is not better.**
+On the `slow-queries` reading the agent actually uses, `getSlowQueries()` in `src/lib/db/providers/keyvalue/redis.ts` and `getSlowQueries()` in `src/lib/db/providers/document/mongodb.ts` `return []` from their catch where MySQL now rejects.
+So a denied grant reaches the model as an empty reading, and the run prompt tells it `"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query, no unused index is what a healthy server looks like"` (`WORKFLOW_TOOL_RULES` in `src/lib/agent/investigation.ts`).
+It also costs the operator the reason: `getMonitoringData()` in `src/lib/db/base-provider.ts` records `errors.slowQueries` from a REJECTION, and a resolved `[]` records nothing, so the panel says "no slow queries" where the truth is that the profiler is off.
 
 **Done when:** a slow-query source that could not be read is absent-with-a-reason on both paths - no
 provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
 count of type-ids the type change touched is stated in the PR rather than discovered during it.
 
-### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 18 type-ids
+### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 4 of 19 type-ids
 
 Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
 round 17). `DatabaseOverview.activeConnections` and `DatabaseOverview.databaseSizeBytes` are optional
@@ -428,24 +413,14 @@ for the SAME stated reason (`src/lib/db/types.ts`, the D17 docblock): absence an
 facts. The round closed the first field on three providers. The second is unclosed almost everywhere.
 
 **Two providers get it right, and one of them wrote the argument down.**
-`src/lib/db/providers/sql/cassandra/introspect.ts:582` omits the key with the comment "a zero is a
-measurement, and the Storage tab read `?? 0` and rendered '0 B' with a 0.0% breakdown from it", and
-MongoDB's `getOverview()` catch now omits it too.
+`getOverview()` in `src/lib/db/providers/sql/cassandra/introspect.ts` omits the key with the comment "a zero is a measurement, and the Storage tab read `?? 0` and rendered '0 B' with a 0.0% breakdown from it", and MongoDB's `getOverview()` catch now omits it too.
 
 **The rest fabricate.** Measured by reading every `databaseSizeBytes` assignment under
 `src/lib/db/providers/`:
-- Self-contradicting within one object, and the clearest cases, because the sibling string field
-  already says the figure is unavailable: `sql/trino/introspect.ts:621` pairs a literal `0` with
-  `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts:849` pairs `sizeBytes ?? 0` with
-  `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
-- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts:1111`,
-  `sql/oracle.ts:1154`, `sql/sqlite.ts:794`.
-- Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts:578` and
-  `sql/clickhouse/index.ts:833` through their local `asNumber`.
-- Coerced inline: `sql/postgres.ts:1360` and `sql/mysql.ts:1158` (`parseInt(... || "0")`),
-  `sql/libsql/introspect.ts:399` and `document/couchbase/index.ts:606` (`?? 0`),
-  `keyvalue/redis.ts:590`, and `embedded/libredb.ts:709`, whose `fileSizeBytes()` returns 0 when the
-  `statSync` throws.
+- Self-contradicting within one object, and the clearest cases, because the sibling string field already says the figure is unavailable: `sql/trino/introspect.ts` pairs a literal `0` with `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts` pairs `sizeBytes ?? 0` with `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
+- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts`, `sql/oracle.ts`, `sql/sqlite.ts`.
+- Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts` and `sql/clickhouse/index.ts` through their local `asNumber`.
+- Coerced inline: `sql/postgres.ts` and `sql/mysql.ts` (`parseInt(... || "0")`), `sql/libsql/introspect.ts` and `document/couchbase/index.ts` (`?? 0`), `keyvalue/redis.ts`, and `embedded/libredb.ts`, whose `fileSizeBytes()` returns 0 when the `statSync` throws.
 
 **The consumer makes it visible.** `src/components/monitoring/tabs/StorageTab.tsx` keys its entire
 breakdown off `overview?.databaseSizeBytes !== undefined`: present, and the card renders percentages
@@ -460,17 +435,21 @@ file. That round also measured a mechanism this entry had missed: Couchbase does
 wraps the read in `degradeTo(..., {})`, so a REFUSED bucket read reaches `basicStats?.diskUsed ?? 0` and
 publishes a measured-looking zero - see D51, which is the same shape on the field beside this one.
 
+**Seven of the eleven are closed on main since** - they now leave `databaseSizeBytes` out when the size is unknown.
+PostgreSQL and MySQL in #627, SQLite and LibreDB in #1050 (for #546), SQL Server and Oracle in #579, and libSQL in #569.
+The symbols are `getOverview()` in `src/lib/db/providers/sql/postgres.ts`, `src/lib/db/providers/sql/mysql.ts`, `src/lib/db/providers/sql/sqlite.ts`, `src/lib/db/providers/sql/mssql.ts` and `src/lib/db/providers/sql/oracle.ts`, `readOverview()` in `src/lib/db/providers/sql/libsql/introspect.ts`, and `getOverview()` in `src/lib/db/providers/embedded/libredb.ts`.
+
 **The counts moved for a second reason.** DuckDB arrived as a seventeenth type-id in #516 and gets this
 right without being asked: `duckdb/introspect.ts` spreads the key conditionally and spells the string
 `"N/A"` when the database is in-memory. So it is a fourth correct provider rather than a fifteenth
 fabricating one, and it independently reached the same encoding this entry prescribes.
-Prometheus, the eighteenth type-id (#1085), leaves the key absent too (`overviewFrom` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts`), so the eleven that fabricate are eleven of eighteen.
+Prometheus, the eighteenth type-id (#1085), leaves the key absent too (`overviewFrom` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts`).
+Kafka, the nineteenth type-id (#1088), does the same (`overviewFrom` in `src/lib/db/providers/stream/kafka/monitoring.ts`), so the four that fabricate are four of nineteen.
 
-**Done when:** an unknown size is absent rather than 0 on the remaining eleven type-ids, a real zero
+**Done when:** an unknown size is absent rather than 0 on the remaining four type-ids, a real zero
 still reads as zero, each provider's doc records it, and each provider's test pins both arms - the same
-shape D40 used, applied to the field beside it. Remaining: `sql/postgres.ts`, `sql/mysql.ts`,
-`sql/sqlite.ts`, `sql/mssql.ts`, `sql/oracle.ts`, `sql/libsql/introspect.ts`, `sql/druid/introspect.ts`,
-`sql/clickhouse/index.ts`, `document/couchbase/index.ts`, `keyvalue/redis.ts` and `embedded/libredb.ts`.
+shape D40 used, applied to the field beside it.
+Remaining: `getOverview()` in `src/lib/db/providers/sql/druid/introspect.ts` and in `src/lib/db/providers/sql/clickhouse/index.ts` (the local `asNumber`, which returns 0 for an absent value), `getOverview()` in `src/lib/db/providers/document/couchbase/index.ts` (`basicStats?.diskUsed ?? 0`), and `getOverview()` in `src/lib/db/providers/keyvalue/redis.ts` (`parseInt(parsed.used_memory || "0")`).
 MongoDB is NOT on that list: its catch and its success path both spread conditionally already.
 
 Doing it per family, one PR each, is the cheap ordering, and #517 is the pattern to copy - including the
