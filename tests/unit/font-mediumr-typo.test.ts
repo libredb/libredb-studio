@@ -36,9 +36,7 @@ function srcFiles(): { path: string; lines: string[] }[] {
 describe("no font-mediumr typo in src (issue #1124)", () => {
   test("every .tsx under src/ is free of the font-mediumr token", () => {
     const offenders = srcFiles().flatMap(({ path, lines }) =>
-      lines
-        .map((line, i) => ({ path, line: i + 1, text: line }))
-        .filter(({ text }) => text.includes("font-mediumr")),
+      lines.map((line, i) => ({ path, line: i + 1, text: line })).filter(({ text }) => text.includes("font-mediumr")),
     );
 
     expect(offenders.map(({ path, line }) => `${path}:${line}`)).toEqual([]);
