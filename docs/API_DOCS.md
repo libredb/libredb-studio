@@ -774,7 +774,8 @@ admin routes use.
     "password": "secret"
   },
   "type": "vacuum",
-  "target": "users"
+  "target": "users",
+  "container": "app"
 }
 ```
 
@@ -785,6 +786,13 @@ admin routes use.
 | `connection` | object | Yes | Database connection configuration |
 | `type` | string | Yes | Maintenance operation type |
 | `target` | string | No | Target table name or PID (for kill). Also selects the *placement* the request is validated as: absent or empty means whole-database, any name means one object |
+| `container` | string | No | The container the target lives in, as the row carries it in `schemaName`: the schema on PostgreSQL and SQL Server, the database on ClickHouse, the bucket on a document store. A non-string value (an object, a number, an array, `null`) returns `400`. Absent or empty means the request names no container and the provider falls back to its own reading of `target` |
+
+`container` is what disambiguates a target whose namespace the name alone cannot settle:
+`app.orders` and `public.orders` carry the same `target` and different `container` values, and the
+provider qualifies with it rather than splitting the name. Engines with one attached namespace
+(SQLite, libSQL, Trino's query-id `kill`) ignore it; each provider's own meaning is in
+`docs/providers/<engine>.md`. The maintenance audit event records it beside `target`.
 
 **Maintenance Types:**
 
@@ -829,7 +837,14 @@ admin routes use.
 
 The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
 
-A fourth `400` gates what the operation may be *pointed at*. Each provider declares that separately
+`container` is type-checked before any provider is opened: a value that is neither absent nor a string
+answers `{ "error": "\"container\" must be a string naming the target's container" }` with `400`.
+Without this the value reached the provider's identifier escaper, where it failed as
+`identifier.replace is not a function` and the caller read a `500` for a malformed request. An
+empty string is not malformed: it reads as a request that named no container, the same way an empty
+`target` reads as the whole-database form.
+
+A fifth `400` gates what the operation may be *pointed at*. Each provider declares that separately
 (`maintenanceOperationSpecs`, documented per engine under `docs/providers/`), and `target` selects
 which half of the declaration this request is: absent or empty is a whole-database request, a name
 is a per-object one. When the provider says that placement is not offered for this operation while

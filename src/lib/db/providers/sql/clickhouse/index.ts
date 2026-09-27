@@ -599,6 +599,32 @@ export class ClickHouseProvider extends SQLBaseProvider {
     };
   }
 
+  // ==========================================================================
+  // SQL dialect overrides
+  // ==========================================================================
+
+  /**
+   * A double-quoted identifier, with the BACKSLASH escaped before the quote.
+   *
+   * The inherited escaper doubles only the quote character, and on this engine a backslash
+   * inside a quoted identifier is processed as an ESCAPE - MEASURED (#789 probe 11): a table
+   * created as `"x\\"` stores `hex(name) = 785C`, exactly one trailing backslash, and a name
+   * ending in one therefore SWALLOWS its own closing quote while the parser keeps reading into
+   * whatever the name was followed by. Over a maintenance target that is statement injection
+   * rather than a quoting inconvenience (#1091 review): a container of `x\\` emitted through the
+   * inherited spelling turns the target that follows into more statement text. `objects.ts`
+   * documents the same measurement where it explains why that file's reads take no identifier
+   * position at all.
+   *
+   * The ORDER is the one `literal()` in `objects.ts` uses, and it is forced: doubling the quote
+   * first would leave the backslash that precedes the original quote looking like an escape of
+   * the quote's own doubled pair.
+   */
+  protected override escapeIdentifier(identifier: string): string {
+    const escaped = identifier.replace(/\\/g, "\\\\").replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
+
   /**
    * The inherited limiter appends `LIMIT n` at the very END of the statement,
    * and ClickHouse allows `FORMAT x` and `SETTINGS ...` as TRAILING clauses, so

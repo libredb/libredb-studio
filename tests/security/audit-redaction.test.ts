@@ -23,6 +23,7 @@ const ALLOWED_KEYS = new Set([
   "reason",
   "ip",
   "connection",
+  "container",
   "duration_ms",
   "bucket",
   "correlation_id",
@@ -95,6 +96,45 @@ describe("emitAuditEvent", () => {
     }
     expect(line.event).toBe("agent_operation");
     expect(String(line.correlation_id).length).toBe(254);
+  });
+
+  test("carries the container a maintenance call addressed, so two schemas cannot log alike", () => {
+    // #1091 review: `app.orders` and `public.orders` used to record identically, because the
+    // event carried only `target`. The container is what tells the two apart in the one channel
+    // an operator reconstructs a maintenance operation from.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "maintenance",
+        action: "VACUUM",
+        target: "orders",
+        container: "app",
+        user: "admin",
+        result: "success",
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(line.container).toBe("app");
+    expect(line.route).toBe("orders");
+  });
+
+  test("omits the container entirely for an event that does not set one", () => {
+    // The field is optional on the line the way `reason` and `bucket` are: a whole-database
+    // request, or any event that never had a container, must not grow a null.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "bad_credentials",
+      }),
+    );
+
+    expect(Object.hasOwn(line, "container")).toBe(false);
   });
 
   test("cannot be made to forge a second log line through the actor field", () => {

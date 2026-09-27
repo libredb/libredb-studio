@@ -916,6 +916,16 @@ describe("CouchbaseProvider maintenance", () => {
     expect(bodyOf("UPDATE STATISTICS").statement).toBe("UPDATE STATISTICS FOR `travel`.`inventory`.`hotel` INDEX ALL");
   });
 
+  test("the analyze reply names the keyspace that was touched, not the bare target", async () => {
+    // The statement addresses three segments, so a reply naming only the target could report
+    // `travel` - the BUCKET - after touching only its default collection (#1091 review).
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", "inventory.hotel");
+
+    expect(result.message).toBe("Updated statistics for `travel`.`inventory`.`hotel`");
+  });
+
   test("analyze addresses `_default`.`_default` when the bucket row sends its bucket as the container", async () => {
     // The only Tables row this provider has is the bucket-level one, whose `schemaName` AND
     // `tableName` are both the bucket (`getTableStats()`). Reading the container as a scope

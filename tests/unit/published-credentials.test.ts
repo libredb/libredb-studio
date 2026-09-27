@@ -473,7 +473,7 @@ describe("the documentation publishes no credential that works", () => {
     ]);
     expect(caught(`{ password: 'example-fake-login', email: 'admin@libredb.org' }`)).toEqual(["example-fake-login"]);
 
-    // An unquoted value is an expression, not a literal: this is what docs/API_DOCS.md:1773
+    // An unquoted value is an expression, not a literal: this is what docs/API_DOCS.md:2022
     // reads now, and it publishes nothing.
     expect(
       caught(`body: JSON.stringify({ email: 'admin@libredb.org', password: process.env.ADMIN_PASSWORD }),`),
@@ -665,7 +665,7 @@ describe("the documentation publishes no credential that works", () => {
     const optional = "| `USER_PASSWORD` | No | Never generated - the account exists only when you set it |";
     expect(caught(required + optional, "USER_PASSWORD")).toEqual([]);
 
-    // docs/API_DOCS.md:1835 is a row ABOUT `USER_EMAIL` that names `USER_PASSWORD` in passing
+    // docs/API_DOCS.md:2084 is a row ABOUT `USER_EMAIL` that names `USER_PASSWORD` in passing
     // and carries a default of its own. The subject of a row is the cell the name fills.
     const other =
       "| `USER_EMAIL` | No | Login email (default `user@libredb.org`, only read when `USER_PASSWORD` is set) |";

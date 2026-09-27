@@ -20,7 +20,7 @@ import {
  *
  * WHAT THIS SUITE IS FOR, as distinct from `tests/api/db/objects/edit-apply.test.ts`. That suite
  * asks whether the route behaves; this one asks the two questions the posture page's row makes a
- * claim about, and it asks them over the AUTHORITATIVE channel. `src/lib/audit.ts:480-489` states
+ * claim about, and it asks them over the AUTHORITATIVE channel. `src/lib/audit.ts:520-527` states
  * which channel that is: the in-process ring buffer is a convenience view for the admin UI, and the
  * one JSON line per event on stdout is the record a log pipeline consumes. A leak that reaches the
  * ring and not stdout, and the reverse, are two different defects, so both are asserted separately

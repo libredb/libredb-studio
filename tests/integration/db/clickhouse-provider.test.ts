@@ -1560,6 +1560,49 @@ describe("ClickHouseProvider maintenance", () => {
     expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."users" FINAL');
   });
 
+  // 3c. escapeIdentifier() dialect override (#1091 review)
+  //
+  // A backslash inside a quoted identifier is processed as an ESCAPE on this engine, so the
+  // inherited escaper - which doubles only the quote character - let a name ENDING in a backslash
+  // swallow its own closing quote and the rest of the statement was reparsed around it. The
+  // override escapes the backslash first, the order `literal()` in objects.ts uses.
+  test("escapeIdentifier doubles a backslash as well as the quote", () => {
+    const provider = new ClickHouseProvider(makeConnection());
+
+    const escape = (identifier: string) =>
+      (provider as unknown as { escapeIdentifier(identifier: string): string }).escapeIdentifier(identifier);
+
+    expect(escape("users")).toBe('"users"');
+    expect(escape('we"ird')).toBe('"we""ird"');
+    // The trailing backslash is the whole point: a run-based escaper that only doubles a
+    // backslash with a character after it leaves this one swallowing the closing quote.
+    expect(escape("x\\")).toBe('"x\\\\"');
+    expect(escape('a\\"b')).toBe('"a\\\\""b"');
+  });
+
+  test("a target ending in a backslash keeps its closing quote", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "bs_one\\");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."bs_one\\\\" FINAL');
+  });
+
+  test("a container ending in a backslash cannot swallow the quote that closes it", async () => {
+    // The request from the review: container `x\` with a target that reads as trailing clauses.
+    // Emitted through the inherited escaper, the container's closing quote was consumed by the
+    // backslash and the target became part of the identifier rather than a second segment.
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", ".t FINAL SETTINGS optimize_throw_if_noop = 1 --", "x\\");
+
+    const sent = sqlWith("OPTIMIZE");
+    expect(sent).toBe('OPTIMIZE TABLE "x\\\\".".t FINAL SETTINGS optimize_throw_if_noop = 1 --" FINAL');
+    // The naive spelling - one backslash, so the quote after it is escaped rather than closing -
+    // is what the override exists to prevent.
+    expect(sent).not.toContain('"x\\".');
+  });
+
   test("analyze reports the part statistics ClickHouse keeps instead of computing new ones", async () => {
     // There is no ANALYZE: a MergeTree's statistics are its parts, and they are
     // always current. Reporting them is the honest equivalent of the operation.

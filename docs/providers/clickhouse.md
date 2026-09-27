@@ -123,16 +123,18 @@ ClickHouseProvider (clickhouse/index.ts)
 Couchbase does — because the dialect really is standard on the points the shared helpers care
 about: double-quoted identifiers and `LIMIT n OFFSET m` are both correct here, live-verified
 (`SELECT "id" FROM "probe"` and the bare unquoted form both parse). This is exactly the case
-[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse for. Only `prepareQuery()`
-is overridden, for the trailing-clause trap in [§3.8](#38-the-preparequery-override).
+[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse for. `escapeIdentifier()`
+carries one dialect correction, below; `prepareQuery()` is overridden for the trailing-clause trap
+in [§3.8](#38-the-preparequery-override).
 
 ### 2.3 What `SQLBaseProvider` gives for free
 
-`ClickHouseProvider` reuses these inherited members rather than reimplementing them:
+`ClickHouseProvider` reuses these inherited members rather than reimplementing them, except where
+the table says otherwise:
 
 | Member | Purpose |
 |--------|---------|
-| `escapeIdentifier()` | Double-quoted, since `this.type` (`clickhouse`) falls through to the default branch — the same quoting PostgreSQL uses. Both quoted and unquoted forms parse (live-verified) |
+| `escapeIdentifier()` | **Overridden here.** Double-quoted, the same quoting PostgreSQL uses, plus a doubled BACKSLASH: the inherited form doubles only the quote character, and a backslash is an ESCAPE inside a quoted identifier on this engine, so a name ending in one swallowed its own closing quote (#1091 review). See [§8](#8-maintenance) |
 | `buildLimitClause()` | `LIMIT n` / `LIMIT n OFFSET m` |
 | `shouldEnableSSL()` | Inherited but **never called**, and deliberately so. It infers TLS from substrings in the host (`cloud`, `aws`, …), which would silently switch a self-hosted node whose hostname merely contains one of them. TLS here comes from the connection's own `ssl` config or from an `https://` scheme, never from a guess ([§4.3](#43-tls)) |
 | `prepareQuery()` (base) | The shared query limiter; `ClickHouseProvider` calls it first and only overrides the trailing-clause case |
@@ -1264,8 +1266,16 @@ curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo
 
 ### 6.3 Object edit (#789)
 
-This engine is a REFUSAL, and the reason is that no measured escaper exists for its identifiers.
-A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and all three identifier quoters in this tree emit `"x\"` for the name `x\`, so the statement a plan would carry is not the statement the author addressed.
+This engine is a REFUSAL, and the reason is the one recorded here: no kind declares
+`acceptsSourceEdits`, so nothing builds a statement out of an edited definition.
+A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form
+on 26.7.1.1315, and the shared quoters that are not this provider's own — the default branch of
+`SQLBaseProvider.escapeIdentifier`, `quoteIdentifier` in
+[`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) and `escapeIdentifier` in
+[`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts) — emit `"x\"` for the name `x\`, so a
+statement built through any of them is not the statement the author addressed. This provider's own
+`escapeIdentifier()` now escapes the backslash as well ([§8](#8-maintenance), #1091 review), and it
+is the only member of that set measured to close the hole.
 One question here is UNMEASURED and is recorded as such rather than answered: whether a dictionary's credential is really redacted in the text the Phase 2 read returns.
 No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
 
@@ -1322,6 +1332,13 @@ Calling `runMaintenance` with one directly throws a `QueryError` naming the thre
 operations. A target is qualified through
 `escapeIdentifier()` (`"database"."table"`, defaulting the database to the pinned one when the
 target names none), so a hostile or oddly-named table cannot break out of the generated statement.
+That helper is OVERRIDDEN here rather than inherited, and the reason is the identifier escape
+measured in [§6.3](#63-object-edit-789): a backslash inside a quoted identifier is an escape on this
+engine, so the inherited form — which doubles only the quote character — left a name ending in one
+with its closing quote swallowed and the rest of the statement reparsed around it. A container of
+`x\` was the reachable case (#1091 review): the target that followed became more statement text
+rather than a second segment. The override escapes the backslash first, the order `literal()` in
+`objects.ts` uses.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 

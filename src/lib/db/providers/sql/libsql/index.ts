@@ -446,8 +446,7 @@ export class LibSQLProvider extends SQLBaseProvider {
    * `check` reads the answer rather than the status: `PRAGMA integrity_check`
    * succeeds as a statement and reports the damage in its row, so a provider that
    * only checked for an exception would report a corrupt database as healthy.
-   */
-  /**
+   *
    * `container` is deliberately ignored, for the same reason as `sqlite.ts`: a libSQL
    * connection resolves names against its one attached database (#772).
    */

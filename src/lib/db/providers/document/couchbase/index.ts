@@ -1367,7 +1367,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
 
     try {
       await transport.query(`UPDATE STATISTICS FOR ${keyspace} INDEX ALL`, { timeoutMs: this.queryTimeout });
-      return { success: true, message: `Updated statistics for ${target}` };
+      // The KEYSPACE, not the bare target. The statement addresses three segments, and a reply
+      // naming only the target reported `Updated statistics for travel` - the bucket - after
+      // touching its default collection alone, which is a different thing from what an operator
+      // would read (#1091 review). The path is the same value the statement carried, spelled by
+      // the same helper, so the two cannot describe different keyspaces.
+      return { success: true, message: `Updated statistics for ${keyspace}` };
     } catch (error) {
       // UPDATE STATISTICS is Enterprise-only; a Community Edition cluster
       // answers "'Update Statistics' is an enterprise level feature." That
