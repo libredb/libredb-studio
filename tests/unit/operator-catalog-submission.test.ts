@@ -23,6 +23,7 @@ import { parse } from "yaml";
 import {
   blockingSubmissions,
   catalogVersions,
+  channelEntries,
   compareVersions,
   isManagedSubmission,
   submittedVersions,
@@ -410,6 +411,218 @@ describe("withReplaces", () => {
     const patched = withReplaces(nested, `${OPERATOR}.v0.9.59`);
     expect(patched).toContain(`  replaces: ${OPERATOR}.v0.9.59\n  version: 0.14.1`);
     expect(patched).toContain("    - version: v1alpha1");
+  });
+});
+
+/**
+ * The FBC catalog's channel template, in the exact shape the bot writes it.
+ *
+ * Generated rather than pasted per case, because each case needs a different
+ * tail, and pinned to the real file by the first test below: this reproduces
+ * operators/libredb-studio-operator/catalog-templates/basic.yaml on
+ * redhat-openshift-ecosystem/community-operators-prod main byte for byte, as
+ * fetched with `gh api` on 2026-09-27 (after #11204 added v0.16.0).
+ */
+function fbcTemplate(versions: string[]): string {
+  const lines = [
+    "---",
+    "schema: olm.template.basic",
+    "entries:",
+    "- schema: olm.package",
+    `  name: ${OPERATOR}`,
+    "  defaultChannel: alpha",
+    "- schema: olm.channel",
+    `  package: ${OPERATOR}`,
+    "  name: alpha",
+    "  entries:",
+  ];
+  versions.forEach((version, index) => {
+    lines.push(`  - name: ${OPERATOR}.v${version}`);
+    if (index > 0) {
+      lines.push(`    replaces: ${OPERATOR}.v${versions[index - 1]}`);
+    }
+  });
+  for (const version of versions) {
+    lines.push("- schema: olm.bundle", `  image: quay.io/community-operator-pipeline-prod/${OPERATOR}:${version}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** The real upstream file on 2026-09-27, verbatim. */
+const UPSTREAM_TEMPLATE_2026_09_27 = `---
+schema: olm.template.basic
+entries:
+- schema: olm.package
+  name: libredb-studio-operator
+  defaultChannel: alpha
+- schema: olm.channel
+  package: libredb-studio-operator
+  name: alpha
+  entries:
+  - name: libredb-studio-operator.v0.9.59
+  - name: libredb-studio-operator.v0.14.1
+    replaces: libredb-studio-operator.v0.9.59
+  - name: libredb-studio-operator.v0.15.0
+    replaces: libredb-studio-operator.v0.14.1
+  - name: libredb-studio-operator.v0.16.0
+    replaces: libredb-studio-operator.v0.15.0
+- schema: olm.bundle
+  image: quay.io/community-operator-pipeline-prod/libredb-studio-operator:0.9.59
+- schema: olm.bundle
+  image: quay.io/community-operator-pipeline-prod/libredb-studio-operator:0.14.1
+- schema: olm.bundle
+  image: quay.io/community-operator-pipeline-prod/libredb-studio-operator:0.15.0
+- schema: olm.bundle
+  image: quay.io/community-operator-pipeline-prod/libredb-studio-operator:0.16.0
+`;
+
+describe("channelEntries", () => {
+  test("the fixture generator reproduces the real upstream template", () => {
+    expect(fbcTemplate(["0.9.59", "0.14.1", "0.15.0", "0.16.0"])).toBe(UPSTREAM_TEMPLATE_2026_09_27);
+  });
+
+  test("reads the versions the channel links, ascending", () => {
+    expect(channelEntries(UPSTREAM_TEMPLATE_2026_09_27, OPERATOR)).toEqual(["0.9.59", "0.14.1", "0.15.0", "0.16.0"]);
+  });
+
+  test("does not count a bundle image the channel does not name", () => {
+    // The bot adds the olm.bundle line and the channel entry in the same
+    // commit, but only the channel entry is an edge: an image line alone is
+    // exactly the "bundle, not yet a channel entry" state this guards.
+    const imageOnly = fbcTemplate(["0.9.59", "0.15.0"]).replace(
+      /\n$/,
+      `\n- schema: olm.bundle\n  image: quay.io/community-operator-pipeline-prod/${OPERATOR}:0.16.0\n`,
+    );
+    expect(channelEntries(imageOnly, OPERATOR)).toEqual(["0.9.59", "0.15.0"]);
+  });
+
+  test("does not count the channel's own name or the package name", () => {
+    // `name: alpha` and `name: libredb-studio-operator` are keys, not entries.
+    expect(channelEntries(fbcTemplate(["0.9.59"]), OPERATOR)).toEqual(["0.9.59"]);
+  });
+
+  test("reads CRLF line endings the same way", () => {
+    const crlf = UPSTREAM_TEMPLATE_2026_09_27.replace(/\n/g, "\r\n");
+    expect(channelEntries(crlf, OPERATOR)).toEqual(["0.9.59", "0.14.1", "0.15.0", "0.16.0"]);
+  });
+
+  test("throws on a template with no olm.channel, rather than allowing a submission", () => {
+    const channelless = "---\nschema: olm.template.basic\nentries:\n- schema: olm.package\n  name: x\n";
+    expect(() => channelEntries(channelless, OPERATOR)).toThrow(/no olm\.channel/);
+  });
+
+  test("throws on an empty or unreadable template", () => {
+    expect(() => channelEntries("", OPERATOR)).toThrow(/no olm\.channel/);
+    expect(() => channelEntries("{ not: yaml: at all", OPERATOR)).toThrow(/no olm\.channel/);
+  });
+
+  test("throws on a channel that names no entry", () => {
+    const empty = fbcTemplate([]);
+    expect(() => channelEntries(empty, OPERATOR)).toThrow(/names no entry/);
+  });
+
+  test("throws on an entry that is not one of our bundle names", () => {
+    const foreign = UPSTREAM_TEMPLATE_2026_09_27.replace(`${OPERATOR}.v0.14.1\n`, "someone-else.v0.14.1\n");
+    expect(() => channelEntries(foreign, OPERATOR)).toThrow(/someone-else\.v0\.14\.1/);
+  });
+
+  test("throws on a second olm.channel, whose entries it cannot attribute", () => {
+    // release-config.yaml targets `alpha` only. With two channels, a union
+    // of their entries could vouch for a predecessor that is in the wrong one.
+    const two = UPSTREAM_TEMPLATE_2026_09_27.replace(
+      "- schema: olm.bundle\n",
+      `- schema: olm.channel\n  package: ${OPERATOR}\n  name: beta\n  entries:\n  - name: ${OPERATOR}.v0.16.0\n- schema: olm.bundle\n`,
+    );
+    expect(() => channelEntries(two, OPERATOR)).toThrow(/more than one olm\.channel/);
+  });
+});
+
+describe("submissionDecision on an FBC catalog", () => {
+  // The four version directories community-operators-prod held on 2026-09-19,
+  // when 0.16.0's bundle had merged but its catalog update (#11204) had not.
+  const dirs = ["ci.yaml", "Makefile", "catalog-templates", "0.9.59", "0.14.1", "0.15.0", "0.16.0"];
+
+  test("refuses to submit past a bundle that is not yet a channel entry (the #11290 shape)", () => {
+    // Submitted as #11290 with replaces v0.16.0, whose dry run then failed
+    // with "multiple channel heads found in graph: libredb-studio-operator.v0.15.0,
+    // libredb-studio-operator.v0.16.1": the template on the branch still ended
+    // at v0.15.0, so v0.16.1 replaced a node the graph did not have.
+    const decision = submissionDecision({
+      version: "0.16.1",
+      operator: OPERATOR,
+      entries: dirs,
+      openSubmissions: [],
+      channel: ["0.9.59", "0.14.1", "0.15.0"],
+    });
+    expect(decision.enabled).toBe(false);
+    expect(decision.reason).toMatch(/0\.16\.0 is a bundle in this catalog but not yet an entry of its channel/);
+    expect(decision.reason).toMatch(/catalog update has to merge first/);
+    expect(decision.predecessor).toBeNull();
+  });
+
+  test("submits once the catalog update has merged, replacing the predecessor", () => {
+    const decision = submissionDecision({
+      version: "0.16.1",
+      operator: OPERATOR,
+      entries: dirs,
+      openSubmissions: [],
+      channel: channelEntries(UPSTREAM_TEMPLATE_2026_09_27, OPERATOR),
+    });
+    expect(decision).toEqual({ enabled: true, reason: "0.16.1 is not listed; replaces 0.16.0", predecessor: "0.16.0" });
+  });
+
+  test("refuses 0.17.0 while 0.16.1 is merged as a bundle but not yet as a channel entry", () => {
+    // The same trap one release later: once #11290 merges, 0.16.1 is a
+    // directory, and its own catalog update still has to land.
+    const decision = submissionDecision({
+      version: "0.17.0",
+      operator: OPERATOR,
+      entries: [...dirs, "0.16.1"],
+      openSubmissions: [],
+      channel: channelEntries(UPSTREAM_TEMPLATE_2026_09_27, OPERATOR),
+    });
+    expect(decision.enabled).toBe(false);
+    expect(decision.reason).toMatch(/0\.16\.1 is a bundle in this catalog but not yet an entry of its channel/);
+  });
+
+  test("a catalog with no channel template decides exactly as before (control)", () => {
+    // k8s-operatorhub is not FBC: a version directory there IS the listing.
+    const input = { version: "0.16.1", operator: OPERATOR, entries: dirs, openSubmissions: [] };
+    expect(submissionDecision({ ...input, channel: null })).toEqual(submissionDecision(input));
+    expect(submissionDecision({ ...input, channel: null })).toEqual({
+      enabled: true,
+      reason: "0.16.1 is not listed; replaces 0.16.0",
+      predecessor: "0.16.0",
+    });
+  });
+
+  test("keeps the earlier rules first: already listed, above the head, an open submission", () => {
+    const lagging = ["0.9.59", "0.14.1", "0.15.0"];
+    const base = { operator: OPERATOR, entries: dirs, openSubmissions: [], channel: lagging };
+    expect(submissionDecision({ ...base, version: "0.16.0" }).reason).toMatch(/already carries 0\.16\.0/);
+    expect(submissionDecision({ ...base, version: "0.15.5" }).reason).toMatch(/above 0\.15\.5/);
+    expect(
+      submissionDecision({
+        ...base,
+        version: "0.16.1",
+        openSubmissions: [{ number: 11300, versions: ["0.16.2"], managed: false }],
+      }).reason,
+    ).toMatch(/still open - 0\.16\.2 \(#11300\)/);
+  });
+
+  test("a first submission has no predecessor to wait for", () => {
+    const decision = submissionDecision({
+      version: "0.16.1",
+      operator: OPERATOR,
+      entries: ["ci.yaml", "catalog-templates"],
+      openSubmissions: [],
+      channel: [],
+    });
+    expect(decision).toEqual({
+      enabled: true,
+      reason: "0.16.1 is not listed; first submission, no replaces",
+      predecessor: null,
+    });
   });
 });
 
@@ -939,6 +1152,80 @@ describe("CLI", () => {
     ]);
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/--repo is required/);
+  });
+
+  /** An FBC checkout: version directories plus catalog-templates/basic.yaml holding `template`. */
+  function fbcCatalogDir(entries: string[], template: string | null): string {
+    const dir = catalogDir(entries);
+    mkdirSync(join(dir, "catalog-templates"), { recursive: true });
+    if (template !== null) {
+      writeFileSync(join(dir, "catalog-templates", "basic.yaml"), template);
+    }
+    return dir;
+  }
+
+  const fbcArgs = (version: string, dir: string, apiBase: string) => [
+    "decide",
+    "--version",
+    version,
+    "--operator-dir",
+    dir,
+    "--repo",
+    "redhat-openshift-ecosystem/community-operators-prod",
+    "--fork",
+    "libredb/community-operators-prod",
+    "--api-base",
+    apiBase,
+  ];
+
+  test("reads the FBC channel template and skips past a bundle its channel does not name", async () => {
+    const result = await run(
+      fbcArgs(
+        "0.16.1",
+        fbcCatalogDir(
+          ["ci.yaml", "Makefile", "0.9.59", "0.14.1", "0.15.0", "0.16.0"],
+          fbcTemplate(["0.9.59", "0.14.1", "0.15.0"]),
+        ),
+        apiServing([]),
+      ),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("enabled=false");
+    expect(result.stdout).toMatch(/reason=.*0\.16\.0 is a bundle in this catalog but not yet an entry of its channel/);
+    expect(result.stdout).toContain("replaces=\n");
+  });
+
+  test("submits on an FBC catalog whose channel carries the predecessor", async () => {
+    const result = await run(
+      fbcArgs(
+        "0.16.1",
+        fbcCatalogDir(["ci.yaml", "Makefile", "0.9.59", "0.14.1", "0.15.0", "0.16.0"], UPSTREAM_TEMPLATE_2026_09_27),
+        apiServing([]),
+      ),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("enabled=true");
+    expect(result.stdout).toContain(`replaces=${OPERATOR}.v0.16.0`);
+  });
+
+  test("fails on a channel template it cannot read instead of submitting", async () => {
+    const result = await run(
+      fbcArgs(
+        "0.16.1",
+        fbcCatalogDir(["ci.yaml", "0.15.0", "0.16.0"], "---\nschema: olm.template.basic\n"),
+        apiServing([]),
+      ),
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/no olm\.channel/);
+    expect(result.stdout).not.toContain("enabled=");
+  });
+
+  test("fails when catalog-templates exists without basic.yaml, rather than reading it as non-FBC", async () => {
+    const result = await run(fbcArgs("0.16.1", fbcCatalogDir(["ci.yaml", "0.15.0", "0.16.0"], null), apiServing([])));
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/basic\.yaml/);
+    expect(result.stdout).not.toContain("enabled=");
   });
 });
 
