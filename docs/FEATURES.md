@@ -17,11 +17,16 @@
 ### 2. Multi-Tab Query Management
 *   **Workspace Tabs:** Open multiple queries simultaneously in separate tabs.
 *   **Independent Results:** Each tab maintains its own execution state and results grid.
+*   **Failed Runs Stay Visible:** A run that fails replaces the tab's previous result with the error, in the results panel, so the rows on screen always belong to the statement that last ran.
+    The notification still appears, and the next successful run clears the error.
+    A failed Load More is the exception, because only the next page failed: the rows already loaded stay.
+    A cancelled run leaves the previous result as it was.
+    The embedded workspace shows the same inline error, which is its only failure signal, because it mounts no notification area.
 *   **Persistent Tabs:** Switch between tasks without losing your work.
 
 ### 3. Pro Data Grid (Excel-Style)
 *   **High Performance:** Virtualized rendering using TanStack Virtual for smooth scrolling through millions of rows.
-*   **Inline Editing:** Double-click any cell to edit data directly; apply pending cell changes as one `UPDATE` per edited row or discard them. The table written to is the one the *statement that fetched the rows* names, not the tab's title. A query whose rows have no single table - a join, a comma-separated `FROM`, a subquery in `FROM` or in the select list, a CTE, a set operation - is refused with a reason rather than guessed at. The key the `WHERE` is built on is a guess off the result's own fields, so before anything is written the apply asks the engine whether that column addresses one row per value and refuses the whole apply when it does not: on a result carrying a foreign key rather than the table's own key, one cell edit used to rewrite every row sharing that value. Offered only where the provider declares `supportsInlineRowEdit`. ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, MongoDB, Redis, Prometheus and LibreDB show no editing control at all because they have no single-table row update - on Cassandra because CQL requires the WHOLE primary key restricted by equality while the editor names one column it guessed from the result fields, so a clustered table answers "Some partition key parts are missing" (measured) — on Trino because it declares no primary key for any table in any catalog, so the generated `WHERE` could not identify one row — on the two search engines `UPDATE` is absent from the SQL grammar itself, measured on both; Couchbase shows none because the document key reaches the grid as a projection alias the generated `WHERE` cannot address.
+*   **Inline Editing:** Double-click any cell to edit data directly; apply pending cell changes as one `UPDATE` per edited row or discard them. The table written to is the one the *statement that fetched the rows* names, not the tab's title. A query whose rows have no single table - a join, a comma-separated `FROM`, a subquery in `FROM` or in the select list, a CTE, a set operation - is refused with a reason rather than guessed at. The key the `WHERE` is built on is a guess off the result's own fields, so before anything is written the apply asks the engine whether that column addresses one row per value and refuses the whole apply when it does not: on a result carrying a foreign key rather than the table's own key, one cell edit used to rewrite every row sharing that value. Offered only where the provider declares `supportsInlineRowEdit`. ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, MongoDB, Redis, Prometheus, Apache Kafka and LibreDB show no editing control at all because they have no single-table row update - on Cassandra because CQL requires the WHOLE primary key restricted by equality while the editor names one column it guessed from the result fields, so a clustered table answers "Some partition key parts are missing" (measured); on Trino because it declares no primary key for any table in any catalog, so the generated `WHERE` could not identify one row; on the two search engines `UPDATE` is absent from the SQL grammar itself, measured on both; Couchbase shows none because the document key reaches the grid as a projection alias the generated `WHERE` cannot address.
 *   **Data-Type Formatting:** Specialized rendering for Numbers, Booleans, and Nulls.
 *   **Column Management:** Resizable columns and advanced sorting.
     A result column opens at a width that fits its header.
@@ -72,6 +77,13 @@
         Metrics, rule groups, recording and alerting rules, scrape pools and scrape targets are browsable, with a firing alert or a down target marked in the tree.
         Read-only by design: no admin endpoint, no remote write, no maintenance.
         See [`providers/prometheus.md`](providers/prometheus.md).
+*   **Stream Stores:**
+    *   **Apache Kafka:** Read-only browsing over the Kafka protocol through `@platformatic/kafka`, with a JSON read request in the editor (`queryDialect: "kafka"`) that reads a topic by partition, offset or timestamp, from the earliest offset, or its latest messages.
+        Topics with their partitions and non-default configs, consumer groups of both protocols with their lag per partition, and brokers with their configs are browsable, with an offline or under-replicated topic marked in the tree.
+        Keys, values and headers are decoded as JSON, text or base64, and a Confluent-framed value is labelled with its schema id; reads are read-committed, and every result is bounded by a row limit, a byte budget and a cell limit.
+        TLS with a custom CA and client certificates, and SASL PLAIN, SCRAM-SHA-256 and SCRAM-SHA-512 over TLS only.
+        Read-only by construction: the provider never produces, commits an offset, joins a consumer group or creates a topic.
+        See [`providers/kafka.md`](providers/kafka.md).
 *   **Embedded Stores:**
     *   **LibreDB:** Support for embedded, server-less `.libredb` files via the `@libredb/libredb` package — a small get/put/delete/prefix/range command grammar over the key-value lens, with catalog-aware schema views for relational and document namespaces.
 *   **Connection Pooling:** Configurable pool settings (min/max connections, idle timeout) for production workloads.
@@ -86,6 +98,9 @@
 ### 8. Advanced Schema Explorer (2025 Edition)
 Two components are described below and a claim true of one can be false of the other. The desktop sidebar renders the lazy object tree; the mobile schema tab and the published `SchemaExplorer` export render the flat schema list. A bullet marked "(schema tab)" is about the flat list.
 *   **Lazy Object Tree (desktop sidebar):** Containers, per-kind folders and object rows, each level read only when it is opened, so connecting costs one listing rather than a walk of the whole database. Expanding an object of a kind whose provider declares that it has columns adds one row per column, with the declared type right-aligned and a key mark on the primary key, from a single-object read issued when the row is opened and kept for the life of the connection; a kind whose provider declares nothing has no chevron, is never read, and stays a leaf. The two gestures on an object row are separate and do different things: clicking the row opens that object's data in a tab, and clicking the chevron to its left opens and closes its columns. With the row focused, Enter and Space open the data, ArrowRight and ArrowLeft open and close the columns.
+    Activating an object whose data tab is already open on the same connection, and whose query has not been edited since, focuses that tab without running the query again; once the query has been edited, a fresh tab opens instead.
+    When that tab's last run failed, focusing it also runs its query again, in the same tab.
+    Holding Enter or Space down does not open another tab per key repeat.
 *   **Deep Tree Inspection (schema tab):** Expand tables to view column definitions, data types, and Primary Key (PK) constraints with intuitive iconography.
 *   **Global Search & Filter (schema tab):** Real-time, high-performance filtering across both table names and column names.
 *   **Catalog Row Counts:** Both explorers draw the row count the engine already holds in its catalog, in compact K/M/B/T units (for example, `1.6M`).
@@ -95,7 +110,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", "Generate Count Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
 *   **Generate Count Query (both explorers):** Opens an editable count statement in a new tab without running it, so a filter can be added before Run.
     SQL engines get a qualified, dialect-quoted `SELECT COUNT(*)` (`COUNT_BIG(*)` on SQL Server), and MongoDB gets its `count` document.
-    Redis, LibreDB and Prometheus have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
+    Redis, LibreDB, Prometheus and Apache Kafka have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.
@@ -163,6 +178,13 @@ Two components are described below and a claim true of one can be false of the o
 *   **Bounded and visible:** 18 to 45 statements, 80 to 180 s of database time, 200 rows per read, a 6 to 15 minute run deadline and 3 repair attempts, each ceiling set per workflow — with the meter on screen, and stated as a floor rather than an exact spend.
 *   **A verdict beside the status:** a run that ended `succeeded` may still have answered nothing, so the rail says "Run answered" or "Run did not answer" and names what was missing.
 *   **Your own model, standalone only:** Gemini, OpenAI, Ollama or any OpenAI-compatible endpoint through the existing `LLM_*` settings; the embedded `@libredb/studio` package carries no agent surface. See [Agent Guide](AGENT_GUIDE.md), [Agent Data Flow](AGENT_DATA_FLOW.md) and [Agent Runtime](AGENT.md).
+
+### 19. MCP Server for your own AI client (off by default)
+*   **Your own client:** Claude Code, Codex, Cursor, VS Code or Gemini CLI connect to `/api/mcp` with a token each user mints on the settings screen.
+*   **Three read-only tools:** `list_connections` and `inspect_schema` on every engine, and `run_read_query` on PostgreSQL, SQLite, DuckDB and SQL Server.
+*   **Opted-in connections only:** only the seed connections an operator opts in with `mcp: true`, filtered by the token's role; the database credentials stay on the server.
+*   **Bounded and audited:** every result is bounded to 32 KiB and marked as untrusted data, and every call is audited.
+*   **Setup:** client configuration and limits are in [`docs/MCP.md`](MCP.md).
 
 ## Roadmap
 

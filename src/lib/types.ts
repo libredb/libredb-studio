@@ -88,7 +88,13 @@ export type DatabaseType =
   // and an optional credential: `user` and `password` are HTTP Basic, and a password with no
   // user is sent as a bearer token. VictoriaMetrics speaks the same API and is recorded as a
   // relative of this id, never as an id of its own.
-  | "prometheus";
+  | "prometheus"
+  // Apache Kafka (#1088). A message log browsed read-only over the Kafka protocol, the first
+  // member of the `stream/` family. Its editor text is a JSON read request, so it declares
+  // `queryLanguage: "json"` with a `queryDialect` of its own. The connection is one bootstrap
+  // address plus TLS and an optional SASL credential, `saslMechanism` below naming how `user` and
+  // `password` are checked; the client learns every other broker from the cluster's metadata.
+  | "kafka";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -265,6 +271,16 @@ export interface DatabaseConnection {
    * is a field of its own rather than a reuse of `database`.
    */
   authSource?: string;
+  /**
+   * Kafka: the SASL mechanism that checks `user` and `password`, absent meaning none (#1088).
+   *
+   * A mechanism NAME, never a credential, and not a refinement either: a broker keeps a SCRAM
+   * credential per mechanism, so the same user and password are a different principal's secret
+   * under each, and a credential sent with no mechanism has no way to be sent at all, which the
+   * provider refuses rather than dropping. PLAIN and both SCRAM mechanisms require TLS there.
+   * OAUTHBEARER and GSSAPI are not offered.
+   */
+  saslMechanism?: "PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512";
   /**
    * Read no catalog when this connection opens.
    *
@@ -546,8 +562,18 @@ export interface QueryTab {
    * Absent on a tab whose result predates this field, and on one that has never run.
    */
   resultQuery?: string;
+  /**
+   * Why the tab's last NEW run failed, in the words the failure arrived with.
+   *
+   * Set together with `result: null`, so the results panel shows the failure in place of the
+   * previous run's rows instead of leaving them up under a statement that did not produce them.
+   * A failed Load More does not set it: the rows on screen are intact and only the next page did
+   * not arrive. Cleared by the next run that lands. Absent on a tab whose last run succeeded, and
+   * optional because this type is part of the published package surface.
+   */
+  runError?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state
@@ -572,6 +598,26 @@ export interface QueryTab {
    * is overridden; the connection is otherwise the active one, whole.
    */
   databaseOverride?: number;
+  /**
+   * The object activation that opened this tab: the connection it was opened on, the object's
+   * path, the database override it was opened with, and the statement it was opened on.
+   *
+   * WHAT LETS A SECOND ACTIVATION FOCUS THIS TAB instead of opening another and reading the same
+   * rows again. The tab is reused only on the connection that opened it, since two connections
+   * can hold the same path, and only while `query` still equals `origin.query`: a tab whose
+   * statement the reader has edited is their work, and an activation must never capture it. A
+   * reused tab whose `runError` is set is run again in place.
+   *
+   * NOT PERSISTED, so a tab restored from storage carries none and is never matched: a restored
+   * tab opens a fresh one on the next activation, which is what every activation did before this.
+   */
+  origin?: {
+    /** Absent when no connection was active; optional because this type is published. */
+    readonly connectionId?: string;
+    readonly path: readonly string[];
+    readonly databaseOverride?: number;
+    readonly query: string;
+  };
   /**
    * Present exactly on a Source tab (#789 Phase 2).
    *

@@ -125,6 +125,7 @@ import {
   trinoBulkColumnsSql,
   trinoObjectTargetSql,
   containerRead,
+  parentCatalog,
   functionSegment,
   trinoCreateFunctionIdentity,
   listedObject,
@@ -408,6 +409,9 @@ export class TrinoProvider extends SQLBaseProvider {
         { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
       ],
+      // A catalog alone is an address as well as a catalog and a schema, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       // Four kinds (`objects.ts`), and the two connector-gated ones are declared because
       // the ENGINE has them rather than because every catalog does.
       //
@@ -856,7 +860,7 @@ export class TrinoProvider extends SQLBaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { catalog } = containerRead(capabilities, parentPath);
+    const catalog = parentCatalog(capabilities, parentPath);
     const rows = await this.runObjectRows(trinoSchemaListSql(catalog));
     return rows.flatMap((row) => {
       const name = readObjectIdentifier(row.schemaName);

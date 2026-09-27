@@ -255,6 +255,9 @@ export class DruidProvider extends SQLBaseProvider {
       // trigger - because `CREATE` is not in Druid's grammar in any form, so the tree
       // draws no folder for any of them.
       containerLevels: DRUID_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: DRUID_OBJECT_KINDS,
     };
   }

@@ -1,0 +1,58 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumerGroupDescribeV0.api.async(conn, [\"lag-kip848\", \"lag-classic\"], false)"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Received response with error while executing API ConsumerGroupDescribe(v0)",
+  "code": "PLT_KFK_RESPONSE",
+  "response": {
+   "throttleTimeMs": 0,
+   "groups": [
+    {
+     "errorCode": 0,
+     "errorMessage": null,
+     "groupId": "lag-kip848",
+     "groupState": "Empty",
+     "groupEpoch": 3,
+     "assignmentEpoch": 2,
+     "assignorName": "uniform",
+     "members": [],
+     "authorizedOperations": -2147483648
+    },
+    {
+     "errorCode": 69,
+     "errorMessage": "Group lag-classic is not a consumer group.",
+     "groupId": "lag-classic",
+     "groupState": "",
+     "groupEpoch": 0,
+     "assignmentEpoch": 0,
+     "assignorName": "",
+     "members": [],
+     "authorizedOperations": -2147483648
+    }
+   ]
+  },
+  "class": "ResponseError",
+  "errors": [
+   {
+    "message": "The group id does not exist.",
+    "code": "PLT_KFK_PROTOCOL",
+    "apiId": "GROUP_ID_NOT_FOUND",
+    "apiCode": 69,
+    "serverErrorMessage": "Group lag-classic is not a consumer group.",
+    "canRetry": false,
+    "hasStaleMetadata": false,
+    "needsRejoin": false,
+    "producerFenced": false,
+    "rebalanceInProgress": false,
+    "unknownMemberId": false,
+    "path": "/groups/1",
+    "class": "ProtocolError"
+   }
+  ]
+ }
+}

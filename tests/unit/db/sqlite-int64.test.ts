@@ -276,9 +276,13 @@ const READ_PATTERN_SOURCE = "[1-9][0-9]{0,18}";
 
 /**
  * SQLite INTEGER's limits, matched as ANY literal. Both spellings of the ceiling are
- * listed because a copy may state the inclusive bound or the exclusive one, and
- * neither number has a use in a provider that is not this rule: a SQL string carrying
- * one would BE this rule, reimplemented in text.
+ * listed because a copy may state the inclusive bound or the exclusive one, and a
+ * literal of either in a provider is taken for this rule reimplemented, a SQL string
+ * carrying one above all. The number has one other use there, under a rule of its own:
+ * a Kafka offset is an INT64 on the wire, so the Kafka provider's largest offset is
+ * 2^63 - 1 as well, and it takes every offset from 0 up, where this rule converts only
+ * the digit strings past 2^53. `stream/kafka/request.ts` derives that ceiling with a
+ * shift rather than spelling it, so the guard needs no exception for it.
  */
 const INT64_BOUND_DIGITS = new Set(["9223372036854775807", "9223372036854775808"]);
 

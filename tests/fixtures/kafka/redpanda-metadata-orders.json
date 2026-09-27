@@ -1,0 +1,73 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.metadata({ topics: [\"orders\"], autocreateTopics: false })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "id": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "brokers": {
+   "$map": [
+    [
+     0,
+     {
+      "host": "localhost",
+      "port": 29092,
+      "rack": null
+     }
+    ]
+   ]
+  },
+  "topics": {
+   "$map": [
+    [
+     "orders",
+     {
+      "id": "03c22755-ff60-4977-b784-b9da7e542644",
+      "partitions": [
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 0,
+        "leaderEpoch": 2,
+        "replicas": [
+         0
+        ],
+        "isr": [
+         0
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 3,
+      "lastUpdate": 1790276299456
+     }
+    ]
+   ]
+  },
+  "lastUpdate": 1790276299456,
+  "controllerId": 0
+ }
+}

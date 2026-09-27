@@ -119,6 +119,7 @@ import {
   bulkPrimaryKeySql,
   bulkTargetSql,
   containerRead,
+  parentCatalog,
   groupByObject,
   objectDetailFromRows,
   type OfObject,
@@ -424,6 +425,9 @@ export class DuckDBProvider extends SQLBaseProvider {
         { id: "catalog", label: "Database", labelPlural: "Databases" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
       ],
+      // A database alone is an address as well as a database and a schema, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       // Four kinds, one `duckdb_*` table function behind each (`objects.ts`).
       //
       // NO trigger and NO stored procedure, because DuckDB has neither: `CREATE TRIGGER`
@@ -867,7 +871,7 @@ export class DuckDBProvider extends SQLBaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { catalog } = containerRead(capabilities, parentPath);
+    const catalog = parentCatalog(capabilities, parentPath);
     const rows = await this.runObjectRows<SchemaNameRow>(SCHEMAS_SQL, [catalog]);
     return rows.map((row) => ({
       path: [...parentPath, row.schema_name],

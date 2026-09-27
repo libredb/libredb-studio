@@ -47,18 +47,32 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
-  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
   findKind,
   isCountUnavailable,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * MongoDB's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const MONGODB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mongodb",
+  label: "A MongoDB",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // Types
@@ -431,14 +445,7 @@ function containerSegment(
  * way to report a caller mistake.
  */
 function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A MongoDB container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "mongodb",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MONGODB_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 
@@ -660,6 +667,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       supportsConnectionString: true,
       defaultPort: 27017,
       containerLevels: MONGODB_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: MONGODB_OBJECT_KINDS,
       schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',
     };

@@ -1,0 +1,22 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "7L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:58:40.194Z",
+  "surface": "admin.listTopics() in plaintext, no SASL, to kafka-auth's TLS port"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Listing topics failed.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "Broker requires TLS.",
+    "code": "PLT_KFK_USER",
+    "canRetry": false,
+    "class": "UserError"
+   }
+  ]
+ }
+}

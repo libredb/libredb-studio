@@ -132,6 +132,7 @@ const mockSetAuthSource = mock(() => {});
 const mockSetApiKeyId = mock(() => {});
 const mockSetApiKeySecret = mock(() => {});
 const mockSetSkipObjectScan = mock(() => {});
+const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
 
@@ -195,6 +196,8 @@ function getDefaultForm() {
     setApiKeyId: mockSetApiKeyId,
     apiKeySecret: "",
     setApiKeySecret: mockSetApiKeySecret,
+    saslMechanism: "",
+    setSaslMechanism: mockSetSaslMechanism,
     showSSH: false,
     setShowSSH: mockSetShowSSH,
     sshEnabled: false,
@@ -257,25 +260,44 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
   prometheus: ["host", "port", "user", "password"],
+  kafka: ["host", "port", "saslMechanism", "user", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
 
-/** The field copy a `DatabaseUIConfig` may declare (#1085): labels and hints keyed by field. */
+/**
+ * What a `DatabaseUIConfig` may declare about its connection fields: labels and hints keyed by
+ * field (#1085), the choices of a field drawn as a select, and whether the SSH panel is offered
+ * (#1088).
+ */
 interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
   readonly fieldHints?: Readonly<Record<string, string>>;
+  readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
+  readonly showSshTunnel?: false;
 }
 
 /**
  * The copy each engine DECLARES for its connection fields (#1085), mirrored from the real table the
- * way MOCK_CONNECTION_FIELDS mirrors its field lists. Prometheus is the one shipped entry that
- * declares any, which tests/unit/lib/db-ui-config.test.ts pins against the real table.
+ * way MOCK_CONNECTION_FIELDS mirrors its field lists. Prometheus and Kafka are the shipped entries
+ * that declare any, which tests/unit/lib/db-ui-config.test.ts pins against the real table.
  */
 const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   prometheus: {
     fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
+  },
+  kafka: {
+    fieldLabels: { saslMechanism: "SASL mechanism" },
+    fieldHints: { saslMechanism: "PLAIN and SCRAM require TLS" },
+    fieldOptions: {
+      saslMechanism: [
+        { value: "PLAIN", label: "PLAIN" },
+        { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
+        { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
+      ],
+    },
+    showSshTunnel: false,
   },
 };
 
@@ -295,6 +317,8 @@ mock.module("@/lib/db-ui-config", () => ({
     ...mockDeclaredCopy,
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
+  // The real rule over the mirrored table: false only where an entry declares `showSshTunnel: false`.
+  offersSshTunnel: (type: string) => MOCK_FIELD_COPY[type]?.showSshTunnel !== false,
   // The real pair's rule, mirrored the way `isFileBased` below mirrors its own: the modal reads
   // its field copy through these two, and the real ones run in tests/unit/lib/db-ui-config.test.ts.
   connectionFieldLabel: (config: MockFieldCopy, field: string, fallback: string) =>
@@ -359,6 +383,7 @@ describe("ConnectionModal", () => {
     mockSetPort.mockClear();
     mockSetShowPasteInput.mockClear();
     mockSetShowSSL.mockClear();
+    mockSetSaslMechanism.mockClear();
     mockHandleTestConnection.mockClear();
     mockHandleConnect.mockClear();
   });
@@ -1011,6 +1036,85 @@ describe("ConnectionModal", () => {
     expect(container.querySelector("#user")).not.toBeNull();
   });
 
+  // ── 34b-quater. Kafka: a declared SASL select, the TLS panel, and no SSH tunnel (#1088 6.1) ──
+  //
+  // The select is drawn from the `kafka` entry's `fieldOptions` declaration, never from an
+  // `isKafka` branch, and the SSH panel is withheld through `offersSshTunnel`: a tunnel forwards one
+  // address, and a Kafka client reaches every broker at the address the broker advertises. The
+  // mock mirrors the declaration in `MOCK_FIELD_COPY`; the real entry is pinned in
+  // tests/unit/lib/db-ui-config.test.ts.
+
+  test("Kafka offers a SASL mechanism select with a None choice and the three mechanisms", () => {
+    mockFormOverrides = { type: "kafka" };
+    const { container, getByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    const select = container.querySelector("#saslMechanism") as HTMLSelectElement | null;
+    expect(select?.tagName).toBe("SELECT");
+    expect(container.querySelector('label[for="saslMechanism"]')?.textContent).toBe("SASL mechanism");
+    const options = [...(select?.options ?? [])].map((option) => ({ value: option.value, label: option.textContent }));
+    expect(options).toEqual([
+      { value: "", label: "None" },
+      { value: "PLAIN", label: "PLAIN" },
+      { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
+      { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
+    ]);
+    // The form holds no mechanism, so the select shows None.
+    expect(select?.value).toBe("");
+    // The declared hint is drawn under it and named by it, before the provider's refusal says so.
+    expect(getByTestId("saslMechanism-hint").textContent).toBe("PLAIN and SCRAM require TLS");
+    expect(select?.getAttribute("aria-describedby")).toBe("saslMechanism-hint");
+  });
+
+  test("choosing a mechanism, and then None, reaches the form state", () => {
+    mockFormOverrides = { type: "kafka" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const select = container.querySelector("#saslMechanism") as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: "SCRAM-SHA-512" } });
+    expect(mockSetSaslMechanism).toHaveBeenLastCalledWith("SCRAM-SHA-512");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(mockSetSaslMechanism).toHaveBeenLastCalledWith("");
+    expect(mockSetSaslMechanism).toHaveBeenCalledTimes(2);
+  });
+
+  test("the select shows the mechanism the form holds", () => {
+    mockFormOverrides = { type: "kafka", saslMechanism: "SCRAM-SHA-256" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect((container.querySelector("#saslMechanism") as HTMLSelectElement).value).toBe("SCRAM-SHA-256");
+  });
+
+  test("Kafka renders no Database box, and keeps the host, user and password boxes", () => {
+    mockFormOverrides = { type: "kafka" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    // One connection is one cluster (#1088 6.1), so there is no database to name.
+    expect(container.querySelector("#database")).toBeNull();
+    expect(container.querySelector("#host")).not.toBeNull();
+    expect(container.querySelector("#user")).not.toBeNull();
+    expect(container.querySelector("#password")).not.toBeNull();
+  });
+
+  test("Kafka keeps the SSL/TLS panel and draws no SSH Tunnel toggle, even with a tunnel left on in the form", () => {
+    // `sshEnabled` and an open panel are what a tunnel switched on under another type leaves in the
+    // dialog's state; the toggle and the panel stay withheld all the same.
+    mockFormOverrides = { type: "kafka", sshEnabled: true, showSSH: true };
+    const { queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect(queryByText("SSL / TLS")).not.toBeNull();
+    expect(queryByText("SSH Tunnel")).toBeNull();
+    expect(queryByText("Enable SSH Tunnel")).toBeNull();
+  });
+
+  test("the control: an engine that offers a tunnel draws the SSH toggle and no SASL select", () => {
+    mockFormOverrides = { type: "postgres", sshEnabled: true, showSSH: true };
+    const { container, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect(queryByText("SSH Tunnel")).not.toBeNull();
+    expect(queryByText("Enable SSH Tunnel")).not.toBeNull();
+    expect(container.querySelector("#saslMechanism")).toBeNull();
+  });
+
   // ── 34c. Cassandra asks for the one field its driver cannot start without ──
   //
   // `cassandra-driver` 4.9.0 refuses to connect with no local data centre at all
@@ -1180,10 +1284,10 @@ describe("ConnectionModal", () => {
 
   /*
     The copy an engine DECLARES for a connection field (#1085). `DatabaseUIConfig.fieldLabels` and
-    `fieldHints` are read before this dialog's own words, and Prometheus is the one shipped entry
-    that declares either. So the census pins every shipped type's field labels and hints: Prometheus's
-    as `MOCK_FIELD_COPY` mirrors its declaration, and every other type's as they were before the
-    declaration existed. The cases after it declare copy for every field and read it back from each
+    `fieldHints` are read before this dialog's own words, and Prometheus and Kafka are the shipped
+    entries that declare either. So the census pins every shipped type's field labels and hints:
+    those two as `MOCK_FIELD_COPY` mirrors their declarations, and every other type's as they were
+    before the declaration existed. The cases after it declare copy for every field and read it back from each
     place a field is drawn; that copy is synthetic and lives in `mockDeclaredCopy`. The real table's
     copy is pinned in tests/unit/lib/db-ui-config.test.ts, which runs the real helpers.
   */
@@ -1203,6 +1307,7 @@ describe("ConnectionModal", () => {
       "authSource",
       "apiKeyId",
       "apiKeySecret",
+      "saslMechanism",
     ] as const;
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
@@ -1232,7 +1337,7 @@ describe("ConnectionModal", () => {
     /**
      * [case, type, form state, labels drawn, declared hints drawn] for every shipped type, read off
      * the dialog's code under the field lists and the field copy this file mirrors. Every row but
-     * Prometheus's is what the dialog drew before the declaration existed.
+     * Prometheus's and Kafka's is what the dialog drew before the declaration existed.
      */
     const SHIPPED: readonly (readonly [
       string,
@@ -1287,6 +1392,13 @@ describe("ConnectionModal", () => {
         {},
         { ...CREDENTIALS_ONLY, user: "User", password: "Password or token" },
         { password: "Leave User empty to send this as a bearer token." },
+      ],
+      [
+        "kafka",
+        "kafka",
+        {},
+        { ...CREDENTIALS_ONLY, saslMechanism: "SASL mechanism" },
+        { saslMechanism: "PLAIN and SCRAM require TLS" },
       ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
@@ -1363,6 +1475,13 @@ describe("ConnectionModal", () => {
         {},
         labelsFor("host", "user", "password", "apiKeyId", "apiKeySecret"),
         ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
+      ],
+      [
+        "kafka",
+        "kafka",
+        {},
+        labelsFor("host", "user", "password", "saslMechanism"),
+        ["host", "port", "user", "password", "saslMechanism"],
       ],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
     ];

@@ -42,6 +42,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // A DATABASE NAME (`admin`), not a credential. The password that authenticates
   // against it is the secret, and it is classified above.
   authSource: "public",
+  // A SASL MECHANISM NAME (`SCRAM-SHA-512`), which a broker's own configuration lists in the
+  // clear. It says how the password is checked; the password is the secret, classified above.
+  saslMechanism: "public",
   schema: "public",
   queryTimeout: "public",
   // A display preference: whether this browser reads the catalog when the connection

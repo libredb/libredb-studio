@@ -2066,3 +2066,145 @@ describe("useTabManager carries the walked database", () => {
     expect(result.current.tabs.some((tab) => "databaseOverride" in tab)).toBe(false);
   });
 });
+
+// ─── A second activation of the same object focuses its tab ───
+
+describe("useTabManager reuses an object's unedited data tab", () => {
+  /** Long enough for the deferred run `handleTableClick` schedules. */
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  function renderManager(schema: DetailedObject[] = testSchema) {
+    return renderHook(() => useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema }));
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("two activations of the same object give one data tab, focused, run once", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const opened = result.current.activeTabId;
+    // Away and back, so the second activation has something to focus.
+    act(() => result.current.setActiveTabId("default"));
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users"]);
+    expect(result.current.activeTabId).toBe(opened);
+    expect(executeFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("a matched tab whose last run failed is focused and run again, in that tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const opened = result.current.activeTabId;
+    await settle();
+    // The shape a failed run leaves: no rows, and the reason in their place.
+    act(() => result.current.updateTabById(opened, { runError: "connection reset" }));
+    act(() => result.current.setActiveTabId("default"));
+    executeFn.mockClear();
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users"]);
+    expect(result.current.activeTabId).toBe(opened);
+    expect(executeFn).toHaveBeenCalledTimes(1);
+    const query = result.current.tabs[1].query;
+    expect(executeFn).toHaveBeenCalledWith(query, opened, false, { limit: PREVIEW_PAGE_SIZE });
+  });
+
+  test("a tab opened on one connection is not reused on another holding the same path", async () => {
+    const executeFn = mock(() => {});
+    const { result, rerender } = renderHook(
+      ({ connectionId }: { connectionId: string }) =>
+        useTabManager({
+          activeConnection: makeConnection({ id: connectionId }),
+          metadata: defaultMetadata,
+          schema: testSchema,
+        }),
+      { initialProps: { connectionId: "conn-a" } },
+    );
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const onA = result.current.activeTabId;
+    // Same connection: the control, reused.
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    expect(result.current.activeTabId).toBe(onA);
+    expect(result.current.tabs).toHaveLength(2);
+
+    rerender({ connectionId: "conn-b" });
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.activeTabId).not.toBe(onA);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a different object opens its own tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    act(() => result.current.handleTableClick(["orders"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users", "orders"]);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a tab whose query the user edited is never captured", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const edited = result.current.activeTabId;
+    act(() => result.current.updateTabById(edited, { query: "SELECT id FROM users WHERE id > 10;" }));
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.activeTabId).not.toBe(edited);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+    // The edit is the reader's work, and it is left exactly as they wrote it.
+    expect(result.current.tabs.find((t) => t.id === edited)?.query).toBe("SELECT id FROM users WHERE id > 10;");
+  });
+
+  test("the same key in another numbered database is another tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager([]);
+    const type = [{ name: "type", type: "string", nullable: false, isPrimary: false }];
+
+    act(() => result.current.handleTableClick(["report:daily"], executeFn, type, 3));
+    act(() => result.current.handleTableClick(["report:daily"], executeFn, type, 4));
+    act(() => result.current.handleTableClick(["report:daily"], executeFn, type, 3));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.databaseOverride)).toEqual([undefined, 3, 4]);
+    expect(result.current.activeTabId).toBe(result.current.tabs[1].id);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a tab with the same name and query but no recorded origin is not captured", async () => {
+    // The shape a tab restored from storage has: its origin is never persisted.
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() =>
+      result.current.setTabs((prev) => [
+        ...prev,
+        { id: "restored", name: "users", query: "SELECT * FROM users;", result: null, isExecuting: false, type: "sql" },
+      ]),
+    );
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(executeFn).toHaveBeenCalledTimes(1);
+  });
+});

@@ -444,3 +444,34 @@ export const PrometheusIcon: React.FC<IconProps> = ({ className, ...props }) => 
     <path d="M9 18.5h6" />
   </svg>
 );
+
+/**
+ * Apache Kafka: the node mark, reduced to its outline.
+ *
+ * The brand mark is a column of three rings, the middle one larger, with two more rings to its
+ * right joined to the middle one by a spoke each. That is what this draws, as strokes at the
+ * house weight with no fill: the offset pair of spokes is what makes it identifiable at the 14px
+ * (`w-3.5`) size the sidebar renders a DB icon at, and nothing else in this set has them.
+ */
+export const KafkaIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="8.5" cy="4" r="2" />
+    <circle cx="8.5" cy="12" r="2.75" />
+    <circle cx="8.5" cy="20" r="2" />
+    <circle cx="16.5" cy="7.5" r="2" />
+    <circle cx="16.5" cy="16.5" r="2" />
+    <path d="M8.5 6v3.25" />
+    <path d="M8.5 14.75V18" />
+    <path d="m10.9 10.65 3.86-2.17" />
+    <path d="m10.9 13.35 3.86 2.17" />
+  </svg>
+);

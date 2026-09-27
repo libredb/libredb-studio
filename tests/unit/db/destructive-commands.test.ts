@@ -235,13 +235,31 @@ describe("isDestructiveNonSqlQuery", () => {
     // server cannot parse is refused there, with nothing changed.
     expect(isDestructiveNonSqlQuery(query, "prometheus")).toBe(false);
   });
+
+  // ── Kafka ────────────────────────────────────────────────────────────────
+
+  test.each<[string, string]>([
+    ["a read of a topic named like a SQL write", '{"topic": "delete", "from": "latest", "limit": 50}'],
+    ["the same, uppercased", '{"topic": "DROP", "from": "earliest"}'],
+    ["a topic named update, by offset", '{"topic": "update", "partition": 0, "from": {"offset": "120"}}'],
+    ["a topic named truncate, by timestamp", '{"topic": "truncate", "from": {"timestamp": "2026-09-23T00:00:00Z"}}'],
+    ["topics named insert and alter", '{"topic": "insert"} {"topic": "alter"}'],
+    ["SQL, which the parser refuses", "DELETE FROM orders"],
+    ["a request that never closes", '{"topic": "orders"'],
+    ["nothing at all", ""],
+  ])("names nothing for %s, because a Kafka read request can only read", (_label, query) => {
+    // Not "unreadable, so ask": whatever the text, the provider either parses it as one read of
+    // one topic's messages or refuses it before anything is sent, and it sends no request that
+    // writes (#1088, section 2).
+    expect(isDestructiveNonSqlQuery(query, "kafka")).toBe(false);
+  });
 });
 
 describe("vocabularyDecidesAlone", () => {
-  // The one row the gate reads without its SQL keyword test in front. MongoDB and Redis
-  // keep that test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus and for no other type", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual(["prometheus"]);
+  // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
+  // test as a backstop; a type with no row is read by the SQL half entirely.
+  test("is true for prometheus and kafka and for no other type", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual(["prometheus", "kafka"]);
   });
 
   test("is false with no type at all", () => {
@@ -250,8 +268,14 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the three types whose text is not SQL", () => {
-    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual(["mongodb", "prometheus", "redis"]);
+  test("carries a row for exactly the four types whose text is not SQL", () => {
+    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual(["kafka", "mongodb", "prometheus", "redis"]);
+  });
+
+  test("names no Kafka operation, because a read request has none to name", () => {
+    // Not an omission: the editor text is one read request, and the provider refuses any key
+    // but the four it reads, so there is no operation a row could list.
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.kafka?.operations.size).toBe(0);
   });
 
   // `readsSqlText` is the gate's other table. A type it reports as not SQL skips the SQL

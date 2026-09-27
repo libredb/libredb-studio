@@ -19,6 +19,8 @@ describe("seed pipeline integration", () => {
     delete process.env.TEST_REDIS_PASSWORD;
     delete process.env.SEED_CACHE_TTL_MS;
     delete process.env.GOOD_PASSWORD;
+    delete process.env.TEST_KAFKA_PASSWORD;
+    delete process.env.TEST_KAFKA_MECHANISM;
   });
 
   it("full pipeline: load -> resolve -> filter (admin)", async () => {
@@ -98,5 +100,31 @@ describe("seed pipeline integration", () => {
     const redis = conns.find((c) => c.seedId === "test-redis");
     expect(redis?.managed).toBe(true);
     expect(redis?.environment).toBe("production");
+  });
+
+  it("a seeded Kafka connection's SASL mechanism reaches the listed connection", async () => {
+    // Both halves of the round trip fail silently: zod strips a key the schema does not declare,
+    // and the filter is a hand-written field list. The listed connection is where both show.
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "kafka-config.yaml");
+    process.env.TEST_KAFKA_PASSWORD = "kafka-secret";
+
+    const conns = await getManagedConnections(["admin"]);
+    expect(conns).toHaveLength(1);
+    expect(conns[0].type).toBe("kafka");
+    expect(conns[0].saslMechanism).toBe("SCRAM-SHA-512");
+    // The control: the credential beside it is resolved from the environment as before.
+    expect(conns[0].password).toBe("kafka-secret");
+  });
+
+  it("a seeded mechanism written as an environment reference refuses the file, naming the field", async () => {
+    // A mechanism names no credential and no address, so no reference is resolved in it, and the
+    // file is validated before anything is resolved: the refusal names the field.
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "kafka-mechanism-reference.yaml");
+    process.env.TEST_KAFKA_MECHANISM = "SCRAM-SHA-512";
+    process.env.TEST_KAFKA_PASSWORD = "kafka-secret";
+
+    await expect(getManagedConnections(["admin"])).rejects.toThrow(
+      /^Invalid seed config: connections\.0\.saslMechanism: /,
+    );
   });
 });

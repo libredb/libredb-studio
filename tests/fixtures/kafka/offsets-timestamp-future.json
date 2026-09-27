@@ -1,0 +1,53 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumer.listOffsetsWithTimestamps({ topics: [\"orders\"], timestamp: <now + 1 day> })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "$map": [
+   [
+    "orders",
+    {
+     "$map": [
+      [
+       0,
+       {
+        "offset": {
+         "$bigint": "-1"
+        },
+        "timestamp": {
+         "$bigint": "-1"
+        }
+       }
+      ],
+      [
+       1,
+       {
+        "offset": {
+         "$bigint": "-1"
+        },
+        "timestamp": {
+         "$bigint": "-1"
+        }
+       }
+      ],
+      [
+       2,
+       {
+        "offset": {
+         "$bigint": "-1"
+        },
+        "timestamp": {
+         "$bigint": "-1"
+        }
+       }
+      ]
+     ]
+    }
+   ]
+  ]
+ }
+}

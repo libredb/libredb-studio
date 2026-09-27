@@ -211,6 +211,29 @@
         }
       }
     },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Serve /api/mcp: false (default) writes no LIBREDB_MCP_* variable; true writes all four as strings and requires url and tokenLabel"
+        },
+        "url": {
+          "type": "string",
+          "description": "The address MCP clients use and every token is bound to: an absolute http(s) URL ending in /api/mcp, with config.basePath when one is set"
+        },
+        "tokenLabel": {
+          "type": "string",
+          "description": "Any non-empty value; the token signing key is derived under it, so changing it revokes every MCP token at once"
+        },
+        "tokenTtlDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Days a minted MCP token stays valid"
+        }
+      }
+    },
     "persistence": {
       "type": "object",
       "properties": {

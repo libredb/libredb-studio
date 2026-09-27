@@ -95,6 +95,18 @@ services:
       # WORKFLOW_LOCAL_DATA_DIR: ${WORKFLOW_LOCAL_DATA_DIR:-/app/data/workflow}
 
       # -----------------------------------------------------------------------
+      # MCP SERVER: off unless LIBREDB_MCP_ENABLED says on. An AI client of your
+      # own reads schemas and runs read-only SQL at /api/mcp with a token minted on
+      # the settings screen. The URL is the address clients use, with your
+      # BASE_PATH, and every token is bound to it; changing the label revokes
+      # every token at once. See docs/MCP.md.
+      # -----------------------------------------------------------------------
+      # LIBREDB_MCP_ENABLED: "true"
+      # LIBREDB_MCP_URL: ${LIBREDB_MCP_URL:-http://localhost:3000/api/mcp}
+      # LIBREDB_MCP_TOKEN_LABEL: ${LIBREDB_MCP_TOKEN_LABEL}
+      # LIBREDB_MCP_TOKEN_TTL_DAYS: ${LIBREDB_MCP_TOKEN_TTL_DAYS:-30}
+
+      # -----------------------------------------------------------------------
       # SEED CONNECTIONS (optional) — pre-configure databases on boot.
       # Uncomment the seed volume mount below, then provide seed-connections.yaml.
       # Credentials referenced in that file via ${VAR} are read from this .env.

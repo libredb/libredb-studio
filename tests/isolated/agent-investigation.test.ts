@@ -28,6 +28,7 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError, LLMStreamError } from "@/lib/llm/types";
@@ -1528,6 +1529,39 @@ describe("planning mode runs no statement of the user's", () => {
         expect(rules).toContain("database's own query language");
         expect(rules).toContain("This engine speaks no SQL");
         expect(rules).toContain("those are the names of its own objects and of the fields inside them");
+        // The SQL arm's opening and its SQL-only name rule, neither of which may also be present.
+        expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
+        expect(rules).not.toContain("and no column name that is not in that inventory");
+      });
+
+      /*
+        #1088: Kafka declares `"json"`, so it takes the same neutral arm, and the one fact about how
+        its statement is written is its provider's `statementLanguage` label, stated verbatim after
+        that arm's opening: the read request's schema, which is this product's own, with its keys as
+        the label quotes them. The labels are the ones the provider ships, so the sentence that
+        reaches the model is the one under test. The non-SQL name rule stays beside it, and the
+        label's clause is what answers it: the inventory's columns are not keys of the request.
+      */
+      test("a Kafka engine is told its read request's keys, after the neutral contract", async () => {
+        const labels = new KafkaProvider({
+          id: "kafka-plan",
+          name: "Kafka",
+          type: "kafka",
+          host: "localhost",
+          port: 9092,
+          createdAt: new Date(0),
+        }).getLabels();
+        const { rules } = await planOnProvider("json", labels);
+
+        expect(rules).toContain("database's own query language");
+        expect(rules).toContain("Write it in the JSON read request this editor executes");
+        for (const key of ['"topic"', '"partition"', '"from"', '"limit"', '{"offset"', '{"timestamp"']) {
+          expect(rules, key).toContain(key);
+        }
+        expect(rules).toContain("Use no name that is not in that inventory");
+        expect(rules).toContain("not keys of the request");
+        // The label adds to the contract rather than replacing it: the neutral opening comes first.
+        expect(rules.indexOf("own query language")).toBeLessThan(rules.indexOf("Write it in the JSON read request"));
         // The SQL arm's opening and its SQL-only name rule, neither of which may also be present.
         expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
         expect(rules).not.toContain("and no column name that is not in that inventory");

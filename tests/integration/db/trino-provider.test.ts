@@ -1990,6 +1990,20 @@ describe("Trino object containers, listings and detail", () => {
     expect(await provider.listContainers!(["iceberg", "warehouse"])).toEqual([]);
   });
 
+  test("a parent is a tree cursor, so a catalog lists its schemas even when only exact addresses are declared", async () => {
+    const provider = await objectProvider();
+    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
+    // not one: `[catalog]` is where the tree is, so an address check would refuse it here.
+    spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerPathShapes: "exact" });
+
+    expect((await provider.listContainers!(["iceberg"])).map((container) => container.path)).toEqual([
+      ["iceberg", "default"],
+      ["iceberg", "system"],
+      ["iceberg", "warehouse"],
+    ]);
+  });
+
   /**
    * Four properties of the statements themselves, asserted as TEXT rather than through a
    * behaviour, and the reason is a real limit of this harness rather than a preference.

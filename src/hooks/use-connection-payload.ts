@@ -112,6 +112,10 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // somewhere else is authenticating as a different principal, so it does not resolve
   // to the same connection.
   authSource: "resolution",
+  // Which stored credential the broker checks the password against: Kafka keeps a SCRAM
+  // credential per mechanism, so a copy that authenticates by another mechanism is
+  // authenticating as a different principal, and it does not resolve to the same connection.
+  saslMechanism: "resolution",
   // The role a run executes as. A copy that carries its own is a different execution
   // profile even when it points at the same database (#328).
   agentUser: "resolution",

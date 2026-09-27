@@ -309,6 +309,7 @@ describe("CouchbaseProvider metadata", () => {
       defaultPort: 8091,
       // The object surface (#789); asserted field by field in the object-surface block.
       containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      containerPathShapes: "prefixes",
       objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     });
@@ -1363,6 +1364,19 @@ describe("CouchbaseProvider object surface (#789)", () => {
     expect(await objectProvider.listContainers([BUCKET])).toEqual([
       { path: [BUCKET, "_default"], name: "_default", level: 1, isSessionDefault: true },
       { path: [BUCKET, "inventory"], name: "inventory", level: 1, isSessionDefault: false },
+    ]);
+  });
+
+  test("reads a parent as a tree cursor, so a bucket lists its scopes when only exact addresses are declared", async () => {
+    // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
+    // not one: `[bucket]` is where the tree is, so an address check would refuse it here.
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      containerPathShapes: "exact",
+    });
+    expect((await objectProvider.listContainers([BUCKET])).map((container) => container.path)).toEqual([
+      [BUCKET, "_default"],
+      [BUCKET, "inventory"],
     ]);
   });
 

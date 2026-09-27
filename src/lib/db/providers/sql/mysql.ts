@@ -43,10 +43,12 @@ import {
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   requireSourceKind,
@@ -56,6 +58,18 @@ import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { unquoteLiteral } from "@/lib/sql/values";
+
+/**
+ * MySQL's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const MYSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mysql",
+  label: "A MySQL",
+  shapeNames: "label",
+};
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -884,6 +898,7 @@ const LIST_EVENTS_SQL = `
 const OBJECT_COLUMNS_SQL = `
         SELECT
           COLUMN_NAME AS column_name,
+          COLUMN_TYPE AS column_type,
           DATA_TYPE AS data_type,
           IS_NULLABLE AS is_nullable,
           COLUMN_DEFAULT AS column_default,
@@ -1011,6 +1026,7 @@ function bulkDetailSql(spellings: number, bound?: number): BulkDetailStatements 
         SELECT
           d.name AS object_name,
           c.COLUMN_NAME AS column_name,
+          c.COLUMN_TYPE AS column_type,
           c.DATA_TYPE AS data_type,
           c.IS_NULLABLE AS is_nullable,
           c.COLUMN_DEFAULT AS column_default,
@@ -1313,14 +1329,7 @@ function containerSegment(
  * position holds the schema is read off the declaration rather than assumed.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A MySQL container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "mysql",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MYSQL_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 
@@ -1704,6 +1713,13 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
 /** One row of the column read, single or bulk. `object_name` is present only in the bulk one. */
 interface DetailColumnRow extends RowDataPacket {
   column_name: string;
+  /**
+   * The type AS DECLARED, length and precision and value list and `unsigned` included
+   * (#1033). Both column reads select it, so it is required rather than optional: a row
+   * without it is a read this module did not write.
+   */
+  column_type: string;
+  /** The type FAMILY. A separate catalog column the server reports on its own, not one derived from `COLUMN_TYPE` by stripping parts out of it. */
   data_type: string;
   is_nullable: string;
   column_default: string | null;
@@ -1845,7 +1861,8 @@ function objectDetailFromRows(
 ): ObjectDetail {
   const columns: ColumnSchema[] = rows.columns.map((row) => ({
     name: row.column_name,
-    type: row.data_type,
+    type: row.column_type,
+    ...(row.column_type === row.data_type ? {} : { baseType: row.data_type }),
     nullable: row.is_nullable === "YES",
     isPrimary: row.column_key === "PRI",
     ...catalogDefault(row.column_default, row.extra, reading),
@@ -1970,6 +1987,9 @@ export class MySQLProvider extends SQLBaseProvider {
       // level here - MySQL has exactly one and `information_schema.SCHEMATA` is what a
       // catalog would contain.
       containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Six kinds on MySQL and eight on MariaDB, resolved from what the server called
       // itself and never from the type id (#789). See `objectKindsFor`.
       objectKinds: objectKindsFor(this.measuredFlavour),
@@ -2103,10 +2123,23 @@ export class MySQLProvider extends SQLBaseProvider {
       keepAliveInitialDelay: 10000,
     };
 
+    // Without a zone, mysql2 reads DATE and DATETIME in the Node process's local zone and the
+    // row then serialises as ISO UTC, so the value moves with the server's TZ. Measured under
+    // TZ=Europe/Istanbul on MySQL 8.4: a pasted connection string answered `DATE '2026-09-01'`
+    // as 2026-08-31T21:00:00.000Z, the previous day, while the structured form, the only one
+    // that set this, answered 2026-09-01.
+    const timezone = this.options.timezone ?? "Z";
+
     if (this.config.connectionString) {
+      // A `?timezone=` written into the string is the user's own choice, and mysql2 lets an
+      // option beat the `uri` (`ConnectionConfig` skips every uri key the options already
+      // set), so the default is passed only when the string names no zone of its own.
+      const connectionString = this.config.connectionString;
+      const namesTimezone = new URL(connectionString).searchParams.has("timezone");
       return {
         ...baseConfig,
-        uri: this.config.connectionString,
+        ...(namesTimezone ? {} : { timezone }),
+        uri: connectionString,
       };
     }
 
@@ -2118,7 +2151,7 @@ export class MySQLProvider extends SQLBaseProvider {
       password: this.config.password,
       database: this.config.database,
       ssl: this.buildSSLConfig(),
-      timezone: this.options.timezone ?? "Z",
+      timezone,
     };
   }
 

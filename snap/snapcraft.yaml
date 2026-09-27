@@ -36,7 +36,8 @@ summary: The modern, AI-powered open-source SQL IDE for cloud-native teams
 description: |
   Web-based SQL IDE for PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
   SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
-  Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and Prometheus
+  Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Prometheus and
+  Apache Kafka
   with AI query assistance.
 
   Installing the snap starts a background service that serves the app on

@@ -1,0 +1,53 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "consumer.listOffsetsWithTimestamps({ topics: [\"orders\"], timestamp: 1790275839935 })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "$map": [
+   [
+    "orders",
+    {
+     "$map": [
+      [
+       0,
+       {
+        "offset": {
+         "$bigint": "3"
+        },
+        "timestamp": {
+         "$bigint": "1790275839935"
+        }
+       }
+      ],
+      [
+       1,
+       {
+        "offset": {
+         "$bigint": "2"
+        },
+        "timestamp": {
+         "$bigint": "1790275839935"
+        }
+       }
+      ],
+      [
+       2,
+       {
+        "offset": {
+         "$bigint": "4"
+        },
+        "timestamp": {
+         "$bigint": "1790275839935"
+        }
+       }
+      ]
+     ]
+    }
+   ]
+  ]
+ }
+}

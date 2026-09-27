@@ -41,10 +41,12 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
 } from "../../object-kinds";
@@ -62,6 +64,18 @@ import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * Oracle's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "oracle",
+  label: "An Oracle",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // SQL Statements
@@ -956,14 +970,7 @@ function notableStatus(status: string): { status?: string } {
  * `CREATE USER "app"` is legal, so upper-casing here would make that owner unreachable.
  */
 function containerOwner(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `An Oracle container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "oracle",
-    );
-  }
+  assertContainerPathShape(capabilities, container, ORACLE_CONTAINER_PATH_ENGINE);
   return ownerSegment(capabilities, container);
 }
 
@@ -1440,6 +1447,9 @@ export class OracleProvider extends SQLBaseProvider {
       // pool is opened against one service and nothing in the product can switch the
       // pluggable database on a live connection.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Nine kinds, all nine answered by `ALL_OBJECTS.OBJECT_TYPE` (#789).
       //
       // No `index` kind, deliberately. Oracle's own dictionary models an index as an

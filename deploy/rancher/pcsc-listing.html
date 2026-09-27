@@ -1,8 +1,8 @@
-LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas and run queries across seventeen database engines from one web interface, with no desktop client to install. Where an engine cannot edit data, the controls are shown as unsupported instead of failing.
+LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas and run queries across eighteen database engines from one web interface, with no desktop client to install. Where an engine cannot edit data, the controls are shown as unsupported instead of failing.
 
 The Helm chart installs from the Rancher Apps catalog with default values: first-run admin credentials are generated and printed to the pod log, while production installs can supply their own secrets. LibreDB Studio runs on your own infrastructure and is developed and commercially supported by the LibreDB team.
 <ul>
-<li>Seventeen engines: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Prometheus</li>
+<li>Eighteen engines: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Prometheus, Apache Kafka</li>
 <li>Optional AI, off by default (Gemini, OpenAI or a local model): plain-English query explanation from the EXPLAIN plan on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid and Apache Trino. A read-only agent on PostgreSQL, SQLite, DuckDB and SQL Server never writes</li>
 <li>Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB, HPA, Ingress/TLS</li>
 <li>Self-hosted and air-gap friendly: no external services required</li>

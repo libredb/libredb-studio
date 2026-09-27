@@ -13,6 +13,7 @@
   - [Database API](#database-api)
   - [AI API](#ai-api)
   - [Agent API](#agent-api)
+  - [MCP API](#mcp-api)
   - [Storage API](#storage-api)
   - [Connections API](#connections-api)
   - [Admin API](#admin-api)
@@ -26,12 +27,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Redis and Prometheus.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Redis, Prometheus and Apache Kafka.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Seventeen engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Redis, Prometheus
+- **Multi-Database Support** - Eighteen engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -87,8 +88,11 @@ The middleware (`src/proxy.ts`) gates every route: all of them require a valid `
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
 Unauthenticated requests to any other (middleware-gated) route are redirected to `/login`. A few allowlisted handlers self-check instead and return JSON — e.g. `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+`/api/mcp` is the exception: without a valid bearer token it answers 401 with `WWW-Authenticate`, never a redirect (see the [MCP API](#mcp-api) below).
 
-**One route is session-less without being public: `POST /api/agent/drive`.** It is deliberately *not* on the list above — a path-shaped exemption would admit anything that can reach the port. It carries a server-minted, single-purpose credential instead, verified by the middleware and again by the handler (see the [Agent API](#agent-api) below).
+**Two routes are session-less without being public: `POST /api/agent/drive` and `/api/mcp`.**
+Neither is on the list above, because a path-shaped exemption would admit anything that can reach the port.
+Each carries a server-minted credential of its own instead, verified by the middleware and again by the handler: the drive callback a single-purpose credential (see the [Agent API](#agent-api) below), and the MCP endpoint a scoped bearer token (see the [MCP API](#mcp-api) below).
 
 ---
 
@@ -329,13 +333,13 @@ Execute SQL query on connected database.
 
 The `pagination` object reports the auto-limiting applied by the server.
 `limit` is `options.limit` when the caller sent one and 500 otherwise; the app's own tree click sends 50.
-`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4).
+`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4).
 
 `hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the server's own limiter alone, and both halves matter.
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
-Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB and Prometheus ignore it. `GET /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
+Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus and Kafka ignore it. `GET /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
 
 **The database a run reads (optional):**
 ```json
@@ -859,6 +863,40 @@ A `druid` connection fails the second check whatever the `type` is, with `{ "err
 
 A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
 
+#### Container paths on the object routes
+
+Four object routes take a container path, and they check it by two different rules before the provider is called (#1147).
+
+`container` on `POST /api/db/objects/counts` and `POST /api/db/objects/list`, and every entry of `containers` on `POST /api/db/objects/inventory`, is an address: the container a read binds its segments from.
+The route accepts it only in a shape the engine declares as `containerPathShapes` in its capabilities, and it reads that declaration through the same kernel function the provider refuses by, `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts`.
+An `exact` engine accepts the declared depth and nothing else.
+A `prefixes` engine accepts every depth from one level up to the declared one, so on Trino a catalog alone is an address as well as a catalog and a schema.
+An engine that declares no value reads as `exact`.
+A path the engine does not accept is refused at the edge, whether it is too short or too long, with one sentence and one wire shape.
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| `container`, or one entry of `containers`, is not a shape the engine accepts | `400` | `{ "error": "<type> accepts \"<field>\" as <shapes>, received <path>" }` |
+
+The body carries no `code`, like the route's other refusals of a caller mistake, and no listing runs: on the inventory every named entry is checked before the first one is read.
+`<shapes>` spells each accepted shape from the engine's level labels, lowercased.
+A declaration with no level prints `empty` when only `[]` is accepted, and `nothing: this declaration carries no container level` when no path is.
+
+| Engine | Request field | Answer |
+|--------|---------------|--------|
+| PostgreSQL | `"container": []` | `400` `{ "error": "postgres accepts \"container\" as [schema], received []" }` |
+| PostgreSQL | `"container": ["app", "x"]` | `400` `{ "error": "postgres accepts \"container\" as [schema], received [\"app\",\"x\"]" }` |
+| PostgreSQL | `"containers": [["app"], []]` | `400` `{ "error": "postgres accepts \"containers\" as [schema], received []" }` |
+| Trino | `"container": ["memory"]` | reaches the engine |
+| Trino | `"container": ["memory", "app", "x"]` | `400` `{ "error": "trino accepts \"container\" as [catalog] or [catalog, schema], received [\"memory\",\"app\",\"x\"]" }` |
+| SQLite | `"container": ["main"]` | `400` `{ "error": "sqlite accepts \"container\" as empty, received [\"main\"]" }` |
+
+`parent` on `POST /api/db/objects/containers` is a tree cursor rather than an address, and it keeps the depth ceiling on every engine.
+Any depth up to and including the declared one is accepted, and a parent at the declared depth answers `[]`, because nothing nests below the last level.
+Only a deeper parent is refused, at `400` with `{ "error": "<type> declares a container depth of <n>, and \"parent\" has <m> segments: <path>" }`.
+
+A caller that reaches a provider without these routes, such as the MCP `inspect-schema` tool or a host behind the embedded workspace, is refused by the provider itself under the same rule, in the provider's own words: `A PostgreSQL container path is [schema], received []`.
+
 #### POST /api/db/objects/describe
 
 Read the columns, indexes and foreign keys of ONE object.
@@ -943,9 +981,8 @@ there.
 Build a plan for an edited object definition, and answer what an apply would send.
 It executes nothing and writes nothing.
 
-The describe route above is the one Phase 2 sibling documented in this file.
-The other six under `/api/db/objects/` (`containers`, `counts`, `list`, `search`, `inventory`,
-`source`) are not documented here yet.
+The describe route above is the one Phase 2 sibling documented in full in this file.
+The other six under `/api/db/objects/` (`containers`, `counts`, `list`, `search`, `inventory`, `source`) are not, except for the container-path rule four of them share, which [Container paths on the object routes](#container-paths-on-the-object-routes) documents.
 
 **Authentication:** Required.
 There is NO admin gate on either route, and the reason is measured rather than preferred: a
@@ -1532,6 +1569,59 @@ Nothing in the product produces a drive delivery yet, so this route's callers to
 
 ---
 
+### MCP API
+
+The MCP endpoint for AI clients of your own ([`docs/MCP.md`](MCP.md)).
+It is off by default (`LIBREDB_MCP_ENABLED`), and it authenticates with a scoped bearer token, never the session cookie.
+
+#### `POST /api/mcp`
+
+A JSON-RPC message of MCP revision 2026-07-28, 2025-11-25 or 2025-06-18, sent with `Authorization: Bearer <your-mcp-token>` and `Content-Type: application/json`.
+The answers, in the order they are checked:
+
+| Status | Body | When |
+|---|---|---|
+| 403 | JSON-RPC `-32000`: `Invalid Origin: <host>`, `Invalid Host: <host>` or `Missing Host header` | The `Origin` is not on the MCP allowlist, or on a loopback bind the `Host` is not |
+| 401 | `{"error":"invalid_token","error_description":"..."}` with `WWW-Authenticate: Bearer error="invalid_token", error_description="...", scope="mcp:read"` | No bearer, or one that does not verify |
+| 404 | `{"error":"MCP is not enabled on this server"}` | `LIBREDB_MCP_ENABLED` is off |
+| 500 | `{"error":"..."}` naming `LIBREDB_MCP_ENABLED` or `NEXT_PUBLIC_APP_VERSION`, or the OAuth `server_error` body | An unrecognized switch value, an unset server version, or a server fault during verification |
+| 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` | The per-user query budget is spent |
+| 415, 413, 400 | JSON-RPC `-32000`, `-32700`, `-32600` or `-32020` | A body that is not JSON, over 4 MiB, unreadable or invalid, a batch, or a standard header outside visible ASCII or missing after `initialize` |
+| 404 | JSON-RPC `-32601`, `Method not found` | `subscriptions/listen`, which this server does not implement |
+| 200, 202 | The SDK's JSON-RPC answer, as JSON or as an event stream; 202 for a notification | Everything else |
+
+#### `GET /api/mcp`, `DELETE /api/mcp`
+
+After the same Origin, Host, bearer, switch and version checks, 405 with the SDK's JSON-RPC body and `Allow: POST`: the server keeps no session and offers no stream.
+Neither is metered.
+
+#### `GET /api/mcp/token`
+
+The MCP channel's status for the signed-in user, which the settings screen reads; session-checked and never metered.
+
+```text
+{ "state": "off" | "misconfigured" | "ready", "problems": [ "..." ], "url": "https://studio.example.com/api/mcp" | null, "tokenTtlDays": 30 | null, "visibleConnections": 2 | null }
+```
+
+Each problem names one variable and its fix, never the configured value.
+`visibleConnections` is how many `mcp: true` seed connections your role reaches, and `null`, with a problem, when the seed file cannot be read.
+It never returns a token.
+
+#### `POST /api/mcp/token`
+
+Mints a token for the signed-in user and role; it reads no body field and spends one slot of the query budget.
+
+| Status | Body |
+|---|---|
+| 200 | `{ "token": "...", "expiresAt": "<ISO 8601>", "url": "..." }` with `Cache-Control: no-store`; the token appears in no other response |
+| 401 | `{ "error": "Authentication required" }` |
+| 403 | `{ "error": "Sign in again to create a token: a token can only be created within 10 minutes of signing in." }`, with `Cache-Control: no-store`, when the session was signed in more than ten minutes ago |
+| 409 | `{ "error": "MCP tokens cannot be issued on this server", "problems": [ "..." ] }` |
+| 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` |
+| 500 | `{ "error": "The token was not issued because its audit record could not be written." }` |
+
+---
+
 ### Storage API
 
 The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)). Data is per-user, keyed by the session username.
@@ -1626,7 +1716,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `queryTimeout`, `agentUser`, `agentPassword`, and `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `queryTimeout`, `agentUser`, `agentPassword`, and `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
@@ -1653,6 +1743,7 @@ interface DatabaseConnection {
   instanceName?: string;   // MSSQL: named instance (e.g. SQLEXPRESS)
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
+  saslMechanism?: 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'; // Kafka only: the SASL mechanism that checks user and password, absent meaning none. A user or password with no mechanism is refused, and every mechanism requires TLS
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
   managed?: boolean;       // true = admin-controlled, read-only in UI
   seedId?: string;         // stable reference to seed config ID
@@ -1662,7 +1753,7 @@ interface DatabaseConnection {
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 

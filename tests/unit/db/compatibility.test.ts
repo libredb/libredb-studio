@@ -64,6 +64,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   FerretDB: "ferretdb",
   ScyllaDB: "scylla",
   VictoriaMetrics: "victoriametrics",
+  Redpanda: "redpanda",
 };
 
 describe("wire-compatibility registry", () => {
@@ -334,6 +335,31 @@ describe("wire-compatibility registry", () => {
     ]) {
       expect(caveats).not.toContain(resolved);
     }
+  });
+
+  test("Redpanda is a full Kafka relative, recorded at the tier its live read-only check measured", () => {
+    // Probed 2026-09-25 against `redpandadata/redpanda:v26.2.2`, a single node seeded by
+    // docker/kafka/seed.sh and docker/kafka/seed-binary.ts, through a real KafkaProvider run by
+    // tests/live/kafka-read-only.ts --redpanda, with the single Apache Kafka 4.3.1 node as the
+    // baseline in the same pass (#1088 section 8). Every surface answered, with data wherever Kafka
+    // held data: the counts, the three listings and sources, a read in every `from` form, the four
+    // codecs, the transactional topic, the refusals, the three panels, the group listing and each
+    // group's lag against rpk's own, the forwarder and IPv6 checks, and the unchanged broker
+    // snapshot. So the tier is full, and the caveats name what reads differently from Kafka.
+    expect(SHIPPED_DATABASE_TYPES).toContain("kafka");
+    const relatives = compatibleEnginesFor("kafka");
+    expect(relatives.map((engine) => engine.name)).toEqual(["Redpanda"]);
+    const redpanda = relatives[0];
+    expect(redpanda?.via).toBe("kafka");
+    expect(redpanda?.tier).toBe("full");
+    expect(redpanda?.probedVersion).toBe("Redpanda v26.2.2");
+    // One pin per caveat the probe earned, so a caveat cannot be dropped or reworded away silently.
+    const caveats = redpanda?.caveats.join(" ") ?? "";
+    expect(caveats).toContain("max.connections");
+    expect(caveats).toContain("nine");
+    expect(caveats).toContain("usage percentage");
+    expect(caveats).toContain("ListGroups up to v4");
+    expect(redpanda?.caveats).toHaveLength(4);
   });
 
   test("every entry names a driver we actually ship", () => {

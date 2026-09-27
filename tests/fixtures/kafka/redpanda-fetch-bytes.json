@@ -1,0 +1,129 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "consumer.fetch(bytes partition 0 offset 0, READ_COMMITTED)"
+ },
+ "outcome": "pass",
+ "payload": {
+  "throttleTimeMs": 0,
+  "errorCode": 0,
+  "sessionId": 1,
+  "responses": [
+   {
+    "topicId": "157ed92a-1c2c-45d7-8823-788e586f02d8",
+    "partitions": [
+     {
+      "partitionIndex": 0,
+      "errorCode": 0,
+      "highWatermark": {
+       "$bigint": "2"
+      },
+      "lastStableOffset": {
+       "$bigint": "2"
+      },
+      "logStartOffset": {
+       "$bigint": "0"
+      },
+      "divergingEpoch": {
+       "epoch": -1,
+       "endOffset": {
+        "$bigint": "-1"
+       }
+      },
+      "currentLeader": {
+       "leaderId": -1,
+       "leaderEpoch": -1
+      },
+      "snapshotId": {
+       "endOffset": {
+        "$bigint": "-1"
+       },
+       "epoch": -1
+      },
+      "abortedTransactions": null,
+      "preferredReadReplica": -1,
+      "records": [
+       {
+        "firstOffset": {
+         "$bigint": "0"
+        },
+        "length": 76,
+        "partitionLeaderEpoch": 1,
+        "magic": 2,
+        "crc": 2322314209,
+        "attributes": 0,
+        "lastOffsetDelta": 0,
+        "firstTimestamp": {
+         "$bigint": "1790275854713"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275854713"
+        },
+        "producerId": {
+         "$bigint": "7"
+        },
+        "producerEpoch": 0,
+        "firstSequence": 0,
+        "records": [
+         {
+          "length": 26,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": null,
+          "value": {
+           "$bytes": "AAAAACp7ImZyYW1lZCI6dHJ1ZX0="
+          },
+          "headers": []
+         }
+        ]
+       },
+       {
+        "firstOffset": {
+         "$bigint": "1"
+        },
+        "length": 60,
+        "partitionLeaderEpoch": 1,
+        "magic": 2,
+        "crc": 2606851999,
+        "attributes": 0,
+        "lastOffsetDelta": 0,
+        "firstTimestamp": {
+         "$bigint": "1790275868664"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275868664"
+        },
+        "producerId": {
+         "$bigint": "-1"
+        },
+        "producerEpoch": 0,
+        "firstSequence": 0,
+        "records": [
+         {
+          "length": 10,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": null,
+          "value": {
+           "$bytes": "//4AAQ=="
+          },
+          "headers": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "nodeEndpoints": []
+ }
+}

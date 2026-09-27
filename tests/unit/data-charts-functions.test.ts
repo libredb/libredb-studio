@@ -1,5 +1,5 @@
 import "../setup";
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import {
   analyzeField,
   analyzeData,
@@ -411,6 +411,17 @@ describe("aggregateData", () => {
 
 describe("groupByDate", () => {
   const iso = "2025-06-15T14:30:45Z";
+  // groupByDate reads local fields, so these UTC fixtures name the expected day only at UTC.
+  // Held there rather than inherited: off CI's UTC they failed, "day with zero-padding" in
+  // every zone west of UTC and "hour" and "day" at UTC+14.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "UTC";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
 
   test("groups by hour", () => {
     const result = groupByDate(iso, "hour");
@@ -451,5 +462,56 @@ describe("groupByDate", () => {
   test("handles day with zero-padding", () => {
     const result = groupByDate("2025-03-05T00:00:00Z", "day");
     expect(result).toBe("2025-03-05");
+  });
+});
+
+describe("groupByDate - a date-only value west of UTC", () => {
+  // PostgreSQL now hands a `date` column over as its own text, "2026-09-01". A bare
+  // ISO date parses as UTC midnight, which is the previous evening in any zone west
+  // of UTC, so reading local fields off it put every bucket one day early. CI runs
+  // at UTC, where the two readings agree, so this block holds a real western offset.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/Los_Angeles";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
+
+  test("keeps the calendar day", () => {
+    expect(groupByDate("2026-09-01", "day")).toBe("2026-09-01");
+  });
+
+  test("keeps the first of the month in its own month", () => {
+    expect(groupByDate("2026-09-01", "month")).toBe("2026-09");
+  });
+
+  test("starts the week on a Sunday date itself, not the Sunday before it", () => {
+    expect(groupByDate("2026-08-30", "week")).toBe("W2026-08-30");
+  });
+
+  test("keeps the first of January in its own year", () => {
+    expect(groupByDate("2026-01-01", "year")).toBe("2026");
+  });
+
+  test("still reads a timestamp with an offset as that instant in the local zone", () => {
+    expect(groupByDate("2026-09-01T03:00:00Z", "day")).toBe("2026-08-31");
+  });
+
+  test("buckets date rows by month through aggregateData", () => {
+    const rows = [
+      { order_date: "2026-09-01", n: 2 },
+      { order_date: "2026-09-30", n: 3 },
+      { order_date: "2026-08-31", n: 5 },
+    ];
+    expect(aggregateData(rows, "order_date", [{ field: "n", aggregation: "sum" }], "month")).toEqual([
+      { order_date: "2026-09", n: 5 },
+      { order_date: "2026-08", n: 5 },
+    ]);
+  });
+
+  test("returns an impossible date-only value unchanged", () => {
+    expect(groupByDate("2026-13-45", "day")).toBe("2026-13-45");
   });
 });

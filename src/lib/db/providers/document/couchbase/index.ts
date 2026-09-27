@@ -73,6 +73,7 @@ import {
   COUCHBASE_KIND_INDEX,
   COUCHBASE_OBJECT_KINDS,
   containerRead,
+  parentCatalog,
   type ContainerNameRow,
   COUCHBASE_SOURCE_PART_ID,
   COUCHBASE_SOURCE_PART_LABEL,
@@ -384,6 +385,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       supportsConnectionString: true,
       defaultPort: 8091,
       containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      // A bucket alone is an address as well as a bucket and a scope, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     };
@@ -650,7 +654,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { bucket } = containerRead(capabilities, parentPath);
+    const bucket = parentCatalog(capabilities, parentPath);
     const rows = await this.objectRows<ContainerNameRow>(SCOPES_SQL, [bucket]);
     return rows
       .map((row) => String(row.scope_name))

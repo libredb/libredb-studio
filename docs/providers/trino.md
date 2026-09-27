@@ -903,9 +903,9 @@ collide with a schema called `a` holding `b.c`.
 
 #### Container shapes and the derivations behind them
 
-Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole
-catalog hold", and a schema answers the folder the tree actually draws. That matches SQL Server and
-DuckDB, and `src/lib/api/object-route.ts` admits any path down to the declared depth.
+Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole catalog hold", and a schema answers the folder the tree actually draws.
+The declaration states it as `containerPathShapes: "prefixes"`, the same answer SQL Server, DuckDB and Couchbase give.
+The object routes in `src/lib/api/object-route.ts` read that field through the same kernel reader this provider refuses by, `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts`, so a path of neither depth is refused at the HTTP edge with the shapes the provider names.
 
 Nothing reads a path by position. The container segments come from the declared `ContainerLevelSpec`
 ids, the object name is `path[path.length - 1]`, and the depth is `containerDepth()` — never
@@ -1652,6 +1652,8 @@ are undeclared.
 | `defaultPort` | `8080` | Same under TLS ([§4.3](#43-tls-and-the-password-rule)) |
 | `identifierQuoting` | `"double"` | Declared, not derived from a generic port ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `statementTerminator` | `"none"` | `SELECT 1;` is a syntax error ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
+| `containerLevels` | `catalog`, then `schema` | Labelled Catalog and Schema: a catalog is a named connector configuration, not a database ([two container levels](#two-container-levels-and-a-catalog-is-not-a-database)) |
+| `containerPathShapes` | `"prefixes"` | `[catalog]` and `[catalog, schema]` both address a container, because a catalog alone is a real address ([container shapes](#container-shapes-and-the-derivations-behind-them)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider directly (#1147) |
 
 ### `getLabels()` ([`trino/index.ts`](../../src/lib/db/providers/sql/trino/index.ts))
 

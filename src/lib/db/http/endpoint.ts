@@ -74,8 +74,11 @@ function ipv6Literal(host: string): string | null {
   return !address.includes("%") && isIPv6(address) ? address : null;
 }
 
-/** The host in URL form, or a refusal. */
-function validateHost(host: unknown): string {
+/**
+ * The host in URL form, or a refusal.
+ * Exported for the Kafka bootstrap address, which is a TCP host and port rather than a URL.
+ */
+export function validateHost(host: unknown): string {
   if (typeof host !== "string") throw new DatabaseConfigError(INVALID_HOST);
 
   const ipv6 = ipv6Literal(host);
@@ -85,8 +88,11 @@ function validateHost(host: unknown): string {
   throw new DatabaseConfigError(INVALID_HOST);
 }
 
-/** An integer port from 1 to 65535, from a number or a string of digits alone. */
-function validatePort(port: unknown): number {
+/**
+ * An integer port from 1 to 65535, from a number or a string of digits alone.
+ * Exported for the Kafka bootstrap address, which is a TCP host and port rather than a URL.
+ */
+export function validatePort(port: unknown): number {
   const value = typeof port === "string" && PORT_DIGITS.test(port) ? Number(port) : port;
   if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_PORT) return value;
 

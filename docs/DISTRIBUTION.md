@@ -480,6 +480,9 @@ each *newly added* OpenShift version's catalog) and does not substitute for
 (k8s-operatorhub/community-operators) has no such second step: its
 bundle-directory PR is the whole listing.
 
+So on this catalog a merged version directory is not yet a node of the channel graph: that happens only when the bot's "Catalog update" PR adds it to `catalog-templates/basic.yaml`, and until then a submission that replaces it fails `add-bundle-to-fbc-dryrun` with `multiple channel heads found in graph` (measured on community-operators-prod#11290, submitted while 0.16.0's catalog update #11204 was still open).
+The `submit-catalogs` job therefore reads that template and skips, naming the version, while the predecessor is a bundle but not yet a channel entry.
+
 ### Automated submission
 
 Both submissions are opened by the `submit-catalogs` job in
@@ -498,6 +501,7 @@ A skip that means a release did not reach a catalog is a `::warning::` rather th
 | the operator has no directory in that catalog | a first listing needs review and metadata this path does not carry |
 | the catalog already carries this version | a rerun after a merge |
 | an open submission for any other version | see below, this one is a hard stop |
+| FBC only: the predecessor is a bundle directory but not yet an entry of the channel template | its catalog update has to merge first, or the new bundle replaces a node the graph does not have |
 | the release is a prerelease | the catalogs take bare semver directories only |
 
 Three conditions are hard failures rather than skips, because each is a misconfiguration on our side that would otherwise break the channel quietly:

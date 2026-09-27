@@ -35,9 +35,19 @@ import type {
   DatabaseObject,
   DatabaseProvider,
   KindCount,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
+import {
+  countObjects as countKafkaObjects,
+  describeObjects as describeKafkaObjects,
+  KAFKA_CONTAINER_LEVELS,
+  KAFKA_OBJECT_KINDS,
+  KAFKA_TOPIC_LIST_CAP,
+  listObjects as listKafkaObjects,
+  type ObjectsClient as KafkaObjectsClient,
+} from "@/lib/db/providers/stream/kafka/objects";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
@@ -1612,6 +1622,12 @@ describe("captureContextSnapshot — the object surface that says what each entr
       readonly counts?: (container: readonly string[]) => Record<string, KindCount>;
       readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
       readonly containers?: (parent?: readonly string[]) => readonly Container[];
+      /** The folder's bulk column read; absent, it answers the table and view columns of `schema`. */
+      readonly describeObjects?: (
+        container: readonly string[],
+        kind: string,
+        limit?: number,
+      ) => Promise<ObjectDetailBatch>;
       readonly omitObjectSurface?: boolean;
       readonly omitContainerListing?: boolean;
       readonly listThrows?: Error;
@@ -1640,16 +1656,22 @@ describe("captureContextSnapshot — the object surface that says what each entr
     );
 
     const provider = {
-      describeObjects: mock(async (container: readonly string[], kind: string) => ({
-        details: (options.schema ?? COLUMNS)
-          .filter((object) => (kind === "table" ? object.name.endsWith("orders") : object.name.endsWith("summary")))
-          .map((object) => ({
-            path: [...container, object.name.split(".")[object.name.split(".").length - 1]],
-            columns: object.columns,
-            indexes: object.indexes,
-            foreignKeys: object.foreignKeys ?? [],
-          })),
-      })),
+      describeObjects: mock(async (container: readonly string[], kind: string, limit?: number) =>
+        options.describeObjects !== undefined
+          ? options.describeObjects(container, kind, limit)
+          : {
+              details: (options.schema ?? COLUMNS)
+                .filter((object) =>
+                  kind === "table" ? object.name.endsWith("orders") : object.name.endsWith("summary"),
+                )
+                .map((object) => ({
+                  path: [...container, object.name.split(".")[object.name.split(".").length - 1]],
+                  columns: object.columns,
+                  indexes: object.indexes,
+                  foreignKeys: object.foreignKeys ?? [],
+                })),
+            },
+      ),
       // Carried so a catalog dialect can be driven through this harness: the composed
       // path reads through `queryReadOnly` and never asks the object surface.
       queryReadOnly: mock(async (sql: string) => answerPostgres(sql)),
@@ -1827,6 +1849,96 @@ describe("captureContextSnapshot — the object surface that says what each entr
 
     expect(harness.countObjects.mock.calls).toEqual([[[]]]);
     expect(snapshot.objects.find((object) => object.kind === "table")?.path).toEqual(["orders"]);
+  });
+
+  /**
+   * KM1 of the Kafka provider (#1088, spec 4.3 and 11). Its topic listing is capped at 2,000
+   * names, and past the cap its bulk read reports the cap as `truncated`, as the contract
+   * requires. This walk stops at the first truncated batch, so past the cap plan mode grounds
+   * topics and nothing else: a stated limit, not one the declaration order can fix without
+   * reordering the tree. Both arms run through the real walk over the Kafka module's own
+   * declaration, counts, listings and bulk reads, since no live fixture reaches 2,000 topics.
+   */
+  async function kafkaHarness(topicCount: number): Promise<ObjectHarness> {
+    const names = Array.from({ length: topicCount }, (_unused, index) => `topic_${String(index).padStart(5, "0")}`);
+    const unread = async (): Promise<never> => {
+      throw new Error("the inventory walk reads no offsets, configs or group descriptions");
+    };
+    const client: KafkaObjectsClient = {
+      listTopics: async () => names,
+      metadata: async (topics) => ({
+        clusterId: "c",
+        controllerId: 1,
+        brokers: [
+          { nodeId: 1, host: "b1", port: 9092, rack: null },
+          { nodeId: 2, host: "b2", port: 9092, rack: null },
+        ],
+        topics: (topics ?? names).map((name) => ({ name, id: name, partitions: [] })),
+      }),
+      listGroups: async () => [{ groupId: "billing", state: "Stable", groupType: "classic", protocolType: "consumer" }],
+      offsets: unread,
+      topicConfigs: unread,
+      brokerConfigs: unread,
+      describeGroup: unread,
+      committedOffsets: unread,
+    };
+    const counts = await countKafkaObjects(client, []);
+    const listed = new Map(
+      await Promise.all(
+        KAFKA_OBJECT_KINDS.map(async (kind) => [kind.id, await listKafkaObjects(client, [], kind.id)] as const),
+      ),
+    );
+    return objectHarness({
+      kinds: KAFKA_OBJECT_KINDS,
+      containerLevels: KAFKA_CONTAINER_LEVELS,
+      counts: () => counts,
+      objects: (_container, kind) => listed.get(kind) ?? [],
+      describeObjects: (container, kind, limit) => describeKafkaObjects(client, container, kind, limit),
+    });
+  }
+
+  test("Kafka past its topic cap: the walk grounds topics only and says why, in the provider's sentence", async () => {
+    const harness = await kafkaHarness(KAFKA_TOPIC_LIST_CAP + 1);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects).toHaveLength(KAFKA_TOPIC_LIST_CAP);
+    expect(new Set(snapshot.objects.map((object) => object.kind))).toEqual(new Set(["topic"]));
+    expect(snapshot.truncated).toEqual({
+      limit: KAFKA_TOPIC_LIST_CAP,
+      reason: "the listing is one topic listing capped at 2,000 names",
+    });
+    expect(snapshot.kinds?.find((kind) => kind.id === "topic")?.sampledFrom).toBe(
+      "one topic listing capped at 2,000 names",
+    );
+    // The walk stopped at the topic folder: the groups and brokers were counted but never listed.
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["topic"]);
+  });
+
+  test("Kafka below its topic cap: the walk also grounds the consumer groups and the brokers", async () => {
+    const harness = await kafkaHarness(7);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.truncated).toBeUndefined();
+    const byKind = Object.groupBy(snapshot.objects, (object) => object.kind ?? "");
+    expect(byKind.topic).toHaveLength(7);
+    expect(byKind.consumer_group?.map((object) => object.name)).toEqual(["billing"]);
+    // Addressed by node id, labelled with host and port.
+    expect(byKind.broker?.map((object) => [object.name, object.label])).toEqual([
+      ["1", "1 b1:9092"],
+      ["2", "2 b2:9092"],
+    ]);
+    expect(snapshot.objects.find((object) => object.kind === "topic")?.columns.map((column) => column.name)).toEqual([
+      "partition",
+      "offset",
+      "timestamp",
+      "key",
+      "key_encoding",
+      "value",
+      "value_encoding",
+      "headers",
+    ]);
   });
 
   test("more container and kind pairs than the read may issue is reported as truncated too", async () => {

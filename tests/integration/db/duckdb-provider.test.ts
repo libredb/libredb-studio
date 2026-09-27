@@ -1631,6 +1631,24 @@ describe("DuckDB object containers, listings and detail", () => {
     }
   });
 
+  test("a parent is a tree cursor, so a catalog lists its schemas even when only exact addresses are declared", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
+      // not one: `[database]` is where the tree is, so an address check would refuse it here.
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...new DuckDBProvider(makeConfig()).getCapabilities(),
+        containerPathShapes: "exact",
+      });
+      expect((await provider.listContainers(["memory"])).map((container) => container.path)).toEqual([
+        ["memory", "analytics"],
+        ["memory", "main"],
+      ]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
   test("counts the whole catalog, then one schema, and seeds a declared kind at zero", async () => {
     const provider = await seededObjectProvider();
     try {

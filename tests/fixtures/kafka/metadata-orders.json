@@ -1,0 +1,73 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.metadata({ topics: [\"orders\"], autocreateTopics: false })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "id": "4L6g3nShT-eMCtK--X86sw",
+  "brokers": {
+   "$map": [
+    [
+     1,
+     {
+      "host": "localhost",
+      "port": 9092,
+      "rack": null
+     }
+    ]
+   ]
+  },
+  "topics": {
+   "$map": [
+    [
+     "orders",
+     {
+      "id": "ae5fd052-88d6-4c94-ac08-d450f3fe6a48",
+      "partitions": [
+       {
+        "leader": 1,
+        "leaderEpoch": 2,
+        "replicas": [
+         1
+        ],
+        "isr": [
+         1
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 1,
+        "leaderEpoch": 2,
+        "replicas": [
+         1
+        ],
+        "isr": [
+         1
+        ],
+        "offlineReplicas": []
+       },
+       {
+        "leader": 1,
+        "leaderEpoch": 2,
+        "replicas": [
+         1
+        ],
+        "isr": [
+         1
+        ],
+        "offlineReplicas": []
+       }
+      ],
+      "partitionsCount": 3,
+      "lastUpdate": 1790276214318
+     }
+    ]
+   ]
+  },
+  "lastUpdate": 1790276214318,
+  "controllerId": 1
+ }
+}

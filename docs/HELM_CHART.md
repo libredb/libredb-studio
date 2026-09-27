@@ -224,6 +224,15 @@ The agent has no on-switch: the app derives whether it can run from a configured
 - A release where an agent could run **and** more than one replica is asked for **fails the render** (a template guard in `deployment.yaml`, same shape as the seed guard above). The zero-config ledger takes file locks and each pod mounts its own `/app/data`, so a run started on one pod is invisible to the next request; the only backend that lifts the constraint (`@workflow/world-postgres`) is not loadable in the published image (`B16` in `docs/BACKLOG.md`), which the message says rather than selling an opt-in that does not exist yet. "Could run" is read conservatively from these values: an inline `secrets.llmApiKey`, `config.llmProvider` set to one of the key-optional providers (`ollama`, `custom` — the app's `validateConfig` demands a key only for `gemini` and `openai`), or an explicit `agent.enabled=true`. So an existing multi-replica install that configures no AI keeps rendering. The guard's blind spots are `secrets.existingSecret`, `extraEnvFrom` **and** `extraEnv`, none of which a template can read a model out of; all three are listed in the chart README and in the helper's own comment.
 - Run history lives in that ledger, so `persistence.enabled=false` means an `emptyDir` and a history that goes with the pod. `values.yaml`, the chart README and `NOTES.txt` all say so.
 
+### 10. MCP Server
+
+The MCP server is off by default, and the chart's job is to write nothing until the operator asks (docs/MCP.md).
+
+- `mcp.enabled: false`, the default, writes no `LIBREDB_MCP_*` variable, so an install that never mentions MCP renders exactly as before, and the endpoint answers an authenticated request with 404.
+- `mcp.enabled: true` writes `LIBREDB_MCP_ENABLED`, `LIBREDB_MCP_URL`, `LIBREDB_MCP_TOKEN_LABEL` and `LIBREDB_MCP_TOKEN_TTL_DAYS`, each quoted, because `EnvVar.value` is a string; they are written before `extraEnv`, so an operator can still override one.
+- An enabled block without `mcp.url` or `mcp.tokenLabel` fails the render and names the value, because the app accepts no token without either, and only the operator knows the public address, its TLS termination and its `basePath`.
+- The block is read through `default dict`, so a values set that predates it, as an upgrade with `--reuse-values` carries, keeps rendering; `tests/unit/helm-chart-mcp.test.ts` pins all four rules.
+
 ## Release Pipeline
 
 The chart never releases before the image it deploys exists (#161), and the

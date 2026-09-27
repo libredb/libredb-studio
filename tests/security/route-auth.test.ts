@@ -221,13 +221,15 @@ const ROUTES_OUTSIDE_API = ["health"];
  * here is exactly the hand-maintained-inventory drift this enumeration exists to prevent, and
  * the sanity check below fails if a key does not match a route that actually exists.
  *
- * One entry (`agent/drive`) is NOT in that category and says so in its own reason: it does reach
- * a provider, and it is exempt from THIS enumeration only because the enumeration probes with a
- * POST carrying no credential and asserts guardRoute's exact 401 body. That route cannot have a
- * user session by construction - it is the durable transport's callback - so it authenticates
- * with a server-minted single-purpose credential instead, and the same "no credential, no work"
- * property is proven against it in tests/api/agent/drive.test.ts. An exemption whose reason is a
- * different verified control is the only kind allowed here; "it has no auth" never is.
+ * Two entries (`agent/drive` and `mcp`) are NOT in that category and say so in their own reasons:
+ * each does reach a provider, and each is exempt from THIS enumeration only because the
+ * enumeration probes with a POST carrying no credential and asserts guardRoute's exact 401 body.
+ * Neither takes a user session. `agent/drive` is the durable transport's callback and verifies a
+ * server-minted single-purpose credential, proven in tests/api/agent/drive.test.ts; `mcp` is
+ * called by an MCP client of the user's own and verifies a scoped bearer token, because a session
+ * cookie must not open a machine API, proven in tests/security/mcp-auth.test.ts. An exemption
+ * whose reason is a different verified control is the only kind allowed here; "it has no auth"
+ * never is.
  */
 const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "admin/audit": "reads/writes the in-process audit ring buffer only; no database or LLM provider",
@@ -249,6 +251,7 @@ const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "connections/managed": "reads seed config metadata only; never opens a database connection (GET, no POST export)",
   health:
     "liveness only: returns a fixed body and touches nothing, so there is no provider to require a session for (GET, no POST export). The connection-scoped check is POST /api/db/health, which is not on this list",
+  mcp: "reaches a provider, but is called by an MCP client of the user's own and verifies a scoped bearer token instead of a session (src/lib/mcp/bearer.ts): its 401 body differs from guardRoute's on purpose, and tests/security/mcp-auth.test.ts proves that no refused identity constructs a provider",
   storage: "reaches the app's own storage backend (STORAGE_PROVIDER), not a user database or LLM provider (GET only)",
   "storage/[collection]": "same storage backend as above, scoped to the caller's own data (PUT, no POST export)",
   "storage/config": "publicly documents whether server storage is enabled; no session, no provider (GET only)",
@@ -341,11 +344,11 @@ describe("routes that reach a provider require a session", () => {
     { label: "a handleSchemaRequest() call", pattern: /\bhandleSchemaRequest\s*\(/ },
   ];
 
-  // The one allowlist entry whose reason does NOT claim to be provider-free (see the doc comment
-  // on ROUTES_WITHOUT_A_PROVIDER). Skipping it is itself verified below - the assertion requires
-  // the entry's reason to still say so, so this set cannot quietly grow into a second unchecked
+  // The two allowlist entries whose reasons do NOT claim to be provider-free (see the doc comment
+  // on ROUTES_WITHOUT_A_PROVIDER). Skipping them is itself verified below - the assertion requires
+  // each entry's reason to still say so, so this set cannot quietly grow into a second unchecked
   // allowlist.
-  const ALLOWLISTED_BUT_REACHES_A_PROVIDER = ["agent/drive"];
+  const ALLOWLISTED_BUT_REACHES_A_PROVIDER = ["agent/drive", "mcp"];
 
   /** Blanks out comments while preserving line numbering, so a mention in prose is not a hit. */
   function withoutComments(source: string): string {

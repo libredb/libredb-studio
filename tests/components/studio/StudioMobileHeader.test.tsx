@@ -1,5 +1,5 @@
 import "../../setup-dom";
-import "../../helpers/mock-navigation";
+import { mockRouterPush } from "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -427,6 +427,12 @@ describe("StudioMobileHeader", () => {
    * leave it. The user menu is where the other once-per-session settings already
    * live, and where a theme preference is looked for.
    */
+  test("offers every signed-in user the MCP settings screen", () => {
+    const { getByText } = render(<StudioMobileHeader {...defaults} isAdmin={false} />);
+    fireEvent.click(getByText("MCP"));
+    expect(mockRouterPush).toHaveBeenCalledWith("/settings/mcp");
+  });
+
   test("the user menu carries a theme control", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
     expect(queryByText("Switch to light theme")).not.toBeNull();

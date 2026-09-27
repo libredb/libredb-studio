@@ -1,0 +1,125 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "7L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:58:40.194Z",
+  "surface": "admin.listTopics() to kafka-auth with a wrong SCRAM-SHA-512 password"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Listing topics failed.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "metadata failed 2 times.",
+    "code": "PLT_KFK_MULTIPLE",
+    "class": "MultipleErrors",
+    "errors": [
+     {
+      "message": "Cannot connect to any broker.",
+      "code": "PLT_KFK_MULTIPLE",
+      "class": "MultipleErrors",
+      "errors": [
+       {
+        "message": "Connection to localhost:19094 failed.",
+        "code": "PLT_KFK_NETWORK",
+        "canRetry": true,
+        "class": "NetworkError",
+        "cause": {
+         "message": "SASL authentication failed.",
+         "code": "PLT_KFK_AUTHENTICATION",
+         "canRetry": false,
+         "class": "AuthenticationError",
+         "cause": {
+          "message": "Received response with error while executing API SaslAuthenticate(v2)",
+          "code": "PLT_KFK_RESPONSE",
+          "response": {
+           "errorCode": 58,
+           "errorMessage": "Authentication failed during authentication due to invalid credentials with SASL mechanism SCRAM-SHA-512",
+           "authBytes": {
+            "$bytes": ""
+           },
+           "sessionLifetimeMs": {
+            "$bigint": "0"
+           }
+          },
+          "class": "ResponseError",
+          "errors": [
+           {
+            "message": "SASL authentication failed.",
+            "code": "PLT_KFK_PROTOCOL",
+            "apiId": "SASL_AUTHENTICATION_FAILED",
+            "apiCode": 58,
+            "serverErrorMessage": "Authentication failed during authentication due to invalid credentials with SASL mechanism SCRAM-SHA-512",
+            "canRetry": false,
+            "hasStaleMetadata": false,
+            "needsRejoin": false,
+            "producerFenced": false,
+            "rebalanceInProgress": false,
+            "unknownMemberId": false,
+            "path": "/",
+            "class": "ProtocolError"
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "message": "Cannot connect to any broker.",
+      "code": "PLT_KFK_MULTIPLE",
+      "class": "MultipleErrors",
+      "errors": [
+       {
+        "message": "Connection to localhost:19094 failed.",
+        "code": "PLT_KFK_NETWORK",
+        "canRetry": true,
+        "class": "NetworkError",
+        "cause": {
+         "message": "SASL authentication failed.",
+         "code": "PLT_KFK_AUTHENTICATION",
+         "canRetry": false,
+         "class": "AuthenticationError",
+         "cause": {
+          "message": "Received response with error while executing API SaslAuthenticate(v2)",
+          "code": "PLT_KFK_RESPONSE",
+          "response": {
+           "errorCode": 58,
+           "errorMessage": "Authentication failed during authentication due to invalid credentials with SASL mechanism SCRAM-SHA-512",
+           "authBytes": {
+            "$bytes": ""
+           },
+           "sessionLifetimeMs": {
+            "$bigint": "0"
+           }
+          },
+          "class": "ResponseError",
+          "errors": [
+           {
+            "message": "SASL authentication failed.",
+            "code": "PLT_KFK_PROTOCOL",
+            "apiId": "SASL_AUTHENTICATION_FAILED",
+            "apiCode": 58,
+            "serverErrorMessage": "Authentication failed during authentication due to invalid credentials with SASL mechanism SCRAM-SHA-512",
+            "canRetry": false,
+            "hasStaleMetadata": false,
+            "needsRejoin": false,
+            "producerFenced": false,
+            "rebalanceInProgress": false,
+            "unknownMemberId": false,
+            "path": "/",
+            "class": "ProtocolError"
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

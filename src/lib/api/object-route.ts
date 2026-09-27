@@ -5,6 +5,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import {
   SOURCE_PART_LIMIT,
+  acceptedContainerShapes,
   applySourceBound,
   containerDepth,
   declaredKinds,
@@ -12,6 +13,7 @@ import {
   isSourcePartUnavailable,
   kindAcceptsSourceEdits,
   kindHasSource,
+  renderContainerShapes,
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { INVENTORY_LIMIT, INVENTORY_PAIR_LIMIT, PAIR_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
@@ -314,8 +316,8 @@ interface ObjectRequestBody {
  * A refusal this layer decides for itself, rather than one an engine raised.
  *
  * One status uses it, 400: a caller mistake the provider must never be asked to interpret, such as
- * a container deeper than the engine has levels, a kind it does not declare, or a path that is not
- * a path.
+ * a container path the engine does not accept as an address, a parent deeper than the engine has
+ * levels, a kind it does not declare, or a path that is not a path.
  *
  * It carried a 501 as well, for the phase in which the object methods were optional and only some
  * engines implemented them. They are required now, so there is no provider gap left to name and no
@@ -447,12 +449,19 @@ export function dedupePaths(paths: readonly (readonly string[])[]): readonly (re
 }
 
 /**
- * A container path the engine could actually resolve, checked before the provider is called.
+ * A container PARENT the engine could list under, checked before the provider is called.
  *
- * Only a path DEEPER than the declared depth is refused. A path exactly at the depth is what a
- * caller asking for the level below the last one sends, and PostgreSQL's `listContainers`
- * documents answering `[]` for it as a true statement about the engine rather than a caller
- * mistake, so refusing it here would contradict the provider.
+ * `parent` on `POST /api/db/objects/containers` is a tree cursor rather than an address: the
+ * tree walks down one level at a time, so on every engine any depth up to and including the
+ * declared one is a valid place to stand, and only a path DEEPER than the declared depth is
+ * refused. A path exactly at the depth is what a caller asking for the level below the last one
+ * sends, and PostgreSQL's `listContainers` documents answering `[]` for it as a true statement
+ * about the engine rather than a caller mistake, so refusing it here would contradict the
+ * provider.
+ *
+ * It used to guard addresses too, and #1147 split that out: an ADDRESS is checked against the
+ * declared shapes by `assertContainerAddress` below, because a depth ceiling admits a path one
+ * segment short on an engine that accepts only the declared depth.
  */
 export function assertContainerDepth(provider: DatabaseProvider, name: string, path: readonly string[]): void {
   const depth = containerDepth(provider.getCapabilities());
@@ -460,6 +469,36 @@ export function assertContainerDepth(provider: DatabaseProvider, name: string, p
   throw new ObjectRouteError(
     `${provider.type} declares a container depth of ${depth}, and "${name}" has ${path.length} segments: ` +
       `${JSON.stringify(path)}`,
+    400,
+  );
+}
+
+/**
+ * A container ADDRESS the engine accepts, checked at the HTTP edge before the provider is
+ * called (#1147).
+ *
+ * `container` on `counts` and `list`, and every entry of `containers` on `inventory`, names the
+ * container a read binds its segments from. It is checked against `acceptedContainerShapes()`,
+ * the kernel reader the provider's own `assertContainerPathShape` refuses by, so the edge and the
+ * provider apply one rule to one declaration. Before #1147 this layer applied the depth ceiling
+ * to addresses as well, so on an `exact` engine a path one segment short passed here and the
+ * provider refused it with `code` and `statusCode`, while a path one segment long was refused
+ * here with neither.
+ *
+ * One sentence and one wire shape for both directions: a 400 in this module's own
+ * `ObjectRouteError` family, `{ error }` with no `code`, like every other caller mistake this
+ * layer decides for itself. The shapes are spelled from the lowercased level LABELS by the
+ * kernel's `renderContainerShapes()`, whichever field a provider's own sentence spells them by,
+ * because this refusal binds nothing and is read by a person.
+ *
+ * The provider check stays behind it: MCP's `inspect-schema` and an embedded host reach the
+ * provider without this route.
+ */
+export function assertContainerAddress(provider: DatabaseProvider, name: string, path: readonly string[]): void {
+  const shapes = acceptedContainerShapes(provider.getCapabilities());
+  if (shapes.some((shape) => shape.length === path.length)) return;
+  throw new ObjectRouteError(
+    `${provider.type} accepts "${name}" as ${renderContainerShapes(shapes, "label")}, received ${JSON.stringify(path)}`,
     400,
   );
 }
@@ -673,9 +712,9 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * There are THREE producers of `edit`: `providers/sql/postgres.ts:3201`, gated on
- * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1279` and
- * `providers/keyvalue/redis.ts:1948`, both gated on `spec.acceptsSourceEdits === true`, which is the
+ * There are THREE producers of `edit`: `providers/sql/postgres.ts:3271`, gated on
+ * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1283` and
+ * `providers/keyvalue/redis.ts:1958`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
@@ -687,7 +726,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
  * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
  * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
- * stated at `redis.ts:1941-1947`: the affordance is offered on a truncated part deliberately, because
+ * stated at `redis.ts:1951-1957`: the affordance is offered on a truncated part deliberately, because
  * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
  * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
@@ -707,8 +746,8 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3358`, `providers/keyvalue/redis.ts:2038`
- * and `providers/sql/trino/index.ts:1473`. The second is what closes the class rather than narrowing
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:3428`, `providers/keyvalue/redis.ts:2048`
+ * and `providers/sql/trino/index.ts:1477`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.
  *

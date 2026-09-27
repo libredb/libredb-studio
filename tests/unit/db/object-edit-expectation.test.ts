@@ -18,8 +18,8 @@ describe("the Phase 3 census expectation", () => {
   test("the day-one set is four pairs on three engines", () => {
     expect(EXPECTED_EDITABLE_KINDS.length).toBe(4);
     expect(new Set(EXPECTED_EDITABLE_KINDS.map(([type]) => type)).size).toBe(3);
-    expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(15);
-    expect(EDIT_CENSUS_TYPES.length).toBe(18);
+    expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(16);
+    expect(EDIT_CENSUS_TYPES.length).toBe(19);
   });
 
   test("no pair is written twice", () => {
