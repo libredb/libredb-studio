@@ -3,7 +3,7 @@ import "../helpers/mock-navigation";
 
 import { mockToastError } from "../helpers/mock-sonner";
 
-import { mock } from "bun:test";
+import { mock, type Mock } from "bun:test";
 import React from "react";
 
 // ─── Module-level capture variables for mock editor callbacks ─────────────────
@@ -226,8 +226,16 @@ mock.module("@/lib/editor/sql-completions", () => ({
 }));
 
 // ── Mock editor/mongodb-completions ─────────────────────────────────────────
+// Named, so a test can read which editors register the MongoDB completion provider (#1088): each
+// registration answers its own dispose, so a test can also read that one was taken down.
+const mockMongoDBCompletionDisposals: Array<Mock<() => void>> = [];
+const mockRegisterMongoDBCompletionProvider = mock<(...args: unknown[]) => { dispose: () => void }>(() => {
+  const dispose = mock(() => {});
+  mockMongoDBCompletionDisposals.push(dispose);
+  return { dispose };
+});
 mock.module("@/lib/editor/mongodb-completions", () => ({
-  registerMongoDBCompletionProvider: mock(() => ({ dispose: mock(() => {}) })),
+  registerMongoDBCompletionProvider: mockRegisterMongoDBCompletionProvider,
 }));
 
 // ── Mock lucide-react icons ─────────────────────────────────────────────────
@@ -248,7 +256,9 @@ mock.module("lucide-react", () => {
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import { QueryEditor } from "@/components/QueryEditor";
+import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import type { MaintenanceType } from "@/lib/db/types";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 
 // =============================================================================
 // QueryEditor Tests
@@ -645,6 +655,53 @@ describe("QueryEditor", () => {
     const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     expect(editor.value).toContain('"collection"');
     expect(onChange).toHaveBeenCalled();
+  });
+
+  /*
+    #1088. A Kafka tab formats through the same JSON branch, and that is correct as is: Format
+    writes `JSON.stringify(JSON.parse(text), null, 2)` and the read request's parser reads nothing
+    but `JSON.parse`'s value, so a formatted request reads what the typed one reads. A digit-string
+    offset stays a string, and a JSON-number offset past 2^53, which the first parse has already
+    rounded, is refused before formatting and after it, with the advice to write it as a string.
+  */
+  describe("FORMAT on a Kafka read request (#1088)", () => {
+    const formatted = (typed: string): string => {
+      const { queryByText, queryByTestId } = render(
+        React.createElement(QueryEditor, createDefaultProps({ value: typed, language: "json" })),
+      );
+      fireEvent.click(queryByText("Format")!);
+      return (queryByTestId("mock-monaco-editor") as HTMLTextAreaElement).value;
+    };
+
+    test.each([
+      ['{"topic":"orders"}'],
+      ['{"topic":"orders","from":"earliest","limit":20}'],
+      ['{"topic":"orders","partition":0,"from":{"offset":120}}'],
+      ['{"topic":"orders","partition":2,"from":{"offset":"9007199254740993"}}'],
+      ['{"topic":"orders","from":{"timestamp":"2026-09-23T03:00:00+03:00"}}'],
+    ])("leaves %s a request the parser reads as the typed one", (typed) => {
+      const text = formatted(typed);
+      // It did format: the typed text is on one line, and Format writes two-space indentation.
+      expect(text).toBe(JSON.stringify(JSON.parse(typed), null, 2));
+      expect(text).not.toBe(typed);
+      expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT)).toEqual(parseReadRequest(typed, DEFAULT_QUERY_LIMIT));
+    });
+
+    test("keeps a digit-string offset past 2^53 the offset it names", () => {
+      const text = formatted('{"topic":"orders","partition":0,"from":{"offset":"9007199254740993"}}');
+      expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT).from).toEqual({
+        kind: "offset",
+        offset: BigInt("9007199254740993"),
+      });
+    });
+
+    test("cannot make a JSON-number offset past 2^53 readable: it is refused typed and formatted", () => {
+      const typed = '{"topic":"orders","partition":0,"from":{"offset":9007199254740993}}';
+      const text = formatted(typed);
+      expect(text).not.toBe(typed);
+      expect(() => parseReadRequest(typed, DEFAULT_QUERY_LIMIT)).toThrow("write it as a digit string");
+      expect(() => parseReadRequest(text, DEFAULT_QUERY_LIMIT)).toThrow("write it as a digit string");
+    });
   });
 
   test("FORMAT with invalid JSON does not crash", () => {
@@ -1462,6 +1519,73 @@ describe("QueryEditor", () => {
     mockUseMonacoReturn = { Range: class {} };
     const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: "json" })));
     unmount();
+  });
+
+  /*
+    #1088. A Kafka tab renders in Monaco's json mode, and the MongoDB completion provider registers
+    for that mode: its snippets are MongoDB documents (`find`, `aggregate`, `insertOne`, keyed by
+    `collection` and `operation`), which the read request's parser refuses, and its field items
+    offer a topic's result columns as if they were keys of the request. So it registers only where
+    the declared capabilities name no JSON dialect, and, for the published component's callers,
+    where none are passed.
+  */
+  describe("the MongoDB completion provider registers for MongoDB's JSON only (#1088)", () => {
+    const jsonCapabilities = { ...defaultCapabilities, queryLanguage: "json" as const, supportsExplain: false };
+    const kafkaCapabilities = { ...jsonCapabilities, queryDialect: "kafka" as const };
+
+    beforeEach(() => {
+      mockUseMonacoReturn = { Range: class {} };
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockMongoDBCompletionDisposals.length = 0;
+    });
+
+    test("a json editor on a Kafka connection registers none", () => {
+      render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: kafkaCapabilities })),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("the control: a json editor on MongoDB's JSON, with no dialect, registers it", () => {
+      render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: jsonCapabilities })),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+    });
+
+    test("a json editor handed no capabilities still registers it, as the published component always has", () => {
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: undefined })));
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+    });
+
+    test("the rule is any declared dialect, not Kafka's name: a json editor on another dialect registers none", () => {
+      // Reachable for a render while a tab is retyped after a connection switch, and the shape a
+      // JSON dialect added later arrives in: MongoDB's snippets are no more its grammar than Kafka's.
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "json", capabilities: { ...jsonCapabilities, queryDialect: "redis" } }),
+        ),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("a sql editor registers none, whatever its capabilities", () => {
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", capabilities: jsonCapabilities })));
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("a switch from MongoDB to Kafka takes the registration down, and registers none in its place", () => {
+      const props = createDefaultProps({ language: "json", capabilities: jsonCapabilities });
+      const { rerender } = render(React.createElement(QueryEditor, props));
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+
+      rerender(React.createElement(QueryEditor, { ...props, capabilities: kafkaCapabilities }));
+
+      expect(mockMongoDBCompletionDisposals).toHaveLength(1);
+      expect(mockMongoDBCompletionDisposals[0]).toHaveBeenCalledTimes(1);
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -----------------------------------------------------------------------

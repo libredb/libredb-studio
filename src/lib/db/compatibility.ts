@@ -67,6 +67,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // the `timeseries/` family. A relative that speaks the same HTTP API is recorded below only
   // once a gate-4 probe has measured one, never because the API answers.
   prometheus: true,
+  // Apache Kafka (#1088): its own provider, doc and integration test, and the first member of the
+  // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
+  // once a gate-4 probe has measured one, never because the protocol answers.
+  kafka: true,
   libredb: true,
 });
 
@@ -115,6 +119,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   redis: true,
   // A server the user already runs, reached over its HTTP API.
   prometheus: true,
+  // A cluster the user already runs, reached over the Kafka protocol.
+  kafka: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -171,7 +177,8 @@ export interface WireCompatibleEngine {
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
  * 2026-08-21/22, Apache Doris, Garnet and both Percona distributions from a seventh run
  * on 2026-08-26, ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27, and
- * VictoriaMetrics, the first relative of the `prometheus` driver, from a ninth on 2026-09-23.
+ * VictoriaMetrics, the first relative of the `prometheus` driver, from a ninth on 2026-09-23, and
+ * Redpanda, the first relative of the `kafka` driver, from a tenth on 2026-09-25.
  * The nine MySQL-wire relatives were re-measured together on 2026-09-06 for issues
  * #573 and #574, at the wire and then in a browser against the built app, and the
  * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5 for the
@@ -569,7 +576,6 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)",
     caveats: [
       "The Overview and Storage tabs of the monitoring dashboard fail, and so does the Scrape pools folder, whose count reads unavailable: VictoriaMetrics answers /api/v1/status/runtimeinfo, /api/v1/status/flags and /api/v1/scrape_pools with HTTP 400 and the text 'unsupported path requested', and the message shown names the path and the status, with a server that does not serve the path among the causes it offers.",
-      "The Tables tab lists ten metrics where Prometheus lists up to fifty: VictoriaMetrics ignores the limit on /api/v1/status/tsdb and answers its own top ten, which the tab's caption, 'at most 50', allows, and each of the ten series counts matched Prometheus's for the same metric.",
       "A metric's Source tab shows its type and help and no unit: VictoriaMetrics' /api/v1/metadata entries carry no unit, and the provider leaves it out rather than inventing an empty one.",
       "A target's Source tab has no scrapeInterval or scrapeTimeout: VictoriaMetrics' /api/v1/targets entries carry neither, and keep them as __scrape_interval__ and __scrape_timeout__ among the discovered labels, which the tab shows.",
       "A target VictoriaMetrics has not scraped yet reads as down: VictoriaMetrics reports it with health down, no error and a last scrape of 1970-01-01T00:00:00Z, where Prometheus reports health unknown.",
@@ -577,6 +583,24 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       'A string expression such as "libredb" returns no rows: VictoriaMetrics answers it with an empty vector, where Prometheus answers a string.',
       "A subquery's points are counted back from its evaluation time, both ends of its window kept: avg_over_time(up[5m])[30m:1m] answered 31 points ending at that time, where Prometheus 3.13.3 answers 30 on whole minutes.",
       "PromQL infos and warnings do not appear beside a result: VictoriaMetrics answered rate(up[5m]) with no notice where Prometheus 3.13.3 attaches 'PromQL info: metric might not be a counter', and it sent none with any other answer measured.",
+    ],
+  },
+  {
+    // The first relative of the `kafka` driver: it answers the Kafka protocol, so the provider serves
+    // it unchanged. Probed as a single node seeded by the Kafka fixture's own scripts, through a real
+    // provider run by tests/live/kafka-read-only.ts, with Apache Kafka 4.3.1 as the baseline in the
+    // same pass (#1088 section 8). Every surface answered and the broker's state was unchanged by the
+    // run; the caveats name the figures Redpanda does not publish over the protocol, and the group
+    // type it cannot report, which is right there because it has no other kind of group.
+    name: "Redpanda",
+    via: "kafka",
+    tier: "full",
+    probedVersion: "Redpanda v26.2.2",
+    caveats: [
+      "Max connections reads 0, no limit published: Redpanda's DescribeConfigs answer for a broker holds no max.connections, and it keeps its connection limits in its cluster configuration, which the Kafka protocol does not read.",
+      "A broker's Source tab lists nine configs where Apache Kafka 4.3.1 lists 340: Redpanda answers DescribeConfigs for a broker with those nine entries only.",
+      "The Storage tab shows no usage percentage: Redpanda's DescribeLogDirs answer carries no total or usable bytes for its data directory, so only the size is shown.",
+      "Every consumer group reads as classic, which on Redpanda is always right: it answers ListGroups up to v4, which carries no group type, and it has no KIP-848 consumer group protocol at all.",
     ],
   },
 ];

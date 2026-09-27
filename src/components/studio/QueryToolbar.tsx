@@ -68,7 +68,7 @@ export function QueryToolbar({
       {playgroundMode && (
         <div className="hidden md:flex items-center justify-center gap-2 px-4 py-1 bg-success-tint/10 border-b border-success-tint/20 text-success">
           <FlaskConical strokeWidth={1.5} className="w-3 h-3" />
-          <span className="text-xs font-mediumr">Sandbox Mode — All changes will be auto-rolled back</span>
+          <span className="text-xs font-medium">Sandbox Mode — All changes will be auto-rolled back</span>
         </div>
       )}
 

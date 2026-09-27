@@ -1,0 +1,76 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "consumer.fetch(orders partition 1 offset 1000)"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Received response with error while executing API Fetch(v13)",
+  "code": "PLT_KFK_RESPONSE",
+  "response": {
+   "throttleTimeMs": 0,
+   "errorCode": 0,
+   "sessionId": 1,
+   "responses": [
+    {
+     "topicId": "03c22755-ff60-4977-b784-b9da7e542644",
+     "partitions": [
+      {
+       "partitionIndex": 1,
+       "errorCode": 1,
+       "highWatermark": {
+        "$bigint": "12"
+       },
+       "lastStableOffset": {
+        "$bigint": "12"
+       },
+       "logStartOffset": {
+        "$bigint": "0"
+       },
+       "divergingEpoch": {
+        "epoch": -1,
+        "endOffset": {
+         "$bigint": "-1"
+        }
+       },
+       "currentLeader": {
+        "leaderId": -1,
+        "leaderEpoch": -1
+       },
+       "snapshotId": {
+        "endOffset": {
+         "$bigint": "-1"
+        },
+        "epoch": -1
+       },
+       "abortedTransactions": null,
+       "preferredReadReplica": -1,
+       "records": []
+      }
+     ]
+    }
+   ],
+   "nodeEndpoints": []
+  },
+  "class": "ResponseError",
+  "errors": [
+   {
+    "message": "The requested offset is not within the range of offsets maintained by the server.",
+    "code": "PLT_KFK_PROTOCOL",
+    "apiId": "OFFSET_OUT_OF_RANGE",
+    "apiCode": 1,
+    "serverErrorMessage": null,
+    "canRetry": false,
+    "hasStaleMetadata": false,
+    "needsRejoin": false,
+    "producerFenced": false,
+    "rebalanceInProgress": false,
+    "unknownMemberId": false,
+    "path": "/responses/0/partitions/0",
+    "class": "ProtocolError"
+   }
+  ]
+ }
+}

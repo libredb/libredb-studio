@@ -7,6 +7,8 @@
 > [opensearch.md](./opensearch.md) is the prime reference for the fork — **one implementation serves
 > both type-ids**, and the two documents deliberately disagree wherever the two products do.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -1706,4 +1708,4 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
 - Mapping: <https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping.html>
 - `_cat/indices`: <https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-indices.html>
 - Elastic License 2.0: <https://www.elastic.co/licensing/elastic-license>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Druid](./druid.md) · [Apache Trino](./trino.md) · [OpenSearch](./opensearch.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Druid](./druid.md) · [Trino](./trino.md) · [OpenSearch](./opensearch.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

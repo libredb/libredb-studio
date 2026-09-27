@@ -298,9 +298,10 @@ jobs:
     # libraries prebuilt, so the apt path is removed rather than retried.
     # The tag MUST track @playwright/test in package.json: a mismatch only
     # costs a re-download into PLAYWRIGHT_BROWSERS_PATH (the install step below
-    # is the fail-safe), never a broken job.
+    # is the fail-safe), never a broken job, which is why it went unnoticed;
+    # tests/unit/ci-playwright-image.test.ts now fails on it.
     container:
-      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
 
     steps:
       - name: Checkout code
@@ -500,7 +501,7 @@ jobs:
     # only need node + bun; the docker/deb/rpm/snap channels elsewhere need a
     # daemon or a package manager and therefore stay on the bare runner.
     container:
-      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6

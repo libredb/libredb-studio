@@ -3,8 +3,9 @@ import { defineConfig, devices } from "@playwright/test";
 // Override with E2E_PORT when localhost:3000 is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
-// offline-editor.spec.ts gets its own server process on its own port - see the webServer array
-// below for why. Override with E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
+// offline-editor.spec.ts and kafka-provider.spec.ts get a second server process on its own port -
+// see the projects and the webServer array below for why. Override with E2E_OFFLINE_PORT under the
+// same collision circumstances as E2E_PORT.
 const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
 
 const testCredentials = {
@@ -44,8 +45,9 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      // offline-editor.spec.ts runs under "chromium-offline-editor" below, against its own server.
-      testIgnore: /(?:offline-editor|base-path)\.spec\.ts/,
+      // offline-editor.spec.ts and kafka-provider.spec.ts run under their own projects below,
+      // against the second server.
+      testIgnore: /(?:offline-editor|base-path|kafka-provider)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -63,6 +65,16 @@ export default defineConfig({
       name: "chromium-offline-editor",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /offline-editor\.spec\.ts/,
+    },
+    {
+      // kafka-provider.spec.ts drives Test Connection, which spends the same per-account "query"
+      // bucket, and on the shared server it met the budget the specs before it had spent: CI run
+      // 36263561882 answered its refusal check "Too many requests. Try again in 38 seconds." on all
+      // three attempts. It runs against the second server for the reason offline-editor.spec.ts
+      // does; the two specs together stay far below that bucket's 120 requests a minute.
+      name: "chromium-kafka",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /kafka-provider\.spec\.ts/,
     },
     {
       // Scoped to the CSP spec only. The desktop shell renders under WebKitGTK, and this is the

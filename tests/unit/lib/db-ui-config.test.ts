@@ -9,6 +9,7 @@ import {
   getDBIcon,
   getDBColor,
   isFileBased,
+  offersSshTunnel,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -37,6 +38,7 @@ const ALL_TYPES: DatabaseType[] = [
   "libsql",
   "duckdb",
   "prometheus",
+  "kafka",
 ];
 
 describe("db-ui-config", () => {
@@ -224,6 +226,64 @@ describe("db-ui-config", () => {
       expect(takesConnectionField("prometheus", "password")).toBe(true);
     });
 
+    test("kafka declares saslMechanism as a select with exactly the three mechanisms, no database field and no SSH tunnel", () => {
+      const kafka = DB_UI_CONFIG.kafka;
+      expect(kafka.label).toBe("Apache Kafka");
+      expect(kafka.defaultPort).toBe("9092");
+      expect(kafka.showConnectionStringToggle).toBe(false);
+      expect(kafka.showSshTunnel).toBe(false);
+      expect(kafka.connectionFields).toEqual(["host", "port", "saslMechanism", "user", "password"]);
+      expect(kafka.fieldOptions?.saslMechanism?.map((option) => option.value)).toEqual([
+        "PLAIN",
+        "SCRAM-SHA-256",
+        "SCRAM-SHA-512",
+      ]);
+      // Each mechanism is offered under its own name, the word the broker's configuration uses.
+      expect(kafka.fieldOptions?.saslMechanism?.map((option) => option.label)).toEqual([
+        "PLAIN",
+        "SCRAM-SHA-256",
+        "SCRAM-SHA-512",
+      ]);
+      expect(kafka.fieldLabels?.saslMechanism).toBe("SASL mechanism");
+      expect(kafka.fieldHints?.saslMechanism).toBe("PLAIN and SCRAM require TLS");
+      // The one rule the modal and buildConnection read: false only where an entry declares it.
+      expect(offersSshTunnel("kafka")).toBe(false);
+      expect(offersSshTunnel("postgres")).toBe(true);
+    });
+
+    test("only kafka's connections refuse an SSH tunnel, and only because its entry declares it", () => {
+      // Derived from the declaration rather than typed out: a tunnel forwards one address, and a
+      // Kafka client reaches every broker at the address the broker advertises (docs/providers/kafka.md).
+      for (const type of ALL_TYPES) {
+        expect({ type, offered: offersSshTunnel(type) }).toEqual({
+          type,
+          offered: getDBConfig(type).showSshTunnel !== false,
+        });
+      }
+      const refusing = ALL_TYPES.filter((type) => !offersSshTunnel(type));
+      expect(refusing).toEqual(["kafka"]);
+      // A file-based engine still answers true: its panel is hidden by isFileBased instead.
+      expect(offersSshTunnel("sqlite")).toBe(true);
+    });
+
+    test("a field an engine draws as a select is a field it takes, and the SASL select is drawn exactly where the field is taken", () => {
+      // The dialog renders a select from `fieldOptions` where the engine takes the field, and
+      // buildConnection writes the field on the same condition, so a declaration that named
+      // options for a field the engine does not take, or took the field with no options to
+      // choose from, would draw a control that writes nothing or a select that offers nothing.
+      for (const type of ALL_TYPES) {
+        const config = getDBConfig(type);
+        for (const field of Object.keys(config.fieldOptions ?? {}) as ConnectionField[]) {
+          expect({ type, field, taken: takesConnectionField(type, field) }).toEqual({ type, field, taken: true });
+        }
+        expect({ type, declared: config.fieldOptions?.saslMechanism !== undefined }).toEqual({
+          type,
+          declared: takesConnectionField(type, "saslMechanism"),
+        });
+      }
+      expect(ALL_TYPES.filter((type) => takesConnectionField(type, "saslMechanism"))).toEqual(["kafka"]);
+    });
+
     test("every provider carries a distinct colour class", () => {
       const colors = ALL_TYPES.map((type) => getDBConfig(type).color);
       expect(new Set(colors).size).toBe(colors.length);
@@ -267,6 +327,8 @@ describe("db-ui-config", () => {
       expect(isFileBased("clickhouse")).toBe(false);
       expect(isFileBased("druid")).toBe(false);
       expect(isFileBased("prometheus")).toBe(false);
+      // Not file-based, so the dialog keeps its TLS panel: only the SSH half is withheld.
+      expect(isFileBased("kafka")).toBe(false);
     });
   });
 
@@ -375,6 +437,7 @@ describe("db-ui-config", () => {
           "connectionString",
           "apiKeyId",
           "apiKeySecret",
+          "saslMechanism",
         ] as const;
         for (const type of ALL_TYPES) {
           for (const field of FIELDS) {
@@ -415,6 +478,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   authSource: true,
   apiKeyId: true,
   apiKeySecret: true,
+  saslMechanism: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 
@@ -449,11 +513,11 @@ describe("declared connection-field copy (#1085)", () => {
     expect(connectionFieldHint(empty, "password")).toBeUndefined();
   });
 
-  test("only prometheus declares field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only prometheus and kafka declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["prometheus"]);
+    expect(declared).toEqual(["prometheus", "kafka"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -473,6 +537,18 @@ describe("declared connection-field copy (#1085)", () => {
     expect(connectionFieldHint(config, "user")).toBeUndefined();
     // The control: every other field keeps the dialog's own word and draws no hint.
     for (const field of EVERY_FIELD.filter((candidate) => candidate !== "password" && candidate !== "user")) {
+      expect(connectionFieldLabel(config, field, "the dialog's own word")).toBe("the dialog's own word");
+      expect(connectionFieldHint(config, field)).toBeUndefined();
+    }
+  });
+
+  test("kafka declares the SASL select's label and hint, because the select says TLS is required before the refusal does", () => {
+    const config = getDBConfig("kafka");
+    expect(connectionFieldLabel(config, "saslMechanism", "the dialog's own word")).toBe("SASL mechanism");
+    expect(connectionFieldHint(config, "saslMechanism")).toBe("PLAIN and SCRAM require TLS");
+    // The control: every other field keeps the dialog's own word and draws no hint, so the user
+    // and password boxes read "Username" and "Password" as they do on every networked engine.
+    for (const field of EVERY_FIELD.filter((candidate) => candidate !== "saslMechanism")) {
       expect(connectionFieldLabel(config, field, "the dialog's own word")).toBe("the dialog's own word");
       expect(connectionFieldHint(config, field)).toBeUndefined();
     }
@@ -524,6 +600,9 @@ describe("db-showcase", () => {
         // Behind Trino and ahead of libSQL (#1085): a name every cloud-native evaluator knows,
         // met as the metrics store beside their databases rather than as one of them.
         "prometheus",
+        // Behind Prometheus and ahead of libSQL (#1088), for the same reason: the message log
+        // those teams run beside their databases, met beside them rather than as one of them.
+        "kafka",
         "libsql",
         "libredb",
       ]);

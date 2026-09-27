@@ -24,13 +24,31 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { type, target } = body;
+    const { type, target, container } = body;
 
     const connection = await resolveConnection(body, guard.session);
 
     if (!type) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
     }
+
+    // `container` is the row's `schemaName`: a string naming the container the target lives in,
+    // or absent for a request that names none. A non-string one is a malformed request, and it
+    // is answered HERE rather than allowed through to a provider, where the first use - an
+    // `identifier.replace` - threw a TypeError and the client read a 500 for a request this
+    // route could have refused by reading the field's type (#1091 review). Nothing is opened
+    // and nothing is run for it.
+    if (container !== undefined && typeof container !== "string") {
+      return NextResponse.json(
+        { error: `"container" must be a string naming the target's container` },
+        { status: 400 },
+      );
+    }
+
+    // An EMPTY string reads as the absence of a container, the same way an empty `target` reads
+    // as the whole-database form below. Nothing here may hand a provider a value that its own
+    // falsy test would have refused anyway, because the audit row below records what arrived.
+    const requestedContainer: string | undefined = container || undefined;
 
     const provider = await getOrCreateProvider(connection);
     const capabilities = provider.getCapabilities();
@@ -102,7 +120,7 @@ export async function POST(request: Request) {
     }
 
     const startTime = Date.now();
-    const result = await provider.runMaintenance(type, target);
+    const result = await provider.runMaintenance(type, target, requestedContainer);
     const duration = Date.now() - startTime;
 
     // Isolated in its own try/catch: runMaintenance() above has already succeeded and its result
@@ -114,6 +132,12 @@ export async function POST(request: Request) {
         type: type === "kill" ? "kill_session" : "maintenance",
         action: type.toUpperCase(),
         target: target || "all",
+        // The container the request named, omitted when it named none. `app.orders` and
+        // `public.orders` recorded identically while this row carried only `target`, and an
+        // operator reconstructing what was done to a database could not tell the two apart
+        // (#1091 review). Optional on the EVENT the way `reason` and `bucket` are, so a
+        // whole-database row does not grow a field claiming a container it never had.
+        container: requestedContainer,
         connectionName: connection.name || connection.database || "unknown",
         user: guard.session.username || "admin",
         // The engine's verdict, not the request's. `runMaintenance` resolving is only the

@@ -674,6 +674,9 @@ export function useQueryExecution({
             isExecuting: false,
             isLoadingMore: false,
             explainPlan: explainPlanData || t.explainPlan,
+            // A run that landed answers the failure before it. An EXPLAIN leaves the
+            // results panel alone, so it leaves that panel's error alone too.
+            runError: isExplain ? t.runError : undefined,
           };
         });
 
@@ -758,10 +761,26 @@ export function useQueryExecution({
         // say one thing.
         const title = isLoadMore ? "Load More Error" : "Query Error";
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        // Fallback string check for cancellation errors not caught by response code
-        if (errorMessage.includes("Query was cancelled") || errorMessage.includes("cancelled")) {
-          toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
-          return false;
+        // NO MESSAGE CHECK FOR A CANCEL. Both real cancellations are caught before this by
+        // structure: the fetch's own AbortError above, and the server's 499 `QUERY_CANCELLED`,
+        // which every provider's cancel maps to, where the response is read. A check for the
+        // word "cancelled" here also caught `column "cancelled" does not exist` and kept the
+        // previous statement's rows under it.
+        // A FAILED RUN IS NOT A RUN OF THE ROWS ON SCREEN. A new run that fails replaces the
+        // previous result with its error, because leaving those rows up broke the invariant
+        // the replace branch keeps (#881): the grid, export and inline edit went on acting on
+        // the previous statement's rows while the editor showed the one that failed, and the
+        // toast that said so fades. A failed page keeps its rows, for the reason above, and an
+        // EXPLAIN never owned the results. `commitToTab` drops the write for a superseded run.
+        if (!isLoadMore && !isExplain) {
+          commitToTab((t) => ({
+            ...t,
+            result: null,
+            resultQuery: undefined,
+            allRows: undefined,
+            currentOffset: 0,
+            runError: errorMessage,
+          }));
         }
         toast({ title, description: errorMessage, variant: "destructive" });
         return false;

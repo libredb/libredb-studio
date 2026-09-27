@@ -538,6 +538,56 @@ opened before any scope was recorded still has no owner.
 The same argument applies to `sqlite` and `duckdb`, which likewise hold one handle for every
 concurrent request and ignore the scope for the same reason.
 
+### 5.2b Commands that would change the shared connection (#1107)
+
+`query()` refuses three kinds of command before they reach the server.
+The reason is the one §5.2a gives for `MULTI`: the provider is cached per connection for the whole process and runs every statement on ONE client (§3.6), so whatever a statement leaves on that client is what every later request on the connection gets, whoever sends it.
+Measured on redis 8.10.2 through ioredis 5.11.1, on a connection configured for database `2`: the first table as an ACL user with `+@read` on 2026-09-25, the rest as `default` on 2026-09-28.
+
+**Commands that change what later requests read, or who they run as.**
+The refusal reads `<COMMAND> is not run here: it would change the shared connection for every later request.`, and for `SELECT` it adds where to pick a database instead.
+
+| Command | What it did to the shared client |
+|---------|----------------------------------|
+| `SELECT 0` | Every later `GET` read database 0 instead of the configured `database` |
+| `MULTI` / `SELECT 0` / `EXEC` | The same, which is why the refusal is by command name and not by reply |
+| `RESET` | Moved the client to database 0 AND logged it back in as `default`: the read-only user could `SET` |
+| `AUTH default <anything>` | The same against a stock `default nopass` server |
+| `HELLO 3` | Switched the reply protocol; ioredis then failed with `Protocol error, got "%"` |
+
+**Commands after which the connection stops answering.**
+The refusal reads `<COMMAND> is not run here: the shared connection would stop answering later requests.`
+
+| Command | What it did to the shared client |
+|---------|----------------------------------|
+| `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` | Never answered; ioredis threw an uncaught `TypeError`, and every later command failed `Connection in subscriber mode`. Through `POST /api/db/query`, one `SUBSCRIBE` from a `user` session failed the connection for every user, admin included, until the idle sweep evicted the provider |
+| `QUIT` | Closed the socket for good: every later command failed `Connection is closed.`, while `isConnected()` still said true, so the provider cache kept serving it |
+| `MONITOR` | Turned the connection into a feed of every command the server runs, which ioredis read as replies to later commands |
+| `CLIENT REPLY OFF`, `CLIENT REPLY SKIP` | Stopped the server replying, so every later command waited for an answer that never came |
+
+**Commands that hold the connection until data or a timeout arrives.**
+The refusal reads `<COMMAND> is not run here: every other request on the shared connection would wait until it returns.`
+They are `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, and `XREAD` / `XREADGROUP` with `BLOCK`.
+With a timeout of 0 each one never returned, and neither did any later command.
+A `GET` sent while `BLPOP queue 3` waited answered after 3 seconds, so the refusal does not depend on the timeout.
+Only a `BLOCK` before `STREAMS` is the option, and `GROUP`'s two names are skipped, so a stream key or a group named `BLOCK` still runs.
+The non-blocking forms, such as `LPOP`, `LMOVE`, `ZPOPMIN` and `XREAD` without `BLOCK`, run as before.
+
+**Every command word is compared up to its first NUL.**
+The server can match a name that way: it reuses the previous command's lookup when the next name matches it as a C string.
+On a raw socket `SELECT\0 0` answered `OK` right after `SELECT 2` and `unknown command` right after `PING`.
+The provider sends `SELECT <db>` on connect, so a byte-exact check let the first statement on a fresh provider, `SELECT\0 0`, move it to database 0 through `POST /api/db/query`.
+
+**Measured, and still run.**
+`SWAPDB`, `MOVE` and a script's `redis.call('SELECT', n)` leave the client's database and user where they were.
+`UNSUBSCRIBE`, `PUNSUBSCRIBE` and `SUNSUBSCRIBE` outside subscriber mode answer 0 and change nothing.
+`CLIENT SETNAME`, `SETINFO`, `NO-EVICT`, `NO-TOUCH` and `TRACKING` set attributes and flags of the connection, not its database, user or replies.
+`SYNC` and `PSYNC` ended in an ioredis protocol error, and the next request was answered normally in the configured database.
+
+To read another database, pick it in the Keys panel (§6.2): a key opened from there runs under the
+per-run `database` field of `POST /api/db/query`, on a provider of its own, and the shared one is not
+touched. To change the database a connection reads by default, change its **Database** field (§4.1).
+
 ### 5.3 Schema-explorer menu actions
 
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that node,
@@ -1606,6 +1656,7 @@ no control offers it.
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `keyspace` (relation) and `function` (routine, `hasSource`, `sourceLanguage: "lua"`). `function` is the only kind in this engine with a definition text, read through `FUNCTION LIST ... WITHCODE` ([§6.1](#61-the-object-surface-789)). Three further candidates are absent rather than declared and zero |
 | `keyScan` | `{ defaultCount: 500, maxCount: 1000 }` — the batch sizes this provider forwards for a resumable walk of the keyspace, and the declaration that gates the Keys panel ([§6.2](#62-the-key-space-walk-panel)). Declared here rather than defaulted at the call site so a panel and its provider cannot disagree about what a batch is |
 | `supportsMaintenance` | `true` |
@@ -1856,6 +1907,7 @@ request/response contract.
   node presents a self-signed one, which a verifying mode would refuse. Verification therefore stays
   an explicit choice in the SSL panel; the URL alone never turns it on.
 - **No Cluster / Sentinel support.** Only a single standalone node is supported.
+- **No pub/sub, `MONITOR` or blocking reads in the editor.** Each would change or hold the one client every request on the connection shares, so `query()` refuses them ([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)).
 - **`SCAN` is capped at 1000 keys** for schema discovery — prefixes that only appear beyond the cap
   won't show as "tables". This is a deliberate bound, not a bug. The object surface shares the same
   walk and the same bound, so on a keyspace larger than it the `keyspace` folder's badge and its rows

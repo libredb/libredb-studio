@@ -5,7 +5,7 @@
     "which only Flathub's build infrastructure can do: it downloads the screenshots and",
     "rewrites the catalogue to https://dl.flathub.org/media. A build outside that pipeline",
     "can pass --mirror-screenshots-url and commit the screenshots ref (both are done here),",
-    "but the URLs still point at github.com, so these two errors always fire.",
+    "but the URLs still point at GitHub, so these two errors always fire.",
     "This file is NOT the Flathub exception list - it only relaxes our own verification runs.",
     "Everything else the repo lint reports stays a hard failure."
   ],

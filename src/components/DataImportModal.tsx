@@ -399,7 +399,7 @@ export function DataImportModal({
             <React.Fragment key={s}>
               <div
                 className={cn(
-                  "flex items-center gap-1.5 text-xs font-mediumr",
+                  "flex items-center gap-1.5 text-xs font-medium",
                   step === s
                     ? "text-brand"
                     : idx < ["upload", "preview", "configure", "ready"].indexOf(step)

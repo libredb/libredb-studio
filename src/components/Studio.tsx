@@ -762,6 +762,11 @@ export default function Studio() {
    * selection, an inline edit, the next page - are all about that same key, so the number goes onto
    * the TAB rather than into this request. `undefined`/`null` is the panel saying "the engine's own
    * session database", which is not an override at all: that activation opens the tab it always did.
+   *
+   * The path and that database are also the tab's ORIGIN, and it is what makes one rule hold for every
+   * gesture that arrives here: `handleTableClick` focuses a tab already open for the same object in
+   * the same database while its statement is unedited, rather than opening a second and reading the
+   * same rows again.
    */
   const openTabFor = (path: readonly string[], columns?: readonly ColumnSchema[], database?: number | null) => {
     if (applyInFlight) {

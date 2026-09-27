@@ -1,0 +1,286 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.listApis()"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "apiKey": 0,
+   "name": "Produce",
+   "minVersion": 0,
+   "maxVersion": 7
+  },
+  {
+   "apiKey": 1,
+   "name": "Fetch",
+   "minVersion": 4,
+   "maxVersion": 13
+  },
+  {
+   "apiKey": 2,
+   "name": "ListOffsets",
+   "minVersion": 0,
+   "maxVersion": 6
+  },
+  {
+   "apiKey": 3,
+   "name": "Metadata",
+   "minVersion": 0,
+   "maxVersion": 12
+  },
+  {
+   "apiKey": 9,
+   "name": "OffsetFetch",
+   "minVersion": 1,
+   "maxVersion": 8
+  },
+  {
+   "apiKey": 47,
+   "name": "OffsetDelete",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 10,
+   "name": "FindCoordinator",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 16,
+   "name": "ListGroups",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 18,
+   "name": "ApiVersions",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 11,
+   "name": "JoinGroup",
+   "minVersion": 0,
+   "maxVersion": 6
+  },
+  {
+   "apiKey": 12,
+   "name": "Heartbeat",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 21,
+   "name": "DeleteRecords",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 13,
+   "name": "LeaveGroup",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 14,
+   "name": "SyncGroup",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 19,
+   "name": "CreateTopics",
+   "minVersion": 0,
+   "maxVersion": 7
+  },
+  {
+   "apiKey": 8,
+   "name": "OffsetCommit",
+   "minVersion": 1,
+   "maxVersion": 8
+  },
+  {
+   "apiKey": 32,
+   "name": "DescribeConfigs",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 33,
+   "name": "AlterConfigs",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 20,
+   "name": "DeleteTopics",
+   "minVersion": 0,
+   "maxVersion": 6
+  },
+  {
+   "apiKey": 15,
+   "name": "DescribeGroups",
+   "minVersion": 0,
+   "maxVersion": 5
+  },
+  {
+   "apiKey": 17,
+   "name": "SaslHandshake",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 36,
+   "name": "SaslAuthenticate",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 44,
+   "name": "IncrementalAlterConfigs",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 42,
+   "name": "DeleteGroups",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 29,
+   "name": "DescribeAcls",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 35,
+   "name": "DescribeLogDirs",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 30,
+   "name": "CreateAcls",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 31,
+   "name": "DeleteAcls",
+   "minVersion": 0,
+   "maxVersion": 2
+  },
+  {
+   "apiKey": 22,
+   "name": "InitProducerId",
+   "minVersion": 0,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 24,
+   "name": "AddPartitionsToTxn",
+   "minVersion": 0,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 28,
+   "name": "TxnOffsetCommit",
+   "minVersion": 0,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 25,
+   "name": "AddOffsetsToTxn",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 26,
+   "name": "EndTxn",
+   "minVersion": 0,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 37,
+   "name": "CreatePartitions",
+   "minVersion": 0,
+   "maxVersion": 3
+  },
+  {
+   "apiKey": 23,
+   "name": "OffsetForLeaderEpoch",
+   "minVersion": 0,
+   "maxVersion": 4
+  },
+  {
+   "apiKey": 45,
+   "name": "AlterPartitionReassignments",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 46,
+   "name": "ListPartitionReassignments",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 61,
+   "name": "DescribeProducers",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 65,
+   "name": "DescribeTransactions",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 66,
+   "name": "ListTransactions",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 49,
+   "name": "AlterClientQuotas",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 48,
+   "name": "DescribeClientQuotas",
+   "minVersion": 0,
+   "maxVersion": 1
+  },
+  {
+   "apiKey": 60,
+   "name": "DescribeCluster",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 50,
+   "name": "DescribeUserScramCredentials",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 51,
+   "name": "AlterUserScramCredentials",
+   "minVersion": 0,
+   "maxVersion": 0
+  },
+  {
+   "apiKey": 15000,
+   "minVersion": 0,
+   "maxVersion": 0
+  }
+ ]
+}

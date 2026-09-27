@@ -7,6 +7,9 @@ import { checkOrigin } from "@/lib/api/origin-check";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { auditMcpDenial, authenticateMcpRequest } from "@/lib/mcp/bearer";
+import { MCP_PATH } from "@/lib/mcp/config";
+import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { withSecurityHeaders } from "@/lib/security/config";
 
@@ -76,6 +79,15 @@ export async function proxy(request: NextRequest) {
       }
     }
     return withSecurityHeaders(NextResponse.json(ORIGIN_MISMATCH_BODY, { status: 403 }));
+  }
+
+  // The MCP endpoint (#246). Matched before the cookie is read, so the session cookie is never
+  // consulted on this path: an MCP client authenticates with a scoped bearer token of its own,
+  // and a browser cannot attach one on its own. The exact match keeps /api/mcp/token, which mints
+  // those tokens for a signed-in user, on the ordinary session path below. The route verifies all
+  // of this again: middleware is an optimisation, not the authorization boundary.
+  if (pathname === MCP_PATH) {
+    return withSecurityHeaders(await mcpGate(request));
   }
 
   const token = request.cookies.get("auth-token")?.value;
@@ -174,6 +186,27 @@ export async function proxy(request: NextRequest) {
     logger.warn("JWT verification failed, redirecting to login", { route: "proxy" });
     return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
   }
+}
+
+/**
+ * Origin on every method, Host on a loopback bind, then the bearer, each refusal audited by the
+ * helper the route uses too. A request that passes continues to the route, as the drive path does.
+ */
+async function mcpGate(request: NextRequest): Promise<NextResponse> {
+  const refusal = mcpOriginHostRefusal(request);
+  if (refusal !== null) {
+    auditMcpDenial(request, refusal.reason);
+    return asNextResponse(refusal.response);
+  }
+  const authentication = await authenticateMcpRequest(request);
+  if (authentication.kind === "denied") auditMcpDenial(request, authentication.reason);
+  if (authentication.kind !== "authenticated") return asNextResponse(authentication.response);
+  return NextResponse.next();
+}
+
+/** withSecurityHeaders takes a NextResponse, and the SDK's helpers answer a plain Response. */
+function asNextResponse(response: Response): NextResponse {
+  return new NextResponse(response.body, { status: response.status, headers: response.headers });
 }
 
 export const config = {

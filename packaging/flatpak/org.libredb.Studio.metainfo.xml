@@ -25,7 +25,9 @@
     <p>
       LibreDB Studio is an open-source SQL IDE for developers and data teams. The desktop
       app runs entirely on your machine: it starts a local LibreDB Studio server in the
-      background and shows it in a native window. Nothing is sent to a cloud service.
+      background and shows it in a native window. It reaches the databases you configure
+      and, if you turn the optional AI features on, the model provider you pick. Nothing
+      else leaves the machine.
     </p>
     <p>Databases it speaks:</p>
     <ul>
@@ -43,9 +45,10 @@
       <li>Apache Druid (read-only)</li>
       <li>Elasticsearch (read-only)</li>
       <li>OpenSearch (read-only)</li>
-      <li>Apache Trino</li>
+      <li>Trino</li>
       <li>Apache Cassandra and ScyllaDB</li>
       <li>Prometheus (read-only)</li>
+      <li>Apache Kafka (read-only)</li>
     </ul>
     <p>What you get:</p>
     <ul>
@@ -53,13 +56,16 @@
       <li>A virtualized results grid built for large result sets, with CSV and JSON export</li>
       <li>Schema browser, entity-relationship diagrams and index advice</li>
       <li>Query plans, slow-query and session monitoring</li>
-      <li>Optional AI assistance (natural language to SQL, query explanation) using your own API key</li>
+      <li>Optional AI query explanation on PostgreSQL, MySQL, SQLite, libSQL, DuckDB,
+      Couchbase, ClickHouse, Apache Druid and Trino, through Gemini, OpenAI, a local
+      Ollama or your own endpoint</li>
       <li>An embedded sample database, so there is something to query on first launch</li>
     </ul>
     <p>
       Connections are made over TCP. The sandbox has no access to your home directory by
-      default; grant it explicitly if you need to open SQLite files or reach a database
-      through a Unix socket - the project documentation lists the exact commands.
+      default; grant it explicitly if you need to open SQLite or DuckDB files or reach
+      a database through a Unix socket - the project documentation lists the exact
+      commands.
     </p>
   </description>
 
@@ -90,20 +96,16 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/hero-editor.png</image>
+      <image>https://raw.githubusercontent.com/libredb/libredb-studio/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/hero-editor.png</image>
       <caption>Running a query and browsing results in the SQL editor</caption>
     </screenshot>
     <screenshot>
-      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/connection-modal.png</image>
+      <image>https://raw.githubusercontent.com/libredb/libredb-studio/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/connection-modal.png</image>
       <caption>Adding a database connection</caption>
     </screenshot>
     <screenshot>
-      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/erd-diagram.png</image>
+      <image>https://raw.githubusercontent.com/libredb/libredb-studio/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/erd-diagram.png</image>
       <caption>Entity-relationship diagram of a schema</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/nl2sql.png</image>
-      <caption>Turning a question in plain language into SQL</caption>
     </screenshot>
   </screenshots>
 

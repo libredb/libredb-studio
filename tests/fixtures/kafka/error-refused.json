@@ -1,0 +1,67 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "7L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:58:40.194Z",
+  "surface": "admin.listTopics() to localhost:19099, where nothing listens"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Listing topics failed.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "metadata failed 2 times.",
+    "code": "PLT_KFK_MULTIPLE",
+    "class": "MultipleErrors",
+    "errors": [
+     {
+      "message": "Cannot connect to any broker.",
+      "code": "PLT_KFK_MULTIPLE",
+      "class": "MultipleErrors",
+      "errors": [
+       {
+        "message": "Connection to localhost:19099 failed.",
+        "code": "PLT_KFK_NETWORK",
+        "canRetry": true,
+        "class": "NetworkError",
+        "cause": {
+         "errno": -111,
+         "syscall": "connect",
+         "port": 19099,
+         "address": "127.0.0.1",
+         "code": "ECONNREFUSED",
+         "class": "Error",
+         "message": "connect ECONNREFUSED 127.0.0.1:19099"
+        }
+       }
+      ]
+     },
+     {
+      "message": "Cannot connect to any broker.",
+      "code": "PLT_KFK_MULTIPLE",
+      "class": "MultipleErrors",
+      "errors": [
+       {
+        "message": "Connection to localhost:19099 failed.",
+        "code": "PLT_KFK_NETWORK",
+        "canRetry": true,
+        "class": "NetworkError",
+        "cause": {
+         "errno": -111,
+         "syscall": "connect",
+         "port": 19099,
+         "address": "127.0.0.1",
+         "code": "ECONNREFUSED",
+         "class": "Error",
+         "message": "connect ECONNREFUSED 127.0.0.1:19099"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

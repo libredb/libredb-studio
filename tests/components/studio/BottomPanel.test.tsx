@@ -299,6 +299,36 @@ describe("BottomPanel", () => {
     expect(emptyText).not.toBeNull();
   });
 
+  /**
+   * A failed run shows its failure where the rows were, and in both shells: the embedded
+   * workspace mounts no Toaster, so this block is the only failure signal a host's user
+   * gets. It replaces the empty state too, which would otherwise read as "nothing ran".
+   */
+  test("a failed run renders its error in place of the grid", () => {
+    const props = createDefaultProps({
+      mode: "results",
+      currentTab: {
+        id: "tab-1",
+        name: "Query 1",
+        query: "SELEC * FROM x",
+        result: null,
+        runError: 'near "SELEC": syntax error',
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    const { getByTestId, queryByTestId, queryByText } = render(
+      <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+    );
+
+    expect(getByTestId("run-failure").textContent).toContain("The query failed.");
+    expect(getByTestId("run-failure-message").textContent).toBe('near "SELEC": syntax error');
+    expect(queryByTestId("resultsgrid")).toBeNull();
+    expect(queryByText("Execute a query or check history")).toBeNull();
+    // Nothing to export: the rows that were on screen belonged to another statement.
+    expect(queryByText("Export")).toBeNull();
+  });
+
   test("tab click fires onSetMode with correct mode", () => {
     const onSetMode = mock(() => {});
     const props = createDefaultProps({ onSetMode });
@@ -786,6 +816,27 @@ describe("BottomPanel", () => {
       expect(badge.textContent).toContain("corr_9");
       expect(getByTestId("resultsgrid")).toBeTruthy();
       expect(capturedResultsGridProps.result).toEqual(ARTIFACT_RESULT);
+    });
+
+    test("a hydrated result still wins over the tab's own failed run", () => {
+      const props = hydratedProps({
+        currentTab: {
+          id: "tab-1",
+          name: "Q",
+          query: "SELEC 1",
+          result: null,
+          runError: "syntax error",
+          isExecuting: false,
+          type: "sql" as const,
+        },
+      });
+      const { getByTestId, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+      expect(capturedResultsGridProps.result).toEqual(ARTIFACT_RESULT);
+      expect(queryByTestId("run-failure")).toBeNull();
     });
 
     test("a hydrated result is read-only: nothing offers to edit it or page it", () => {

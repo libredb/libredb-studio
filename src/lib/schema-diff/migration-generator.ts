@@ -147,6 +147,14 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change.",
   },
+  // Not a table store either (#1088): a topic holds messages whose keys and values are bytes the
+  // producers chose, and the broker declares no column anywhere; the columns the object browser
+  // shows are the fixed shape of a read result. The sentence is the one `NO_TABLE_DDL` below
+  // prints when it declines the whole diff.
+  kafka: {
+    label: "Apache Kafka",
+    reason: "A topic holds messages, not rows with declared columns, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -190,6 +198,8 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * `prometheus` (#1085) joined later, on the fact `mongodb` and `redis` already rest on: its
  * text is PromQL, not SQL (`NON_SQL_DIALECTS`). `NO_TABLE_DDL` declines its whole diff before
  * any wrapper is written, so this entry keeps the two sets agreeing rather than changing output.
+ * `kafka` (#1088) joined on the same fact and for the same reason: its text is a JSON read
+ * request, not SQL.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -206,6 +216,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "opensearch",
   "trino",
   "prometheus",
+  "kafka",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -220,6 +231,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "elasticsearch",
   "opensearch",
   "prometheus",
+  "kafka",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

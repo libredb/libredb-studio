@@ -45,7 +45,7 @@ export interface WorkspaceConnection {
    * More control. That is deliberate rather than an omission: only the host knows whether
    * its `onQueryExecute` really applies a positive `offset`, and a control that re-fetches
    * page one is worse than none. Declare it `true` once your implementation pages, and
-   * report `pagination.wasLimited` honestly — the control also requires that.
+   * report `pagination.hasMore` honestly: the control also requires `hasMore: true`.
    */
   capabilities?: ProviderCapabilities;
   /** This provider's UI wording, as `getLabels()` reports it. See `capabilities`. */
@@ -407,8 +407,10 @@ export interface StudioWorkspaceProps {
    * after the first can be requested for.
    *
    * `offset` is what a Load More click asks for, and `limit` on that call is the size of the page
-   * already on screen. A host that cannot apply a positive `offset` should report
-   * `pagination.wasLimited: false`, which is what keeps the control from being offered at all.
+   * already on screen. A host that cannot apply a positive `offset` should leave
+   * `capabilities.supportsResultPagination` undeclared and report `pagination.hasMore: false`:
+   * `pageOfferFor` offers the control only when both are true, and `pagination.wasLimited`
+   * drives only the "limited" badge.
    */
   onQueryExecute: (
     connectionId: string,

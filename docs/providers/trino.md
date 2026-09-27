@@ -1,11 +1,13 @@
-# Apache Trino Provider
+# Trino Provider
 
-> Apache Trino support for LibreDB Studio, built on Trino's own client protocol (`POST /v1/statement`,
+> Trino support for LibreDB Studio, built on Trino's own client protocol (`POST /v1/statement`,
 > port `8080`) with **no driver dependency of any kind**: every statement is the body of an HTTP
 > request and the answer is read by following a chain of `nextUri` links through the runtime's own
 > `fetch`. This document is the single reference point for the Trino provider: design, architecture,
 > usage, and tests. If you are reading the code, extending Trino support, adding PrestoDB, or
 > authoring a new provider over HTTP, start here.
+
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
 
 | | |
 |---|---|
@@ -22,7 +24,7 @@
 | **Transactions** | Not exposed |
 | **Maintenance** | `kill` only, via `CALL system.runtime.kill_query` ([§8](#8-maintenance)) |
 | **Query cancellation** | Yes — `cancelQuery()` over `DELETE /v1/query/{id}` ([§3.7](#37-abandoning-a-request-does-not-stop-the-work)) |
-| **Verified against** | **Apache Trino 476**, the official `trinodb/trino:476` image with authentication disabled, catalogs `tpch` / `tpcds` / `memory` / `system` / `jmx`; schema tree read against `tpch`, statistics against `tpch.tiny`. Measured 2026-08-20 |
+| **Verified against** | **Trino 476**, the official `trinodb/trino:476` image with authentication disabled, catalogs `tpch` / `tpcds` / `memory` / `system` / `jmx`; schema tree read against `tpch`, statistics against `tpch.tiny`. Measured 2026-08-20 |
 | **Source** | [`src/lib/db/providers/sql/trino/`](../../src/lib/db/providers/sql/trino/) |
 | **Tests** | [`tests/integration/db/trino-provider.test.ts`](../../tests/integration/db/trino-provider.test.ts) + [`tests/unit/db/trino/`](../../tests/unit/db/trino/) + [`tests/unit/lib/explain/trino-json.test.ts`](../../tests/unit/lib/explain/trino-json.test.ts) + [`e2e/trino-provider.spec.ts`](../../e2e/trino-provider.spec.ts) |
 | **Tracking issue** | [#424 — Wire-compatibility and new engines](https://github.com/libredb/libredb-studio/issues/424), Phase 2 |
@@ -903,9 +905,9 @@ collide with a schema called `a` holding `b.c`.
 
 #### Container shapes and the derivations behind them
 
-Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole
-catalog hold", and a schema answers the folder the tree actually draws. That matches SQL Server and
-DuckDB, and `src/lib/api/object-route.ts` admits any path down to the declared depth.
+Both depths are accepted by all four methods: a catalog alone answers "how many tables does this whole catalog hold", and a schema answers the folder the tree actually draws.
+The declaration states it as `containerPathShapes: "prefixes"`, the same answer SQL Server, DuckDB and Couchbase give.
+The object routes in `src/lib/api/object-route.ts` read that field through the same kernel reader this provider refuses by, `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts`, so a path of neither depth is refused at the HTTP edge with the shapes the provider names.
 
 Nothing reads a path by position. The container segments come from the declared `ContainerLevelSpec`
 ids, the object name is `path[path.length - 1]`, and the depth is `containerDepth()` — never
@@ -1601,6 +1603,9 @@ every connector decides for itself whether it implements it, and measured, the `
 answers `This connector does not support analyze` and no connector on the probe cluster implements
 it. A button that always fails is worse than a stated reason.
 
+A `container` is deliberately ignored (#772): the only operation this provider performs is `kill`,
+whose target is a query id rather than an object inside any namespace.
+
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
 Declaring that an operation EXISTS is not enough to put a button on it: two engines that
@@ -1649,6 +1654,9 @@ are undeclared.
 | `defaultPort` | `8080` | Same under TLS ([§4.3](#43-tls-and-the-password-rule)) |
 | `identifierQuoting` | `"double"` | Declared, not derived from a generic port ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `statementTerminator` | `"none"` | `SELECT 1;` is a syntax error ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
+| `containerLevels` | `catalog`, then `schema` | Labelled Catalog and Schema: a catalog is a named connector configuration, not a database ([two container levels](#two-container-levels-and-a-catalog-is-not-a-database)) |
+| `containerPathShapes` | `"prefixes"` | `[catalog]` and `[catalog, schema]` both address a container, because a catalog alone is a real address ([container shapes](#container-shapes-and-the-derivations-behind-them)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider directly (#1147) |
+| `objectKinds` | `table`, `view`, `materialized_view`, `function` | Declared in this order ([the object surface](#the-object-surface-789)) |
 
 ### `getLabels()` ([`trino/index.ts`](../../src/lib/db/providers/sql/trino/index.ts))
 

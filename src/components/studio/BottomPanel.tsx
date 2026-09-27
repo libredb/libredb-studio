@@ -31,6 +31,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Terminal,
+  TriangleAlert,
   X,
   Zap,
 } from "lucide-react";
@@ -601,6 +602,32 @@ export function BottomPanel({
                 onApplyChanges={onApplyChanges}
                 onDiscardChanges={onDiscardChanges}
               />
+            ) : currentTab.runError !== undefined ? (
+              /*
+                The tab's last run failed, and its failure stands where its rows would.
+                After the grid, so a hydrated result keeps its precedence, and before the
+                empty state, which would read as "nothing ran". Rendered here rather than
+                left to the toast: the embedded shell mounts no Toaster, so in that product
+                this block is the only failure signal there is.
+              */
+              <div
+                role="alert"
+                className="h-full flex flex-col items-center justify-center px-3 text-center bg-surface"
+                data-testid="run-failure"
+              >
+                <TriangleAlert
+                  aria-hidden="true"
+                  strokeWidth={1.5}
+                  className="mb-2 h-8 w-8 text-destructive opacity-50"
+                />
+                <p className="text-xs font-medium text-destructive">The query failed.</p>
+                <p
+                  className="mt-1 max-w-xl break-words whitespace-pre-wrap font-mono text-xs text-destructive"
+                  data-testid="run-failure-message"
+                >
+                  {currentTab.runError}
+                </p>
+              </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
                 <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />

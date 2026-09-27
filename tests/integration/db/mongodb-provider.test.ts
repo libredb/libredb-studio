@@ -1204,6 +1204,40 @@ describe("MongoDBProvider", () => {
       expect(result.message).toContain("Compacted");
     });
 
+    // #1091 review: the refusal compared `config.database`, and a connection-string connection
+    // sets no `config.database` - so it refused the database the provider IS bound to and every
+    // per-collection button answered `bound to the database ""`. The comparison is against the
+    // name `getDatabaseName()` resolves and `connect()` opens.
+    test("a connection-string connection accepts the database it is bound to", async () => {
+      const provider = new MongoDBProvider({
+        ...baseConfig,
+        host: undefined,
+        database: undefined,
+        connectionString: "mongodb://remote:27017/fromstring",
+      });
+      await provider.connect();
+
+      const result = await provider.runMaintenance("analyze", "users", "fromstring");
+
+      expect(result.success).toBe(true);
+      await provider.disconnect();
+    });
+
+    test("a container naming another database is refused, and the sentence names the bound one", async () => {
+      const provider = new MongoDBProvider({
+        ...baseConfig,
+        host: undefined,
+        database: undefined,
+        connectionString: "mongodb://remote:27017/fromstring",
+      });
+      await provider.connect();
+
+      await expect(provider.runMaintenance("vacuum", "users", "elsewhere")).rejects.toThrow(
+        'bound to the database "fromstring"',
+      );
+      await provider.disconnect();
+    });
+
     test("unsupported maintenance type throws", async () => {
       await expect(provider.runMaintenance("flush" as never)).rejects.toThrow();
     });
@@ -1798,7 +1832,7 @@ describe("object surface", () => {
   test("declares columns on every kind it has, and both answer a usable column shape", async () => {
     const kinds = objectProvider.getCapabilities().objectKinds ?? [];
     // BOTH, and there is no third: `describeObject` samples documents the same way for a
-    // collection and for a view (`mongodb.ts:1818-1821`), so no kind here abstains and the
+    // collection and for a view (its docblock in `mongodb.ts`), so no kind here abstains and the
     // expectation above has to say `noAbstainingKinds`.
     expect(kinds.filter((kind) => kind.hasColumns === true).map((kind) => kind.id)).toEqual(["collection", "view"]);
     expect(kinds.filter((kind) => kind.hasColumns !== true).map((kind) => kind.id)).toEqual([]);
@@ -1839,9 +1873,9 @@ describe("object surface", () => {
       absentSource: { path: ["app", "no_such_view"], kind: "view" },
       // Every kind this engine has declares `hasColumns`, so invariant 8's negative
       // direction iterates zero times and certifies nothing unless it is said out loud.
-      // There is no schema to read here: a collection and a view both get their fields
-      // SAMPLED from documents by the same code path (`mongodb.ts:1818-1821`), so there is
-      // no kind left that could abstain.
+      // There is no schema to read here: a collection and a view both get their fields SAMPLED from
+      // documents by the same code path (`describeObject` in `mongodb.ts`), so there is no kind
+      // left that could abstain.
       noAbstainingKinds: true,
     });
   });

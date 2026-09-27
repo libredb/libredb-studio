@@ -58,7 +58,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -76,6 +76,7 @@ connections:
     # instanceName: "MSSQL$"  # SQL Server only
     # localDataCenter: "datacenter1"  # Cassandra only - REQUIRED there
     # authSource: "admin"     # MongoDB only - the database the user was created in
+    # saslMechanism: SCRAM-SHA-512  # Kafka only - PLAIN|SCRAM-SHA-256|SCRAM-SHA-512, a literal name
 
   - id: "dev-mysql"
     name: "Dev MySQL"
@@ -148,6 +149,23 @@ connections:
     # password alone is sent as a bearer token, for a token-guarded proxy. Over plain
     # HTTP either one is readable on the wire, so set `ssl` for a server across a
     # network you do not control.
+
+  - id: "events-kafka"
+    name: "Kafka Events"
+    type: kafka
+    host: "${KAFKA_HOST}"      # One bootstrap broker; the client learns the rest from it
+    port: 9093
+    saslMechanism: SCRAM-SHA-512   # A literal: PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512
+    user: "${KAFKA_USER}"
+    password: "${KAFKA_PASSWORD}"
+    roles: ["*"]
+    environment: production
+    ssl:
+      mode: verify-full        # SASL over plaintext is refused, and verify-full keeps the
+                               # credentials to brokers the CA vouches for
+    # No `database`: one connection is one cluster, so there is nothing to select.
+    # No `connectionString` and no `sshTunnel`: a Kafka client reaches every broker at
+    # the address the broker advertises, which a tunnel to one address does not carry.
 ```
 
 ### Field Reference
@@ -155,14 +173,14 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | — | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged |
+| `defaults` | No | — | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp` is refused here (see [MCP opt-in](#mcp-opt-in)) |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
@@ -179,7 +197,17 @@ connections:
 | `connections[].serviceName` | No | — | Oracle service name |
 | `connections[].instanceName` | No | — | SQL Server instance name |
 | `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
+| `connections[].saslMechanism` | No | - | Kafka: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`, absent meaning none; `user` and `password` are sent only with a mechanism, and only over TLS. It takes a literal name: it is neither a credential nor an address, so a `${ENV}` or `${vault:...}` reference in it is refused when the file loads, naming the field, because the file is validated before any reference is resolved |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file |
+
+### MCP opt-in
+
+An MCP client reaches a connection only when its entry says `mcp: true`, and only when the connection's `roles` admit the role the client's token carries.
+The opt-in is per connection: `defaults.mcp` is refused, because a default would opt in every connection the file later gains.
+The built-in sample connections never carry it, so they are never visible to an MCP client.
+A value that is not a boolean fails the whole file, as any invalid field does: `GET /api/connections/managed` then answers 500 with its named reason, and every MCP tool answers that the connection configuration could not be read.
+With no seed file, or with no entry that opts in for the token's role, `list_connections` answers an empty list.
 
 ---
 
@@ -488,6 +516,7 @@ extraEnvFrom:
 | Config file not found | App runs normally, no seed connections. Warning logged. |
 | Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
+| `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |
@@ -548,6 +577,7 @@ Standalone deployments also get automatic, code-defined seed connections (none o
 - **Sample (Employees)** — `src/lib/seed/sqlite-sample.ts` copies the vendored employees SQLite database (`seed-assets/sqlite/employee.db`, from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db); see `seed-assets/sqlite/ATTRIBUTION.md`) to `<data dir>/sample-employees.db`. Seeded **asynchronously and fail-open**: boot never waits for the copy; while it is in flight `GET /api/connections/managed` lists the seed id in `pendingSeeds` and the client polls (1s, max 30 attempts; the interval constant is inlined at build time — `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
 
 `getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`, `roles: ["*"]`), so they behave like any other unmanaged seed: editable, and if deleted they go to the dismissed list rather than reappearing.
+Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 

@@ -628,6 +628,9 @@ mock.module("ioredis", () => {
         this._inMulti = false;
         return "OK";
       }
+      // A server's `SELECT` moves THIS connection, the same as the method form above, so a
+      // provider that let it through `query()` would move the session here too (#1107).
+      if (cmd === "SELECT" && !this._inMulti) return this.select(Number(args[0]));
       if (cmd === "PING" && pingFailure !== null) throw pingFailure;
       // Inside a `MULTI` the server answers the status "QUEUED" INSTEAD of the command's
       // own reply and runs nothing, every command alike except the ones above. Measured on
@@ -1241,6 +1244,75 @@ describe("RedisProvider", () => {
       const result = await provider.query("GET mykey");
       expect(result.rows).toBeArray();
       expect(result.rows[0].result).toBe("hello-world");
+    });
+
+    // Every statement runs on the ONE client every later request shares, so a statement that would
+    // leave it in another database, as another user, no longer answering, or blocked is refused
+    // before it reaches the server. The NUL forms are here because the server can match a command
+    // word only up to a NUL (§5.2b), and the label is JSON so the NUL shows in the test name (#1107).
+    test.each(
+      [
+        "SELECT 0",
+        '{"command":"select","args":["0"]}',
+        "SELECT\u0000 0",
+        '{"command":"SELECT\\u0000","args":["0"]}',
+        "RESET",
+        "AUTH default x",
+        "HELLO 3",
+        "QUIT",
+        "SUBSCRIBE news",
+        "PSUBSCRIBE news:*",
+        "SSUBSCRIBE news",
+        "MONITOR",
+        "CLIENT REPLY OFF",
+        "client reply skip",
+        "CLIENT REPLY\u0000 OFF",
+        "BLPOP queue 0",
+        "BRPOP queue 5",
+        "BRPOPLPUSH queue done 0",
+        "BLMOVE queue done LEFT RIGHT 0",
+        "BLMPOP 0 1 queue LEFT",
+        "BZPOPMIN ranks 0",
+        "BZPOPMAX ranks 0",
+        "BZMPOP 0 1 ranks MIN",
+        "WAIT 1 0",
+        "WAITAOF 0 1 0",
+        "XREAD BLOCK 0 STREAMS events $",
+        "XREAD COUNT 10 block 100 STREAMS events $",
+        "XREADGROUP GROUP readers r1 BLOCK 0 STREAMS events >",
+      ].map((statement) => [JSON.stringify(statement), statement]),
+    )("%s is refused before it reaches the shared client (#1107)", async (_label, statement) => {
+      await provider.disconnect();
+      provider = new RedisProvider({ ...baseConfig, database: "2" });
+      await provider.connect();
+      capturedCalls.length = 0;
+
+      await expect(provider.query(statement)).rejects.toThrow(/shared connection/);
+      expect(capturedCalls).toEqual([]);
+
+      await provider.query("GET mykey");
+      expect(openedClients.at(-1)!.database).toBe(2);
+    });
+
+    // The controls for the refusal above: the same words where they leave the shared client as it
+    // was. A stream KEY or a GROUP named BLOCK is not the BLOCK option, an XREAD without STREAMS is
+    // the server's to refuse, and UNSUBSCRIBE outside subscriber mode answers 0 and changes nothing
+    // (measured, §5.2b).
+    test.each([
+      "XREAD COUNT 1 STREAMS events 0",
+      "XREAD COUNT 1",
+      "XREAD STREAMS BLOCK 0",
+      "XREADGROUP GROUP BLOCK r1 STREAMS events >",
+      "CLIENT INFO",
+      "LPOP queue",
+      "UNSUBSCRIBE",
+    ])("%s still runs (#1107)", async (statement) => {
+      capturedCalls.length = 0;
+
+      await provider.query(statement);
+
+      const [command, ...args] = statement.split(" ");
+      expect(capturedCalls).toEqual([{ command, args }]);
     });
 
     test("empty command throws QueryError", async () => {

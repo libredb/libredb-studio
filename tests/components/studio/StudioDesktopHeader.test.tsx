@@ -252,6 +252,14 @@ describe("StudioDesktopHeader", () => {
       expect(container.querySelector('[data-testid="dropdown-menu"]')).toBeTruthy();
     });
 
+    test("the user menu trigger is a button named User menu", () => {
+      // The trigger holds only an icon, and it is the only way to reach the MCP screen,
+      // so a screen reader must be able to find it by name.
+      const { getByRole } = render(<StudioDesktopHeader {...defaultProps} />);
+      const trigger = getByRole("button", { name: "User menu" });
+      expect(trigger.closest('[data-testid="dropdown-trigger"]')).toBeTruthy();
+    });
+
     test("does not render user dropdown when user is null", () => {
       const { container } = render(<StudioDesktopHeader {...defaultProps} user={null} />);
       expect(container.querySelector('[data-testid="dropdown-menu"]')).toBeNull();
@@ -300,6 +308,12 @@ describe("StudioDesktopHeader", () => {
       const { getByText } = render(<StudioDesktopHeader {...defaultProps} onLogout={onLogout} />);
       fireEvent.click(getByText("Logout"));
       expect(onLogout).toHaveBeenCalledTimes(1);
+    });
+
+    test("offers every signed-in user the MCP settings screen", () => {
+      const { getByText } = render(<StudioDesktopHeader {...defaultProps} isAdmin={false} user={{ role: "user" }} />);
+      fireEvent.click(getByText("MCP"));
+      expect(mockRouterPush).toHaveBeenCalledWith("/settings/mcp");
     });
 
     test("Logout menu item has danger-token styling", () => {

@@ -20,6 +20,7 @@
 
 import { isIPv6 } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { assertPublicLiteralHost } from "./egress-policy";
 
 export type HttpScheme = "http" | "https";
 
@@ -74,19 +75,29 @@ function ipv6Literal(host: string): string | null {
   return !address.includes("%") && isIPv6(address) ? address : null;
 }
 
-/** The host in URL form, or a refusal. */
-function validateHost(host: unknown): string {
+/**
+ * The host in URL form, or a refusal.
+ * Exported for the Kafka bootstrap address, which is a TCP host and port rather than a URL.
+ */
+export function validateHost(host: unknown): string {
   if (typeof host !== "string") throw new DatabaseConfigError(INVALID_HOST);
 
   const ipv6 = ipv6Literal(host);
-  if (ipv6 !== null) return `[${ipv6.toLowerCase()}]`;
-  if (IPV4.test(host) || isHostname(host)) return host.toLowerCase();
+  if (ipv6 !== null) {
+    return `[${ipv6.toLowerCase()}]`;
+  }
+  if (IPV4.test(host) || isHostname(host)) {
+    return host.toLowerCase();
+  }
 
   throw new DatabaseConfigError(INVALID_HOST);
 }
 
-/** An integer port from 1 to 65535, from a number or a string of digits alone. */
-function validatePort(port: unknown): number {
+/**
+ * An integer port from 1 to 65535, from a number or a string of digits alone.
+ * Exported for the Kafka bootstrap address, which is a TCP host and port rather than a URL.
+ */
+export function validatePort(port: unknown): number {
   const value = typeof port === "string" && PORT_DIGITS.test(port) ? Number(port) : port;
   if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_PORT) return value;
 
@@ -95,7 +106,9 @@ function validatePort(port: unknown): number {
 
 /** Validate a connection's host and port for one scheme. */
 export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown): HttpOrigin {
-  return { scheme, host: validateHost(host), port: validatePort(port) };
+  const validatedHost = validateHost(host);
+  assertPublicLiteralHost(validatedHost);
+  return { scheme, host: validatedHost, port: validatePort(port) };
 }
 
 /**

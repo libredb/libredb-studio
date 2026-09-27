@@ -26,7 +26,7 @@ Three decisions. The first is the consequential one, which is why it is first.
    ([clickhouse.md](./providers/clickhouse.md)), Apache Druid over `POST /druid/v2/sql`
    ([druid.md](./providers/druid.md)), Elasticsearch and OpenSearch over their SQL endpoints
    ([elasticsearch.md](./providers/elasticsearch.md) · [opensearch.md](./providers/opensearch.md)),
-   Apache Trino over its own client protocol ([trino.md](./providers/trino.md)), libSQL over the
+   Trino over its own client protocol ([trino.md](./providers/trino.md)), libSQL over the
    Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)), and Prometheus over its
    HTTP API, `/api/v1/*` ([prometheus.md](./providers/prometheus.md)). If it does need one, it
    will be something like `pg`,
@@ -38,7 +38,7 @@ Three decisions. The first is the consequential one, which is why it is first.
      `this.type` — identifier and string escaping, `LIMIT` clause building,
      read-only and DDL detection — plus a `prepareQuery()` that applies the shared query limiter.
      None of it touches a pool, a driver or a connection, so **an HTTP transport is no reason to
-     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse, Apache Druid or Apache Trino,
+     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse, Apache Druid or Trino,
      should extend it and get all of that for free. Druid is the clearest case of how little is left over:
      double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, so
      `escapeIdentifier()` and `buildLimitClause()` are inherited unchanged and `prepareQuery()` is
@@ -90,7 +90,7 @@ Score a candidate before writing code. Each criterion you fail becomes code you 
 | 4 | **Is there monitoring data over the same surface?** | Decides how much of the monitoring panel is real rather than honestly empty |
 | 5 | **Is there an EXPLAIN?** | Decides `supportsExplain` and whether a strategy is needed |
 | 6 | **How complex is auth?** | Basic auth is three lines. SigV4, OAuth2 refresh or Kerberos is a library — and that is usually where the no-dependency promise ends |
-| 7 | **Does the data model map onto containers, kinds and objects?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name |
+| 7 | **Does the data model map onto containers, kinds and objects, and is an outer container level alone a real address?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name. Then choose `containerPathShapes` and declare it in `getCapabilities()`: `exact` when only the declared depth is an address (a PostgreSQL schema, a MongoDB database), `prefixes` when the outer levels alone are one too (a Trino catalog with no schema, a Couchbase bucket with no scope). An absent field reads as `exact`, and the provider's own check and the HTTP object routes both refuse by that one declaration through `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts` |
 
 A good sanity check for criterion 1: **can a browser talk to it?** Couchbase's own Web Console and
 the Capella UI are browser applications, so every service had to be reachable over HTTP for the
@@ -185,7 +185,7 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka';  // Add your type here if needed
 }
 ```
 
@@ -195,6 +195,8 @@ A new tab type is reached one of two ways, and both are wired in `src/lib/editor
 A language that is a kind of JSON declares a `queryDialect` on the provider and gets an arm in `resolveTabType()` **above** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb` and the arm unreachable, which is exactly what #427 fixed.
 A language that is neither SQL nor JSON widens `ProviderCapabilities.queryLanguage` instead, as PromQL did (#1085), and every reader of that union then needs an explicit arm or a test pinning that its branch is right, because a reader written `=== 'json'` sends the new member into its SQL branch and one written `!== 'sql'` into its JSON branch.
 Either way the type is mapped to a Monaco language in `editorLanguageForTabType()`, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage` and `registerPromqlLanguage`.
+A JSON kind may instead render in Monaco's built-in `json` mode and register no module, as Kafka's read request does (#1088).
+Then the MongoDB completion provider `QueryEditor` registers for `json` must stay off it: it registers only where the declared capabilities name no JSON dialect, so its MongoDB snippets and column completions never reach a tab whose parser refuses them.
 
 ## Step 2: Create the Provider Class
 
@@ -424,7 +426,7 @@ bun add <driver-package>
 # ClickHouse needs no driver — plain SQL over its HTTP interface (port 8123)
 # Apache Druid needs no driver — plain SQL over POST /druid/v2/sql (Router 8888 or Broker 8082)
 # Elasticsearch / OpenSearch need no driver — SQL over _sql / _plugins/_sql (port 9200)
-# Apache Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
+# Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
 # libSQL needs no driver — SQLite's dialect over the Hrana protocol, POST /v2/pipeline (port 8080)
 # bun add cassandra-driver  (Apache Cassandra — a binary protocol over TCP, so a driver is not
 #                            optional; this one is pure JS, which is the next best thing)
@@ -679,7 +681,7 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json' \| 'promql'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
-| `queryDialect` | `'libredb' \| 'redis' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`) and picks the editor tab type and Monaco language. Checked **before** `queryLanguage` everywhere — `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
+| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`) and picks the editor tab type and Monaco language. Checked **before** `queryLanguage` everywhere: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
@@ -745,7 +747,7 @@ const result = await provider.query(prepared.query);
 | Field | Purpose |
 |-------|---------|
 | `query` | The (possibly modified) query string to execute |
-| `wasLimited` | Whether a LIMIT was injected. The query route reports it on the response's `pagination.wasLimited`, which the stats strip shows as the "limited" badge. A provider that bounds its own result instead, as the Prometheus provider cuts a vector at its series cap, returns `false` here and reports its bound on `QueryResult.pagination.wasLimited`, which `POST /api/db/query` keeps (#1085, section 5.4); such a bound never sets `hasMore`, because no offset can advance it |
+| `wasLimited` | Whether a LIMIT was injected. This preparation flag is unchanged for short results; the query and transaction routes report it on the response's `pagination.wasLimited` only when the returned page fills that bound, which the stats strip shows as the "limited" badge. A provider that bounds its own result instead, as the Prometheus provider cuts a vector at its series cap and the Kafka provider cuts a read at its row limit, its result byte budget and its cell limit, returns `false` here and reports its bound on `QueryResult.pagination.wasLimited`, which `POST /api/db/query` keeps (#1085, section 5.4); such a bound never sets `hasMore`, because no offset can advance it |
 | `limit` | The effective row limit |
 | `offset` | The effective offset |
 
@@ -755,7 +757,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · kafka · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
@@ -783,7 +785,7 @@ declares them. See [cassandra.md](./providers/cassandra.md).
 ([#263](https://github.com/libredb/libredb-studio/issues/263)), ClickHouse
 ([#264](https://github.com/libredb/libredb-studio/issues/264)), Apache Druid
 ([#265](https://github.com/libredb/libredb-studio/issues/265)), Elasticsearch + OpenSearch
-([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1) Apache Trino
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1) Trino
 ([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 2) and Apache Cassandra
 ([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 4 - the first phase to add a
 runtime dependency, and a pure-JS one).
@@ -890,6 +892,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 **Also always, and not named above until the Prometheus provider found them (#1085):** each is an exhaustive record or a hand-kept population.
 Three searches reach them: the `git grep -l` of an earlier provider's type-id that the note below names, `git grep -n "Record<DatabaseType" -- src tests` with its two-line form `git grep -n -A1 -E "Record<\s*$" -- src tests | grep -B1 "DatabaseType,"`, and `git grep -n "DatabaseType\[\]" -- src tests`.
 The compiler refuses the first seven without an entry; the last two are refused by a test.
+Those three reach code and tests only; the four prose greps of the published block below reach what a new engine makes false in the docs and the listings.
 
 - [ ] `src/lib/db/compatibility.ts`: the `EXTERNAL` record beside `SHIPPED`.
       It answers whether the new id is an external engine or an embedded store, and every published database count reads it.
@@ -898,10 +901,37 @@ The compiler refuses the first seven without an entry; the last two are refused 
 - [ ] `src/lib/sql/values.ts`: `LITERAL_ESCAPE`.
 - [ ] `src/lib/export/result-export.ts`: `STANDS_ALONE` and `BINARY_LITERAL`, plus a decision on the partial `DIALECT_TYPES`.
 - [ ] `tests/helpers/census-connection.ts`: `CENSUS_CONNECTION`, the unconnected connection every census builds through the real factory.
-- [ ] `tests/isolated/object-column-declarations.test.ts` (`EXPECTED_COLUMN_KINDS`), `tests/isolated/object-source-declarations.test.ts` (`SOURCE_DECLARATIONS`), `tests/unit/db/result-pagination-capability.test.ts` (`EXPECTED`), `tests/unit/schema-diff/migration-dialects.test.ts` (`COLUMN_GRAMMAR`), `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE`, `TRANSACTION_WRAPPER_COVERAGE`) and `tests/hooks/use-connection-form.test.ts` (`PICKER_COVERAGE`).
+- [ ] `tests/isolated/object-column-declarations.test.ts` (`EXPECTED_COLUMN_KINDS`), `tests/isolated/object-source-declarations.test.ts` (`SOURCE_DECLARATIONS`), `tests/unit/db/result-pagination-capability.test.ts` (`EXPECTED`), `tests/unit/db/container-path-shapes-capability.test.ts` (`EXPECTED_CONTAINER_PATH_SHAPES`), `tests/unit/schema-diff/migration-dialects.test.ts` (`COLUMN_GRAMMAR`), `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE`, `TRANSACTION_WRAPPER_COVERAGE`) and `tests/hooks/use-connection-form.test.ts` (`PICKER_COVERAGE`).
 - [ ] `tests/unit/lib/db-ui-config.test.ts`: `ALL_TYPES`, which a test holds equal to the keys of `DB_UI_CONFIG`.
 - [ ] `tests/helpers/object-edit-expectation.ts`: `EXPECTED_EDIT_ABSTAINERS`, when the new id declares no editable kind.
       That is a population, not a record, so the compiler says nothing; `tests/isolated/object-edit-declarations.test.ts` then requires an `Object edit (#789)` heading in the new provider doc naming which absence it is.
+
+**Also always, and not named above until the Kafka provider found them (#1088):** each is a record, a population or a pinned list no search above prints by itself.
+
+- [ ] `src/lib/db/destructive-commands.ts`: `NON_SQL_DESTRUCTIVE_VOCABULARY`, a row for every id `NON_SQL_DIALECTS` names, which `tests/unit/db/destructive-commands.test.ts` holds to exactly those ids.
+      A text that cannot write takes the row that names no operation and decides alone, the Prometheus and Kafka shape.
+- [ ] `src/lib/schema-diff/migration-generator.ts`: `NO_TABLE_DDL`, beside `NO_COLUMN_MODIFICATION` and `NO_TRANSACTION_WRAPPER`, for an engine whose diff gets no table DDL at all; every id in it is in `NO_TRANSACTION_WRAPPER` too.
+- [ ] `tests/unit/lib/db-ui-config.test.ts`: `FIELD_CHECKLIST`, when the new id's connection fields include one the checklist does not hold.
+- [ ] The pinned lists and per-dialect pins: `tests/components/ConnectionModal.test.tsx` (its mocks and its `SHIPPED` census), `tests/components/rich-text.test.tsx` and `tests/unit/lib/sql/fence-tags.test.ts` (the hand lists of canonical tags), `tests/unit/aws-listing-fields.test.ts` (`productNames`), `tests/unit/db/object-edit-expectation.test.ts` (the census counts), `tests/unit/lib/export/result-export.test.ts` and `tests/unit/sql/values.test.ts` (the literal and placeholder pins).
+- [ ] `docs/API_DOCS.md`: the `type DatabaseType` line names every type-id.
+- [ ] The `factory.ts` line citations that `tests/unit/lib/db/connection-fingerprint.test.ts` holds to the lines their anchors sit on: a new factory `case` moves every line below it.
+
+**For a JSON dialect**, every reader of `queryDialect` and `queryLanguage` needs an arm or a test pinning that its branch is right, because a reader keyed on `"json"` alone treats the text as MongoDB (#427):
+
+- [ ] `src/components/QueryEditor.tsx`: the MongoDB completion provider registers only where the declared capabilities name no JSON dialect.
+- [ ] `src/lib/db/types.ts`: `offersColumnProfiling`, `offersCodeGeneration` and `offersCountQuery`, the action gates of both row menus; each answers from the declared language and dialect, and the one that would offer something the engine cannot do needs an explicit arm.
+- [ ] `src/lib/query-generators.ts`: an arm before the `json` arm in `generateTableQuery` and `generateSelectQuery`, or a tree click auto-executes a MongoDB document.
+      `docs/providers/kafka.md` section 3.1 is the worked case.
+
+**For a new connection field**, beside the three `Record<keyof DatabaseConnection, ...>` maps and `connection-filter.ts` that the note below names:
+
+- [ ] `src/hooks/use-connection-form.ts`: the dialog keeps each field in its own state and rebuilds the connection from those states, so a declared field alone never reaches the saved connection.
+      The field needs its state, its load on edit (always overwritten, so one connection's value never carries to the next), its reset on close, its line in `buildConnection` gated on `addressedFields`, its dependency entry and its returned pair.
+- [ ] `src/lib/seed/types.ts`: `SeedConnectionSchema`, the zod object a seed file is validated against before `connection-filter.ts` maps it; zod strips a key the object does not declare, so an undeclared field is dropped with no error.
+- [ ] `src/lib/seed/credential-resolver.ts`: `RESOLVABLE_FIELDS`, when the field is a credential or an address a deployment keeps out of the seed file; a name such as a SASL mechanism is neither, and takes a literal.
+- [ ] `src/lib/db/provider-cache-key.ts`: `credentialDigest`, a hand-kept list of every field that changes who a connection authenticates as, so two connections that differ only in that field never share a cached provider.
+- [ ] `docs/API_DOCS.md`: the `DatabaseConnection` block, which `tests/unit/api-docs-types.test.ts` compares with the interface as an ordered list of field names, so the field goes in at the same position in both.
+- [ ] `src/lib/db-ui-config.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select, and `showSshTunnel: false`, when the engine cannot run through a tunnel; the dialog and `buildConnection` both read the latter through `offersSshTunnel`, one rule for both readers.
 
 **Conditionally, and each one is easy to miss because the code still compiles without it:**
 
@@ -946,7 +976,9 @@ walks them, refuses a numeral qualifying "engines" that is not `EXTERNAL_DATABAS
 where that numeral introduces a list, refuses a list that does not name every one of them by its
 `DB_UI_CONFIG` label (#D47 - added after three consecutive PRs corrected the same class by hand; the
 #511 review found all nine stale after libSQL had already landed everywhere the compiler looks). The
-files NOT in that walk have no gate at all, and an abridged list ("and more", or a "from X to Y"
+files NOT in that walk have no numeral gate.
+`DOCKERHUB.md` has one gate of another kind: `tests/unit/dockerhub-listing.test.ts` holds it to `FULL_DESCRIPTION_BUDGET` bytes, below Docker Hub's limit, so a new engine row can need room made elsewhere in the listing, and the counted listings have size gates of their own (`tests/unit/pcsc-listing.test.ts`, `tests/unit/build-azure-package.test.ts`, `tests/unit/caprover-template.test.ts`).
+An abridged list ("and more", or a "from X to Y"
 range) is still checked on its numeral only, deliberately, so that no numeral goes stale (#445):
 
 - [ ] `charts/libredb-studio/Chart.yaml` — the `description`, which is what **ArtifactHub** shows, AND
@@ -965,7 +997,7 @@ range) is still checked on its numeral only, deliberately, so that no numeral go
       type-ids the factory builds, external drivers (that set minus the embedded store), wire-compatible
       relatives, and their sum. `connectableProductCount()` is the arithmetic's one definition — derive
       from it, and re-read each sentence to see which of the four it counts. A mechanical replace is
-      how a correct number becomes wrong: the agent docs' "the other fifteen" counts type-ids minus
+      how a correct number becomes wrong: the agent docs' count of the ids grounded through their provider is type-ids minus
       the two `CATALOG_PLANS` dialects and moved for a different reason than the driver count did.
       DuckDB is the sharpest illustration: it moved the type-id count and the driver count, left
       "the fourteen the read-only profile refuses" exactly where it was — because it implements
@@ -974,6 +1006,19 @@ range) is still checked on its numeral only, deliberately, so that no numeral go
 - [ ] the marketplace listings under `deploy/` — a claim that enumerates engines is bound to the file
       that proves it, and the `marketplace-copy` test fails when a plan-capable engine is missing from
       one
+
+Four prose greps find the statements a new engine or relative can make false in the docs and the listings, the way the Kafka provider found them (#1088): G1 the numerals that can count the fleet, in every language the READMEs are written in; G2 every line that names the closest earlier engine, where it joined an enumeration; G3 the JSON-language and dialect sets; G4 every line that names the latest relative.
+Run them before the first edit and again before the commit, and re-derive each hit from the set it counts, never by incrementing it:
+
+```bash
+OUT=(docs CLAUDE.md CONTRIBUTING.md 'README*.md' DOCKERHUB.md snap packaging desktop deploy charts/libredb-studio operator/config e2e ':!docs/BACKLOG.md' ':!docs/llms')
+git grep -n -I -i -E '\b(eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty[- ](six|seven|eight|nine)|forty[- ](four|five|six))\b|\b(1[0-9]|2[0-9]|4[0-9]) (database backends|database engines|engines|type-ids|providers|drivers)\b|十[七八九]|二十[七八]|四十[四五六]|Diecisiete|Dieciocho|veintisiete|veintiocho|1[789]の|सत्रह|अठारह|سترہ|اٹھارہ' -- "${OUT[@]}"   # G1
+git grep -n -I -E 'Prometheus|prometheus|PromQL|promql' -- "${OUT[@]}"   # G2, the closest earlier engine
+git grep -n -I -i -E 'redis and libredb|redis, libredb|libredb and redis|mongodb and redis|mongodb, redis|redis and mongodb|dialect of (its|their) own|queryDialect' -- "${OUT[@]}"   # G3
+git grep -n -I -E 'VictoriaMetrics|victoriametrics' -- "${OUT[@]}"   # G4, the latest relative
+```
+
+The numerals of G1 move with each engine, so widen its word list to the next one before running it.
 
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the

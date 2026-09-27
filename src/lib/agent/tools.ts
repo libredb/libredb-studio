@@ -663,15 +663,16 @@ const presentAnswerSchema = z.strictObject({
  * makes it safe. Wrapping the field in `z.preprocess` instead would produce a `ZodPipe`, and the
  * SDK derives the model's copy of the contract from this same object with
  * `toJSONSchema(schema, { target: 'draft-7', io: 'input' })`
- * (node_modules/@ai-sdk/provider-utils/src/schema.ts:251, reached from `declaredTools()` in
- * src/lib/agent/investigation.ts) — where a `ZodPipe` is not counted as a required key. Measured
- * over every entry of `AGENT_TOOL_DEFINITIONS` with that wrapper in place, `present_answer` was
- * the ONLY tool whose two contracts disagreed: runtime `[artifact, presentation]` against
- * advertised `[artifact]`, while all eight others matched exactly. So a model that OBEYED the
- * advertised contract would send `artifact` alone and be refused — and because this tool is
- * ledger-only, its refusal records no event and the run is scored `no-answer` with nothing saying
- * why: the same invisible failure this fix exists to remove, re-created for correct models instead
- * of sloppy ones. Reading here leaves the advertised schema byte-identical to what it always was.
+ * (`zod4Schema()` in node_modules/@ai-sdk/provider-utils/src/schema.ts, reached from
+ * `declaredTools()` in src/lib/agent/investigation.ts) — where a `ZodPipe` is not counted as a
+ * required key. Measured over every entry of `AGENT_TOOL_DEFINITIONS` with that wrapper in place,
+ * `present_answer` was the ONLY tool whose two contracts disagreed: runtime
+ * `[artifact, presentation]` against advertised `[artifact]`, while all eight others matched
+ * exactly. So a model that OBEYED the advertised contract would send `artifact` alone and be
+ * refused — and because this tool is ledger-only, its refusal records no event and the run is
+ * scored `no-answer` with nothing saying why: the same invisible failure this fix exists to remove,
+ * re-created for correct models instead of sloppy ones. Reading here leaves the advertised schema
+ * byte-identical to what it always was.
  *
  * That placement puts a dependency between this read and the run loop, and it is worth naming
  * because it is invisible from here. The SDK validates the model's arguments against this same
@@ -679,11 +680,12 @@ const presentAnswerSchema = z.strictObject({
  * `ai@7.0.59`, `doParseToolCall` throws, the SDK catches it, re-parses the raw JSON without a
  * schema and enqueues the tool-call part anyway with `invalid: true`. So this function is reached
  * only because `takeTurn` dispatches every tool-call part without consulting that flag
- * (src/lib/agent/investigation.ts:1042). Hardening that line to `!part.invalid` would drop the call
- * before it arrives here and silently undo this fix — and it is a plausible edit rather than an
- * imagined one, because `capability-probe.ts:279` already treats the flag as meaningful
- * (`part.invalid !== true`). `tests/isolated/agent-investigation.test.ts` drives the whole path
- * through the real SDK so that edit fails a test rather than a run.
+ * (src/lib/agent/investigation.ts). Hardening that dispatch to `!part.invalid` would
+ * drop the call before it arrives here and silently undo this fix — and it is a plausible edit
+ * rather than an imagined one, because `observeProbe()` in `src/lib/agent/capability-probe.ts`
+ * already treats the flag as meaningful (`part.invalid !== true`).
+ * `tests/isolated/agent-investigation.test.ts` drives the whole path through the real SDK so that
+ * edit fails a test rather than a run.
  */
 /**
  * A claims array a model sent as a STRING of JSON, read back once before validation.
@@ -1557,24 +1559,26 @@ function auditDeadlineRefusal(
  *
  * - **`AuthenticationError`** covers two unrelated events. `mapDatabaseError` answers
  *   it for anything matching `password`/`authentication`/`access denied`/
- *   `permission denied` (`errors.ts:270-277`), which folds a wrong agent credential
+ *   `permission denied` (`src/lib/db/errors.ts`), which folds a wrong agent credential
  *   together with `permission denied for table secrets`. The second is routine on the
  *   least-privilege `agentUser` this programme recommends — per-table `SELECT` grants
  *   are what bound an agent's reads — so it is the model's first probe of an ungranted
  *   object, and reading a different table is exactly the repair that helps. They are
  *   indistinguishable by class but not by PHASE, which is what `runStatement` splits
  *   on: a credential failure happens while connecting, a grant failure while running.
- * - **`QueryCancelledError`** is what a PostgreSQL statement timeout arrives as, and
- *   this layer is what CAUSES it: the clamped budget becomes `SET LOCAL
- *   statement_timeout` (`postgres.ts:894`), the engine says `canceling statement due
- *   to statement timeout`, and `mapDatabaseError` matches `canceling statement`
- *   BEFORE its timeout branch (`errors.ts:280-293`) — so the timeout never arrives as
- *   `TimeoutError` on this engine at all. Narrowing the read is the repair that helps.
- *   The message that would distinguish an operator cancel is discarded by the mapper
- *   (`docs/BACKLOG.md` B4), so this cannot be split on text.
- *   FOR T7: a run cancellation must therefore be enforced by the run loop's own
- *   persisted state between tool calls, NOT by expecting a driver cancel to propagate
- *   out of this layer — after this commit it does not.
+ * - **`QueryCancelledError`** covers an OPERATOR cancel (`pg_cancel_backend`,
+ *   `canceling statement due to user request`) and stays repairable at the query
+ *   phase for the same reason a `TimeoutError` is: narrowing the read is a rewrite
+ *   the model can make. Since #1145 a PostgreSQL `statement_timeout` — the budget
+ *   this layer itself installs via the `SET LOCAL statement_timeout` in
+ *   `PostgresProvider.queryReadOnly()` (`src/lib/db/providers/sql/postgres.ts`)
+ *   — no longer arrives here: `mapDatabaseError` now recognises `canceling statement
+ *   due to statement timeout` BEFORE its cancellation branch and returns a
+ *   `TimeoutError` (`errors.ts`), which is also repairable at this phase, so the
+ *   repair loop is unchanged. Both classes stay OUT of `ENVIRONMENT_FAILURES`.
+ *   FOR T7: a run cancellation must still be enforced by the run loop's own
+ *   persisted state between tool calls, NOT by expecting a driver cancel to
+ *   propagate out of this layer — it does not.
  *
  * HONEST LIMIT: this split is only as sharp as `mapDatabaseError`'s classification,
  * which is SUBSTRING matching on the engine's message, and it is imprecise in BOTH
@@ -1601,13 +1605,13 @@ const ENVIRONMENT_FAILURES = [ConnectionError, PoolExhaustedError, DatabaseConfi
  *
  * Classified BY EXCLUSION rather than by naming the repairable classes, and that is
  * the load-bearing part. `mapDatabaseError` is what every profiled provider routes a
- * driver error through, and its fall-through is the BASE `DatabaseError`
- * (`errors.ts:332`) — so an enumeration of `QueryError | TimeoutError` missed the most
- * canonical repairable failure of all: `no such table: ordrs` on SQLite, and
- * PostgreSQL's `operator does not exist`, `invalid input syntax for type …`,
- * `function … does not exist` and `division by zero`. Each of those escaped this
- * layer as a raw throw instead of becoming a repairable refusal, which killed the
- * repair loop for exactly the errors it exists to serve.
+ * driver error through, and its fall-through is the BASE `DatabaseError` (the final
+ * fallback in `mapDatabaseError()` in `src/lib/db/errors.ts`) — so an enumeration of
+ * `QueryError | TimeoutError` missed the most canonical repairable failure of all:
+ * `no such table: ordrs` on SQLite, and PostgreSQL's `operator does not exist`,
+ * `invalid input syntax for type …`, `function … does not exist` and `division by zero`.
+ * Each of those escaped this layer as a raw throw instead of becoming a repairable
+ * refusal, which killed the repair loop for exactly the errors it exists to serve.
  *
  * Exclusion also fails in the right direction as `mapDatabaseError` grows: a new
  * message pattern that lands on the base class is treated as the model's problem and
@@ -1617,7 +1621,7 @@ const ENVIRONMENT_FAILURES = [ConnectionError, PoolExhaustedError, DatabaseConfi
  * answer is right — it says so itself.
  *
  * `ExecutionProfileError` needs no entry: it does not extend `DatabaseError` at all
- * (`errors.ts:177`), so it is outside this predicate by construction — and it is
+ * (`src/lib/db/errors.ts`), so it is outside this predicate by construction — and it is
  * raised during acquisition, which propagates everything anyway.
  */
 function isStatementFailure(error: unknown): error is DatabaseError {

@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:574-581` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:586-593` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:574` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:586` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -307,11 +307,12 @@ describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof Dat
 });
 
 /**
- * This module and this test file cite `src/lib/db/factory.ts` BY LINE, and that pointer rots in
- * silence: any insertion above the cited line invalidates it from a hand nowhere near this file.
- * It happened here. The X23 commit inserted thirty-four lines above the tunnel branch, and the
- * four pointers at line 485 it left behind now name `const cacheKey = connection.id;` and a
- * `@param` line inside a docblock.
+ * This test file cites `factory.ts` BY LINE, and that pointer rots in silence: any insertion above
+ * the cited line invalidates it from a hand nowhere near this file. It happened here. The X23
+ * commit inserted thirty-four lines above the tunnel branch, and the four pointers at line 485 it
+ * left behind now name `const cacheKey = connection.id;` and a `@param` line inside a docblock.
+ * The module now names `getOrCreateProvider` instead of a line (#1135), and the first test below
+ * keeps it that way.
  *
  * The guard holds every number in ONE place, the cited file itself: the table names the ANCHOR,
  * the test greps it and derives the number the prose must be writing. A correct renumbering costs
@@ -321,10 +322,8 @@ describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof Dat
  * `after` exists because the tunnel branch is written three times in `factory.ts` - once in each
  * rewrite site - so the anchor alone is ambiguous and the scope has to say which one.
  *
- * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose. Two other `factory.ts` citations went
- * stale in the same commit, in `src/lib/api/object-edit-plan-token.ts` and `docs/AGENT_GUIDE.md`,
- * and both belong to another owner; a repo-wide version of this check belongs with whoever owns
- * the repository's lint surface rather than with this entry.
+ * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose. The repository-wide version of this
+ * check is `docs/BACKLOG.md` DOC8.
  */
 const FACTORY = "src/lib/db/factory.ts";
 const GET_OR_CREATE = "export async function getOrCreateProvider(";
@@ -332,7 +331,7 @@ const TUNNEL_BRANCH = "if (connection.sshTunnel?.enabled && connection.host && c
 const TUNNEL_REWRITE = "effectiveConnection = tunnelledConnection(connection, tunnel);";
 
 type CitedFactoryLine = {
-  /** The path exactly as the prose writes it, which differs between the module and its test. */
+  /** The path exactly as the test prose writes it. */
   as: string;
   /** A line that is unique in `factory.ts`, from which the anchors below are searched forward. */
   after: string;
@@ -342,14 +341,12 @@ type CitedFactoryLine = {
 
 const CITED_FACTORY_LINES: CitedFactoryLine[] = [
   // `enabled` is framed because this branch tests exactly that flag before anything is rewritten.
-  { as: "src/lib/db/factory.ts", after: GET_OR_CREATE, anchor: TUNNEL_BRANCH },
   { as: "factory.ts", after: GET_OR_CREATE, anchor: TUNNEL_BRANCH },
   // The rewrite itself, cited as a range: the branch through the call that replaces the endpoint.
-  { as: "src/lib/db/factory.ts", after: GET_OR_CREATE, anchor: [TUNNEL_BRANCH, TUNNEL_REWRITE] },
   { as: "factory.ts", after: GET_OR_CREATE, anchor: [TUNNEL_BRANCH, TUNNEL_REWRITE] },
 ];
 
-describe("the factory.ts lines the fingerprint module and its test cite", () => {
+describe("the factory.ts citations in the fingerprint module and its test", () => {
   const repoRoot = join(import.meta.dir, "../../../..");
   const factoryLines = readFileSync(join(repoRoot, FACTORY), "utf8").split("\n");
   const citing = ["src/lib/db/connection-fingerprint.ts", "tests/unit/lib/db/connection-fingerprint.test.ts"];
@@ -362,6 +359,14 @@ describe("the factory.ts lines the fingerprint module and its test cite", () => 
     const anchors = Array.isArray(site.anchor) ? site.anchor : [site.anchor];
     return `${site.as}:${anchors.map((anchor) => linesOf(anchor, from)[0]).join("-")}`;
   };
+
+  test("the module names the declared function without line numbers", () => {
+    const source = readFileSync(join(repoRoot, "src/lib/db/connection-fingerprint.ts"), "utf8");
+    expect(source.match(/`getOrCreateProvider`/g)?.length).toBe(2);
+    expect(source.match(/`src\/lib\/db\/factory\.ts`/g)?.length).toBe(2);
+    expect(source).not.toMatch(/factory\.ts:\d/);
+    expect(linesOf(GET_OR_CREATE, 0)).toHaveLength(1);
+  });
 
   test("every scope anchor sits on exactly one line of factory.ts", () => {
     const ambiguous = CITED_FACTORY_LINES.filter((site) => scopeOf(site).length !== 1).map((site) => site.after);

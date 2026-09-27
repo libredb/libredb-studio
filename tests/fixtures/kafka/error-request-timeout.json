@@ -1,0 +1,15 @@
+{
+ "$captured": {
+  "image": null,
+  "clusterId": null,
+  "date": "2026-09-24T18:56:39.621Z",
+  "surface": "admin.metadata({ topics: [] }) to a listener that accepts and never writes, requestTimeout 800"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Request timed out",
+  "code": "PLT_KFK_NETWORK",
+  "canRetry": false,
+  "class": "TimeoutError"
+ }
+}

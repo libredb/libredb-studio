@@ -71,6 +71,8 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   redis: null,
   libredb: null,
   prometheus: null,
+  // A read request is JSON of its own dialect (#1088), and its grammar has no count to write.
+  kafka: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

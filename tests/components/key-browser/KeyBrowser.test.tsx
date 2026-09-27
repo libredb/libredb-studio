@@ -600,6 +600,24 @@ describe("KeyBrowser", () => {
       expect(opened).toHaveLength(2);
     });
 
+    test("a held key activates once, and its repeats are still swallowed", async () => {
+      // Every auto-repeat of a held Enter or Space arrives as another keydown, so without the
+      // guard one long press opened a tab per repeat.
+      const opened: Array<[string, string | null]> = [];
+      mockGlobalFetch({ "/api/db/keys/scan": page(["app:env"], "0", 1, { "app:env": "string" }) });
+      renderBrowser(CAPABILITY, (key, type) => opened.push([key, type]));
+      await waitFor(() => {
+        expect(rows()).toEqual(["app:*@0"]);
+      });
+      fireEvent.click(screen.getByText("app:*"));
+
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: " " })).toBe(false);
+      // `false` is a keydown whose default was prevented, so a repeat never scrolls the list.
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: " ", repeat: true })).toBe(false);
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: "Enter", repeat: true })).toBe(false);
+      expect(opened).toEqual([["app:env", "string"]]);
+    });
+
     test("is not actionable when nobody is listening", async () => {
       const fetchMock = mockGlobalFetch({
         "/api/db/keys/scan": page(["app:env"], "0", 1, { "app:env": "string" }),
@@ -937,6 +955,26 @@ describe("KeyBrowser", () => {
       fireEvent.keyDown(screen.getByTestId("key-browser-database"), { key: "Enter" });
       expect(rows()).toEqual(["0@0", "app:*@1"]);
       expect(fetchMock.mock.calls.length).toBe(before);
+    });
+
+    test("a held key toggles the database row once, and its repeats are swallowed", async () => {
+      mockGlobalFetch(redisRoutes(page(["app:env"], "0", 1531)));
+      renderLevel();
+      await waitFor(() => {
+        expect(rows()).toEqual(["0@0", "app:*@1"]);
+      });
+      const database = () => screen.getByTestId("key-browser-database");
+
+      // The press itself toggles: the control.
+      expect(fireEvent.keyDown(database(), { key: "Enter" })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      // Each auto-repeat is another keydown, prevented all the same, and none toggles the row back.
+      // Checked after each one, because two unguarded toggles would land back where they began.
+      expect(fireEvent.keyDown(database(), { key: "Enter", repeat: true })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      expect(fireEvent.keyDown(database(), { key: " ", repeat: true })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      expect(rows()).toEqual(["0@0"]);
     });
 
     test("says so and keeps walking when the database list cannot be read", async () => {

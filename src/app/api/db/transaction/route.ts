@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
+import type { QueryResult } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -17,10 +18,7 @@ interface TransactionProvider {
   commitTransaction(): Promise<void>;
   rollbackTransaction(): Promise<void>;
   isInTransaction(): boolean;
-  queryInTransaction(
-    sql: string,
-    params?: unknown[],
-  ): Promise<{ rows: Record<string, unknown>[]; fields: string[]; rowCount: number; executionTime: number }>;
+  queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
 }
 
 function isTransactionProvider(provider: unknown): provider is TransactionProvider {
@@ -154,7 +152,7 @@ export async function POST(req: NextRequest) {
             offset: prepared.offset,
             hasMore,
             totalReturned: result.rows.length,
-            wasLimited: prepared.wasLimited,
+            wasLimited: hasMore || result.pagination?.wasLimited === true,
           },
         });
       }

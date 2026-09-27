@@ -267,6 +267,11 @@ describe("BaseDatabaseProvider", () => {
       expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
       expect(externalImplementer.supportsTransactions).toBeUndefined();
       expect(externalImplementer.declaresForeignKeys).toBeUndefined();
+      // The conservative default for `containerPathShapes` lives in the kernel reader and never in a
+      // base declaration: absent here, so every provider that declares a value declares it itself,
+      // and one that forgets it reads as `exact` through `acceptedContainerShapes()` (#1147).
+      expect(caps.containerPathShapes).toBeUndefined();
+      expect(externalImplementer.containerPathShapes).toBeUndefined();
       // The SQL default: a relational engine HAS foreign keys whether or not a given
       // schema uses any. The six engines that have none override it, so the strong
       // claim - "no reading could ever return one here" - is always declared and
@@ -1068,6 +1073,8 @@ describe("offersColumnProfiling", () => {
   test("JSON in a dialect of its own is not the MongoDB document the route builds", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(false);
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "libredb" }))).toBe(false);
+    // A Kafka read request is JSON of this product's own schema (#1088), no MongoDB document either.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe(false);
     // The control: the same language with the dialect removed.
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json" }))).toBe(true);
   });
@@ -1099,6 +1106,16 @@ describe("offersCodeGeneration", () => {
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "promql" }))).toBe(false);
     // The control: the same declaration in SQL.
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+  });
+
+  test("Kafka is not offered it: a topic's columns are a read result's shape, which the models reject (#1088)", () => {
+    // The models type `timestamp` as a Date where a read answers an ISO string, and `value` as a
+    // record where a read answers text, base64 or a Confluent label (#1088, section 3.3).
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe(false);
+    // The controls: the same language with the dialect removed, and with another JSON dialect, which
+    // keeps it, so the refusal is Kafka's own arm and not the dialect rule of the profiling gate.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
   });
 
   test("undefined capabilities are a denial, not a permission", () => {

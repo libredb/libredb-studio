@@ -75,7 +75,8 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * Adding a branch would only duplicate it.
  */
 export function quoteIdentifier(name: string, capabilities: ProviderCapabilities): string {
-  // Document stores (MongoDB) don't use SQL identifier quoting.
+  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB and
+  // Kafka, which declare a JSON dialect of their own (#1088).
   if (capabilities.queryLanguage === "json") return name;
 
   // An explicit declaration wins over the port heuristic below, because the port
@@ -428,8 +429,8 @@ function libredbNewlineNote(base: string): string | null {
  *
  * It takes the object's PATH, because that is what addresses an object; `name` is what
  * labels it (standing ruling 2). Every dialect below that addresses by qualification gets
- * the whole path, and the three that address a single key or collection get the object's
- * own segment.
+ * the whole path, and each that addresses a single key, collection, topic or metric gets
+ * the object's own segment.
  *
  * NO SQL RETURN HERE CARRIES A ROW BOUND (#816). It used to: `LIMIT 50`, `FETCH FIRST 50
  * ROWS ONLY`, `SELECT TOP 50`. Nothing downstream could then tell that preview cap from a
@@ -439,10 +440,11 @@ function libredbNewlineNote(base: string): string | null {
  * instead (`PREVIEW_PAGE_SIZE` in `use-tab-manager.ts`), which leaves a user-written
  * `LIMIT n` with exactly one meaning: a hard bound we do not page past.
  *
- * The two JSON-language branches keep their own bound, and that is not an exception to
- * the rule. Neither MongoDB nor Redis can be asked for page two at all
+ * The three JSON-language branches keep their own bound, and that is not an exception to
+ * the rule. None of MongoDB, Redis and Kafka can be asked for page two at all
  * (`supportsResultPagination: false`, measured), so their bound is the only one there is
- * and no control is offered that a preview cap in the text could disengage.
+ * and no control is offered that a preview cap in the text could disengage. Kafka's is
+ * the read request's own `limit` (#1088).
  *
  * The PromQL branch writes the metric's selector and no bound at all (#1085): PromQL has no row
  * bound to write, and the provider caps the series it returns (#1085, section 5.4).
@@ -473,6 +475,12 @@ export function generateTableQuery(
     if (isPrefixGroup) return redisScan(base);
     const keyType = redisKeyType(columns);
     return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(base) : ["TYPE", base]);
+  }
+  // Kafka reads a topic through a JSON read request, not a MongoDB document: without
+  // this arm a tree click would auto-execute a `find` the provider refuses (#1088 3.3).
+  // The name goes through JSON.stringify with the rest, so no topic name leaves its string.
+  if (capabilities.queryDialect === "kafka") {
+    return JSON.stringify({ topic: tableName, from: "latest", limit: 50 }, null, 2);
   }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify(
@@ -613,6 +621,9 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
  * statement they chose to execute and its bound is theirs: a hard bound, honoured, and not
  * paged past. Removing it would instead hand them an unbounded scan they never asked for.
  *
+ * The Kafka branch keeps a bound for the same reason, in the read request's own `limit`: 50, the
+ * click's and the request's default (#1088).
+ *
  * The PromQL branch is the exception, for the tree click's reason: PromQL has no bound to write,
  * so the text is the metric's selector, with the two range forms that widen it written as
  * comments above it (#1085).
@@ -632,6 +643,16 @@ export function generateSelectQuery(
   }
   if (capabilities.queryDialect === "redis") {
     return redisCheatsheet(tableName, columns);
+  }
+  // Kafka (#1088): ONE read request, because the tab's whole buffer is sent as one request
+  // (`handleGenerateSelect` in use-tab-manager.ts) and JSON has no comments to hold the other forms.
+  // The click reads the latest messages; this names a partition and reads it from its earliest
+  // offset, which exists on any retention, and the result's `offset` column shows the offsets the
+  // `{"offset": n}` form takes. The offset and timestamp forms are documented in
+  // docs/providers/kafka.md. The columns are the fields each message comes back with, not keys of
+  // the request, so none is written; the name goes through JSON.stringify with the rest.
+  if (capabilities.queryDialect === "kafka") {
+    return JSON.stringify({ topic: tableName, partition: 0, from: "earliest", limit: 50 }, null, 2);
   }
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};

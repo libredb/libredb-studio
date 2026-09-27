@@ -1,0 +1,192 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "consumer.fetch(txn partition 0 offset 0, READ_COMMITTED)"
+ },
+ "outcome": "pass",
+ "payload": {
+  "throttleTimeMs": 0,
+  "errorCode": 0,
+  "sessionId": 1,
+  "responses": [
+   {
+    "topicId": "92f8fe53-078c-4605-b0d6-382ca3138b35",
+    "partitions": [
+     {
+      "partitionIndex": 0,
+      "errorCode": 0,
+      "highWatermark": {
+       "$bigint": "8"
+      },
+      "lastStableOffset": {
+       "$bigint": "8"
+      },
+      "logStartOffset": {
+       "$bigint": "0"
+      },
+      "divergingEpoch": {
+       "epoch": -1,
+       "endOffset": {
+        "$bigint": "-1"
+       }
+      },
+      "currentLeader": {
+       "leaderId": -1,
+       "leaderEpoch": -1
+      },
+      "snapshotId": {
+       "endOffset": {
+        "$bigint": "-1"
+       },
+       "epoch": -1
+      },
+      "abortedTransactions": [
+       {
+        "producerId": {
+         "$bigint": "10"
+        },
+        "firstOffset": {
+         "$bigint": "4"
+        }
+       }
+      ],
+      "preferredReadReplica": -1,
+      "records": [
+       {
+        "firstOffset": {
+         "$bigint": "1"
+        },
+        "length": 113,
+        "partitionLeaderEpoch": 1,
+        "magic": 2,
+        "crc": 700584396,
+        "attributes": 16,
+        "lastOffsetDelta": 1,
+        "firstTimestamp": {
+         "$bigint": "1790275868876"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275868876"
+        },
+        "producerId": {
+         "$bigint": "10"
+        },
+        "producerEpoch": 0,
+        "firstSequence": 0,
+        "records": [
+         {
+          "length": 31,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": null,
+          "value": {
+           "$bytes": "eyJ0eG4iOiJjb21taXR0ZWQiLCJuIjoxfQ=="
+          },
+          "headers": []
+         },
+         {
+          "length": 31,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 1,
+          "key": null,
+          "value": {
+           "$bytes": "eyJ0eG4iOiJjb21taXR0ZWQiLCJuIjoyfQ=="
+          },
+          "headers": []
+         }
+        ]
+       },
+       {
+        "firstOffset": {
+         "$bigint": "3"
+        },
+        "length": 66,
+        "partitionLeaderEpoch": 1,
+        "magic": 2,
+        "crc": 73693986,
+        "attributes": 48,
+        "lastOffsetDelta": 0,
+        "firstTimestamp": {
+         "$bigint": "1790275868877"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275868877"
+        },
+        "producerId": {
+         "$bigint": "10"
+        },
+        "producerEpoch": 0,
+        "firstSequence": -1,
+        "records": [
+         {
+          "length": 16,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": {
+           "$bytes": "AAAAAQ=="
+          },
+          "value": {
+           "$bytes": "AAAAAAAA"
+          },
+          "headers": []
+         }
+        ]
+       },
+       {
+        "firstOffset": {
+         "$bigint": "7"
+        },
+        "length": 66,
+        "partitionLeaderEpoch": 1,
+        "magic": 2,
+        "crc": 1466012268,
+        "attributes": 48,
+        "lastOffsetDelta": 0,
+        "firstTimestamp": {
+         "$bigint": "1790275868879"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275868879"
+        },
+        "producerId": {
+         "$bigint": "10"
+        },
+        "producerEpoch": 0,
+        "firstSequence": -1,
+        "records": [
+         {
+          "length": 16,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": {
+           "$bytes": "AAAAAA=="
+          },
+          "value": {
+           "$bytes": "AAAAAAAA"
+          },
+          "headers": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "nodeEndpoints": []
+ }
+}

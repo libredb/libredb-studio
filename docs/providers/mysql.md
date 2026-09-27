@@ -332,8 +332,8 @@ EVERY integer into a string — `SELECT 5` becomes `"5"`, `COUNT(*)` becomes `"3
 were never wrong.
 
 **The option is the FIRST entry in `baseConfig`, which is what makes it cover both connection forms.**
-The connection-string branch returns `{ ...baseConfig, uri }` and takes the discrete-fields branch not
-at all ([§4.2](#42-connection-pooling)), so an option added beside `timezone` or the SSL config would
+The connection-string branch returns `{ ...baseConfig, timezone, uri }` and takes the discrete-fields branch not
+at all ([§4.2](#42-connection-pooling)), so an option added beside the SSL config would
 apply to a host/port connection and silently not to a pasted URI.
 
 **Both wire protocols answer the same shape.** Re-measured in the same pass with the option on: the
@@ -379,15 +379,21 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 | `queueLimit` | `0` (unbounded queue) | fixed |
 | `enableKeepAlive` | `true` | fixed |
 | `keepAliveInitialDelay` | `10000` ms | fixed |
-| `timezone` | `'Z'` | `ProviderOptions.timezone ?? 'Z'` (discrete form only — see below) |
+| `timezone` | `'Z'` | `ProviderOptions.timezone ?? 'Z'`, both forms; a connection string's own `?timezone=` wins (see below) |
 
 > ⚠️ Only `max` from `DEFAULT_POOL_CONFIG` is honored. `min`, `idleTimeout`, and `acquireTimeout`
 > are **not** mapped (the mysql2 pool model differs from `pg`), and `queryTimeout` is **not** applied
 > (see [§3.5](#35-no-server-side-query-timeout)).
 >
-> ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, uri }`
-> and takes the discrete-fields branch **not at all** — so `timezone`, `ssl`/`connection.ssl`, and
+> ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, timezone, uri }`
+> and takes the discrete-fields branch **not at all**, so `ssl`/`connection.ssl` and
 > cloud SSL auto-detect are **ignored**; those settings must be encoded in the URI itself.
+>
+> `timezone` is the exception, and applies to the connection string too.
+> mysql2 lets an option beat the same key in the `uri` (its `ConnectionConfig` skips every uri key the options already set), so the default is left out when the string carries its own `?timezone=`, and that value wins.
+> Without a zone mysql2 reads `DATE` and `DATETIME` in the Node process's local zone.
+> Measured 2026-09-27 on `mysql:8.4` under `TZ=Europe/Istanbul`, before the fix: the structured form read `DATE '2026-09-01'` as `2026-09-01T00:00:00.000Z` and a pasted connection string read it as `2026-08-31T21:00:00.000Z`, the previous day, with `TIMESTAMP '2026-09-01 10:30:00'` at `07:30`.
+> After it, both forms answer `2026-09-01T00:00:00.000Z` and `2026-09-01T10:30:00.000Z`, and a string with `?timezone=%2B03:00` read under `TZ=UTC` answers `2026-08-31T21:00:00.000Z`, the zone it asked for.
 
 `connect()` is idempotent. Unlike the PostgreSQL provider, MySQL exposes **no** `getPoolStats()`.
 
@@ -563,7 +569,8 @@ Two things that table settles, neither of which is guessable from the code alone
 What the names deliberately leave out: the length, precision or display width (`decimal`, not
 `decimal(10,2)`), the `unsigned` suffix, and the `point` subtype the protocol does not carry.
 Checked column by column against `information_schema.COLUMNS.DATA_TYPE` for the same 40-column
-table - the same source the schema tree shows - **38 of 39 match exactly**; the one difference is
+table - the family, which the schema tree now carries as `baseType` beside the declared type
+([§7.1](#71-the-object-surface-789)) - **38 of 39 match exactly**; the one difference is
 `POINT`, which arrives as code 255 with nothing to distinguish it from `GEOMETRY`.
 
 `columnTypes` is filled by `query()` and `queryInTransaction()`, and is **absent entirely** when no
@@ -916,6 +923,41 @@ A `VIEW` carries neither a row count nor a size: measured, `information_schema.T
 `TABLE_ROWS`, `DATA_LENGTH` and `INDEX_LENGTH` for one, and 0 rows of 0 bytes would be a measurement
 nobody took. `TABLE_ROWS` on a base table is the engine's own estimate, the same nature as
 PostgreSQL's `reltuples`.
+
+**A column's type is the type AS DECLARED, and the family rides beside it (#1033).**
+`information_schema.COLUMNS` carries two type columns and they are not interchangeable.
+`DATA_TYPE` is the FAMILY: it drops the length, the precision and scale, the value list of an `ENUM` or a `SET`, and the `unsigned` and `zerofill` attributes.
+`COLUMN_TYPE` is the declaration and drops none of them.
+Measured 2026-09-22 on MySQL 26.7.0 and MariaDB 13.0.2, over the `app.column_types` both fixtures create:
+
+| DDL | `DATA_TYPE` | `COLUMN_TYPE`, MySQL | `COLUMN_TYPE`, MariaDB |
+| --- | --- | --- | --- |
+| `VARCHAR(20)` | `varchar` | `varchar(20)` | `varchar(20)` |
+| `DECIMAL(12,2)` | `decimal` | `decimal(12,2)` | `decimal(12,2)` |
+| `CHAR(2)` | `char` | `char(2)` | `char(2)` |
+| `ENUM('x','y')` | `enum` | `enum('x','y')` | `enum('x','y')` |
+| `SET('a','b')` | `set` | `set('a','b')` | `set('a','b')` |
+| `INT UNSIGNED` | `int` | `int unsigned` | `int(10) unsigned` |
+| `TEXT` | `text` | `text` | `text` |
+
+`ColumnSchema.type` takes `COLUMN_TYPE` and `ColumnSchema.baseType` takes `DATA_TYPE`, and `baseType` is OMITTED where the two agree, which is the rule the SQL Server provider already follows for its alias types.
+An absent `baseType` therefore says the server draws no distinction for this column, never that nobody looked.
+
+Both fields are load-bearing, in opposite directions.
+`type` is what a reader SEES and what a reader emitting DDL WRITES: the schema-diff migration generator interpolates it into `CREATE TABLE` and `ADD COLUMN` verbatim, and `varchar` with no length is not a type on either server - `CREATE TABLE t (note varchar)` is error 1064 - so a migration built from the family alone was rejected in full.
+`baseType` is what a reader DECIDING matches against, because a declaration is not a family name: `int unsigned` equals no spelling a `===` knows, and `enum('int','text')` answers a substring test for `int` while being neither an integer nor a number.
+The two are carried side by side rather than one being parsed back out of the other, because that parse is not available: one declaration is spelled more than one way across the fleet, and only the server knows which.
+MySQL deprecated the integer display width in 8.0.17 and stopped printing it in 8.0.19, in `SHOW CREATE`, `DESCRIBE` and `information_schema` alike, with two exceptions it still prints: `TINYINT(1)`, which connectors read as a boolean, and any column with `ZEROFILL`.
+Measured on MySQL 26.7.0: `INT` is `int`, `BIGINT(20)` is `bigint`, `TINYINT(1)` is `tinyint(1)` and `INT ZEROFILL` is `int(10) unsigned zerofill`; MariaDB 13.0.2 still prints every width, so its `INT` is `int(11)`.
+Per the 8.0.19 release notes, a table created on an earlier 8.0 keeps its width in `information_schema`, because the data dictionary is not rewritten, so `int(11)` is reachable on a current MySQL too.
+
+`tests/live/mysql-column-type.ts` ([§12.4](#124-optional-verifying-against-a-live-mysql-and-a-live-mariadb)) holds that claim against real servers: it replays the generated `CREATE TABLE` at the server that supplied its columns and requires an accept, and replays the family-only definition it replaces and requires a REFUSAL.
+
+Two consequences for the schema diff, measured and accepted rather than repaired.
+`diffColumns()` compares `type`, and a snapshot taken before this change stored the family, so the same unchanged column now reads as its declaration: every column with a length, a precision and scale, a value list, or `unsigned` reports one spurious `Type changed: varchar → varchar(20)` and one `MODIFY COLUMN` that changes nothing.
+A column whose declaration is its family, such as `text`, `date` or a MySQL `int`, compares equal and reports nothing, and a new snapshot clears the rest.
+The second is not stale data at all: diffing a MariaDB schema against a MySQL 8.0.19+ one reports `Type changed: int(11) → int` for every integer column the two created from the same DDL, except `TINYINT(1)` and `ZEROFILL` columns, which both servers print in full.
+Comparing `baseType` instead would silence both, and would also silence a real `varchar(20)` → `varchar(40)`, which is the change this section exists to carry.
 
 **MariaDB and MySQL do not report a column default the same way, and this surface reads both (#795).**
 MySQL reports the VALUE: a column with no default is SQL NULL, and `DEFAULT 'abc'` reads back as `abc`.
@@ -1486,8 +1528,11 @@ that is what MySQL itself calls index bytes.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
-are backtick-quoted via `escapeIdentifier()`:
+`runMaintenance(type, target?, container?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
+are backtick-quoted via `escapeIdentifier()`. A `container` is the DATABASE the row carries as
+`schemaName` (#772), and it qualifies the target only when it names a database OTHER than the
+connected one: a MySQL statement already resolves a bare table inside the connected database, so
+the same name as a prefix adds nothing.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
@@ -1587,6 +1632,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `defaultPort` | `3306` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | one level, `{ id: 'schema', label: 'Database', labelPlural: 'Databases' }` ([§7.1](#71-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | six on MySQL, eight on MariaDB, resolved from the server's own `VERSION()` string at connect and never from the type id ([§7.1](#71-the-object-surface-789)) |
 
 ### Labels
@@ -1780,6 +1826,20 @@ LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@
   bun tests/live/mysql-object-vocabulary.ts
 ```
 
+Two more live guards read the same fixture, and both exist for the same reason: their subject is what
+an ENGINE emits, which a mock cannot settle. `mysql-column-type.ts` checks the `DATA_TYPE` /
+`COLUMN_TYPE` split ([§7.1](#71-the-object-surface-789)) by replaying the generated `CREATE TABLE` at
+the server that supplied its columns; `mysql-column-defaults.ts` checks the per-flavour default
+reading, and on MariaDB replays each reported `COLUMN_DEFAULT` after the word `DEFAULT`. Both CREATE
+and DROP throwaway tables in the database the URL names, so point them at a disposable server:
+
+```bash
+LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@127.0.0.1:3307/app" \
+  bun tests/live/mysql-column-type.ts
+LIBREDB_LIVE_MYSQL_URLS="mysql://root:root@127.0.0.1:3306/app,mysql://root:root@127.0.0.1:3307/app" \
+  bun tests/live/mysql-column-defaults.ts
+```
+
 ---
 
 ## 13. Usage examples
@@ -1840,4 +1900,4 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/mysql-provider.test.ts`](../../tests/integration/db/mysql-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [Trino](./trino.md) · [Redis](./redis.md)

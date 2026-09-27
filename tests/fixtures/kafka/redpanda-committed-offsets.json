@@ -1,0 +1,67 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.listConsumerGroupOffsets({ groups: [lag-classic, lag-kip848, lag-partial] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "groupId": "lag-classic",
+   "topics": [
+    {
+     "name": "orders",
+     "partitions": [
+      {
+       "partitionIndex": 0,
+       "committedOffset": {
+        "$bigint": "10"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      },
+      {
+       "partitionIndex": 1,
+       "committedOffset": {
+        "$bigint": "0"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      },
+      {
+       "partitionIndex": 2,
+       "committedOffset": {
+        "$bigint": "0"
+       },
+       "committedLeaderEpoch": -1,
+       "metadata": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "groupId": "lag-kip848",
+   "topics": []
+  },
+  {
+   "groupId": "lag-partial",
+   "topics": [
+    {
+     "name": "lag-partial",
+     "partitions": [
+      {
+       "partitionIndex": 0,
+       "committedOffset": {
+        "$bigint": "1"
+       },
+       "committedLeaderEpoch": 1,
+       "metadata": ""
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

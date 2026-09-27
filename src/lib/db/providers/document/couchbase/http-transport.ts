@@ -22,6 +22,8 @@ import { promises as dns, type SrvRecord } from "node:dns";
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import { quoteIdentifier } from "./keyspace";
@@ -284,8 +286,14 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
   let response: Response;
   try {
     // A followed redirect would carry the credential to wherever it points.
-    response = await fetch(url, { method: init.method, headers: init.headers, body: init.body, redirect: "manual" });
+    response = await httpTransportFetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      redirect: "manual",
+    });
   } catch (error) {
+    if (error instanceof DatabaseConfigError) throw error;
     throw networkError(error);
   }
   const text = await response.text();
@@ -302,6 +310,7 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
   const options: HttpsRequestOptions = {
     protocol: target.protocol,
     hostname: target.hostname,
+    ...guardedNodeOptions(target.hostname),
     port: target.port,
     path: `${target.pathname}${target.search}`,
     method: init.method,
@@ -329,7 +338,9 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
         ? httpsRequest(options, onResponse)
         : httpRequest(options as HttpRequestOptions, onResponse);
 
-    clientRequest.on("error", (error: Error) => reject(networkError(error)));
+    clientRequest.on("error", (error: Error) =>
+      reject(error instanceof DatabaseConfigError ? error : networkError(error)),
+    );
     if (init.body !== undefined) clientRequest.write(init.body);
     clientRequest.end();
   });

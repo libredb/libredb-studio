@@ -174,21 +174,21 @@ describe("TablesTab", () => {
     expect(reindexButton).not.toBeNull();
 
     fireEvent.click(analyzeButton!);
-    expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users");
+    expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users", "public");
     expect(vacuumButton!.disabled).toBe(true);
     await waitFor(() => {
       expect(vacuumButton!.disabled).toBe(false);
     });
 
     fireEvent.click(vacuumButton!);
-    expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
+    expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users", "public");
     expect(reindexButton!.disabled).toBe(true);
     await waitFor(() => {
       expect(reindexButton!.disabled).toBe(false);
     });
 
     fireEvent.click(reindexButton!);
-    expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+    expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users", "public");
   });
 
   test("shows non-admin placeholder for actions", () => {
@@ -271,7 +271,7 @@ describe("TablesTab", () => {
 
     fireEvent.click(reindexButton!);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users", "public");
     });
   });
 
@@ -620,7 +620,7 @@ describe("per-row controls follow the provider's own declaration", () => {
 
     // Oracle's "Rebuild Indexes" is `optimize`, and the target is the TABLE - the
     // shape that answered ORA-01418 for a table name before this change.
-    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledWith("optimize", "users"));
+    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledWith("optimize", "users", "public"));
   });
 
   test("a provider that declares no specs keeps the pre-#U9 three controls", () => {
