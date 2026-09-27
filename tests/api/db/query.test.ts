@@ -129,6 +129,36 @@ describe("POST /api/db/query", () => {
     );
   });
 
+  for (const [count, providerLimited, expectedLimited] of [
+    [2, false, false],
+    [50, false, true],
+    [2, true, true],
+  ] as const) {
+    test(`reports a ${count}-row page with provider cut=${providerLimited} accurately`, async () => {
+      (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+        rows: Array.from({ length: count }, (_, i) => ({ id: i + 1 })),
+        fields: ["id"],
+        rowCount: count,
+        executionTime: 1,
+        pagination: { limit: 50, offset: 0, hasMore: false, totalReturned: count, wasLimited: providerLimited },
+      });
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT * FROM users" },
+      });
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ pagination: unknown }>(res);
+      expect(res.status).toBe(200);
+      expect(data.pagination).toEqual({
+        limit: 50,
+        offset: 0,
+        hasMore: count === 50,
+        totalReturned: count,
+        wasLimited: expectedLimited,
+      });
+    });
+  }
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 
@@ -256,7 +286,7 @@ describe("POST /api/db/query", () => {
     expect(data.pagination).toBeDefined();
     expect(data.pagination.limit).toBe(50);
     expect(data.pagination.offset).toBe(0);
-    expect(data.pagination.wasLimited).toBe(true);
+    expect(data.pagination.wasLimited).toBe(false);
   });
 
   test("returns 400 when connection is missing", async () => {
