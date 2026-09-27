@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { logger } from "@/lib/logger";
 import { UNDECRYPTABLE_WARNING_PREFIX, withCredentialEncryption } from "@/lib/storage/encrypting-provider";
 import { encryptSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
-import type { ServerStorageProvider } from "@/lib/storage/types";
+import type { AccountWriteOptions, ServerStorageProvider, StoredAccount } from "@/lib/storage/types";
+import { verifyTotp } from "@/lib/totp";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** Mechanics: delegation, collection narrowing, and the single warning line. */
@@ -19,6 +20,10 @@ function stubProvider(overrides: Partial<ServerStorageProvider> = {}) {
     ...overrides,
   } as unknown as ServerStorageProvider & Record<string, ReturnType<typeof mock>>;
 }
+
+// Valid base32 test secrets, never credentials anywhere.
+const TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+const TOTP_PENDING = "KRSXG5CTMVRXEZLUKRSXG5CTMVRXEZLU";
 
 const connection: DatabaseConnection = {
   id: "c1",
@@ -167,36 +172,101 @@ describe("the warning", () => {
     }
   });
 
-  test("account registry methods pass through without encryption", async () => {
+  test("account rows pass through, except the second-factor secrets, which are sealed at rest", async () => {
     const account = {
       email: "ada@example.com",
       passwordHash: "scrypt$hash",
       role: "admin" as const,
-      totpSecret: null,
-      totpPending: null,
+      totpSecret: TOTP_SECRET,
+      totpPending: TOTP_PENDING,
       disabled: false,
-      sessionVersion: 0,
+      sessionVersion: 7,
       createdAt: "t",
       updatedAt: "t",
     };
-    const listAccounts = mock(async () => [account]);
-    const getAccount = mock(async () => account);
-    const insertAccount = mock(async () => {});
-    const updateAccount = mock(async () => {});
+    const stored: StoredAccount[] = [];
+    const insertAccount = mock(async (row: StoredAccount) => {
+      stored.push(row);
+    });
+    const updateAccount = mock(async (row: StoredAccount, _options?: AccountWriteOptions) => {
+      stored.push(row);
+    });
     const deleteAccount = mock(async () => {});
-    const inner = stubProvider({ listAccounts, getAccount, insertAccount, updateAccount, deleteAccount });
+    const inner = stubProvider({
+      insertAccount,
+      updateAccount,
+      deleteAccount,
+      listAccounts: mock(async () => stored),
+      getAccount: mock(async () => stored[0] ?? null),
+    } as never);
     const wrapped = withCredentialEncryption(inner);
 
-    expect(await wrapped.listAccounts()).toEqual([account]);
-    expect(await wrapped.getAccount(account.email)).toEqual(account);
     await wrapped.insertAccount(account);
-    await wrapped.updateAccount(account, { keepEnabledAdmin: true });
+    await wrapped.updateAccount({ ...account, totpPending: null }, { keepEnabledAdmin: true });
     await wrapped.deleteAccount(account.email, { keepEnabledAdmin: true });
 
-    expect(listAccounts).toHaveBeenCalledTimes(1);
-    expect(getAccount).toHaveBeenCalledWith(account.email);
-    expect(insertAccount).toHaveBeenCalledWith(account);
-    expect(updateAccount).toHaveBeenCalledWith(account, { keepEnabledAdmin: true });
+    // What reached the store: no plaintext secret, everything else as given.
+    expect(JSON.stringify(stored)).not.toContain(TOTP_SECRET);
+    expect(JSON.stringify(stored)).not.toContain(TOTP_PENDING);
+    expect(stored[0].totpSecret).toStartWith("v1:");
+    expect(stored[0].totpPending).toStartWith("v1:");
+    expect(stored[1].totpPending).toBeNull();
+    expect({ ...stored[0], totpSecret: null, totpPending: null }).toEqual({
+      ...account,
+      totpSecret: null,
+      totpPending: null,
+    });
+    expect(updateAccount.mock.calls[0][1]).toEqual({ keepEnabledAdmin: true });
     expect(deleteAccount).toHaveBeenCalledWith(account.email, { keepEnabledAdmin: true });
+
+    // What a caller reads back: the secrets open again.
+    expect(await wrapped.getAccount(account.email)).toEqual(account);
+    expect((await wrapped.listAccounts()).map((row) => row.totpSecret)).toEqual([TOTP_SECRET, TOTP_SECRET]);
+  });
+
+  test("a stored factor the key cannot open reads as an unusable secret, never as no factor", async () => {
+    const sealed = encryptSecret(TOTP_SECRET);
+    const row = {
+      email: "ada@example.com",
+      passwordHash: "scrypt$hash",
+      role: "user" as const,
+      totpSecret: sealed,
+      totpPending: null,
+      disabled: false,
+      sessionVersion: 1,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    const inner = stubProvider({ getAccount: mock(async () => row), listAccounts: mock(async () => [row]) } as never);
+
+    process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
+    resetStorageEncryptionKey();
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const read = await withCredentialEncryption(inner).getAccount(row.email);
+      // Still a factor, so login keeps asking for a code, and no code opens it.
+      expect(read?.totpSecret).not.toBeNull();
+      expect(verifyTotp(read?.totpSecret ?? "", "000000")).toBeNull();
+      expect((await withCredentialEncryption(inner).listAccounts())[0].totpSecret).toBe(read?.totpSecret ?? "");
+      expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("ada@example.com");
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("a factor stored before sealing existed is read as it is and sealed at the next write", async () => {
+    const row = {
+      email: "ada@example.com",
+      passwordHash: "scrypt$hash",
+      role: "user" as const,
+      totpSecret: TOTP_SECRET,
+      totpPending: null,
+      disabled: false,
+      sessionVersion: 1,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    const inner = stubProvider({ getAccount: mock(async () => row) } as never);
+    expect((await withCredentialEncryption(inner).getAccount(row.email))?.totpSecret).toBe(TOTP_SECRET);
   });
 });

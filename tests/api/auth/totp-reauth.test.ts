@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 
 // A session cookie alone must not change an account's second factor: whoever steals the cookie
 // would remove it, or replace it with their own. So setting one up and turning it off both ask for
@@ -133,6 +134,12 @@ describe("changing your own second factor needs more than the session", () => {
   test("setup with the current password returns a secret that a code confirms", async () => {
     const secret = await enrol();
     expect((await storedFactor()).secret).toBe(secret);
+    // At rest the column holds the sealed envelope, never the base32 secret.
+    const raw = new Database(join(dir, "store.db"), { readonly: true });
+    const column = raw.prepare("SELECT totp_secret FROM accounts WHERE email = ?").get(ALICE) as { totp_secret: string };
+    raw.close();
+    expect(column.totp_secret).toStartWith("v1:");
+    expect(column.totp_secret).not.toContain(secret);
     expect((await signIn(ALICE, ALICE_PASSWORD)).status).toBe(401);
   });
 

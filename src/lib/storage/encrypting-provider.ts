@@ -1,5 +1,6 @@
 import { logger } from "@/lib/logger";
 import { decryptConnections, encryptConnections } from "./connection-secrets";
+import { encryptSecret, readSecret } from "./encryption";
 import type {
   AccountWriteOptions,
   ServerStorageProvider,
@@ -18,9 +19,10 @@ import type { DatabaseConnection } from "@/lib/types";
  * Neither shipped provider knows this exists; both simply receive a connection list whose secret
  * fields are already sealed and JSON.stringify it into their `data` column.
  *
- * Only `connections` is touched. No other collection carries a credential field: history and
- * saved_queries hold SQL text (the product's data, not its secrets), audit_log is already
- * sanitized by src/lib/audit.ts, and the remaining eight hold metadata.
+ * Of the collections, only `connections` is touched. No other collection carries a credential
+ * field: history and saved_queries hold SQL text (the product's data, not its secrets), audit_log
+ * is already sanitized by src/lib/audit.ts, and the remaining eight hold metadata. Of the account
+ * registry, only the TOTP secrets are sealed (see openFactor below).
  */
 
 const CONNECTIONS: StorageCollection = "connections";
@@ -42,6 +44,43 @@ function reportUndecryptable(count: number): void {
     `${UNDECRYPTABLE_WARNING_PREFIX}: ${count} field(s) were omitted. Restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) BEFORE the app writes again, or re-enter the affected credentials.`,
     { provider: "storage-encryption" },
   );
+}
+
+/**
+ * Not base32, so verifyTotp() rejects every code against it. A sealed factor the current key cannot
+ * open must never read as null: null means "no second factor", and a rotated key would silently
+ * turn MFA off. It reads as this instead, the account keeps asking for a code no one can produce,
+ * and signs in again once an admin clears the factor (or ADMIN_PASSWORD_RESET does, for the env
+ * admin). Written back by a later update, it stays unusable.
+ */
+const UNOPENABLE_FACTOR = "!unopenable";
+
+function sealFactor(value: string | null): string | null {
+  return value === null ? null : encryptSecret(value);
+}
+
+function openFactor(value: string | null, email: string): string | null {
+  if (value === null) return null;
+  const result = readSecret(value);
+  if (result.kind !== "undecryptable") return result.value;
+  logger.error(
+    `The stored second factor of ${email} does not open with the current storage key, so the account cannot sign in until an admin clears it. Restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) to recover it.`,
+    undefined,
+    { provider: "storage-encryption" },
+  );
+  return UNOPENABLE_FACTOR;
+}
+
+function sealAccount(account: StoredAccount): StoredAccount {
+  return { ...account, totpSecret: sealFactor(account.totpSecret), totpPending: sealFactor(account.totpPending) };
+}
+
+function openAccount(account: StoredAccount): StoredAccount {
+  return {
+    ...account,
+    totpSecret: openFactor(account.totpSecret, account.email),
+    totpPending: openFactor(account.totpPending, account.email),
+  };
 }
 
 class CredentialEncryptingProvider implements ServerStorageProvider {
@@ -88,22 +127,23 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
     return this.inner.mergeData(userId, { ...data, connections: encryptConnections(data.connections) });
   }
 
-  // The account registry is not a connection secret. Password hashes are already a KDF output,
-  // and the wrapper's job is the connections collection, so these pass through.
-  listAccounts(): Promise<StoredAccount[]> {
-    return this.inner.listAccounts();
+  // Account rows: the password hash is already a KDF output and passes through. The TOTP secret
+  // is not: it is the shared key that mints codes, so it is sealed like a connection password.
+  async listAccounts(): Promise<StoredAccount[]> {
+    return (await this.inner.listAccounts()).map(openAccount);
   }
 
-  getAccount(email: string): Promise<StoredAccount | null> {
-    return this.inner.getAccount(email);
+  async getAccount(email: string): Promise<StoredAccount | null> {
+    const account = await this.inner.getAccount(email);
+    return account ? openAccount(account) : null;
   }
 
   insertAccount(account: StoredAccount): Promise<void> {
-    return this.inner.insertAccount(account);
+    return this.inner.insertAccount(sealAccount(account));
   }
 
   updateAccount(account: StoredAccount, options?: AccountWriteOptions): Promise<void> {
-    return this.inner.updateAccount(account, options);
+    return this.inner.updateAccount(sealAccount(account), options);
   }
 
   deleteAccount(email: string, options?: AccountWriteOptions): Promise<void> {
