@@ -1528,8 +1528,11 @@ that is what MySQL itself calls index bytes.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
-are backtick-quoted via `escapeIdentifier()`:
+`runMaintenance(type, target?, container?)` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)); targets
+are backtick-quoted via `escapeIdentifier()`. A `container` is the DATABASE the row carries as
+`schemaName` (#772), and it qualifies the target only when it names a database OTHER than the
+connected one: a MySQL statement already resolves a bare table inside the connected database, so
+the same name as a prefix adds nothing.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
@@ -1629,6 +1632,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `defaultPort` | `3306` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | one level, `{ id: 'schema', label: 'Database', labelPlural: 'Databases' }` ([§7.1](#71-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | six on MySQL, eight on MariaDB, resolved from the server's own `VERSION()` string at connect and never from the type id ([§7.1](#71-the-object-surface-789)) |
 
 ### Labels

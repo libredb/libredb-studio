@@ -420,6 +420,19 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
     return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
   }
 
+  // PostgreSQL preemption vs. operator cancel (#1145). Both a `statement_timeout`
+  // and a `lock_timeout` are reported as `canceling statement due to <statement|lock>
+  // timeout`, sharing the `canceling statement` prefix an operator cancel
+  // (`pg_cancel_backend`, `due to user request`) uses. Both are TIMEOUTS — a time
+  // budget elapsed and the statement never ran to completion — so they map to
+  // TimeoutError carrying the engine's own text, exactly as every other engine's
+  // query timeout does. This MUST run before the cancellation branch below, which
+  // would otherwise match `canceling statement` first and discard the wording that
+  // tells a timeout apart from a cancel.
+  if (message.includes("canceling statement due to statement timeout") || message.includes("due to lock timeout")) {
+    return new TimeoutError(error.message, provider, undefined, query);
+  }
+
   // Query cancellation (must check before timeout — 'canceling statement' is cancellation, not timeout)
   if (
     message.includes("canceling statement") ||

@@ -1551,6 +1551,67 @@ describe("OracleProvider", () => {
       expect(captured.some((sql) => sql.includes('ALTER INDEX "U9_PROBE" REBUILD'))).toBe(false);
     });
 
+    // #1091 review: with an owner the index list comes from `ALL_INDEXES`, which answers for
+    // any schema - but a bare `ALTER INDEX "X" REBUILD` rebuilds in the CONNECTED user's
+    // schema, which is not the schema the list was read from. The rebuild names the owner.
+    test("optimize with an owner rebuilds in THAT schema rather than the connected one", async () => {
+      const captured: string[] = [];
+      let indexQueryBinds: unknown;
+      mockExecuteFn = async (sql: string, binds?: unknown) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("ALL_INDEXES") && upper.includes("TABLE_NAME =")) {
+          indexQueryBinds = binds;
+          return {
+            rows: [{ INDEX_NAME: "IDX_RPT_CITY" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "RPT_CUSTOMERS", "REPORTING");
+
+      expect(result.success).toBe(true);
+      // Both arguments are bound: owner first, then the table name.
+      expect(indexQueryBinds).toEqual(["REPORTING", "RPT_CUSTOMERS"]);
+      expect(captured).toContain('ALTER INDEX "REPORTING"."IDX_RPT_CITY" REBUILD');
+      // The unqualified spelling is what rebuilt in the wrong schema; it must not appear.
+      expect(captured.some((sql) => sql.includes('ALTER INDEX "IDX_RPT_CITY" REBUILD'))).toBe(false);
+    });
+
+    test("analyze with an owner gathers statistics FOR that owner", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze", "RPT_CUSTOMERS", "REPORTING");
+
+      expect(result.success).toBe(true);
+      // The owner is an inline-escaped literal because DBMS_STATS takes no binds; `USER`
+      // would mean the connected user, which is the wrong schema here.
+      expect(capturedSql).toContain("GATHER_TABLE_STATS('REPORTING', 'RPT_CUSTOMERS')");
+      expect(capturedSql).not.toContain("GATHER_TABLE_STATS(USER");
+    });
+
+    test("without an owner the owner position stays USER", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("analyze", "USERS");
+
+      // The bare-name reading is unchanged: the connected user is the owner.
+      expect(capturedSql).toContain("GATHER_TABLE_STATS(USER, 'USERS')");
+    });
+
     test("optimize on a table with no rebuildable index succeeds having rebuilt nothing", async () => {
       // A heap table with no index is an ordinary state, and so is a table whose only
       // index is the LOB index the catalog query filters out (the live probe's

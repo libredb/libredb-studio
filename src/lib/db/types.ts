@@ -640,6 +640,30 @@ export interface ProviderCapabilities {
    */
   containerLevels?: ContainerLevels;
   /**
+   * Which container paths this engine accepts as an ADDRESS, beside `containerLevels` (#1147).
+   *
+   * `exact` accepts only the declared depth: every declared level is named, or the path is
+   * refused. `prefixes` accepts every depth from one level up to the declared one, because on
+   * those engines a container named by its outer levels alone is a real address: a catalog with no
+   * schema on Trino, a database with no schema on SQL Server and DuckDB, a bucket with no scope on
+   * Couchbase. Both refuse a path longer than the declaration.
+   *
+   * Absent reads as `exact`, the conservative answer. Read as `prefixes`, a provider that forgot
+   * the field would let a partial path reach a read that binds its segments by position, and
+   * `undefined` bound where a segment belongs answers an empty folder that looks exactly like a
+   * container holding nothing.
+   *
+   * Read it through `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts` and never
+   * directly, so the provider's own refusal (`assertContainerPathShape`) and the HTTP object routes
+   * in `src/lib/api/object-route.ts` apply one rule to one declaration. It governs an address, the
+   * `container` a count or a listing names; the `parent` a container listing starts from is a tree
+   * cursor and keeps the depth ceiling on every engine.
+   *
+   * Optional for the same published-interface reason as `containerLevels` (`src/exports/types.ts`):
+   * a required field added after the fact stops every external implementer compiling.
+   */
+  containerPathShapes?: "exact" | "prefixes";
+  /**
    * Every object kind this engine has, each declared in full by the provider that has
    * it (#789).
    *
@@ -1243,8 +1267,13 @@ export interface DatabaseProvider {
    * Run maintenance operations
    * @param type - Type of maintenance operation
    * @param target - Optional target (table name or process ID)
+   * @param container - Optional namespace the target lives in. What a container means is
+   * per-engine and the provider decides: a schema for PostgreSQL, DuckDB and SQL Server, a
+   * database for MySQL and ClickHouse, an owner for Oracle, a bucket or scope for Couchbase,
+   * the attached database for SQLite and libSQL. Providers that cannot act on one ignore it
+   * rather than guessing a dialect from the target string.
    */
-  runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult>;
 
   /**
    * Validate provider configuration
@@ -2436,10 +2465,16 @@ export type ObjectEditOutcome =
    * wraps its own transaction. `"rolled-back"` may be claimed ONLY by a provider that opened and
    * closed the transaction itself, which is `transactional-replace`.
    *
-   * There is NO `retryable` field on this type and no retry advice in it. MEASURED: a PostgreSQL
-   * DDL timeout answers HTTP 499 `QUERY_CANCELLED` "Query was cancelled", and Trino mints a
-   * `TimeoutError` directly (`TrinoProvider.mapTrinoError()` in `src/lib/db/providers/sql/trino/index.ts`) which the generic mapper answers 408
-   * `retryable: true`. A client that retries an apply whose disposition is unknown applies twice.
+   * There is NO `retryable` field on this type and no retry advice in it. MEASURED on the general
+   * query path (`POST /api/db/query`), which routes through `mapDatabaseError`: since #1145 a
+   * PostgreSQL statement timeout answers HTTP 408 `TIMEOUT_ERROR` `retryable: true`, the same as
+   * Trino, which mints a `TimeoutError` directly (`TrinoProvider.mapTrinoError()` in
+   * `src/lib/db/providers/sql/trino/index.ts`). The apply route
+   * (`edit-apply/route.ts`) deliberately does NOT inherit that 408: it always answers 200 and never
+   * carries a `retryable` flag, because a client that retries an apply whose disposition is unknown
+   * applies twice. A PostgreSQL apply-time timeout does not even reach this `interrupted` arm —
+   * `classifyApplyFailure` reads its SQLSTATE `57014`, which is not in `APPLY_VERDICT_BY_SQLSTATE`,
+   * so `verdict` is `undefined` and the outcome is `refused` with the `definition` class.
    */
   | {
       readonly outcome: "interrupted";

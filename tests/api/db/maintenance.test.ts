@@ -163,6 +163,99 @@ describe("POST /api/db/maintenance", () => {
     expect(data.message).toBe("OK");
   });
 
+  // #772: the wire contract carries the table's container beside its target, and the route
+  // passes it through untouched. Reading only `target` was the whole defect - every provider
+  // then had to guess a namespace from a bare name.
+  test("passes the container through to the provider", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", container: "reporting", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(mockProvider.runMaintenance).toHaveBeenCalledWith("vacuum", "users", "reporting");
+  });
+
+  // #1091 review: the audit row recorded only `target`, so `app.orders` and `public.orders`
+  // logged identically. The container is what tells them apart.
+  test("the audit event records the container beside the target", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "orders", container: "app", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    const event = mockAuditPush.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event.target).toBe("orders");
+    expect(event.container).toBe("app");
+  });
+
+  test("a whole-database request records no container, and the target keeps its `all` fallback", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    const event = mockAuditPush.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event.target).toBe("all");
+    expect(event.container).toBeUndefined();
+  });
+
+  test("a request with no container reaches the provider with it undefined", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockProvider.runMaintenance).toHaveBeenCalledWith("vacuum", "users", undefined);
+  });
+
+  // #1091 review: a non-string container used to reach the provider, where it failed as
+  // `identifier.replace is not a function` - a 500 for what is a malformed request. The route
+  // answers 400 and runs nothing.
+  test.each<[string, unknown]>([
+    ["an object", { schema: "app" }],
+    ["a number", 7],
+    ["an array", ["app"]],
+    ["null", null],
+    ["false", false],
+  ])("a non-string container (%s) answers 400 and runs nothing", async (_label, container) => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", container, connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain("container");
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    expect(mockAuditPush).not.toHaveBeenCalled();
+  });
+
+  test("an empty-string container is a container the caller omitted, not a malformed one", async () => {
+    // The same reading `target: ""` gets below: a falsy string is the absence of the field.
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", container: "", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(mockProvider.runMaintenance).toHaveBeenCalledWith("vacuum", "users", undefined);
+  });
+
   // Threat: runMaintenance() has already completed by the time emitAuditEvent runs (see the route's
   // own comment). Before this fix, a broken audit sink shared the operation's try/catch, so a
   // throw here would 500 a client that must not be told to retry an operation - possibly a

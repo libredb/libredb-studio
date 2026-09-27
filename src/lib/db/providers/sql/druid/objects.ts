@@ -73,11 +73,13 @@
 
 import { QueryError } from "@/lib/db/errors";
 import {
+  assertContainerPathShape,
   assertObjectPathShape,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
   findKind,
+  type ContainerPathShapeEngine,
   type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
@@ -96,6 +98,18 @@ import { DRUID_CLIENT_DEADLINE_GRACE_MS, type DruidRow, type DruidTransport } fr
 import { DRUID_SCHEMA_NAME, DRUID_SYSTEM_READ_TIMEOUT_MS, readColumn, readIdentifier } from "./introspect";
 
 const PROVIDER = "druid" as const;
+
+/**
+ * Druid's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()` (`./index.ts`), which the object routes read too (#1147).
+ */
+const DRUID_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: PROVIDER,
+  label: "A Druid",
+  shapeNames: "label",
+};
 
 /**
  * Druid's identity for the shared path-shape renderer.
@@ -380,14 +394,7 @@ function containerSegment(
  * to report a caller mistake.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A Druid container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      PROVIDER,
-    );
-  }
+  assertContainerPathShape(capabilities, container, DRUID_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 

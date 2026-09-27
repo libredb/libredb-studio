@@ -47,10 +47,12 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   kindAcceptsSourceEdits,
@@ -74,6 +76,20 @@ import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * PostgreSQL's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147). Which level the readers need
+ * is not a field either: they look `schema` up rather than by position, so a declaration that
+ * names none is refused by `containerSchema` itself, where the reads are.
+ */
+const POSTGRES_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "postgres",
+  label: "A PostgreSQL",
+  shapeNames: "id",
+};
 
 // ============================================================================
 // Type parsers
@@ -1400,15 +1416,21 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * A path of another depth is a caller that built it from another engine's shape, and it
  * raises rather than reading a segment and carrying on: `undefined` bound to `$1` would
  * answer an empty folder that looks exactly like a schema holding nothing.
+ *
+ * The same failure arrives through a declaration rather than a caller: a depth-matching one
+ * that names no `schema` level passes the shared shape check, so the lookup below refuses
+ * it. A rule only this engine's readers need cannot be seen by that check, which compares
+ * depths, so it lives here, next to the reads it protects.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  assertContainerPathShape(capabilities, container, POSTGRES_CONTAINER_PATH_ENGINE);
   const levels = declaredLevels(capabilities);
   const index = levels.findIndex((level) => level.id === "schema");
-  const segment = container.length === levels.length && index >= 0 ? container[index] : undefined;
+  const segment = index < 0 ? undefined : container[index];
   if (segment === undefined) {
     throw new QueryError(
-      `A PostgreSQL container path is [${levels.map((level) => level.id).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
+      `A PostgreSQL path needs a "schema" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(container)}`,
       "postgres",
     );
   }
@@ -2099,6 +2121,9 @@ export class PostgresProvider extends SQLBaseProvider {
       // database and nothing in the product can switch it on a live connection, so
       // declaring a catalog level would draw a folder with exactly one child forever.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address (#1147). Which level the reads need is PostgreSQL's
+      // own rule and stays in `containerSchema`, beside the reads it protects.
+      containerPathShapes: "exact",
       // Seven kinds, each with the catalog that answers for it (#789):
       // table, view, materialized view and sequence from `pg_class.relkind`; function and
       // procedure from `pg_proc.prokind`; trigger from `pg_trigger`.
@@ -4157,8 +4182,15 @@ export class PostgresProvider extends SQLBaseProvider {
    * Bare table names default to the public schema; "schema.table" is quoted
    * per-part. Returns an empty string when no target is given.
    */
-  private qualifyMaintenanceTarget(target?: string): string {
+  private qualifyMaintenanceTarget(target?: string, container?: string): string {
     if (!target) return "";
+    // An explicit container wins over anything the name appears to carry: a container can
+    // legitimately contain a dot, and splitting a name to recover it is the ambiguity this
+    // parameter exists to remove. Without one the old readings stay, so existing callers do
+    // not change behaviour.
+    if (container) {
+      return this.escapeIdentifier(container) + "." + this.escapeIdentifier(target);
+    }
     if (target.includes(".")) {
       return target
         .split(".")
@@ -4168,16 +4200,16 @@ export class PostgresProvider extends SQLBaseProvider {
     return "public." + this.escapeIdentifier(target);
   }
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
       try {
         let sql = "";
-        // Resolve target into a schema-qualified, quoted identifier (defaults to
-        // the public schema for bare names; "schema.table" is also supported).
-        const qualifiedTarget = this.qualifyMaintenanceTarget(target);
+        // Resolve target into a schema-qualified, quoted identifier: the caller's container
+        // when there is one, else "schema.table", else the public schema for bare names.
+        const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
 
         switch (type) {
           case "vacuum":

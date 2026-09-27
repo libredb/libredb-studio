@@ -2608,8 +2608,7 @@ the role's own grants are the whole boundary (A3).
 
 - **B2** — the Anthropic kind is ratified and installed but not offered; serving it means giving the
   chat surface an Anthropic provider first.
-- **B4** — a mapped database error discards the text distinguishing a timeout cancel from an operator
-  cancel.
+- **B4** — `mapDatabaseError` classifies on a substring a table or column name can satisfy.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
 - **B6** — the repair ledger is rebuilt per drive, so a resumed run's repair attempts start over.
 - **B9** — the resume sweep is local-only, so an interrupted run is picked up only on the `local`

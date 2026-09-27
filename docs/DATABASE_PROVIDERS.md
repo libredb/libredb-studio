@@ -242,7 +242,7 @@ interface DatabaseProvider {
   getHealth(): Promise<HealthInfo>;
 
   // Maintenance operations
-  runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult>;
 
   // Validation
   validate(): void;

@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D128, U17 · 73
+- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 73
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 42
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3–DOC7 · 4
+- [Documentation](#documentation) — DOC3-DOC8 · 5
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H12 · 3
@@ -515,47 +515,6 @@ current database, and that permission cannot be granted in `master`.
 `SERVERPROPERTY('ProductMajorVersion')` to pick the permission name - and an incomplete count is absent
 rather than published. Measured on a real instance with a login that has neither grant, because the
 whole entry rests on a permission boundary no fixture can prove.
-
-### D49. Per-table maintenance drops the schema, so every table outside the default one refuses
-
-Found 2026-08-27 in the BROWSER while registering `duckdb` (issue #424). Not DuckDB's defect - the
-provider is the half that behaves - and no gate could have caught it: the six local gates, 100%
-line coverage and a four-lens adversarial review all passed over it, because the two halves are
-correct in isolation and only the running product puts them together.
-
-`TablesTab.tsx:390` calls `handleMaintenance(type, table.tableName)` - the BARE table name - from a
-row whose very next line (`:350`) renders `table.schemaName` beside it. Every provider's
-`qualifyMaintenanceTarget` then supplies a default schema for an unqualified target:
-`postgres.ts:1287` returns `"public." + escapeIdentifier(target)`, and
-`duckdb/index.ts:712` returns `"main"."<target>"`. So the statement names a table that is not there.
-
-Measured on DuckDB v1.5.5, clicking **Analyze Table** on the `analytics.events` row:
-
-```
-Catalog Error: Table with name events does not exist! Did you mean "analytics.events"?
-LINE 1: ANALYZE "main"."events"
-```
-
-`POST /api/db/maintenance` answers 400 and the panel prints the engine's message, so it is visible
-rather than silent - but the button cannot succeed on any table outside the default schema, on any
-engine. It went unnoticed because the fixtures the other engines are exercised with keep their
-tables in the default schema; DuckDB is simply the first whose fixture carries a second one.
-
-This is #U9 one layer up. #U9 was an operation DECLARED in the wrong placement (Oracle offered
-`optimize` per table, and the target it sent was rejected); this is the right placement sending an
-under-qualified target.
-
-Deliberately not fixed in the provider PR that found it. The one-line repair - passing
-`` `${table.schemaName}.${table.tableName}` `` - changes the target string reaching all TWELVE
-providers that implement `runMaintenance` (postgres, mysql, mssql, oracle, sqlite, libsql, duckdb,
-clickhouse, cassandra, druid, trino, search), and each has its own qualification and its own
-statement grammar: SQLite has no user schemas, MySQL's `OPTIMIZE TABLE` takes `db.table`, and the
-HTTP engines build their own paths. That is a twelve-engine live verification, not a provider
-change.
-
-**Done when:** the row passes the qualified name, every one of the twelve providers has been
-measured against a table outside its default schema (or recorded as having no such concept), and a
-component test pins the target the row sends so it cannot silently revert to the bare name.
 
 ### D51. Four providers degrade a refused monitoring read to no rows, then read the absent row as 0
 
@@ -1240,47 +1199,6 @@ test pins the behaviour that was chosen.
 
 ---
 
-# D94 (proposed): hand-copied source coordinates across this repository are stale by thousands of lines
-
-**Status:** proposed, wave 6 slot B fix round.
-
-Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
-moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
-`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
-Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
-`64ee0e3f^` was wrong before this round touched anything:
-
-| Citation | Cited in | Anchor actually at |
-|---|---|---|
-| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
-| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
-| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
-| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
-| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
-| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
-| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
-| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
-| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
-
-Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
-follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
-agent that re-derives its own citations after an edit, which this epic has now asked for three
-times, is paying a per-commit tax on coordinates that were never right.
-
-Two halves, and the second is what stops it recurring:
-
-1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
-   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
-   a number is correct only until the next commit.
-2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
-   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
-   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
-   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
-
-**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
-and the citations present at that commit all resolve. The test needs one case per shape it must
-accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
-
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
 
 `grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 39 hits, re-measured 2026-09-23. Seven of
@@ -1820,13 +1738,13 @@ Not fixed there: the cache key is shared by every engine.
 
 Found 2026-09-24 in the browser while verifying #843 (PR #1106), on a connection opened with `appdata` whose tree also lists `analytics`.
 Both hold a collection called `events`.
-The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and `runMaintenance(type, target)` takes a bare collection name.
+The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and since #1091 `runMaintenance()` takes the row's container but refuses one that is not the connected database.
 So the row a person presses for the collection they chose is the connected database's same-named collection, which is the shape #843 removed from the query path.
 
 Not fixed in #1106, which is scoped to the statement grammar.
-The target is a bare string in `runMaintenance(type, target)`'s contract for every provider, so passing a path is the D49 change, and the monitoring tabs are session-scoped on every engine.
+Since #1091 the contract carries the container, `runMaintenance(type, target, container)`, so what is left is the provider running in a database other than the connected one, and the monitoring tabs, which are session-scoped on every engine.
 
-**Done when:** a MongoDB maintenance target names its database, the deep link either opens the collection's own database or refuses a path outside the connected one, and a test pins that `Validate` on `analytics.events` reaches `analytics`.
+**Done when:** the deep link either opens the collection's own database or refuses a path outside the connected one, and a test pins that `Validate` on `analytics.events` reaches `analytics`.
 
 ### D119. On RisingWave every column reads nullable, a `NOT NULL` column and a primary key included
 
@@ -1979,6 +1897,20 @@ A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop t
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
 **Done when:** `queryReadOnly` accepts an `AbortSignal`, each of the four providers stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
+
+### D129. `attachedSegment`, the object-path policy, is still a constant in each provider file rather than part of the declaration
+
+`ObjectPathShapeEngine.attachedSegment` in `src/lib/db/object-kinds.ts` (#978) decides whether an attached kind, such as a trigger on a table or an index, may also be addressed by the bare shape `[...levels, name]`.
+MySQL and Oracle set `"optional"`; the other twelve engines that reach `assertObjectPathShape` set `"required"`, each in its own descriptor constant.
+That is the shape #1147 removed for container paths: a per-engine acceptance rule that only the provider can read, which is why the kernel rule in `docs/ARCHITECTURE.md` names it as its one pre-existing exception.
+
+Measured on 2026-09-27, on `main` at ef1748e3:
+- The object routes (`describe`, `source`, `edit-plan`) check nothing about an object path's shape: `requireObjectPath` in `src/lib/api/object-route.ts` refuses only a path that is not an array of strings or is empty, so the provider is the only layer that refuses a wrong-shaped one, with `code: QUERY_ERROR`.
+- SQL Server, Trino and DuckDB do not reach `assertObjectPathShape` at all: `mssql.ts`, `trino/objects.ts` and `duckdb/objects.ts` still build the `path is [...]` sentence with a local `shapeList`.
+
+Do it after #1148 has merged, in a PR of its own, and not alongside another architectural change: the owner asked for the two to stay apart.
+
+**Done when:** which object-path shapes an engine accepts is part of its declaration, read through one kernel reader in the way `acceptedContainerShapes()` reads `containerPathShapes`; `attachedSegment` is gone from `ObjectPathShapeEngine`; the three local `shapeList` object-path sentences go through the shared renderer; the object routes refuse a path the engine does not accept by the same reader, before the provider is called; and every provider refusal sentence stays byte-identical.
 
 ## Value interpolation
 
@@ -3159,6 +3091,48 @@ Not fixed in #1085: rewriting one paragraph in four languages is the per-languag
 
 **Done when:** each of the four paragraphs says what `README.md` says about the panel, Oracle's certificate caveat and the libSQL connection string included.
 
+### DOC8. Hand-copied source coordinates across this repository are stale by thousands of lines
+
+Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
+moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
+`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
+Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
+`64ee0e3f^` was wrong before this round touched anything:
+
+| Citation | Cited in | Anchor actually at |
+|---|---|---|
+| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
+| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
+| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
+| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
+| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
+| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
+| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
+| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
+| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
+
+Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
+follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
+agent that re-derives its own citations after an edit, which this epic has now asked for three
+times, is paying a per-commit tax on coordinates that were never right.
+
+Two halves, and the second is what stops it recurring:
+
+1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
+   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
+   a number is correct only until the next commit.
+2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
+   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
+   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
+   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
+
+DOC4 is the same class in the provider docs, and #1135 (PR #1141) replaces the citations in three source comments.
+This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
+
+**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
+and the citations present at that commit all resolve. The test needs one case per shape it must
+accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
+
 ---
 
 ## Release pipeline
@@ -3766,29 +3740,11 @@ ratified package, which that test's allowed-ignore set names explicitly.
 gains the matching adapter in the same change. The `Record<LLMProviderType, AgentProviderAdapter>` will
 not compile until it does.
 
-### B4. `mapDatabaseError` discards the text that distinguishes a timeout cancel from an operator cancel
+### B4. `mapDatabaseError` classifies on a substring a table or column name can satisfy
 
-`mapDatabaseError` matches `canceling statement` before its timeout branch and returns
-`new QueryCancelledError("Query was cancelled", provider, query)`, replacing the engine's own wording.
-PostgreSQL says `canceling statement due to statement timeout` for a `statement_timeout` and
-`canceling statement due to user request` for `pg_cancel_backend`. After this mapping **no** consumer
-can tell them apart. The discriminator is gone, not merely unexamined.
-
-That is why the agent tool layer classifies a cancel as a repairable statement failure: the reachable
-case on the agent path is the timeout this layer itself installs via `SET LOCAL statement_timeout`, and
-narrowing the read is the repair that helps. The cost is stated there — an operator cancel arriving
-mid-statement is also offered a repair, so a run cancellation has to be enforced by the run loop's own
-persisted state between tool calls rather than by expecting the driver's cancel to propagate.
-
-The fix is in shared code and has editor-visible consequences, which is why it is not in #329.
-Reordering the timeout check ahead of the cancellation check, or preserving the original message on
-`QueryCancelledError`, changes what the query panel shows when a statement is cancelled versus times
-out. The reordering is the substantive one and needs the editor's cancel/timeout UX re-checked
-(`postgres.ts` sets `queryTimeout` on the pool as well, so both paths exist).
-
-**The same mapper has a wider imprecision, and the agent's repairable-versus-environment split inherits
-it.** Classification is **substring** matching on the engine's message, so an identifier can decide the
-class. Verified against the live mapper:
+`mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
+decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
+Verified against the live mapper:
 
 - `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
   relation is treated as an environment fault and ends the run.
@@ -3802,11 +3758,9 @@ Neither direction is a boundary failure: nothing runs that policy did not allow,
 repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
 consumer sees the error, so no consumer can correct it.
 
-**Done when:** a statement timeout and a user cancellation are distinguishable by type or by preserved
-message, with the editor's consumers updated and the agent's cancel classification revisited against
-the new signal — and when classification no longer depends on a substring a table or column name can
-satisfy. Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not
-collide, and each provider already has access to its own.
+**Done when:** classification no longer depends on a substring a table or column name can satisfy.
+Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
+each provider already has access to its own.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 
@@ -4190,10 +4144,9 @@ and a test drives an engine whose top level exceeds the cap.
 
 Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
 (DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
-`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
-path is [database] or [database, schema], received []". The tree then re-reads correctly and the
-final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
-switch.
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400.
+Since #1147 the route refuses it itself, as `duckdb accepts "container" as [database] or [database, schema], received []`; before that the provider did, as "A DuckDB container path is [database] or [database, schema], received []".
+The tree then re-reads correctly and the final paint is right, so nothing is visible to the user; the 400 shows in the browser's network log on every such switch, and since #1147 it is no longer logged as a `Query error` warning by `createErrorResponse` (`src/lib/api/errors.ts`), because the route's own refusals are not.
 
 The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
 with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a

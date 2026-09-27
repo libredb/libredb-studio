@@ -2547,13 +2547,12 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     ['invalid input syntax for type integer: "abc"', "postgres"],
     ["function nosuch(integer) does not exist", "postgres"],
     ["division by zero", "postgres"],
-    // The one this layer causes ITSELF, and the reason the classification is by
-    // phase rather than by class. `postgres.ts` issues `SET LOCAL statement_timeout`
-    // with the clamped budget, and when it fires PostgreSQL says "canceling
-    // statement due to statement timeout" — which `mapDatabaseError` matches on
-    // `canceling statement` BEFORE its timeout branch, so it arrives as a
-    // `QueryCancelledError` and never as a `TimeoutError`. Narrowing the read is
-    // exactly the repair that helps, so this must not leave the layer as a throw.
+    // The one this layer causes ITSELF via `SET LOCAL statement_timeout`. Since
+    // #1145, PostgreSQL's "canceling statement due to statement timeout" is
+    // recognised by `mapDatabaseError` BEFORE its cancellation branch and arrives as
+    // a `TimeoutError` carrying the engine's text — still repairable at this phase,
+    // because narrowing the read is exactly the repair that helps, so this must not
+    // leave the layer as a throw.
     ["canceling statement due to statement timeout", "postgres"],
     // A least-privilege `agentUser` with per-table grants (the deployment
     // `execution-policy.ts` and postgres.md §12.3 recommend) makes this the model's
@@ -2573,8 +2572,9 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       throw new Error(`expected a repairable database error, got ${JSON.stringify(outcome)}`);
     }
     // The MAPPED message, not the raw engine text: `mapDatabaseError` rewrites some of
-    // them (a cancel collapses to "Query was cancelled", losing the distinguishing
-    // wording — see `docs/BACKLOG.md` B4), and what the model sees is the mapped one.
+    // them (an operator cancel collapses to "Query was cancelled"), and what the model
+    // sees is the mapped one. A PostgreSQL statement timeout, by contrast, keeps the
+    // engine's own wording since #1145.
     expect(outcome.refusal.message).toBe(mapped.message);
     expect(outcome.refusal.statementFingerprint).toBe(fingerprintStatement("SELECT * FROM ordrs"));
     // It cost an attempt and is now unrepeatable — the whole point of being repairable.

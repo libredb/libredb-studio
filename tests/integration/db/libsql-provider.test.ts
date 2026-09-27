@@ -618,8 +618,11 @@ describe("LibSQLProvider runMaintenance", () => {
 
     expect(await provider.runMaintenance("reindex")).toMatchObject({ success: true });
     expect(await provider.runMaintenance("reindex", "probe_customers")).toMatchObject({ success: true });
+    // #772: a container is ignored - the connection resolves names against its one
+    // attached database, exactly as sqlite.ts does.
+    expect(await provider.runMaintenance("reindex", "probe_customers", "main")).toMatchObject({ success: true });
 
-    expect(sentStatements()).toEqual(["REINDEX", 'REINDEX "probe_customers"']);
+    expect(sentStatements()).toEqual(["REINDEX", 'REINDEX "probe_customers"', 'REINDEX "probe_customers"']);
     await provider.disconnect();
   });
 
@@ -1791,9 +1794,9 @@ describe("LibSQLProvider object surface (#789)", () => {
     // on nothing, and a kind answering columns without declaring it hides them behind a
     // leaf row. Both directions are asserted against this engine's own answer rather
     // than against the role, which happens to coincide here and does not elsewhere:
-    // `describeLibSQLObject` gates on `spec.role !== "relation"`
-    // (src/lib/db/providers/sql/libsql/objects.ts:785), while a MariaDB sequence is
-    // declared `config` and still has columns.
+    // `describeLibSQLObject` in src/lib/db/providers/sql/libsql/objects.ts gates on
+    // `spec.role !== "relation"`, while a MariaDB sequence is declared `config` and still
+    // has columns.
     objects = await connectedWithObjects();
     const kinds = objects.getCapabilities().objectKinds ?? [];
 

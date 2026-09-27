@@ -109,6 +109,127 @@ export function assertObjectPathShape(
 }
 
 /**
+ * The engine half of `assertContainerPathShape`: the identity its error carries, and the one
+ * spelling choice the fifteen hoisted copies disagreed on.
+ *
+ * WHAT MAY TRAVEL HERE, and the rule belongs to this file rather than to this type (#1147). This
+ * file is the kernel through which every provider reads its declaration, and it takes only facts
+ * that follow from the declaration and hold for every engine. Which depths an engine accepts is
+ * such a fact, so it left this descriptor for `ProviderCapabilities.containerPathShapes`, read by
+ * `acceptedContainerShapes()` below, where the HTTP object routes read it too; the wording for a
+ * declaration that names no level follows from it and left with it. What stays is how an engine
+ * SPEAKS: its opening words, and which field of a level spells a shape.
+ *
+ * A rule that only one engine's reads need stays in that engine's file, next to the reads it
+ * protects, the way PostgreSQL's `containerSchema` refuses a declaration that names no `schema`
+ * level (#1092). A field here that only one engine would set is a sign that its rule belongs in
+ * that engine.
+ *
+ * `ObjectPathShapeEngine.attachedSegment` (#978) is the one pre-existing exception: an acceptance
+ * policy carried per engine in a descriptor rather than in the declaration, and moving it into the
+ * declaration is separate work.
+ */
+export type ContainerPathShapeEngine = {
+  /** The engine code the thrown `QueryError` is stamped with. */
+  code: DatabaseType;
+  /** The message's opening subject, article included: "A MySQL", "An Oracle". */
+  label: string;
+  /**
+   * Which field of a declared level spells the shape. `label` is the engine's own word for
+   * a person reading a refusal, which is what most engines print; `id` is what Trino and
+   * PostgreSQL print, because a declaration whose label is prose would otherwise describe
+   * a shape no read accepts, since every read binds its segment by `id`. On both engines'
+   * own declarations the two are the same word, so only a varied declaration shows it.
+   * The HTTP route's refusal always spells by `label`, because it binds nothing (#1147).
+   */
+  shapeNames: "id" | "label";
+};
+
+/**
+ * The container paths this engine accepts as an ADDRESS, as lists of its declared levels (#1147).
+ *
+ * The one reader of `ProviderCapabilities.containerPathShapes`, and both refusals read it: the
+ * provider's own `assertContainerPathShape` below, and the address check of the HTTP object routes
+ * in `src/lib/api/object-route.ts`. `exact` answers the declared levels as the only shape;
+ * `prefixes` answers every leading slice of them, from one level up to all of them, because on
+ * those engines a container named by its outer levels alone is a real address (a catalog with no
+ * schema, a bucket with no scope). No shape is longer than `declaredLevels()`, so both refuse a
+ * longer path.
+ *
+ * EVERY VALUE BUT `prefixes` READS AS `exact`, absent included, and the direction is a security
+ * decision rather than a convenience: `prefixes` is the one value that widens, so a provider that
+ * forgot the field, misspelled it or set a value this reader does not know fails closed. Read as
+ * `prefixes`, any of those would let a partial path reach a read that binds its segments by
+ * position, and `undefined` bound where a segment belongs answers an empty folder that looks
+ * exactly like a container holding nothing.
+ *
+ * The two policies differ on one more case, the declaration that names no level. `exact` answers
+ * the empty path, because the depth it asks for is zero; `prefixes` answers no shape at all, since
+ * every prefix of an empty list is a shape it never declared.
+ */
+export function acceptedContainerShapes(
+  capabilities: ProviderCapabilities,
+): readonly (readonly ContainerLevelSpec[])[] {
+  const levels = declaredLevels(capabilities);
+  if (capabilities.containerPathShapes !== "prefixes") return [levels];
+  return levels.map((_, index) => levels.slice(0, index + 1));
+}
+
+/**
+ * The accepted shapes spelled for a refusal: `[database]`, `[bucket] or [bucket, scope]`, or the
+ * words for a declaration that names no level (#1147).
+ *
+ * Exported so the HTTP route spells shapes with the code the providers use. `shapeNames` picks the
+ * field of each level that spells it: a provider passes its descriptor's choice, and the route
+ * passes `label`, which prints lowercased.
+ *
+ * The empty wording follows from the shapes, which is to say from the declared policy: over no
+ * level, `exact` accepts the empty path alone and prints `empty`, and `prefixes` accepts nothing
+ * and prints `nothing: this declaration carries no container level`. An empty join would read as a
+ * formatting bug rather than as the fact it is, which is how SQL Server's copy came to print
+ * `A SQL Server container path is , received [...]` (#1065).
+ */
+export function renderContainerShapes(
+  shapes: readonly (readonly ContainerLevelSpec[])[],
+  shapeNames: ContainerPathShapeEngine["shapeNames"],
+): string {
+  if (shapes.length === 0) return "nothing: this declaration carries no container level";
+  if (shapes.every((shape) => shape.length === 0)) return "empty";
+  const spell = (level: ContainerLevelSpec): string => (shapeNames === "id" ? level.id : level.label.toLowerCase());
+  return shapes.map((shape) => `[${shape.map(spell).join(", ")}]`).join(" or ");
+}
+
+/**
+ * Refuses a container path that is not one of the shapes the DECLARATION describes.
+ *
+ * Hoisted from fifteen provider-local copies (#1065): eleven threw on a depth mismatch and
+ * four carried their own `shapeList()`, and two of those four had already drifted.
+ * The shapes come from `acceptedContainerShapes()`, which reads the declared levels and the
+ * declared `containerPathShapes`, so the check and its message are the same array and nothing
+ * here can inherit a hardcoded 1 or a policy of its own. An engine's opening words and its shape
+ * spelling travel through the descriptor, because those differ by design; which depths it accepts
+ * is part of its declaration since #1147, which is what lets the HTTP route refuse by the same rule
+ * before this function is reached. This check stays for every caller that bypasses the route:
+ * MCP's `inspect-schema` and an embedded host reach the provider directly.
+ *
+ * It raises rather than reading a segment and carrying on: `undefined` bound to a
+ * parameter answers an empty folder that looks exactly like a container holding nothing,
+ * and a path one segment too long would bind the object's own name as the missing level.
+ */
+export function assertContainerPathShape(
+  capabilities: ProviderCapabilities,
+  container: readonly string[],
+  engine: ContainerPathShapeEngine,
+): void {
+  const shapes = acceptedContainerShapes(capabilities);
+  if (shapes.some((shape) => shape.length === container.length)) return;
+  throw new QueryError(
+    `${engine.label} container path is ${renderContainerShapes(shapes, engine.shapeNames)}, received ${JSON.stringify(container)}`,
+    engine.code,
+  );
+}
+
+/**
  * Whether THIS KIND accepts a row write. Absent and undeclared both read as false.
  *
  * Deliberately NOT conjoined with the engine-wide `supportsInlineRowEdit`, and the name
@@ -116,10 +237,10 @@ export function assertObjectPathShape(
  * inline row editor (`canEditRows` in `src/components/Studio.tsx`), and the two row
  * menus, which need both facts for Generate Test Data, conjoin it with this function at
  * the call site. Folding it in here would answer false for three engines
- * that do take row writes: MongoDB (`src/lib/db/providers/document/mongodb.ts:635`),
- * Couchbase (`src/lib/db/providers/document/couchbase/index.ts:352`) and Cassandra
- * (`src/lib/db/providers/sql/cassandra/index.ts:256`) all declare
- * `supportsInlineRowEdit: false`, and #789 declares a kind that accepts a row write on
+ * that do take row writes: MongoDB, Couchbase and Cassandra all declare
+ * `supportsInlineRowEdit: false` in `getCapabilities()` (`src/lib/db/providers/document/mongodb.ts`,
+ * `src/lib/db/providers/document/couchbase/index.ts` and `src/lib/db/providers/sql/cassandra/index.ts`),
+ * and #789 declares a kind that accepts a row write on
  * each of the three, so a conjunction would silently drop all three out of the import
  * target list.
  *

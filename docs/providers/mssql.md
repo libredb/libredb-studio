@@ -521,13 +521,10 @@ in one trigger folder, and a serialised key sorts the deeper path before its own
 `a\"b` and sorts after `a0b`, while the segments sort the other way. Both names are legal DDL
 trigger names, measured.
 
-A container path may be a database alone or a database and a schema, and both are true questions:
-the tree draws kind folders only at the deepest level
-([`flatten.ts`](../../src/components/object-tree/flatten.ts)), but `assertContainerDepth` in
-[`object-route.ts`](../../src/lib/api/object-route.ts) admits any path down to the declared depth and
-the shared conformance helper reads counts at the OUTER one. A database-level read answers for the
-whole database, and for every kind except `trigger` it equals the sum over the schemas
-`listContainers` lists. Measured on the fixture:
+A container path may be a database alone or a database and a schema, and both are true questions, which the declaration states as `containerPathShapes: "prefixes"`.
+The tree draws kind folders only at the deepest level ([`flatten.ts`](../../src/components/object-tree/flatten.ts)), while the object routes in [`object-route.ts`](../../src/lib/api/object-route.ts) accept `container` in either shape by reading that field through the same kernel function this provider refuses by (`acceptedContainerShapes()` in [`object-kinds.ts`](../../src/lib/db/object-kinds.ts)), and the shared conformance helper reads counts at the OUTER one.
+A database-level read answers for the whole database, and for every kind except `trigger` it equals the sum over the schemas `listContainers` lists.
+Measured on the fixture:
 
 | Read | table | view | procedure | function | trigger | synonym | sequence |
 |---|---|---|---|---|---|---|---|
@@ -1254,8 +1251,10 @@ boundary preserves those states without a falsy test that would erase a genuine 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
-are bracket-escaped (`]` → `]]`):
+`runMaintenance(type, target?, container?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
+are bracket-escaped (`]` → `]]`). A `container` is the SCHEMA the row carries as `schemaName`
+(#772), emitted as `[schema].[table]`; without one a bare target keeps the previous reading, where
+the connected default schema applies.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
@@ -1314,6 +1313,7 @@ render those words and send an operation SQL Server declares (#496).
 | `defaultPort` | `1433` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | **two**: `catalog` (Database) then `schema` - the first two-level engine in #789 ([§7](#the-object-surface-789)) |
+| `containerPathShapes` | `prefixes`: `[database]` and `[database, schema]` both address a container, because a database alone is a true question here ([§7](#the-object-surface-789)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | seven: table, view, procedure, function, trigger, synonym, sequence. No `index` kind and no materialized view ([§7](#the-object-surface-789)) |
 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))

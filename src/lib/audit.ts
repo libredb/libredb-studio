@@ -187,6 +187,18 @@ export interface AuditEvent {
   type: AuditEventType;
   action: string;
   target: string;
+  /**
+   * The CONTAINER the target was addressed in, when the request named one: the schema of a
+   * PostgreSQL table, the database on ClickHouse, the bucket on a document store. It is what
+   * tells `app.orders` apart from `public.orders` in this log (#1091 review), so a maintenance
+   * row is two facts rather than one.
+   *
+   * Optional, and set only by the maintenance route: every other event's `target` already names
+   * a route rather than an object, and a field that claimed a container there would be a value
+   * its writer never meant. `toAuditLine` omits it entirely when it is unset, the way `reason`
+   * and `bucket` are omitted, so the line's shape does not grow a null.
+   */
+  container?: string;
   connectionName?: string;
   user: string;
   result: "success" | "failure";
@@ -513,6 +525,7 @@ interface AuditLogLine {
   reason?: AuditReason;
   ip?: string;
   connection?: string;
+  container?: string;
   duration_ms?: number;
   bucket?: string;
   correlation_id?: string;
@@ -531,6 +544,9 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
     ...(event.reason ? { reason: event.reason } : {}),
     ...(event.ip && event.ip !== UNKNOWN_ADDRESS ? { ip: event.ip } : {}),
     ...(event.connectionName ? { connection: event.connectionName } : {}),
+    // The container beside the route, and omitted on the same terms: an event that named none
+    // must not publish a `container: null` a parser would read as a value (#1091 review).
+    ...(event.container ? { container: event.container } : {}),
     ...(event.bucket ? { bucket: event.bucket } : {}),
     ...(event.correlationId ? { correlation_id: event.correlationId } : {}),
     // Number.isFinite excludes NaN and +/-Infinity: JSON.stringify(NaN) silently produces `null`,

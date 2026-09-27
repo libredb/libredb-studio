@@ -1358,6 +1358,54 @@ describe("MSSQLProvider", () => {
       expect(capturedSql).toContain("UPDATE STATISTICS");
     });
 
+    // #772: `schemaName` is the schema on SQL Server, and the row holds it. A container
+    // qualifies the target; without one the connected default schema applies.
+    test("a container schema-qualifies the target rather than escaping it whole", async () => {
+      let capturedSql = "";
+      mockQueryFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("analyze", "Orders", "reporting");
+
+      expect(capturedSql).toBe("UPDATE STATISTICS [reporting].[Orders]");
+    });
+
+    test("optimize qualifies the same way, and a bare name stays unqualified", async () => {
+      const captured: string[] = [];
+      mockQueryFn = async (sql: string) => {
+        captured.push(sql);
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("optimize", "Orders", "reporting");
+      await provider.runMaintenance("optimize", "Orders");
+
+      // `connect()` runs its own `SELECT 1` probe first, so the two maintenance statements
+      // are selected by prefix rather than positionally.
+      const rebuilds = captured.filter((sql) => sql.startsWith("ALTER INDEX ALL ON"));
+      expect(rebuilds).toEqual([
+        "ALTER INDEX ALL ON [reporting].[Orders] REBUILD",
+        "ALTER INDEX ALL ON [Orders] REBUILD",
+      ]);
+    });
+
+    test("a container and a target that carry a bracket are both escaped", async () => {
+      let capturedSql = "";
+      mockQueryFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("analyze", "Or]ders", "rep]orting");
+
+      expect(capturedSql).toBe("UPDATE STATISTICS [rep]]orting].[Or]]ders]");
+    });
+
     test("analyze without target calls sp_updatestats", async () => {
       let capturedSql = "";
       mockQueryFn = async (sql: string) => {

@@ -562,6 +562,16 @@ export interface QueryTab {
    * Absent on a tab whose result predates this field, and on one that has never run.
    */
   resultQuery?: string;
+  /**
+   * Why the tab's last NEW run failed, in the words the failure arrived with.
+   *
+   * Set together with `result: null`, so the results panel shows the failure in place of the
+   * previous run's rows instead of leaving them up under a statement that did not produce them.
+   * A failed Load More does not set it: the rows on screen are intact and only the next page did
+   * not arrive. Cleared by the next run that lands. Absent on a tab whose last run succeeded, and
+   * optional because this type is part of the published package surface.
+   */
+  runError?: string;
   isExecuting: boolean;
   type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka";
   viewMode?: "results" | "explain" | "history" | "saved";
@@ -588,6 +598,26 @@ export interface QueryTab {
    * is overridden; the connection is otherwise the active one, whole.
    */
   databaseOverride?: number;
+  /**
+   * The object activation that opened this tab: the connection it was opened on, the object's
+   * path, the database override it was opened with, and the statement it was opened on.
+   *
+   * WHAT LETS A SECOND ACTIVATION FOCUS THIS TAB instead of opening another and reading the same
+   * rows again. The tab is reused only on the connection that opened it, since two connections
+   * can hold the same path, and only while `query` still equals `origin.query`: a tab whose
+   * statement the reader has edited is their work, and an activation must never capture it. A
+   * reused tab whose `runError` is set is run again in place.
+   *
+   * NOT PERSISTED, so a tab restored from storage carries none and is never matched: a restored
+   * tab opens a fresh one on the next activation, which is what every activation did before this.
+   */
+  origin?: {
+    /** Absent when no connection was active; optional because this type is published. */
+    readonly connectionId?: string;
+    readonly path: readonly string[];
+    readonly databaseOverride?: number;
+    readonly query: string;
+  };
   /**
    * Present exactly on a Source tab (#789 Phase 2).
    *

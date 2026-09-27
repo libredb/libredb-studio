@@ -22,9 +22,9 @@ export function toDatabaseError(error: unknown, bootstrap: { host: string; port:
   }
   if (!(error instanceof KafkaError)) return error as Error;
   switch (error.category) {
-    case "invalid-request":
     case "invalid-config":
       return new DatabaseConfigError(error.message, PROVIDER);
+    case "invalid-request":
     case "unknown-topic":
     case "unknown-object":
     case "unreadable-topic":

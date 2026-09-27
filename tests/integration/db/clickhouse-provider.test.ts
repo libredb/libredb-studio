@@ -459,6 +459,7 @@ describe("ClickHouseProvider metadata", () => {
       // #789. Asserted in full in the `object surface` block below; repeated here only
       // so this exhaustive comparison stays exhaustive.
       containerLevels: CLICKHOUSE_CONTAINER_LEVELS,
+      containerPathShapes: "exact",
       objectKinds: CLICKHOUSE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
     });
@@ -1531,6 +1532,76 @@ describe("ClickHouseProvider maintenance", () => {
     await provider.runMaintenance("optimize", 'we"ird');
 
     expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."we""ird" FINAL');
+  });
+
+  // #772: `schemaName` is the DATABASE on ClickHouse, so a container replaces the split of
+  // the name rather than being recovered from it - which is the ambiguity that matters for a
+  // name containing a dot.
+  test("a container is the database outright, and the name is not split", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "audit", "default");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "default"."audit" FINAL');
+  });
+
+  test("a container is used whole even when it contains a dot", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "audit", "my.db");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "my.db"."audit" FINAL');
+  });
+
+  test("a bare target with no container keeps the pinned-database reading", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "users");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."users" FINAL');
+  });
+
+  // 3c. escapeIdentifier() dialect override (#1091 review)
+  //
+  // A backslash inside a quoted identifier is processed as an ESCAPE on this engine, so the
+  // inherited escaper - which doubles only the quote character - let a name ENDING in a backslash
+  // swallow its own closing quote and the rest of the statement was reparsed around it. The
+  // override escapes the backslash first, the order `literal()` in objects.ts uses.
+  test("escapeIdentifier doubles a backslash as well as the quote", () => {
+    const provider = new ClickHouseProvider(makeConnection());
+
+    const escape = (identifier: string) =>
+      (provider as unknown as { escapeIdentifier(identifier: string): string }).escapeIdentifier(identifier);
+
+    expect(escape("users")).toBe('"users"');
+    expect(escape('we"ird')).toBe('"we""ird"');
+    // The trailing backslash is the whole point: a run-based escaper that only doubles a
+    // backslash with a character after it leaves this one swallowing the closing quote.
+    expect(escape("x\\")).toBe('"x\\\\"');
+    expect(escape('a\\"b')).toBe('"a\\\\""b"');
+  });
+
+  test("a target ending in a backslash keeps its closing quote", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", "bs_one\\");
+
+    expect(sqlWith("OPTIMIZE")).toBe('OPTIMIZE TABLE "demo"."bs_one\\\\" FINAL');
+  });
+
+  test("a container ending in a backslash cannot swallow the quote that closes it", async () => {
+    // The request from the review: container `x\` with a target that reads as trailing clauses.
+    // Emitted through the inherited escaper, the container's closing quote was consumed by the
+    // backslash and the target became part of the identifier rather than a second segment.
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("optimize", ".t FINAL SETTINGS optimize_throw_if_noop = 1 --", "x\\");
+
+    const sent = sqlWith("OPTIMIZE");
+    expect(sent).toBe('OPTIMIZE TABLE "x\\\\".".t FINAL SETTINGS optimize_throw_if_noop = 1 --" FINAL');
+    // The naive spelling - one backslash, so the quote after it is escaped rather than closing -
+    // is what the override exists to prevent.
+    expect(sent).not.toContain('"x\\".');
   });
 
   test("analyze reports the part statistics ClickHouse keeps instead of computing new ones", async () => {

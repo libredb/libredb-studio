@@ -47,18 +47,32 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
-  type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
   declaredKinds,
   findKind,
   isCountUnavailable,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * MongoDB's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const MONGODB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mongodb",
+  label: "A MongoDB",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // Types
@@ -431,14 +445,7 @@ function containerSegment(
  * way to report a caller mistake.
  */
 function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A MongoDB container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "mongodb",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MONGODB_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 
@@ -660,6 +667,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       supportsConnectionString: true,
       defaultPort: 27017,
       containerLevels: MONGODB_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: MONGODB_OBJECT_KINDS,
       schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',
     };
@@ -1255,7 +1265,29 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * A maintenance command runs on the database the provider is bound to, and MongoDB has no
+   * way to retarget one mid-command. A container naming a DIFFERENT database is refused
+   * rather than quietly acted on against the bound one, which is what #843 is about; the
+   * bound database itself is accepted so a caller that echoes it back still works.
+   *
+   * The comparison is against `getDatabaseName()`, the name `connect()` actually opened, and
+   * not against `config.database` alone: a connection-string connection sets no
+   * `config.database`, so comparing with it refused the database the provider IS bound to and
+   * every per-collection button on that connection answered `bound to the database ""`.
+   */
+  private assertContainerIsBound(container?: string): void {
+    const bound = this.getDatabaseName();
+    if (container && container !== bound) {
+      throw new QueryError(
+        `This connection is bound to the database "${bound}", so it cannot run maintenance in "${container}".`,
+        "mongodb",
+      );
+    }
+  }
+
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
+    this.assertContainerIsBound(container);
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {

@@ -2276,6 +2276,48 @@ describe("PostgresProvider", () => {
       expect(capturedSql).not.toContain("public.");
     });
 
+    // The container parameter exists because the name alone cannot say which schema it came
+    // from: `schemaName` is a schema for PostgreSQL, the database for MySQL, an owner for
+    // Oracle, and the monitoring page already renders it beside every table (#772). A name
+    // that carries a dot cannot stand in for it, since a container can contain one.
+    test("a container qualifies the target, and the name is not re-split", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("vacuum", "users", "reporting");
+      expect(capturedSql).toContain('"reporting"."users"');
+      expect(capturedSql).not.toContain("public.");
+    });
+
+    test("a container containing a dot survives the qualifier", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("analyze", "users", "my.schema");
+      expect(capturedSql).toContain('"my.schema"."users"');
+    });
+
+    test("without a container the old readings stay", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("vacuum", "reporting.MonthlySummary");
+      expect(capturedSql).toContain('"reporting"."MonthlySummary"');
+      expect(capturedSql).not.toContain('"reporting.MonthlySummary"');
+    });
+
     test("kill with valid PID returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -5104,6 +5146,36 @@ describe("PostgreSQL bulk column read", () => {
     await provider.connect();
 
     await expect(provider.describeObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await provider.disconnect();
+  });
+
+  /**
+   * The schema level is REQUIRED by this engine's readers, not just the depth.
+   *
+   * A declaration whose one level is called `catalog` has the depth the shared check wants,
+   * so the renderer accepts `["shop"]` here and the refusal has to come from this engine.
+   * PostgreSQL's readers do not read their segment by position: they look the `schema` level
+   * up and bind what they find, so with no such level the read would bind `undefined` where
+   * `$1` belongs and answer an empty folder that looks exactly like a schema holding
+   * nothing. Nothing else in this file covers it, because every other fixture declares a
+   * `schema` level.
+   */
+  test("a declaration with no schema level is refused even when the depth matches", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    try {
+      await expect(provider.describeObjects(["shop"], "table")).rejects.toThrow(
+        /A PostgreSQL path needs a "schema" container level and a segment for it; the declaration is \[catalog\] and the path is \["shop"\]/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
     await provider.disconnect();
   });
 

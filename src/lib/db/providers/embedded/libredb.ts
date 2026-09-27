@@ -48,9 +48,11 @@ import {
   type ObjectKindSpec,
 } from "../../types";
 import {
+  assertContainerPathShape,
   assertObjectPathShape,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   type ObjectPathShapeEngine,
@@ -61,6 +63,18 @@ import { formatBytes } from "../../utils/pool-manager";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
+
+/**
+ * LibreDB's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const LIBREDB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "libredb",
+  label: "A LibreDB",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // Lazy package loader (mirrors sqlite.ts loading bun:sqlite)
@@ -309,10 +323,7 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * database holding nothing.
  */
 function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
-  const levels = declaredLevels(capabilities);
-  if (container.length === levels.length) return;
-  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
-  throw new QueryError(`A LibreDB container path is ${shape}, received ${JSON.stringify(container)}`, "libredb");
+  assertContainerPathShape(capabilities, container, LIBREDB_CONTAINER_PATH_ENGINE);
 }
 
 /** One enumerated object, with the two things `describeObject` needs to describe it. */
@@ -384,6 +395,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // database is ONE FILE holding one flat namespace, with nothing above it to list.
       // `containerLevels` is therefore absent, which `containerDepth()` reads as 0 -
       // absent and `[]` are the same fact and only that helper is allowed to decide it.
+      // `exact` over no level: the empty path is the only address, so any segment at all is a
+      // caller holding another engine's model. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: LIBREDB_OBJECT_KINDS,
       // `lib.open({ path })` takes an exclusive `<path>.lock` sidecar, so a second
       // open of a file this process already holds throws `LOCKED` rather than

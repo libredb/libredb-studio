@@ -518,6 +518,7 @@ describe("DruidProvider metadata", () => {
       // The object model (#789), asserted in full in the `object surface` block
       // below; repeated here only because this assertion is exhaustive.
       containerLevels: DRUID_CONTAINER_LEVELS,
+      containerPathShapes: "exact",
       objectKinds: DRUID_OBJECT_KINDS,
     });
   });

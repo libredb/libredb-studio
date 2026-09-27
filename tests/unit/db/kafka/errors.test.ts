@@ -5,7 +5,7 @@ import { toDatabaseError } from "@/lib/db/providers/stream/kafka/errors";
 
 const B = { host: "broker-1", port: 9092 };
 const cases: Array<[KafkaErrorCategory, new (...a: never[]) => Error]> = [
-  ["invalid-request", DatabaseConfigError],
+  ["invalid-request", QueryError],
   ["invalid-config", DatabaseConfigError],
   ["unknown-topic", QueryError],
   ["unknown-object", QueryError],

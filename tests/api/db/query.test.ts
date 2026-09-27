@@ -355,6 +355,28 @@ describe("POST /api/db/query", () => {
     expect(data.error).toContain("cancelled");
   });
 
+  test("a PostgreSQL statement timeout answers 408 TIMEOUT_ERROR, not 499 (#1145)", async () => {
+    // The end-to-end shape of the bug: the provider throws the mapped error a real
+    // `statement_timeout` produces, and the route must answer a retryable 408 timeout
+    // rather than the 499 QUERY_CANCELLED that kept the previous rows on screen and
+    // never told the user the statement timed out.
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      mapDatabaseError(new Error("canceling statement due to statement timeout"), "postgres"),
+    );
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT pg_sleep(5)" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string; code: string; retryable?: boolean }>(res);
+
+    expect(res.status).toBe(408);
+    expect(data.code).toBe("TIMEOUT_ERROR");
+    expect(res.status).not.toBe(499);
+  });
+
   test("returns 500 for generic error", async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(new Error("Something unexpected happened"));
 

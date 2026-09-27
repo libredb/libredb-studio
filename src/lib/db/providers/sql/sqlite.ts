@@ -13,7 +13,6 @@
 import { SQLBaseProvider } from "./sql-base";
 import {
   type Container,
-  type ContainerLevelSpec,
   type DatabaseObject,
   type DatabaseConnection,
   type KindCount,
@@ -52,10 +51,11 @@ import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
 import { declaredColumnTypes } from "./column-types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
-  containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   requireSourceKind,
@@ -66,6 +66,18 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
+
+/**
+ * SQLite's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const SQLITE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "sqlite",
+  label: "A SQLite",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // Type Definitions
@@ -440,22 +452,6 @@ interface ObjectDetailRows {
 }
 
 /**
- * The container levels this provider declares, sliced to the depth `containerDepth()`
- * reports.
- *
- * One reader for the whole file, so the depth and the level list can never be taken by
- * two different rules. `containerDepth()` is what decides, never `containerLevels.length`:
- * absent and empty are the same fact and two callers reading the field by different rules
- * is how the tree and the API route came to disagree about one engine.
- *
- * On SQLite this answers the empty array, which is the point of the task and not a
- * degenerate case.
- */
-function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerLevelSpec[] {
-  return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
-}
-
-/**
  * Refuses a container path that is not the shape the DECLARATION describes.
  *
  * On SQLite the only valid container path is the empty one, and `container.length !== 0`
@@ -469,10 +465,7 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * like a database holding nothing is the worst way to report that.
  */
 function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
-  const levels = declaredLevels(capabilities);
-  if (container.length === levels.length) return;
-  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
-  throw new QueryError(`A SQLite container path is ${shape}, received ${JSON.stringify(container)}`, "sqlite");
+  assertContainerPathShape(capabilities, container, SQLITE_CONTAINER_PATH_ENGINE);
 }
 
 /**
@@ -1120,6 +1113,9 @@ export class SQLiteProvider extends SQLBaseProvider {
         check: { label: "Integrity Check", perEntity: false, global: true },
       },
       containerLevels: [],
+      // `exact` over no level: the empty path is the only address, so any segment at all is a
+      // caller holding another engine's model. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: SQLITE_OBJECT_KINDS,
     };
   }
@@ -2038,7 +2034,12 @@ export class SQLiteProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * `container` is deliberately ignored: SQLite resolves a bare name against the attached
+   * database it was opened on, always `main` for this provider, and the file has no second
+   * namespace to name (#772). The parameter is accepted so the shared contract holds.
+   */
+  public async runMaintenance(type: MaintenanceType, target?: string, _container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {

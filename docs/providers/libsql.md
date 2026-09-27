@@ -864,6 +864,9 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | `check` | globally | `PRAGMA integrity_check`, and the ANSWER is read — a corrupt database reports damage in its row while the statement itself succeeds |
 | `vacuum`, `analyze`, `optimize`, `kill` | withheld | Refused by the server (§3.5); a direct API call is refused by the provider with the reason |
 
+A `container` is deliberately ignored (#772): a libSQL connection resolves names against its one
+attached database, exactly as `sqlite.ts` does.
+
 ---
 
 ## 9. Capabilities & labels
@@ -885,6 +888,7 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | `supportsCreateTable` | `true` | `CREATE TABLE` works as an ordinary SQL statement |
 | `schemaRefreshPattern` | `"(CREATE\|DROP\|ALTER\|TRUNCATE\|REINDEX)\\b"` | Matches statements that modify schema or index metadata |
 | `containerLevels` | `[]` | Zero-container engine; bare object names throughout ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact` | Only the empty path `[]` addresses a container, so any segment is refused, by the object routes over HTTP and by this provider directly (#1147) |
 | `objectKinds` | `LIBSQL_OBJECT_KINDS` | `table` (relation, `acceptsRowWrites`), `view` (relation), `index` (config), `trigger` (attached) |
 
 ### Labels — overridden (`getLabels()`, [`src/lib/db/providers/sql/libsql/index.ts`](../../src/lib/db/providers/sql/libsql/index.ts))

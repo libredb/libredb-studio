@@ -43,10 +43,12 @@ import {
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   requireSourceKind,
@@ -56,6 +58,18 @@ import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { unquoteLiteral } from "@/lib/sql/values";
+
+/**
+ * MySQL's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const MYSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mysql",
+  label: "A MySQL",
+  shapeNames: "label",
+};
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -1315,14 +1329,7 @@ function containerSegment(
  * position holds the schema is read off the declaration rather than assumed.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A MySQL container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "mysql",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MYSQL_CONTAINER_PATH_ENGINE);
   return containerSegment(capabilities, container, "schema");
 }
 
@@ -1980,6 +1987,9 @@ export class MySQLProvider extends SQLBaseProvider {
       // level here - MySQL has exactly one and `information_schema.SCHEMATA` is what a
       // catalog would contain.
       containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Six kinds on MySQL and eight on MariaDB, resolved from what the server called
       // itself and never from the type id (#789). See `objectKindsFor`.
       objectKinds: objectKindsFor(this.measuredFlavour),
@@ -2927,7 +2937,21 @@ export class MySQLProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * A maintenance target as a `database.table` identifier, qualified only when the caller's
+   * container is a database OTHER than the connected one. A MySQL statement already resolves
+   * a bare table inside the connected database, so qualifying with the same name would add a
+   * prefix the engine reads as redundant, and a container that is not a database at all is
+   * not something this engine can act on.
+   */
+  private qualifyMaintenanceTarget(target: string, container?: string): string {
+    if (container && container !== this.config.database) {
+      return `${this.escapeIdentifier(container)}.${this.escapeIdentifier(target)}`;
+    }
+    return this.escapeIdentifier(target);
+  }
+
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -2942,7 +2966,9 @@ export class MySQLProvider extends SQLBaseProvider {
           case "analyze":
           case "optimize":
           case "check": {
-            const tables = target ? this.escapeIdentifier(target) : await this.getAllTablesForMaintenance(conn);
+            const tables = target
+              ? this.qualifyMaintenanceTarget(target, container)
+              : await this.getAllTablesForMaintenance(conn);
             // An empty database joined to an empty list, and `OPTIMIZE TABLE ` alone is
             // a syntax error - measured through the provider against a database with no
             // tables on 2026-08-25: "You have an error in your SQL syntax ... near ''".

@@ -726,6 +726,215 @@ describe("useQueryExecution", () => {
     expect(tabs[0].result!.rows).toHaveLength(2);
     expect(tabs[0].allRows).toHaveLength(2);
     expect(tabs[0].currentOffset).toBe(50);
+    // The page is what failed, not the statement, so the panel keeps its rows and says
+    // nothing inline.
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  /**
+   * A failed NEW run is the opposite case of the page above: the statement on screen is
+   * no longer the one that last ran, so the rows it fetched may not stay under it.
+   * Measured before this: a good run, then `SELEC * FROM x`, left the first run's rows,
+   * header and `resultQuery` in the tab, and the only signal was a toast that fades, so
+   * the grid, export and inline edit all acted on the previous statement's rows.
+   */
+  test("a failed run replaces the previous result with its error, and the next success clears it", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as { sql: string };
+        return body.sql.startsWith("SELEC ")
+          ? { ok: false, status: 400, json: { error: 'near "SELEC": syntax error' } }
+          : { ok: true, json: mockQueryResult };
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    expect(tabs[0].result?.rows).toHaveLength(2);
+
+    await act(async () => {
+      await result.current.executeQuery("SELEC * FROM x");
+    });
+
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+    expect(tabs[0].result).toBeNull();
+    expect(tabs[0].resultQuery).toBeUndefined();
+    expect(tabs[0].allRows).toBeUndefined();
+    expect(tabs[0].currentOffset).toBe(0);
+    // The toast stays: the inline block is the lasting signal, not the only one.
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: 'near "SELEC": syntax error' });
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    expect(tabs[0].runError).toBeUndefined();
+    expect(tabs[0].result?.rows).toHaveLength(2);
+    expect(tabs[0].resultQuery).toBe("SELECT * FROM users");
+  });
+
+  /**
+   * A superseded run's refusal belongs to a statement the tab no longer shows, so its
+   * error must not replace the rows of the run that took the tab over.
+   */
+  test("a superseded run's failure writes no error over the run that replaced it", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    let releaseFirst: () => void = () => {};
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as { sql: string; explain?: unknown };
+        if (body.sql !== "SELEC * FROM x" || body.explain !== undefined) return { ok: true, json: mockQueryResult };
+        await firstHeld;
+        return { ok: false, status: 400, json: { error: 'near "SELEC": syntax error' } };
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    let first: Promise<boolean> | undefined;
+    act(() => {
+      first = result.current.executeQuery("SELEC * FROM x");
+    });
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    releaseFirst();
+    await act(async () => {
+      await first;
+    });
+
+    expect(tabs[0].runError).toBeUndefined();
+    expect(tabs[0].resultQuery).toBe("SELECT * FROM users");
+    expect(tabs[0].result?.rows).toHaveLength(2);
+  });
+
+  /** An EXPLAIN never owned the results panel, so landing one does not answer its error. */
+  test("an EXPLAIN that succeeds leaves the tab's run error in place", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab({ runError: 'near "SELEC": syntax error' })]);
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: { rows: [{ "QUERY PLAN": { plan: "Seq Scan" } }], fields: ["QUERY PLAN"], rowCount: 1, executionTime: 5 },
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    expect(tabs[0].explainPlan).toBeDefined();
+    expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+  });
+
+  /** The same exemption from the other side: a failed EXPLAIN takes no rows off the panel. */
+  test("an EXPLAIN that fails leaves the previous result and sets no run error", async () => {
+    const tab = createTab({
+      result: mockQueryResult,
+      resultQuery: "SELECT * FROM users",
+      allRows: mockQueryResult.rows,
+    });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({ "/api/db/query": { ok: false, status: 400, json: { error: "EXPLAIN is not allowed here" } } });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "EXPLAIN is not allowed here" });
+    expect(tabs[0].runError).toBeUndefined();
+    expect(tabs[0].result?.rows).toHaveLength(2);
+    expect(tabs[0].resultQuery).toBe("SELECT * FROM users");
+  });
+
+  /** A thrown request, not a refused one, is the same failure to the reader. */
+  test("a request that throws replaces the previous result too", async () => {
+    const tab = createTab({
+      result: mockQueryResult,
+      resultQuery: "SELECT * FROM users",
+      allRows: mockQueryResult.rows,
+    });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    globalThis.fetch = mock(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    expect(tabs[0].runError).toBe("Failed to fetch");
+    expect(tabs[0].result).toBeNull();
+  });
+
+  /**
+   * The owner's scope: a cancellation keeps today's behaviour and is not an error. This is
+   * the shape a server-side cancel arrives in, `createErrorResponse`'s 499 and its code.
+   */
+  test("a cancelled run leaves the previous result and sets no error", async () => {
+    const tab = createTab({
+      result: mockQueryResult,
+      resultQuery: "SELECT * FROM users",
+      allRows: mockQueryResult.rows,
+    });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: false,
+        status: 499,
+        json: { error: "Query was cancelled", code: "QUERY_CANCELLED", statusCode: 499 },
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    expect(tabs[0].runError).toBeUndefined();
+    expect(tabs[0].result?.rows).toHaveLength(2);
+  });
+
+  /**
+   * The word is not the signal. A message that only CONTAINS "cancelled" was read as a
+   * cancellation and kept the previous statement's rows, so an engine refusing a column or
+   * an enum value of that name looked like a cancel the user never asked for.
+   */
+  test('an engine error naming a "cancelled" column is a failure, not a cancellation', async () => {
+    const tab = createTab({
+      result: mockQueryResult,
+      resultQuery: "SELECT * FROM users",
+      allRows: mockQueryResult.rows,
+    });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({
+      "/api/db/query": { ok: false, status: 400, json: { error: 'column "cancelled" does not exist' } },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT cancelled FROM users");
+    });
+
+    expect(tabs[0].runError).toBe('column "cancelled" does not exist');
+    expect(tabs[0].result).toBeNull();
+    expect(tabs[0].allRows).toBeUndefined();
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: 'column "cancelled" does not exist' });
   });
 
   /**
@@ -1973,7 +2182,8 @@ describe("useQueryExecution", () => {
 
   // ── "Query was cancelled" message handling ─────────────────────────────
 
-  test('shows cancellation toast for "Query was cancelled" error message', async () => {
+  test('a "Query was cancelled" message without the code is an error, not a cancellation', async () => {
+    // No server path sends this: a cancel is always the 499 and its code below.
     mockGlobalFetch({
       "/api/db/query": { ok: false, status: 500, json: { error: "Query was cancelled by user" } },
     });
@@ -1985,8 +2195,8 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("SELECT pg_sleep(60)");
     });
 
-    // Should show cancellation toast, not generic error
-    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "Query was cancelled by user" });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
   test("handles QUERY_CANCELLED response code from API", async () => {

@@ -645,6 +645,23 @@ describe("ObjectTree object rows", () => {
     await userEvent.keyboard(" ");
     await waitFor(() => expect(row(/Views/).getAttribute("aria-expanded")).toBe("false"));
   });
+
+  test("a held Space on an object row activates once, and its repeats are still swallowed", async () => {
+    // Every auto-repeat of a held key arrives as another keydown, so without the guard one long
+    // press opened a data tab per repeat.
+    const clicked: DatabaseObject[] = [];
+    withObjects();
+    await openTables((object) => clicked.push(object));
+
+    row(/orders/).focus();
+    await userEvent.click(row(/orders/));
+    clicked.length = 0;
+
+    expect(fireEvent.keyDown(row(/orders/), { key: " ", repeat: true })).toBe(false);
+    expect(clicked).toHaveLength(0);
+    expect(fireEvent.keyDown(row(/orders/), { key: " " })).toBe(false);
+    expect(clicked).toHaveLength(1);
+  });
 });
 
 describe("ObjectTree loading states", () => {

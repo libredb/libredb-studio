@@ -874,7 +874,7 @@ describe("reads over captured payloads", () => {
     });
     expect(result.warnings).toBeUndefined();
     const past = await provider.query(`{"topic":"codec-gzip","limit":${DEFAULT_QUERY_LIMIT + 1}}`).catch((e) => e);
-    expect(past).toBeInstanceOf(DatabaseConfigError);
+    expect(past).toBeInstanceOf(QueryError);
     expect(past.message).toBe(`"limit" must be a whole number from 1 to ${DEFAULT_QUERY_LIMIT}`);
   });
 
@@ -1015,12 +1015,12 @@ describe("reads over captured payloads", () => {
     expect(empty).toBeInstanceOf(QueryError);
     expect(empty.message).toBe('The editor is empty: write a read request such as {"topic": "orders"}');
     const invalid = await provider.query("{}").catch((e) => e);
-    expect(invalid).toBeInstanceOf(DatabaseConfigError);
+    expect(invalid).toBeInstanceOf(QueryError);
     expect(invalid.message).toContain('"topic" is required');
     // Empty text is text that is empty once whitespace is removed, and nothing more: one character
     // that is not whitespace is a request, which the parser reads and refuses.
     const oneCharacter = await provider.query(" { ").catch((e) => e);
-    expect(oneCharacter).toBeInstanceOf(DatabaseConfigError);
+    expect(oneCharacter).toBeInstanceOf(QueryError);
     expect(oneCharacter.message).toBe("The read request is not valid JSON");
     // And a request reaches the parser as written, never trimmed: a no-break space, which trim()
     // removes and JSON does not allow, before or after a request makes it text the parser refuses.
@@ -1031,7 +1031,7 @@ describe("reads over captured payloads", () => {
       ),
     );
     for (const refusal of padded) {
-      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect(refusal).toBeInstanceOf(QueryError);
       expect(refusal.message).toBe("The read request is not valid JSON");
     }
     // The whitespace is every character trim() removes, and no other: each alone, and all of them at
