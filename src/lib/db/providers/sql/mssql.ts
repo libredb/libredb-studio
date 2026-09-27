@@ -72,15 +72,13 @@ import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from
 /**
  * SQL Server's identity for the shared container-path renderer.
  *
- * `shapes: "prefixes"`: every depth up to the declaration is a real address here, because a
- * caller may name only the outer levels. A path longer than the declaration is still refused.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
  */
 const MSSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "mssql",
   label: "A SQL Server",
   shapeNames: "label",
-  shapes: "prefixes",
-  emptyShapes: "nothing: this declaration carries no container level",
 };
 
 /**
@@ -1536,6 +1534,9 @@ export class MSSQLProvider extends SQLBaseProvider {
         { id: "catalog", label: "Database", labelPlural: "Databases" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
       ],
+      // A database alone is an address as well as a database and a schema, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       // Seven kinds. Six are `sys.objects.type` spellings (`MSSQL_OBJECT_TYPES`) and the
       // seventh, the trigger, is read from `sys.triggers` because `sys.objects` holds no
       // DDL trigger at all (#789).

@@ -62,15 +62,13 @@ import { unquoteLiteral } from "@/lib/sql/values";
 /**
  * MySQL's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: the caller either names every declared level or is refused,
- * because a partial path would leave a level unbound and answer an empty folder.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
  */
 const MYSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "mysql",
   label: "A MySQL",
   shapeNames: "label",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 /**
@@ -1989,6 +1987,9 @@ export class MySQLProvider extends SQLBaseProvider {
       // level here - MySQL has exactly one and `information_schema.SCHEMATA` is what a
       // catalog would contain.
       containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Six kinds on MySQL and eight on MariaDB, resolved from what the server called
       // itself and never from the type id (#789). See `objectKindsFor`.
       objectKinds: objectKindsFor(this.measuredFlavour),

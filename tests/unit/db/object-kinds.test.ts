@@ -1,7 +1,10 @@
 import { describe, test, expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import type { ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
+import type { ContainerLevelSpec, ObjectKindSpec, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
 import {
+  acceptedContainerShapes,
+  assertContainerPathShape,
+  type ContainerPathShapeEngine,
   containerDepth,
   declaredKinds,
   findKind,
@@ -19,6 +22,7 @@ import {
   requireSourceKind,
   kindAcceptsSourceEdits,
   requireEditableKind,
+  renderContainerShapes,
 } from "@/lib/db/object-kinds";
 
 const base = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
@@ -467,6 +471,192 @@ describe("requireEditableKind", () => {
     );
     expect(() => requireEditableKind(capabilities, "nolang", engine)).toThrow(
       'PostgreSQL declares an editable kind "nolang" and no sourceLanguage to render it with',
+    );
+  });
+});
+
+const SCHEMA_LEVEL: ContainerLevelSpec = { id: "schema", label: "Schema", labelPlural: "Schemas" };
+const CATALOG_LEVEL: ContainerLevelSpec = { id: "catalog", label: "Catalog", labelPlural: "Catalogs" };
+/** A level whose label is not its id's word, so the two spellings can differ. */
+const DATABASE: ContainerLevelSpec = { id: "catalog", label: "Database", labelPlural: "Databases" };
+
+/** A declaration with these levels and, when named, this policy. An unnamed policy is ABSENT, not undefined. */
+function declaration(levels: readonly ContainerLevelSpec[], policy?: "exact" | "prefixes"): ProviderCapabilities {
+  return {
+    ...base,
+    containerLevels: levels,
+    ...(policy === undefined ? {} : { containerPathShapes: policy }),
+  } as unknown as ProviderCapabilities;
+}
+
+const ids = (shapes: readonly (readonly ContainerLevelSpec[])[]): string[][] =>
+  shapes.map((shape) => shape.map((level) => level.id));
+
+/** The error a call raised, so a message can be compared whole rather than as a substring. */
+function refusal(call: () => void): QueryError {
+  try {
+    call();
+  } catch (error) {
+    if (error instanceof QueryError) return error;
+    throw error;
+  }
+  throw new Error("the call did not refuse");
+}
+
+describe("acceptedContainerShapes (#1147)", () => {
+  test("exact accepts the declared depth and nothing else, at depths 0, 1 and 2", () => {
+    expect(ids(acceptedContainerShapes(declaration([], "exact")))).toEqual([[]]);
+    expect(ids(acceptedContainerShapes(declaration([SCHEMA_LEVEL], "exact")))).toEqual([["schema"]]);
+    expect(ids(acceptedContainerShapes(declaration([CATALOG_LEVEL, SCHEMA_LEVEL], "exact")))).toEqual([
+      ["catalog", "schema"],
+    ]);
+  });
+
+  test("prefixes accepts every depth from one level up to the declared one", () => {
+    expect(ids(acceptedContainerShapes(declaration([SCHEMA_LEVEL], "prefixes")))).toEqual([["schema"]]);
+    expect(ids(acceptedContainerShapes(declaration([CATALOG_LEVEL, SCHEMA_LEVEL], "prefixes")))).toEqual([
+      ["catalog"],
+      ["catalog", "schema"],
+    ]);
+  });
+
+  test("prefixes with no level accepts nothing, not even the empty path", () => {
+    expect(acceptedContainerShapes(declaration([], "prefixes"))).toEqual([]);
+  });
+
+  test("an absent field reads as exact at depths 0, 1 and 2, never as prefixes", () => {
+    expect(ids(acceptedContainerShapes(declaration([])))).toEqual([[]]);
+    expect(ids(acceptedContainerShapes(declaration([SCHEMA_LEVEL])))).toEqual([["schema"]]);
+    expect(ids(acceptedContainerShapes(declaration([CATALOG_LEVEL, SCHEMA_LEVEL])))).toEqual([["catalog", "schema"]]);
+    // The control: at depth 0 and at depth 2 the two policies answer differently, so the
+    // assertions above could not pass if absent were read as prefixes.
+    expect(acceptedContainerShapes(declaration([]))).not.toEqual(acceptedContainerShapes(declaration([], "prefixes")));
+    expect(acceptedContainerShapes(declaration([CATALOG_LEVEL, SCHEMA_LEVEL]))).not.toEqual(
+      acceptedContainerShapes(declaration([CATALOG_LEVEL, SCHEMA_LEVEL], "prefixes")),
+    );
+  });
+
+  test("a declaration with no containerLevels at all is depth 0", () => {
+    expect(acceptedContainerShapes(base)).toEqual([[]]);
+  });
+
+  test("a third declared level widens nothing", () => {
+    const threeLevels = {
+      ...base,
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL, { id: "schema", label: "Extra", labelPlural: "Extras" }],
+      containerPathShapes: "prefixes",
+    } as unknown as ProviderCapabilities;
+    expect(ids(acceptedContainerShapes(threeLevels))).toEqual([["catalog"], ["catalog", "schema"]]);
+  });
+});
+
+describe("renderContainerShapes (#1147)", () => {
+  test("label spelling prints each level's label, lowercased", () => {
+    expect(renderContainerShapes([[DATABASE], [DATABASE, SCHEMA_LEVEL]], "label")).toBe(
+      "[database] or [database, schema]",
+    );
+  });
+
+  test("id spelling prints each level's id", () => {
+    expect(renderContainerShapes([[DATABASE], [DATABASE, SCHEMA_LEVEL]], "id")).toBe("[catalog] or [catalog, schema]");
+  });
+
+  test("a prose label shows the difference between the two spellings", () => {
+    const shapes = [[{ id: "schema", label: "Key Space", labelPlural: "Key Spaces" } satisfies ContainerLevelSpec]];
+    expect(renderContainerShapes(shapes, "label")).toBe("[key space]");
+    expect(renderContainerShapes(shapes, "id")).toBe("[schema]");
+  });
+
+  test("one shape carries no or", () => {
+    expect(renderContainerShapes([[SCHEMA_LEVEL]], "label")).toBe("[schema]");
+  });
+
+  test("the empty path and no shape at all print their own words under both spellings", () => {
+    expect(renderContainerShapes([[]], "label")).toBe("empty");
+    expect(renderContainerShapes([[]], "id")).toBe("empty");
+    expect(renderContainerShapes([], "label")).toBe("nothing: this declaration carries no container level");
+    expect(renderContainerShapes([], "id")).toBe("nothing: this declaration carries no container level");
+  });
+
+  test("the empty wordings are the two policies' own answers over no level", () => {
+    expect(renderContainerShapes(acceptedContainerShapes(declaration([], "exact")), "label")).toBe("empty");
+    expect(renderContainerShapes(acceptedContainerShapes(declaration([], "prefixes")), "label")).toBe(
+      "nothing: this declaration carries no container level",
+    );
+  });
+});
+
+describe("assertContainerPathShape (#1147)", () => {
+  const POSTGRES: ContainerPathShapeEngine = { code: "postgres", label: "A PostgreSQL", shapeNames: "id" };
+  const TRINO: ContainerPathShapeEngine = { code: "trino", label: "A Trino", shapeNames: "id" };
+  const SQLITE: ContainerPathShapeEngine = { code: "sqlite", label: "A SQLite", shapeNames: "label" };
+  const DUCKDB: ContainerPathShapeEngine = { code: "duckdb", label: "A DuckDB", shapeNames: "label" };
+
+  test("prefixes over two levels accepts one or two segments and refuses the rest", () => {
+    const capabilities = declaration([CATALOG_LEVEL, SCHEMA_LEVEL], "prefixes");
+    expect(() => assertContainerPathShape(capabilities, ["c"], TRINO)).not.toThrow();
+    expect(() => assertContainerPathShape(capabilities, ["c", "s"], TRINO)).not.toThrow();
+    expect(refusal(() => assertContainerPathShape(capabilities, [], TRINO)).message).toBe(
+      "A Trino container path is [catalog] or [catalog, schema], received []",
+    );
+    expect(refusal(() => assertContainerPathShape(capabilities, ["c", "s", "x"], TRINO)).message).toBe(
+      'A Trino container path is [catalog] or [catalog, schema], received ["c","s","x"]',
+    );
+  });
+
+  test("exact over one level accepts only that level", () => {
+    const capabilities = declaration([SCHEMA_LEVEL], "exact");
+    expect(() => assertContainerPathShape(capabilities, ["app"], POSTGRES)).not.toThrow();
+    expect(refusal(() => assertContainerPathShape(capabilities, [], POSTGRES)).message).toBe(
+      "A PostgreSQL container path is [schema], received []",
+    );
+    expect(refusal(() => assertContainerPathShape(capabilities, ["app", "x"], POSTGRES)).message).toBe(
+      'A PostgreSQL container path is [schema], received ["app","x"]',
+    );
+  });
+
+  test("the two empty wordings survive the move byte for byte", () => {
+    expect(refusal(() => assertContainerPathShape(declaration([], "exact"), ["main"], SQLITE)).message).toBe(
+      'A SQLite container path is empty, received ["main"]',
+    );
+    expect(refusal(() => assertContainerPathShape(declaration([], "prefixes"), [], DUCKDB)).message).toBe(
+      "A DuckDB container path is nothing: this declaration carries no container level, received []",
+    );
+  });
+
+  test("an absent policy refuses a partial path", () => {
+    expect(
+      refusal(() => assertContainerPathShape(declaration([CATALOG_LEVEL, SCHEMA_LEVEL]), ["c"], TRINO)).message,
+    ).toBe('A Trino container path is [catalog, schema], received ["c"]');
+  });
+
+  test("the refusal is a QueryError stamped with the descriptor's code", () => {
+    const raised = refusal(() => assertContainerPathShape(declaration([SCHEMA_LEVEL], "exact"), [], POSTGRES));
+    expect(raised).toBeInstanceOf(QueryError);
+    expect(raised.provider).toBe("postgres");
+  });
+
+  test("the descriptor carries no accepted depths any more, and the compiler holds it there", () => {
+    const withShapes: ContainerPathShapeEngine = {
+      code: "postgres",
+      label: "A PostgreSQL",
+      shapeNames: "id",
+      // @ts-expect-error the accepted depths are the declaration's containerPathShapes since #1147
+      shapes: "exact",
+    };
+    const withEmptyShapes: ContainerPathShapeEngine = {
+      code: "postgres",
+      label: "A PostgreSQL",
+      shapeNames: "id",
+      // @ts-expect-error the empty wording follows from containerPathShapes since #1147
+      emptyShapes: "empty",
+    };
+    // A stray member is inert: the declaration decides, whatever the descriptor carries.
+    expect(() =>
+      assertContainerPathShape(declaration([CATALOG_LEVEL, SCHEMA_LEVEL], "prefixes"), ["c"], withShapes),
+    ).not.toThrow();
+    expect(refusal(() => assertContainerPathShape(declaration([], "prefixes"), [], withEmptyShapes)).message).toEndWith(
+      "nothing: this declaration carries no container level, received []",
     );
   });
 });

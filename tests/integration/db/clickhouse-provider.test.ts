@@ -459,6 +459,7 @@ describe("ClickHouseProvider metadata", () => {
       // #789. Asserted in full in the `object surface` block below; repeated here only
       // so this exhaustive comparison stays exhaustive.
       containerLevels: CLICKHOUSE_CONTAINER_LEVELS,
+      containerPathShapes: "exact",
       objectKinds: CLICKHOUSE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
     });

@@ -309,6 +309,7 @@ describe("CouchbaseProvider metadata", () => {
       defaultPort: 8091,
       // The object surface (#789); asserted field by field in the object-surface block.
       containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      containerPathShapes: "prefixes",
       objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     });

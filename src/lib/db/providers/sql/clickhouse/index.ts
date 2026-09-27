@@ -556,6 +556,9 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // absence of `acceptsRowWrites` on every one of them are all argued in
       // `./objects.ts`.
       containerLevels: CLICKHOUSE_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: CLICKHOUSE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
     };

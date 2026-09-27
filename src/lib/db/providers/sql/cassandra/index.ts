@@ -290,6 +290,9 @@ export class CassandraProvider extends SQLBaseProvider {
       // holding the committed fixture. The declaration and the four methods that read
       // it live in `objects.ts`, which carries the measurements (issue #789).
       containerLevels: CASSANDRA_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: CASSANDRA_OBJECT_KINDS,
     };
   }

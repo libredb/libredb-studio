@@ -220,6 +220,9 @@ export class LibSQLProvider extends SQLBaseProvider {
       // read off a provider that never connects, so it could not describe session state
       // in any case. See `objects.ts`.
       containerLevels: [],
+      // `exact` over no level: the empty path is the only address, so any segment at all is a
+      // caller holding another engine's model. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: LIBSQL_OBJECT_KINDS,
     };
   }

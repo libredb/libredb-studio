@@ -80,16 +80,15 @@ import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from
 /**
  * PostgreSQL's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: every declared level is named or the path is refused. Which level the
- * readers need is not a field here: they look `schema` up rather than by position, so a
- * declaration that names none is refused by `containerSchema` itself, where the reads are.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147). Which level the readers need
+ * is not a field either: they look `schema` up rather than by position, so a declaration that
+ * names none is refused by `containerSchema` itself, where the reads are.
  */
 const POSTGRES_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "postgres",
   label: "A PostgreSQL",
   shapeNames: "id",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 // ============================================================================
@@ -2122,6 +2121,9 @@ export class PostgresProvider extends SQLBaseProvider {
       // database and nothing in the product can switch it on a live connection, so
       // declaring a catalog level would draw a folder with exactly one child forever.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address (#1147). Which level the reads need is PostgreSQL's
+      // own rule and stays in `containerSchema`, beside the reads it protects.
+      containerPathShapes: "exact",
       // Seven kinds, each with the catalog that answers for it (#789):
       // table, view, materialized view and sequence from `pg_class.relkind`; function and
       // procedure from `pg_proc.prokind`; trigger from `pg_trigger`.

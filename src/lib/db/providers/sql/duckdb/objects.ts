@@ -55,15 +55,13 @@ import type {
 /**
  * DuckDB's identity for the shared container-path renderer.
  *
- * `shapes: "prefixes"`: every depth up to the declaration is a real address here, because a
- * caller may name only the outer levels. A path longer than the declaration is still refused.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()` (`./index.ts`), which the object routes read too (#1147).
  */
 const DUCKDB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "duckdb",
   label: "A DuckDB",
   shapeNames: "label",
-  shapes: "prefixes",
-  emptyShapes: "nothing: this declaration carries no container level",
 };
 
 // ============================================================================

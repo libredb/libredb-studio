@@ -267,6 +267,11 @@ describe("BaseDatabaseProvider", () => {
       expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
       expect(externalImplementer.supportsTransactions).toBeUndefined();
       expect(externalImplementer.declaresForeignKeys).toBeUndefined();
+      // The conservative default for `containerPathShapes` lives in the kernel reader and never in a
+      // base declaration: absent here, so every provider that declares a value declares it itself,
+      // and one that forgets it reads as `exact` through `acceptedContainerShapes()` (#1147).
+      expect(caps.containerPathShapes).toBeUndefined();
+      expect(externalImplementer.containerPathShapes).toBeUndefined();
       // The SQL default: a relational engine HAS foreign keys whether or not a given
       // schema uses any. The six engines that have none override it, so the strong
       // claim - "no reading could ever return one here" - is always declared and

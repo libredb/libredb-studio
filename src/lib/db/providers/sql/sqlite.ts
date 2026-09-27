@@ -70,15 +70,13 @@ import * as path from "path";
 /**
  * SQLite's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: the only path this engine accepts is the declared depth, which here
- * is the empty one, so any segment at all is a caller holding another engine's model.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
  */
 const SQLITE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "sqlite",
   label: "A SQLite",
   shapeNames: "label",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 // ============================================================================
@@ -1115,6 +1113,9 @@ export class SQLiteProvider extends SQLBaseProvider {
         check: { label: "Integrity Check", perEntity: false, global: true },
       },
       containerLevels: [],
+      // `exact` over no level: the empty path is the only address, so any segment at all is a
+      // caller holding another engine's model. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: SQLITE_OBJECT_KINDS,
     };
   }

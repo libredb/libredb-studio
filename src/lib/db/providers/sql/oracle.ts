@@ -68,15 +68,13 @@ import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from
 /**
  * Oracle's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: the caller either names every declared level or is refused,
- * because a partial path would leave a level unbound and answer an empty folder.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
  */
 const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "oracle",
   label: "An Oracle",
   shapeNames: "label",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 // ============================================================================
@@ -1429,6 +1427,9 @@ export class OracleProvider extends SQLBaseProvider {
       // pool is opened against one service and nothing in the product can switch the
       // pluggable database on a live connection.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Nine kinds, all nine answered by `ALL_OBJECTS.OBJECT_TYPE` (#789).
       //
       // No `index` kind, deliberately. Oracle's own dictionary models an index as an

@@ -378,6 +378,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       supportsConnectionString: true,
       defaultPort: 8091,
       containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      // A bucket alone is an address as well as a bucket and a scope, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     };

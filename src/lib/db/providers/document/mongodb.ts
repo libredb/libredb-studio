@@ -65,15 +65,13 @@ import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from
 /**
  * MongoDB's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: the caller either names every declared level or is refused,
- * because a partial path would leave a level unbound and answer an empty folder.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
  */
 const MONGODB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "mongodb",
   label: "A MongoDB",
   shapeNames: "label",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 // ============================================================================
@@ -669,6 +667,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       supportsConnectionString: true,
       defaultPort: 27017,
       containerLevels: MONGODB_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: MONGODB_OBJECT_KINDS,
       schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',
     };

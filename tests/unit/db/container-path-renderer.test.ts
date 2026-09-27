@@ -112,8 +112,10 @@ describe("the container-path sentence has one producer under providers/", () => 
     expect(kinds).toContain("export function assertContainerPathShape(");
 
     // One descriptor per engine that renders the sentence, which is what keeps an engine's
-    // own opening words and accepted depths travelling through the shared renderer instead
-    // of being re-typed at a call site. A new provider that hand-rolls its own message
+    // own opening words and its shape spelling travelling through the shared renderer
+    // instead of being re-typed at a call site. The depths it accepts are not the
+    // descriptor's: they come from its declaration's `containerPathShapes`, through
+    // `acceptedContainerShapes()` (#1147). A new provider that hand-rolls its own message
     // fails the test above; one that reaches the renderer without a descriptor fails here.
     const callers = files.filter((file) => fs.readFileSync(file, "utf8").includes("assertContainerPathShape("));
     expect(callers.map(repoRelative).sort()).toEqual([...ENGINES].sort());

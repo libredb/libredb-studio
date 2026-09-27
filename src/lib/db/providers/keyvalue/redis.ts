@@ -77,15 +77,13 @@ import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 /**
  * Redis's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: the caller either names every declared level or is refused,
- * because a partial path would leave a level unbound and answer an empty folder.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
  */
 const REDIS_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: "redis",
   label: "A Redis",
   shapeNames: "label",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 /**
@@ -894,6 +892,9 @@ export class RedisProvider extends BaseDatabaseProvider {
       // The object model (#789). Both are module constants: see their docblocks for the
       // measurements behind the one container level and the two kinds.
       containerLevels: REDIS_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: REDIS_OBJECT_KINDS,
       // The key-space walk. `defaultCount` is the batch a caller that names none gets, and it
       // is larger than the object surface's `COUNT 100` on purpose: this is a WALK a person

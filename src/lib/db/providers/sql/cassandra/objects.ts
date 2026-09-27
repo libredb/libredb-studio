@@ -132,15 +132,13 @@ const PROVIDER = "cassandra" as const;
 /**
  * Cassandra's identity for the shared container-path renderer.
  *
- * `shapes: "exact"`: the caller either names every declared level or is refused,
- * because a partial path would leave a level unbound and answer an empty folder.
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()` (`./index.ts`), which the object routes read too (#1147).
  */
 const CASSANDRA_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: PROVIDER,
   label: "A Cassandra",
   shapeNames: "label",
-  shapes: "exact",
-  emptyShapes: "empty",
 };
 
 // ============================================================================

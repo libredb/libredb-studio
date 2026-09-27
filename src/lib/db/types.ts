@@ -640,6 +640,30 @@ export interface ProviderCapabilities {
    */
   containerLevels?: ContainerLevels;
   /**
+   * Which container paths this engine accepts as an ADDRESS, beside `containerLevels` (#1147).
+   *
+   * `exact` accepts only the declared depth: every declared level is named, or the path is
+   * refused. `prefixes` accepts every depth from one level up to the declared one, because on
+   * those engines a container named by its outer levels alone is a real address: a catalog with no
+   * schema on Trino, a database with no schema on SQL Server and DuckDB, a bucket with no scope on
+   * Couchbase. Both refuse a path longer than the declaration.
+   *
+   * Absent reads as `exact`, the conservative answer. Read as `prefixes`, a provider that forgot
+   * the field would let a partial path reach a read that binds its segments by position, and
+   * `undefined` bound where a segment belongs answers an empty folder that looks exactly like a
+   * container holding nothing.
+   *
+   * Read it through `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts` and never
+   * directly, so the provider's own refusal (`assertContainerPathShape`) and the HTTP object routes
+   * in `src/lib/api/object-route.ts` apply one rule to one declaration. It governs an address, the
+   * `container` a count or a listing names; the `parent` a container listing starts from is a tree
+   * cursor and keeps the depth ceiling on every engine.
+   *
+   * Optional for the same published-interface reason as `containerLevels` (`src/exports/types.ts`):
+   * a required field added after the fact stops every external implementer compiling.
+   */
+  containerPathShapes?: "exact" | "prefixes";
+  /**
    * Every object kind this engine has, each declared in full by the provider that has
    * it (#789).
    *
