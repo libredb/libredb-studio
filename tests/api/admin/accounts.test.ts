@@ -26,7 +26,7 @@ const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 const { clearTotpReplayState, decodeBase32, TOTP_PERIOD_SECONDS } = await import("@/lib/totp");
 const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage/factory");
 const { hashPassword, passwordVerificationCount, SCRYPT_N } = await import("@/lib/password-hash");
-const { rehashStoredPassword } = await import("@/lib/local-accounts");
+const { beginTotpEnrolment, disableOwnTotp, rehashStoredPassword } = await import("@/lib/local-accounts");
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-accounts-"));
 // The suite password lives in tests/setup.ts. Repeating the literal here is what GitGuardian flags.
@@ -432,9 +432,12 @@ describe("stored local accounts", () => {
 
     await as("admin", "admin@libredb.org");
     expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "disable" }))).status).toBe(200);
+    // A session whose account is not in the registry is refused before the route runs; the
+    // library still answers 404 for an account that disappears between the two reads.
     await as("admin", "ghost@example.com");
-    expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "begin" }))).status).toBe(404);
-    expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "disable" }))).status).toBe(404);
+    expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "begin" }))).status).toBe(401);
+    await expect(beginTotpEnrolment("ghost@example.com")).rejects.toMatchObject({ status: 404 });
+    await expect(disableOwnTotp("ghost@example.com")).rejects.toMatchObject({ status: 404 });
     await as("admin", "admin@libredb.org");
     expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "nope" }))).status).toBe(400);
     expect(

@@ -12,7 +12,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { emitAuditEvent } from "@/lib/audit";
-import type { Role } from "@/lib/auth";
+import type { Role, UserPayload } from "@/lib/auth";
 import { hmacHex } from "@/lib/auth-compare";
 import { getAuthUsers, type AuthUser } from "@/lib/local-auth";
 import { logger } from "@/lib/logger";
@@ -98,6 +98,7 @@ function toAuthUser(account: StoredAccount): AuthUser {
     passwordHash: account.passwordHash,
     role: account.role,
     disabled: account.disabled,
+    sessionVersion: account.sessionVersion,
     ...(account.totpSecret ? { totpSecret: account.totpSecret } : {}),
   };
 }
@@ -143,6 +144,7 @@ async function insertSeeded(provider: ServerStorageProvider, user: AuthUser, now
     totpSecret: user.totpSecret ?? null,
     totpPending: null,
     disabled: false,
+    sessionVersion: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -174,6 +176,32 @@ export async function resolveLocalAuthUsers(): Promise<AuthUser[]> {
   if (!provider) return getAuthUsers();
   await seedAccountsIfEmpty(provider);
   return (await provider.listAccounts()).map(toAuthUser);
+}
+
+/**
+ * Whether a verified session still speaks for its stored account. src/lib/auth.ts getSession()
+ * calls this on every request, because the token itself stays valid for 24 hours.
+ *
+ * OIDC and `STORAGE_PROVIDER=local` sessions have no row to consult and pass. In store mode the
+ * account must exist, be enabled, hold the role the token names, and carry the token's session
+ * version. A token from before the registry existed carries no version and matches a row still at
+ * 0; the lookup seeds an empty table first, so upgrading does not sign the env admin out.
+ */
+export async function storedAccountAllows(session: UserPayload): Promise<boolean> {
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return true;
+  const provider = await getStorageProvider();
+  if (!provider) return true;
+  let account = await provider.getAccount(session.username);
+  if (!account) {
+    await seedAccountsIfEmpty(provider);
+    account = await provider.getAccount(session.username);
+  }
+  return (
+    account !== null &&
+    !account.disabled &&
+    account.role === session.role &&
+    account.sessionVersion === (session.sessionVersion ?? 0)
+  );
 }
 
 /** After a successful store-mode login, bring an older scrypt parameter set up to the current one. */
@@ -212,6 +240,7 @@ export async function createAccount(actor: string, body: unknown): Promise<Publi
     totpSecret: null,
     totpPending: null,
     disabled: false,
+    sessionVersion: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -258,18 +287,29 @@ function assertAdminRemains(
   if (survivors.length === 0) throw new AccountError(409, LAST_ADMIN);
 }
 
-export async function changeAccount(actor: string, email: string, body: unknown): Promise<PublicAccount> {
+export interface ChangedAccount {
+  account: PublicAccount;
+  /** The version a session for this account must now carry; the route re-issues the actor's own. */
+  sessionVersion: number;
+}
+
+export async function changeAccount(actor: string, email: string, body: unknown): Promise<ChangedAccount> {
   const provider = await requireAccountStore();
   const patch = readPatch(body);
   const current = await provider.getAccount(email);
   if (!current) throw new AccountError(404, ACCOUNT_NOT_FOUND);
+  const role = patch.role ?? current.role;
+  const disabled = patch.disabled ?? current.disabled;
+  // Each of these changes what an existing session was issued for, so each ends it.
+  const endsSessions = role !== current.role || (disabled && !current.disabled) || patch.password !== undefined;
   const next: StoredAccount = {
     ...current,
-    role: patch.role ?? current.role,
-    disabled: patch.disabled ?? current.disabled,
+    role,
+    disabled,
     passwordHash: patch.password ? await hashPassword(patch.password) : current.passwordHash,
     totpSecret: patch.clearTotp ? null : current.totpSecret,
     totpPending: patch.clearTotp ? null : current.totpPending,
+    sessionVersion: endsSessions ? current.sessionVersion + 1 : current.sessionVersion,
     updatedAt: new Date().toISOString(),
   };
   assertAdminRemains(await provider.listAccounts(), current.email, next);
@@ -280,7 +320,7 @@ export async function changeAccount(actor: string, email: string, body: unknown)
   }
   if (patch.password) audit(actor, "password", current.email);
   if (patch.clearTotp) audit(actor, "totp_clear", current.email);
-  return toPublic(next);
+  return { account: toPublic(next), sessionVersion: next.sessionVersion };
 }
 
 export async function removeAccount(actor: string, email: string): Promise<void> {

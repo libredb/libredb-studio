@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { accountFailureResponse } from "@/lib/api/account-response";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { login } from "@/lib/auth";
 import { changeAccount, removeAccount } from "@/lib/local-accounts";
 
 const PATCH_ROUTE = "PATCH /api/admin/accounts/[email]";
@@ -27,7 +28,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ em
     } catch {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
-    const account = await changeAccount(guard.session.username, email, body);
+    const { account, sessionVersion } = await changeAccount(guard.session.username, email, body);
+    // Changing your own role or password ends your other sessions, not the one making the change.
+    if (account.email.toLowerCase() === guard.session.username.toLowerCase() && !account.disabled) {
+      await login(account.role, account.email, sessionVersion);
+    }
     return NextResponse.json({ account });
   } catch (error) {
     return accountFailureResponse(error, PATCH_ROUTE);

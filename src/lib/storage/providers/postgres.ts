@@ -62,6 +62,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           totp_secret   TEXT,
           totp_pending  TEXT,
           disabled      INTEGER NOT NULL DEFAULT 0,
+          session_version INTEGER NOT NULL DEFAULT 0,
           created_at    TEXT NOT NULL,
           updated_at    TEXT NOT NULL
         )
@@ -148,7 +149,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async listAccounts(): Promise<StoredAccount[]> {
     this.ensurePool();
     const { rows } = await this.pool!.query(
-      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at
        FROM accounts ORDER BY email`,
     );
     return (rows as AccountRow[]).map(accountFromRow);
@@ -157,7 +158,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async getAccount(email: string): Promise<StoredAccount | null> {
     this.ensurePool();
     const { rows } = await this.pool!.query(
-      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at
        FROM accounts WHERE email = $1`,
       [email],
     );
@@ -168,8 +169,8 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async insertAccount(account: StoredAccount): Promise<void> {
     this.ensurePool();
     await this.pool!.query(
-      `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         account.email,
         account.passwordHash,
@@ -177,6 +178,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         account.totpSecret,
         account.totpPending,
         account.disabled ? 1 : 0,
+        account.sessionVersion,
         account.createdAt,
         account.updatedAt,
       ],
@@ -187,14 +189,16 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     await this.pool!.query(
       `UPDATE accounts
-       SET password_hash = $1, role = $2, totp_secret = $3, totp_pending = $4, disabled = $5, updated_at = $6
-       WHERE email = $7`,
+       SET password_hash = $1, role = $2, totp_secret = $3, totp_pending = $4, disabled = $5, session_version = $6,
+           updated_at = $7
+       WHERE email = $8`,
       [
         account.passwordHash,
         account.role,
         account.totpSecret,
         account.totpPending,
         account.disabled ? 1 : 0,
+        account.sessionVersion,
         account.updatedAt,
         account.email,
       ],

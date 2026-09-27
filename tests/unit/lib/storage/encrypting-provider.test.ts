@@ -175,6 +175,7 @@ describe("the warning", () => {
       totpSecret: null,
       totpPending: null,
       disabled: false,
+      sessionVersion: 0,
       createdAt: "t",
       updatedAt: "t",
     };

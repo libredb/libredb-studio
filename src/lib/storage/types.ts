@@ -105,6 +105,11 @@ export interface StoredAccount {
   totpSecret: string | null;
   totpPending: string | null;
   disabled: boolean;
+  /**
+   * Copied into each session token at login. Disabling, a role change and a password change
+   * increment it, which ends every session minted before the change at its next request.
+   */
+  sessionVersion: number;
   createdAt: string;
   updatedAt: string;
 }

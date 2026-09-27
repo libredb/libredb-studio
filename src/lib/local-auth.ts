@@ -24,6 +24,8 @@ export interface AuthUser {
   passwordHash?: string;
   /** A stored account that must not receive a session. Env accounts are never disabled. */
   disabled?: boolean;
+  /** The stored account's session version, signed into its token at login. Absent on env accounts. */
+  sessionVersion?: number;
 }
 
 // Single-line and module-scoped so bun's line coverage credits it cleanly (it

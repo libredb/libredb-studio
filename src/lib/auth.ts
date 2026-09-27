@@ -3,6 +3,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
 import { getJwtSecret } from "@/lib/config/auth-env";
+import { storedAccountAllows } from "@/lib/local-accounts";
 
 // getJwtSecret is called per sign/verify rather than at module load, so a
 // misconfigured JWT_SECRET surfaces as an AuthConfigError the login route can turn
@@ -21,6 +22,11 @@ export type Role = "admin" | "user";
 export interface UserPayload {
   role: Role;
   username: string;
+  /**
+   * Set only on sessions for an account in the server store (src/lib/local-accounts.ts), and
+   * compared with that account's current value on every request. Env and OIDC sessions omit it.
+   */
+  sessionVersion?: number;
 }
 
 export async function signJWT(payload: UserPayload) {
@@ -51,7 +57,17 @@ export async function getSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get("auth-token")?.value;
   if (!token) return null;
-  return await verifyJWT(token);
+  const session = await verifyJWT(token);
+  if (!session) return null;
+  // The token is valid for 24 hours whatever happens to the account, so a stored account is read
+  // again here: disabled, deleted, demoted or password-reset means this session is over. A registry
+  // that cannot be read refuses the session rather than trusting a token it cannot check.
+  try {
+    return (await storedAccountAllows(session)) ? session : null;
+  } catch (error) {
+    logger.error("Could not read the account registry, refusing the session", error, { route: "auth" });
+    return null;
+  }
 }
 
 /** Hosts whose traffic never leaves the machine (port is stripped before the check). */
@@ -146,8 +162,8 @@ export async function shouldMarkCookieSecure(): Promise<boolean> {
   }
 }
 
-export async function login(role: Role, username?: string) {
-  const token = await signJWT({ role, username: username || role });
+export async function login(role: Role, username?: string, sessionVersion?: number) {
+  const token = await signJWT({ role, username: username || role, sessionVersion });
   const cookieStore = await cookies();
   cookieStore.set("auth-token", token, {
     httpOnly: true,

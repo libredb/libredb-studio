@@ -78,6 +78,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
           totp_secret   TEXT,
           totp_pending  TEXT,
           disabled      INTEGER NOT NULL DEFAULT 0,
+          session_version INTEGER NOT NULL DEFAULT 0,
           created_at    TEXT NOT NULL,
           updated_at    TEXT NOT NULL
         )
@@ -163,7 +164,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
   async listAccounts(): Promise<StoredAccount[]> {
     this.ensureDb();
     const rows = this.db!.prepare(
-      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at
        FROM accounts ORDER BY email`,
     ).all() as AccountRow[];
     return rows.map(accountFromRow);
@@ -172,7 +173,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
   async getAccount(email: string): Promise<StoredAccount | null> {
     this.ensureDb();
     const row = this.db!.prepare(
-      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at
+      `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at
        FROM accounts WHERE email = ?`,
     ).get(email) as AccountRow | undefined;
     return row ? accountFromRow(row) : null;
@@ -181,8 +182,8 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
   async insertAccount(account: StoredAccount): Promise<void> {
     this.ensureDb();
     this.db!.prepare(
-      `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       account.email,
       account.passwordHash,
@@ -190,6 +191,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       account.totpSecret,
       account.totpPending,
       account.disabled ? 1 : 0,
+      account.sessionVersion,
       account.createdAt,
       account.updatedAt,
     );
@@ -199,7 +201,8 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
     this.ensureDb();
     this.db!.prepare(
       `UPDATE accounts
-       SET password_hash = ?, role = ?, totp_secret = ?, totp_pending = ?, disabled = ?, updated_at = ?
+       SET password_hash = ?, role = ?, totp_secret = ?, totp_pending = ?, disabled = ?, session_version = ?,
+           updated_at = ?
        WHERE email = ?`,
     ).run(
       account.passwordHash,
@@ -207,6 +210,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       account.totpSecret,
       account.totpPending,
       account.disabled ? 1 : 0,
+      account.sessionVersion,
       account.updatedAt,
       account.email,
     );

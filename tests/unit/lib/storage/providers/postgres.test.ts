@@ -399,6 +399,7 @@ describe("PostgresStorageProvider", () => {
       totp_secret: "SECRET",
       totp_pending: null,
       disabled: 1,
+      session_version: 3,
       created_at: "2026-09-25T00:00:00.000Z",
       updated_at: "2026-09-25T00:00:00.000Z",
     };
@@ -412,6 +413,7 @@ describe("PostgresStorageProvider", () => {
         totpSecret: "SECRET",
         totpPending: null,
         disabled: true,
+        sessionVersion: 3,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       },
@@ -439,12 +441,31 @@ describe("PostgresStorageProvider", () => {
           totp_secret: null,
           totp_pending: null,
           disabled: 0,
+          session_version: 0,
           created_at: "t",
           updated_at: "t",
         },
       ],
     });
     await expect(provider.listAccounts()).rejects.toThrow(/role owner/);
+  });
+
+  test("rejects an accounts row whose session_version is not a whole number", async () => {
+    await provider.initialize();
+    const row = {
+      email: "ada@example.com",
+      password_hash: "h",
+      role: "user",
+      totp_secret: null,
+      totp_pending: null,
+      disabled: 0,
+      created_at: "t",
+      updated_at: "t",
+    };
+    for (const session_version of ["x", -1, 1.5]) {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...row, session_version }] });
+      await expect(provider.getAccount("ada@example.com")).rejects.toThrow(/session_version/);
+    }
   });
 
   test("writes account inserts, updates and deletes", async () => {
@@ -457,6 +478,7 @@ describe("PostgresStorageProvider", () => {
       totpSecret: null,
       totpPending: null,
       disabled: false,
+      sessionVersion: 0,
       createdAt: "t",
       updatedAt: "t",
     };

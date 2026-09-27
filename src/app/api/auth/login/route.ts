@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (matched) {
-      await login(matched.role, matched.email);
+      await login(matched.role, matched.email, matched.sessionVersion);
       resetRateLimit("login_client", clientKey);
       resetRateLimit("login_account", accountKey);
       // Isolated in its own try/catch, separate from login() above, matching logout and the OIDC
