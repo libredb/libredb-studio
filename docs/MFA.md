@@ -112,15 +112,21 @@ password alone if that is what you need.
 
 ### When accounts live in the server store
 
-`STORAGE_PROVIDER=sqlite` or `postgres` copies `ADMIN_TOTP_SECRET` and `USER_TOTP_SECRET` onto the
-account row once, while the table is empty. After that the row is the secret. Changing the
-environment variable does not change an account that already exists, and blanking it does not turn
-the factor off. Enrol from Admin → Accounts (or `POST /api/auth/totp` with `{"action":"begin"}`,
-then `{"action":"confirm","code":"123456"}`). `{"action":"disable"}` removes your own factor. An
-admin clears someone else's with `PATCH /api/admin/accounts/<email>` `{"clearTotp":true}`.
+`STORAGE_PROVIDER=sqlite` or `postgres` copies `ADMIN_TOTP_SECRET` and `USER_TOTP_SECRET` onto the account row once, while the table is empty.
+After that the row is the secret: changing the environment variable does not change an account that already exists, and blanking it does not turn the factor off.
+`ADMIN_PASSWORD_RESET=true` is the exception for the env admin, and applies `ADMIN_TOTP_SECRET` (or no factor) along with the password; see [STORAGE.md](./STORAGE.md#accounts).
 
-`STORAGE_PROVIDER=local` has no row to write, so the environment variables stay the only switch,
-including blanking one and restarting. OIDC mode does not enrol here.
+Every account sets up its own authenticator under the user menu → Authenticator (`/settings/authenticator`); an admin also finds it at the foot of Admin → Accounts.
+Setting one up asks for the current password, and turning one off asks for the current password and a current code, so a stolen session cookie can neither remove the factor nor replace it.
+A wrong password or code there is charged to the same budgets as a failed login.
+An admin clears someone else's factor with `PATCH /api/admin/accounts/<email>` `{"clearTotp":true}`, for example when a phone is lost.
+The API is `POST /api/auth/totp` with `{"action":"begin","password":"..."}`, then `{"action":"confirm","code":"123456"}`, and `{"action":"disable","password":"...","code":"123456"}`; `GET /api/auth/totp` says whether the signed-in account has a factor.
+
+The stored secrets are sealed with the storage encryption key, as connection passwords are.
+Rotating `JWT_SECRET` or `STORAGE_ENCRYPTION_KEY` therefore makes every stored factor unreadable, and an account whose factor cannot be opened cannot sign in until an admin clears it (or `ADMIN_PASSWORD_RESET` does, for the env admin): the factor is locked, never silently turned off.
+
+`STORAGE_PROVIDER=local` has no row to write, so the environment variables stay the only switch, including blanking one and restarting.
+OIDC mode does not enrol here.
 
 ### Running both
 

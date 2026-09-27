@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   totp_secret   TEXT,
   totp_pending  TEXT,
   disabled      INTEGER NOT NULL DEFAULT 0,
+  session_version INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -347,6 +348,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   totp_secret   TEXT,
   totp_pending  TEXT,
   disabled      INTEGER NOT NULL DEFAULT 0,
+  session_version INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -358,7 +360,8 @@ If a DBA creates the table, the app user only needs:
 
 ```sql
 -- Grant only data access (no DDL needed)
-GRANT SELECT, INSERT, UPDATE ON user_storage TO libredb_app;
+-- DELETE: removing an account removes its user_storage rows in the same transaction.
+GRANT SELECT, INSERT, UPDATE, DELETE ON user_storage TO libredb_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON accounts TO libredb_app;
 ```
 
@@ -596,6 +599,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   totp_secret   TEXT,
   totp_pending  TEXT,
   disabled      INTEGER NOT NULL DEFAULT 0,
+  session_version INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -622,6 +626,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   totp_secret   TEXT,
   totp_pending  TEXT,
   disabled      INTEGER NOT NULL DEFAULT 0,
+  session_version INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -742,9 +747,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   email         TEXT PRIMARY KEY,  -- local login email; also the user_storage user_id
   password_hash TEXT NOT NULL,     -- scrypt encoding, never the password
   role          TEXT NOT NULL,     -- 'admin' or 'user'
-  totp_secret   TEXT,              -- confirmed TOTP secret, or NULL
-  totp_pending  TEXT,              -- enrolment that has not been confirmed; login ignores it
+  totp_secret   TEXT,              -- confirmed TOTP secret, sealed like a connection password, or NULL
+  totp_pending  TEXT,              -- enrolment not yet confirmed, sealed; login ignores it
   disabled      INTEGER NOT NULL,  -- 1 rejects login and keeps this user's rows
+  session_version INTEGER NOT NULL, -- signed into each session; a change ends older sessions
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -1124,13 +1130,36 @@ OIDC users (Auth0, Keycloak, Okta, Azure AD) have their `preferred_username` or 
 
 ### Accounts
 
-`STORAGE_PROVIDER=sqlite` or `postgres` keeps local email/password identities in an `accounts` table next to `user_storage`. `STORAGE_PROVIDER=local` has no server database, so it keeps using `ADMIN_PASSWORD` and the optional `USER_PASSWORD` on every login. `NEXT_PUBLIC_AUTH_PROVIDER=oidc` does not read or write `accounts`: the issuer is the only identity, and a stored role cannot deny or elevate someone the issuer already named.
+`STORAGE_PROVIDER=sqlite` or `postgres` keeps local email/password identities in an `accounts` table next to `user_storage`.
+`STORAGE_PROVIDER=local` has no server database, so it keeps using `ADMIN_PASSWORD` and the optional `USER_PASSWORD` on every login.
+`NEXT_PUBLIC_AUTH_PROVIDER=oidc` does not read or write `accounts`: the issuer is the only identity, and a stored role cannot deny or elevate someone the issuer already named.
 
-On the first start with an empty table, `ADMIN_EMAIL` / `ADMIN_PASSWORD` (and `USER_EMAIL` / `USER_PASSWORD` when the password is set) are copied in and then left alone. Passwords are stored as scrypt (RFC 7914) with N=16384, r=8, p=1, a 16-byte salt and a 32-byte key, encoded `scrypt$<N>$<r>$<p>$<salt>$<key>`. A stored hash whose parameters differ is rewritten with the current parameters after a successful login. A failed login does not write.
+On the first start with an empty table, `ADMIN_EMAIL` / `ADMIN_PASSWORD` (and `USER_EMAIL` / `USER_PASSWORD` when the password is set) are copied in and then left alone.
+Passwords are stored as scrypt (RFC 7914) with N=16384, r=8, p=1, a 16-byte salt and a 32-byte key, encoded `scrypt$<N>$<r>$<p>$<salt>$<key>`.
+A stored hash whose parameters differ is rewritten with the current parameters after a successful login.
+A failed login does not write.
 
-Further accounts are created under Admin → Accounts. Disabling an account stops login and leaves its `user_storage` rows in place, so enabling it again restores that person's connections. Deleting an account removes those rows as well, so creating the same email later does not inherit them. The last enabled admin cannot be disabled, demoted, or deleted.
+Further accounts are created under Admin → Accounts.
+Disabling an account stops login and leaves its `user_storage` rows in place, so enabling it again restores that person's connections.
+Deleting an account removes those rows in the same transaction, so creating the same email later does not inherit them.
+The last enabled admin cannot be disabled, demoted, or deleted, and the store decides that inside the write's own transaction, so two concurrent requests cannot each remove one of the last two admins.
 
-TOTP secrets that were set in the environment are copied onto the seeded rows. After that, enrolment is per account. See [MFA.md](./MFA.md#when-accounts-live-in-the-server-store).
+**Sessions follow the account.**
+Each session token carries the account's `session_version`, and every request reads the row again: a session ends at its next request when its account is disabled, deleted, demoted or promoted, or has its password reset by an admin.
+An admin who changes their own role or password keeps the session making the change, and their other sessions end.
+MCP tokens minted for a stored account carry the same version and stop working the same way.
+A new row starts at a random version, so a session of a deleted account never matches a later account with the same email.
+Upgrading an existing `sqlite` or `postgres` deployment to a release with the registry signs every local user out once: a session from before it carries no version.
+
+**The environment after seeding.**
+Once the table has rows, changing `ADMIN_PASSWORD` no longer changes the admin's password.
+Each start compares the two once and logs a warning when `ADMIN_PASSWORD` does not match the stored admin, or when `ADMIN_EMAIL` has no row.
+To apply the environment, for a rotated secret or an admin locked out of every account, set `ADMIN_PASSWORD_RESET=true` and restart: `ADMIN_EMAIL` becomes an enabled admin that signs in with `ADMIN_PASSWORD`, with `ADMIN_TOTP_SECRET` as its second factor or none, its older sessions end, and the audit log records the change with actor `environment`.
+Remove the variable afterwards, because every start applies it again while it is set, and the log says so.
+
+TOTP secrets that were set in the environment are copied onto the seeded rows.
+After that, enrolment is per account, and the stored secrets are sealed with the same key as connection passwords.
+See [MFA.md](./MFA.md#when-accounts-live-in-the-server-store).
 
 ---
 

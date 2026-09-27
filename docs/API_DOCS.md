@@ -191,7 +191,28 @@ Get current authenticated user information.
 }
 ```
 
-> The `user` object is the JWT session payload (`role`, `username`). It is a public route in the middleware but self-checks the cookie, returning `{ "authenticated": false }` when absent/invalid.
+> The `user` object is the JWT session payload (`role`, `username`, and `sessionVersion` for an account in the server store). It is a public route in the middleware but self-checks the cookie, returning `{ "authenticated": false }` when absent/invalid.
+> With `STORAGE_PROVIDER=sqlite` or `postgres` and local sign-in, a session whose stored account was disabled, deleted, demoted or password-reset since it was issued also answers `401`.
+
+#### GET /api/auth/totp
+
+The signed-in account's own second factor.
+Answers `{ "available": true, "enabled": false }` for an account in the server store, or `{ "available": false, "reason": "..." }` under OIDC or `STORAGE_PROVIDER=local`, where setup is not offered here.
+`401` without a session.
+
+#### POST /api/auth/totp
+
+Sets up or turns off the signed-in account's own authenticator; the body's `action` picks one.
+
+| `action` | Body | Answer |
+|---|---|---|
+| `begin` | `{ "password": "<current password>" }` | `{ "secret": "<base32>", "otpauthUrl": "otpauth://..." }`; `409` while a factor is already on |
+| `confirm` | `{ "code": "123456" }`, a code from the secret `begin` returned | `{ "ok": true }`; `400` for a wrong or reused code |
+| `disable` | `{ "password": "...", "code": "123456" }`; the code only while a factor is on | `{ "ok": true }` |
+
+A missing field is `400`.
+A wrong password or code is `401` and is charged to the same two budgets as a failed login, so `429` with `Retry-After` follows once either is spent.
+`409` under OIDC or `STORAGE_PROVIDER=local`. See [MFA.md](./MFA.md#when-accounts-live-in-the-server-store).
 
 ---
 
@@ -1694,7 +1715,7 @@ configuration is what failed.
 
 ### Admin API
 
-Both require an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role — the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required" }`, and only a valid session with a non-admin role returns the `403` above.
+Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role — the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required" }`, and only a valid session with a non-admin role returns the `403` above.
 
 #### GET /api/admin/audit
 
@@ -1705,6 +1726,21 @@ Events of type `agent_operation` come from the agent execution path (#328) and a
 #### POST /api/admin/fleet-health
 
 Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ connectionId, status, latencyMs, ... }] }`. `400` if `connections` is missing. `401` with no session, `403` with a session that is not an admin — see the note above.
+
+#### GET, POST /api/admin/accounts
+
+The local account registry, available with `STORAGE_PROVIDER=sqlite` or `postgres` and local sign-in; otherwise `409` with the reason.
+Both go through the shared route guard: `401` with no session, `403` for a non-admin.
+`GET` answers `{ "accounts": [{ "email", "role", "disabled", "totpEnabled", "createdAt" }] }` and never a hash or a secret.
+`POST` with `{ "email", "password", "role": "admin" | "user" }` creates one and answers `201 { "account": {...} }`; the password needs 8 characters, and an email that already exists in any letter case is `409`.
+
+#### PATCH, DELETE /api/admin/accounts/{email}
+
+`PATCH` takes any of `{ "role": "admin" | "user" }`, `{ "disabled": true | false }`, `{ "password": "..." }` and `{ "clearTotp": true }` and answers `{ "account": {...} }`.
+A role change, disabling and a password reset end that account's sessions and MCP tokens at their next request; when the admin changes their own account, the response re-issues their session cookie.
+`DELETE` removes the account and its stored rows and answers `{ "ok": true }`.
+Both answer `404` for an unknown email, and `409` when the change would leave no enabled admin.
+Every change, and every refused one, is an `account` event in the audit log naming the acting admin.
 
 ---
 
