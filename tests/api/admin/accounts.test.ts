@@ -63,10 +63,10 @@ function request(method: string, path: string, body?: unknown) {
   });
 }
 
-function currentCode(secret: string): string {
+function currentCode(secret: string, stepOffset = 0): string {
   const key = decodeBase32(secret);
   if (!key) throw new Error("secret did not decode");
-  const step = Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS);
+  const step = Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS) + stepOffset;
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(step));
   const digest = createHmac("sha1", key).update(counter).digest();
@@ -410,7 +410,7 @@ describe("stored local accounts", () => {
   });
 
   test("enrolment confirms a code once, then a password alone is not enough", async () => {
-    const begun = await totpRoute.POST(request("POST", "/api/auth/totp", { action: "begin" }));
+    const begun = await totpRoute.POST(request("POST", "/api/auth/totp", { action: "begin", password: adminPassword }));
     expect(begun.status).toBe(200);
     const { secret } = (await begun.json()) as { secret: string; otpauthUrl: string };
     expect(secret.length).toBeGreaterThan(0);
@@ -437,7 +437,14 @@ describe("stored local accounts", () => {
     expect(withCode.status).toBe(200);
 
     await as("admin", "admin@libredb.org");
-    expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "disable" }))).status).toBe(200);
+    // The login above claimed this step's code, so turning the factor off takes the next one.
+    expect(
+      (
+        await totpRoute.POST(
+          request("POST", "/api/auth/totp", { action: "disable", password: adminPassword, code: currentCode(secret, 1) }),
+        )
+      ).status,
+    ).toBe(200);
     // A session whose account is not in the registry is refused before the route runs; the
     // library still answers 404 for an account that disappears between the two reads.
     await as("admin", "ghost@example.com");

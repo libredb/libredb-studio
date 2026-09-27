@@ -52,6 +52,10 @@ const LOCAL_MODE = "The account registry needs STORAGE_PROVIDER=sqlite or postgr
 const TOTP_MISSING = "Start authenticator setup before confirming a code.";
 const TOTP_BAD = "Invalid authentication code";
 const NOT_IN_STORE = "This session has no account in the registry.";
+const CURRENT_PASSWORD_MISSING = "Enter your current password.";
+const CURRENT_PASSWORD_WRONG = "The current password is not correct.";
+const CURRENT_CODE_MISSING = "Enter a current code from your authenticator app.";
+const FACTOR_ACTIVE = "Turn off the current authenticator before setting up a new one.";
 const PASSWORD_MIN_LENGTH = 8;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -121,6 +125,40 @@ function audit(actor: string, action: string, email: string): void {
     });
   } catch (error) {
     logger.error("Failed to record account audit event", error, { route: "accounts" });
+  }
+}
+
+function auditRefusal(email: string, action: string, reason: "bad_credentials" | "bad_totp"): void {
+  try {
+    emitAuditEvent({ type: "account", action, target: email, user: email, result: "failure", reason });
+  } catch (error) {
+    logger.error("Failed to record account audit event", error, { route: "accounts" });
+  }
+}
+
+function readCredential(body: unknown, field: "password" | "code", missing: string): string {
+  const value = isRecord(body) ? body[field] : undefined;
+  if (typeof value !== "string" || value.length === 0) throw new AccountError(400, missing);
+  return value;
+}
+
+/**
+ * Changing your own second factor asks for the password again, and turning an active one off asks
+ * for a current code too, so a stolen session cookie can neither remove the factor nor replace it
+ * with the thief's. A 401 from here is a failed guess, and the route charges it to the login budget.
+ */
+async function confirmOwner(current: StoredAccount, body: unknown, action: string, needsCode: boolean): Promise<void> {
+  const password = readCredential(body, "password", CURRENT_PASSWORD_MISSING);
+  const code = needsCode ? readCredential(body, "code", CURRENT_CODE_MISSING) : "";
+  if (!(await passwordMatchesHash(password, current.passwordHash))) {
+    auditRefusal(current.email, action, "bad_credentials");
+    throw new AccountError(401, CURRENT_PASSWORD_WRONG);
+  }
+  if (!needsCode || !current.totpSecret) return;
+  const step = verifyTotp(current.totpSecret, code);
+  if (step === null || !claimTotpStep(hmacHex(current.email.toLowerCase()), step)) {
+    auditRefusal(current.email, action, "bad_totp");
+    throw new AccountError(401, TOTP_BAD);
   }
 }
 
@@ -433,10 +471,15 @@ function otpauthUrl(email: string, secret: string): string {
   return `otpauth://totp/LibreDB:${encodeURIComponent(email)}?secret=${secret}&issuer=LibreDB&algorithm=SHA1&digits=6&period=30`;
 }
 
-export async function beginTotpEnrolment(email: string): Promise<{ secret: string; otpauthUrl: string }> {
+export async function beginTotpEnrolment(
+  email: string,
+  body?: unknown,
+): Promise<{ secret: string; otpauthUrl: string }> {
   const provider = await requireAccountStore();
   const current = await provider.getAccount(email);
   if (!current) throw new AccountError(404, NOT_IN_STORE);
+  await confirmOwner(current, body, "totp_begin", false);
+  if (current.totpSecret) throw new AccountError(409, FACTOR_ACTIVE);
   const secret = encodeBase32(randomBytes(20));
   current.totpPending = secret;
   current.updatedAt = new Date().toISOString();
@@ -458,10 +501,11 @@ export async function confirmTotpEnrolment(email: string, code: string): Promise
   audit(email, "totp_enrol", current.email);
 }
 
-export async function disableOwnTotp(email: string): Promise<void> {
+export async function disableOwnTotp(email: string, body?: unknown): Promise<void> {
   const provider = await requireAccountStore();
   const current = await provider.getAccount(email);
   if (!current) throw new AccountError(404, NOT_IN_STORE);
+  await confirmOwner(current, body, "totp_clear", current.totpSecret !== null);
   current.totpSecret = null;
   current.totpPending = null;
   current.updatedAt = new Date().toISOString();
