@@ -115,6 +115,7 @@ Each directory's `reserved-words.json` holds every lexer word asked bare and as 
 | `flags.json` | `GET /api/v1/status/flags` | `200 success` | `400 "unsupported path requested: \"/api/v1/status/flags\"\n"` | every command-line flag with its value |
 | `tsdb-status-10.json` | `GET /api/v1/status/tsdb limit=10` | `200 success` | `200 success` | TSDB statistics at limit=10 |
 | `tsdb-status-50.json` | `GET /api/v1/status/tsdb limit=50` | `200 success` | `200 success` | TSDB statistics at TSDB\_TOP\_METRICS (50) |
+| `tsdb-status-50-topn.json` | `GET /api/v1/status/tsdb limit=50&topN=50` | `200 success` | `200 success` | TSDB statistics at TSDB\_TOP\_METRICS (50), sent as both limit and topN (added 2026-09-27, below) |
 | `tsdb-status-10000.json` | `GET /api/v1/status/tsdb limit=10000` | `200 success` | `200 success` | TSDB statistics at the largest limit the server takes |
 | `tsdb-status-over-limit.json` | `GET /api/v1/status/tsdb limit=10001` | `400 bad_data: limit must not exceed 10000` | `200 success` | the refusal of limit=10001 |
 | `redirect-root.json` | `GET /` | `302 to /query` | `200 "<h2>Single-node VictoriaMetrics</h2></br>Version victoria-me"` | a redirect the server itself answers |
@@ -274,3 +275,16 @@ Status: buildinfo answered 200 with version `2.24.0`, runtimeinfo answered `400 
 Limits and their notices: M8 above; the `U__` escape: the entry above.
 Rules: `rules-all.json` answered `200 success` with 0 groups; single-node VictoriaMetrics evaluates no rules and runs here without `-vmalert.proxyURL`.
 Targets: `targets-active.json` answered `200 success` with 5 active targets (2 down, 3 up), and `scrape-pools.json` `400 "unsupported path requested: \"/api/v1/scrape_pools\"\n"`.
+
+## Added 2026-09-27: the TSDB status cut sent as `topN`
+
+`tsdb-status-50-topn.json` was taken by hand, not by the harness, against the same two images, after VictoriaMetrics was found to cut the TSDB status at `topN` and ignore `limit`:
+
+```bash
+curl -s --compressed 'http://localhost:9090/api/v1/status/tsdb?limit=50&topN=50'
+curl -s --compressed 'http://localhost:8428/api/v1/status/tsdb?limit=50&topN=50'
+```
+
+VictoriaMetrics answered 50 entries in `seriesCountByMetricName`, where `tsdb-status-50.json` holds its default ten.
+Prometheus answered the same four ranked lists with `topN=50` as without it, so it ignores the parameter.
+The provider sends the cut under both names (`tsdbStatus` in `http-transport.ts`).

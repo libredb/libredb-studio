@@ -313,7 +313,8 @@ describe("wire-compatibility registry", () => {
     const caveats = victoria?.caveats.join(" ") ?? "";
     expect(caveats).toContain("unsupported path requested");
     expect(caveats).toContain("does not serve the path");
-    expect(caveats).toContain("its own top ten");
+    // The Tables tab lists up to fifty there too, since the TSDB read sends topN beside limit.
+    expect(caveats).not.toContain("its own top ten");
     expect(caveats).toContain("shows its type and help");
     expect(caveats).toContain("has no scrapeInterval or scrapeTimeout");
     expect(caveats).toContain("1970-01-01T00:00:00Z");

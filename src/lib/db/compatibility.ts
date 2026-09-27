@@ -576,7 +576,6 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)",
     caveats: [
       "The Overview and Storage tabs of the monitoring dashboard fail, and so does the Scrape pools folder, whose count reads unavailable: VictoriaMetrics answers /api/v1/status/runtimeinfo, /api/v1/status/flags and /api/v1/scrape_pools with HTTP 400 and the text 'unsupported path requested', and the message shown names the path and the status, with a server that does not serve the path among the causes it offers.",
-      "The Tables tab lists ten metrics where Prometheus lists up to fifty: VictoriaMetrics ignores the limit on /api/v1/status/tsdb and answers its own top ten, which the tab's caption, 'at most 50', allows, and each of the ten series counts matched Prometheus's for the same metric.",
       "A metric's Source tab shows its type and help and no unit: VictoriaMetrics' /api/v1/metadata entries carry no unit, and the provider leaves it out rather than inventing an empty one.",
       "A target's Source tab has no scrapeInterval or scrapeTimeout: VictoriaMetrics' /api/v1/targets entries carry neither, and keep them as __scrape_interval__ and __scrape_timeout__ among the discovered labels, which the tab shows.",
       "A target VictoriaMetrics has not scraped yet reads as down: VictoriaMetrics reports it with health down, no error and a last scrape of 1970-01-01T00:00:00Z, where Prometheus reports health unknown.",

@@ -592,7 +592,16 @@ const GETS: readonly GetCase[] = [
   ["buildInfo", "/api/v1/status/buildinfo", [], "buildinfo", (transport) => transport.buildInfo()],
   ["runtimeInfo", "/api/v1/status/runtimeinfo", [], "runtimeinfo", (transport) => transport.runtimeInfo()],
   ["flags", "/api/v1/status/flags", [], "flags", (transport) => transport.flags()],
-  ["tsdbStatus", "/api/v1/status/tsdb", [["limit", "50"]], "tsdb-status-50", (transport) => transport.tsdbStatus(50)],
+  [
+    "tsdbStatus",
+    "/api/v1/status/tsdb",
+    [
+      ["limit", "50"],
+      ["topN", "50"],
+    ],
+    "tsdb-status-50",
+    (transport) => transport.tsdbStatus(50),
+  ],
 ];
 
 describe("every endpoint call is sent exactly (4.6, 6.2)", () => {

@@ -1355,13 +1355,13 @@ describe("the declarations", () => {
     // The caption is built from the list's bound, so a change to the bound changes the sentence too.
     expect(new PrometheusProvider(connection()).getLabels().tableStatsCaption).toContain(`at most ${TSDB_TOP_METRICS}`);
 
-    // Prometheus cuts its ranked list at the limit it is sent, and VictoriaMetrics ignores the limit
-    // and lists its own top ten, so "at most" is the count that holds on both.
+    // Prometheus cuts its ranked list at limit and VictoriaMetrics at topN, and each lists fewer where
+    // the head holds fewer metrics, so "at most" is the count that holds on both.
     const listedFrom = async (answer: InboundResponse) => {
       respond = async (request) => (request.url.pathname === "/api/v1/status/tsdb" ? answer : captured(request));
       return (await connectedProvider()).getTableStats();
     };
-    const vm = captureVm("tsdb-status-50");
+    const vm = captureVm("tsdb-status-50-topn");
     const onPrometheus = await listedFrom(replay("tsdb-status-10000"));
     const onVictoriaMetrics = await listedFrom({
       status: vm.status,

@@ -248,7 +248,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       sessionsEmptyState:
         "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
       // The Tables list is the top of the TSDB status's ranking, not every metric (#1085 6.2). "At most",
-      // because VictoriaMetrics ignores the limit on that read and lists its own top ten.
+      // because a head that holds fewer metrics lists fewer.
       tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
       // Never rendered while `supportsMaintenance` is false (`maintenanceControl()` gates every
       // placement on it first), and written true to the engine all the same.
