@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 74
+- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 73
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 42
@@ -515,47 +515,6 @@ current database, and that permission cannot be granted in `master`.
 `SERVERPROPERTY('ProductMajorVersion')` to pick the permission name - and an incomplete count is absent
 rather than published. Measured on a real instance with a login that has neither grant, because the
 whole entry rests on a permission boundary no fixture can prove.
-
-### D49. Per-table maintenance drops the schema, so every table outside the default one refuses
-
-Found 2026-08-27 in the BROWSER while registering `duckdb` (issue #424). Not DuckDB's defect - the
-provider is the half that behaves - and no gate could have caught it: the six local gates, 100%
-line coverage and a four-lens adversarial review all passed over it, because the two halves are
-correct in isolation and only the running product puts them together.
-
-`TablesTab.tsx:390` calls `handleMaintenance(type, table.tableName)` - the BARE table name - from a
-row whose very next line (`:350`) renders `table.schemaName` beside it. Every provider's
-`qualifyMaintenanceTarget` then supplies a default schema for an unqualified target:
-`postgres.ts:1287` returns `"public." + escapeIdentifier(target)`, and
-`duckdb/index.ts:712` returns `"main"."<target>"`. So the statement names a table that is not there.
-
-Measured on DuckDB v1.5.5, clicking **Analyze Table** on the `analytics.events` row:
-
-```
-Catalog Error: Table with name events does not exist! Did you mean "analytics.events"?
-LINE 1: ANALYZE "main"."events"
-```
-
-`POST /api/db/maintenance` answers 400 and the panel prints the engine's message, so it is visible
-rather than silent - but the button cannot succeed on any table outside the default schema, on any
-engine. It went unnoticed because the fixtures the other engines are exercised with keep their
-tables in the default schema; DuckDB is simply the first whose fixture carries a second one.
-
-This is #U9 one layer up. #U9 was an operation DECLARED in the wrong placement (Oracle offered
-`optimize` per table, and the target it sent was rejected); this is the right placement sending an
-under-qualified target.
-
-Deliberately not fixed in the provider PR that found it. The one-line repair - passing
-`` `${table.schemaName}.${table.tableName}` `` - changes the target string reaching all TWELVE
-providers that implement `runMaintenance` (postgres, mysql, mssql, oracle, sqlite, libsql, duckdb,
-clickhouse, cassandra, druid, trino, search), and each has its own qualification and its own
-statement grammar: SQLite has no user schemas, MySQL's `OPTIMIZE TABLE` takes `db.table`, and the
-HTTP engines build their own paths. That is a twelve-engine live verification, not a provider
-change.
-
-**Done when:** the row passes the qualified name, every one of the twelve providers has been
-measured against a table outside its default schema (or recorded as having no such concept), and a
-component test pins the target the row sends so it cannot silently revert to the bare name.
 
 ### D51. Four providers degrade a refused monitoring read to no rows, then read the absent row as 0
 
@@ -1779,13 +1738,13 @@ Not fixed there: the cache key is shared by every engine.
 
 Found 2026-09-24 in the browser while verifying #843 (PR #1106), on a connection opened with `appdata` whose tree also lists `analytics`.
 Both hold a collection called `events`.
-The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and `runMaintenance(type, target)` takes a bare collection name.
+The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and since #1091 `runMaintenance()` takes the row's container but refuses one that is not the connected database.
 So the row a person presses for the collection they chose is the connected database's same-named collection, which is the shape #843 removed from the query path.
 
 Not fixed in #1106, which is scoped to the statement grammar.
-The target is a bare string in `runMaintenance(type, target)`'s contract for every provider, so passing a path is the D49 change, and the monitoring tabs are session-scoped on every engine.
+Since #1091 the contract carries the container, `runMaintenance(type, target, container)`, so what is left is the provider running in a database other than the connected one, and the monitoring tabs, which are session-scoped on every engine.
 
-**Done when:** a MongoDB maintenance target names its database, the deep link either opens the collection's own database or refuses a path outside the connected one, and a test pins that `Validate` on `analytics.events` reaches `analytics`.
+**Done when:** the deep link either opens the collection's own database or refuses a path outside the connected one, and a test pins that `Validate` on `analytics.events` reaches `analytics`.
 
 ### D119. On RisingWave every column reads nullable, a `NOT NULL` column and a primary key included
 

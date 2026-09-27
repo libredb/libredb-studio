@@ -820,17 +820,17 @@ describe("runMaintenance()", () => {
   });
 
   /*
-    The other side of that default, and the reason D49 exists.
+    The other side of that default.
 
     A caller that sends a BARE name for a table living outside `main` gets `main`, and the
     engine refuses because that table is not there. The refusal is the CORRECT behaviour for
     this provider - guessing which schema the caller meant would act on a table nobody named -
     so it is pinned here rather than repaired: the repair belongs to the caller.
 
-    Measured in the browser on 2026-08-27: the Tables panel's per-row Analyze button sends
+    Measured in the browser on 2026-08-27: the Tables panel's per-row Analyze button sent
     `table.tableName` without the `table.schemaName` it renders beside it, so clicking it on the
-    `analytics.events` row produced exactly this refusal. That is a shared-component defect
-    reaching all twelve providers that implement `runMaintenance`, filed as D49.
+    `analytics.events` row produced exactly this refusal. #772 repaired the caller, which now
+    sends the schema as the container (the test below).
   */
   test("a bare target naming a table outside main is refused, and the message names the real one", async () => {
     provider = await seededMemoryProvider();

@@ -1832,7 +1832,7 @@ describe("object surface", () => {
   test("declares columns on every kind it has, and both answer a usable column shape", async () => {
     const kinds = objectProvider.getCapabilities().objectKinds ?? [];
     // BOTH, and there is no third: `describeObject` samples documents the same way for a
-    // collection and for a view (`mongodb.ts:1818-1821`), so no kind here abstains and the
+    // collection and for a view (its docblock in `mongodb.ts`), so no kind here abstains and the
     // expectation above has to say `noAbstainingKinds`.
     expect(kinds.filter((kind) => kind.hasColumns === true).map((kind) => kind.id)).toEqual(["collection", "view"]);
     expect(kinds.filter((kind) => kind.hasColumns !== true).map((kind) => kind.id)).toEqual([]);
@@ -1873,9 +1873,9 @@ describe("object surface", () => {
       absentSource: { path: ["app", "no_such_view"], kind: "view" },
       // Every kind this engine has declares `hasColumns`, so invariant 8's negative
       // direction iterates zero times and certifies nothing unless it is said out loud.
-      // There is no schema to read here: a collection and a view both get their fields
-      // SAMPLED from documents by the same code path (`mongodb.ts:1818-1821`), so there is
-      // no kind left that could abstain.
+      // There is no schema to read here: a collection and a view both get their fields SAMPLED from
+      // documents by the same code path (`describeObject` in `mongodb.ts`), so there is no kind
+      // left that could abstain.
       noAbstainingKinds: true,
     });
   });

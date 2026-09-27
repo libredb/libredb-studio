@@ -49,11 +49,11 @@ const ROUTE = "api/db/objects/edit-apply";
  *
  * WHAT AN EVENT MAY NEVER CARRY: the statement, the command payload, the reader's text, the
  * pre-image, the engine's message, the engine's code, the revision token, the plan token, or any
- * other part of the plan. `src/lib/audit.ts:532-536` forbids SQL text, request bodies and raw
- * `Error.message` by name, `AuditReason` is closed precisely so no path can put a driver string
- * into a record, and `MAX_AUDIT_FIELD_LENGTH` is 254, so an unvalidated string would be TRUNCATED
- * rather than refused. What the two events carry instead is the object address, the kind, the part,
- * the resolved strategy and one correlation id, which is `plan.planId`.
+ * other part of the plan. `emitAuditEvent`'s docblock in `src/lib/audit.ts` forbids SQL text,
+ * request bodies and raw `Error.message` by name, `AuditReason` is closed precisely so no path can
+ * put a driver string into a record, and `MAX_AUDIT_FIELD_LENGTH` is 254, so an unvalidated string
+ * would be TRUNCATED rather than refused. What the two events carry instead is the object address,
+ * the kind, the part, the resolved strategy and one correlation id, which is `plan.planId`.
  *
  * `target` IS `plan.path.join("/")`, which is design 5.5's own spelling and is used here unchanged,
  * with its limit named rather than discovered: it is a FOURTH spelling of a path key in a

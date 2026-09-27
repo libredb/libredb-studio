@@ -1266,16 +1266,10 @@ curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo
 
 ### 6.3 Object edit (#789)
 
-This engine is a REFUSAL, and the reason is the one recorded here: no kind declares
-`acceptsSourceEdits`, so nothing builds a statement out of an edited definition.
-A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form
-on 26.7.1.1315, and the shared quoters that are not this provider's own (the default branch of
-`SQLBaseProvider.escapeIdentifier`, `quoteIdentifier` in
-[`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) and `escapeIdentifier` in
-[`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts)) emit `"x\"` for the name `x\`, so a
-statement built through any of them is not the statement the author addressed. This provider's own
-`escapeIdentifier()` now escapes the backslash as well ([§8](#8-maintenance), #1091 review), and it
-is the only member of that set measured to close the hole.
+This engine is a REFUSAL, recorded because no escaper for its identifiers had been measured.
+A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and the shared quoters (the default branch of `SQLBaseProvider.escapeIdentifier`, `quoteIdentifier` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) and `escapeIdentifier` in [`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts)) emit `"x\"` for the name `x\`, so a statement built through any of them is not the statement the author addressed.
+Since #1091 this provider's own `escapeIdentifier()` escapes the backslash as well, and it is measured ([§8](#8-maintenance)).
+No edit statement is built through it and none has been measured, so the refusal stands.
 One question here is UNMEASURED and is recorded as such rather than answered: whether a dictionary's credential is really redacted in the text the Phase 2 read returns.
 No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
 
@@ -1339,6 +1333,8 @@ with its closing quote swallowed and the rest of the statement reparsed around i
 `x\` was the reachable case (#1091 review): the target that followed became more statement text
 rather than a second segment. The override escapes the backslash first, the order `literal()` in
 `objects.ts` uses.
+Live-verified on 26.7.1.1315 against the fixture's own `` demo.`bs_one\` ``: the target `bs_one\`, the target `demo.bs_one\`, and the target `bs_one\` with the container `demo` all optimize it, where the inherited spelling answers `Double quoted string is not closed` on the same table.
+The container `x\` with the target `.t FINAL SETTINGS optimize_throw_if_noop = 1 --` is refused with `UNKNOWN_DATABASE`, for a database named `x\`.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
