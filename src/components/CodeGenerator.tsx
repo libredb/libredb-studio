@@ -30,10 +30,7 @@ const LANGUAGES: { id: Language; label: string; ext: string }[] = [
 ];
 
 export function toPascalCase(str: string): string {
-  return str
-    .replace(/[_-](\w)/g, (_, c) => c.toUpperCase())
-    .replace(/^\w/, (c) => c.toUpperCase())
-    .replace(/s$/, ""); // Remove trailing 's' (pluralized table name)
+  return str.replace(/[_-](\w)/g, (_, c) => c.toUpperCase()).replace(/^\w/, (c) => c.toUpperCase());
 }
 
 /**
@@ -65,7 +62,9 @@ export function toIdentifier(str: string): string {
   // every run of separators to ONE underscore, so a repeated quantifier here can
   // never match more — it only adds the backtracking that makes the pattern
   // super-linear on a long run of separators (SonarCloud S5852).
-  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, ""));
+  // The trailing-s strip lives here, not in toPascalCase: it singularizes the table name
+  // for the type name (#1138), while column names keep whatever the table declares.
+  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, "")).replace(/s$/, "");
   if (!/^\p{L}/u.test(result)) return result ? `T${result}` : "Record";
   return result;
 }

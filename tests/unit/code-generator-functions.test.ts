@@ -19,18 +19,21 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 // ============================================================================
 
 describe("toPascalCase", () => {
-  test("simple table name", () => expect(toPascalCase("users")).toBe("User"));
-  test("underscore name", () => expect(toPascalCase("order_items")).toBe("OrderItem"));
-  test("hyphenated name", () => expect(toPascalCase("user-roles")).toBe("UserRole"));
+  // Case only, no singularizing: a trailing `s` is the table name's business (#1138).
+  test("simple table name", () => expect(toPascalCase("users")).toBe("Users"));
+  test("underscore name", () => expect(toPascalCase("order_items")).toBe("OrderItems"));
+  test("hyphenated name", () => expect(toPascalCase("user-roles")).toBe("UserRoles"));
   test("already pascal", () => expect(toPascalCase("User")).toBe("User"));
   test("single char", () => expect(toPascalCase("a")).toBe("A"));
   test("non-plural name", () => expect(toPascalCase("data")).toBe("Data"));
+  test("column name keeps its trailing s", () => expect(toPascalCase("status")).toBe("Status"));
 });
 
 describe("toCamelCase", () => {
-  test("simple table name", () => expect(toCamelCase("users")).toBe("user"));
-  test("underscore name", () => expect(toCamelCase("order_items")).toBe("orderItem"));
+  test("simple table name", () => expect(toCamelCase("users")).toBe("users"));
+  test("underscore name", () => expect(toCamelCase("order_items")).toBe("orderItems"));
   test("already camel", () => expect(toCamelCase("email")).toBe("email"));
+  test("column name keeps its trailing s", () => expect(toCamelCase("status")).toBe("status"));
 });
 
 describe("toSnakeCase", () => {
@@ -306,6 +309,9 @@ describe("toIdentifier", () => {
   test("a name with no alphanumerics falls back to Record", () => expect(toIdentifier(":*")).toBe("Record"));
   test("an empty name falls back to Record", () => expect(toIdentifier("")).toBe("Record"));
   test("an ordinary SQL table name is unaffected (regression)", () => expect(toIdentifier("users")).toBe("User"));
+  // The singularizing moved here from toPascalCase, so the plural cases live here too (#1138).
+  test("an underscore table name still singularizes", () => expect(toIdentifier("order_items")).toBe("OrderItem"));
+  test("a hyphenated table name still singularizes", () => expect(toIdentifier("user-roles")).toBe("UserRole"));
   test("a leading digit is prefixed rather than left illegal", () => expect(toIdentifier("2fa:*")).toBe("T2fa"));
 
   // Non-ASCII names were ALREADY legal identifiers in all six target languages,
@@ -395,4 +401,65 @@ describe("generateCode — non-identifier table names (#427)", () => {
       expect(generateCode(lang, unicodeSchema)).toContain(expected);
     });
   }
+});
+
+// ============================================================================
+// Column names keep their trailing `s` while the table name singularizes (#1138)
+// ============================================================================
+
+describe("generateCode — trailing-s column names (#1138)", () => {
+  const ordersSchema: DetailedObject = {
+    name: "orders",
+    kind: "table",
+    path: ["orders"],
+    indexes: [],
+    columns: [
+      { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
+      { name: "status", type: "VARCHAR(20)", nullable: false, isPrimary: false },
+      { name: "address", type: "TEXT", nullable: true, isPrimary: false },
+    ],
+  };
+
+  const typeNames: [Parameters<typeof generateCode>[0], string][] = [
+    ["typescript", "export interface Order {"],
+    ["zod", "export const OrderSchema = z.object"],
+    ["prisma", "model Order {"],
+    ["go", "type Order struct"],
+    ["python", "class Order:"],
+    ["java", "public class Order {"],
+  ];
+
+  for (const [lang, expected] of typeNames) {
+    test(`${lang} still singularizes the orders table name`, () => {
+      expect(generateCode(lang, ordersSchema)).toContain(expected);
+    });
+  }
+
+  test("typescript keeps status and address", () => {
+    const code = generateCode("typescript", ordersSchema);
+    expect(code).toContain("status: string;");
+    expect(code).toContain("address: string | null;");
+    expect(code).not.toContain("statu:");
+  });
+
+  test("zod keeps status and address", () => {
+    const code = generateCode("zod", ordersSchema);
+    expect(code).toContain("status: z.string(),");
+    expect(code).toContain("address: z.string().nullable(),");
+    expect(code).not.toContain("statu:");
+  });
+
+  test("go keeps Status and Address", () => {
+    const code = generateCode("go", ordersSchema);
+    expect(code).toContain('Status string `json:"status" db:"status"`');
+    expect(code).toContain('Address *string `json:"address" db:"address"`');
+    expect(code).not.toContain("Statu ");
+  });
+
+  test("java keeps status and address", () => {
+    const code = generateCode("java", ordersSchema);
+    expect(code).toContain("private String status;");
+    expect(code).toContain("private String address;");
+    expect(code).not.toContain("statu;");
+  });
 });

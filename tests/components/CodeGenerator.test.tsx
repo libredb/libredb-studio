@@ -51,9 +51,7 @@ const declaredTypeSchema: DetailedObject = {
   columns: [
     { name: "id", type: "int unsigned", baseType: "int", nullable: false, isPrimary: true },
     { name: "note", type: "varchar(20)", baseType: "varchar", nullable: true, isPrimary: false },
-    // `kind`, not `status`: `toCamelCase` strips a trailing `s`, so `status` renders as `statu`
-    // in the TypeScript and Zod output, and these assertions should not depend on that.
-    { name: "kind", type: "enum('int','text')", baseType: "enum", nullable: true, isPrimary: false },
+    { name: "status", type: "enum('int','text')", baseType: "enum", nullable: true, isPrimary: false },
   ],
 };
 
@@ -236,9 +234,9 @@ describe("CodeGenerator", () => {
     // column as a number. One assertion per substring mapper, so reverting any ONE of them
     // to the declaration fails here.
     for (const [language, want] of [
-      ["TypeScript Interface", "kind: string | null;"],
-      ["Zod Schema", "kind: z.string().nullable(),"],
-      ["Python Dataclass", "kind: Optional[str]"],
+      ["TypeScript Interface", "status: string | null;"],
+      ["Zod Schema", "status: z.string().nullable(),"],
+      ["Python Dataclass", "status: Optional[str]"],
     ] as const) {
       const { queryByText, container, unmount } = render(
         <CodeGenerator
