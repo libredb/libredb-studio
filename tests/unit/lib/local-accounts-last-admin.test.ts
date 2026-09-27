@@ -10,13 +10,19 @@ import { closeStorageProvider, getStorageProvider } from "@/lib/storage/factory"
 // rule inside the write's own transaction. These cases race two requests in one process.
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-last-admin-"));
-const KEYS = ["STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "NEXT_PUBLIC_AUTH_PROVIDER", "ADMIN_TOTP_SECRET", "USER_TOTP_SECRET"];
+const KEYS = [
+  "STORAGE_PROVIDER",
+  "STORAGE_SQLITE_PATH",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
+  "ADMIN_TOTP_SECRET",
+  "USER_TOTP_SECRET",
+];
 const savedEnv: Record<string, string | undefined> = {};
 const ENV_ADMIN = "admin@libredb.org";
 
 async function enabledAdmins(): Promise<string[]> {
   const provider = await getStorageProvider();
-  return (await provider?.listAccounts() ?? [])
+  return ((await provider?.listAccounts()) ?? [])
     .filter((account) => account.role === "admin" && !account.disabled)
     .map((account) => account.email);
 }

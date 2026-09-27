@@ -33,7 +33,13 @@ const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage
 const dir = mkdtempSync(join(tmpdir(), "libredb-totp-reauth-"));
 // The suite password lives in tests/setup.ts. Repeating the literal here is what GitGuardian flags.
 const adminPassword = process.env.ADMIN_PASSWORD ?? "";
-const KEYS = ["STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "NEXT_PUBLIC_AUTH_PROVIDER", "ADMIN_TOTP_SECRET", "USER_TOTP_SECRET"];
+const KEYS = [
+  "STORAGE_PROVIDER",
+  "STORAGE_SQLITE_PATH",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
+  "ADMIN_TOTP_SECRET",
+  "USER_TOTP_SECRET",
+];
 const savedEnv: Record<string, string | undefined> = {};
 const ALICE = "alice@example.com";
 const ALICE_PASSWORD = "alice-pass-1";
@@ -136,7 +142,9 @@ describe("changing your own second factor needs more than the session", () => {
     expect((await storedFactor()).secret).toBe(secret);
     // At rest the column holds the sealed envelope, never the base32 secret.
     const raw = new Database(join(dir, "store.db"), { readonly: true });
-    const column = raw.prepare("SELECT totp_secret FROM accounts WHERE email = ?").get(ALICE) as { totp_secret: string };
+    const column = raw.prepare("SELECT totp_secret FROM accounts WHERE email = ?").get(ALICE) as {
+      totp_secret: string;
+    };
     raw.close();
     expect(column.totp_secret).toStartWith("v1:");
     expect(column.totp_secret).not.toContain(secret);

@@ -441,7 +441,11 @@ describe("stored local accounts", () => {
     expect(
       (
         await totpRoute.POST(
-          request("POST", "/api/auth/totp", { action: "disable", password: adminPassword, code: currentCode(secret, 1) }),
+          request("POST", "/api/auth/totp", {
+            action: "disable",
+            password: adminPassword,
+            code: currentCode(secret, 1),
+          }),
         )
       ).status,
     ).toBe(200);

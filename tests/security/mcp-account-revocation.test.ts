@@ -20,7 +20,13 @@ import { useMcpChannel } from "../helpers/mcp-token";
 pinMcpTestEnvironment();
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-revocation-"));
-const KEYS = ["STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "NEXT_PUBLIC_AUTH_PROVIDER", "ADMIN_TOTP_SECRET", "USER_TOTP_SECRET"];
+const KEYS = [
+  "STORAGE_PROVIDER",
+  "STORAGE_SQLITE_PATH",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
+  "ADMIN_TOTP_SECRET",
+  "USER_TOTP_SECRET",
+];
 const savedEnv: Record<string, string | undefined> = {};
 let restoreChannel: () => void = () => {};
 

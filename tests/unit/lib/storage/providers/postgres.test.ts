@@ -506,8 +506,9 @@ describe("PostgresStorageProvider", () => {
 
   test("a guarded write locks the enabled admins first and commits when one remains", async () => {
     await provider.initialize();
-    const clientQuery = mock(async (sql: string): Promise<{ rows: unknown[] }> =>
-      sql.includes("COUNT(*)") ? { rows: [{ n: 1 }] } : { rows: [] },
+    const clientQuery = mock(
+      async (sql: string): Promise<{ rows: unknown[] }> =>
+        sql.includes("COUNT(*)") ? { rows: [{ n: 1 }] } : { rows: [] },
     );
     const release = mock(() => {});
     mockPool.connect = mock(async () => ({ query: clientQuery, release }));
@@ -522,8 +523,9 @@ describe("PostgresStorageProvider", () => {
 
   test("a guarded write that would leave no enabled admin rolls back with LastAdminError", async () => {
     await provider.initialize();
-    const clientQuery = mock(async (sql: string): Promise<{ rows: unknown[] }> =>
-      sql.includes("COUNT(*)") ? { rows: [{ n: "0" }] } : { rows: [] },
+    const clientQuery = mock(
+      async (sql: string): Promise<{ rows: unknown[] }> =>
+        sql.includes("COUNT(*)") ? { rows: [{ n: "0" }] } : { rows: [] },
     );
     const release = mock(() => {});
     mockPool.connect = mock(async () => ({ query: clientQuery, release }));
@@ -544,7 +546,6 @@ describe("PostgresStorageProvider", () => {
     expect(sql).not.toContain("COMMIT");
     expect(release).toHaveBeenCalledTimes(1);
   });
-
 
   test("deleteAccount rolls back when the row delete fails, so no rows are orphaned", async () => {
     await provider.initialize();

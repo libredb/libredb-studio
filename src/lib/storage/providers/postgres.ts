@@ -236,7 +236,9 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     try {
       await client.query("BEGIN");
       if (options.keepEnabledAdmin) {
-        await client.query("SELECT email FROM accounts WHERE role = 'admin' AND disabled = 0 ORDER BY email FOR UPDATE");
+        await client.query(
+          "SELECT email FROM accounts WHERE role = 'admin' AND disabled = 0 ORDER BY email FOR UPDATE",
+        );
       }
       await write(client);
       if (options.keepEnabledAdmin) {

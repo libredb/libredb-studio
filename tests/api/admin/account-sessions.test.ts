@@ -35,7 +35,13 @@ const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage
 const dir = mkdtempSync(join(tmpdir(), "libredb-account-sessions-"));
 // The suite password lives in tests/setup.ts. Repeating the literal here is what GitGuardian flags.
 const adminPassword = process.env.ADMIN_PASSWORD ?? "";
-const KEYS = ["STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "NEXT_PUBLIC_AUTH_PROVIDER", "ADMIN_TOTP_SECRET", "USER_TOTP_SECRET"];
+const KEYS = [
+  "STORAGE_PROVIDER",
+  "STORAGE_SQLITE_PATH",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
+  "ADMIN_TOTP_SECRET",
+  "USER_TOTP_SECRET",
+];
 const savedEnv: Record<string, string | undefined> = {};
 
 function request(method: string, path: string, body?: unknown) {

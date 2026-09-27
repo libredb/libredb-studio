@@ -15,7 +15,9 @@ describe("AuthenticatorSettings", () => {
   test("says why setup is not offered when the server has no registry", async () => {
     mockGlobalFetch({ "/api/auth/totp": { json: { available: false, reason: "Needs a server store." } } });
     const view = render(<AuthenticatorSettings />);
-    await waitFor(() => expect(view.getByTestId("authenticator-unavailable").textContent).toBe("Needs a server store."));
+    await waitFor(() =>
+      expect(view.getByTestId("authenticator-unavailable").textContent).toBe("Needs a server store."),
+    );
     expect(view.queryByRole("button", { name: "Set up authenticator" })).toBeNull();
   });
 
