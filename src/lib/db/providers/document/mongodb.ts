@@ -57,7 +57,6 @@ import {
   type ContainerPathShapeEngine,
   type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
-
 import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";

@@ -66,7 +66,7 @@ import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
- *  Oracle's identity for the shared container-path renderer.
+ * Oracle's identity for the shared container-path renderer.
  *
  * `shapes: "exact"`: the caller either names every declared level or is refused,
  * because a partial path would leave a level unbound and answer an empty folder.

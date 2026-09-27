@@ -65,7 +65,6 @@
 
 import { QueryError } from "@/lib/db/errors";
 import { assertContainerPathShape, containerDepth, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
-
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,

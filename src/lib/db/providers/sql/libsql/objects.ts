@@ -52,7 +52,6 @@ import {
   type ContainerPathShapeEngine,
   type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
-
 import { comparePaths } from "@/lib/db/object-path";
 import { unquoteLiteral } from "@/lib/sql/values";
 import { readNumber, readText } from "./introspect";

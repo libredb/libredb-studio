@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
+import ts from "typescript";
 
 /**
  * The container-path sentence has one producer under `src/lib/db/providers`.
@@ -39,65 +40,32 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
- * The source with comments removed, one entry per line, so line numbers survive.
- *
- * Prose quotes the phrase on purpose (a dozen docblocks explain why a path is refused), and
- * a blanket grep would fail on the documentation that records the fix. So both comment
- * forms are removed first: everything after a `//` on its line, and any block comment
- * wherever it opens, including a docblock whose continuation lines carry no marker of their
- * own. Only what remains is code.
- */
-function codeLines(source: string): string[] {
-  const lines: string[] = [];
-  let inBlock = false;
-  for (const raw of source.split("\n")) {
-    let code = "";
-    let index = 0;
-    while (index < raw.length) {
-      if (inBlock) {
-        const close = raw.indexOf("*/", index);
-        if (close < 0) {
-          index = raw.length;
-          continue;
-        }
-        inBlock = false;
-        index = close + 2;
-        continue;
-      }
-      const open = raw.indexOf("/*", index);
-      const line = raw.indexOf("//", index);
-      if (line >= 0 && (open < 0 || line < open)) {
-        code += raw.slice(index, line);
-        index = raw.length;
-        continue;
-      }
-      if (open < 0) {
-        code += raw.slice(index);
-        index = raw.length;
-        continue;
-      }
-      code += raw.slice(index, open);
-      inBlock = true;
-      index = open + 2;
-    }
-    lines.push(code);
-  }
-  return lines;
-}
-
-/**
  * Every line of CODE that RENDERS the sentence, rather than one that talks about it.
  *
- * Where the phrase survives the comment strip it can only sit inside a string literal,
- * which is what a throw site looks like. Every quote style is matched rather than only the
- * backtick: a `throw new QueryError("A Trino container path is ...")` written with double
- * quotes is the same defect, and a backtick-only matcher reads it as clean.
+ * Prose quotes the phrase on purpose (a dozen docblocks explain why a path is refused), and
+ * a blanket grep would fail on the documentation that records the fix. So the file is
+ * parsed rather than scanned, the way the seam guards read a provider: comments are trivia
+ * and never reach the walk, and every string the code carries is a node, whatever its quote
+ * style. A `throw new QueryError("A Trino container path is ...")` written with double
+ * quotes is the same defect as a template, and a line scanner that strips `//` without
+ * knowing about strings reads one that carries a URL before the phrase as clean.
  */
-function renderingLines(source: string): string[] {
-  return codeLines(source)
-    .map((line, index) => ({ line, number: index + 1 }))
-    .filter(({ line }) => /["'`][^"'`]*container path is/.test(line))
-    .map(({ line, number }) => `${number}: ${line.trim()}`);
+function renderingLines(file: string, source: string): string[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const lines = source.split("\n");
+  // One entry per line: the two arms of a conditional that both carry the phrase would
+  // otherwise report their line twice, which reads like two throw sites.
+  const found = new Set<number>();
+
+  const visit = (node: ts.Node): void => {
+    if ((ts.isStringLiteral(node) || ts.isTemplateLiteralToken(node)) && node.text.includes("container path is")) {
+      found.add(sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return [...found].sort((a, b) => a - b).map((line) => `${line + 1}: ${lines[line].trim()}`);
 }
 
 /**
@@ -133,7 +101,7 @@ describe("the container-path sentence has one producer under providers/", () => 
   test("no provider builds the sentence itself", () => {
     const offenders: string[] = [];
     for (const file of files) {
-      const rendered = renderingLines(fs.readFileSync(file, "utf8"));
+      const rendered = renderingLines(file, fs.readFileSync(file, "utf8"));
       if (rendered.length > 0) offenders.push(`${repoRelative(file)}\n    ${rendered.join("\n    ")}`);
     }
     expect(offenders).toEqual([]);
