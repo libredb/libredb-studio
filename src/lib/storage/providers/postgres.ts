@@ -207,8 +207,20 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
   async deleteAccount(email: string): Promise<void> {
     this.ensurePool();
-    await this.pool!.query("DELETE FROM accounts WHERE email = $1", [email]);
-    await this.pool!.query("DELETE FROM user_storage WHERE user_id = $1", [email]);
+    // One transaction: an account removed without its rows would hand them to the next account
+    // created with the same email.
+    const client = await this.pool!.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM accounts WHERE email = $1", [email]);
+      await client.query("DELETE FROM user_storage WHERE user_id = $1", [email]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async isHealthy(): Promise<boolean> {

@@ -218,8 +218,13 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
 
   async deleteAccount(email: string): Promise<void> {
     this.ensureDb();
-    this.db!.prepare("DELETE FROM accounts WHERE email = ?").run(email);
-    this.db!.prepare("DELETE FROM user_storage WHERE user_id = ?").run(email);
+    // One transaction: an account removed without its rows would hand them to the next account
+    // created with the same email.
+    const tx = this.db!.transaction(() => {
+      this.db!.prepare("DELETE FROM accounts WHERE email = ?").run(email);
+      this.db!.prepare("DELETE FROM user_storage WHERE user_id = ?").run(email);
+    });
+    tx();
   }
 
   async isHealthy(): Promise<boolean> {

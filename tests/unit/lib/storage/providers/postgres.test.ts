@@ -484,14 +484,37 @@ describe("PostgresStorageProvider", () => {
     };
     await provider.insertAccount(account);
     await provider.updateAccount({ ...account, disabled: true });
-    await provider.deleteAccount(account.email);
     const sql = (mockQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
     expect(sql[0]).toContain("INSERT INTO accounts");
     expect(sql[1]).toContain("UPDATE accounts");
-    expect(sql[2]).toContain("DELETE FROM accounts");
-    expect(sql[3]).toContain("DELETE FROM user_storage");
+
+    const clientQuery = mock(async (): Promise<{ rows: unknown[] }> => ({ rows: [] }));
+    const release = mock(() => {});
+    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    await provider.deleteAccount(account.email);
+    const deleted = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+    expect(deleted[0]).toBe("BEGIN");
+    expect(deleted[1]).toContain("DELETE FROM accounts");
+    expect(deleted[2]).toContain("DELETE FROM user_storage");
+    expect(deleted[3]).toBe("COMMIT");
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
+
+  test("deleteAccount rolls back when the row delete fails, so no rows are orphaned", async () => {
+    await provider.initialize();
+    const clientQuery = mock(async (sql: string): Promise<{ rows: unknown[] }> => {
+      if (sql.includes("DELETE FROM user_storage")) throw new Error("row delete refused");
+      return { rows: [] };
+    });
+    const release = mock(() => {});
+    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    await expect(provider.deleteAccount("ada@example.com")).rejects.toThrow(/row delete refused/);
+    const sql = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+    expect(sql).toContain("ROLLBACK");
+    expect(sql).not.toContain("COMMIT");
+    expect(release).toHaveBeenCalledTimes(1);
+  });
   test("account reads fail before initialize", async () => {
     const fresh = new PostgresStorageProvider("postgresql://localhost:5432/test");
     await expect(fresh.listAccounts()).rejects.toThrow(/not initialized/);
