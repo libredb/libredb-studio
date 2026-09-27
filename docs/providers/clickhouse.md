@@ -1269,10 +1269,10 @@ curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo
 This engine is a REFUSAL, and the reason is the one recorded here: no kind declares
 `acceptsSourceEdits`, so nothing builds a statement out of an edited definition.
 A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form
-on 26.7.1.1315, and the shared quoters that are not this provider's own — the default branch of
+on 26.7.1.1315, and the shared quoters that are not this provider's own (the default branch of
 `SQLBaseProvider.escapeIdentifier`, `quoteIdentifier` in
 [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) and `escapeIdentifier` in
-[`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts) — emit `"x\"` for the name `x\`, so a
+[`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts)) emit `"x\"` for the name `x\`, so a
 statement built through any of them is not the statement the author addressed. This provider's own
 `escapeIdentifier()` now escapes the backslash as well ([§8](#8-maintenance), #1091 review), and it
 is the only member of that set measured to close the hole.
@@ -1334,7 +1334,7 @@ operations. A target is qualified through
 target names none), so a hostile or oddly-named table cannot break out of the generated statement.
 That helper is OVERRIDDEN here rather than inherited, and the reason is the identifier escape
 measured in [§6.3](#63-object-edit-789): a backslash inside a quoted identifier is an escape on this
-engine, so the inherited form — which doubles only the quote character — left a name ending in one
+engine, so the inherited form, which doubles only the quote character, left a name ending in one
 with its closing quote swallowed and the rest of the statement reparsed around it. A container of
 `x\` was the reachable case (#1091 review): the target that followed became more statement text
 rather than a second segment. The override escapes the backslash first, the order `literal()` in
