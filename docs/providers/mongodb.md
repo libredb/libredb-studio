@@ -972,6 +972,7 @@ request here.
 | `defaultPort` | `27017` |
 | `schemaRefreshPattern` | `"operation"\s*:\s*"(insert\|delete\|update)` |
 | `containerLevels` | one level, `{ id: 'schema', label: 'Database' }` — the object surface's container ([§6](#the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `collection` (relation, `acceptsRowWrites`) and `view` (relation). No `index`, no routine kind, no `timeseries` kind; each absence is measured in [§6](#what-is-not-declared-and-why-each-absence-is-a-measurement) |
 
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections

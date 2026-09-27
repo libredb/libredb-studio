@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { assertContainerDepth, handleObjectRequest, requireString, requireStringArray } from "@/lib/api/object-route";
+import { assertContainerAddress, handleObjectRequest, requireString, requireStringArray } from "@/lib/api/object-route";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/list", async (provider, body) => {
     const container = requireStringArray(body, "container");
     const kind = requireString(body, "kind");
-    assertContainerDepth(provider, "container", container);
+    assertContainerAddress(provider, "container", container);
     return provider.listObjects(container, kind);
   });
 }

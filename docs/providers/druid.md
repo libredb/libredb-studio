@@ -1603,6 +1603,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `defaultPort` | `8888` | The Router. `8082` (Broker) is equally valid ([§3.3](#33-router-8888-or-broker-8082--both-work-identically)) |
 | `schemaRefreshPattern` | `\b(INSERT\|REPLACE)\b` | The only statements that could change a datasource — and the native engine rejects both, so in practice a query never refreshes the schema, which is correct |
 | `containerLevels` | one `schema` level | `INFORMATION_SCHEMA.SCHEMATA` reports one catalog, always `druid`, so there is no second level to add ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact` | Only `[schema]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider directly (#1147) |
 | `objectKinds` | `datasource`, `lookup`, `system_table` | And five kinds ABSENT rather than declared and zero, because `CREATE` is not in the grammar in any form ([§6.1](#61-the-object-surface-789)) |
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))

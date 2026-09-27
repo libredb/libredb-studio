@@ -4190,10 +4190,9 @@ and a test drives an engine whose top level exceeds the cap.
 
 Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
 (DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
-`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
-path is [database] or [database, schema], received []". The tree then re-reads correctly and the
-final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
-switch.
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400.
+Since #1147 the route refuses it itself, as `duckdb accepts "container" as [database] or [database, schema], received []`; before that the provider did, as "A DuckDB container path is [database] or [database, schema], received []".
+The tree then re-reads correctly and the final paint is right, so nothing is visible to the user; the 400 shows in the browser's network log on every such switch, and since #1147 it is no longer logged as a `Query error` warning by `createErrorResponse` (`src/lib/api/errors.ts`), because the route's own refusals are not.
 
 The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
 with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a

@@ -147,6 +147,13 @@ Both database and LLM layers use the Strategy Pattern with a factory:
 
 No `isMongoDB` / `=== 'mongodb'` checks outside provider classes. All behavior differences are driven through capabilities and labels.
 
+`src/lib/db/object-kinds.ts` is the kernel through which every provider reads its own declaration, and it takes only facts that follow from the declaration and hold for every engine.
+How deep the container chain is (`containerDepth()`), which container paths are an address (`acceptedContainerShapes()`, over `containerPathShapes`) and which object kinds exist (`declaredKinds()`) are such facts.
+The HTTP object routes read them through the same functions, so a route refusal and a provider refusal cannot disagree about one declaration (#1147).
+A rule that only one engine's reads need stays in that engine's file, next to the reads it protects.
+PostgreSQL's `containerSchema()` is the example: it refuses a declaration that names no `schema` level, because the PostgreSQL reads look the schema up by id, so it lives beside those reads rather than in the kernel (#1092).
+A descriptor field that only one engine sets is a sign that its rule belongs in that engine.
+
 ### 4.2. Authentication Flow
 
 ```mermaid

@@ -341,8 +341,9 @@ const ALLOWED_CONSOLE: readonly { readonly text: RegExp; readonly from: RegExp; 
     why:
       "The object tree's FIRST read of a connection, refused once per session and recovered from " +
       "immediately. MEASURED on 2026-09-15 against the fixture: the browser posts " +
-      '{"container":[]} to /api/db/objects/counts and the route answers 400 "A PostgreSQL ' +
-      'container path is [schema], received []". `containerDepth()` reads ' +
+      '{"container":[]} to /api/db/objects/counts and the route answers 400. The provider refused it ' +
+      'then, as "A PostgreSQL container path is [schema], received []"; since #1147 the route refuses ' +
+      'it itself, as `postgres accepts "container" as [schema], received []`. `containerDepth()` reads ' +
       "`capabilities.containerLevels`, which is empty until provider-meta lands, so `rootRead(0)` " +
       "in src/components/object-tree/use-tree-nodes.ts issues the depth-0 read at first paint and " +
       "the depth-1 `containers` read follows once the capabilities arrive. Nothing is lost and the " +

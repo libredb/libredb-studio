@@ -1139,6 +1139,7 @@ answers with nothing both while it is in flight and when it failed.
 | `defaultPort` | `null` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | **`[]`** — SQLite has no container level at all, which `containerDepth()` reads as 0 ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: with no container level, only the empty path `[]` addresses a container, so any segment is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `table`, `view`, `index`, `trigger` — no routine kind of any spelling ([§6.1](#61-the-object-surface-789)) |
 
 ### Labels

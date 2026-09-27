@@ -1374,6 +1374,8 @@ rather than silent.
 | `maintenanceOperations` | `['optimize', 'analyze', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `8123` |
+| `containerLevels` | one level, `schema`, labelled Database: ClickHouse has no schema level below a database ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container ([§6.1](#61-the-object-surface-789)), so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER\|RENAME\|TRUNCATE\|ATTACH\|DETACH)\b` |
 
 `supportsCreateTable: false` is deliberate, not an oversight — see

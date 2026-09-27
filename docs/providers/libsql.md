@@ -885,6 +885,7 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | `supportsCreateTable` | `true` | `CREATE TABLE` works as an ordinary SQL statement |
 | `schemaRefreshPattern` | `"(CREATE\|DROP\|ALTER\|TRUNCATE\|REINDEX)\\b"` | Matches statements that modify schema or index metadata |
 | `containerLevels` | `[]` | Zero-container engine; bare object names throughout ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact` | Only the empty path `[]` addresses a container, so any segment is refused, by the object routes over HTTP and by this provider directly (#1147) |
 | `objectKinds` | `LIBSQL_OBJECT_KINDS` | `table` (relation, `acceptsRowWrites`), `view` (relation), `index` (config), `trigger` (attached) |
 
 ### Labels — overridden (`getLabels()`, [`src/lib/db/providers/sql/libsql/index.ts`](../../src/lib/db/providers/sql/libsql/index.ts))

@@ -615,6 +615,8 @@ connection's own file restated: `ATTACH '<file>' AS warehouse` puts another whol
 session and a three-part name reaches into it, so one connection genuinely holds databases holding
 schemas holding objects. `ATTACH ':memory:' AS name` works too, which is what the tests use.
 
+A database alone is therefore a real address as well as a database and a schema, and the declaration states it as `containerPathShapes: "prefixes"`: a database-level read answers for every schema in that database.
+
 #### Four kinds, and one `duckdb_*` function behind each
 
 | Kind | Role | Catalog function | Note |
@@ -1054,7 +1056,7 @@ with wording about a keyword the user never typed.
 
 ## 9. Capabilities & labels
 
-### 9.1  `getCapabilities()` (`index.ts:380`)
+### 9.1  `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts))
 
 | Capability | Value | UI effect |
 |---|---|---|
@@ -1069,13 +1071,14 @@ with wording about a keyword the user never typed.
 | `identifierQuoting` | `double` | Generated SQL quotes identifiers with double quotes. |
 | `maintenanceOperations` | `vacuum`, `analyze`, `optimize` | Offers only the maintenance operations implemented in §8. |
 | `containerLevels` | `Database`, `Schema` | The object browser nests schemas under databases (§6). |
+| `containerPathShapes` | `prefixes` | `[database]` and `[database, schema]` both address a container, because an attached database alone is a real address; a longer path is refused, by the object routes over HTTP and by this provider directly (§6, #1147). |
 | `objectKinds` | `table`, `view`, `macro`, `sequence` | These are the object folders exposed in the browser (§6). |
 
 The maintenance specs make `vacuum` and `analyze` available both per table and globally.
 `optimize` is global only and is labelled **Checkpoint Database** because it runs `CHECKPOINT`.
 See §8 for the statements and placement rules.
 
-### 9.2  `getLabels()` (`index.ts:520`)
+### 9.2  `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts))
 
 | Label | UI effect |
 |---|---|

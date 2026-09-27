@@ -848,6 +848,40 @@ A `druid` connection fails the second check whatever the `type` is, with `{ "err
 
 A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
 
+#### Container paths on the object routes
+
+Four object routes take a container path, and they check it by two different rules before the provider is called (#1147).
+
+`container` on `POST /api/db/objects/counts` and `POST /api/db/objects/list`, and every entry of `containers` on `POST /api/db/objects/inventory`, is an address: the container a read binds its segments from.
+The route accepts it only in a shape the engine declares as `containerPathShapes` in its capabilities, and it reads that declaration through the same kernel function the provider refuses by, `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts`.
+An `exact` engine accepts the declared depth and nothing else.
+A `prefixes` engine accepts every depth from one level up to the declared one, so on Trino a catalog alone is an address as well as a catalog and a schema.
+An engine that declares no value reads as `exact`.
+A path the engine does not accept is refused at the edge, whether it is too short or too long, with one sentence and one wire shape.
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| `container`, or one entry of `containers`, is not a shape the engine accepts | `400` | `{ "error": "<type> accepts \"<field>\" as <shapes>, received <path>" }` |
+
+The body carries no `code`, like the route's other refusals of a caller mistake, and no listing runs: on the inventory every named entry is checked before the first one is read.
+`<shapes>` spells each accepted shape from the engine's level labels, lowercased.
+A declaration with no level prints `empty` when only `[]` is accepted, and `nothing: this declaration carries no container level` when no path is.
+
+| Engine | Request field | Answer |
+|--------|---------------|--------|
+| PostgreSQL | `"container": []` | `400` `{ "error": "postgres accepts \"container\" as [schema], received []" }` |
+| PostgreSQL | `"container": ["app", "x"]` | `400` `{ "error": "postgres accepts \"container\" as [schema], received [\"app\",\"x\"]" }` |
+| PostgreSQL | `"containers": [["app"], []]` | `400` `{ "error": "postgres accepts \"containers\" as [schema], received []" }` |
+| Trino | `"container": ["memory"]` | reaches the engine |
+| Trino | `"container": ["memory", "app", "x"]` | `400` `{ "error": "trino accepts \"container\" as [catalog] or [catalog, schema], received [\"memory\",\"app\",\"x\"]" }` |
+| SQLite | `"container": ["main"]` | `400` `{ "error": "sqlite accepts \"container\" as empty, received [\"main\"]" }` |
+
+`parent` on `POST /api/db/objects/containers` is a tree cursor rather than an address, and it keeps the depth ceiling on every engine.
+Any depth up to and including the declared one is accepted, and a parent at the declared depth answers `[]`, because nothing nests below the last level.
+Only a deeper parent is refused, at `400` with `{ "error": "<type> declares a container depth of <n>, and \"parent\" has <m> segments: <path>" }`.
+
+A caller that reaches a provider without these routes, such as the MCP `inspect-schema` tool or a host behind the embedded workspace, is refused by the provider itself under the same rule, in the provider's own words: `A PostgreSQL container path is [schema], received []`.
+
 #### POST /api/db/objects/describe
 
 Read the columns, indexes and foreign keys of ONE object.
@@ -932,9 +966,8 @@ there.
 Build a plan for an edited object definition, and answer what an apply would send.
 It executes nothing and writes nothing.
 
-The describe route above is the one Phase 2 sibling documented in this file.
-The other six under `/api/db/objects/` (`containers`, `counts`, `list`, `search`, `inventory`,
-`source`) are not documented here yet.
+The describe route above is the one Phase 2 sibling documented in full in this file.
+The other six under `/api/db/objects/` (`containers`, `counts`, `list`, `search`, `inventory`, `source`) are not, except for the container-path rule four of them share, which [Container paths on the object routes](#container-paths-on-the-object-routes) documents.
 
 **Authentication:** Required.
 There is NO admin gate on either route, and the reason is measured rather than preferred: a
