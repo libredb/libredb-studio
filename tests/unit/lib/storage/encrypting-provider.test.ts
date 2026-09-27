@@ -190,13 +190,13 @@ describe("the warning", () => {
     expect(await wrapped.listAccounts()).toEqual([account]);
     expect(await wrapped.getAccount(account.email)).toEqual(account);
     await wrapped.insertAccount(account);
-    await wrapped.updateAccount(account);
-    await wrapped.deleteAccount(account.email);
+    await wrapped.updateAccount(account, { keepEnabledAdmin: true });
+    await wrapped.deleteAccount(account.email, { keepEnabledAdmin: true });
 
     expect(listAccounts).toHaveBeenCalledTimes(1);
     expect(getAccount).toHaveBeenCalledWith(account.email);
     expect(insertAccount).toHaveBeenCalledWith(account);
-    expect(updateAccount).toHaveBeenCalledWith(account);
-    expect(deleteAccount).toHaveBeenCalledWith(account.email);
+    expect(updateAccount).toHaveBeenCalledWith(account, { keepEnabledAdmin: true });
+    expect(deleteAccount).toHaveBeenCalledWith(account.email, { keepEnabledAdmin: true });
   });
 });

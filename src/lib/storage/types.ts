@@ -85,12 +85,28 @@ export interface ServerStorageProvider {
   /** Insert. The email is the primary key. */
   insertAccount(account: StoredAccount): Promise<void>;
   /** Replace the mutable columns of an existing email. Does not rename. */
-  updateAccount(account: StoredAccount): Promise<void>;
+  updateAccount(account: StoredAccount, options?: AccountWriteOptions): Promise<void>;
   /**
    * Remove the account and its `user_storage` rows. Disabling an account does not call this:
    * a disabled account keeps its rows so re-enabling restores them.
    */
-  deleteAccount(email: string): Promise<void>;
+  deleteAccount(email: string, options?: AccountWriteOptions): Promise<void>;
+}
+
+export interface AccountWriteOptions {
+  /**
+   * Write only if an enabled admin remains afterwards, decided inside the write's own transaction
+   * with the admin rows locked, so two concurrent requests cannot each remove one of the last two.
+   */
+  keepEnabledAdmin?: boolean;
+}
+
+/** A guarded account write that would have left no enabled admin. Nothing was written. */
+export class LastAdminError extends Error {
+  constructor() {
+    super("The write would leave no enabled admin");
+    this.name = "LastAdminError";
+  }
 }
 
 /**

@@ -18,7 +18,7 @@ import { getAuthUsers, type AuthUser } from "@/lib/local-auth";
 import { logger } from "@/lib/logger";
 import { hashPassword, needsRehash, passwordMatchesHash } from "@/lib/password-hash";
 import { getStorageProvider } from "@/lib/storage/factory";
-import type { ServerStorageProvider, StoredAccount } from "@/lib/storage/types";
+import { LastAdminError, type ServerStorageProvider, type StoredAccount } from "@/lib/storage/types";
 import { encodeBase32, claimTotpStep, verifyTotp } from "@/lib/totp";
 
 export class AccountError extends Error {
@@ -413,16 +413,21 @@ function readPatch(body: unknown): AccountPatch {
   return patch;
 }
 
-function assertAdminRemains(
-  accounts: StoredAccount[],
-  email: string,
-  next: { role: Role; disabled: boolean } | null,
-): void {
-  const survivors = accounts.filter((account) => {
-    if (sameEmail(account.email, email)) return next !== null && next.role === "admin" && !next.disabled;
-    return account.role === "admin" && !account.disabled;
-  });
-  if (survivors.length === 0) throw new AccountError(409, LAST_ADMIN);
+function isEnabledAdmin(account: StoredAccount): boolean {
+  return account.role === "admin" && !account.disabled;
+}
+
+/**
+ * The store decides "an enabled admin remains" inside the write's own transaction, because a
+ * read-then-write check here let two concurrent requests each remove one of the last two admins.
+ */
+async function guardLastAdmin(write: () => Promise<void>): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    if (error instanceof LastAdminError) throw new AccountError(409, LAST_ADMIN);
+    throw error;
+  }
 }
 
 export interface ChangedAccount {
@@ -450,8 +455,9 @@ export async function changeAccount(actor: string, email: string, body: unknown)
     sessionVersion: endsSessions ? current.sessionVersion + 1 : current.sessionVersion,
     updatedAt: new Date().toISOString(),
   };
-  assertAdminRemains(await provider.listAccounts(), current.email, next);
-  await provider.updateAccount(next);
+  await guardLastAdmin(() =>
+    provider.updateAccount(next, { keepEnabledAdmin: isEnabledAdmin(current) && !isEnabledAdmin(next) }),
+  );
   if (patch.role !== undefined && patch.role !== current.role) audit(actor, "role", current.email);
   if (patch.disabled !== undefined && patch.disabled !== current.disabled) {
     audit(actor, patch.disabled ? "disable" : "enable", current.email);
@@ -465,8 +471,7 @@ export async function removeAccount(actor: string, email: string): Promise<void>
   const provider = await requireAccountStore();
   const current = await provider.getAccount(email);
   if (!current) throw new AccountError(404, ACCOUNT_NOT_FOUND);
-  assertAdminRemains(await provider.listAccounts(), current.email, null);
-  await provider.deleteAccount(current.email);
+  await guardLastAdmin(() => provider.deleteAccount(current.email, { keepEnabledAdmin: isEnabledAdmin(current) }));
   audit(actor, "delete", current.email);
 }
 

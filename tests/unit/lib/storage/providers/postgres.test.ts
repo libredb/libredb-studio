@@ -42,6 +42,7 @@ mock.module("pg", () => ({
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 import { PostgresStorageProvider } from "@/lib/storage/providers/postgres";
+import { LastAdminError } from "@/lib/storage/types";
 
 describe("PostgresStorageProvider", () => {
   let provider: ServerStorageProvider;
@@ -483,20 +484,64 @@ describe("PostgresStorageProvider", () => {
       updatedAt: "t",
     };
     await provider.insertAccount(account);
-    await provider.updateAccount({ ...account, disabled: true });
-    const sql = (mockQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
-    expect(sql[0]).toContain("INSERT INTO accounts");
-    expect(sql[1]).toContain("UPDATE accounts");
+    expect((mockQuery.mock.calls as unknown[][])[0][0]).toContain("INSERT INTO accounts");
 
     const clientQuery = mock(async (): Promise<{ rows: unknown[] }> => ({ rows: [] }));
     const release = mock(() => {});
     mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    await provider.updateAccount({ ...account, disabled: true });
     await provider.deleteAccount(account.email);
-    const deleted = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
-    expect(deleted[0]).toBe("BEGIN");
-    expect(deleted[1]).toContain("DELETE FROM accounts");
-    expect(deleted[2]).toContain("DELETE FROM user_storage");
-    expect(deleted[3]).toBe("COMMIT");
+    const sql = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+    expect(sql[0]).toBe("BEGIN");
+    expect(sql[1]).toContain("UPDATE accounts");
+    expect(sql[2]).toBe("COMMIT");
+    expect(sql[3]).toBe("BEGIN");
+    expect(sql[4]).toContain("DELETE FROM accounts");
+    expect(sql[5]).toContain("DELETE FROM user_storage");
+    expect(sql[6]).toBe("COMMIT");
+    // An unguarded write takes no lock on the admin rows.
+    expect(sql.some((statement) => statement.includes("FOR UPDATE"))).toBe(false);
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  test("a guarded write locks the enabled admins first and commits when one remains", async () => {
+    await provider.initialize();
+    const clientQuery = mock(async (sql: string): Promise<{ rows: unknown[] }> =>
+      sql.includes("COUNT(*)") ? { rows: [{ n: 1 }] } : { rows: [] },
+    );
+    const release = mock(() => {});
+    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    await provider.deleteAccount("ada@example.com", { keepEnabledAdmin: true });
+    const sql = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+    expect(sql[0]).toBe("BEGIN");
+    expect(sql[1]).toContain("FOR UPDATE");
+    expect(sql[2]).toContain("DELETE FROM accounts");
+    expect(sql[4]).toContain("COUNT(*)");
+    expect(sql[5]).toBe("COMMIT");
+  });
+
+  test("a guarded write that would leave no enabled admin rolls back with LastAdminError", async () => {
+    await provider.initialize();
+    const clientQuery = mock(async (sql: string): Promise<{ rows: unknown[] }> =>
+      sql.includes("COUNT(*)") ? { rows: [{ n: "0" }] } : { rows: [] },
+    );
+    const release = mock(() => {});
+    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    const account = {
+      email: "ada@example.com",
+      passwordHash: "scrypt$hash",
+      role: "user" as const,
+      totpSecret: null,
+      totpPending: null,
+      disabled: false,
+      sessionVersion: 3,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    await expect(provider.updateAccount(account, { keepEnabledAdmin: true })).rejects.toBeInstanceOf(LastAdminError);
+    const sql = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+    expect(sql).toContain("ROLLBACK");
+    expect(sql).not.toContain("COMMIT");
     expect(release).toHaveBeenCalledTimes(1);
   });
 

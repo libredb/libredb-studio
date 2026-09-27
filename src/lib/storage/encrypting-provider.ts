@@ -1,6 +1,12 @@
 import { logger } from "@/lib/logger";
 import { decryptConnections, encryptConnections } from "./connection-secrets";
-import type { ServerStorageProvider, StorageCollection, StorageData, StoredAccount } from "./types";
+import type {
+  AccountWriteOptions,
+  ServerStorageProvider,
+  StorageCollection,
+  StorageData,
+  StoredAccount,
+} from "./types";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -96,12 +102,12 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
     return this.inner.insertAccount(account);
   }
 
-  updateAccount(account: StoredAccount): Promise<void> {
-    return this.inner.updateAccount(account);
+  updateAccount(account: StoredAccount, options?: AccountWriteOptions): Promise<void> {
+    return this.inner.updateAccount(account, options);
   }
 
-  deleteAccount(email: string): Promise<void> {
-    return this.inner.deleteAccount(email);
+  deleteAccount(email: string, options?: AccountWriteOptions): Promise<void> {
+    return this.inner.deleteAccount(email, options);
   }
 }
 
