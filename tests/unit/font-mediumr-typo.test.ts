@@ -41,8 +41,6 @@ describe("no font-mediumr typo in src (issue #1124)", () => {
         .filter(({ text }) => text.includes("font-mediumr")),
     );
 
-    expect(
-      offenders.map(({ path, line }) => `${path}:${line}`),
-    ).toEqual([]);
+    expect(offenders.map(({ path, line }) => `${path}:${line}`)).toEqual([]);
   });
 });
