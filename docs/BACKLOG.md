@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D128, U17 · 73
+- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 74
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 42
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3–DOC7 · 4
+- [Documentation](#documentation) — DOC3-DOC8 · 5
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H12 · 3
@@ -1240,47 +1240,6 @@ test pins the behaviour that was chosen.
 
 ---
 
-# D94 (proposed): hand-copied source coordinates across this repository are stale by thousands of lines
-
-**Status:** proposed, wave 6 slot B fix round.
-
-Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
-moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
-`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
-Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
-`64ee0e3f^` was wrong before this round touched anything:
-
-| Citation | Cited in | Anchor actually at |
-|---|---|---|
-| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
-| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
-| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
-| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
-| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
-| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
-| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
-| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
-| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
-
-Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
-follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
-agent that re-derives its own citations after an edit, which this epic has now asked for three
-times, is paying a per-commit tax on coordinates that were never right.
-
-Two halves, and the second is what stops it recurring:
-
-1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
-   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
-   a number is correct only until the next commit.
-2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
-   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
-   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
-   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
-
-**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
-and the citations present at that commit all resolve. The test needs one case per shape it must
-accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
-
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
 
 `grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 39 hits, re-measured 2026-09-23. Seven of
@@ -1979,6 +1938,20 @@ A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop t
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
 **Done when:** `queryReadOnly` accepts an `AbortSignal`, each of the four providers stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
+
+### D129. `attachedSegment`, the object-path policy, is still a constant in each provider file rather than part of the declaration
+
+`ObjectPathShapeEngine.attachedSegment` in `src/lib/db/object-kinds.ts` (#978) decides whether an attached kind, such as a trigger on a table or an index, may also be addressed by the bare shape `[...levels, name]`.
+MySQL and Oracle set `"optional"`; the other twelve engines that reach `assertObjectPathShape` set `"required"`, each in its own descriptor constant.
+That is the shape #1147 removed for container paths: a per-engine acceptance rule that only the provider can read, which is why the kernel rule in `docs/ARCHITECTURE.md` names it as its one pre-existing exception.
+
+Measured on 2026-09-27, on `main` at ef1748e3:
+- The object routes (`describe`, `source`, `edit-plan`) check nothing about an object path's shape: `requireObjectPath` in `src/lib/api/object-route.ts` refuses only a path that is not an array of strings or is empty, so the provider is the only layer that refuses a wrong-shaped one, with `code: QUERY_ERROR`.
+- SQL Server, Trino and DuckDB do not reach `assertObjectPathShape` at all: `mssql.ts`, `trino/objects.ts` and `duckdb/objects.ts` still build the `path is [...]` sentence with a local `shapeList`.
+
+Do it after #1148 has merged, in a PR of its own, and not alongside another architectural change: the owner asked for the two to stay apart.
+
+**Done when:** which object-path shapes an engine accepts is part of its declaration, read through one kernel reader in the way `acceptedContainerShapes()` reads `containerPathShapes`; `attachedSegment` is gone from `ObjectPathShapeEngine`; the three local `shapeList` object-path sentences go through the shared renderer; the object routes refuse a path the engine does not accept by the same reader, before the provider is called; and every provider refusal sentence stays byte-identical.
 
 ## Value interpolation
 
@@ -3158,6 +3131,48 @@ Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: rewriting one paragraph in four languages is the per-language follow-up #1055 leaves to a speaker of each.
 
 **Done when:** each of the four paragraphs says what `README.md` says about the panel, Oracle's certificate caveat and the libSQL connection string included.
+
+### DOC8. Hand-copied source coordinates across this repository are stale by thousands of lines
+
+Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
+moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
+`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
+Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
+`64ee0e3f^` was wrong before this round touched anything:
+
+| Citation | Cited in | Anchor actually at |
+|---|---|---|
+| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
+| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
+| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
+| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
+| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
+| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
+| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
+| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
+| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
+
+Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
+follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
+agent that re-derives its own citations after an edit, which this epic has now asked for three
+times, is paying a per-commit tax on coordinates that were never right.
+
+Two halves, and the second is what stops it recurring:
+
+1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
+   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
+   a number is correct only until the next commit.
+2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
+   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
+   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
+   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
+
+DOC4 is the same class in the provider docs, and #1135 (PR #1141) replaces the citations in three source comments.
+This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
+
+**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
+and the citations present at that commit all resolve. The test needs one case per shape it must
+accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
 
 ---
 
