@@ -153,6 +153,7 @@ The HTTP object routes read them through the same functions, so a route refusal 
 A rule that only one engine's reads need stays in that engine's file, next to the reads it protects.
 PostgreSQL's `containerSchema()` is the example: it refuses a declaration that names no `schema` level, because the PostgreSQL reads look the schema up by id, so it lives beside those reads rather than in the kernel (#1092).
 A descriptor field that only one engine sets is a sign that its rule belongs in that engine.
+`ObjectPathShapeEngine.attachedSegment` (#978) is the one pre-existing exception: a per-engine acceptance policy carried in provider descriptors rather than in the declaration, and moving it into the declaration is separate work.
 
 ### 4.2. Authentication Flow
 

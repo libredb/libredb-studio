@@ -124,6 +124,10 @@ export function assertObjectPathShape(
  * protects, the way PostgreSQL's `containerSchema` refuses a declaration that names no `schema`
  * level (#1092). A field here that only one engine would set is a sign that its rule belongs in
  * that engine.
+ *
+ * `ObjectPathShapeEngine.attachedSegment` (#978) is the one pre-existing exception: an acceptance
+ * policy carried per engine in a descriptor rather than in the declaration, and moving it into the
+ * declaration is separate work.
  */
 export type ContainerPathShapeEngine = {
   /** The engine code the thrown `QueryError` is stamped with. */
@@ -152,10 +156,12 @@ export type ContainerPathShapeEngine = {
  * schema, a bucket with no scope). No shape is longer than `declaredLevels()`, so both refuse a
  * longer path.
  *
- * ABSENT READS AS `exact`, and the direction is a security decision rather than a convenience:
- * read as `prefixes`, a provider that forgot the field would let a partial path reach a read that
- * binds its segments by position, and `undefined` bound where a segment belongs answers an empty
- * folder that looks exactly like a container holding nothing.
+ * EVERY VALUE BUT `prefixes` READS AS `exact`, absent included, and the direction is a security
+ * decision rather than a convenience: `prefixes` is the one value that widens, so a provider that
+ * forgot the field, misspelled it or set a value this reader does not know fails closed. Read as
+ * `prefixes`, any of those would let a partial path reach a read that binds its segments by
+ * position, and `undefined` bound where a segment belongs answers an empty folder that looks
+ * exactly like a container holding nothing.
  *
  * The two policies differ on one more case, the declaration that names no level. `exact` answers
  * the empty path, because the depth it asks for is zero; `prefixes` answers no shape at all, since
@@ -165,7 +171,7 @@ export function acceptedContainerShapes(
   capabilities: ProviderCapabilities,
 ): readonly (readonly ContainerLevelSpec[])[] {
   const levels = declaredLevels(capabilities);
-  if ((capabilities.containerPathShapes ?? "exact") === "exact") return [levels];
+  if (capabilities.containerPathShapes !== "prefixes") return [levels];
   return levels.map((_, index) => levels.slice(0, index + 1));
 }
 

@@ -407,7 +407,9 @@ describe("POST /api/db/objects/containers", () => {
     );
   });
 
-  test("a parent AT the declared depth still passes, because a parent is a cursor and not an address", async () => {
+  test("a parent AT the declared depth reaches the provider", async () => {
+    // On one level both rules accept `["app"]`, so this proves only that the route lets it through;
+    // the test below is the one that tells the depth ceiling from the address rule.
     const listContainers = mock(async (): Promise<Container[]> => []);
     activeProvider = objectProvider({ listContainers });
 

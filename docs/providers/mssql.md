@@ -1311,7 +1311,7 @@ render those words and send an operation SQL Server declares (#496).
 | `defaultPort` | `1433` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | **two**: `catalog` (Database) then `schema` - the first two-level engine in #789 ([§7](#the-object-surface-789)) |
-| `containerPathShapes` | `prefixes`: `[database]` and `[database, schema]` both address a container, because a database alone is a true question here ([§7](#the-object-surface-789)); a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `containerPathShapes` | `prefixes`: `[database]` and `[database, schema]` both address a container, because a database alone is a true question here ([§7](#the-object-surface-789)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | seven: table, view, procedure, function, trigger, synonym, sequence. No `index` kind and no materialized view ([§7](#the-object-surface-789)) |
 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))

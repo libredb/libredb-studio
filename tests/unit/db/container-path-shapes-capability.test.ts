@@ -57,26 +57,6 @@ describe("containerPathShapes (#1147)", () => {
     const declared = Object.hasOwn(capabilities, "containerPathShapes") ? capabilities.containerPathShapes : "absent";
     expect(declared).toBe(EXPECTED_CONTAINER_PATH_SHAPES[type]);
   });
-
-  test("the fifteen that declare a value are pinned by name", () => {
-    expect(TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort()).toEqual([
-      "cassandra",
-      "clickhouse",
-      "couchbase",
-      "druid",
-      "duckdb",
-      "libredb",
-      "libsql",
-      "mongodb",
-      "mssql",
-      "mysql",
-      "oracle",
-      "postgres",
-      "redis",
-      "sqlite",
-      "trino",
-    ]);
-  });
 });
 
 // Anchored to this file rather than to `process.cwd()`, because a runner that launched this
@@ -88,15 +68,46 @@ const FIELD = "containerPathShapes";
 /** `path.relative` spells the separator by HOST; the pinned list below is POSIX-spelled. */
 const repoRelative = (file: string): string => path.relative(ROOT, file).split(path.sep).join("/");
 
+/**
+ * The extensions the scan reads: `.ts`, `.tsx` and `.js`, which are the script extensions src/
+ * holds (`.js` for `src/exports/index.js`). src/ holds no `.mjs`, `.cjs`, `.mts` or `.cts` file,
+ * so none of those is scanned; a first one needs adding here.
+ */
+const SCANNED_EXTENSIONS = [".ts", ".tsx", ".js"] as const;
+
 function sourceFiles(dir: string): string[] {
   const found: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) found.push(...sourceFiles(full));
-    else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) found.push(full);
+    else if (SCANNED_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) found.push(full);
   }
   return found;
 }
+
+/**
+ * The type-id a provider file serves: its basename, or its directory's name when the provider is
+ * split across modules (`trino/objects.ts` is trino). Every caller of `assertContainerPathShape`
+ * is one of those two layouts, which is the layout CLAUDE.md names for providers.
+ */
+function providerTypeId(file: string): string {
+  const base = path.basename(file, ".ts");
+  return base === "objects" || base === "index" ? path.basename(path.dirname(file)) : base;
+}
+
+describe("the declaration follows the check (#1147)", () => {
+  test("the type-ids that declare a value are exactly the engines whose providers call assertContainerPathShape", () => {
+    // Read from the code on both sides: a new caller that declares nothing, or a declaration
+    // left behind by a provider that stopped calling the check, fails here.
+    const callers = sourceFiles(path.join(SRC, "lib/db/providers"))
+      .filter((file) => fs.readFileSync(file, "utf8").includes("assertContainerPathShape("))
+      .map(providerTypeId)
+      .sort();
+    const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
+    expect(callers).toHaveLength(15);
+    expect(callers).toEqual(declaring);
+  });
+});
 
 /**
  * How many times this source READS the field, in any spelling.
@@ -105,11 +116,14 @@ function sourceFiles(dir: string): string[] {
  * access by that name, a destructuring that binds it (renamed or not), or the name as a string
  * outside a type position and outside a quoted declaration key; the last covers an element
  * access, an `in` test, `Object.hasOwn` and `Reflect.get`, and it counts an element access
- * through its argument so nothing is counted twice. The interface member in `types.ts` and the
- * `containerPathShapes:` keys of the providers' literals are declarations, not reads.
+ * through its argument so nothing is counted twice. A destructuring ASSIGNMENT reads it too, in
+ * all three spellings (`({ containerPathShapes: x } = c)`, `({ containerPathShapes } = c)` and the
+ * quoted key), so an object literal's key counts when that literal is an assignment target. The
+ * interface member in `types.ts` and the `containerPathShapes:` keys of the providers' literals
+ * are declarations, not reads. It reads the files `SCANNED_EXTENSIONS` names, and no other.
  */
 function countReads(file: string, source: string): number {
-  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : file.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   let reads = 0;
   const visit = (node: ts.Node): void => {
@@ -118,6 +132,12 @@ function countReads(file: string, source: string): number {
       const key = node.propertyName ?? node.name;
       if (ts.isIdentifier(key) && key.text === FIELD) reads += 1;
       else if (ts.isStringLiteral(key) && key.text === FIELD) reads += 1;
+    } else if (
+      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+      ts.isObjectLiteralExpression(node.parent) &&
+      isAssignmentTarget(node.parent)
+    ) {
+      if ((ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === FIELD) reads += 1;
     } else if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === FIELD) {
       const parent = node.parent;
       const typePosition = ts.isLiteralTypeNode(parent);
@@ -134,6 +154,24 @@ function countReads(file: string, source: string): number {
   return reads;
 }
 
+/** Whether this literal is the target of a destructuring assignment, however deeply nested. */
+function isAssignmentTarget(literal: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression): boolean {
+  let child: ts.Node = literal;
+  let parent = literal.parent;
+  while (ts.isParenthesizedExpression(parent)) {
+    child = parent;
+    parent = parent.parent;
+  }
+  if (ts.isBinaryExpression(parent))
+    return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && parent.left === child;
+  if (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) return parent.initializer === child;
+  if (ts.isArrayLiteralExpression(parent)) return isAssignmentTarget(parent);
+  if (ts.isPropertyAssignment(parent) && parent.initializer === child && ts.isObjectLiteralExpression(parent.parent)) {
+    return isAssignmentTarget(parent.parent);
+  }
+  return false;
+}
+
 describe("the declaration has one reader (#1147)", () => {
   test("the detector counts every spelling of a read, and nothing that is not one", () => {
     const reads = [
@@ -146,13 +184,18 @@ describe("the declaration has one reader (#1147)", () => {
       "const { containerPathShapes } = c;",
       "const { containerPathShapes: renamed } = c;",
       'const { "containerPathShapes": quoted } = c;',
+      "({ containerPathShapes: assigned } = c);",
+      "({ containerPathShapes } = c);",
+      '({ "containerPathShapes": quotedAssigned } = c);',
     ].join("\n");
-    expect(countReads("reads.ts", reads)).toBe(9);
+    expect(countReads("reads.ts", reads)).toBe(12);
 
     const nonReads = [
       'type P = ProviderCapabilities["containerPathShapes"];',
       'const d = { containerPathShapes: "exact" };',
       'const q = { "containerPathShapes": "exact" };',
+      "const s = { containerPathShapes };",
+      "x = { containerPathShapes: y };",
       'interface X { containerPathShapes?: "exact" }',
       "// c.containerPathShapes",
     ].join("\n");

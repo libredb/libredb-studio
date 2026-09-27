@@ -1071,7 +1071,7 @@ with wording about a keyword the user never typed.
 | `identifierQuoting` | `double` | Generated SQL quotes identifiers with double quotes. |
 | `maintenanceOperations` | `vacuum`, `analyze`, `optimize` | Offers only the maintenance operations implemented in §8. |
 | `containerLevels` | `Database`, `Schema` | The object browser nests schemas under databases (§6). |
-| `containerPathShapes` | `prefixes` | `[database]` and `[database, schema]` both address a container, because an attached database alone is a real address; a longer path is refused, by the object routes over HTTP and by this provider directly (§6, #1147). |
+| `containerPathShapes` | `prefixes` | `[database]` and `[database, schema]` both address a container, because an attached database alone is a real address; the empty path and a longer path are both refused, by the object routes over HTTP and by this provider directly (§6, #1147). |
 | `objectKinds` | `table`, `view`, `macro`, `sequence` | These are the object folders exposed in the browser (§6). |
 
 The maintenance specs make `vacuum` and `analyze` available both per table and globally.

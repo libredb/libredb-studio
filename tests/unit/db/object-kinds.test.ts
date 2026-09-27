@@ -536,6 +536,19 @@ describe("acceptedContainerShapes (#1147)", () => {
     );
   });
 
+  test("a value outside the union reads as exact, never as prefixes", () => {
+    // Only the exact string "prefixes" widens; a typo, a case variant, an empty string or a
+    // future member a reader does not know yet must fail closed.
+    for (const value of ["prefix", "EXACT", "Prefixes", ""]) {
+      const capabilities = {
+        ...base,
+        containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+        containerPathShapes: value,
+      } as unknown as ProviderCapabilities;
+      expect(ids(acceptedContainerShapes(capabilities))).toEqual([["catalog", "schema"]]);
+    }
+  });
+
   test("a declaration with no containerLevels at all is depth 0", () => {
     expect(acceptedContainerShapes(base)).toEqual([[]]);
   });

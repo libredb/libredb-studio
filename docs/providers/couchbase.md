@@ -1180,7 +1180,7 @@ stays absent, and that card never renders either.
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `8091` |
 | `containerLevels` | two levels, `catalog` labelled Bucket then `schema` labelled Scope ([§6a.1](#6a1-what-is-declared)) |
-| `containerPathShapes` | `prefixes`: `[bucket]` and `[bucket, scope]` both address a container, because a bucket alone is a real address ([§6a.1](#6a1-what-is-declared)); a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `containerPathShapes` | `prefixes`: `[bucket]` and `[bucket, scope]` both address a container, because a bucket alone is a real address ([§6a.1](#6a1-what-is-declared)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER)\s+(COLLECTION\|SCOPE\|INDEX)\b` |
 
 `supportsCreateTable: false` is deliberate: `CreateTableModal` builds `CREATE TABLE` from a column
