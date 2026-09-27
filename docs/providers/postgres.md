@@ -1304,7 +1304,9 @@ acquires a pooled client, optionally records its backend PID for cancellation, r
 
 Native `pg` errors are normalised through `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes (syntax → `QueryError`, auth → `AuthenticationError`,
-timeout → `TimeoutError`, etc.).
+timeout → `TimeoutError`, etc.). A PostgreSQL `statement_timeout` or `lock_timeout` is a timeout even
+though the engine reports it as `canceling statement due to …`, so since #1145 it maps to `TimeoutError`;
+only an operator cancel (`pg_cancel_backend`, `due to user request`) stays a `QueryCancelledError`.
 
 ### 5.2 Automatic `LIMIT` injection
 
@@ -1792,8 +1794,9 @@ the shared hierarchy:
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | SQL syntax / bad column / relation | `QueryError` (with position when available) |
-| `statement_timeout` exceeded, or user cancel via `pg_cancel_backend` | `QueryCancelledError` — both emit *"canceling statement due to …"*, which `mapDatabaseError()` matches **before** its timeout check |
-| Generic timeout / connection-acquire timeout (message contains "timeout"/"timed out", not "canceling statement") | `TimeoutError` |
+| `statement_timeout` or `lock_timeout` exceeded (`canceling statement due to statement timeout` / `due to lock timeout`) | `TimeoutError` — a time budget elapsed, so since #1145 `mapDatabaseError()` recognises these **before** its cancellation branch and keeps the engine's text |
+| User cancel via `pg_cancel_backend` (`canceling statement due to user request`) | `QueryCancelledError` |
+| Generic timeout / connection-acquire timeout (message contains "timeout"/"timed out") | `TimeoutError` |
 | Bad password / authentication | `AuthenticationError` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
 
@@ -1999,13 +2002,16 @@ Four things about the PostgreSQL side of that layer are worth knowing here:
   clamp really preempts; on SQLite it does not — see
   [sqlite.md §12](./sqlite.md#12-agent-read-only-execution-profile-328).
 
-  Worth knowing what the preemption looks like coming back, because it is not what the name suggests:
-  PostgreSQL reports it as `canceling statement due to statement timeout`, and `mapDatabaseError`
-  matches `canceling statement` before its timeout branch, so it arrives as a `QueryCancelledError` and
-  never as a `TimeoutError` on this engine. The agent tool layer treats it as a repairable statement
-  failure — narrowing the read is the repair that helps — and the mapper discards the wording that
-  would separate it from an operator cancel ([BACKLOG](../BACKLOG.md) B4), which is why a run
-  cancellation is enforced by the run loop's own state rather than by that exception.
+  Worth knowing what the preemption looks like coming back: PostgreSQL reports it as
+  `canceling statement due to statement timeout`, sharing the `canceling statement` prefix an operator
+  cancel uses. Since #1145 `mapDatabaseError` recognises that phrasing (and `due to lock timeout`)
+  **before** its cancellation branch and returns a `TimeoutError` carrying the engine's own text, so a
+  budget timeout arrives as a `TimeoutError` on this engine like everywhere else — only
+  `pg_cancel_backend`'s `due to user request` stays a `QueryCancelledError`. The agent tool layer
+  treats the timeout as a repairable statement failure — narrowing the read is the repair that helps.
+  A run cancellation is still enforced by the run loop's own state rather than by that exception,
+  because an operator cancel arriving mid-statement is repairable too (see [BACKLOG](../BACKLOG.md) B4
+  for the residual: classification reads the message text rather than the `57014`/`55P03` SQLSTATE).
 
 ---
 

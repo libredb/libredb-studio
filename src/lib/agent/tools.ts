@@ -1564,17 +1564,18 @@ function auditDeadlineRefusal(
  *   object, and reading a different table is exactly the repair that helps. They are
  *   indistinguishable by class but not by PHASE, which is what `runStatement` splits
  *   on: a credential failure happens while connecting, a grant failure while running.
- * - **`QueryCancelledError`** is what a PostgreSQL statement timeout arrives as, and
- *   this layer is what CAUSES it: the clamped budget becomes `SET LOCAL
- *   statement_timeout` (`postgres.ts:894`), the engine says `canceling statement due
- *   to statement timeout`, and `mapDatabaseError` matches `canceling statement`
- *   BEFORE its timeout branch (`errors.ts:280-293`) — so the timeout never arrives as
- *   `TimeoutError` on this engine at all. Narrowing the read is the repair that helps.
- *   The message that would distinguish an operator cancel is discarded by the mapper
- *   (`docs/BACKLOG.md` B4), so this cannot be split on text.
- *   FOR T7: a run cancellation must therefore be enforced by the run loop's own
- *   persisted state between tool calls, NOT by expecting a driver cancel to propagate
- *   out of this layer — after this commit it does not.
+ * - **`QueryCancelledError`** covers an OPERATOR cancel (`pg_cancel_backend`,
+ *   `canceling statement due to user request`) and stays repairable at the query
+ *   phase for the same reason a `TimeoutError` is: narrowing the read is a rewrite
+ *   the model can make. Since #1145 a PostgreSQL `statement_timeout` — the budget
+ *   this layer itself installs via `SET LOCAL statement_timeout` (`postgres.ts:2528`)
+ *   — no longer arrives here: `mapDatabaseError` now recognises `canceling statement
+ *   due to statement timeout` BEFORE its cancellation branch and returns a
+ *   `TimeoutError` (`errors.ts`), which is also repairable at this phase, so the
+ *   repair loop is unchanged. Both classes stay OUT of `ENVIRONMENT_FAILURES`.
+ *   FOR T7: a run cancellation must still be enforced by the run loop's own
+ *   persisted state between tool calls, NOT by expecting a driver cancel to
+ *   propagate out of this layer — it does not.
  *
  * HONEST LIMIT: this split is only as sharp as `mapDatabaseError`'s classification,
  * which is SUBSTRING matching on the engine's message, and it is imprecise in BOTH

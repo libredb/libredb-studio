@@ -3766,29 +3766,18 @@ ratified package, which that test's allowed-ignore set names explicitly.
 gains the matching adapter in the same change. The `Record<LLMProviderType, AgentProviderAdapter>` will
 not compile until it does.
 
-### B4. `mapDatabaseError` discards the text that distinguishes a timeout cancel from an operator cancel
+### B4. `mapDatabaseError` classifies on a substring a table or column name can satisfy
 
-`mapDatabaseError` matches `canceling statement` before its timeout branch and returns
-`new QueryCancelledError("Query was cancelled", provider, query)`, replacing the engine's own wording.
-PostgreSQL says `canceling statement due to statement timeout` for a `statement_timeout` and
-`canceling statement due to user request` for `pg_cancel_backend`. After this mapping **no** consumer
-can tell them apart. The discriminator is gone, not merely unexamined.
+The timeout-versus-cancel half of this entry is **resolved** (#1145): `mapDatabaseError` now recognises
+PostgreSQL's `canceling statement due to statement timeout` and `due to lock timeout` **before** its
+cancellation branch and returns a `TimeoutError` carrying the engine's own text, so a `statement_timeout`
+answers HTTP 408 `TIMEOUT_ERROR` like every other engine's timeout, while only `pg_cancel_backend`'s
+`due to user request` stays a `QueryCancelledError` at 499. The editor's consumers and the agent's
+repairable classification were revisited against that new signal.
 
-That is why the agent tool layer classifies a cancel as a repairable statement failure: the reachable
-case on the agent path is the timeout this layer itself installs via `SET LOCAL statement_timeout`, and
-narrowing the read is the repair that helps. The cost is stated there — an operator cancel arriving
-mid-statement is also offered a repair, so a run cancellation has to be enforced by the run loop's own
-persisted state between tool calls rather than by expecting the driver's cancel to propagate.
-
-The fix is in shared code and has editor-visible consequences, which is why it is not in #329.
-Reordering the timeout check ahead of the cancellation check, or preserving the original message on
-`QueryCancelledError`, changes what the query panel shows when a statement is cancelled versus times
-out. The reordering is the substantive one and needs the editor's cancel/timeout UX re-checked
-(`postgres.ts` sets `queryTimeout` on the pool as well, so both paths exist).
-
-**The same mapper has a wider imprecision, and the agent's repairable-versus-environment split inherits
-it.** Classification is **substring** matching on the engine's message, so an identifier can decide the
-class. Verified against the live mapper:
+What remains open is the **wider imprecision the same mapper has, which the agent's
+repairable-versus-environment split inherits.** Classification is **substring** matching on the engine's
+message, so an identifier can decide the class. Verified against the live mapper:
 
 - `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
   relation is treated as an environment fault and ends the run.
@@ -3802,11 +3791,11 @@ Neither direction is a boundary failure: nothing runs that policy did not allow,
 repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
 consumer sees the error, so no consumer can correct it.
 
-**Done when:** a statement timeout and a user cancellation are distinguishable by type or by preserved
-message, with the editor's consumers updated and the agent's cancel classification revisited against
-the new signal — and when classification no longer depends on a substring a table or column name can
-satisfy. Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not
-collide, and each provider already has access to its own.
+**Done when:** classification no longer depends on a substring a table or column name can satisfy.
+Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
+each provider already has access to its own — the #1145 fix still reads message text rather than the
+`57014`/`55P03` SQLSTATE, and moving it to the code is the same work this entry now tracks for the rest
+of the mapper.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 
