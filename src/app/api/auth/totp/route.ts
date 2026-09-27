@@ -4,7 +4,13 @@ import { clientAddress } from "@/lib/api/client-address";
 import { consumeRateLimit, peekRateLimit, RateLimitError } from "@/lib/api/rate-limit";
 import { guardRoute } from "@/lib/api/require-session";
 import { hmacHex } from "@/lib/auth-compare";
-import { AccountError, beginTotpEnrolment, confirmTotpEnrolment, disableOwnTotp } from "@/lib/local-accounts";
+import {
+  AccountError,
+  beginTotpEnrolment,
+  confirmTotpEnrolment,
+  disableOwnTotp,
+  ownFactorStatus,
+} from "@/lib/local-accounts";
 
 const ROUTE = "POST /api/auth/totp";
 
@@ -29,6 +35,16 @@ async function withLoginBudget<T>(request: Request, email: string, run: () => Pr
       for (const { bucket, key } of budgets) consumeRateLimit(bucket, key);
     }
     throw error;
+  }
+}
+
+export async function GET(request: Request) {
+  const guard = await guardRoute({ route: "GET /api/auth/totp", bucket: "query", request });
+  if ("response" in guard) return guard.response;
+  try {
+    return NextResponse.json(await ownFactorStatus(guard.session.username));
+  } catch (error) {
+    return accountFailureResponse(error, "GET /api/auth/totp");
   }
 }
 

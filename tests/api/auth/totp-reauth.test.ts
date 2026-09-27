@@ -179,6 +179,40 @@ describe("changing your own second factor needs more than the session", () => {
     expect((await totpRoute.POST(request({ action: "disable", password: ALICE_PASSWORD }))).status).toBe(200);
   });
 
+  test("GET says whether this account has a factor, and needs a session", async () => {
+    const status = () => totpRoute.GET(new Request("http://localhost/api/auth/totp"));
+    expect(await (await status()).json()).toEqual({ available: true, enabled: false });
+    await enrol();
+    expect(await (await status()).json()).toEqual({ available: true, enabled: true });
+    delete cookieStore["auth-token"];
+    expect((await status()).status).toBe(401);
+  });
+
+  test("GET explains why setup is not offered under OIDC or without a server store", async () => {
+    const status = async () =>
+      (await (await totpRoute.GET(new Request("http://localhost/api/auth/totp"))).json()) as {
+        available: boolean;
+        reason?: string;
+      };
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+    try {
+      const oidc = await status();
+      expect(oidc.available).toBe(false);
+      expect(oidc.reason).toContain("identity provider");
+    } finally {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
+    }
+    await closeStorageProvider();
+    process.env.STORAGE_PROVIDER = "local";
+    try {
+      const local = await status();
+      expect(local.available).toBe(false);
+      expect(local.reason).toContain("ADMIN_TOTP_SECRET");
+    } finally {
+      process.env.STORAGE_PROVIDER = "sqlite";
+    }
+  });
+
   test("wrong answers spend the login budget, so the two routes share one guess limit", async () => {
     for (let i = 0; i < 5; i++) {
       expect((await totpRoute.POST(request({ action: "begin", password: `guess-${i}` }))).status).toBe(401);

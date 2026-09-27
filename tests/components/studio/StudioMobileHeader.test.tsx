@@ -433,6 +433,12 @@ describe("StudioMobileHeader", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/settings/mcp");
   });
 
+  test("offers every signed-in user the authenticator screen", () => {
+    const { getByText } = render(<StudioMobileHeader {...defaults} isAdmin={false} />);
+    fireEvent.click(getByText("Authenticator"));
+    expect(mockRouterPush).toHaveBeenCalledWith("/settings/authenticator");
+  });
+
   test("the user menu carries a theme control", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
     expect(queryByText("Switch to light theme")).not.toBeNull();

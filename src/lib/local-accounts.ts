@@ -56,6 +56,9 @@ const CURRENT_PASSWORD_MISSING = "Enter your current password.";
 const CURRENT_PASSWORD_WRONG = "The current password is not correct.";
 const CURRENT_CODE_MISSING = "Enter a current code from your authenticator app.";
 const FACTOR_ACTIVE = "Turn off the current authenticator before setting up a new one.";
+const FACTOR_OIDC = "Two-factor authentication for this sign-in is managed by your identity provider.";
+const FACTOR_LOCAL =
+  "Setting up an authenticator here needs STORAGE_PROVIDER=sqlite or postgres. With STORAGE_PROVIDER=local an operator sets ADMIN_TOTP_SECRET or USER_TOTP_SECRET instead.";
 const PASSWORD_MIN_LENGTH = 8;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -465,6 +468,18 @@ export async function removeAccount(actor: string, email: string): Promise<void>
   assertAdminRemains(await provider.listAccounts(), current.email, null);
   await provider.deleteAccount(current.email);
   audit(actor, "delete", current.email);
+}
+
+export type OwnFactorStatus = { available: false; reason: string } | { available: true; enabled: boolean };
+
+/** What the authenticator screen offers the signed-in account, and why when it offers nothing. */
+export async function ownFactorStatus(email: string): Promise<OwnFactorStatus> {
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return { available: false, reason: FACTOR_OIDC };
+  const provider = await getStorageProvider();
+  if (!provider) return { available: false, reason: FACTOR_LOCAL };
+  const current = await provider.getAccount(email);
+  if (!current) throw new AccountError(404, NOT_IN_STORE);
+  return { available: true, enabled: current.totpSecret !== null };
 }
 
 function otpauthUrl(email: string, secret: string): string {

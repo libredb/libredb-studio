@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { AuthenticatorSettings } from "@/components/auth/AuthenticatorSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { appFetch } from "@/lib/config/base-path";
@@ -22,10 +23,8 @@ type View =
   | { kind: "error"; message: string }
   | { kind: "ready"; accounts: PublicAccount[] };
 
-async function readBody(
-  res: Response,
-): Promise<{ error?: string; accounts?: PublicAccount[]; secret?: string; otpauthUrl?: string }> {
-  return (await res.json()) as { error?: string; accounts?: PublicAccount[]; secret?: string; otpauthUrl?: string };
+async function readBody(res: Response): Promise<{ error?: string; accounts?: PublicAccount[] }> {
+  return (await res.json()) as { error?: string; accounts?: PublicAccount[] };
 }
 
 export function AccountsTab() {
@@ -35,9 +34,6 @@ export function AccountsTab() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "user">("user");
-  const [secret, setSecret] = useState<string | null>(null);
-  const [otpauthUrl, setOtpauthUrl] = useState<string | null>(null);
-  const [code, setCode] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,9 +63,6 @@ export function AccountsTab() {
 
   function refresh(message: string | null) {
     setNotice(message);
-    setSecret(null);
-    setOtpauthUrl(null);
-    setCode("");
     setReload((value) => value + 1);
   }
 
@@ -104,46 +97,6 @@ export function AccountsTab() {
     const res = await appFetch(`/api/admin/accounts/${encodeURIComponent(accountEmail)}`, { method: "DELETE" });
     const payload = await readBody(res);
     refresh(res.ok ? null : (payload.error ?? "Could not delete the account"));
-  }
-
-  async function beginEnrol() {
-    const res = await appFetch("/api/auth/totp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "begin" }),
-    });
-    const body = await readBody(res);
-    if (!res.ok || !body.secret) {
-      refresh(body.error ?? "Could not start authenticator setup");
-      return;
-    }
-    setSecret(body.secret);
-    setOtpauthUrl(body.otpauthUrl ?? null);
-  }
-
-  async function confirmEnrol(event: React.FormEvent) {
-    event.preventDefault();
-    const res = await appFetch("/api/auth/totp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "confirm", code }),
-    });
-    const body = await readBody(res);
-    if (!res.ok) {
-      setNotice(body.error ?? "Invalid authentication code");
-      return;
-    }
-    refresh(null);
-  }
-
-  async function disableEnrol() {
-    const res = await appFetch("/api/auth/totp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "disable" }),
-    });
-    const body = await readBody(res);
-    refresh(res.ok ? null : (body.error ?? "Could not turn off the authenticator"));
   }
 
   if (view.kind === "loading") {
@@ -301,35 +254,7 @@ export function AccountsTab() {
         </select>
         <Button type="submit">Create account</Button>
       </form>
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium text-fg">Your authenticator</h3>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => void beginEnrol()}>
-            Set up authenticator
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => void disableEnrol()}>
-            Turn off authenticator
-          </Button>
-        </div>
-        {secret ? (
-          <form className="space-y-2" onSubmit={(event) => void confirmEnrol(event)}>
-            <p className="text-sm text-fg-muted">
-              Add this secret to your authenticator app, then enter the 6-digit code.
-            </p>
-            <code data-testid="totp-secret">{secret}</code>
-            {otpauthUrl ? <p className="text-xs text-fg-muted break-all">{otpauthUrl}</p> : null}
-            <Input
-              aria-label="Authentication code"
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              className="w-40"
-            />
-            <Button type="submit" size="sm">
-              Confirm code
-            </Button>
-          </form>
-        ) : null}
-      </div>
+      <AuthenticatorSettings />
     </div>
   );
 }

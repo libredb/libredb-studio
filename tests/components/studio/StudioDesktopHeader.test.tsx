@@ -316,6 +316,12 @@ describe("StudioDesktopHeader", () => {
       expect(mockRouterPush).toHaveBeenCalledWith("/settings/mcp");
     });
 
+    test("offers every signed-in user the authenticator screen", () => {
+      const { getByText } = render(<StudioDesktopHeader {...defaultProps} isAdmin={false} user={{ role: "user" }} />);
+      fireEvent.click(getByText("Authenticator"));
+      expect(mockRouterPush).toHaveBeenCalledWith("/settings/authenticator");
+    });
+
     test("Logout menu item has danger-token styling", () => {
       const { getByText } = render(<StudioDesktopHeader {...defaultProps} />);
       const logoutItem = getByText("Logout").closest('[role="menuitem"]');

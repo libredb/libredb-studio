@@ -1,6 +1,6 @@
 import "../../setup-dom";
 import { afterEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { AccountsTab } from "@/components/admin/tabs/AccountsTab";
 
@@ -54,14 +54,12 @@ describe("AccountsTab", () => {
     await waitFor(() => expect(garbage.getByTestId("accounts-error").textContent).toBe("Could not load accounts"));
   });
 
-  test("creates, changes, deletes, and enrols from the table", async () => {
+  test("creates, changes and deletes from the table", async () => {
     const accounts: Account[] = [
       { email: "admin@libredb.org", role: "admin", disabled: false, totpEnabled: true, createdAt: "t" },
       { email: "user@libredb.org", role: "user", disabled: true, totpEnabled: false, createdAt: "t" },
     ];
     let failCreate = false;
-    let failBegin = false;
-    let failConfirm = false;
     const calls: { method: string; path: string; body: unknown }[] = [];
 
     mockGlobalFetch({
@@ -89,19 +87,7 @@ describe("AccountsTab", () => {
         }
         return { json: { account: accounts[0] } };
       },
-      "/api/auth/totp": async (req) => {
-        const body = (await req.json()) as { action?: string };
-        calls.push({ method: req.method, path: "/api/auth/totp", body });
-        if (body.action === "begin") {
-          if (failBegin) return { status: 400, json: { error: "no account" } };
-          return { json: { secret: "SECRETVALUE", otpauthUrl: "otpauth://totp/LibreDB" } };
-        }
-        if (body.action === "confirm") {
-          if (failConfirm) return { status: 400, json: { error: "bad code" } };
-          return { json: { ok: true } };
-        }
-        return { json: { ok: true } };
-      },
+      "/api/auth/totp": { json: { available: true, enabled: false } },
     });
 
     const view = render(<AccountsTab />);
@@ -111,8 +97,9 @@ describe("AccountsTab", () => {
     expect(view.getByText("Disable")).toBeTruthy();
     expect(view.getByText("Enable")).toBeTruthy();
     expect(view.getByText("Clear MFA")).toBeTruthy();
-    expect(view.getByText("On")).toBeTruthy();
-    expect(view.getByText("Off")).toBeTruthy();
+    const table = within(view.getByRole("table"));
+    expect(table.getByText("On")).toBeTruthy();
+    expect(table.getByText("Off")).toBeTruthy();
 
     fireEvent.click(view.getByTestId("role-user@libredb.org"));
     fireEvent.click(view.getByTestId("disabled-admin@libredb.org"));
@@ -143,29 +130,8 @@ describe("AccountsTab", () => {
     fireEvent.click(view.getByRole("button", { name: "Create account" }));
     await waitFor(() => expect(view.getByText("new@example.com")).toBeTruthy());
 
-    failBegin = true;
-    fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
-    await waitFor(() => expect(view.getByRole("alert").textContent).toBe("no account"));
-
-    failBegin = false;
-    fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
-    await waitFor(() => expect(view.getByTestId("totp-secret").textContent).toBe("SECRETVALUE"));
-    expect(view.getByText("otpauth://totp/LibreDB")).toBeTruthy();
-
-    failConfirm = true;
-    fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "000000" } });
-    fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
-    await waitFor(() => expect(view.getByRole("alert").textContent).toBe("bad code"));
-    expect(view.getByTestId("totp-secret")).toBeTruthy();
-
-    failConfirm = false;
-    fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
-    await waitFor(() => expect(view.queryByTestId("totp-secret")).toBeNull());
-
-    fireEvent.click(view.getByRole("button", { name: "Turn off authenticator" }));
-    await waitFor(() =>
-      expect(calls.some((call) => (call.body as { action?: string } | null)?.action === "disable")).toBe(true),
-    );
+    // The authenticator section is the shared component, tested on its own.
+    await waitFor(() => expect(view.getByRole("heading", { name: "Your authenticator" })).toBeTruthy());
 
     const roleCall = calls.find((call) => call.method === "PATCH" && call.path.endsWith("user%40libredb.org"));
     expect(roleCall?.body).toEqual({ role: "admin" });

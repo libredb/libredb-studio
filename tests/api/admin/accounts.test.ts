@@ -26,7 +26,7 @@ const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 const { clearTotpReplayState, decodeBase32, TOTP_PERIOD_SECONDS } = await import("@/lib/totp");
 const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage/factory");
 const { hashPassword, passwordVerificationCount, SCRYPT_N } = await import("@/lib/password-hash");
-const { beginTotpEnrolment, disableOwnTotp, rehashStoredPassword, seedAccountsIfEmpty } = await import(
+const { beginTotpEnrolment, disableOwnTotp, ownFactorStatus, rehashStoredPassword, seedAccountsIfEmpty } = await import(
   "@/lib/local-accounts"
 );
 
@@ -451,6 +451,7 @@ describe("stored local accounts", () => {
     expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "begin" }))).status).toBe(401);
     await expect(beginTotpEnrolment("ghost@example.com")).rejects.toMatchObject({ status: 404 });
     await expect(disableOwnTotp("ghost@example.com")).rejects.toMatchObject({ status: 404 });
+    await expect(ownFactorStatus("ghost@example.com")).rejects.toMatchObject({ status: 404 });
     await as("admin", "admin@libredb.org");
     expect((await totpRoute.POST(request("POST", "/api/auth/totp", { action: "nope" }))).status).toBe(400);
     expect(
