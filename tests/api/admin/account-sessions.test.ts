@@ -107,11 +107,13 @@ describe("a live session follows its stored account", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("a session minted before the registry existed is accepted once the env account is seeded", async () => {
-    // Upgrade path: the cookie predates the accounts table and carries no session version.
+  test("a token with no session version, as minted before the registry existed, is refused", async () => {
+    // Upgrade path: the cookie predates the accounts table. Signing in again once is the cost.
     use(await signJWT({ role: "admin", username: "admin@libredb.org" }));
-    expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);
+    expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(401);
     admin = await signIn("admin@libredb.org", adminPassword);
+    use(admin);
+    expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);
   });
 
   test("a token for an email the registry does not hold is refused", async () => {
@@ -176,6 +178,9 @@ describe("a live session follows its stored account", () => {
 
     use(admin);
     await create("frank@example.com", "frank-pass-2", "user");
+    // The new account shares the email, not the old one's sessions.
+    use(frank);
+    expect((await whoami()).status).toBe(401);
     use(await signIn("frank@example.com", "frank-pass-2"));
     const view = (await (await storageRoute.GET(request("GET", "/api/storage") as never)).json()) as {
       connections?: unknown;

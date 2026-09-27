@@ -26,7 +26,9 @@ const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 const { clearTotpReplayState, decodeBase32, TOTP_PERIOD_SECONDS } = await import("@/lib/totp");
 const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage/factory");
 const { hashPassword, passwordVerificationCount, SCRYPT_N } = await import("@/lib/password-hash");
-const { beginTotpEnrolment, disableOwnTotp, rehashStoredPassword } = await import("@/lib/local-accounts");
+const { beginTotpEnrolment, disableOwnTotp, rehashStoredPassword, seedAccountsIfEmpty } = await import(
+  "@/lib/local-accounts"
+);
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-accounts-"));
 // The suite password lives in tests/setup.ts. Repeating the literal here is what GitGuardian flags.
@@ -45,8 +47,12 @@ function restore(keys: string[]) {
   }
 }
 
+// A stored account's session carries its current session version; a name with no row gets none.
 async function as(role: "admin" | "user", username: string) {
-  cookieStore["auth-token"] = { value: await signJWT({ role, username }) };
+  const provider = await getStorageProvider();
+  if (provider) await seedAccountsIfEmpty(provider);
+  const sessionVersion = (await provider?.getAccount(username))?.sessionVersion;
+  cookieStore["auth-token"] = { value: await signJWT({ role, username, sessionVersion }) };
 }
 
 function request(method: string, path: string, body?: unknown) {

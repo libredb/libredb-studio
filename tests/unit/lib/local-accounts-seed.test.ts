@@ -55,7 +55,7 @@ describe("seedAccountsIfEmpty", () => {
 
   test("does nothing when the store already has a row", async () => {
     const insertAccount = mock(async () => {});
-    await seedAccountsIfEmpty(stub({ listAccounts: async () => [row], insertAccount }));
+    expect(await seedAccountsIfEmpty(stub({ listAccounts: async () => [row], insertAccount }))).toBe(false);
     expect(insertAccount).not.toHaveBeenCalled();
   });
 
@@ -75,7 +75,7 @@ describe("seedAccountsIfEmpty", () => {
     const insertAccount = mock(async () => {
       throw Object.assign(new Error("duplicate key"), { code: "23505" });
     });
-    await expect(seedAccountsIfEmpty(stub({ insertAccount, getAccount: async () => row }))).resolves.toBeUndefined();
+    await expect(seedAccountsIfEmpty(stub({ insertAccount, getAccount: async () => row }))).resolves.toBe(true);
   });
 
   test("rethrows a unique violation that did not leave a row", async () => {

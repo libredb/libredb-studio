@@ -103,6 +103,18 @@ export function needsRehash(encoded: string): boolean {
  */
 export async function verifyPassword(password: string, encoded: string): Promise<boolean> {
   verifications += 1;
+  return derivedKeyMatches(password, encoded);
+}
+
+/**
+ * The same check, not counted: the once-per-start comparison of ADMIN_PASSWORD with the stored
+ * admin (src/lib/local-accounts.ts) is not login work, and must not move the login count.
+ */
+export async function passwordMatchesHash(password: string, encoded: string): Promise<boolean> {
+  return derivedKeyMatches(password, encoded);
+}
+
+async function derivedKeyMatches(password: string, encoded: string): Promise<boolean> {
   const parsed = parseHash(encoded);
   try {
     const derived = await scrypt(

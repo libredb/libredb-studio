@@ -10,13 +10,13 @@
  * Passwords are scrypt hashes. Disabling keeps that account's `user_storage` rows; deleting
  * removes them, so the same email can be issued again without inheriting the previous rows.
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { emitAuditEvent } from "@/lib/audit";
 import type { Role, UserPayload } from "@/lib/auth";
 import { hmacHex } from "@/lib/auth-compare";
 import { getAuthUsers, type AuthUser } from "@/lib/local-auth";
 import { logger } from "@/lib/logger";
-import { hashPassword, needsRehash } from "@/lib/password-hash";
+import { hashPassword, needsRehash, passwordMatchesHash } from "@/lib/password-hash";
 import { getStorageProvider } from "@/lib/storage/factory";
 import type { ServerStorageProvider, StoredAccount } from "@/lib/storage/types";
 import { encodeBase32, claimTotpStep, verifyTotp } from "@/lib/totp";
@@ -128,8 +128,18 @@ async function requireAccountStore(): Promise<ServerStorageProvider> {
   if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") throw new AccountError(409, OIDC_MODE);
   const provider = await getStorageProvider();
   if (!provider) throw new AccountError(409, LOCAL_MODE);
+  await reconcileOnce(provider);
   await seedAccountsIfEmpty(provider);
   return provider;
+}
+
+/**
+ * Where a new row's session version starts. Random rather than 0, so a session from an account
+ * that was deleted, or from before the registry existed, can never match a row created later
+ * under the same email. The ceiling leaves room for 2^30 increments inside a Postgres INTEGER.
+ */
+function initialSessionVersion(): number {
+  return randomInt(1, 2 ** 30);
 }
 
 /**
@@ -144,7 +154,7 @@ async function insertSeeded(provider: ServerStorageProvider, user: AuthUser, now
     totpSecret: user.totpSecret ?? null,
     totpPending: null,
     disabled: false,
-    sessionVersion: 0,
+    sessionVersion: initialSessionVersion(),
     createdAt: now,
     updatedAt: now,
   };
@@ -155,13 +165,102 @@ async function insertSeeded(provider: ServerStorageProvider, user: AuthUser, now
   }
 }
 
-export async function seedAccountsIfEmpty(provider: ServerStorageProvider): Promise<void> {
-  if ((await provider.listAccounts()).length > 0) return;
+/** Returns whether it seeded, which is also whether the env admin matches the store by construction. */
+export async function seedAccountsIfEmpty(provider: ServerStorageProvider): Promise<boolean> {
+  if ((await provider.listAccounts()).length > 0) return false;
   const now = new Date().toISOString();
   // getAuthUsers returns the admin and, only when USER_PASSWORD is set, one more account.
   const [admin, extra] = getAuthUsers();
   await insertSeeded(provider, admin, now);
   if (extra) await insertSeeded(provider, extra, now);
+  return true;
+}
+
+const RESET_APPLIED = (email: string) =>
+  `ADMIN_PASSWORD_RESET is set: ${email} is an enabled admin again and signs in with ADMIN_PASSWORD. Remove ADMIN_PASSWORD_RESET now; every start applies it again while it is set.`;
+const EMAIL_NOT_STORED = (email: string) =>
+  `ADMIN_EMAIL ${email} is not in the account registry. With a server store the environment only seeds an empty table; set ADMIN_PASSWORD_RESET=true and restart to create it.`;
+const PASSWORD_DRIFT = (email: string) =>
+  `ADMIN_PASSWORD does not match the stored password for ${email}. With a server store the environment only seeds the account; set ADMIN_PASSWORD_RESET=true and restart to apply it.`;
+
+const RESET_ON = new Set(["true", "1", "on"]);
+const RESET_OFF = new Set(["false", "0", "off"]);
+
+function resetRequested(): boolean {
+  const raw = process.env.ADMIN_PASSWORD_RESET?.trim();
+  if (!raw) return false;
+  const value = raw.toLowerCase();
+  if (RESET_ON.has(value)) return true;
+  if (!RESET_OFF.has(value)) {
+    logger.warn(`unrecognized ADMIN_PASSWORD_RESET value "${raw}"; the reset is not applied (use "true")`, {
+      route: "accounts",
+    });
+  }
+  return false;
+}
+
+/**
+ * The break-glass path: make ADMIN_EMAIL an enabled admin that signs in with ADMIN_PASSWORD (and
+ * ADMIN_TOTP_SECRET, or no second factor), whatever the store holds. Every session it had ends.
+ */
+async function applyEnvironmentAdmin(
+  provider: ServerStorageProvider,
+  admin: AuthUser,
+  stored: StoredAccount | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const next: StoredAccount = {
+    email: stored?.email ?? admin.email,
+    passwordHash: await hashPassword(admin.password),
+    role: "admin",
+    totpSecret: admin.totpSecret ?? null,
+    totpPending: null,
+    disabled: false,
+    sessionVersion: stored ? stored.sessionVersion + 1 : initialSessionVersion(),
+    createdAt: stored?.createdAt ?? now,
+    updatedAt: now,
+  };
+  if (stored) await provider.updateAccount(next);
+  else await provider.insertAccount(next);
+  audit("environment", "reset", next.email);
+  logger.warn(RESET_APPLIED(next.email), { route: "accounts" });
+}
+
+/**
+ * Once the table is seeded the environment stops deciding the admin's password. An operator who
+ * rotates ADMIN_PASSWORD, or who is locked out, must still see that and have a way back, so each
+ * start compares the two once: a mismatch is reported, and ADMIN_PASSWORD_RESET applies the
+ * environment.
+ */
+async function reconcileWithEnvironment(provider: ServerStorageProvider): Promise<void> {
+  if (await seedAccountsIfEmpty(provider)) return;
+  const [admin] = getAuthUsers();
+  const stored = await provider.getAccount(admin.email);
+  if (resetRequested()) {
+    await applyEnvironmentAdmin(provider, admin, stored);
+    return;
+  }
+  if (!stored) {
+    logger.warn(EMAIL_NOT_STORED(admin.email), { route: "accounts" });
+    return;
+  }
+  if (!(await passwordMatchesHash(admin.password, stored.passwordHash))) {
+    logger.warn(PASSWORD_DRIFT(admin.email), { route: "accounts" });
+  }
+}
+
+// One reconciliation per provider instance, which is once per process in production. A failed
+// attempt is forgotten so the next request tries again rather than serving an unreconciled store.
+const reconciled = new WeakMap<ServerStorageProvider, Promise<void>>();
+
+function reconcileOnce(provider: ServerStorageProvider): Promise<void> {
+  let pending = reconciled.get(provider);
+  if (!pending) {
+    pending = reconcileWithEnvironment(provider);
+    reconciled.set(provider, pending);
+    pending.catch(() => reconciled.delete(provider));
+  }
+  return pending;
 }
 
 /**
@@ -174,6 +273,7 @@ export async function resolveLocalAuthUsers(): Promise<AuthUser[]> {
   const provider = await getStorageProvider();
   // local mode: no server database, so the env accounts stay the registry.
   if (!provider) return getAuthUsers();
+  await reconcileOnce(provider);
   await seedAccountsIfEmpty(provider);
   return (await provider.listAccounts()).map(toAuthUser);
 }
@@ -184,23 +284,20 @@ export async function resolveLocalAuthUsers(): Promise<AuthUser[]> {
  *
  * OIDC and `STORAGE_PROVIDER=local` sessions have no row to consult and pass. In store mode the
  * account must exist, be enabled, hold the role the token names, and carry the token's session
- * version. A token from before the registry existed carries no version and matches a row still at
- * 0; the lookup seeds an empty table first, so upgrading does not sign the env admin out.
+ * version. A token with no version predates the registry and matches nothing: its holder signs in
+ * once more.
  */
 export async function storedAccountAllows(session: UserPayload): Promise<boolean> {
   if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return true;
   const provider = await getStorageProvider();
   if (!provider) return true;
-  let account = await provider.getAccount(session.username);
-  if (!account) {
-    await seedAccountsIfEmpty(provider);
-    account = await provider.getAccount(session.username);
-  }
+  await reconcileOnce(provider);
+  const account = await provider.getAccount(session.username);
   return (
     account !== null &&
     !account.disabled &&
     account.role === session.role &&
-    account.sessionVersion === (session.sessionVersion ?? 0)
+    account.sessionVersion === session.sessionVersion
   );
 }
 
@@ -240,7 +337,7 @@ export async function createAccount(actor: string, body: unknown): Promise<Publi
     totpSecret: null,
     totpPending: null,
     disabled: false,
-    sessionVersion: 0,
+    sessionVersion: initialSessionVersion(),
     createdAt: now,
     updatedAt: now,
   };
