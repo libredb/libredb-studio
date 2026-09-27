@@ -307,9 +307,23 @@ describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof Dat
 });
 
 /**
- * The module cites getOrCreateProvider by name; this test still has two line citations.
- * Resolve those against scoped anchors, and keep the named references checked too.
- * The tunnel branch occurs in several functions, so the scope disambiguates it.
+ * This test file cites `factory.ts` BY LINE, and that pointer rots in silence: any insertion above
+ * the cited line invalidates it from a hand nowhere near this file. It happened here. The X23
+ * commit inserted thirty-four lines above the tunnel branch, and the four pointers at line 485 it
+ * left behind now name `const cacheKey = connection.id;` and a `@param` line inside a docblock.
+ * The module now names `getOrCreateProvider` instead of a line (#1135), and the first test below
+ * keeps it that way.
+ *
+ * The guard holds every number in ONE place, the cited file itself: the table names the ANCHOR,
+ * the test greps it and derives the number the prose must be writing. A correct renumbering costs
+ * no edit here and a stale one fails with the number to write. It is the shape
+ * `tests/unit/lib/api/object-route-edit.test.ts` already uses for `src/lib/api/object-route.ts`.
+ *
+ * `after` exists because the tunnel branch is written three times in `factory.ts` - once in each
+ * rewrite site - so the anchor alone is ambiguous and the scope has to say which one.
+ *
+ * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose. The repository-wide version of this
+ * check is `docs/BACKLOG.md` DOC8.
  */
 const FACTORY = "src/lib/db/factory.ts";
 const GET_OR_CREATE = "export async function getOrCreateProvider(";

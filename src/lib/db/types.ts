@@ -1551,9 +1551,10 @@ export interface MonitoringData {
    * which is a different fact from an empty array or a zero - StarRocks 3.3 has no
    * `information_schema.PROCESSLIST`, so `activeSessions` is absent there while an idle
    * PostgreSQL answers `[]`. Rendering the first as the second would claim a measurement
-   * the engine refused to make (the very error `QueriesTab` in `src/components/monitoring/tabs/QueriesTab.tsx` documents for
-   * `slowQueries`). A consumer therefore gates on the field being present, and shows the
-   * `errors` entry in place of that panel.
+   * the engine refused to make (the very error `QueriesTab` in
+   * `src/components/monitoring/tabs/QueriesTab.tsx` documents for `slowQueries`). A
+   * consumer therefore gates on the field being present, and shows the `errors` entry in
+   * place of that panel.
    */
   overview?: DatabaseOverview;
   performance?: PerformanceMetrics;
@@ -2024,10 +2025,10 @@ export type ObjectPartEdit = { readonly offered: true } | { readonly offered: fa
  *
  * CLOSED rather than an open string, against this repository's own precedent for
  * `ObjectKindSpec.id`, and the cost is that a host whose engine has a seventh mechanism has
- * nothing to name. It is closed anyway because the module docblock in `src/lib/db/operations/execution.ts` states
- * the audit's rule, that "the audited action is the registry-RESOLVED descriptor id, never the
- * caller's raw operation string", and this value is what an apply's audit event carries in
- * `action`.
+ * nothing to name. It is closed anyway because the module docblock in
+ * `src/lib/db/operations/execution.ts` states the audit's rule, that "the audited action is the
+ * registry-RESOLVED descriptor id, never the caller's raw operation string", and this value is
+ * what an apply's audit event carries in `action`.
  *
  * NOTHING IN `src/lib/db` OR IN CORE MAY SWITCH ON IT. Three things read it: the preview
  * caption, the audit's `action`, and the census. A member with no producer is therefore not a
@@ -2258,14 +2259,14 @@ export interface ObjectEditPlan {
   /**
    * A digest of the SERVER this plan was built against, not of the connection's id.
    *
-   * `resolveConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed inline
-   * connection object verbatim, `id` included, and the browser drove it: a made-up id with different credentials
-   * connected as them. So `connection.id` is a string the caller typed on the majority path, and
-   * binding to it would be vacuous for exactly the case the binding exists for. The fingerprint
-   * is a hash over a length-framed walk of the RESOLVED connection's `type`, `host`, `port`,
-   * `database` and `user`, which are the fields that decide which server and which principal.
-   * Stated as a limit rather than left to be discovered: it does not catch a different server
-   * that answers on the same host and port.
+   * MEASURED, `resolveConnection()` in `src/lib/seed/resolve-connection.ts` returns a non-seed
+   * inline connection object verbatim, `id` included, and the browser drove it: a made-up id with
+   * different credentials connected as them. So `connection.id` is a string the caller typed on the
+   * majority path, and binding to it would be vacuous for exactly the case the binding exists for.
+   * The fingerprint is a hash over a length-framed walk of the RESOLVED connection's `type`,
+   * `host`, `port`, `database` and `user`, which are the fields that decide which server and which
+   * principal. Stated as a limit rather than left to be discovered: it does not catch a different
+   * server that answers on the same host and port.
    */
   readonly connectionFingerprint: string;
   readonly type: DatabaseType;
