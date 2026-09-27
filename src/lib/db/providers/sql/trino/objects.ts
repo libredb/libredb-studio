@@ -491,6 +491,18 @@ function requiredSegment(
   return segment;
 }
 
+/**
+ * The catalog segment of a listing parent, read as a tree CURSOR and not as an address.
+ *
+ * `listContainers()` takes a parent to say where in the tree to list, and the route holds a
+ * parent to the depth ceiling alone. `containerPathShapes` governs the paths an object read
+ * ADDRESSES, so running `assertContainerPathShape` here would refuse a valid `[catalog]` the
+ * moment the declaration said `exact`, while the route had already accepted it.
+ */
+export function parentCatalog(capabilities: ProviderCapabilities, parent: readonly string[]): string {
+  return requiredSegment(containerSegments(capabilities, parent), "catalog");
+}
+
 /** The one shape a Trino object path takes, spelled for the message in `objectRead()`. */
 function shapeList(shapes: readonly string[][]): string {
   return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");

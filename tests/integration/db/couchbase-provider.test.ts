@@ -1292,6 +1292,19 @@ describe("CouchbaseProvider object surface (#789)", () => {
     ]);
   });
 
+  test("reads a parent as a tree cursor, so a bucket lists its scopes when only exact addresses are declared", async () => {
+    // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
+    // not one: `[bucket]` is where the tree is, so an address check would refuse it here.
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      containerPathShapes: "exact",
+    });
+    expect((await objectProvider.listContainers([BUCKET])).map((container) => container.path)).toEqual([
+      [BUCKET, "_default"],
+      [BUCKET, "inventory"],
+    ]);
+  });
+
   test("marks no scope of another bucket as the session default", async () => {
     const containers = await objectProvider.listContainers(["other"]);
     expect(containers.map((container) => container.isSessionDefault)).toEqual([false, false]);

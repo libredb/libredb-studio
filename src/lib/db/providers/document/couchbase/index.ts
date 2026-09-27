@@ -73,6 +73,7 @@ import {
   COUCHBASE_KIND_INDEX,
   COUCHBASE_OBJECT_KINDS,
   containerRead,
+  parentCatalog,
   type ContainerNameRow,
   COUCHBASE_SOURCE_PART_ID,
   COUCHBASE_SOURCE_PART_LABEL,
@@ -647,7 +648,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { bucket } = containerRead(capabilities, parentPath);
+    const bucket = parentCatalog(capabilities, parentPath);
     const rows = await this.objectRows<ContainerNameRow>(SCOPES_SQL, [bucket]);
     return rows
       .map((row) => String(row.scope_name))

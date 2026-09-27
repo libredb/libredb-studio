@@ -119,6 +119,7 @@ import {
   bulkPrimaryKeySql,
   bulkTargetSql,
   containerRead,
+  parentCatalog,
   groupByObject,
   objectDetailFromRows,
   type OfObject,
@@ -870,7 +871,7 @@ export class DuckDBProvider extends SQLBaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { catalog } = containerRead(capabilities, parentPath);
+    const catalog = parentCatalog(capabilities, parentPath);
     const rows = await this.runObjectRows<SchemaNameRow>(SCHEMAS_SQL, [catalog]);
     return rows.map((row) => ({
       path: [...parentPath, row.schema_name],

@@ -125,6 +125,7 @@ import {
   trinoBulkColumnsSql,
   trinoObjectTargetSql,
   containerRead,
+  parentCatalog,
   functionSegment,
   trinoCreateFunctionIdentity,
   listedObject,
@@ -859,7 +860,7 @@ export class TrinoProvider extends SQLBaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { catalog } = containerRead(capabilities, parentPath);
+    const catalog = parentCatalog(capabilities, parentPath);
     const rows = await this.runObjectRows(trinoSchemaListSql(catalog));
     return rows.flatMap((row) => {
       const name = readObjectIdentifier(row.schemaName);

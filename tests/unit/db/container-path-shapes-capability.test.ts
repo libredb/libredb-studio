@@ -95,14 +95,42 @@ function providerTypeId(file: string): string {
   return base === "objects" || base === "index" ? path.basename(path.dirname(file)) : base;
 }
 
+/**
+ * Each file whose mapped name is no type-id this census knows, paired with that name.
+ *
+ * A caller in a third layout (`sql/helpers.ts`, `trino/statements.ts`) maps to a name no engine
+ * has, and without this the only failure is a set mismatch that names neither the file nor why.
+ */
+function unknownTypeIds(files: readonly string[]): Array<[string, string]> {
+  return files
+    .map((file): [string, string] => [repoRelative(file), providerTypeId(file)])
+    .filter(([, name]) => !(TYPES as readonly string[]).includes(name));
+}
+
 describe("the declaration follows the check (#1147)", () => {
+  test("a caller in a layout the census cannot map is named with the name it mapped to", () => {
+    const providers = path.join(SRC, "lib/db/providers");
+    expect(
+      unknownTypeIds([
+        path.join(providers, "sql/trino/objects.ts"),
+        path.join(providers, "sql/mssql.ts"),
+        path.join(providers, "sql/helpers.ts"),
+        path.join(providers, "sql/trino/statements.ts"),
+      ]),
+    ).toEqual([
+      ["src/lib/db/providers/sql/helpers.ts", "helpers"],
+      ["src/lib/db/providers/sql/trino/statements.ts", "statements"],
+    ]);
+  });
+
   test("the type-ids that declare a value are exactly the engines whose providers call assertContainerPathShape", () => {
     // Read from the code on both sides: a new caller that declares nothing, or a declaration
     // left behind by a provider that stopped calling the check, fails here.
-    const callers = sourceFiles(path.join(SRC, "lib/db/providers"))
-      .filter((file) => fs.readFileSync(file, "utf8").includes("assertContainerPathShape("))
-      .map(providerTypeId)
-      .sort();
+    const callerFiles = sourceFiles(path.join(SRC, "lib/db/providers")).filter((file) =>
+      fs.readFileSync(file, "utf8").includes("assertContainerPathShape("),
+    );
+    expect(unknownTypeIds(callerFiles)).toEqual([]);
+    const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
     expect(callers).toHaveLength(15);
     expect(callers).toEqual(declaring);

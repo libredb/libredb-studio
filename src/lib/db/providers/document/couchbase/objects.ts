@@ -412,6 +412,18 @@ function requiredSegment(
 }
 
 /**
+ * The catalog segment of a listing parent, read as a tree CURSOR and not as an address.
+ *
+ * `listContainers()` takes a parent to say where in the tree to list, and the route holds a
+ * parent to the depth ceiling alone. `containerPathShapes` governs the paths an object read
+ * ADDRESSES, so running `assertContainerPathShape` here would refuse a valid `[bucket]` the
+ * moment the declaration said `exact`, while the route had already accepted it.
+ */
+export function parentCatalog(capabilities: ProviderCapabilities, parent: readonly string[]): string {
+  return requiredSegment(containerSegments(capabilities, parent), "catalog");
+}
+
+/**
  * What one container path addresses: the bucket to bind, and the scope to filter to.
  *
  * Both are read BY LEVEL, never by position. A bucket-level container has no scope, and
