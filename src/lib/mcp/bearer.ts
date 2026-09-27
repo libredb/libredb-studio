@@ -1,6 +1,7 @@
 import {
   bearerAuthChallengeResponse,
   OAuthError,
+  OAuthErrorCode,
   verifyBearerToken,
   type AuthInfo,
   type BearerAuthOptions,
@@ -12,7 +13,7 @@ import { logger } from "@/lib/logger";
 import { MCP_PATH } from "./config";
 import type { McpOriginHostReason } from "./origin-policy";
 import { redactError } from "./serializer";
-import { MCP_TOKEN_SCOPE, McpTokenError, mcpTokenVerifier } from "./token";
+import { MCP_TOKEN_INVALID_MESSAGE, MCP_TOKEN_SCOPE, McpTokenError, mcpTokenVerifier } from "./token";
 
 /**
  * The one bearer gate /api/mcp has (#246), called by src/proxy.ts and again by the route, because
@@ -52,6 +53,17 @@ export async function authenticateMcpRequest(request: Request): Promise<McpAuthe
     });
     return { kind: "fault", response, error };
   }
+}
+
+/**
+ * The 401 an invalid token gets, for a token whose signature holds but whose account no longer
+ * backs it (src/lib/mcp/account-check.ts). Built from the same options, so it is byte-identical.
+ */
+export function mcpRevokedTokenResponse(): Response {
+  return bearerAuthChallengeResponse(
+    new OAuthError(OAuthErrorCode.InvalidToken, MCP_TOKEN_INVALID_MESSAGE),
+    MCP_BEARER_OPTIONS,
+  );
 }
 
 /**

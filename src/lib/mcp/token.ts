@@ -34,6 +34,8 @@ const REQUIRED_CLAIMS = ["sub", "role", "scope", "jti", "iat", "exp", "aud"];
 export interface McpTokenOwner {
   readonly username: string;
   readonly role: Role;
+  /** The stored account's session version (src/lib/local-accounts.ts), when it has one. */
+  readonly sessionVersion?: number;
 }
 
 export interface MintedMcpToken {
@@ -50,6 +52,7 @@ export interface McpTokenClaims {
   readonly iat: number;
   readonly exp: number;
   readonly aud: string;
+  readonly sv?: number;
 }
 
 export type McpTokenFailure = "invalid" | "channel_unconfigured";
@@ -80,7 +83,8 @@ export async function mintMcpToken(owner: McpTokenOwner, clock: () => number = D
   }
   const issuedAt = Math.floor(clock() / 1000);
   const expiresAt = issuedAt + ttl.value * DAY_SECONDS;
-  const token = await new SignJWT({ role: owner.role, scope: MCP_TOKEN_SCOPE })
+  const sessionVersion = owner.sessionVersion === undefined ? {} : { sv: owner.sessionVersion };
+  const token = await new SignJWT({ role: owner.role, scope: MCP_TOKEN_SCOPE, ...sessionVersion })
     .setProtectedHeader({ alg: "HS256", typ: MCP_TOKEN_TYPE })
     .setSubject(owner.username)
     .setJti(crypto.randomUUID())
@@ -106,8 +110,9 @@ export async function verifyMcpToken(token: string): Promise<McpTokenClaims> {
   } catch {
     throw new McpTokenError("invalid");
   }
-  const { sub, role, scope, jti, iat, exp, aud } = payload;
+  const { sub, role, scope, jti, iat, exp, aud, sv } = payload;
   if (
+    (sv !== undefined && (typeof sv !== "number" || !Number.isSafeInteger(sv) || sv < 0)) ||
     typeof sub !== "string" ||
     sub === "" ||
     (role !== "admin" && role !== "user") ||
@@ -122,7 +127,7 @@ export async function verifyMcpToken(token: string): Promise<McpTokenClaims> {
   const url = readMcpUrl();
   if (!url.ok) throw new McpTokenError("channel_unconfigured");
   if (aud !== url.value) throw new McpTokenError("invalid");
-  return { sub, role, scope: MCP_TOKEN_SCOPE, jti, iat, exp, aud };
+  return { sub, role, scope: MCP_TOKEN_SCOPE, jti, iat, exp, aud, ...(sv === undefined ? {} : { sv }) };
 }
 
 export const mcpTokenVerifier: OAuthTokenVerifier = {
@@ -144,7 +149,11 @@ export const mcpTokenVerifier: OAuthTokenVerifier = {
       scopes: [MCP_TOKEN_SCOPE],
       expiresAt: claims.exp,
       resource: new URL(claims.aud),
-      extra: { username: claims.sub, role: claims.role },
+      extra: {
+        username: claims.sub,
+        role: claims.role,
+        ...(claims.sv === undefined ? {} : { sessionVersion: claims.sv }),
+      },
     };
   },
 };

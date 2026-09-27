@@ -99,7 +99,11 @@ export async function POST(request: Request): Promise<Response> {
     });
     return NextResponse.json({ error: AUDIT_FAILED }, { status: 500, headers: NO_STORE });
   }
-  const minted = await mintMcpToken({ username: guard.session.username, role: guard.session.role });
+  const minted = await mintMcpToken({
+    username: guard.session.username,
+    role: guard.session.role,
+    sessionVersion: guard.session.sessionVersion,
+  });
   return NextResponse.json(
     { token: minted.token, expiresAt: minted.expiresAt.toISOString(), url: minted.url },
     { headers: NO_STORE },

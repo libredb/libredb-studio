@@ -57,12 +57,17 @@ interface Forged {
   readonly sub?: string;
   readonly jti?: string | null;
   readonly alg?: "HS256" | "HS512";
+  readonly sv?: unknown;
 }
 
 async function forge(change: Forged = {}): Promise<string> {
   const alg = change.alg ?? "HS256";
   const typ = change.typ === undefined ? MCP_TOKEN_TYPE : change.typ;
-  let jwt = new SignJWT({ role: change.role ?? "admin", scope: change.scope ?? MCP_TOKEN_SCOPE })
+  let jwt = new SignJWT({
+    role: change.role ?? "admin",
+    scope: change.scope ?? MCP_TOKEN_SCOPE,
+    ...(change.sv === undefined ? {} : { sv: change.sv }),
+  })
     .setProtectedHeader(typ === null ? { alg } : { alg, typ })
     .setSubject(change.sub ?? "alice")
     .setIssuedAt()
@@ -181,6 +186,8 @@ describe("verification", () => {
     ["another scope", { scope: "mcp:write" }],
     ["an empty subject", { sub: "" }],
     ["no jti", { jti: null }],
+    ["a session version that is not a whole number", { sv: "7" }],
+    ["a negative session version", { sv: -1 }],
   ] as const)("refuses a token signed with the right key but %s", async (_name, change) => {
     await expectRefused(await forge(change));
   });
@@ -223,6 +230,17 @@ describe("verification", () => {
 });
 
 describe("the SDK token verifier", () => {
+  test("carries a stored account's session version from mint to AuthInfo", async () => {
+    const token = await mintTestToken({ username: "bob", role: "user", sessionVersion: 41 });
+    expect(decodeJwt(token).sv).toBe(41);
+    expect((await verifyMcpToken(token)).sv).toBe(41);
+    expect((await mcpTokenVerifier.verifyAccessToken(token)).extra).toEqual({
+      username: "bob",
+      role: "user",
+      sessionVersion: 41,
+    });
+  });
+
   test("maps a verified token to AuthInfo", async () => {
     const token = await mintTestToken({ username: "bob", role: "user" });
     const claims = decodeJwt(token);

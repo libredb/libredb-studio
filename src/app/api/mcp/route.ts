@@ -2,7 +2,8 @@ import type { AuthInfo } from "@modelcontextprotocol/server";
 import { NextResponse } from "next/server";
 import { getAppVersion } from "@/lib/app-version";
 import { logger } from "@/lib/logger";
-import { auditMcpDenial, authenticateMcpRequest } from "@/lib/mcp/bearer";
+import { mcpTokenOwnerAllowed } from "@/lib/mcp/account-check";
+import { auditMcpDenial, authenticateMcpRequest, mcpRevokedTokenResponse } from "@/lib/mcp/bearer";
 import { MCP_ENABLED_INVALID_MESSAGE, MCP_PATH, readMcpSwitch } from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { preprocessMcpPost, recordInvalidArguments } from "@/lib/mcp/preprocess";
@@ -37,6 +38,10 @@ async function admit(request: Request): Promise<Admission> {
   const authentication = await authenticateMcpRequest(request);
   if (authentication.kind === "denied") auditMcpDenial(request, authentication.reason);
   if (authentication.kind !== "authenticated") return { response: authentication.response };
+  if (!(await mcpTokenOwnerAllowed(authentication.authInfo))) {
+    auditMcpDenial(request, "mcp_token_invalid");
+    return { response: mcpRevokedTokenResponse() };
+  }
   const reading = readMcpSwitch();
   if (reading.state === "off") return { response: NextResponse.json(MCP_DISABLED_BODY, { status: 404 }) };
   if (reading.state === "invalid") {

@@ -37,7 +37,7 @@ export function useMcpChannel(overrides: ChannelOverrides = {}): () => void {
 }
 
 export async function mintTestToken(
-  owner: { username: string; role: "admin" | "user" } = { username: "alice", role: "admin" },
+  owner: { username: string; role: "admin" | "user"; sessionVersion?: number } = { username: "alice", role: "admin" },
   clock?: () => number,
 ): Promise<string> {
   return (await mintMcpToken(owner, clock)).token;
