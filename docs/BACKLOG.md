@@ -3126,7 +3126,7 @@ Two halves, and the second is what stops it recurring:
    the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
    resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
 
-DOC4 is the same class in the provider docs, and #1135 (PR #1141) replaces the citations in three source comments.
+DOC4 is the same class in the provider docs.
 This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
 
 **Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,

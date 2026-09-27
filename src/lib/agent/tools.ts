@@ -680,7 +680,7 @@ const presentAnswerSchema = z.strictObject({
  * `ai@7.0.59`, `doParseToolCall` throws, the SDK catches it, re-parses the raw JSON without a
  * schema and enqueues the tool-call part anyway with `invalid: true`. So this function is reached
  * only because `takeTurn` dispatches every tool-call part without consulting that flag
- * (`takeTurn()` in src/lib/agent/investigation.ts). Hardening that line to `!part.invalid` would
+ * (src/lib/agent/investigation.ts). Hardening that dispatch to `!part.invalid` would
  * drop the call before it arrives here and silently undo this fix — and it is a plausible edit
  * rather than an imagined one, because `observeProbe()` in `src/lib/agent/capability-probe.ts`
  * already treats the flag as meaningful (`part.invalid !== true`).
