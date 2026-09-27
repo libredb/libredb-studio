@@ -260,7 +260,7 @@ describe("POST /api/db/transaction", () => {
     expect(data.rows).toBeDefined();
     expect(data.fields).toBeDefined();
     expect(data.pagination).toBeDefined();
-    expect(data.pagination.wasLimited).toBeDefined();
+    expect(data.pagination.wasLimited).toBe(false);
   });
 
   /**

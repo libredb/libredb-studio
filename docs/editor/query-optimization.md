@@ -634,7 +634,9 @@ holding rows from two tables while naming one.
 }
 ```
 
-The response's `wasLimited` is false for a short result under an injected cap. It becomes true when that page fills, even if a later page is empty; the limiter does not fetch an extra row. Query and transaction responses follow the same rule.
+The response's `wasLimited` is false for a short result under an injected cap.
+It becomes true when that page fills, even if a later page is empty; the limiter does not fetch an extra row.
+Query and transaction responses follow the same rule.
 
 `hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the limiter alone, and the first half is load-bearing.
 A provider that bounds its own result reports that bound on the response's `wasLimited` too (#1085, section 5.4), and it never sets `hasMore`.
