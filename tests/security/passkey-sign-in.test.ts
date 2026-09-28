@@ -479,7 +479,7 @@ describe("passkey sign-in security properties", () => {
   });
 
   // Options are stateless and a refused verify writes nothing.
-  test("no anonymous request writes a row unless an assertion verifies", async () => {
+  test("no anonymous request writes a passkey or challenge row unless an assertion verifies", async () => {
     const owner = await enrol();
     const stranger = await SoftAuthenticator.create({ origin: PASSKEY_TEST_ORIGIN });
     stranger.userHandle = randomBytes(64).toString("base64url");

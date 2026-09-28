@@ -202,7 +202,8 @@ Rotating `JWT_SECRET` fails any ceremony in flight and ends every session; the s
 The SHA-256 of the challenge is written to `passkey_spent_challenges` in the same transaction that stores the passkey or records the sign-in, so a replay fails on this or any other replica.
 A spent row is kept until 600 seconds after its token expired, so a replica whose clock trails another by up to 10 minutes, and therefore still accepts the token, still finds the row.
 Keep replica clocks synchronized (NTP): beyond that skew the token expiry itself is unreliable.
-Failed attempts write nothing, so no anonymous request writes to the database unless its assertion verified.
+Failed attempts write nothing, so no anonymous request writes a passkey or challenge row unless its assertion verified.
+The one store write an anonymous verify can cause is the first seeding of an empty account registry from the environment accounts, which a password sign-in runs the same way.
 
 **Replicas.**
 On PostgreSQL every replica completes any ceremony: the token verifies anywhere with the same `JWT_SECRET`, and the credentials and the spent challenges live in the database.

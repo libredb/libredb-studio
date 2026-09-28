@@ -247,7 +247,7 @@ The server draws a 32-byte challenge per ceremony and signs it into a token unde
 The token travels in its own HttpOnly, `SameSite=Strict` cookie scoped to the passkey API path, one name per purpose, and lives 600 seconds; the verify request takes it whatever the outcome.
 That cookie binds the challenge to the browser that started the ceremony, which is the login CSRF defence, and a registration token also names the account and the session version it was confirmed under.
 The transaction that completes a ceremony records the challenge's hash in a spent set, so a second success with the same challenge fails on every replica; a spent row is kept 600 seconds past its token's expiry, so replicas whose clocks differ by up to that much still find it.
-No anonymous request writes anything unless an assertion verifies.
+No anonymous request writes a passkey or challenge row unless an assertion verifies; the first request to an empty account registry seeds it from the environment accounts, on this path as on the password one.
 
 User verification, and how it reads against NIST SP 800-63B-4.
 Both ceremonies ask for user verification as `required` and both verifications require it, so every stored passkey was created with it.
