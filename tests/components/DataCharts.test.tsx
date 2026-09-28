@@ -5,6 +5,10 @@ import "../helpers/mock-navigation";
 import { mock } from "bun:test";
 import React from "react";
 
+// Props the chart hands to recharts. The mock draws nothing, so the overlap
+// itself is proved in Playwright; this is the pin that the axis options changed.
+const capturedXAxisProps: Record<string, unknown>[] = [];
+
 // ── Mock Recharts ───────────────────────────────────────────────────────────
 mock.module("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: unknown }) => children,
@@ -59,7 +63,10 @@ mock.module("recharts", () => ({
   Scatter: () => null,
   Cell: () => null,
   RadialBar: () => null,
-  XAxis: () => null,
+  XAxis: (props: Record<string, unknown>) => {
+    capturedXAxisProps.push(props);
+    return null;
+  },
   YAxis: () => null,
   ZAxis: () => null,
   CartesianGrid: () => null,
@@ -319,6 +326,7 @@ describe("DataCharts", () => {
   });
 
   beforeEach(() => {
+    capturedXAxisProps.length = 0;
     // Clear localStorage saved charts
     if (typeof localStorage !== "undefined") {
       try {
@@ -531,6 +539,75 @@ describe("DataCharts", () => {
   test("suggests line for date time-series data", () => {
     const { queryByTestId } = render(React.createElement(DataCharts, { result: dateTimeResult }));
     expect(queryByTestId("mock-line-chart")).not.toBeNull();
+  });
+
+  test("rotated axes measure their tick labels, and only date ticks are shortened", async () => {
+    const isoResult: QueryResult = {
+      rows: [
+        { ts: "2026-09-26T22:34:00.000Z", n: 1 },
+        { ts: "2026-09-26T22:36:00.000Z", n: 2 },
+        { ts: "2026-09-26 22:38:00", n: 3 },
+      ],
+      fields: ["ts", "n"],
+      rowCount: 3,
+      executionTime: 1,
+    };
+    const { queryByText } = render(React.createElement(DataCharts, { result: isoResult }));
+
+    const tickOf = () => {
+      const props = capturedXAxisProps.at(-1);
+      expect(props).toBeDefined();
+      return props as { height?: unknown; tickFormatter?: (value: unknown) => string };
+    };
+
+    await waitFor(() => {
+      expect(tickOf().height).toBe("auto");
+    });
+    const formatDate = tickOf().tickFormatter!;
+    expect(formatDate("2026-09-26T22:36:00.000Z")).toBe("09-26 22:36");
+    expect(formatDate("2026-09-26 22:38:00")).toBe("09-26 22:38");
+    expect(formatDate("2026-09-26")).toBe("09-26");
+    expect(formatDate("09/26/2026")).toBe("09/26/2026");
+    expect(formatDate(null)).toBe("");
+    expect(formatDate(undefined)).toBe("");
+
+    const expectRotated = async (label: string) => {
+      capturedXAxisProps.length = 0;
+      fireEvent.click(queryByText(label)!);
+      await waitFor(() => {
+        expect(capturedXAxisProps.at(-1)?.height).toBe("auto");
+      });
+    };
+    await expectRotated("Bar");
+    await expectRotated("Area");
+    await expectRotated("Stacked");
+    await expectRotated("Stack Area");
+    await expectRotated("Histogram");
+
+    // Histogram buckets are ranges, not the date column, so they stay whole.
+    expect(tickOf().tickFormatter!("100.0-200.0")).toBe("100.0-200.0");
+
+    capturedXAxisProps.length = 0;
+    fireEvent.click(queryByText("Scatter")!);
+    await waitFor(() => {
+      expect(capturedXAxisProps.length).toBeGreaterThan(0);
+    });
+    expect(tickOf().height).not.toBe("auto");
+  });
+
+  test("a category tick is not shortened", async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
+    fireEvent.click(queryByText("Bar")!);
+    await waitFor(() => {
+      expect(capturedXAxisProps.length).toBeGreaterThan(0);
+    });
+    const props = capturedXAxisProps.at(-1) as { height?: unknown; tickFormatter?: (value: unknown) => string };
+    expect(props.height).toBe("auto");
+    const category = "north-america-west";
+    expect(props.tickFormatter!(category)).toBe(category);
+    // The tooltip is a separate element and is not given the tick formatter.
+    expect(document.body.textContent).toContain("tooltip_label");
+    expect(document.body.textContent).not.toContain("09-26");
   });
 
   test("suggests pie for few categorical rows", () => {

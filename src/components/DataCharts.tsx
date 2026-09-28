@@ -248,6 +248,50 @@ export function formatNumber(value: number): string {
   return value.toLocaleString();
 }
 
+/**
+ * Tick text for a rotated category axis.
+ *
+ * A date is drawn as MM-DD, or MM-DD HH:mm when the value has a time, so an
+ * ISO timestamp fits the plot. The row itself is unchanged, which is what the
+ * tooltip reads. Every other value is returned whole.
+ */
+function formatAxisTick(value: unknown, shortenDates: boolean): string {
+  const text = value == null ? "" : String(value);
+  if (!shortenDates) return text;
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(text);
+  if (!match) return text;
+  const month = match[2];
+  const day = match[3];
+  const hour = match[4];
+  const minute = match[5];
+  if (hour === undefined) return `${month}-${day}`;
+  return `${month}-${day} ${hour}:${minute}`;
+}
+
+function RotatedXAxis({
+  dataKey,
+  fill,
+  fontSize,
+  shortenDates,
+}: {
+  dataKey: string;
+  fill: string;
+  fontSize: number;
+  shortenDates: boolean;
+}) {
+  return (
+    <XAxis
+      dataKey={dataKey}
+      tick={{ fill, fontSize }}
+      angle={-45}
+      textAnchor="end"
+      height="auto"
+      padding={{ left: 24 }}
+      tickFormatter={(tick) => formatAxisTick(tick, shortenDates)}
+    />
+  );
+}
+
 interface TooltipProps {
   active?: boolean;
   payload?: Array<{
@@ -951,12 +995,11 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             {chartType === "bar" ? (
               <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
+                <RotatedXAxis
                   dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
+                  fill={viz.axis}
+                  fontSize={11}
+                  shortenDates={analysis.dateFields.includes(xAxis)}
                 />
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
@@ -968,12 +1011,11 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "line" ? (
               <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
+                <RotatedXAxis
                   dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
+                  fill={viz.axis}
+                  fontSize={11}
+                  shortenDates={analysis.dateFields.includes(xAxis)}
                 />
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
@@ -993,12 +1035,11 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "area" ? (
               <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
+                <RotatedXAxis
                   dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
+                  fill={viz.axis}
+                  fontSize={11}
+                  shortenDates={analysis.dateFields.includes(xAxis)}
                 />
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
@@ -1039,13 +1080,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "histogram" ? (
               <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey="range"
-                  tick={{ fill: viz.axis, fontSize: 10 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                <RotatedXAxis dataKey="range" fill={viz.axis} fontSize={10} shortenDates={false} />
                 <YAxis
                   tick={{ fill: viz.axis, fontSize: 11 }}
                   label={{ value: "Count", angle: -90, position: "insideLeft", fill: viz.axis, fontSize: 11 }}
@@ -1056,12 +1091,11 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "stacked-bar" ? (
               <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
+                <RotatedXAxis
                   dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
+                  fill={viz.axis}
+                  fontSize={11}
+                  shortenDates={analysis.dateFields.includes(xAxis)}
                 />
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
@@ -1073,12 +1107,11 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "stacked-area" ? (
               <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
+                <RotatedXAxis
                   dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
+                  fill={viz.axis}
+                  fontSize={11}
+                  shortenDates={analysis.dateFields.includes(xAxis)}
                 />
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
