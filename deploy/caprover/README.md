@@ -65,11 +65,15 @@ npm ci && npm run validate_apps && npm run formatter
 
 Two things to know before you bump:
 
-- **Nothing verifies this file.** `bun run distribution:check` pins
+- **`bun run distribution:check` does not verify this file.** It pins
   `caprover-official` with `remote_file` against the catalog, which is
   deliberate: that pin must measure what upstream actually serves. No gate
   measures the copy in this folder, so it can silently fall behind a release.
   Tracked in [#268](https://github.com/libredb/libredb-studio/issues/268).
+  `tests/unit/caprover-template.test.ts` now closes that gap from the other
+  side: it fails when the pinned tag falls behind `package.json`, when the two
+  places the version appears disagree, when the plain-HTTP cookie override is
+  missing, and when an em dash or a pictograph creeps back in.
 - **Check upstream first.** This folder leads and the catalog follows, but that
   order has been broken once: [caprover/one-click-apps#1315](https://github.com/caprover/one-click-apps/pull/1315)
   bumped the catalog to 0.9.59 directly, leaving this file on 0.9.14 until it

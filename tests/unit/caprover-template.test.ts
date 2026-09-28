@@ -23,11 +23,16 @@ const DESCRIPTION_LIMIT = 200;
 
 const TEMPLATE = path.join(__dirname, "../../deploy/caprover/libredb-studio.yml");
 
-const template = parse(fs.readFileSync(TEMPLATE, "utf8")) as {
+/** Read once as text too: two of the rules below are about characters the
+ *  parser would happily hand back, and about a key whose absence a typed read
+ *  cannot see. */
+const RAW = fs.readFileSync(TEMPLATE, "utf8");
+
+const template = parse(RAW) as {
   caproverOneClickApp: {
     description?: string;
     instructions?: { start?: string; end?: string };
-    variables?: Array<{ id: string; defaultValue?: string }>;
+    variables?: Array<{ id: string; defaultValue?: string; description?: string }>;
   };
 };
 
@@ -46,5 +51,48 @@ describe("the CapRover template passes what caprover/one-click-apps validates", 
   test("the version variable offers a pinned tag, never latest", () => {
     const version = template.caproverOneClickApp.variables?.find((variable) => variable.id === "$$cap_version");
     expect(version?.defaultValue).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test("the version moves in both places at once", () => {
+    // README: "The version appears twice in that file, the defaultValue of
+    // $$cap_version and the example inside its description, and both must move
+    // together." Nothing checked that, so an upgrade could leave the example
+    // naming the release before it.
+    const version = template.caproverOneClickApp.variables?.find((variable) => variable.id === "$$cap_version");
+    const pinned = version?.defaultValue ?? "";
+    expect(pinned).toBeTruthy();
+    expect(version?.description ?? "").toContain(`Example - ${pinned}.`);
+  });
+
+  test("the plain-HTTP cookie override is present", () => {
+    // CapRover serves over http until the operator enables HTTPS, and the app
+    // marks its auth cookie Secure on a non-loopback host, so the browser drops
+    // it and login loops with no error. The override lived only in the
+    // published catalog for a while, which meant the next sync from this folder
+    // would have removed it silently. Measured 2026-09-20 and again 2026-09-28.
+    expect(RAW).toContain("AUTH_COOKIE_SECURE: 'false'");
+  });
+
+  test("nothing in this template carries a dash or an icon we strip downstream", () => {
+    // Three of the four revisions published to caprover/one-click-apps carried a
+    // rocket and a warning icon; the fourth, 2026-09-22, was the first cleaned by
+    // hand. Leaving them here means doing that by hand on every submission, and
+    // three times out of four nobody did. The first version of this assertion
+    // named four code points and missed the very rocket that was in the file,
+    // which is the argument for asking Unicode what a pictograph is.
+    expect(RAW).not.toMatch(/[\u2013\u2014]/);
+    expect(RAW).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  test("the pinned tag does not fall behind the release", () => {
+    // The gap issue #268 describes: a release bumps package.json while this
+    // file stays where it was, and distribution:check does not notice because
+    // its pin measures the published catalog rather than this copy. The two
+    // assertions above only check this file against itself.
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "../../package.json"), "utf8"),
+    ) as { version?: string };
+    const version = template.caproverOneClickApp.variables?.find((variable) => variable.id === "$$cap_version");
+    expect(version?.defaultValue).toBe(pkg.version);
   });
 });
