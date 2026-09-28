@@ -139,6 +139,9 @@ describe("a live session follows its stored account", () => {
     expect((await patch("dave@example.com", { disabled: true })).status).toBe(200);
     presentCookie(dave);
     expect((await storageRoute.GET(request("GET", "/api/storage") as never)).status).toBe(401);
+    // The refused cookie is cleared, so the proxy stops sending the tab back from /login.
+    expect(cookieStore["auth-token"]).toBeUndefined();
+    presentCookie(dave);
     expect((await putConnections("dave-after-disable")).status).toBe(401);
 
     presentCookie(admin);

@@ -62,12 +62,18 @@ export async function getSession() {
   // The token is valid for 24 hours whatever happens to the account, so a stored account is read
   // again here: disabled, deleted, demoted or password-reset means this session is over. A registry
   // that cannot be read refuses the session rather than trusting a token it cannot check.
+  let allowed: boolean;
   try {
-    return (await storedAccountAllows(session)) ? session : null;
+    allowed = await storedAccountAllows(session);
   } catch (error) {
     logger.error("Could not read the account registry, refusing the session", error, { route: "auth" });
     return null;
   }
+  if (allowed) return session;
+  // The proxy verifies only the signature, so a refused cookie would keep sending /login back to
+  // the editor. Clearing it here, on the route's response, lets the next navigation reach login.
+  await logout();
+  return null;
 }
 
 /** Hosts whose traffic never leaves the machine (port is stripped before the check). */
