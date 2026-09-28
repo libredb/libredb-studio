@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { totpCodeFor } from "../../helpers/rfc6238";
 
 // A session cookie alone must not change an account's second factor: whoever steals the cookie
 // would remove it, or replace it with their own. So setting one up and turning it off both ask for
@@ -27,7 +27,7 @@ const accountsRoute = await import("@/app/api/admin/accounts/route");
 const totpRoute = await import("@/app/api/auth/totp/route");
 const { POST: login } = await import("@/app/api/auth/login/route");
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
-const { clearTotpReplayState, decodeBase32, TOTP_PERIOD_SECONDS } = await import("@/lib/totp");
+const { clearTotpReplayState } = await import("@/lib/totp");
 const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage/factory");
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-totp-reauth-"));
@@ -67,13 +67,7 @@ async function signIn(email: string, password: string, totp?: string) {
 }
 
 function codeFor(secret: string, offset = 0): string {
-  const key = decodeBase32(secret);
-  if (!key) throw new Error("secret did not decode");
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS) + offset));
-  const digest = createHmac("sha1", key).update(counter).digest();
-  const at = digest[digest.length - 1] & 0x0f;
-  return ((digest.readUInt32BE(at) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0");
+  return totpCodeFor(secret, Date.now(), offset);
 }
 
 async function storedFactor() {
@@ -116,7 +110,7 @@ describe("changing your own second factor needs more than the session", () => {
     clearTotpReplayState();
     const provider = await getStorageProvider();
     const row = await provider?.getAccount(ALICE);
-    if (row) await provider?.updateAccount({ ...row, totpSecret: null, totpPending: null });
+    if (row) await provider?.updateAccount({ ...row, totpSecret: null, totpPending: null }, { expected: row });
     alice = (await signIn(ALICE, ALICE_PASSWORD)).token;
     cookieStore["auth-token"] = { value: alice };
   });

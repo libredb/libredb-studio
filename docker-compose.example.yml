@@ -107,6 +107,12 @@ services:
       # LIBREDB_MCP_TOKEN_TTL_DAYS: ${LIBREDB_MCP_TOKEN_TTL_DAYS:-30}
 
       # -----------------------------------------------------------------------
+      # PASSKEYS: off unless PASSKEY_ORIGIN is set; also needs STORAGE_PROVIDER
+      # sqlite or postgres. Open Studio at exactly this address. See docs/PASSKEYS.md.
+      # -----------------------------------------------------------------------
+      # PASSKEY_ORIGIN: ${PASSKEY_ORIGIN:-http://localhost:3000}
+
+      # -----------------------------------------------------------------------
       # SEED CONNECTIONS (optional) — pre-configure databases on boot.
       # Uncomment the seed volume mount below, then provide seed-connections.yaml.
       # Credentials referenced in that file via ${VAR} are read from this .env.

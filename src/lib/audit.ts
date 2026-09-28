@@ -106,6 +106,40 @@ export type AuditReason =
    * because the login page tells the user something different for each.
    */
   | "oidc_discovery"
+  // Passkey sign-in and management (#785). Each code has one meaning, so an operator can tell a
+  // cloned authenticator from a replay or a stale cookie without the export.
+  /**
+   * The ceremony cookie was missing, forged, expired, issued for the other ceremony, for another
+   * account or session version (including one that moved while the ceremony ran), or for another RP ID.
+   * A first registration that lost the race to another first registration of the same account lands
+   * here too: its ceremony carries a user handle the account no longer has, and no cookie is at fault.
+   */
+  | "passkey_ceremony_invalid"
+  /**
+   * A response made on another origin than PASSKEY_ORIGIN: a non-browser client, a modified client,
+   * or a page on a subdomain of Studio's host. Studio's own UI never produces it in a real browser,
+   * so it is not a configuration symptom; a wrong PASSKEY_ORIGIN shows as a missing passkey button.
+   */
+  | "passkey_origin_mismatch"
+  /** No credential with that ID for the configured RP ID, or the assertion carried no user handle. */
+  | "passkey_unknown"
+  /**
+   * WebAuthn verification refused the response: challenge, RP ID, flags, signature, attestation
+   * format, cross-origin use, a credential ID that is not the attested one, or a user handle or
+   * backup eligibility that does not match the stored credential.
+   */
+  | "passkey_rejected"
+  /**
+   * The signature counter did not increase, a possible cloned authenticator; the sign-in was refused
+   * and the account is not locked.
+   */
+  | "passkey_counter"
+  /** The challenge of an already successful ceremony was presented again. */
+  | "passkey_replayed"
+  /** A valid passkey of an account that is disabled or gone. */
+  | "passkey_account_unavailable"
+  /** A registration presented a credential ID already registered to an account. */
+  | "passkey_duplicate"
   // Agent execution path (#328). The thirteen `agent_*` codes below mirror
   // `PolicyDenyCode` one-for-one, plus the two outcomes that are not policy
   // denials: an operation that may only ever require approval, and a provider
@@ -235,6 +269,8 @@ export interface AuditEvent {
    * #246).
    */
   correlationId?: string;
+  /** The internal id of the passkey the event concerns, never the WebAuthn credential ID. */
+  passkey?: string;
 }
 
 const MAX_EVENTS = 1000;
@@ -535,6 +571,7 @@ interface AuditLogLine {
   duration_ms?: number;
   bucket?: string;
   correlation_id?: string;
+  passkey?: string;
 }
 
 function toAuditLine(event: AuditEvent): AuditLogLine {
@@ -553,6 +590,8 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
     // The container beside the route, and omitted on the same terms: an event that named none
     // must not publish a `container: null` a parser would read as a value (#1091 review).
     ...(event.container ? { container: event.container } : {}),
+    // Omitted when unset, like container: most events concern no passkey.
+    ...(event.passkey ? { passkey: event.passkey } : {}),
     ...(event.bucket ? { bucket: event.bucket } : {}),
     ...(event.correlationId ? { correlation_id: event.correlationId } : {}),
     // Number.isFinite excludes NaN and +/-Infinity: JSON.stringify(NaN) silently produces `null`,

@@ -230,7 +230,7 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
                   <KeyRound strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> MCP
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => router.push("/settings/authenticator")} className="cursor-pointer">
-                  <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Authenticator
+                  <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Sign-in security
                 </DropdownMenuItem>
                 <div className="border-t border-hairline my-1" />
                 {/*

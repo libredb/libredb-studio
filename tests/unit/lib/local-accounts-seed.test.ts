@@ -30,8 +30,16 @@ function stub(overrides: Partial<ServerStorageProvider>): ServerStorageProvider 
     listAccounts: async () => [],
     getAccount: async () => null,
     insertAccount: async () => {},
-    updateAccount: async () => {},
+    updateAccount: async () => 0,
     deleteAccount: async () => {},
+    listPasskeys: async () => [],
+    countPasskeys: async () => new Map(),
+    getPasskeyUserHandle: async () => null,
+    findPasskey: async () => null,
+    insertPasskey: async () => {},
+    recordPasskeySignIn: async () => {},
+    renamePasskey: async () => false,
+    deletePasskey: async () => {},
     ...overrides,
   };
 }

@@ -2,11 +2,17 @@ import { logger } from "@/lib/logger";
 import { decryptConnections, encryptConnections } from "./connection-secrets";
 import { encryptSecret, readSecret } from "./encryption";
 import type {
+  AccountUpdateOptions,
   AccountWriteOptions,
+  PasskeyMatch,
+  PasskeyRegistrationWrite,
+  PasskeyRemovalWrite,
+  PasskeySignInWrite,
   ServerStorageProvider,
   StorageCollection,
   StorageData,
   StoredAccount,
+  StoredPasskey,
 } from "./types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -22,7 +28,8 @@ import type { DatabaseConnection } from "@/lib/types";
  * Of the collections, only `connections` is touched. No other collection carries a credential
  * field: history and saved_queries hold SQL text (the product's data, not its secrets), audit_log
  * is already sanitized by src/lib/audit.ts, and the remaining eight hold metadata. Of the account
- * registry, only the TOTP secrets are sealed (see openFactor below).
+ * registry, only the TOTP secrets are sealed (see openFactor below). Nothing passkey-related is
+ * sealed: a public key, a user handle and a name are not secrets.
  */
 
 const CONNECTIONS: StorageCollection = "connections";
@@ -142,12 +149,44 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
     return this.inner.insertAccount(sealAccount(account));
   }
 
-  updateAccount(account: StoredAccount, options?: AccountWriteOptions): Promise<void> {
+  updateAccount(account: StoredAccount, options: AccountUpdateOptions): Promise<number> {
     return this.inner.updateAccount(sealAccount(account), options);
   }
 
   deleteAccount(email: string, options?: AccountWriteOptions): Promise<void> {
     return this.inner.deleteAccount(email, options);
+  }
+
+  listPasskeys(email: string): Promise<StoredPasskey[]> {
+    return this.inner.listPasskeys(email);
+  }
+
+  countPasskeys(): Promise<Map<string, number>> {
+    return this.inner.countPasskeys();
+  }
+
+  getPasskeyUserHandle(email: string): Promise<string | null> {
+    return this.inner.getPasskeyUserHandle(email);
+  }
+
+  findPasskey(credentialId: string): Promise<PasskeyMatch | null> {
+    return this.inner.findPasskey(credentialId);
+  }
+
+  insertPasskey(write: PasskeyRegistrationWrite): Promise<void> {
+    return this.inner.insertPasskey(write);
+  }
+
+  recordPasskeySignIn(write: PasskeySignInWrite): Promise<void> {
+    return this.inner.recordPasskeySignIn(write);
+  }
+
+  renamePasskey(email: string, id: string, name: string): Promise<boolean> {
+    return this.inner.renamePasskey(email, id, name);
+  }
+
+  deletePasskey(write: PasskeyRemovalWrite): Promise<void> {
+    return this.inner.deletePasskey(write);
   }
 }
 

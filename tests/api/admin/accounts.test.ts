@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHmac } from "node:crypto";
+import { totpCodeFor } from "../../helpers/rfc6238";
 
 const cookieStore: Record<string, { value: string } | undefined> = {};
 
@@ -23,7 +23,7 @@ const { POST: login } = await import("@/app/api/auth/login/route");
 const storageRoute = await import("@/app/api/storage/route");
 const collectionRoute = await import("@/app/api/storage/[collection]/route");
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
-const { clearTotpReplayState, decodeBase32, TOTP_PERIOD_SECONDS } = await import("@/lib/totp");
+const { clearTotpReplayState } = await import("@/lib/totp");
 const { closeStorageProvider, getStorageProvider } = await import("@/lib/storage/factory");
 const { hashPassword, passwordVerificationCount, SCRYPT_N } = await import("@/lib/password-hash");
 const { beginTotpEnrolment, disableOwnTotp, ownFactorStatus, rehashStoredPassword, seedAccountsIfEmpty } = await import(
@@ -64,15 +64,7 @@ function request(method: string, path: string, body?: unknown) {
 }
 
 function currentCode(secret: string, stepOffset = 0): string {
-  const key = decodeBase32(secret);
-  if (!key) throw new Error("secret did not decode");
-  const step = Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS) + stepOffset;
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(step));
-  const digest = createHmac("sha1", key).update(counter).digest();
-  const offset = digest[digest.length - 1] & 0x0f;
-  const truncated = digest.readUInt32BE(offset) & 0x7fffffff;
-  return (truncated % 1_000_000).toString().padStart(6, "0");
+  return totpCodeFor(secret, Date.now(), stepOffset);
 }
 
 describe("stored local accounts", () => {
@@ -394,8 +386,10 @@ describe("stored local accounts", () => {
     const provider = await getStorageProvider();
     const account = await provider?.getAccount("user@libredb.org");
     if (!account || !provider) throw new Error("seeded user missing");
-    account.passwordHash = await hashPassword(adminPassword, 1024);
-    await provider.updateAccount(account);
+    await provider.updateAccount(
+      { ...account, passwordHash: await hashPassword(adminPassword, 1024) },
+      { expected: account },
+    );
 
     delete cookieStore["auth-token"];
     expect(

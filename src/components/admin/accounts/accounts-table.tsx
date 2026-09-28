@@ -1,6 +1,6 @@
 "use client";
 
-import { Ellipsis, KeyRound, ShieldOff, Trash2, UserCheck, UserCog, UserX } from "lucide-react";
+import { Ellipsis, Fingerprint, KeyRound, ShieldOff, Trash2, UserCheck, UserCog, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,13 +15,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import type { PublicAccount } from "@/lib/local-accounts";
 import type { AccountActions } from "./account-dialogs";
-import { formatCreated, RoleBadge, StatusBadge, TwoFactorStatus, YouTag } from "./account-parts";
+import {
+  formatCreated,
+  PasskeyBadge,
+  PasskeyCount,
+  RoleBadge,
+  StatusBadge,
+  TwoFactorStatus,
+  YouTag,
+} from "./account-parts";
 import { accessAction, roleAction } from "./use-accounts";
 
 /**
- * The accounts as one table: badges for role and status, a quiet two-factor mark, and every row
- * action behind a single "..." menu. Below md the secondary columns fold under the email, so the
- * table never scrolls sideways and a long email truncates instead.
+ * The accounts as one table: badges for role and status, a quiet two-factor mark, the passkey
+ * count, and every row action behind a single "..." menu. Below md the secondary columns fold
+ * under the email, so the table never scrolls sideways and a long email truncates instead.
  */
 
 const HEAD = "h-10 text-xs font-medium text-fg-muted uppercase";
@@ -61,6 +69,15 @@ function RowMenu({ account, actions }: { account: PublicAccount; actions: Accoun
           >
             <ShieldOff />
             Clear two-factor
+          </DropdownMenuItem>
+        ) : null}
+        {account.passkeys > 0 ? (
+          <DropdownMenuItem
+            data-testid={`clear-passkeys-${account.email}`}
+            onSelect={() => actions.request(account, "clear-passkeys")}
+          >
+            <Fingerprint />
+            Remove passkeys
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem data-testid={`disabled-${account.email}`} onSelect={() => actions.request(account, access)}>
@@ -115,6 +132,7 @@ export function AccountsTable({
           <TableHead className={cn(HEAD, "hidden md:table-cell")}>Role</TableHead>
           <TableHead className={cn(HEAD, "hidden md:table-cell")}>Status</TableHead>
           <TableHead className={cn(HEAD, "hidden md:table-cell")}>Two-factor</TableHead>
+          <TableHead className={cn(HEAD, "hidden md:table-cell")}>Passkeys</TableHead>
           <TableHead className={cn(HEAD, "hidden lg:table-cell")}>Created</TableHead>
           <TableHead className="w-12 pr-3">
             <span className="sr-only">Actions</span>
@@ -138,6 +156,7 @@ export function AccountsTable({
                 <RoleBadge role={account.role} />
                 <StatusBadge disabled={account.disabled} />
                 {account.totpEnabled ? <TwoFactorStatus enabled className="ml-1" /> : null}
+                {account.passkeys > 0 ? <PasskeyBadge count={account.passkeys} /> : null}
               </div>
             </TableCell>
             <TableCell className="hidden py-3 md:table-cell">
@@ -148,6 +167,9 @@ export function AccountsTable({
             </TableCell>
             <TableCell className="hidden py-3 md:table-cell">
               <TwoFactorStatus enabled={account.totpEnabled} />
+            </TableCell>
+            <TableCell data-testid={`passkeys-${account.email}`} className="hidden py-3 md:table-cell">
+              <PasskeyCount count={account.passkeys} />
             </TableCell>
             <TableCell className="hidden py-3 text-xs text-fg-muted tabular-nums lg:table-cell">
               {formatCreated(account.createdAt)}

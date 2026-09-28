@@ -176,6 +176,7 @@ Most non-sensitive configuration flows through a ConfigMap (the seed-connection 
 | `AUTH_BOOTSTRAP` | `config.authBootstrap` | When non-empty (chart default: `""` — omitted) |
 | `STORAGE_PROVIDER` | Auto-wired (see above) | Always |
 | `STORAGE_SQLITE_PATH` | `config.storageSqlitePath` | When sqlite |
+| `PASSKEY_ORIGIN` | `config.passkeyOrigin` | When non-empty (chart default: `""`, omitted) |
 | `SEED_CONFIG_PATH` / `SEED_CACHE_TTL_MS` | `seedConnections.*` — set **directly on the Deployment** (not via the ConfigMap) | When `seedConnections.enabled` |
 | `LLM_PROVIDER/MODEL/API_URL` | `config.llm*` | When set |
 | `OIDC_*` | `config.oidc*` | When `authProvider=oidc` |
@@ -398,6 +399,7 @@ helm install libredb libredb/libredb-studio \
   --set "ingress.hosts[0].paths[0].pathType=Prefix" \
   --set "ingress.tls[0].secretName=libredb-tls" \
   --set "ingress.tls[0].hosts[0]=libredb.example.com" \
+  --set config.passkeyOrigin=https://libredb.example.com \
   --set autoscaling.enabled=true \
   --set podDisruptionBudget.enabled=true
 ```

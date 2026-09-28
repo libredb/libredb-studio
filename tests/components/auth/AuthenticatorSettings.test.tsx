@@ -233,4 +233,41 @@ describe("AuthenticatorSettings", () => {
     fireEvent.click(on.getByRole("button", { name: "Turn off authenticator" }));
     await waitFor(() => expect(on.getByRole("alert").textContent).toBe("Could not turn off the authenticator"));
   });
+  test("onChange runs after the authenticator is turned on and after it is turned off", async () => {
+    let enabled = false;
+    let refuse = true;
+    mockGlobalFetch({
+      "/api/auth/totp": async (req) => {
+        if (req.method === "GET") return { json: { available: true, enabled } };
+        const body = (await req.json()) as Posted;
+        if (body.action === "begin") return { json: { secret: "SECRETVALUE" } };
+        if (refuse) return { status: 400, json: { error: "Invalid authentication code" } };
+        enabled = body.action === "confirm";
+        return { json: { ok: true } };
+      },
+    });
+    const onChange = mock(() => {});
+    const view = render(<AuthenticatorSettings onChange={onChange} />);
+    await waitFor(() => expect(view.getByText("Off")).toBeTruthy());
+    fireEvent.change(view.getByLabelText("Current password"), { target: { value: "right" } });
+    fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
+    await waitFor(() => expect(view.getByTestId("totp-secret")).toBeTruthy());
+    fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "000000" } });
+    fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toBe("Invalid authentication code"));
+    // A refusal changes nothing, so the passkey section below has nothing to reload.
+    expect(onChange).not.toHaveBeenCalled();
+
+    refuse = false;
+    fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "123456" } });
+    fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
+    await waitFor(() => expect(view.getByText("On")).toBeTruthy());
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(view.getByLabelText("Current password"), { target: { value: "right" } });
+    fireEvent.change(view.getByLabelText("Current code"), { target: { value: "111111" } });
+    fireEvent.click(view.getByRole("button", { name: "Turn off authenticator" }));
+    await waitFor(() => expect(view.getByText("Off")).toBeTruthy());
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
 });

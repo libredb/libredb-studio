@@ -11,6 +11,7 @@ interface Account {
   role: "admin" | "user";
   disabled: boolean;
   totpEnabled: boolean;
+  passkeys: number;
   createdAt: string;
 }
 
@@ -27,6 +28,7 @@ function fixture(): Account[] {
       role: "admin",
       disabled: false,
       totpEnabled: true,
+      passkeys: 0,
       createdAt: "2026-09-28T10:00:00Z",
     },
     {
@@ -34,11 +36,19 @@ function fixture(): Account[] {
       role: "admin",
       disabled: false,
       totpEnabled: false,
+      passkeys: 0,
       createdAt: "2026-09-28T10:00:00Z",
     },
-    { email: "kenji@libredb.org", role: "user", disabled: false, totpEnabled: true, createdAt: "2026-09-28T10:00:00Z" },
+    {
+      email: "kenji@libredb.org",
+      role: "user",
+      disabled: false,
+      totpEnabled: true,
+      passkeys: 0,
+      createdAt: "2026-09-28T10:00:00Z",
+    },
     // An unreadable date renders as an empty cell rather than "Invalid Date".
-    { email: "lena@libredb.org", role: "user", disabled: true, totpEnabled: false, createdAt: "t" },
+    { email: "lena@libredb.org", role: "user", disabled: true, totpEnabled: false, passkeys: 0, createdAt: "t" },
   ];
 }
 
@@ -54,14 +64,21 @@ function serve(
     respond?: Responder;
     me?: MockFetchResponse | "reject";
     list?: MockFetchResponse;
+    totp?: MockFetchResponse | ((req: Request) => Promise<MockFetchResponse>);
+    passkey?: typeof PASSKEY_STATUS;
   } = {},
 ) {
+  passkeyReads.count = 0;
+  accountReads.count = 0;
   const accounts = options.accounts ?? fixture();
   const calls: Call[] = [];
   mockGlobalFetch({
     "/api/admin/accounts": async (req) => {
       const path = new URL(req.url).pathname;
-      if (req.method === "GET") return options.list ?? { json: { accounts } };
+      if (req.method === "GET") {
+        accountReads.count += 1;
+        return options.list ?? { json: { accounts } };
+      }
       const call = { method: req.method, path, body: req.method === "DELETE" ? null : await req.json() };
       calls.push(call);
       const answer = options.respond?.(call);
@@ -74,10 +91,36 @@ function serve(
       if (options.me === "reject") throw new Error("offline");
       return options.me ?? { json: { authenticated: true, user: { username: "Admin@libredb.org", role: "admin" } } };
     },
-    "/api/auth/totp": { json: { available: true, enabled: false } },
+    "/api/auth/totp": options.totp ?? { json: { available: true, enabled: false } },
+    "/api/auth/passkey": (req) => {
+      if (req.method !== "GET") return { json: { ok: true } };
+      passkeyReads.count += 1;
+      return { json: options.passkey ?? PASSKEY_STATUS };
+    },
   });
   return calls;
 }
+
+const PASSKEY_STATUS: {
+  available: boolean;
+  canAdd: boolean;
+  origin: string;
+  rpId: string;
+  totpEnabled: boolean;
+  passkeys: Record<string, unknown>[];
+} = {
+  available: true,
+  canAdd: true,
+  origin: "http://localhost:3000",
+  rpId: "localhost",
+  totpEnabled: false,
+  passkeys: [],
+};
+
+/** How many times the passkey section has read its status since the last `serve`. */
+const passkeyReads = { count: 0 };
+/** How many times the table has read the account list since the last `serve`. */
+const accountReads = { count: 0 };
 
 async function renderList() {
   const view = render(<AccountsTab />);
@@ -136,6 +179,74 @@ describe("AccountsTab list", () => {
     expect(lenaRow.textContent).not.toContain("Invalid Date");
     expect(view.getByText("4 accounts · 2 admins · 1 disabled")).toBeTruthy();
     await waitFor(() => expect(view.getByRole("heading", { name: "Your authenticator" })).toBeTruthy());
+    // The signed-in admin's passkeys sit at the foot, below their authenticator.
+    const authenticator = view.getByRole("heading", { name: "Your authenticator" });
+    const passkeys = view.getByRole("heading", { name: "Passkeys" });
+    expect(authenticator.compareDocumentPosition(passkeys) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await waitFor(() => expect(passkeyReads.count).toBe(1));
+  });
+
+  test("turning the authenticator on at the foot makes the passkey section load its status again", async () => {
+    let enabled = false;
+    serve({
+      totp: async (req) => {
+        if (req.method === "GET") return { json: { available: true, enabled } };
+        const body = (await req.json()) as { action: string };
+        if (body.action === "begin") return { json: { secret: "SECRETVALUE" } };
+        enabled = true;
+        return { json: { ok: true } };
+      },
+    });
+    const view = await renderList();
+    await waitFor(() => expect(view.getByRole("button", { name: "Set up authenticator" })).toBeTruthy());
+    await waitFor(() => expect(passkeyReads.count).toBe(1));
+    fireEvent.change(view.getByLabelText("Current password"), { target: { value: "right" } });
+    fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
+    await waitFor(() => expect(view.getByTestId("totp-secret")).toBeTruthy());
+    fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "123456" } });
+    fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
+    await waitFor(() => expect(passkeyReads.count).toBe(2));
+  });
+
+  test("removing the signed-in admin's passkeys in the table makes the passkey section read again", async () => {
+    const accounts = fixture();
+    accounts[0].passkeys = 1;
+    serve({ accounts });
+    const user = userEvent.setup();
+    const view = await renderList();
+    await waitFor(() => expect(passkeyReads.count).toBe(1));
+    await openMenuItem(user, view, "admin@libredb.org", "Remove passkeys");
+    const dialog = await view.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("Type admin@libredb.org to confirm"), {
+      target: { value: "admin@libredb.org" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove passkeys" }));
+    await waitFor(() => expect(passkeyReads.count).toBe(2));
+  });
+
+  test("a change in the passkey section makes the table read the accounts again", async () => {
+    serve({
+      passkey: {
+        ...PASSKEY_STATUS,
+        passkeys: [
+          {
+            id: "pk-1",
+            name: "Laptop",
+            createdAt: "2026-09-28T00:00:00.000Z",
+            lastUsedAt: null,
+            backupEligible: false,
+            backupState: false,
+            usable: true,
+          },
+        ],
+      },
+    });
+    const view = await renderList();
+    fireEvent.click(await view.findByRole("button", { name: "Rename Laptop" }));
+    const dialog = await view.findByRole("dialog", { name: "Rename passkey" });
+    expect(accountReads.count).toBe(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(accountReads.count).toBe(2));
   });
 
   test("marks nobody when the session cannot be read", async () => {
@@ -242,6 +353,7 @@ describe("AccountsTab states", () => {
     await waitFor(() => expect(view.getByTestId("accounts-unavailable").textContent).toBe("Needs sqlite."));
     expect(view.getByText("The account registry is off")).toBeTruthy();
     expect(view.queryByRole("heading", { name: "Your authenticator" })).toBeNull();
+    expect(view.queryByRole("heading", { name: "Passkeys" })).toBeNull();
     cleanup();
 
     serve({ list: { status: 409, json: {} } });
@@ -256,6 +368,7 @@ describe("AccountsTab states", () => {
     mockGlobalFetch({
       "/api/admin/accounts": () =>
         failing ? { status: 500, json: { error: "down" } } : { json: { accounts: fixture() } },
+      "/api/auth/passkey": { json: PASSKEY_STATUS },
     });
     const view = render(<AccountsTab />);
     await waitFor(() => expect(view.getByTestId("accounts-error").textContent).toBe("down"));
@@ -274,7 +387,10 @@ describe("AccountsTab states", () => {
     await waitFor(() => expect(garbage.getByTestId("accounts-error").textContent).toBe("Could not load accounts"));
     cleanup();
 
-    mockGlobalFetch({ "/api/admin/accounts": { status: 500, json: {} } });
+    mockGlobalFetch({
+      "/api/admin/accounts": { status: 500, json: {} },
+      "/api/auth/passkey": { json: PASSKEY_STATUS },
+    });
     const bare = render(<AccountsTab />);
     await waitFor(() => expect(bare.getByTestId("accounts-error").textContent).toBe("Could not load accounts"));
   });

@@ -8,13 +8,19 @@ The login page uses a responsive split-panel layout that adapts between OIDC (SS
 
 ```
 src/app/login/
-├── page.tsx           # Server component — reads NEXT_PUBLIC_AUTH_PROVIDER env var
+├── page.tsx           # Server component: reads NEXT_PUBLIC_AUTH_PROVIDER and the passkey offer
 └── login-form.tsx     # Client component — all UI and auth logic
+
+src/lib/passkey/
+├── config.ts          # passkeySignInOffer(): { origin } when passkeys are ready, else null
+└── client.ts          # passkeysUsableHere(), signInWithPasskey()
 ```
 
 **`page.tsx`** is a server component with `export const dynamic = 'force-dynamic'` to ensure the auth provider env var is read at runtime (critical for Docker deployments where the env var is not available during build).
 
 **`login-form.tsx`** receives `authProvider` as a prop and renders the appropriate form based on whether the value is `"oidc"` or `"local"` (default).
+It also receives `passkey`, the server's passkey offer: `{ origin }` when passkeys are ready (local auth, `STORAGE_PROVIDER=sqlite` or `postgres`, a valid `PASSKEY_ORIGIN`), else `null`.
+The page reads it per request, like the auth provider, so nothing about passkeys is decided at build time.
 
 ---
 
@@ -127,6 +133,12 @@ When local auth is active, the right panel shows:
    account carries a second factor is server-side configuration, and deciding it client-side would
    publish which accounts are protected. Editing either credential drops back to step 1, so a code
    minted for one account is never submitted against another. See [MFA.md](../MFA.md).
+4. **"Use a passkey" button**, an outline button with a fingerprint icon below an "or" divider, shown after mount only when the passkey offer is non-null, the browser supports WebAuthn, the page's `window.location.origin` equals the offered origin, and the code step is not showing.
+   It runs `signInWithPasskey()` (`POST /api/auth/passkey/sign-in`, `options` then `verify`) and needs no email.
+   Success toasts "Welcome back, <role>!" and routes by role like the password path; a failure toasts the server's message and changes nothing else, a cancelled or timed-out prompt says that no passkey was used, and an aborted ceremony shows nothing.
+   It never falls through to the password form.
+   Its accessible name must not contain "sign in", because E2E tests locate the password submit button by that text.
+   See [PASSKEYS.md](../PASSKEYS.md).
 
 On successful login, the user is redirected based on their role:
 - `admin` → `/admin`
@@ -182,7 +194,11 @@ The login page follows the app's premium dark aesthetic:
 | File | Purpose |
 |------|---------|
 | `src/app/login/page.tsx` | Server component, reads auth provider env var, forces dynamic rendering |
-| `src/app/login/login-form.tsx` | Client component, split-panel layout, OIDC/local form rendering |
+| `src/app/login/login-form.tsx` | Client component, split-panel layout, OIDC/local form rendering, the passkey button |
+| `src/lib/passkey/config.ts` | `passkeySignInOffer()`: whether the page may offer passkeys, read from `PASSKEY_ORIGIN` |
+| `src/lib/passkey/client.ts` | Browser ceremony: `passkeysUsableHere()`, `signInWithPasskey()` |
+| `tests/components/LoginPasskey.test.tsx` | Component tests for the passkey button's visibility rule and outcomes |
+| `e2e/passkey.spec.ts` | Browser tests with a CDP virtual authenticator |
 | `src/components/login/database-showcase.tsx` | Supported-engine list, both surfaces, from `DB_UI_CONFIG` |
 | `src/components/login/hero-proof.tsx` | Proof row: engine, channel and agent-mode counts, both surfaces |
 | `src/components/login/connection-signature.tsx` | Connection-URI line, both surfaces, from `ENGINE_URI_SCHEMES` |
@@ -201,6 +217,8 @@ The login page follows the app's premium dark aesthetic:
 |----------|---------|-----------------|
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `local` | `"oidc"` → SSO button, `"local"` → email/password form |
 | `NEXT_PUBLIC_APP_VERSION` | — | Displayed in footer as `v{version}` |
+| `PASSKEY_ORIGIN` | unset | With local auth and a server store, a valid origin shows "Use a passkey" on a page at exactly that origin; unset or invalid shows none |
+| `STORAGE_PROVIDER` | `local` | Passkeys need `sqlite` or `postgres`; with `local` the page shows no passkey button |
 | `AUTH_BOOTSTRAP` | on | `off`/`false`/`0` (case-insensitive) disables zero-config credential generation — and secret generation with it. A missing `ADMIN_PASSWORD` then surfaces the 503 error above; a missing `JWT_SECRET` stops the server at boot in production, because nothing would produce one and every login would be 503 |
 
 ---

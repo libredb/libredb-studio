@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
+import { readBoundedJson } from "@/lib/api/bounded-json";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -57,7 +58,7 @@ import type { ApiErrorCode } from "@/lib/api/error-codes";
  * `await req.json()` arm, which is what the seven Phase 2 routes use and which answers
  * `{ error: "Empty request body" }` at 400 for a body TRUNCATED by the framework at 10,485,760
  * bytes: one condition, a wrong sentence, and a defect this phase FILES rather than inherits. The
- * two Phase 3 routes pass `readBoundedJson` instead, which counts the stream and answers a true
+ * two Phase 3 routes pass `readObjectRouteBody` instead, which counts the stream and answers a true
  * sentence for each of the three conditions the default arm collapses into one. It is a
  * substitution and not a flag for the reason every seam in this module is a value: a boolean here
  * would be a second way to reach one behaviour and would put the bound's NUMBER in this file,
@@ -159,7 +160,7 @@ export interface ObjectRequestContext {
  * TRUNCATED by the framework at 10,485,760 bytes, and `POST /api/db/query` answers HTTP 500 with
  * a JSON parser's message for the same condition. Repairing it here would change the response of
  * five shipped routes inside a pull request whose subject is a write path, which is how a diff
- * grows. `readBoundedJson` below is what the two new routes use instead.
+ * grows. `readObjectRouteBody` below is what the two new routes use instead.
  */
 async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown>> {
   let body: Record<string, unknown>;
@@ -221,9 +222,10 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * below the framework's 10,485,760, so an oversized body meets a sentence here rather than a
  * truncation reported as something else downstream.
  *
- * THE COUNT IS OVER THE STREAM AND NEVER OVER `Content-Length`, and that is the whole guard. A
- * check on the header is satisfied by OMITTING the header, and a chunked body carries none: the
- * framework then truncates in silence and the caller gets one of the two wrong sentences above,
+ * THE COUNT IS OVER THE STREAM, and that is the whole guard. The shared reader this function
+ * delegates to, `src/lib/api/bounded-json.ts`, also refuses a declared `Content-Length` over the
+ * bound before reading, but only as a shortcut: a check on the header is satisfied by OMITTING the
+ * header, and a chunked body carries none: the framework then truncates in silence and the caller gets one of the two wrong sentences above,
  * which is the state this function exists to make unreachable. MEASURED on bun 1.4.2 with this
  * repository's own `next` while this was written: `new NextRequest(url, { body: <ReadableStream>,
  * duplex: "half" })` constructs, its `content-length` header is `null`, and reading `req.body` to
@@ -265,39 +267,17 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * own process, so two files can hold that mock without meeting each other; the hazard is only
  * within a file now.
  */
-export async function readBoundedJson(req: NextRequest, byteLimit: number): Promise<Record<string, unknown>> {
-  // `req.body` is null for a request that carried no body at all, which is what a GET or a bodiless
-  // POST is. MEASURED as above, the empty-string construction is NOT null, so this fallback is for
-  // the runtime's own null and the zero-byte sentence below covers both.
-  const reader = (req.body ?? new Blob([]).stream()).getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let bytes = 0;
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    bytes += chunk.value.byteLength;
-    if (bytes > byteLimit) {
-      // Cancelled rather than read to the end: the refusal is decided here and draining the rest
-      // would be reading a body this route has already declined to hold.
-      await reader.cancel();
+export async function readObjectRouteBody(req: NextRequest, byteLimit: number): Promise<Record<string, unknown>> {
+  // The shared reader counts the stream; this function only words its refusals for these routes.
+  const read = await readBoundedJson(req, byteLimit);
+  if (!read.ok) {
+    if (read.reason === "too_large") {
       throw new ObjectRouteError(`this request body is larger than ${byteLimit} bytes`, 413);
     }
-    // `{ stream: true }` because a multi-byte character can be split across two chunks, and a
-    // decode without it would answer a replacement character for each half.
-    text += decoder.decode(chunk.value, { stream: true });
-  }
-  text += decoder.decode();
-
-  if (bytes === 0) {
-    throw new ObjectRouteError("this request carried no body", 400);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
+    if (read.reason === "empty") throw new ObjectRouteError("this request carried no body", 400);
     throw new ObjectRouteError("this request body is not valid JSON", 400);
   }
+  const parsed = read.body;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new ObjectRouteError(
       "this request body is not valid JSON for this route: it parsed, and what it parsed is not a JSON object",
@@ -324,7 +304,7 @@ interface ObjectRequestBody {
  * `requireMethod` to name it with: a guard for a state the type cannot express is an unreachable
  * throw, which is a covered line nothing executes.
  *
- * TWO statuses use it now: 413 joined for a body over `readBoundedJson`'s bound (#789 Phase 3).
+ * TWO statuses use it now: 413 joined for a body over `readObjectRouteBody`'s bound (#789 Phase 3).
  *
  * EXPORTED as of Phase 3, because the two edit routes decide refusals of their own and minting a
  * second error class beside this one would put the status vocabulary in two files. That is the

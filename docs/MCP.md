@@ -108,12 +108,13 @@ It shows whether MCP is ready on this server, what an operator has to set when i
 When it is ready, **Create token** mints one for you and shows it once: copy it then, because it is not shown again and nothing about it is stored.
 
 - A token is valid for `LIBREDB_MCP_TOKEN_TTL_DAYS` days, 30 by default.
-- It carries the role you had when you minted it, so a lowered role keeps working until the token expires or the label changes.
-- Changing `LIBREDB_MCP_TOKEN_LABEL` revokes every MCP token at once, and it is the only revocation there is.
-- Creating a token needs a sign-in from the last ten minutes: an older session is asked to sign in again, because a session lives 24 hours and cannot be ended on the server.
-- Deleting a local user, disabling an OIDC account or changing a password leaves that user's MCP tokens valid until they expire.
-  Removing a person's access therefore takes two steps: stop them signing in, then rotate `LIBREDB_MCP_TOKEN_LABEL` once ten minutes have passed, so no session they still hold can mint under the new label.
-  Rotating `JWT_SECRET` instead ends every session and revokes every MCP token at once.
+- It carries the role you had when you minted it.
+- Creating a token needs a sign-in from the last ten minutes: an older session is asked to sign in again, because a session lives 24 hours.
+- With local sign-in and `STORAGE_PROVIDER=sqlite` or `postgres`, every call checks the token against the stored account, as a session is checked, so a token stops working at its next call when its account is disabled, changes role, has its password set by an admin, is deleted, removes one of its passkeys, or has its passkeys removed by an admin.
+- Changing `LIBREDB_MCP_TOKEN_LABEL` revokes every MCP token at once.
+  Under OIDC and with `STORAGE_PROVIDER=local` there is no stored account to check, so that is the one revocation there: a lowered role, a disabled OIDC account or a changed password leaves the tokens valid until they expire or the label changes.
+  Removing a person's access there takes two steps: stop them signing in, then rotate `LIBREDB_MCP_TOKEN_LABEL` once ten minutes have passed, so no session they still hold can mint under the new label.
+- Rotating `JWT_SECRET` ends every session and revokes every MCP token at once.
 - A changed `LIBREDB_MCP_URL`, and under npx a changed `--host` or `--port`, invalidates every token too.
 
 ## Client configuration

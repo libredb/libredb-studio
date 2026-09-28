@@ -27,6 +27,7 @@ const ALLOWED_KEYS = new Set([
   "duration_ms",
   "bucket",
   "correlation_id",
+  "passkey",
 ]);
 
 function captureLine(emit: () => void): Record<string, unknown> {
@@ -135,6 +136,68 @@ describe("emitAuditEvent", () => {
     );
 
     expect(Object.hasOwn(line, "container")).toBe(false);
+  });
+
+  test("carries a passkey event's internal id under the same key allowlist and bound", () => {
+    // The passkey id is Studio's own row id, never the WebAuthn credential ID, but it is still a
+    // string field, so it gets the same allowlist and the same MAX_AUDIT_FIELD_LENGTH bound.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "account",
+        action: "passkey_add",
+        target: "a@b.c",
+        user: "a@b.c",
+        result: "success",
+        reason: "account_changed",
+        passkey: "p".repeat(10_000),
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(String(line.passkey).length).toBe(254);
+  });
+
+  test("omits passkey entirely for an event that does not set one", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "bad_credentials",
+      }),
+    );
+
+    expect(Object.hasOwn(line, "passkey")).toBe(false);
+  });
+
+  test("records each passkey reason as a closed value", () => {
+    const reasons = [
+      "passkey_ceremony_invalid",
+      "passkey_origin_mismatch",
+      "passkey_unknown",
+      "passkey_rejected",
+      "passkey_counter",
+      "passkey_replayed",
+      "passkey_account_unavailable",
+      "passkey_duplicate",
+    ] as const;
+    for (const reason of reasons) {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: "POST /api/auth/passkey/sign-in",
+          user: "anonymous",
+          result: "failure",
+          reason,
+        }),
+      );
+      expect(line.reason).toBe(reason);
+    }
   });
 
   test("cannot be made to forge a second log line through the actor field", () => {

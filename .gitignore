@@ -120,6 +120,8 @@ data/
 # e2e/offline-editor.spec.ts's isolated server (playwright.config.ts) gets its own data dir so it
 # never contends for the primary server's exclusive-lock sample files.
 data-e2e-offline/
+# e2e/passkey.spec.ts's store-mode server (playwright.config.ts) keeps its account registry here.
+data-e2e-passkey/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
 # The agent runtime's durable ledger: with WORKFLOW_LOCAL_DATA_DIR unset it resolves

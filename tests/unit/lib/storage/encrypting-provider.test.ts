@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { logger } from "@/lib/logger";
 import { UNDECRYPTABLE_WARNING_PREFIX, withCredentialEncryption } from "@/lib/storage/encrypting-provider";
 import { encryptSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
-import type { AccountWriteOptions, ServerStorageProvider, StoredAccount } from "@/lib/storage/types";
+import type { AccountUpdateOptions, ServerStorageProvider, StoredAccount } from "@/lib/storage/types";
 import { verifyTotp } from "@/lib/totp";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -114,6 +114,61 @@ describe("delegation", () => {
   });
 });
 
+describe("passkeys", () => {
+  test("passes every passkey method through unchanged", async () => {
+    // Nothing passkey-related is sealed: a public key, a user handle and a name are not secrets.
+    const results = {
+      listPasskeys: [{ id: "pk-1" }],
+      countPasskeys: new Map([["ada@example.com", 1]]),
+      getPasskeyUserHandle: "handle",
+      findPasskey: { passkey: { id: "pk-1" }, userHandle: "handle" },
+      insertPasskey: undefined,
+      recordPasskeySignIn: undefined,
+      renamePasskey: true,
+      deletePasskey: undefined,
+    };
+    const mocks = Object.fromEntries(Object.entries(results).map(([name, value]) => [name, mock(async () => value)]));
+    const updateAccount = mock(async () => 3);
+    const wrapped = withCredentialEncryption(stubProvider({ ...mocks, updateAccount } as never));
+    const registration = { passkey: { id: "pk-1" }, userHandle: "handle" } as never;
+    const signIn = { id: "pk-1", signCount: 2 } as never;
+    const removal = { email: "ada@example.com", id: "pk-1" } as never;
+
+    expect(await wrapped.listPasskeys("ada@example.com")).toBe(results.listPasskeys as never);
+    expect(await wrapped.countPasskeys()).toBe(results.countPasskeys);
+    expect(await wrapped.getPasskeyUserHandle("ada@example.com")).toBe("handle");
+    expect(await wrapped.findPasskey("cred-1")).toBe(results.findPasskey as never);
+    expect(await wrapped.insertPasskey(registration)).toBeUndefined();
+    expect(await wrapped.recordPasskeySignIn(signIn)).toBeUndefined();
+    expect(await wrapped.renamePasskey("ada@example.com", "pk-1", "Laptop")).toBe(true);
+    expect(await wrapped.deletePasskey(removal)).toBeUndefined();
+
+    expect(mocks.listPasskeys).toHaveBeenCalledWith("ada@example.com");
+    expect(mocks.countPasskeys).toHaveBeenCalledWith();
+    expect(mocks.getPasskeyUserHandle).toHaveBeenCalledWith("ada@example.com");
+    expect(mocks.findPasskey).toHaveBeenCalledWith("cred-1");
+    expect(mocks.insertPasskey).toHaveBeenCalledWith(registration);
+    expect(mocks.recordPasskeySignIn).toHaveBeenCalledWith(signIn);
+    expect(mocks.renamePasskey).toHaveBeenCalledWith("ada@example.com", "pk-1", "Laptop");
+    expect(mocks.deletePasskey).toHaveBeenCalledWith(removal);
+
+    const account = {
+      email: "ada@example.com",
+      passwordHash: "scrypt$hash",
+      role: "user" as const,
+      totpSecret: null,
+      totpPending: null,
+      disabled: false,
+      sessionVersion: 1,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    const options = { expected: { sessionVersion: 1, updatedAt: "t" }, clearPasskeys: true };
+    expect(await wrapped.updateAccount({ ...account, sessionVersion: 2 }, options)).toBe(3);
+    expect(updateAccount).toHaveBeenCalledWith({ ...account, sessionVersion: 2 }, options);
+  });
+});
+
 describe("the warning", () => {
   test("names the count and the recovery action exactly once per read", async () => {
     const sealed = encryptSecret("s3cret");
@@ -188,8 +243,9 @@ describe("the warning", () => {
     const insertAccount = mock(async (row: StoredAccount) => {
       stored.push(row);
     });
-    const updateAccount = mock(async (row: StoredAccount, _options?: AccountWriteOptions) => {
+    const updateAccount = mock(async (row: StoredAccount, _options: AccountUpdateOptions) => {
       stored.push(row);
+      return 0;
     });
     const deleteAccount = mock(async () => {});
     const inner = stubProvider({
@@ -202,7 +258,7 @@ describe("the warning", () => {
     const wrapped = withCredentialEncryption(inner);
 
     await wrapped.insertAccount(account);
-    await wrapped.updateAccount({ ...account, totpPending: null }, { keepEnabledAdmin: true });
+    await wrapped.updateAccount({ ...account, totpPending: null }, { expected: account, keepEnabledAdmin: true });
     await wrapped.deleteAccount(account.email, { keepEnabledAdmin: true });
 
     // What reached the store: no plaintext secret, everything else as given.
@@ -216,7 +272,7 @@ describe("the warning", () => {
       totpSecret: null,
       totpPending: null,
     });
-    expect(updateAccount.mock.calls[0][1]).toEqual({ keepEnabledAdmin: true });
+    expect(updateAccount.mock.calls[0][1]).toEqual({ expected: account, keepEnabledAdmin: true });
     expect(deleteAccount).toHaveBeenCalledWith(account.email, { keepEnabledAdmin: true });
 
     // What a caller reads back: the secrets open again.

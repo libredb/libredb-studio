@@ -42,6 +42,7 @@ None of it is a GitHub issue.
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B91 · 32
+- [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 9
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
 ---
@@ -2270,7 +2271,7 @@ So one condition gets two wrong answers. The five existing object routes that go
 was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
 Neither tells the caller their request was too large.
 
-The two routes added by #789 Phase 3 do NOT inherit this: `readBoundedJson` reads `content-length` and
+The two routes added by #789 Phase 3 do NOT inherit this: `readObjectRouteBody` reads `content-length` and
 answers 413 above `EDIT_BODY_BYTE_LIMIT` (8,388,608), which sits below the framework's wall, so an
 oversized edit body meets a sentence that names the size. They do not fix it anywhere else, and that is
 stated in `readDefaultBody`'s own docblock.
@@ -4281,6 +4282,85 @@ Found 2026-09-28 while testing MCP end to end on macOS.
 Not fixed in #1192: that branch is the agent's measurement path and touches nothing under `src/lib/mcp/`, and a size limit is a ruling about the route's contract rather than a snippet correction.
 **Done when:** the OpenCode snippet uses the key that client reads, with a test asserting each client's snippet against that client's documented shape, and the MCP route rejects a body past a stated bound with a refusal that names it.
 
+## Passkey deferrals (#785)
+
+Each was decided when passkey sign-in was designed, not overlooked.
+The user guide is [`docs/PASSKEYS.md`](PASSKEYS.md).
+
+### PK1. Passkey autofill (conditional mediation) in the email field
+
+The login page offers passkeys through one explicit "Use a passkey" button (`src/app/login/login-form.tsx`), and nothing calls `navigator.credentials.get` with `mediation: "conditional"`.
+Autofill was left out because a pending conditional `get()` blocks every other WebAuthn call in the document until it is aborted, needs abort-on-unmount and restart-before-expiry handling, touches the email field every password manager reads, and had no verified end-to-end path under the CDP virtual authenticator.
+
+**Done when:** the email field offers passkeys through conditional mediation next to the button, the pending request is aborted on unmount and before the button starts its own ceremony, it restarts before the ceremony token expires, and `e2e/passkey.spec.ts` proves an autofill sign-in and a button sign-in on the same page.
+
+### PK2. The WebAuthn Signal API is not used
+
+A passkey removed from Studio stays in the user's password manager, which keeps offering it; the sign-in refusal and the removal dialog tell the user to delete it by hand.
+`signalAllAcceptedCredentials`, `signalUnknownCredential` and `signalCurrentUserDetails` could tidy that up, but an incomplete accepted list hides a valid passkey irreversibly, Firefox has no implementation, and none of them replaces server-side revocation.
+
+**Done when:** after a successful sign-in the page signals the account's complete accepted credential list (or, at minimum, `signalUnknownCredential` after a `passkey_unknown` refusal), feature-detected so browsers without the API are unaffected, with a test that an incomplete list can never be sent.
+
+### PK3. Passkey step-up and passkey-only accounts
+
+Adding or removing a passkey asks for the current password, and a current code when the account has TOTP (`confirmOwner` in `src/lib/local-accounts.ts`, called by `src/lib/passkey/management.ts`).
+For an account with a passkey but no TOTP, NIST SP 800-63B-4 section 4.1.2.1 would ask for an existing passkey (AAL2) before binding another; Studio accepts the password, a deviation stated in `docs/PASSKEYS.md` and `docs/SECURITY.md`.
+Every account also keeps its password, so there are no passkey-only accounts.
+Both need the same thing: a passkey ceremony accepted as the confirmation for a factor change, and for passkey-only accounts recovery codes as well.
+
+**Done when:** `register-options` and `remove` accept a fresh passkey assertion of the same account in place of the password, the account settings can remove the password once another factor and recovery codes exist, and the recovery path for a passkey-only account is documented and tested.
+
+### PK4. No in-session notice of a passkey added since the last visit
+
+Studio has no out-of-band channel, so the substitutes for a "new passkey" notification are the audit line, the dated list under Sign-in security and the admin's per-account count.
+An owner who never opens that page does not learn that someone added a passkey to their account.
+
+**Done when:** the account keeps a last-seen marker, the first page after sign-in names every passkey added since then with its date, and a test covers a passkey added from another session.
+
+### PK5. Owners cannot change their own password
+
+No route under `src/app/api/auth` changes the signed-in account's password; an admin sets it through `PATCH /api/admin/accounts/<email>`.
+Passkeys make that gap more visible, because adding or removing one asks for the current password, and the passkey dialogs tell the user that an admin sets a forgotten one.
+
+**Done when:** an owner changes their own password after confirming the current one (and a current code when TOTP is on), the change ends their other sessions and MCP tokens like an admin password set, it is charged to the login budgets like the other confirmations, and the passkey dialogs point at it.
+
+### PK6. Converge the older copies of the shared helpers
+
+The passkey work added one derivation, `derivedSigningKey(label)` in `src/lib/config/auth-env.ts`, one `isRecord` in `src/lib/is-record.ts`, and one reader of the store mode (`passkeyAvailability` in `src/lib/passkey/config.ts`), and did not migrate the copies that predate them, because a feature PR does not refactor unrequested code.
+The copies are:
+
+- Three HMAC(`JWT_SECRET`, label) derivations: `driveSigningKey` in `src/lib/agent/drive-token.ts`, `mcpSigningKey` in `src/lib/mcp/token.ts` and `planSigningKey` in `src/lib/api/object-edit-plan-token.ts`.
+- Twelve private `isRecord` functions (`src/lib/agent/history.ts`, `src/lib/agent/plan-summary.ts`, `src/lib/agent/run-store.ts`, `src/lib/local-accounts.ts`, `src/lib/api/object-edit-wire.ts`, `src/lib/explain/duckdb-json.ts`, `src/lib/explain/trino-json.ts`, `src/lib/explain/couchbase-json.ts`, `src/lib/explain/clickhouse-json.ts`, `src/lib/explain/druid-native.ts`, `src/components/object-source/source-reader.ts`, `src/components/object-tree/use-tree-nodes.ts`) and the exported one in `src/lib/explain/text-plan.ts`.
+- Four separate tests of OIDC mode and the storage provider inside `src/lib/local-accounts.ts` (`requireAccountStore`, the login user lookup, `storedAccountAllows` and `ownFactorStatus`).
+
+Each derived key must keep its label, so that a token of one purpose still never verifies as another, and each converged site must keep its current behaviour.
+
+**Done when:** the three derivations call `derivedSigningKey` with their existing labels and their tokens still verify across the change, every `isRecord` in `src/` is imported from `src/lib/is-record.ts`, the four store-mode tests read one exported reader, and no test changes its expectation.
+
+### PK7. One bounded request-body reader
+
+`src/lib/api/bounded-json.ts` `readBoundedJson` refuses a declared `Content-Length` over the limit and cancels the stream as soon as the count passes it; the passkey routes and, through `src/lib/api/object-route.ts`, the object edit routes use it.
+One older reader remains: `src/lib/mcp/preprocess.ts` reads `/api/mcp` bodies through the MCP SDK's `readRequestBody`.
+
+**Done when:** `/api/mcp` reads its body through `src/lib/api/bounded-json.ts` and keeps its current status codes and JSON-RPC error bodies.
+
+### PK8. The PostgreSQL leg of the passkey storage contract does not run in CI
+
+`tests/helpers/passkey-store-contract.ts` is one list of cases for both engines.
+`tests/unit/lib/storage/providers/sqlite-passkeys.test.ts` runs it in `bun run test`, but `tests/live/passkey-store-postgres.ts`, which runs the same list against a real PostgreSQL, is hand-run with `LIBREDB_LIVE_POSTGRES_URL`, like every other `tests/live/` guard.
+The row locks, cascades, `ON CONFLICT` behaviour under concurrency and the `::bigint` counter casts that the multi-replica guarantees rest on are therefore checked only when someone runs it.
+
+**Done when:** a CI job starts a throwaway PostgreSQL (as `functional-smoke` in `.github/workflows/ci.yml` already does), runs `bun tests/live/passkey-store-postgres.ts` against it, and fails the build on any case, and `docs/SECURITY.md` "Known limits" drops the hand-run note.
+
+### PK9. `initialize()` still needs CREATE on the schema when every table exists
+
+`PostgresStorageProvider.initialize` in `src/lib/storage/providers/postgres.ts` runs `CREATE TABLE IF NOT EXISTS` for all five tables on every start.
+PostgreSQL checks CREATE on the schema even for a table that already exists (measured on PostgreSQL 17.11), and a default PostgreSQL 17 `public` schema grants other roles no CREATE, so a schema a DBA created in full still fails to start with an app user that holds only data grants; the start fails with the error that names the privileges and `docs/STORAGE.md` "Manual Table Creation".
+Which earlier PostgreSQL versions behave the same is not measured.
+
+**Done when:** `initialize()` checks which tables exist first and creates only the missing ones, a start against a complete DBA-created schema needs no CREATE, and a test against a real PostgreSQL proves it with a user that holds only `SELECT`, `INSERT`, `UPDATE` and `DELETE`.
+
+---
 
 ## MCP server deferrals (#246)
 

@@ -110,7 +110,7 @@ export const StudioDesktopHeader = React.memo(function StudioDesktopHeader({
                 <KeyRound strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> MCP
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => router.push("/settings/authenticator")} className="cursor-pointer">
-                <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Authenticator
+                <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Sign-in security
               </DropdownMenuItem>
               <div className="border-t border-hairline my-1" />
               <DropdownMenuItem onClick={onLogout} className="text-danger cursor-pointer">

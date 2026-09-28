@@ -1,6 +1,6 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
+import { Fingerprint, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { PublicAccount } from "@/lib/local-accounts";
@@ -40,6 +40,30 @@ export function TwoFactorStatus({ enabled, className }: { enabled: boolean; clas
     </span>
   ) : (
     <span className={cn("text-xs text-fg-subtle", className)}>Off</span>
+  );
+}
+
+/** "1 passkey", "2 passkeys": the count as the dialogs and the mobile badge say it. */
+export function passkeyPhrase(count: number): string {
+  return `${count} ${count === 1 ? "passkey" : "passkeys"}`;
+}
+
+/** The Passkeys column: the count, or a muted "None". */
+export function PasskeyCount({ count }: { count: number }) {
+  return count > 0 ? (
+    <span className="text-xs text-fg-secondary tabular-nums">{count}</span>
+  ) : (
+    <span className="text-xs text-fg-subtle">None</span>
+  );
+}
+
+/** The folded mobile row's mark for an account that has passkeys. */
+export function PasskeyBadge({ count }: { count: number }) {
+  return (
+    <Badge variant="outline" className="gap-1 border-hairline-strong text-fg-tertiary">
+      <Fingerprint aria-hidden className="size-3" />
+      {passkeyPhrase(count)}
+    </Badge>
   );
 }
 

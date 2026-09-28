@@ -168,6 +168,13 @@ sequenceDiagram
         U->>F: Email + Password
         F->>A: POST /api/auth/login
         A->>F: Set HTTP-Only JWT Cookie
+    else Passkey sign-in
+        U->>F: Click Use a passkey
+        F->>A: POST /api/auth/passkey/sign-in {options}
+        A->>F: Challenge + signed ceremony cookie
+        U->>F: Unlock passkey on the device
+        F->>A: POST /api/auth/passkey/sign-in {verify}
+        A->>F: Set HTTP-Only JWT Cookie
     else OIDC SSO
         U->>F: Click SSO Login
         F->>O: Redirect (PKCE)
@@ -178,7 +185,9 @@ sequenceDiagram
     end
 ```
 
-Controlled by `NEXT_PUBLIC_AUTH_PROVIDER` (`local` | `oidc`). Both flows result in the same JWT session cookie. Proxy (`src/proxy.ts`) enforces RBAC (admin vs user roles).
+Controlled by `NEXT_PUBLIC_AUTH_PROVIDER` (`local` | `oidc`). Every flow results in the same JWT session cookie. Proxy (`src/proxy.ts`) enforces RBAC (admin vs user roles).
+
+The passkey branch exists only with local auth, `STORAGE_PROVIDER=sqlite` or `postgres`, and a valid `PASSKEY_ORIGIN`. The challenge travels in an HttpOnly, SameSite=Strict cookie signed with a key derived from `JWT_SECRET`, the verify step checks the assertion against the one configured origin and the credential stored in the server store, and marks the challenge spent in the same transaction that records the sign-in, so any replica completes it at most once. A verified passkey replaces the password and the TOTP code, because both ceremonies require user verification. See [PASSKEYS.md](PASSKEYS.md).
 
 ### 4.3. Multi-Statement Execution
 
@@ -250,7 +259,7 @@ Full behaviour, client configuration and limits: [`docs/MCP.md`](MCP.md).
 src/
 ├── app/                    # Next.js App Router
 │   ├── api/
-│   │   ├── auth/           # Login/logout/me + OIDC (PKCE, callback)
+│   │   ├── auth/           # Login/logout/me + OIDC (PKCE, callback), TOTP, passkey/ (owner management) + passkey/sign-in/
 │   │   ├── ai/             # explain, query-safety, describe-schema
 │   │   ├── db/             # Query, objects/ (the object surface), health, maintenance, transactions
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
@@ -307,6 +316,8 @@ src/
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
+    ├── passkey/             # Passkey sign-in (docs/PASSKEYS.md): config (PASSKEY_ORIGIN reader), policy, ceremony
+    │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder,
     │                       # and the LibreDB + Redis command languages

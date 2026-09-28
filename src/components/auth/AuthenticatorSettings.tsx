@@ -80,7 +80,8 @@ function Step({ index, title, children }: { index: number; title: string; childr
   );
 }
 
-export function AuthenticatorSettings() {
+/** `onChange` runs after the authenticator turns on or off, so the passkey section below can reload. */
+export function AuthenticatorSettings({ onChange }: { onChange?: () => void } = {}) {
   const [view, setView] = useState<View>({ kind: "loading" });
   const [reload, setReload] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -126,6 +127,7 @@ export function AuthenticatorSettings() {
     reset();
     toast.success(message);
     setReload((value) => value + 1);
+    onChange?.();
   }
 
   async function begin(event: React.FormEvent) {

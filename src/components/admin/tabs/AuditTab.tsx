@@ -172,7 +172,9 @@ function OperationsAudit() {
       (e) =>
         e.action.toLowerCase().includes(q) ||
         e.target.toLowerCase().includes(q) ||
-        (e.connectionName || "").toLowerCase().includes(q),
+        (e.connectionName || "").toLowerCase().includes(q) ||
+        (e.reason || "").toLowerCase().includes(q) ||
+        (e.passkey || "").toLowerCase().includes(q),
     );
   }, [events, searchQuery]);
 
@@ -191,6 +193,7 @@ function OperationsAudit() {
         "Details",
         "IP",
         "Reason",
+        "Passkey",
         "Bucket",
         "Correlation ID",
         "ID",
@@ -208,6 +211,7 @@ function OperationsAudit() {
           event.details,
           event.ip,
           event.reason,
+          event.passkey,
           event.bucket,
           event.correlationId,
           event.id,
@@ -339,6 +343,14 @@ function OperationsAudit() {
                     <Badge variant="outline" className="text-[0.625rem] font-bold border-hairline-strong">
                       {event.action}
                     </Badge>
+                    {/* The reason tells the passkey refusals apart without the export. */}
+                    {event.reason || event.passkey ? (
+                      <div data-testid="audit-event-reason" className="mt-0.5 font-mono text-[0.625rem] text-fg-muted">
+                        {[event.reason, event.passkey ? `passkey ${event.passkey}` : undefined]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                    ) : null}
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-fg-tertiary truncate max-w-[120px]">
                     {event.target}

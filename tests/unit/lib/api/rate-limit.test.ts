@@ -18,6 +18,8 @@ const MUTATED = [
   "RATE_LIMIT_QUERY_MAX",
   "RATE_LIMIT_ANON_MAX",
   "RATE_LIMIT_ANON_WINDOW_SEC",
+  "RATE_LIMIT_PASSKEY_MAX",
+  "RATE_LIMIT_PASSKEY_WINDOW_SEC",
 ] as const;
 const snapshot: Record<string, string | undefined> = {};
 
@@ -177,6 +179,31 @@ describe("peekRateLimit", () => {
 
     expect(peekRateLimit("login_client", "k").tripped).toBe(true);
     expect(peekRateLimit("login_client", "k").tripped).toBe(false);
+  });
+});
+
+describe("passkey_client", () => {
+  test("passkey_client is its own budget", () => {
+    delete process.env.RATE_LIMIT_PASSKEY_MAX;
+    delete process.env.RATE_LIMIT_PASSKEY_WINDOW_SEC;
+    delete process.env.RATE_LIMIT_LOGIN_MAX;
+    for (let i = 0; i < 10; i++) {
+      expect(consumeRateLimit("passkey_client", "k").allowed).toBe(true);
+      expect(peekRateLimit("login_client", "k").allowed).toBe(true);
+    }
+    const eleventh = consumeRateLimit("passkey_client", "k");
+    expect(eleventh.allowed).toBe(false);
+    expect(eleventh.retryAfterSeconds).toBe(300);
+    expect(peekRateLimit("login_client", "k").allowed).toBe(true);
+
+    clearRateLimitState();
+    process.env.RATE_LIMIT_PASSKEY_MAX = "2";
+    process.env.RATE_LIMIT_PASSKEY_WINDOW_SEC = "60";
+    expect(consumeRateLimit("passkey_client", "k").allowed).toBe(true);
+    expect(consumeRateLimit("passkey_client", "k").allowed).toBe(true);
+    const third = consumeRateLimit("passkey_client", "k");
+    expect(third.allowed).toBe(false);
+    expect(third.retryAfterSeconds).toBe(60);
   });
 });
 

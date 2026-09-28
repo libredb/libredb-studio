@@ -18,7 +18,14 @@ export type AccountsView =
   | { kind: "ready"; accounts: PublicAccount[] };
 
 /** A change that needs nothing beyond the account it applies to. */
-export type AccountAction = "make-admin" | "make-user" | "disable" | "enable" | "clear-totp" | "delete";
+export type AccountAction =
+  | "make-admin"
+  | "make-user"
+  | "disable"
+  | "enable"
+  | "clear-totp"
+  | "clear-passkeys"
+  | "delete";
 
 interface ActionSpec {
   body: Record<string, unknown> | null;
@@ -51,6 +58,11 @@ const ACTIONS: Record<AccountAction, ActionSpec> = {
     body: { clearTotp: true },
     success: (email) => `Two-factor cleared for ${email}`,
     failure: "Could not clear the authenticator",
+  },
+  "clear-passkeys": {
+    body: { clearPasskeys: true },
+    success: (email) => `Passkeys removed for ${email}`,
+    failure: "Could not remove the passkeys",
   },
   delete: {
     body: null,
@@ -187,12 +199,13 @@ export function useAccounts() {
     }
   }
 
-  async function setPassword(account: PublicAccount, password: string): Promise<string | null> {
+  /** A password set removes the account's passkeys on the server unless `keepPasskeys` asks otherwise. */
+  async function setPassword(account: PublicAccount, password: string, keepPasskeys: boolean): Promise<string | null> {
     try {
       const res = await appFetch(accountPath(account.email), {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(keepPasskeys ? { password, keepPasskeys: true } : { password }),
       });
       if (!res.ok) return (await readError(res)) ?? "Could not set the password";
       toast.success(`New password set for ${account.email}`);
@@ -203,7 +216,8 @@ export function useAccounts() {
     }
   }
 
-  return { view, isMe, retry, run, create, setPassword };
+  // `version` advances on every reload, so another section can re-read what an account change touches.
+  return { view, version: reload, isMe, refresh, retry, run, create, setPassword };
 }
 
 export type AccountsController = ReturnType<typeof useAccounts>;

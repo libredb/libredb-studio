@@ -3,7 +3,7 @@ import {
   ObjectRouteError,
   handleObjectRequest,
   optionalStringArray,
-  readBoundedJson,
+  readObjectRouteBody,
   requireString,
 } from "@/lib/api/object-route";
 import { isObjectEditOutcomeShape, isObjectEditPlanShape } from "@/lib/api/object-edit-wire";
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
 
       return outcome;
     },
-    { readBody: (request) => readBoundedJson(request, EDIT_BODY_BYTE_LIMIT) },
+    { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );
 }
 

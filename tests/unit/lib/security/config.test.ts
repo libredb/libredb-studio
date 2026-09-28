@@ -13,6 +13,9 @@ const MUTATED = [
   "HSTS_INCLUDE_SUBDOMAINS",
   "NEXT_PUBLIC_MONACO_VS_PATH",
   "TRUST_PROXY_HEADERS",
+  "PASSKEY_ORIGIN",
+  "STORAGE_PROVIDER",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
 ] as const;
 const snapshot: Record<string, string | undefined> = {};
 
@@ -175,6 +178,33 @@ describe("readSecurityHeaderOptions", () => {
       maxAgeSeconds: 15552000,
       includeSubDomains: false,
     });
+  });
+
+  // The document may request assertions only while this server can verify them.
+  test("allows WebAuthn get only when passkeys are ready", () => {
+    const ready = {
+      NEXT_PUBLIC_AUTH_PROVIDER: "local",
+      STORAGE_PROVIDER: "sqlite",
+      PASSKEY_ORIGIN: "https://studio.example.com",
+    };
+    const cases: Array<[string, Record<string, string | undefined>, boolean]> = [
+      ["ready", ready, true],
+      ["origin unset", { ...ready, PASSKEY_ORIGIN: undefined }, false],
+      ["origin invalid", { ...ready, PASSKEY_ORIGIN: "studio.example.com" }, false],
+      ["oidc", { ...ready, NEXT_PUBLIC_AUTH_PROVIDER: "oidc" }, false],
+      ["local storage", { ...ready, STORAGE_PROVIDER: "local" }, false],
+    ];
+    for (const [name, env, expected] of cases) {
+      for (const [key, value] of Object.entries(env)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+
+      expect({ name, allowWebAuthnGet: readSecurityHeaderOptions().allowWebAuthnGet }).toEqual({
+        name,
+        allowWebAuthnGet: expected,
+      });
+    }
   });
 
   // B40: `bun dev` could not log in, because React's development build evals and the policy

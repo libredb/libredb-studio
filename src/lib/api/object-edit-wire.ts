@@ -294,7 +294,7 @@ function isStep(value: unknown): boolean {
  * WHAT IT IS AND IS NOT, because an earlier form of this docblock claimed a live uncounted seam and
  * that claim is FALSE in this tree. Every one of the four call sites has a tighter count in front
  * of it, so this predicate cannot answer `false` today:
- * - `edit-apply/route.ts` reads the body through `readBoundedJson` at `EDIT_BODY_BYTE_LIMIT` BYTES
+ * - `edit-apply/route.ts` reads the body through `readObjectRouteBody` at `EDIT_BODY_BYTE_LIMIT` BYTES
  *   before the parse, and the unit is a fragment of that body;
  * - `edit-plan/route.ts` narrows a plan a provider built from text already bounded at
  *   `EDIT_CHARACTER_LIMIT`, and measures the same unit against `EDIT_PLAN_EXECUTABLE_LIMIT` on the

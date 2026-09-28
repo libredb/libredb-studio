@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.71 \
+  --version 0.1.72 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -611,6 +611,7 @@ helm uninstall libredb
 | `authProvider` | Auth mode: local or oidc | `local` |
 | `config.authBootstrap` | Auth bootstrap: `""` (zero-config, app default), `on` (explicit zero-config), `off` (strict) | `""` |
 | `config.authCookieSecure` | Whether auth cookies carry the `Secure` flag (`AUTH_COOKIE_SECURE`). Unset writes nothing and the app decides (Secure in production, except a loopback host reached over plain http); `false` drops the flag, which is what a browser reaching a non-loopback host over plain http needs - it rejects a Secure cookie and login silently loops; `true` forces it on. TLS terminated at an ingress does not need this | unset |
+| `config.passkeyOrigin` | The public origin people open Studio at, written to `PASSKEY_ORIGIN` when set: scheme, host and port, no path (so no `config.basePath`), such as `https://studio.example.com`. Passkeys also need `config.storageProvider` `sqlite` or `postgres` and `authProvider` `local`; browsers offer them only over https or on `http://localhost`, and the app validates the value. Changing the host means users register their passkeys again. Needs an application image that includes passkey sign-in (#785): appVersion 0.17.0 does not read it. Guide: [`docs/PASSKEYS.md`](https://github.com/libredb/libredb-studio/blob/main/docs/PASSKEYS.md) | `""` |
 | `secrets.jwtSecret` | JWT signing secret: empty (zero-config) or >= 32 chars (schema-enforced) | `""` |
 | `secrets.adminEmail` | Admin email | `admin@libredb.org` |
 | `secrets.adminPassword` | Admin password | `""` |

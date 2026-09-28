@@ -14,10 +14,10 @@
  * There are no timers here. A setInterval would hold the event loop open and leak one per process;
  * entries expire lazily on access instead.
  *
- * Memory bound: MAX_ENTRIES_PER_BUCKET (1000) x 5 buckets = 5000 counters total. Each counter is a
+ * Memory bound: MAX_ENTRIES_PER_BUCKET (1000) x 6 buckets = 6000 counters total. Each counter is a
  * map entry keyed by up to MAX_KEY_LENGTH (200) UTF-16 characters (~400 bytes) plus a small
  * {count, resetAt, notified} object and Map/object overhead, so the realistic bound is roughly
- * 2.5-3 MB, not a flat "100 bytes per counter" - correct this comment again if either constant
+ * 3-3.6 MB, not a flat "100 bytes per counter" - correct this comment again if either constant
  * changes. Nobody may add a second, unbounded map alongside these.
  *
  * Capacity is partitioned PER BUCKET, not shared across buckets: see pruneIfAtCapacity. A single
@@ -30,7 +30,7 @@
  * bucket can only ever evict entries already in that same bucket's own store.
  */
 
-export type RateLimitBucket = "login_client" | "login_account" | "ai" | "query" | "anon";
+export type RateLimitBucket = "login_client" | "login_account" | "passkey_client" | "ai" | "query" | "anon";
 
 export interface RateLimitDecision {
   allowed: boolean;
@@ -97,6 +97,15 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
     maxVar: "RATE_LIMIT_LOGIN_ACCOUNT_MAX",
     windowVar: "RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SEC",
     maxDefault: 20,
+    windowDefault: 300,
+  },
+  // Failed passkey sign-ins per client key. A bucket of its own: a signature cannot be guessed, so
+  // this bounds CPU, database reads and audit volume rather than guessing, and sharing
+  // login_client would let passkey retries lock an address out of password sign-in.
+  passkey_client: {
+    maxVar: "RATE_LIMIT_PASSKEY_MAX",
+    windowVar: "RATE_LIMIT_PASSKEY_WINDOW_SEC",
+    maxDefault: 10,
     windowDefault: 300,
   },
   // Shared by every route that reaches an LLM provider or touches an agent run, so that
@@ -187,6 +196,7 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
 const bucketStores: Record<RateLimitBucket, Map<string, Counter>> = {
   login_client: new Map(),
   login_account: new Map(),
+  passkey_client: new Map(),
   ai: new Map(),
   query: new Map(),
   anon: new Map(),
@@ -194,11 +204,11 @@ const bucketStores: Record<RateLimitBucket, Map<string, Counter>> = {
 
 /**
  * A clamped integer from the environment. One helper rather than a branch per variable, so the
- * coverage cost of eleven configurable numbers is one small tested function.
+ * coverage cost of twelve configurable numbers is one small tested function.
  * A value of 0 for a *_MAX means unlimited; the caller decides what 0 means for its own variable.
  * Unlike the boolean flags in src/lib/security/config.ts, an out-of-range number here silently
  * falls back rather than warning: these are budget knobs, not a security posture toggle, and this
- * function backs eleven of them plus TRUSTED_PROXY_HOPS - warning here would either fire on every
+ * function backs twelve of them plus TRUSTED_PROXY_HOPS - warning here would either fire on every
  * request or need its own per-variable latch for a case that isn't a security-relevant mistake.
  */
 export function parsePositiveInt(value: string | undefined, fallback: number, max: number): number {

@@ -96,8 +96,28 @@ class CaptureProvider implements ServerStorageProvider {
     return null;
   }
   async insertAccount() {}
-  async updateAccount() {}
+  async updateAccount() {
+    return 0;
+  }
   async deleteAccount() {}
+  async listPasskeys() {
+    return [];
+  }
+  async countPasskeys() {
+    return new Map<string, number>();
+  }
+  async getPasskeyUserHandle() {
+    return null;
+  }
+  async findPasskey() {
+    return null;
+  }
+  async insertPasskey() {}
+  async recordPasskeySignIn() {}
+  async renamePasskey() {
+    return false;
+  }
+  async deletePasskey() {}
 
   /** Everything this store holds, as the bytes a dump would contain. */
   persisted(): string {

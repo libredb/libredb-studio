@@ -116,7 +116,7 @@ password alone if that is what you need.
 After that the row is the secret: changing the environment variable does not change an account that already exists, and blanking it does not turn the factor off.
 `ADMIN_PASSWORD_RESET=true` is the exception for the env admin, and applies `ADMIN_TOTP_SECRET` (or no factor) along with the password; see [STORAGE.md](./STORAGE.md#accounts).
 
-Every account sets up its own authenticator under the user menu → Authenticator (`/settings/authenticator`); an admin also finds it at the foot of Admin → Accounts.
+Every account sets up its own authenticator under the user menu → Sign-in security (`/settings/authenticator`); an admin also finds it at the foot of Admin → Accounts.
 Setting one up asks for the current password, and turning one off asks for the current password and a current code, so a stolen session cookie can neither remove the factor nor replace it.
 A wrong password or code there is charged to the same budgets as a failed login.
 An admin clears someone else's factor with `PATCH /api/admin/accounts/<email>` `{"clearTotp":true}`, for example when a phone is lost.
@@ -127,6 +127,9 @@ Rotating `JWT_SECRET` or `STORAGE_ENCRYPTION_KEY` therefore makes every stored f
 
 `STORAGE_PROVIDER=local` has no row to write, so the environment variables stay the only switch, including blanking one and restarting.
 OIDC mode does not enrol here.
+
+In the server store an account can also sign in with a passkey, which never asks for the code: a passkey requires user verification on the device, so it replaces both the password and the code.
+An account with both keeps its code for password sign-in only; see [PASSKEYS.md](./PASSKEYS.md).
 
 ### Running both
 
@@ -259,10 +262,10 @@ It defeats a password that leaked on its own — reused from another breach, rea
 `docker inspect`, or shoulder-surfed. That is the threat this control exists for, and it is the
 common one.
 
-It is not a substitute for the identity provider. There is no passkey or WebAuthn support here, no
-per-user enrolment, no recovery codes, and no device management — one shared secret per account,
-provisioned by whoever runs the server. Teams that need more should run
-[OIDC](OIDC.md) and enforce it upstream.
+It is not a substitute for the identity provider.
+There are no recovery codes, and with `STORAGE_PROVIDER=local` the secret is one environment variable per account, provisioned by whoever runs the server.
+Local accounts in the server store can add passkeys, which resist phishing where a code does not; see [PASSKEYS.md](PASSKEYS.md).
+Teams that need more should run [OIDC](OIDC.md) and enforce it upstream.
 
 One deployment note: the spent-code set lives in the application process, like the login rate-limit
 counters. Above one replica each process enforces its own view, so a captured code can be replayed

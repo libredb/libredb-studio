@@ -82,7 +82,7 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 
 The middleware (`src/proxy.ts`) gates every route: all of them require a valid `auth-token` cookie **except** the routes below. It is an optimisation rather than the authorization boundary, though — every handler that reaches a database or a model provider verifies the session again itself, through `guardRoute` (`src/lib/api/require-session.ts`), which is also where the rate-limit bucket and the audit line come from.
 
-- `/api/auth/*` — login, logout, me, and OIDC login/callback
+- `/api/auth/*`: login, logout, me, OIDC login/callback, and `POST /api/auth/passkey/sign-in`, which creates the session and so cannot need one; the other auth routes that act on an account (`/api/auth/totp`, `/api/auth/passkey`) check the session themselves
 - `/health` and `/api/health` — liveness, fully public, no dependencies
 - `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public and answers the same as the two above, while `POST` performs its own session check and returns JSON `401` if unauthenticated
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
@@ -213,6 +213,64 @@ Sets up or turns off the signed-in account's own authenticator; the body's `acti
 A missing field is `400`.
 A wrong password or code is `401` and is charged to the same two budgets as a failed login, so `429` with `Retry-After` follows once either is spent.
 `409` under OIDC or `STORAGE_PROVIDER=local`. See [MFA.md](./MFA.md#when-accounts-live-in-the-server-store).
+
+#### GET /api/auth/passkey
+
+The signed-in account's own passkeys ([PASSKEYS.md](./PASSKEYS.md)).
+Every answer of the passkey routes carries `Cache-Control: no-store`.
+`401 { "error": "Authentication required" }` without a session, and `404 { "error": "This session has no account in the registry." }` when the session's account row is missing.
+`200` answers one of:
+
+```json
+{ "available": false, "mode": "oidc", "reason": "Passkeys for this sign-in are managed by your identity provider." }
+{ "available": true, "canAdd": true, "origin": "https://studio.example.com", "rpId": "studio.example.com", "totpEnabled": false, "passkeys": [] }
+{ "available": true, "canAdd": false, "reason": "Passkeys are off on this server. ...", "totpEnabled": false, "passkeys": [] }
+```
+
+`mode` is `"oidc"` or `"local-storage"`.
+`canAdd` is `false` while `PASSKEY_ORIGIN` is unset or invalid, with the reason, and the stored passkeys are still listed.
+Each passkey is `{ "id", "name", "createdAt", "lastUsedAt", "backupEligible", "backupState", "usable" }`: `id` is the internal id, `lastUsedAt` is `null` before the first use, and `usable` is `false` for a passkey registered under another host name, or `null` while passkeys are off or misconfigured.
+No answer carries a credential ID, a public key or a user handle.
+
+#### POST /api/auth/passkey
+
+Adds, renames and removes the signed-in account's passkeys; the body's `action` picks one.
+Bodies over 65536 bytes are `413 { "error": "Request body is too large" }`, unparseable ones `400 { "error": "Invalid request body" }`, and an unknown action `400 { "error": "action must be register-options, register-verify, rename or remove" }`.
+
+| `action` | Body | Answer |
+|---|---|---|
+| `register-options` | `{ "password": "...", "code"?: "123456" }` | `{ "options": PublicKeyCredentialCreationOptionsJSON }`, and sets the `passkey-registration` cookie |
+| `register-verify` | `{ "response": RegistrationResponseJSON, "name"?: "..." }` | `{ "passkey": {...} }`; clears the cookie whatever the outcome |
+| `rename` | `{ "id": "...", "name": "..." }` | `{ "passkey": {...} }` |
+| `remove` | `{ "id": "...", "password": "...", "code"?: "123456" }` | `{ "ok": true }`, and re-issues the caller's session cookie |
+
+`register-options` and `remove` check the current password, and a current code when the account has TOTP.
+Without a code on such an account they answer `400 { "error": "Enter a current code from your authenticator app.", "codeRequired": true }`, which no budget charges.
+A wrong password or code is `401` and is charged to the same two budgets as a failed login, so `429` with `Retry-After` follows once either is spent.
+`register-options` answers `409 "An account holds at most 20 passkeys. Remove one before adding another."` before it checks the password.
+
+`register-verify` answers `400 "The passkey setup expired or belongs to another sign-in. Start again."` for a missing, expired or replayed ceremony, `400 "The passkey could not be verified. Try again."` for a refused response, and `409` for "This passkey is already registered.", "Another passkey was added at the same time. Start again.", the passkey limit, or "The account changed at the same time. Reload the page and try again." when the account's session version moved during the ceremony.
+A name is 1 to 64 characters after trimming with no control characters, else `400 "Name a passkey with 1 to 64 characters."`; `register-verify` without one names the passkey "Passkey".
+`rename` and `remove` answer `404 "No passkey with that id on your account."` for an id the account does not have.
+`remove` ends every other session and MCP token of the account and keeps the caller's through the re-issued cookie; when the session version moved since the request began it removes nothing, re-issues nothing and answers `409 "The account changed at the same time. Reload the page and try again."`.
+
+Every error body is `{ "error": "..." }`.
+Every action answers `409` with the reason under OIDC or `STORAGE_PROVIDER=local`; `register-options` and `register-verify` also answer `409` while `PASSKEY_ORIGIN` is unset and `503` naming the variable while it is invalid, while `rename` and `remove` keep working then.
+Every addition, rename and removal is an `account` event in the audit log, and so is a wrong password or code, a registration whose ceremony, origin or attestation is refused or that conflicts with another change to the account, and a removal that crosses one; [PASSKEYS.md](PASSKEYS.md#troubleshooting) lists the refusals that are not audited.
+
+#### POST /api/auth/passkey/sign-in
+
+Signs in with a passkey, without an email; no session is needed.
+
+| `action` | Body | Answer |
+|---|---|---|
+| `options` | `{ "action": "options" }` | `{ "options": PublicKeyCredentialRequestOptionsJSON }` (no `allowCredentials`, `userVerification: "required"`), and sets the `passkey-sign-in` cookie; writes nothing to the store |
+| `verify` | `{ "action": "verify", "response": AuthenticationResponseJSON }` | `{ "success": true, "role": "admin" \| "user" }`, and sets the session cookie; clears the ceremony cookie whatever the outcome |
+
+Every refusal answers the same `401 { "success": false, "message": "That passkey could not sign you in. If it was removed from Studio, delete it from your password manager too. Sign in with your password." }`, whatever the reason, and the reason is recorded only in the audit log.
+A malformed body is `400 { "success": false, "message": "Invalid request body" }`, an unknown action the same `400`, and a body over 65536 bytes `413 { "success": false, "message": "Request body is too large" }`.
+`409 { "success": false, "message": "<reason>" }` under OIDC, with `STORAGE_PROVIDER=local` or while `PASSKEY_ORIGIN` is unset, and `503` with the problem while it is invalid.
+Each refusal and each malformed body spends one unit of the `passkey_client` budget, which is checked before the body is read, so `429` follows once it is spent; see [Rate Limiting](#rate-limiting).
 
 ---
 
@@ -1731,15 +1789,17 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 
 The local account registry, available with `STORAGE_PROVIDER=sqlite` or `postgres` and local sign-in; otherwise `409` with the reason.
 Both go through the shared route guard: `401` with no session, `403` for a non-admin.
-`GET` answers `{ "accounts": [{ "email", "role", "disabled", "totpEnabled", "createdAt" }] }` and never a hash or a secret.
+`GET` answers `{ "accounts": [{ "email", "role", "disabled", "totpEnabled", "passkeys", "createdAt" }] }`, where `passkeys` is the account's passkey count, and never a hash or a secret.
 `POST` with `{ "email", "password", "role": "admin" | "user" }` creates one and answers `201 { "account": {...} }`; the password needs 8 characters, and an email that already exists in any letter case is `409`.
 
 #### PATCH, DELETE /api/admin/accounts/{email}
 
-`PATCH` takes any of `{ "role": "admin" | "user" }`, `{ "disabled": true | false }`, `{ "password": "..." }` and `{ "clearTotp": true }` and answers `{ "account": {...} }`.
-A role change, disabling and a password reset end that account's sessions and MCP tokens at their next request; when the admin changes their own account, the response re-issues their session cookie.
-`DELETE` removes the account and its stored rows and answers `{ "ok": true }`.
-Both answer `404` for an unknown email, and `409` when the change would leave no enabled admin.
+`PATCH` takes any of `{ "role": "admin" | "user" }`, `{ "disabled": true | false }`, `{ "password": "..." }`, `{ "clearTotp": true }` and `{ "clearPasskeys": true }` and answers `{ "account": {...} }`.
+A password set also removes the account's passkeys, unless the body carries `"keepPasskeys": true` ([PASSKEYS.md](./PASSKEYS.md#admin-actions-and-recovery)).
+`clearPasskeys` other than `true` is `400 "clearPasskeys must be true."`, `keepPasskeys` other than `true` is `400 "keepPasskeys must be true."`, and `keepPasskeys` without `password`, or together with `clearPasskeys`, is `400 "keepPasskeys applies only together with a new password, and never with clearPasskeys."`.
+A role change, disabling, a password reset and a passkey clear end that account's sessions and MCP tokens at their next request; when the admin changes their own account, the response re-issues their session cookie.
+`DELETE` removes the account, its stored rows and its passkeys and answers `{ "ok": true }`.
+Both answer `404` for an unknown email, and `409` when the change would leave no enabled admin, or when another change to the same account landed after this request read it: `409 "The account changed at the same time. Reload the page and try again."`, with nothing written.
 Every change, and every refused one, is an `account` event in the audit log naming the acting admin.
 
 ---
@@ -1993,6 +2053,15 @@ per-address budget the same way a wrong password does - it is checked and charge
 is read, so it cannot bypass the limit the way it would if parsing happened first - but it cannot
 spend the per-account budget, since that key comes from a body there was nothing to extract.
 
+A wrong password or code on `POST /api/auth/totp`, and on the `register-options` and `remove` actions of `POST /api/auth/passkey`, is charged to the same two budgets.
+
+### Passkey sign-in
+
+`POST /api/auth/passkey/sign-in` has a budget of its own, `passkey_client`, per client address: 10 failed attempts per 300 seconds by default (`RATE_LIMIT_PASSKEY_MAX`, `RATE_LIMIT_PASSKEY_WINDOW_SEC`).
+It is checked before the body is read, for both actions, and every refused assertion, malformed body or unknown action spends one unit; a success clears nothing.
+Passkey sign-in never spends the login budgets, so failed passkeys cannot lock an address out of password sign-in.
+A signature cannot be guessed, so this budget bounds CPU, database reads and audit volume rather than guessing.
+
 ### Every session-guarded route
 
 Every route that reaches a database or an LLM provider shares one of two rate-limit buckets, keyed
@@ -2003,7 +2072,7 @@ single number written here has gone stale every time it was updated:
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
 | `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: classifying an objective, starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
-| `query` | Every database-reaching `/api/db/*` route, plus `/api/admin/fleet-health` and the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`), together | 120 requests / 60 seconds |
+| `query` | Every database-reaching `/api/db/*` route, plus `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is
 shared across every route it applies to. All limits are configurable through the `RATE_LIMIT_*`

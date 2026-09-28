@@ -262,6 +262,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **PKCE Security**: Authorization Code Flow with Proof Key for Code Exchange (S256) for secure authentication.
 - **Auto Role Mapping**: Configurable claim-based role mapping with dot-notation for nested claims (e.g., `realm_access.roles`).
 - **Provider Logout**: Logout clears both the local JWT session and identity provider session.
+- **Passkeys**: Local accounts in the server store (`STORAGE_PROVIDER=sqlite` or `postgres`) can sign in with a passkey instead of a password and code once `PASSKEY_ORIGIN` names the address people open Studio at ([guide](docs/PASSKEYS.md)).
 
 ### DBA Maintenance Toolkit (Admin Only)
 - **Live Monitoring Dashboard**: 7-tab monitoring with Overview, Performance, Queries, Sessions, Tables, Storage, and Connection Pool views.
@@ -973,6 +974,7 @@ Open **http://localhost:3000** and log in with the admin credentials the first r
 | [Agent Runtime](docs/AGENT.md) | Agent behaviour, bounds, deployment and known limitations |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
 | [Two-Factor Auth](docs/MFA.md) | TOTP on the local provider — generating a secret, enrolling an app, Docker/Helm wiring, and what it does not cover |
+| [Passkeys](docs/PASSKEYS.md) | Passkey sign-in for local accounts in the server store: enabling it, managing passkeys, admin recovery, troubleshooting, and what it does not cover |
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |

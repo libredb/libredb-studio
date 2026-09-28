@@ -14,17 +14,22 @@ import { AccountsTable, AccountsTableSkeleton } from "@/components/admin/account
 import { AccountsToolbar, filterAccounts, type AccountFilter } from "@/components/admin/accounts/accounts-toolbar";
 import { useAccounts } from "@/components/admin/accounts/use-accounts";
 import { AuthenticatorSettings } from "@/components/auth/AuthenticatorSettings";
+import { PasskeySettings } from "@/components/auth/PasskeySettings";
 import { Button } from "@/components/ui/button";
 
 /**
  * The admin Accounts screen (#784): the local email and password accounts as one table with a
- * search and a filter above it, and the signed-in admin's own authenticator below.
+ * search and a filter above it, and the signed-in admin's own authenticator and passkeys below.
+ * Both need the account registry, so they are hidden with it.
  */
 export function AccountsTab() {
   const controller = useAccounts();
   const actions = useAccountActions(controller);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AccountFilter>("all");
+  // Advanced when the authenticator changes, so the passkey section re-reads whether a code is needed.
+  // The table's version joins it, so a change to the admin's own row there reaches the passkey section too.
+  const [factorVersion, setFactorVersion] = useState(0);
   const { view } = controller;
 
   let content: React.ReactNode;
@@ -89,7 +94,12 @@ export function AccountsTab() {
         </div>
         {content}
       </section>
-      {view.kind === "unavailable" ? null : <AuthenticatorSettings />}
+      {view.kind === "unavailable" ? null : (
+        <>
+          <AuthenticatorSettings onChange={() => setFactorVersion((value) => value + 1)} />
+          <PasskeySettings reloadSignal={factorVersion + controller.version} onChange={controller.refresh} />
+        </>
+      )}
       {actions.dialogs}
     </div>
   );

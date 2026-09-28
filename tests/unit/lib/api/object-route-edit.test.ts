@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
-import { ObjectRouteError, boundSourceDocument, objectRouteErrorBody, readBoundedJson } from "@/lib/api/object-route";
+import {
+  ObjectRouteError,
+  boundSourceDocument,
+  objectRouteErrorBody,
+  readObjectRouteBody,
+} from "@/lib/api/object-route";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectSourceDocument, ProviderCapabilities } from "@/lib/db/types";
@@ -34,7 +39,7 @@ const READABLE = {
   origin: "regenerated",
 };
 
-describe("readBoundedJson", () => {
+describe("readObjectRouteBody", () => {
   const request = (body: string, headers: Record<string, string> = {}): NextRequest =>
     new NextRequest("http://localhost:3000/api/db/objects/edit-plan", {
       method: "POST",
@@ -43,16 +48,20 @@ describe("readBoundedJson", () => {
     });
 
   test("parses an ordinary body", async () => {
-    expect(await readBoundedJson(request(JSON.stringify({ kind: "function" })), 1024)).toEqual({ kind: "function" });
+    expect(await readObjectRouteBody(request(JSON.stringify({ kind: "function" })), 1024)).toEqual({
+      kind: "function",
+    });
   });
 
   test("THREE conditions the shipped arm collapses into one, each with its own true sentence", async () => {
     // `handleObjectRequest`'s own body-parse arm answers 400 "Empty request body" for a body that
     // was TRUNCATED at 10,485,760 bytes, which is one condition reported with a wrong sentence.
     // These two routes do not inherit it.
-    await expect(readBoundedJson(request(""), 1024)).rejects.toThrow("this request carried no body");
-    await expect(readBoundedJson(request("{not json"), 1024)).rejects.toThrow("this request body is not valid JSON");
-    await expect(readBoundedJson(request(JSON.stringify({ text: "x".repeat(2048) })), 1024)).rejects.toThrow(
+    await expect(readObjectRouteBody(request(""), 1024)).rejects.toThrow("this request carried no body");
+    await expect(readObjectRouteBody(request("{not json"), 1024)).rejects.toThrow(
+      "this request body is not valid JSON",
+    );
+    await expect(readObjectRouteBody(request(JSON.stringify({ text: "x".repeat(2048) })), 1024)).rejects.toThrow(
       "this request body is larger than",
     );
   });
@@ -88,13 +97,13 @@ describe("readBoundedJson", () => {
       // compile. The cast exists only because `duplex` is absent from the lib's own init type; the
       // runtime object is unchanged and the measurement in the comment above still describes it.
     } as ConstructorParameters<typeof NextRequest>[1] & { duplex: "half" });
-    await expect(readBoundedJson(chunked, 1024)).rejects.toThrow("this request body is larger than");
+    await expect(readObjectRouteBody(chunked, 1024)).rejects.toThrow("this request body is larger than");
   });
 
   test("the bound is EXCLUSIVE: exactly byteLimit bytes resolves, one byte more is refused", async () => {
     // THE BOUNDARY ITSELF, which the over-limit tests above do not reach: they send 2048 and 4,107
     // bytes against a 1024 bound, so `>=` in place of `>` passes every one of them. The arithmetic
-    // in `readBoundedJson`'s docblock reasons explicitly that a body AT `EDIT_BODY_BYTE_LIMIT` is
+    // in `readObjectRouteBody`'s docblock reasons explicitly that a body AT `EDIT_BODY_BYTE_LIMIT` is
     // inside the bound, and the 413's sentence, "larger than N bytes", is FALSE of a body of
     // exactly N. Both sides are asserted because one side alone is satisfied by the wrong operator.
     //
@@ -106,25 +115,25 @@ describe("readBoundedJson", () => {
     expect(new TextEncoder().encode(body(limit)).byteLength).toBe(limit);
     expect(new TextEncoder().encode(body(limit + 1)).byteLength).toBe(limit + 1);
 
-    expect(await readBoundedJson(request(body(limit)), limit)).toEqual({ t: "x".repeat(limit - 8) });
-    await expect(readBoundedJson(request(body(limit + 1)), limit)).rejects.toThrow(
+    expect(await readObjectRouteBody(request(body(limit)), limit)).toEqual({ t: "x".repeat(limit - 8) });
+    await expect(readObjectRouteBody(request(body(limit + 1)), limit)).rejects.toThrow(
       "this request body is larger than 64 bytes",
     );
   });
 
   test("an EMPTY JSON object is returned rather than refused, which the default read does not do", async () => {
-    // The divergence between the two body reads on one handler, pinned on this side. `readBoundedJson`
+    // The divergence between the two body reads on one handler, pinned on this side. `readObjectRouteBody`
     // has three conditions and "no named fields" is not one of them: `{}` parsed, and it is a JSON
     // object, so it is answered and `resolveConnection` is what refuses it. `readDefaultBody` refuses
     // `{}` itself with `Empty request body`. The handler-level half of this pair, both answers
     // measured end to end through `handleObjectRequest`, is `tests/api/db-objects.test.ts`, under
     // `describe("the body read the handler actually performs")`.
-    expect(await readBoundedJson(request("{}"), 1024)).toEqual({});
+    expect(await readObjectRouteBody(request("{}"), 1024)).toEqual({});
   });
 
   test("a body that is not a JSON OBJECT is refused rather than reaching a provider", async () => {
-    await expect(readBoundedJson(request("[1,2,3]"), 1024)).rejects.toThrow("this request body is not valid JSON");
-    await expect(readBoundedJson(request("null"), 1024)).rejects.toThrow("this request body is not valid JSON");
+    await expect(readObjectRouteBody(request("[1,2,3]"), 1024)).rejects.toThrow("this request body is not valid JSON");
+    await expect(readObjectRouteBody(request("null"), 1024)).rejects.toThrow("this request body is not valid JSON");
   });
 });
 
@@ -215,7 +224,7 @@ describe("the wire body one refusal renders as", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "x".repeat(2048) }),
     });
-    const raised = await readBoundedJson(request, 1024).then(
+    const raised = await readObjectRouteBody(request, 1024).then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -231,7 +240,7 @@ describe("the wire body one refusal renders as", () => {
         headers: { "content-type": "application/json" },
         body,
       });
-      const raised = await readBoundedJson(request, 1024).then(
+      const raised = await readObjectRouteBody(request, 1024).then(
         () => undefined,
         (error: unknown) => error,
       );

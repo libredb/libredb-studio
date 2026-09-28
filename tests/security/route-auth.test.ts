@@ -250,6 +250,9 @@ const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "auth/login": "authenticates the credential itself; a session cannot be required before one exists",
   "auth/totp":
     "enrols a TOTP secret on the caller's own stored account; the storage backend is not a user database or LLM provider",
+  "auth/passkey":
+    "manages passkeys on the caller's own stored account (list, register, rename, remove); the storage backend is not a user database or LLM provider",
+  "auth/passkey/sign-in": "authenticates a passkey assertion itself; a session cannot be required before one exists",
   "auth/logout": "clears the session cookie unconditionally; touches no provider either way",
   "auth/me": "reads the caller's own session claims only (GET, no POST export)",
   "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
@@ -429,9 +432,12 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/agent/run-service": `the run lifecycle service (pause/unpause/cancel/status), and it ${PROVIDER_NAMING_HELPER} (@/lib/db/operations/execution) - but only for releaseExecutionRun, which releases the run's in-process budget and artifacts, never a database or model`,
     "@/lib/api/account-response": "maps account-registry failures to HTTP responses; opens nothing",
     "@/lib/api/agent-run-access": "resolves a run id to its ledger behind guardRoute; reads no provider",
+    "@/lib/api/bounded-json": "reads a request body up to a byte limit; opens nothing",
     "@/lib/api/client-address": "parses the forwarded-for chain for the audit record",
     "@/lib/api/liveness": "builds the fixed liveness body; imports nothing and touches nothing",
     "@/lib/api/errors": `maps a thrown error to a response and ${PROVIDER_NAMING_HELPER} (@/lib/db/errors, @/lib/llm/types) for the error CLASSES alone - nearly every route imports it, and treating it as an entry point would fire on all fifteen`,
+    "@/lib/api/login-budget":
+      "the login failure budgets shared by every route that checks a password, a code or a passkey",
     "@/lib/api/rate-limit": "the in-process token buckets",
     "@/lib/api/require-session": "guardRoute itself",
     "@/lib/audit": "the in-process audit ring buffer",
@@ -439,8 +445,14 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/auth-compare": "constant-time credential comparison",
     "@/lib/auth-errors": "the auth failure taxonomy",
     "@/lib/config/base-path": "prefixes redirect URLs and cookie paths; these routes use no fetch or provider",
+    "@/lib/is-record": "a plain-object type guard; data only",
     "@/lib/local-accounts":
       "the local account registry on the app's storage backend; opens no user database or LLM provider",
+    "@/lib/passkey/management":
+      "passkey registration and management on the caller's own stored account in the app's storage backend; no user database or LLM provider",
+    "@/lib/passkey/policy": "passkey limits and constants; data only",
+    "@/lib/passkey/sign-in": "passkey sign-in against the app's own account store; no user database or LLM provider",
+    "@/lib/passkey/webauthn": "WebAuthn verification through @simplewebauthn/server; computation only",
     "@/lib/password-hash": "scrypt for stored account passwords; no provider",
     "@/lib/logger": "structured logging",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",

@@ -9,10 +9,11 @@ import {
   INVENTORY_PAIR_LIMIT,
   ObjectRouteError,
   handleObjectRequest,
-  readBoundedJson,
+  readObjectRouteBody,
   type ObjectRequestContext,
 } from "@/lib/api/object-route";
 import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { EDIT_BODY_BYTE_LIMIT } from "@/lib/db/object-edit";
 // The CLIENT's shape check, imported into the route's own suite on purpose: the route carries a
 // refusal sentence through untouched and the client refuses that document, and one test pinning
 // both ends is the only thing that keeps the pair from drifting into a contradiction (#789).
@@ -2185,12 +2186,12 @@ describe("the body read the handler actually performs", () => {
   });
 
   test("the two reads DIVERGE on an empty JSON object, and the divergence is pinned here", async () => {
-    // `readDefaultBody` refuses `{}` itself; `readBoundedJson` RETURNS it and `resolveConnection` is
+    // `readDefaultBody` refuses `{}` itself; `readObjectRouteBody` RETURNS it and `resolveConnection` is
     // what then refuses. Both answers are 400 and both sentences are true of the body, but they are
     // different sentences on one handler, so the pair is asserted rather than left for a later reader
     // to discover from a bug report.
     const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }), {
-      readBody: (req) => readBoundedJson(req, 1024),
+      readBody: (req) => readObjectRouteBody(req, 1024),
     });
 
     expect(response.status).toBe(400);
@@ -2199,16 +2200,16 @@ describe("the body read the handler actually performs", () => {
     });
   });
 
-  test("readBoundedJson's 413 reaches the wire THROUGH the handler, sentence and status", async () => {
+  test("readObjectRouteBody's 413 reaches the wire THROUGH the handler, sentence and status", async () => {
     // The edit routes' exact call shape, with a small limit standing in for EDIT_BODY_BYTE_LIMIT so
-    // the body is a test-sized one. Before this, `readBoundedJson` had never once been reached
+    // the body is a test-sized one. Before this, `readObjectRouteBody` had never once been reached
     // through `handleObjectRequest`, so nothing proved its `ObjectRouteError` was rendered by the
     // catch rather than escaping as a 500.
     const response = await handleObjectRequest(
       post({ text: "x".repeat(2048) }),
       probeRoute,
       async () => ({ ok: true }),
-      { readBody: (req) => readBoundedJson(req, 1024) },
+      { readBody: (req) => readObjectRouteBody(req, 1024) },
     );
 
     expect(response.status).toBe(413);
@@ -2229,6 +2230,70 @@ describe("the body read the handler actually performs", () => {
       error: "that plan is not one this server will run",
       code: "EDIT_PLAN_INVALID",
     });
+  });
+});
+
+/**
+ * The two refusals the edit routes' body read took from the shared reader in
+ * `src/lib/api/bounded-json.ts`, measured through the real route handlers. Before that reader, a
+ * byte that is not UTF-8 was decoded to U+FFFD and parsed, and a declared Content-Length over the
+ * bound was read before it was refused.
+ */
+describe("the edit routes' body read", () => {
+  const editRoutes = ["edit-plan", "edit-apply"] as const;
+
+  test("a body that is not valid UTF-8 answers 400 with the not-valid-JSON sentence", async () => {
+    const prefix = new TextEncoder().encode('{"connectionId":"seed-1","sql":"');
+    const bytes = new Uint8Array([...prefix, 0xff, 0x22, 0x7d]);
+    for (const name of editRoutes) {
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      const response = await objectRoutes[name].POST(
+        new Request(`http://localhost:3000/api/db/objects/${name}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: bytes,
+        }) as never,
+      );
+      expect(response.status).toBe(400);
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+        error: "this request body is not valid JSON",
+      });
+    }
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
+  });
+
+  test("a declared Content-Length over the bound answers 413 before the body is read", async () => {
+    for (const name of editRoutes) {
+      let pulls = 0;
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls += 1;
+            controller.enqueue(new TextEncoder().encode('{"connectionId":"seed-1"}'));
+            controller.close();
+          },
+        },
+        // No read-ahead: a pull happens only when the reader asks, so a zero count proves no read.
+        { highWaterMark: 0 },
+      );
+      const request = new Request(`http://localhost:3000/api/db/objects/${name}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(EDIT_BODY_BYTE_LIMIT + 1) },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      const response = await objectRoutes[name].POST(request as never);
+      expect(response.status).toBe(413);
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+        error: `this request body is larger than ${EDIT_BODY_BYTE_LIMIT} bytes`,
+      });
+      expect(pulls).toBe(0);
+      expect(request.bodyUsed).toBe(false);
+    }
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
   });
 });
 

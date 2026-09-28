@@ -163,6 +163,7 @@ describe("AuditTab", () => {
       details: 'completed "safely"',
       ip: "192.0.2.1",
       reason: "origin_mismatch",
+      passkey: "p-1",
       bucket: "login_client",
       correlationId: "op-1",
     };
@@ -193,7 +194,7 @@ describe("AuditTab", () => {
     } else {
       expect(mime).toBe("text/csv");
       expect(content).toBe(
-        'Timestamp,Type,Action,Target,Connection,User,Result,Duration (ms),Details,IP,Reason,Bucket,Correlation ID,ID\n2026-09-09T10:00:00.000Z,maintenance,VACUUM,"users,""archive""\n2026","团队,DB","\'=admin",success,0,"completed ""safely""",192.0.2.1,origin_mismatch,login_client,op-1,audit-export',
+        'Timestamp,Type,Action,Target,Connection,User,Result,Duration (ms),Details,IP,Reason,Passkey,Bucket,Correlation ID,ID\n2026-09-09T10:00:00.000Z,maintenance,VACUUM,"users,""archive""\n2026","团队,DB","\'=admin",success,0,"completed ""safely""",192.0.2.1,origin_mismatch,p-1,login_client,op-1,audit-export',
       );
     }
   });
@@ -388,6 +389,58 @@ describe("AuditTab", () => {
       expect(queryByText("VACUUM")).not.toBeNull();
       expect(queryByText("KILL") === null).toBe(true);
     });
+  });
+
+  test("a row shows the event's reason and passkey id, and the search matches them", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": {
+        json: {
+          events: [
+            {
+              id: "pk1",
+              timestamp: new Date().toISOString(),
+              type: "login_failure",
+              action: "login",
+              target: "POST /api/auth/passkey/sign-in",
+              user: "a@b.c",
+              result: "failure",
+              reason: "passkey_counter",
+              passkey: "p-1",
+            },
+            {
+              id: "q1",
+              timestamp: new Date().toISOString(),
+              type: "query_execution",
+              action: "SELECT",
+              target: "users",
+              connectionName: "TestDB",
+              user: "admin",
+              result: "success",
+            },
+          ],
+        },
+      },
+    });
+    const view = render(<AuditTab />);
+    await waitFor(() => expect(view.queryByText("SELECT")).not.toBeNull());
+
+    // Only the passkey event carries a reason line; the query event renders none.
+    const reasonLines = view.getAllByTestId("audit-event-reason");
+    expect(reasonLines.length).toBe(1);
+    expect(reasonLines[0].textContent).toContain("passkey_counter");
+    expect(reasonLines[0].textContent).toContain("passkey p-1");
+
+    const search = view.getByPlaceholderText("Search...");
+    const onlyThePasskeyRow = () => {
+      expect(view.queryByText("login")).not.toBeNull();
+      expect(view.queryByText("SELECT") === null).toBe(true);
+    };
+    fireEvent.change(search, { target: { value: "passkey_counter" } });
+    await waitFor(onlyThePasskeyRow);
+    fireEvent.change(search, { target: { value: "" } });
+    await waitFor(() => expect(view.queryByText("SELECT")).not.toBeNull());
+    fireEvent.change(search, { target: { value: "p-1" } });
+    await waitFor(onlyThePasskeyRow);
   });
 
   test("type filter dropdown present", async () => {

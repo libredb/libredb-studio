@@ -5,13 +5,8 @@ import { needsRehash, placeholderPasswordHash, verifyPassword } from "@/lib/pass
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { clientAddress } from "@/lib/api/client-address";
-import {
-  consumeRateLimit,
-  peekRateLimit,
-  RateLimitError,
-  resetRateLimit,
-  type RateLimitBucket,
-} from "@/lib/api/rate-limit";
+import { enforceLoginLimit } from "@/lib/api/login-budget";
+import { consumeRateLimit, resetRateLimit } from "@/lib/api/rate-limit";
 import { hmacHex, secretsMatch } from "@/lib/auth-compare";
 import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH, type AuditReason } from "@/lib/audit";
 import { logger } from "@/lib/logger";
@@ -32,39 +27,6 @@ const DUMMY_PASSWORD = "libredb-dummy-password-never-a-credential";
 const MFA_REQUIRED_MESSAGE = "Enter the 6-digit code from your authenticator app";
 const MFA_INVALID_MESSAGE = "Invalid authentication code";
 
-type LoginBucket = Extract<RateLimitBucket, "login_client" | "login_account">;
-
-/**
- * Peek, not consume: a legitimate user who logs in repeatedly must not throttle themselves, so
- * only FAILURES spend budget. The trip is audited once per window, on the transition. The bucket
- * is recorded on the event so an operator can tell a broad address flood (login_client) apart
- * from a targeted attack on one account (login_account).
- */
-function enforceLoginLimit(bucket: LoginBucket, key: string, actor: string, ip: string): void {
-  const decision = peekRateLimit(bucket, key);
-  if (decision.allowed) return;
-
-  if (decision.tripped) {
-    // Isolated for the same reason as the two emits in POST below: the 429 is already decided
-    // (the throw below fires regardless), and a broken audit sink must not turn it into a 500.
-    try {
-      emitAuditEvent({
-        type: "rate_limit_exceeded",
-        action: "throttled",
-        target: ROUTE,
-        user: actor,
-        result: "failure",
-        reason: "rate_limited",
-        ip,
-        bucket,
-      });
-    } catch (auditError) {
-      logger.error("Failed to record rate_limit_exceeded audit event", auditError, { route: ROUTE });
-    }
-  }
-  throw new RateLimitError(decision.retryAfterSeconds);
-}
-
 export async function POST(request: NextRequest) {
   const ip = clientAddress(request);
   const clientKey = ip;
@@ -74,7 +36,7 @@ export async function POST(request: NextRequest) {
     // body to compute. Doing this first means an address that already tripped the bucket is
     // refused before this route ever attempts to parse anything - including a malformed body,
     // which the catch below cannot reach for the same reason it cannot be enforced afterwards.
-    enforceLoginLimit("login_client", clientKey, "anonymous", ip);
+    enforceLoginLimit("login_client", clientKey, "anonymous", ip, ROUTE);
 
     let email: unknown;
     let password: unknown;
@@ -124,7 +86,7 @@ export async function POST(request: NextRequest) {
     // oracle. This is the coupling between control 1.2 and control 1.5.
     const accountKey = hmacHex(submittedEmail.toLowerCase());
 
-    enforceLoginLimit("login_account", accountKey, actor, ip);
+    enforceLoginLimit("login_account", accountKey, actor, ip, ROUTE);
 
     const users = await resolveLocalAuthUsers();
     // Store mode hashes. Env mode still does exactly one secretsMatch, which is what the

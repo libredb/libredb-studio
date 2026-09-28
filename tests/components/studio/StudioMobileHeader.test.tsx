@@ -433,9 +433,9 @@ describe("StudioMobileHeader", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/settings/mcp");
   });
 
-  test("offers every signed-in user the authenticator screen", () => {
+  test("offers every signed-in user the sign-in security screen", () => {
     const { getByText } = render(<StudioMobileHeader {...defaults} isAdmin={false} />);
-    fireEvent.click(getByText("Authenticator"));
+    fireEvent.click(getByText("Sign-in security"));
     expect(mockRouterPush).toHaveBeenCalledWith("/settings/authenticator");
   });
 

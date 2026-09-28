@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { PublicAccount } from "@/lib/local-accounts";
-import { FormError, MonoEmail } from "./account-parts";
+import { FormError, MonoEmail, passkeyPhrase } from "./account-parts";
 import { TypedConfirmDialog } from "./typed-confirm-dialog";
 import { PASSWORD_MIN_LENGTH, type AccountAction, type AccountsController, type NewAccount } from "./use-accounts";
 
@@ -36,10 +37,18 @@ type ConfirmedAction = Exclude<AccountAction, "enable">;
 
 interface ConfirmCopy {
   title: string;
-  description: (email: React.ReactNode, isMe: boolean) => React.ReactNode;
+  /** Receives the account too, so a description can name what still signs in (its passkeys). */
+  description: (email: React.ReactNode, isMe: boolean, account: PublicAccount) => React.ReactNode;
   confirm: string;
   destructive: boolean;
 }
+
+// Kept whole in constants: bun's coverage maps a wrapped JSX text line in this entry as never run.
+const CLEAR_PASSKEYS_TAIL =
+  " can no longer sign in with a passkey, and every session and MCP token they hold ends. Their password and authenticator stay.";
+// An admin's change to their own account re-issues this session's cookie, so only the others end.
+const CLEAR_OWN_PASSKEYS_TAIL =
+  ") can no longer sign in with a passkey. Your other sessions and MCP tokens end; this one continues. Your password and authenticator stay.";
 
 const CONFIRM_COPY: Record<ConfirmedAction, ConfirmCopy> = {
   "make-admin": {
@@ -77,13 +86,37 @@ const CONFIRM_COPY: Record<ConfirmedAction, ConfirmCopy> = {
   },
   "clear-totp": {
     title: "Clear two-factor?",
-    description: (email) => (
-      <>
-        {email} signs in with the password alone until they set up a new authenticator. Use this when the device with
-        the app is lost.
-      </>
-    ),
+    description: (email, _isMe, account) =>
+      account.passkeys > 0 ? (
+        <>
+          {email} signs in with the password alone, or with{" "}
+          {account.passkeys === 1 ? "their passkey" : `one of their ${passkeyPhrase(account.passkeys)}`}, until they set
+          up a new authenticator. If the lost device also held a passkey, use Remove passkeys too.
+        </>
+      ) : (
+        <>
+          {email} signs in with the password alone until they set up a new authenticator. Use this when the device with
+          the app is lost.
+        </>
+      ),
     confirm: "Clear two-factor",
+    destructive: true,
+  },
+  "clear-passkeys": {
+    title: "Remove every passkey?",
+    description: (email, isMe) =>
+      isMe ? (
+        <>
+          You ({email}
+          {CLEAR_OWN_PASSKEYS_TAIL}
+        </>
+      ) : (
+        <>
+          {email}
+          {CLEAR_PASSKEYS_TAIL}
+        </>
+      ),
+    confirm: "Remove passkeys",
     destructive: true,
   },
   delete: {
@@ -193,21 +226,46 @@ function CreateAccountForm({
 
 function SetPasswordForm({
   account,
+  isMe,
   onSubmit,
   onDone,
 }: {
   account: PublicAccount;
-  onSubmit: (account: PublicAccount, password: string) => Promise<string | null>;
+  /** The admin's own row: the route re-issues their cookie, so this session continues. */
+  isMe: boolean;
+  onSubmit: (account: PublicAccount, password: string, keepPasskeys: boolean) => Promise<string | null>;
   onDone: () => void;
 }) {
   const [password, setPassword] = useState("");
+  // A password set is a recovery (docs/PASSKEYS.md, "Admin actions and recovery"), so removing the passkeys is the default.
+  const [removePasskeys, setRemovePasskeys] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const passkeys = passkeyPhrase(account.passkeys);
+
+  const verb = account.passkeys === 1 ? "is" : "are";
+  let consequence: React.ReactNode;
+  if (isMe) {
+    const ends = "Your other sessions and MCP tokens end; this one continues.";
+    consequence = `${ends} Next time you sign in with the new password.`;
+    if (account.passkeys > 0) {
+      consequence = removePasskeys
+        ? `${ends} Your ${passkeys} ${verb} removed, and next time you sign in with the new password.`
+        : `${ends} Next time you sign in with the new password or ${account.passkeys === 1 ? "your passkey" : `one of your ${passkeys}`}; keep the passkeys only when you know the account is not compromised.`;
+    }
+  } else {
+    consequence = "Every session and MCP token they hold ends, and they sign in with the new password.";
+    if (account.passkeys > 0) {
+      consequence = removePasskeys
+        ? `Every session and MCP token they hold ends, their ${passkeys} ${verb} removed, and they sign in with the new password.`
+        : `Every session and MCP token they hold ends. They sign in with the new password or ${account.passkeys === 1 ? "their passkey" : `one of their ${passkeys}`}; keep the passkeys only when you know the account is not compromised.`;
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
-    const failure = await onSubmit(account, password);
+    const failure = await onSubmit(account, password, account.passkeys > 0 && !removePasskeys);
     setBusy(false);
     if (failure) {
       setError(failure);
@@ -221,8 +279,7 @@ function SetPasswordForm({
       <DialogHeader>
         <DialogTitle className="text-fg">Set a new password</DialogTitle>
         <DialogDescription className="text-fg-muted">
-          For <MonoEmail value={account.email} />. Every session and MCP token they hold ends, and they sign in with the
-          new password.
+          For <MonoEmail value={account.email} />. {consequence}
         </DialogDescription>
       </DialogHeader>
       <Field>
@@ -238,6 +295,18 @@ function SetPasswordForm({
         />
         <FieldDescription className="text-fg-muted">At least {PASSWORD_MIN_LENGTH} characters.</FieldDescription>
       </Field>
+      {account.passkeys > 0 ? (
+        <Field orientation="horizontal">
+          <Checkbox
+            id="set-password-remove-passkeys"
+            checked={removePasskeys}
+            onCheckedChange={(checked) => setRemovePasskeys(checked === true)}
+          />
+          <FieldLabel htmlFor="set-password-remove-passkeys" className="font-normal">
+            Also remove {isMe ? "your" : "their"} {passkeys}
+          </FieldLabel>
+        </Field>
+      ) : null}
       <FormError message={error} />
       <DialogFooter>
         <Button type="button" variant="outline" className={CANCEL_BUTTON} onClick={onDone}>
@@ -308,7 +377,7 @@ export function useAccountActions(controller: AccountsController) {
         open={confirm.open}
         onOpenChange={(open) => !open && setConfirm(closed)}
         title={copy.title}
-        description={copy.description(<MonoEmail value={account.email} />, controller.isMe(account))}
+        description={copy.description(<MonoEmail value={account.email} />, controller.isMe(account), account)}
         expected={account.email}
         confirmLabel={copy.confirm}
         destructive={copy.destructive}
@@ -333,6 +402,7 @@ export function useAccountActions(controller: AccountsController) {
             <SetPasswordForm
               key={password.key}
               account={password.target}
+              isMe={controller.isMe(password.target)}
               onSubmit={controller.setPassword}
               onDone={() => setPassword(closed)}
             />

@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+
 /**
  * RFC 6238 Appendix B's seed, shared by every test that needs a known-good TOTP secret.
  *
@@ -36,3 +38,33 @@ function encodeBase32(input: string): string {
 
 /** Base32 form of the seed: what an operator pastes into ADMIN_TOTP_SECRET. 160 bits, 32 chars. */
 export const RFC6238_SECRET = encodeBase32(RFC6238_SEED_ASCII);
+
+function decodeBase32(secret: string): Buffer {
+  let accumulator = 0;
+  let bits = 0;
+  const bytes: number[] = [];
+  for (const char of secret.replace(/=+$/, "").toUpperCase()) {
+    const value = BASE32_ALPHABET.indexOf(char);
+    if (value < 0) throw new Error("secret is not base32");
+    accumulator = (accumulator << 5) | value;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((accumulator >> bits) & 0xff);
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+/**
+ * The six-digit RFC 6238 code (SHA-1, 30-second steps) for a base32 secret at `now`, `offset`
+ * steps away. Self-contained, with no import from src/, because the Playwright specs load it
+ * under Node; tests/unit/lib/totp.test.ts keeps checking the app's own decoder.
+ */
+export function totpCodeFor(secret: string, now = Date.now(), offset = 0): string {
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(now / 1000 / 30) + offset));
+  const digest = createHmac("sha1", decodeBase32(secret)).update(counter).digest();
+  const at = digest[digest.length - 1] & 0x0f;
+  return ((digest.readUInt32BE(at) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0");
+}

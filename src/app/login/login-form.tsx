@@ -1,13 +1,13 @@
 "use client";
 
 import { appFetch, withBasePath } from "@/lib/config/base-path";
-import { Suspense, useState } from "react";
+import { Suspense, useState, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, KeyRound, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
+import { ExternalLink, Fingerprint, KeyRound, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
 import { toast } from "sonner";
 import LibreDBLogo from "@/components/libredb-logo";
 import { CommunitySection } from "@/components/community-section";
@@ -16,6 +16,8 @@ import { DatabaseShowcase } from "@/components/login/database-showcase";
 import { HeroProof, HERO_CLAIMS } from "@/components/login/hero-proof";
 import { WireCompatibleLine } from "@/components/login/wire-compatible-line";
 import type { AuditReason } from "@/lib/audit";
+import type { PasskeySignInOffer } from "@/lib/passkey/api-types";
+import { passkeysUsableHere, signInWithPasskey } from "@/lib/passkey/client";
 
 /**
  * The agent half of the mobile summary. Pulled from `HERO_CLAIMS` rather than retyped, so
@@ -42,7 +44,15 @@ function oidcErrorMessage(code: string): string {
   }
 }
 
-function LoginFormInner({ authProvider }: { authProvider: string }) {
+const noSubscription = () => () => {};
+
+interface LoginFormProps {
+  authProvider: string;
+  /** The server's passkey offer, or null when passkeys are not ready for this deployment. */
+  passkey: PasskeySignInOffer | null;
+}
+
+function LoginFormInner({ authProvider, passkey }: LoginFormProps) {
   const isOIDC = authProvider === "oidc";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -54,6 +64,16 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
    */
   const [mfaRequired, setMfaRequired] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  /**
+   * The server snapshot is false, so the server render and the first client render match; the
+   * client snapshot then asks this browser, which alone knows whether it has WebAuthn and sits on
+   * the configured origin. Neither changes while the page is open, hence no subscription.
+   */
+  const passkeyShown = useSyncExternalStore(
+    noSubscription,
+    () => passkey !== null && passkeysUsableHere(passkey.origin),
+    () => false,
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
   const oidcError = searchParams.get("error");
@@ -115,6 +135,26 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       }
     } catch {
       toast.error("An error occurred. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * A failed or cancelled passkey only says so: it never submits the password form or tries any
+   * other method, so falling back stays the user's own choice.
+   */
+  const handlePasskeySignIn = async () => {
+    setIsLoading(true);
+    try {
+      const result = await signInWithPasskey();
+      if (result.ok) {
+        toast.success(`Welcome back, ${result.role}!`);
+        router.push(result.role === "admin" ? "/admin" : "/");
+        router.refresh();
+      } else if (result.message !== null) {
+        toast.error(result.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -398,6 +438,25 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                       {isLoading ? "Authenticating..." : mfaRequired ? "Verify code" : "Sign in"}
                     </Button>
                   </form>
+                  {passkeyShown && !mfaRequired && (
+                    <>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <div className="h-px flex-1 bg-border" />
+                        <span>or</span>
+                        <div className="h-px flex-1 bg-border" />
+                      </div>
+                      {/* The name must not contain "sign in": E2E tests locate the password submit by it. */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-11 gap-2"
+                        onClick={handlePasskeySignIn}
+                        disabled={isLoading}
+                      >
+                        <Fingerprint className="h-4 w-4" /> Use a passkey
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
             </CardContent>
@@ -439,10 +498,10 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   );
 }
 
-export default function LoginForm({ authProvider }: { authProvider: string }) {
+export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
   return (
     <Suspense>
-      <LoginFormInner authProvider={authProvider} />
+      <LoginFormInner authProvider={authProvider} passkey={passkey} />
     </Suspense>
   );
 }

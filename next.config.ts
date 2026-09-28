@@ -148,10 +148,11 @@ export const DOCUMENT_ONLY_HEADER_NAMES = new Set([
  * only `reportOnly` and `hsts` discriminate anything. Reducing the probe to those two leaves the
  * selected set byte-identical - `allowEval`, `monacoVsPath` and `extra` move the CSP's VALUE and
  * nothing else, and the CSP is already excluded because `reportOnly` RENAMES it, which reaches the
- * filter as an absence rather than as a difference. That is measured in
+ * filter as an absence rather than as a difference. `allowWebAuthnGet` moves only
+ * Permissions-Policy, which is document-only and never baked. That is measured in
  * tests/security/cross-origin-headers.test.ts, not left as a claim here.
  *
- * The three inert fields stay, and the same test requires this probe to be TOTAL over the declared
+ * The four inert fields stay, and the same test requires this probe to be TOTAL over the declared
  * option surface. That is the property worth having: the next option added - one that may well
  * move a non-CSP header - is probed on the day it lands instead of rotting here unnoticed, which
  * is what happened to `extra`, declared on `CspOptions` and varied by no probe field at all until
@@ -168,6 +169,8 @@ export const OPTION_PROBE: SecurityHeaderOptions = {
   hsts: false,
   monacoVsPath: "https://monaco.invalid/vs",
   extra: { "connect-src": ["https://probe.invalid"] },
+  // Listed because the probe must be total; Permissions-Policy is document-only, so it moves nothing baked.
+  allowWebAuthnGet: true,
 };
 
 /**

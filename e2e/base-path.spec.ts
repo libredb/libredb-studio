@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { type Cookie, expect, test } from "@playwright/test";
+import { addVirtualAuthenticator } from "./helpers/virtual-authenticator";
 
 const prefix = "/~/libredb";
 
@@ -103,4 +104,52 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   await page.getByRole("button", { name: "Logout", exact: true }).click();
   await expect(page).toHaveURL(`${baseURL}${prefix}/login`);
   expect((await context.cookies()).some((value) => value.name === "auth-token")).toBe(false);
+});
+
+test("a passkey registers and signs in under the base path", async ({ page, context, baseURL }) => {
+  // WebAuthn accepts plain http only on the host name localhost, so this test leaves baseURL's 127.0.0.1.
+  const origin = new URL(baseURL!);
+  origin.hostname = "localhost";
+  const studio = `${origin.origin}${prefix}`;
+  // The editor answers at the prefix with or without its trailing slash, as in the test above.
+  const editor = new RegExp(`^${origin.origin}${prefix}/?$`);
+  await addVirtualAuthenticator(page);
+
+  await page.goto(`${studio}/login`);
+  await page.locator('input[type="email"]:visible').fill("user@libredb.org");
+  await page.locator('input[type="password"]:visible').fill("test-user");
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page).toHaveURL(editor);
+  await page.getByRole("button", { name: "User menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign-in security" }).click();
+  await expect(page).toHaveURL(`${studio}/settings/authenticator`);
+
+  // Read between the options and the verify request, while the ceremony cookie exists.
+  let ceremonyCookie: Cookie | undefined;
+  await page.route(
+    (url) => url.pathname === `${prefix}/api/auth/passkey`,
+    async (route) => {
+      if (route.request().postDataJSON()?.action === "register-verify") {
+        ceremonyCookie = (await context.cookies()).find((cookie) => cookie.name === "passkey-registration");
+      }
+      await route.continue();
+    },
+  );
+  await page.getByRole("button", { name: "Add passkey" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("#passkey-add-name").fill("Base path");
+  await dialog.locator("#passkey-add-password").fill("test-user");
+  await dialog.getByRole("button", { name: "Create passkey" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Base path", { exact: true })).toBeVisible();
+  expect(ceremonyCookie).toMatchObject({ path: `${prefix}/api/auth/passkey`, httpOnly: true, sameSite: "Strict" });
+
+  const logoutStatus = await page.evaluate(
+    async (path) => (await fetch(`${path}/api/auth/logout`, { method: "POST" })).status,
+    prefix,
+  );
+  expect(logoutStatus).toBe(200);
+  await page.goto(`${studio}/login`);
+  await page.getByRole("button", { name: "Use a passkey" }).click();
+  await expect(page).toHaveURL(editor);
 });

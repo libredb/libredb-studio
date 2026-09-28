@@ -165,13 +165,14 @@ describe("#512: every header securityHeaders() sends is classified, and the clas
     expect(declared.length).toBeGreaterThanOrEqual(5);
   });
 
-  test("only two of the probe's five fields discriminate anything today, and that is measured", () => {
+  test("only two of the probe's six fields discriminate anything today, and that is measured", () => {
     // The honest counterweight to the test above, and the reason next.config.ts no longer claims
     // that measuring the probe is what makes the rule enforceable. Reducing OPTION_PROBE to
     // { reportOnly, hsts } selects the identical set: `allowEval`, `monacoVsPath` and `extra` move
     // the CSP's VALUE and nothing else, and the CSP is already excluded because `reportOnly`
-    // RENAMES it, which reaches the filter as an absence. Pinning the inertness rather than
-    // asserting it in prose means the day one of those three - or a newly added option - starts
+    // RENAMES it, which reaches the filter as an absence; `allowWebAuthnGet` moves only the
+    // document-only Permissions-Policy. Pinning the inertness rather than
+    // asserting it in prose means the day one of those four - or a newly added option - starts
     // moving a non-CSP header, this goes red and that comment gets re-read instead of trusted.
     const full = selectStaticAssetHeaders(securityHeaders(), securityHeaders(OPTION_PROBE));
     const reduced = selectStaticAssetHeaders(securityHeaders(), securityHeaders({ reportOnly: true, hsts: false }));
