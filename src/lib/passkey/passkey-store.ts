@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import { getDataDir } from "@/lib/data-dir";
 
 export const PASSKEY_STORE_FILE_NAME = "auth-passkeys.json";
@@ -25,6 +26,7 @@ interface PasskeyStoreFile {
   credentials: StoredPasskey[];
   registrationChallenges: Record<string, StoredChallenge>;
   authenticationChallenges: Record<string, StoredChallenge>;
+  userIds: Record<string, string>;
 }
 
 const EMPTY_STORE: PasskeyStoreFile = {
@@ -32,6 +34,7 @@ const EMPTY_STORE: PasskeyStoreFile = {
   credentials: [],
   registrationChallenges: {},
   authenticationChallenges: {},
+  userIds: {},
 };
 
 export function resolvePasskeyStorePath(): string {
@@ -62,7 +65,10 @@ function readStore(): PasskeyStoreFile {
       Array.isArray(store.registrationChallenges) ||
       typeof store.authenticationChallenges !== "object" ||
       store.authenticationChallenges === null ||
-      Array.isArray(store.authenticationChallenges)
+      Array.isArray(store.authenticationChallenges) ||
+      typeof store.userIds !== "object" ||
+      store.userIds === null ||
+      Array.isArray(store.userIds)
     ) {
       throw new Error("passkey store has an invalid shape");
     }
@@ -72,6 +78,7 @@ function readStore(): PasskeyStoreFile {
       credentials: store.credentials as StoredPasskey[],
       registrationChallenges: store.registrationChallenges as Record<string, StoredChallenge>,
       authenticationChallenges: store.authenticationChallenges as Record<string, StoredChallenge>,
+      userIds: store.userIds as Record<string, string>,
     };
   } catch {
     throw new Error(`Unable to read passkey store at ${filePath}`);
@@ -95,6 +102,7 @@ function writeStore(store: PasskeyStoreFile): void {
   } catch {
     try {
       fs.copyFileSync(tempPath, filePath);
+
       try {
         fs.chmodSync(filePath, 0o600);
       } catch {
@@ -104,6 +112,29 @@ function writeStore(store: PasskeyStoreFile): void {
       fs.rmSync(tempPath, { force: true });
     }
   }
+}
+
+/**
+ * Return the stable opaque WebAuthn user ID for a LibreDB account.
+ *
+ * The LibreDB account identifier (for example, an email address) is deliberately
+ * not used as the WebAuthn user ID because the WebAuthn identifier should be
+ * opaque and stable.
+ */
+export function getOrCreateWebAuthnUserId(userId: string): string {
+  const store = readStore();
+  const existing = store.userIds[userId];
+
+  if (existing) {
+    return existing;
+  }
+
+  const webAuthnUserId = randomUUID();
+
+  store.userIds[userId] = webAuthnUserId;
+  writeStore(store);
+
+  return webAuthnUserId;
 }
 
 export function getPasskeysForUser(userId: string): StoredPasskey[] {
@@ -158,7 +189,9 @@ export function consumeRegistrationChallenge(userId: string): string | null {
   const store = readStore();
   const entry = store.registrationChallenges[userId];
 
-  if (!entry) return null;
+  if (!entry) {
+    return null;
+  }
 
   delete store.registrationChallenges[userId];
   writeStore(store);
@@ -189,7 +222,9 @@ export function consumeAuthenticationChallenge(sessionId: string): string | null
   const store = readStore();
   const entry = store.authenticationChallenges[sessionId];
 
-  if (!entry) return null;
+  if (!entry) {
+    return null;
+  }
 
   delete store.authenticationChallenges[sessionId];
   writeStore(store);

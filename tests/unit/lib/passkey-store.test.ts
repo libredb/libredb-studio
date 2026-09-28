@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   consumeAuthenticationChallenge,
   consumeRegistrationChallenge,
+  getOrCreateWebAuthnUserId,
   getPasskeyById,
   getPasskeysForUser,
   saveAuthenticationChallenge,
@@ -77,6 +78,23 @@ describe("passkey store", () => {
     expect(() => updatePasskeyCounter("missing", 1)).toThrow("Passkey not found");
   });
 
+  test("creates a stable opaque WebAuthn user ID", () => {
+    const first = getOrCreateWebAuthnUserId("alice@example.com");
+    const second = getOrCreateWebAuthnUserId("alice@example.com");
+
+    expect(first).toBe(second);
+    expect(first).not.toBe("alice@example.com");
+  });
+
+  test("creates different WebAuthn user IDs for different users", () => {
+    const alice = getOrCreateWebAuthnUserId("alice@example.com");
+    const bob = getOrCreateWebAuthnUserId("bob@example.com");
+
+    expect(alice).not.toBe(bob);
+    expect(alice).not.toBe("alice@example.com");
+    expect(bob).not.toBe("bob@example.com");
+  });
+
   test("registration challenges are one-time", () => {
     saveRegistrationChallenge("alice@example.com", "registration-123", Date.now() + 60_000);
 
@@ -91,15 +109,23 @@ describe("passkey store", () => {
   });
 
   test("authentication challenges are one-time", () => {
-    saveAuthenticationChallenge("authentication-123", Date.now() + 60_000);
+    saveAuthenticationChallenge(
+      "session-123",
+      "authentication-123",
+      Date.now() + 60_000,
+    );
 
-    expect(consumeAuthenticationChallenge("authentication-123")).toBe("authentication-123");
-    expect(consumeAuthenticationChallenge("authentication-123")).toBeNull();
+    expect(consumeAuthenticationChallenge("session-123")).toBe("authentication-123");
+    expect(consumeAuthenticationChallenge("session-123")).toBeNull();
   });
 
   test("expired authentication challenges are rejected", () => {
-    saveAuthenticationChallenge("expired-auth", Date.now() - 1);
+    saveAuthenticationChallenge(
+      "session-expired",
+      "expired-auth",
+      Date.now() - 1,
+    );
 
-    expect(consumeAuthenticationChallenge("expired-auth")).toBeNull();
+    expect(consumeAuthenticationChallenge("session-expired")).toBeNull();
   });
 });

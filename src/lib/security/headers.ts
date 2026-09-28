@@ -88,7 +88,6 @@ const DENIED_FEATURES = [
   "microphone",
   "midi",
   "payment",
-  "publickey-credentials-get",
   "screen-wake-lock",
   "serial",
   "usb",

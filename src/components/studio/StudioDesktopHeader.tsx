@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { PasskeyRegistration } from "@/components/auth/PasskeyRegistration";
 
 interface StudioDesktopHeaderProps {
   activeConnection: DatabaseConnection | null;
@@ -38,18 +39,28 @@ export function StudioDesktopHeader({
         <div className="p-1.5 rounded-lg bg-brand-tint/10 border border-brand-tint/20">
           <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-brand" />
         </div>
+
         <div>
           <h1 className="text-xs font-medium text-fg truncate max-w-[120px]">
             {activeConnection ? activeConnection.name : "Quick Access"}
           </h1>
+
           {activeConnection && (
             <p className="text-xs text-fg-muted font-mono uppercase leading-none mt-0.5">
               {activeConnection.type}
-              {activeConnection.environment && activeConnection.environment !== "other" && (
-                <span className="ml-1 font-medium" style={{ color: activeConnection.color || "#22c55e" }}>
-                  • {activeConnection.environment}
-                </span>
-              )}
+
+              {activeConnection.environment &&
+                activeConnection.environment !== "other" && (
+                  <span
+                    className="ml-1 font-medium"
+                    style={{
+                      color: activeConnection.color || "#22c55e",
+                    }}
+                  >
+                    • {activeConnection.environment}
+                  </span>
+                )}
+
               {!activeConnection.environment && (
                 <span>
                   {" "}
@@ -70,13 +81,19 @@ export function StudioDesktopHeader({
             <div
               className={cn(
                 "w-2 h-2 rounded-full",
-                connectionPulse === "healthy" && "bg-success-tint animate-pulse",
+                connectionPulse === "healthy" &&
+                  "bg-success-tint animate-pulse",
                 connectionPulse === "degraded" && "bg-warning-tint",
                 connectionPulse === "error" && "bg-danger-tint",
               )}
             />
+
             <span className="text-xs font-medium text-fg-muted">
-              {connectionPulse === "healthy" ? "Online" : connectionPulse === "degraded" ? "Slow" : "Error"}
+              {connectionPulse === "healthy"
+                ? "Online"
+                : connectionPulse === "degraded"
+                  ? "Slow"
+                  : "Error"}
             </span>
           </div>
         )}
@@ -87,36 +104,79 @@ export function StudioDesktopHeader({
           className="h-7 px-3 text-xs font-medium gap-2 text-fg-muted hover:text-hue-purple hover:bg-hue-purple-tint/10"
           onClick={() => router.push("/monitoring")}
         >
-          <Gauge strokeWidth={1.5} className="w-3 h-3" /> Monitoring
+          <Gauge strokeWidth={1.5} className="w-3 h-3" />
+          Monitoring
         </Button>
 
         {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 gap-2 hover:bg-fill px-2">
-                <User strokeWidth={1.5} className="w-3 h-3 text-brand" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-2 hover:bg-fill px-2"
+              >
+                <User
+                  strokeWidth={1.5}
+                  className="w-3 h-3 text-brand"
+                />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 bg-raised border-hairline-strong text-fg-secondary">
+
+            <DropdownMenuContent
+              align="end"
+              className="w-56 bg-raised border-hairline-strong text-fg-secondary"
+            >
               {isAdmin && (
-                <DropdownMenuItem onClick={() => router.push("/admin")} className="cursor-pointer">
-                  <Settings strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Admin Dashboard
+                <DropdownMenuItem
+                  onClick={() => router.push("/admin")}
+                  className="cursor-pointer"
+                >
+                  <Settings
+                    strokeWidth={1.5}
+                    className="w-3.5 h-3.5 mr-2"
+                  />
+                  Admin Dashboard
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
-                <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
+
+              <DropdownMenuItem
+                onClick={() => router.push("/monitoring")}
+                className="cursor-pointer"
+              >
+                <Gauge
+                  strokeWidth={1.5}
+                  className="w-3.5 h-3.5 mr-2"
+                />
+                Monitoring
               </DropdownMenuItem>
+
+              <PasskeyRegistration />
+
               <div className="border-t border-hairline my-1" />
-              <DropdownMenuItem onClick={onLogout} className="text-danger cursor-pointer">
-                <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Logout
+
+              <DropdownMenuItem
+                onClick={onLogout}
+                className="text-danger cursor-pointer"
+              >
+                <LogOut
+                  strokeWidth={1.5}
+                  className="w-3.5 h-3.5 mr-2"
+                />
+                Logout
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+
         {/* Renders nothing when a host (platform) owns the theme — see ThemeToggle. */}
         <ThemeToggle className="mr-1" />
+
         <GitHubRepoLink className="text-fg-tertiary hover:text-fg-bright mr-2" />
-        <span className="text-xs text-fg-muted font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
+
+        <span className="text-xs text-fg-muted font-mono">
+          v{process.env.NEXT_PUBLIC_APP_VERSION}
+        </span>
       </div>
     </header>
   );

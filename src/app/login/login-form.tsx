@@ -1,5 +1,6 @@
 "use client";
 
+import { startAuthentication } from "@simplewebauthn/browser";
 import { appFetch, withBasePath } from "@/lib/config/base-path";
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -34,6 +35,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
    */
   const [mfaRequired, setMfaRequired] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const oidcError = searchParams.get("error");
@@ -99,7 +101,67 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       setIsLoading(false);
     }
   };
+  const handlePasskeyLogin = async () => {
+  setIsPasskeyLoading(true);
 
+  try {
+    const optionsResponse = await appFetch(
+      "/api/auth/passkey/authenticate/options"
+    );
+    const optionsData = await optionsResponse.json();
+
+    if (!optionsResponse.ok) {
+      throw new Error(
+        optionsData.error || "Unable to start passkey authentication"
+      );
+    }
+
+    const { sessionId, options: authenticationOptions } = optionsData;
+
+    const authenticationResponse = await startAuthentication({
+      optionsJSON: authenticationOptions,
+    });
+
+    const verifyResponse = await appFetch(
+      "/api/auth/passkey/authenticate/verify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          response: authenticationResponse,
+        }),
+      }
+    );
+
+    const verifyData = await verifyResponse.json();
+
+    if (!verifyResponse.ok || !verifyData.verified) {
+      throw new Error(
+        verifyData.error || "Passkey authentication failed"
+      );
+    }
+
+    toast.success(`Welcome back, ${verifyData.role}!`);
+    router.push(verifyData.role === "admin" ? "/admin" : "/");
+    router.refresh();
+  } catch (error) {
+    if (error instanceof Error) {
+      if (
+        error.name === "NotAllowedError" ||
+        error.name === "AbortError"
+      ) {
+        toast.error("Passkey authentication was cancelled");
+      } else {
+        toast.error(error.message || "Passkey authentication failed");
+      }
+    } else {
+      toast.error("Passkey authentication failed");
+    }
+  } finally {
+    setIsPasskeyLoading(false);
+  }
+};
   return (
     <div className="flex min-h-[100dvh] bg-background">
       {/*
@@ -371,11 +433,40 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                     <Button
                       className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all"
                       type="submit"
-                      disabled={isLoading}
+                      disabled={isLoading || isPasskeyLoading}
                     >
-                      {isLoading ? "Authenticating..." : mfaRequired ? "Verify code" : "Sign In"}
+                      {isLoading
+                        ? "Authenticating..."
+                        : mfaRequired
+                          ? "Verify code"
+                          : "Sign In"}
                     </Button>
                   </form>
+
+                  {!mfaRequired && (
+                    <>
+                      <div className="relative flex items-center py-1">
+                        <div className="flex-grow border-t border-border" />
+                        <span className="px-3 text-xs text-muted-foreground">
+                          or
+                        </span>
+                        <div className="flex-grow border-t border-border" />
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-11 text-base font-medium active:scale-[0.98] transition-all gap-2"
+                        onClick={handlePasskeyLogin}
+                        disabled={isLoading || isPasskeyLoading}
+                      >
+                        <KeyRound className="h-4 w-4" />
+                        {isPasskeyLoading
+                          ? "Authenticating with passkey..."
+                          : "Sign in with Passkey"}
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
             </CardContent>
