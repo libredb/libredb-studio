@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, mock, spyOn } from "bun:test";
 import {
   callerBoundTruncationReason,
   isSourcePartUnavailable,
@@ -72,8 +72,18 @@ const DB_TYPE_RAW: oracledb.DbType = { num: 23, name: "DB_TYPE_RAW" };
 // The two INTERVAL identities, as the driver numbers them (measured: 2016 and 2015).
 const DB_TYPE_INTERVAL_YM: oracledb.DbType = { num: 2016, name: "DB_TYPE_INTERVAL_YM" };
 const DB_TYPE_INTERVAL_DS: oracledb.DbType = { num: 2015, name: "DB_TYPE_INTERVAL_DS" };
-const STRING = 2001;
-const BUFFER = 2005;
+// The two naive wall-clock identities and their zoned siblings, as the driver numbers them
+// (measured in node_modules/oracledb/lib/types.js: DATE 2011, TIMESTAMP 2012, TIMESTAMP_TZ
+// 2013, TIMESTAMP_LTZ 2014).
+const DB_TYPE_DATE: oracledb.DbType = { num: 2011, name: "DB_TYPE_DATE" };
+const DB_TYPE_TIMESTAMP: oracledb.DbType = { num: 2012, name: "DB_TYPE_TIMESTAMP" };
+const DB_TYPE_TIMESTAMP_TZ: oracledb.DbType = { num: 2013, name: "DB_TYPE_TIMESTAMP_TZ" };
+const DB_TYPE_TIMESTAMP_LTZ: oracledb.DbType = { num: 2014, name: "DB_TYPE_TIMESTAMP_LTZ" };
+// `STRING` and `BUFFER` are `DbType` identities in the driver - `DB_TYPE_VARCHAR` and
+// `DB_TYPE_RAW` themselves, verified against 6.10.0 on 2026-09-28 - and the mock keeps
+// that shape so a handler's answer is compared as the driver compares it.
+const STRING: oracledb.DbType = DB_TYPE_VARCHAR;
+const BUFFER: oracledb.DbType = DB_TYPE_RAW;
 
 mock.module("oracledb", () => {
   const oracledbMock = {
@@ -85,6 +95,10 @@ mock.module("oracledb", () => {
     DB_TYPE_RAW,
     DB_TYPE_INTERVAL_YM,
     DB_TYPE_INTERVAL_DS,
+    DB_TYPE_DATE,
+    DB_TYPE_TIMESTAMP,
+    DB_TYPE_TIMESTAMP_TZ,
+    DB_TYPE_TIMESTAMP_LTZ,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -942,6 +956,88 @@ describe("OracleProvider", () => {
         const result = await provider.query("SELECT c, b FROM r6_lob WHERE id = 2");
         expect((result.rows[0] as Record<string, unknown>).C).toBeNull();
         expect(asBytes((result.rows[0] as Record<string, unknown>).B)).toBeUndefined();
+      });
+    });
+
+    // Naive DATE and TIMESTAMP columns. node-oracledb (Thin) builds a JS `Date` for these
+    // two types by reading the stored wall clock in the PROCESS's zone, and every row path
+    // serialised that `Date` as UTC text - so a `DATE '2026-09-01'` read under
+    // TZ=Europe/Istanbul answered 2026-08-31T21:00:00.000Z, the previous day, and the SQL
+    // INSERT export replayed it as 2026-08-31 (#1131). The handler keeps the column's own
+    // fetch type and prints the wall clock back out of the `Date`; `TIMESTAMP WITH TIME
+    // ZONE` and `WITH LOCAL TIME ZONE` name instants and keep the driver's `Date`.
+    describe("naive DATE and TIMESTAMP columns", () => {
+      function handler(): (meta: { dbType: unknown; name: string }) => unknown {
+        return lastExecuteOpts.fetchTypeHandler as (meta: { dbType: unknown; name: string }) => unknown;
+      }
+
+      type Answer = { type?: unknown; converter: (value: unknown) => unknown };
+
+      const converterOf = (dbType: unknown): ((value: unknown) => unknown) =>
+        (handler()({ dbType, name: "D" }) as Answer).converter;
+
+      test("a DATE keeps its own fetch type and prints the wall clock", async () => {
+        await provider.connect();
+        await provider.query("SELECT d FROM r7_dates");
+
+        const answer = handler()({ dbType: DB_TYPE_DATE, name: "D" }) as Answer;
+        expect(answer.type).toBe(DB_TYPE_DATE);
+        expect(answer.converter(new Date(2026, 8, 1, 0, 0, 0))).toBe("2026-09-01 00:00:00");
+      });
+
+      test("a TIMESTAMP prints the wall clock, with the fraction when it has one", async () => {
+        await provider.connect();
+        await provider.query("SELECT ts FROM r7_dates");
+
+        const answer = handler()({ dbType: DB_TYPE_TIMESTAMP, name: "TS" }) as Answer;
+        expect(answer.type).toBe(DB_TYPE_TIMESTAMP);
+        expect(answer.converter(new Date(2026, 8, 1, 10, 30, 0))).toBe("2026-09-01 10:30:00");
+        expect(answer.converter(new Date(2026, 8, 1, 10, 30, 0, 120))).toBe("2026-09-01 10:30:00.12");
+        expect(answer.converter(new Date(2026, 8, 1, 10, 30, 0, 5))).toBe("2026-09-01 10:30:00.005");
+      });
+
+      // The driver invokes a column's converter for every row, NULL included, so a
+      // converter that fell over on one would fail the whole query rather than one cell.
+      test("a NULL, and anything that is not a Date, passes through", async () => {
+        await provider.connect();
+        await provider.query("SELECT d FROM r7_dates");
+
+        const convert = converterOf(DB_TYPE_DATE);
+        expect(convert(null)).toBeNull();
+        expect(convert("2026-09-01 00:00:00")).toBe("2026-09-01 00:00:00");
+      });
+
+      // Controls: the two zoned types name instants, so they must keep the driver's `Date`
+      // and the export keeps writing them through FROM_TZ.
+      test("no zoned column is redirected", async () => {
+        await provider.connect();
+        await provider.query("SELECT tz, ltz FROM r7_dates");
+
+        expect(handler()({ dbType: DB_TYPE_TIMESTAMP_TZ, name: "TZ" })).toBeUndefined();
+        expect(handler()({ dbType: DB_TYPE_TIMESTAMP_LTZ, name: "LTZ" })).toBeUndefined();
+      });
+
+      // The conversion must not depend on the process's zone: the components are read back
+      // with the same local getters the driver built the `Date` with, so the text is the
+      // same in every TZ. CI runs at UTC, where the defect was invisible, so this block
+      // holds a real western offset rather than inheriting one.
+      describe("under a western process TZ", () => {
+        const runnerZone = process.env.TZ;
+        beforeAll(() => {
+          process.env.TZ = "America/Los_Angeles";
+        });
+        afterAll(() => {
+          if (runnerZone === undefined) delete process.env.TZ;
+          else process.env.TZ = runnerZone;
+        });
+
+        test("a DATE and a TIMESTAMP read the same text as at UTC", async () => {
+          await provider.connect();
+          await provider.query("SELECT d, ts FROM r7_dates");
+
+          expect(converterOf(DB_TYPE_DATE)(new Date(2026, 8, 1, 0, 0, 0))).toBe("2026-09-01 00:00:00");
+          expect(converterOf(DB_TYPE_TIMESTAMP)(new Date(2026, 8, 1, 10, 30, 0))).toBe("2026-09-01 10:30:00");
+        });
       });
     });
 
@@ -4744,7 +4840,7 @@ describe("Oracle object source", () => {
   });
 
   test("a CLOB that came back as a stream RAISES rather than reaching an editor as a shape", async () => {
-    // The trap this file's `lobFetchTypeHandler` exists for: oracledb answers a CLOB with a Lob
+    // The trap this file's `oracleFetchTypeHandler` exists for: oracledb answers a CLOB with a Lob
     // object by default, `runObjectQuery` passes no fetch handler at all, and serialising a Lob
     // throws "Converting circular structure to JSON". A provider that coerced it would put
     // "[object Object]" in an editor as this object's definition.

@@ -991,6 +991,40 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
     );
   });
 
+  // Since #1131 the provider prints a naive DATE/TIMESTAMP as fixed-format wall-clock text,
+  // and the same declarations now write those STRINGS back through the matching conversion.
+  // The reader is the provider's own rendering (oracle.ts `formatNaiveDateTime`), so the
+  // mask here is exact rather than best-effort.
+  test("writes a DATE that arrived as wall-clock text through TO_DATE", () => {
+    expect(oracle({ at: "DATE" }, "2026-09-01 00:00:00")).toContain(
+      `VALUES (TO_DATE('2026-09-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS'));`,
+    );
+  });
+
+  test("writes a TIMESTAMP text through TO_TIMESTAMP, the fraction optional in the mask", () => {
+    expect(oracle({ at: "TIMESTAMP(6)" }, "2026-09-01 10:30:00.123")).toContain(
+      `VALUES (TO_TIMESTAMP('2026-09-01 10:30:00.123', 'YYYY-MM-DD HH24:MI:SS.FF'));`,
+    );
+    expect(oracle({ at: "TIMESTAMP" }, "2026-09-01 10:30:00")).toContain(
+      `VALUES (TO_TIMESTAMP('2026-09-01 10:30:00', 'YYYY-MM-DD HH24:MI:SS.FF'));`,
+    );
+  });
+
+  // Text is the one cell shape that cannot say what it is on its own, so the conversion is
+  // keyed on the DECLARED type and nothing else: a VARCHAR2 holding the same bytes is text
+  // a user typed, and a zoned column never reaches here as text at all.
+  test("a date-looking STRING in a non-date column keeps its quoting", () => {
+    expect(oracle({ at: "VARCHAR2" }, "2026-09-01 00:00:00")).toContain(`VALUES ('2026-09-01 00:00:00');`);
+    expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, "2026-09-01 10:30:00")).toContain(
+      `VALUES ('2026-09-01 10:30:00');`,
+    );
+  });
+
+  test("a DATE column holding text the provider would not render keeps its quoting", () => {
+    expect(oracle({ at: "DATE" }, "Sep 1, 2026")).toContain(`VALUES ('Sep 1, 2026');`);
+    expect(oracle({ at: "DATE" }, "2026-09-01")).toContain(`VALUES ('2026-09-01');`);
+  });
+
   test("reads no declared type off the prototype for a column named after one", () => {
     const file = buildResultExport(
       "sql-insert",

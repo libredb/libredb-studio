@@ -563,7 +563,7 @@ const OBJECT_INDEXES_SQL = `SELECT ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME
  * Oracle it does not reach statement text at all.
  *
  * `FROM DUAL` rather than a PL/SQL block, because the value has to come back as a column the
- * driver can apply `lobFetchTypeHandler` to. GET_DDL answers a CLOB and the object surface's
+ * driver can apply `oracleFetchTypeHandler` to. GET_DDL answers a CLOB and the object surface's
  * ordinary reader passes no fetch handler, so this read has its own execute.
  */
 const OBJECT_DDL_SQL = `SELECT DBMS_METADATA.GET_DDL(:1, :2, :3) AS DDL FROM DUAL`;
@@ -1259,12 +1259,25 @@ function measuredDefault(raw: unknown): string | undefined {
  * `RangeError: Invalid string length`, which reaches the user as a failed query
  * rather than as a value that has quietly lost its tail.
  */
-const lobFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
+const oracleFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
   if (metaData.dbType === oracledb.DB_TYPE_CLOB || metaData.dbType === oracledb.DB_TYPE_NCLOB) {
     return { type: oracledb.STRING };
   }
   if (metaData.dbType === oracledb.DB_TYPE_BLOB) {
     return { type: oracledb.BUFFER };
+  }
+  // `DATE` and the naive `TIMESTAMP` name no instant and carry no zone, but the driver
+  // builds a JS `Date` for both by reading the stored wall clock in the PROCESS's zone,
+  // and every row path then serialises that `Date` as UTC text - so the value moved with
+  // the server process's TZ (#1131). Measured 2026-09-28 on Oracle Database 26ai Free
+  // through this provider under TZ=Europe/Istanbul: a `DATE '2026-09-01'` came back as
+  // 2026-08-31T21:00:00.000Z, the previous day, and the SQL INSERT export replayed it as
+  // 2026-08-31. The answer keeps the column's own fetch type - the driver still hands
+  // over the `Date` it builds - and the converter prints the wall clock back out of it,
+  // which is the value the server stored, in every process TZ. `TIMESTAMP WITH TIME ZONE`
+  // and `WITH LOCAL TIME ZONE` name instants and keep the driver's `Date`.
+  if (metaData.dbType === oracledb.DB_TYPE_DATE || metaData.dbType === oracledb.DB_TYPE_TIMESTAMP) {
+    return { type: metaData.dbType, converter: convertNaiveDateTime };
   }
   // Every other column keeps the driver's default: RAW already arrives as a
   // Buffer and VARCHAR2 as a string, and restating them here would put this
@@ -1274,6 +1287,52 @@ const lobFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
 
 /** Two digits minimum, which is the width Oracle's own default precision prints. */
 const pad2 = (value: number): string => String(Math.abs(value)).padStart(2, "0");
+
+/**
+ * A naive `DATE` or `TIMESTAMP` as the fixed-format wall-clock text the provider answers
+ * with, `YYYY-MM-DD HH24:MI:SS` plus the milliseconds when there are any (#1131).
+ *
+ * These two types name no instant and carry no zone, yet node-oracledb (Thin) builds a JS
+ * `Date` for them by reading the stored wall clock in the PROCESS's zone, and every row
+ * path then serialises that `Date` as UTC - so the same row read from a server process east
+ * or west of UTC moved, and a SQL INSERT export replayed the moved day. No `Date` is right
+ * for a value that is not an instant, and the text is exact. The components are read back
+ * with the LOCAL getters, the exact inverse of how the driver built the `Date` (local wall
+ * clock in, local wall clock out), so the text is the server's value in every process TZ.
+ *
+ * Measured 2026-09-28 against Oracle Database 26ai Free (`gvenzl/oracle-free:slim`,
+ * oracledb 6.10.0 Thin) through this provider: `DATE '2026-09-01'` reads
+ * `2026-09-01 00:00:00` and `TIMESTAMP '2026-09-01 10:30:00'` reads
+ * `2026-09-01 10:30:00` under TZ=UTC, Europe/Istanbul and America/Los_Angeles, where the
+ * driver's own `Date` answered 2026-08-31T21:00:00.000Z and 2026-09-01T07:30:00.000Z under
+ * Europe/Istanbul.
+ *
+ * The fraction keeps the milliseconds a `Date` carries, with trailing zeros trimmed - a
+ * `TIMESTAMP(3)` of `.120` reads `.12` - and is left off entirely at zero milliseconds, so
+ * a whole second reads `10:30:00`. Digits below a millisecond are already gone by the time
+ * the driver has built its `Date`: a `TIMESTAMP(6)` of `.123456` arrives with `.123`.
+ *
+ * One measured limit, recorded rather than glossed: a wall clock that does not exist in the
+ * PROCESS's own zone on a DST transition day (for example `2026-03-08 02:30:00` in
+ * America/Los_Angeles) reads back as that zone normalised the `Date` it built - measured,
+ * `03:30:00` there while TZ=UTC and Europe/Istanbul read `02:30:00`. That is the driver's
+ * `Date` construction showing through, not a second conversion here.
+ */
+const formatNaiveDateTime = (value: Date): string => {
+  const date = `${String(value.getFullYear()).padStart(4, "0")}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+  const time = `${pad2(value.getHours())}:${pad2(value.getMinutes())}:${pad2(value.getSeconds())}`;
+  const milliseconds = value.getMilliseconds();
+  const fraction = milliseconds === 0 ? "" : `.${String(milliseconds).padStart(3, "0").replace(/0+$/, "")}`;
+  return `${date} ${time}${fraction}`;
+};
+
+/**
+ * The `fetchTypeHandler` converter for `DATE` and the naive `TIMESTAMP`. The driver invokes
+ * a column's converter for every row, NULL included, so a NULL - or, if the driver ever
+ * hands such a column over as something other than the `Date` it builds today - passes
+ * through untouched rather than failing the whole query.
+ */
+const convertNaiveDateTime = (value: unknown): unknown => (value instanceof Date ? formatNaiveDateTime(value) : value);
 
 /** One leading sign for the whole interval: every field of a negative one is negative. */
 const intervalSign = (fields: readonly number[]): string => (fields.some((field) => field < 0) ? "-" : "+");
@@ -1745,7 +1804,7 @@ export class OracleProvider extends SQLBaseProvider {
           const res = await conn.execute(sql, bindParams, {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: true,
-            fetchTypeHandler: lobFetchTypeHandler,
+            fetchTypeHandler: oracleFetchTypeHandler,
           });
 
           return res;
@@ -1873,7 +1932,7 @@ export class OracleProvider extends SQLBaseProvider {
           return await this.txConn!.execute(sql, params || [], {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: false,
-            fetchTypeHandler: lobFetchTypeHandler,
+            fetchTypeHandler: oracleFetchTypeHandler,
           });
         } catch (error) {
           throw mapDatabaseError(error, "oracle", sql);
@@ -2194,7 +2253,7 @@ export class OracleProvider extends SQLBaseProvider {
    *
    * FOUR THINGS THIS METHOD DOES THAT NO OTHER OBJECT READ HERE DOES.
    *
-   * 1. IT PASSES `lobFetchTypeHandler`. GET_DDL answers a CLOB, oracledb answers a CLOB with a
+   * 1. IT PASSES `oracleFetchTypeHandler`. GET_DDL answers a CLOB, oracledb answers a CLOB with a
    *    `Lob` stream by default, and serialising one throws `TypeError: Converting circular
    *    structure to JSON`. The handler is a PER-CALL option and `runObjectQuery` passes none,
    *    so this read has its own execute rather than reusing that one. A value that still comes
@@ -2298,7 +2357,7 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       const result = await conn.execute(OBJECT_DDL_SQL, [type.metadata, name, owner], {
         outFormat: oracledb.OUT_FORMAT_OBJECT,
-        fetchTypeHandler: lobFetchTypeHandler,
+        fetchTypeHandler: oracleFetchTypeHandler,
       });
       value = ((result.rows ?? []) as Record<string, unknown>[])[0]?.DDL;
     } catch (error) {

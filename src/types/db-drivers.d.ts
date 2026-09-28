@@ -30,10 +30,28 @@ declare module "oracledb" {
     readonly DB_TYPE_BLOB: oracledb.DbType;
     readonly DB_TYPE_INTERVAL_YM: oracledb.DbType;
     readonly DB_TYPE_INTERVAL_DS: oracledb.DbType;
-    /** Fetch-target identities, the value side of a `fetchTypeHandler` answer. */
-    readonly STRING: number;
-    readonly BUFFER: number;
+    /**
+     * The two naive wall-clock types (#1131). Named because the provider compares a
+     * column's `dbType` against them; the `WITH TIME ZONE` variants are deliberately
+     * not named, nothing compares against them.
+     */
+    readonly DB_TYPE_DATE: oracledb.DbType;
+    readonly DB_TYPE_TIMESTAMP: oracledb.DbType;
+    /**
+     * Fetch-target identities, the value side of a `fetchTypeHandler` answer. Both are
+     * `DbType` instances in the installed driver, not numbers: `STRING` IS the
+     * `DB_TYPE_VARCHAR` identity and `BUFFER` IS `DB_TYPE_RAW`, and the driver asserts
+     * `result.type instanceof DbType` (verified against 6.10.0 on 2026-09-28).
+     */
+    readonly STRING: oracledb.DbType;
+    readonly BUFFER: oracledb.DbType;
     readonly OUT_FORMAT_OBJECT: number;
+    /**
+     * The other row format. The provider's constructor pins the process-wide default to
+     * OBJECT, so anything that wants arrays (the live guard's raw reads) has to ask for
+     * them explicitly rather than inheriting a global.
+     */
+    readonly OUT_FORMAT_ARRAY: number;
     /** Process-wide defaults the provider sets once, in its constructor. */
     outFormat: number;
     autoCommit: number | boolean;
@@ -66,8 +84,15 @@ declare module "oracledb" {
       scale?: number;
     }
 
-    /** What a `fetchTypeHandler` may answer: a fetch target, or nothing to keep the default. */
-    type FetchType = { type: number } | undefined;
+    /**
+     * What a `fetchTypeHandler` may answer: a fetch target, a converter for the fetched
+     * value, both, or nothing to keep the driver's default (the handler's own answer is
+     * per call; this type is the contract for each answer). `type` is a `DbType` identity -
+     * the driver asserts `instanceof` when it is set. A `converter` is invoked for every
+     * value of its column, NULL included, so it must pass through what it does not own;
+     * see `oracleFetchTypeHandler` in providers/sql/oracle.ts.
+     */
+    type FetchType = { type?: DbType; converter?: (value: unknown) => unknown } | undefined;
 
     type FetchTypeHandler = (metaData: Metadata) => FetchType;
 

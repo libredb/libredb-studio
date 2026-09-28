@@ -548,7 +548,7 @@ summary all read.
 | `RAW` | `Buffer` | `{"type":"Buffer","data":[10,11,12]}` | `\x0a0b0c` |
 | `NUMBER` | `number` | `1.2345678901234568e+37` — **digits lost** | the double, see below |
 | `BINARY_DOUBLE` | `number` | `3.5` | the number |
-| `TIMESTAMP` / `DATE` | `Date` | `"2026-08-23T17:46:46.422Z"` | the formatted date |
+| `TIMESTAMP` / `DATE` | `string` (see below) | `"2026-08-23 17:46:46"` | that text — [§5.6](#56-a-naive-date-and-a-timestamp-arrive-as-wall-clock-text) |
 | `TIMESTAMP WITH TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — offset folded to UTC, sub-ms dropped | the formatted date — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `TIMESTAMP WITH LOCAL TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — same, normalized to the session time zone first | the formatted date — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `INTERVAL YEAR TO MONTH` | `IntervalYM` | `"+03-07"` | its Oracle literal — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
@@ -561,9 +561,11 @@ summary all read.
 
 `query()` and `queryInTransaction()` pass a per-call **`fetchTypeHandler`**
 ([oracle.ts](../../src/lib/db/providers/sql/oracle.ts)) that maps `CLOB` and `NCLOB` to
-`oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Every other column keeps the driver's own default:
-`RAW` is already a `Buffer` and `VARCHAR2` already a string, and restating them would put this
-provider in charge of types it has no reason to touch.
+`oracledb.STRING` and `BLOB` to `oracledb.BUFFER` — and, since #1131, prints a naive
+`DATE`/`TIMESTAMP` cell as wall-clock text instead of a zone-shifted `Date`
+([§5.6](#56-a-naive-date-and-a-timestamp-arrive-as-wall-clock-text)). Every other column keeps the
+driver's own default: `RAW` is already a `Buffer` and `VARCHAR2` already a string, and restating
+them would put this provider in charge of types it has no reason to touch.
 
 Without it oracledb answers a LOB with a **`Lob` stream object**, and the row cannot be serialized at
 all. Measured over four LOB columns, each arriving with `constructor.name === "Lob"`:
@@ -864,6 +866,59 @@ That last row is the truncation this section is about, not an export defect: `K=
 microseconds the driver dropped (`TO_CHAR(s."TS" - r."TS")` → `+000000000 00:00:00.000678`, and
 `+000000000 00:00:00.000000` for the millisecond-exact row). **A sub-millisecond digit does not
 survive an export, because it did not survive the driver.**
+
+Since #1131 the provider answers these two naive columns as TEXT
+([§5.6](#56-a-naive-date-and-a-timestamp-arrive-as-wall-clock-text)), and the export then writes the
+same fields through that section's `…SS.FF` mask; the statements above are the `Date`-cell path this
+section measured.
+
+### 5.6 A naive DATE and a TIMESTAMP arrive as wall-clock text
+
+`DATE` and `TIMESTAMP` (without a time zone) name **no instant**, and the driver still hands them
+over as a JS `Date` — built, as above, by reading the stored wall clock in **the Node process's
+zone**. Every row path then serialised that `Date` as UTC, so the same row moved with the server
+process's `TZ` and the SQL INSERT export replayed the moved day. Measured 2026-09-28 on Oracle AI
+Database 26ai Free (`gvenzl/oracle-free:slim`, oracledb 6.10.0 Thin), over a row storing
+`DATE '2026-09-01'`:
+
+| process `TZ` | the driver's `Date` | this provider answers |
+|---|---|---|
+| `UTC` | `2026-09-01T00:00:00.000Z` | `2026-09-01 00:00:00` |
+| `Europe/Istanbul` | `2026-08-31T21:00:00.000Z` — **the previous day** | `2026-09-01 00:00:00` |
+| `America/Los_Angeles` | `2026-09-01T07:00:00.000Z` | `2026-09-01 00:00:00` |
+
+The fix is in the `fetchTypeHandler` answer (#1131): the column keeps its own fetch type — the
+driver still builds the same `Date`, and no `Date` is right for a value that is not an instant —
+and a **converter** prints that `Date`'s LOCAL components back out, the exact inverse of how the
+driver built it. `{type: oracledb.STRING}` was measured and rejected for this
+([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)): it answers the
+`Date` put through `toString()`.
+
+The text is `YYYY-MM-DD HH24:MI:SS`, with milliseconds appended when there are any — trailing zeros
+trimmed, so a `TIMESTAMP(3)` of `.120` reads `.12` — and left off entirely at zero, so a whole
+second reads `10:30:00`. Digits below a millisecond are already gone at the driver's `Date`
+boundary: measured on the same server, the engine's own `TO_CHAR` prints a `TIMESTAMP(9)` of
+`.123456789` as `.123456789` while the `Date` arriving here holds `.123`, so no fetch path could
+return the rest. One measured limit, recorded rather than glossed: a wall clock that does not exist
+in the process's own zone on a DST transition day (`2026-03-08 02:30:00` under
+`TZ=America/Los_Angeles`) reads back as that zone normalised it — `03:30:00` — the driver's `Date`
+construction showing through, not a second conversion.
+
+The export follows the value it was given. A STRING cell from a declared naive `DATE`/`TIMESTAMP`
+column ([§5.4](#54-declared-column-types) said so) is written through the same
+`TO_DATE(…, 'YYYY-MM-DD HH24:MI:SS')` / `TO_TIMESTAMP(…, 'YYYY-MM-DD HH24:MI:SS.FF')` masks, and
+only when the bytes match the provider's own rendering: the same bytes in a `VARCHAR2` keep their
+plain quoting, because text alone cannot say whether it is a value. `TIMESTAMP WITH TIME ZONE` and
+`WITH LOCAL TIME ZONE` name instants and are untouched — they keep arriving as the driver's `Date`
+and keep exporting through `FROM_TZ`
+([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)).
+
+`tests/live/oracle-date-text.ts` is the opt-in guard. It reads every value twice — once through the
+provider, once through the engine's own `TO_CHAR` — and requires them equal in whatever `TZ` it runs
+under; it replays the SQL INSERT export into a copy of the table and requires both the provider's
+text and the server's own reading of the copy to match; and it fails if the raw driver value stops
+being the locally-built `Date` the conversion compensates for, because that day the guard must be
+rewritten, not deleted.
 
 ---
 
@@ -1494,7 +1549,7 @@ grant to create a wrapped unit.
   exists to remove.
 - a CLOB that arrives as something other than a string RAISES. `GET_DDL` answers a CLOB, oracledb
   answers a CLOB with a `Lob` stream by default, and serialising one throws
-  `TypeError: Converting circular structure to JSON`. The fix, `lobFetchTypeHandler`, is a PER-CALL
+  `TypeError: Converting circular structure to JSON`. The fix, `oracleFetchTypeHandler`, is a PER-CALL
   option and the object surface's ordinary reader passes none, so this read has its own `execute`; a
   value that still comes back as a stream is a defect of ours and is reported as one rather than
   coerced into an editor.

@@ -737,6 +737,10 @@ function binaryLiteral(bytes: Uint8Array, dialect: DatabaseType | undefined): st
  * driving the embeddable surface may supply none - the timestamp form is the fallback:
  * Oracle's own provider always declares (`metaData[].dbTypeName`, 5.4), the naive types
  * are the common ones, and the fallback is the shape that is exact for them.
+ *
+ * Since #1131 a naive column can also arrive as TEXT - the provider prints it - and that
+ * case is keyed on the declaration by `oracleTextDateShape` below: `'2026-09-01'` in a
+ * `VARCHAR2` is text a user typed, and must not be written as a date.
  */
 type OracleDateShape = "date" | "timestamp" | "zoned";
 
@@ -744,6 +748,44 @@ function oracleDateShape(declared: string | undefined): OracleDateShape {
   const bare = declared?.trim().toUpperCase().replace(/\s+/g, " ") ?? "";
   if (bare === "DATE") return "date";
   return bare.endsWith("TIME ZONE") ? "zoned" : "timestamp";
+}
+
+/**
+ * The shape when the DECLARED type itself is a naive `DATE` or `TIMESTAMP` - the only
+ * columns whose TEXT cells are written through a conversion.
+ *
+ * The provider prints these two types as fixed-format wall-clock text (#1131), and text is
+ * the one cell shape that cannot say what it is on its own: `'2026-09-01 00:00:00'` in a
+ * `VARCHAR2` is text a user typed, and the same bytes in a `DATE` are a value the server
+ * parsed. So the declared type decides, and nothing else does. `undefined` for every other
+ * declaration - a zoned column never reaches here as text (the driver hands it over as a
+ * `Date`, and `oracleDateLiteral` writes that one), and a host that supplies no
+ * `columnTypes` keeps the plain quoting rather than guessing.
+ */
+function oracleTextDateShape(declared: string | undefined): "date" | "timestamp" | undefined {
+  const bare = declared?.trim().toUpperCase().replace(/\s+/g, " ") ?? "";
+  if (bare === "DATE") return "date";
+  if (!bare.startsWith("TIMESTAMP") || bare.endsWith("TIME ZONE")) return undefined;
+  return "timestamp";
+}
+
+/** Exactly the text `formatNaiveDateTime` in providers/sql/oracle.ts renders, and nothing else. */
+const ORACLE_NAIVE_DATE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,3})?$/;
+
+/**
+ * A naive `DATE`/`TIMESTAMP` cell that arrived as the provider's own text, written back
+ * through the conversion its declared type names.
+ *
+ * `TO_DATE` for a declared `DATE` - a `DATE` has no fractional second, and the mask is the
+ * provider's own rendering mask. `TO_TIMESTAMP` for a declared timestamp, with `.FF` in the
+ * mask on purpose: measured on the same server, `'2026-09-01 10:30:00'` and
+ * `'2026-09-01 10:30:00.123'` both parse under `YYYY-MM-DD HH24:MI:SS.FF`, while a value
+ * that carries a fraction and a mask WITHOUT `.FF` raises ORA-01830 rather than parsing -
+ * the fraction can be absent, so the mask has to take both.
+ */
+function oracleTextLiteral(value: string, shape: "date" | "timestamp"): string {
+  if (shape === "date") return `TO_DATE('${value}', 'YYYY-MM-DD HH24:MI:SS')`;
+  return `TO_TIMESTAMP('${value}', 'YYYY-MM-DD HH24:MI:SS.FF')`;
 }
 
 /** What `source` declared for `column`, or `undefined`. */
@@ -788,7 +830,12 @@ function oracleDateLiteral(value: Date, shape: OracleDateShape): string {
  * be stringified to a locale-dependent form no engine parses back, and an object to
  * the literal text `[object Object]`.
  */
-function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracleShape?: OracleDateShape): string {
+function sqlValue(
+  value: unknown,
+  dialect: DatabaseType | undefined,
+  oracleShape?: OracleDateShape,
+  oracleTextShape?: "date" | "timestamp",
+): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "bigint") return String(value);
   // NaN and ±Infinity are not numbers any of these dialects accepts as a literal,
@@ -798,6 +845,13 @@ function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracleShape
   if (value instanceof Date) {
     if (oracleShape !== undefined) return oracleDateLiteral(value, oracleShape);
     return quoteLiteral(value.toISOString(), dialect);
+  }
+  // A naive `DATE`/`TIMESTAMP` cell that arrived as TEXT - the provider's own
+  // `YYYY-MM-DD HH24:MI:SS[.fff]` rendering (#1131) - is written through the conversion its
+  // declared type asks for. The pattern is the guard: only a value in exactly that
+  // provider-rendered shape is claimed as one; anything else keeps the plain quoting below.
+  if (typeof value === "string" && oracleTextShape !== undefined && ORACLE_NAIVE_DATE_TIME.test(value)) {
+    return oracleTextLiteral(value, oracleTextShape);
   }
   // Before the object branch, which used to write a `bytea`/`BLOB` cell as the quoted
   // text `{"type":"Buffer","data":[…]}`. Replayed into Postgres 18.4 that INSERT
@@ -844,8 +898,15 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
     // type, which does not change row to row.
     const oracleShapes =
       dialect === "oracle" ? columns.map((column) => oracleDateShape(declaredTypeOf(source, column))) : undefined;
+    // The second, stricter mapping for TEXT cells: only a column whose DECLARED type is a
+    // naive date/timestamp can own one (#1131), so a `VARCHAR2` holding the same bytes keeps
+    // its plain quoting.
+    const oracleTextShapes =
+      dialect === "oracle" ? columns.map((column) => oracleTextDateShape(declaredTypeOf(source, column))) : undefined;
     const statements = rows.map((row) => {
-      const values = columns.map((column, index) => sqlValue(cellOf(row, column), dialect, oracleShapes?.[index]));
+      const values = columns.map((column, index) =>
+        sqlValue(cellOf(row, column), dialect, oracleShapes?.[index], oracleTextShapes?.[index]),
+      );
       return `INSERT INTO ${tableName} (${quotedColumns.join(", ")}) VALUES (${values.join(", ")});`;
     });
     return sql(statements.join("\n"));
