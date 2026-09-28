@@ -191,8 +191,12 @@ When using LibreDB Studio, please follow these security best practices:
   risk has to be made again rather than inherited
 - The published container image is scanned daily and its findings are published
   to the Security tab. Most OS-package findings in any Debian-based image have no
-  fixed package available at the time they appear; the ones that do are taken by
-  bumping the base image
+  fixed package available at the time they appear, and those are reported rather
+  than gated. A CRITICAL one that does have a fix available fails the scan, so it
+  is taken by bumping the base image and cutting a release rather than carried
+  quietly; if the distribution has shipped the fix but the base image has not yet
+  picked it up, that wait is written down in `.trivyignore.yaml` with an expiry
+  like any other suppression
 - Every commit is scanned for credentials. The full history was swept once and
   classified: 24 matches across 753 commits, every one of them a fabricated test
   fixture, a documented example password or UI placeholder copy. **No credential

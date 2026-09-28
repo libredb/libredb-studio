@@ -11,6 +11,9 @@ import * as generators from "@/lib/query-generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
+import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
+import { KAFKA_TOPIC_COLUMNS } from "@/lib/db/providers/stream/kafka/objects";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 
 // ============================================================================
 // Helpers
@@ -1315,6 +1318,153 @@ describe("PromQL tree click (#1085)", () => {
 
   test("the metric's columns never reach the click's text", () => {
     expect(generateTableQuery(["up"], promqlCaps, hostileLabelColumns)).toBe("up");
+  });
+});
+
+// ============================================================================
+// Kafka (#1088): a topic click is a JSON read request, never a MongoDB document
+// ============================================================================
+
+/** The capabilities #1088 section 6.2 gives Kafka, varied from the SQL helper only where it says. */
+const kafkaCaps = makeCaps({
+  queryLanguage: "json",
+  queryDialect: "kafka",
+  defaultPort: 9092,
+  statementTerminator: "none",
+  supportsExplain: false,
+  supportsExternalQueryLimiting: false,
+  supportsCreateTable: false,
+  supportsInlineRowEdit: false,
+  supportsMaintenance: false,
+  supportsConnectionString: false,
+  containerLevels: [],
+});
+
+describe("Kafka tree click (#1088)", () => {
+  test("a tree click on a topic reads its latest 50 messages, as one JSON read request", () => {
+    const text = generateTableQuery(["orders"], kafkaCaps);
+    expect(text).toBe(JSON.stringify({ topic: "orders", from: "latest", limit: 50 }, null, 2));
+    expect(JSON.parse(text)).toEqual({ topic: "orders", from: "latest", limit: 50 });
+    expect(text).not.toContain('"collection"');
+    // The control: the same path on a JSON engine with no dialect is the MongoDB `find` a Kafka
+    // connection would have been sent without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateTableQuery(["orders"], mongodb))).toMatchObject({
+      collection: "orders",
+      operation: "find",
+    });
+  });
+
+  test.each([
+    ["a quote", 'or"ders'],
+    ["a backslash", "or\\ders"],
+    ["a line feed", "or\nders"],
+    ["a key-shaped name", '"},{"topic":"other'],
+    ["an Object.prototype member", "__proto__"],
+  ])("a topic named with %s is written through JSON.stringify and reads back unchanged", (_label, topic) => {
+    const text = generateTableQuery([topic], kafkaCaps);
+    const request = JSON.parse(text) as Record<string, unknown>;
+    expect(Object.keys(request)).toEqual(["topic", "from", "limit"]);
+    expect(request.topic).toBe(topic);
+    expect(text).toBe(JSON.stringify({ topic, from: "latest", limit: 50 }, null, 2));
+  });
+
+  test("the topic's own segment is read, and no column reaches the text", () => {
+    // A topic row's path is one segment (no container level), and the generator reads the object's
+    // own segment whatever it is handed, as the other JSON arms do.
+    expect(JSON.parse(generateTableQuery(["app", "orders"], kafkaCaps, sampleColumns))).toEqual({
+      topic: "orders",
+      from: "latest",
+      limit: 50,
+    });
+  });
+
+  test("the click's text is a request the provider's own parser reads as is", () => {
+    // The click auto-executes, so "runs as is" is the provider's parser reading the exact text,
+    // not a claim: the latest 50 messages of the topic, across every partition.
+    expect(parseReadRequest(generateTableQuery(["orders"], kafkaCaps), DEFAULT_QUERY_LIMIT)).toEqual({
+      topic: "orders",
+      from: { kind: "latest" },
+      limit: 50,
+    });
+  });
+});
+
+describe("Kafka Generate Read Request (#1088)", () => {
+  test("opens ONE read request, partition 0 from its earliest offset, which the provider's parser reads as is", () => {
+    const text = generateSelectQuery(["orders"], [], kafkaCaps);
+    // One object, because the tab's whole buffer is sent as one read request (`handleGenerateSelect`
+    // in src/hooks/use-tab-manager.ts) and JSON has no comments to hold alternatives. Not offset 0:
+    // retention moves a partition's earliest offset past 0 on almost every production topic, and an
+    // offset below it is refused as out of range (tests/unit/lib/kafka-generated-read.test.ts).
+    expect(text).toBe(JSON.stringify({ topic: "orders", partition: 0, from: "earliest", limit: 50 }, null, 2));
+    expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT)).toEqual({
+      topic: "orders",
+      partition: 0,
+      from: { kind: "earliest" },
+      limit: 50,
+    });
+    // The control: the same call on a JSON engine with no dialect is the MongoDB `find` a Kafka
+    // connection would have been handed without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateSelectQuery(["orders"], [], mongodb))).toMatchObject({
+      collection: "orders",
+      operation: "find",
+    });
+  });
+
+  test.each([
+    ["a quote", 'or"ders'],
+    ["a backslash", "or\\ders"],
+    ["a line feed", "or\nders"],
+    ["a key-shaped name", '"},{"topic":"other'],
+    ["an Object.prototype member", "__proto__"],
+  ])("a topic named with %s is written through JSON.stringify and reads back unchanged", (_label, topic) => {
+    const text = generateSelectQuery([topic], [], kafkaCaps);
+    const request = JSON.parse(text) as Record<string, unknown>;
+    expect(Object.keys(request)).toEqual(["topic", "partition", "from", "limit"]);
+    expect(request.topic).toBe(topic);
+    expect(text).toBe(JSON.stringify({ topic, partition: 0, from: "earliest", limit: 50 }, null, 2));
+  });
+
+  test("the topic's columns never reach the text: they are fields a message comes back with, not request keys", () => {
+    // The MongoDB arm projects the columns it is handed, and a `projection` key is one the read
+    // request's parser refuses; the topic's own fixed columns are what the tree hands over here.
+    const text = generateSelectQuery(["orders"], KAFKA_TOPIC_COLUMNS, kafkaCaps);
+    expect(text).toBe(generateSelectQuery(["orders"], [], kafkaCaps));
+    expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT).topic).toBe("orders");
+  });
+
+  test("the topic's own segment is read, whatever path it is handed", () => {
+    expect(JSON.parse(generateSelectQuery(["app", "orders"], sampleColumns, kafkaCaps))).toEqual({
+      topic: "orders",
+      partition: 0,
+      from: "earliest",
+      limit: 50,
+    });
+  });
+});
+
+/**
+ * The two quoting helpers on a Kafka connection answer the JSON arm's spelling, the name as it is,
+ * pinned rather than given an arm of their own (#1088, section 3.3): no caller that a Kafka
+ * connection reaches sends what they answer to the broker. `POST /api/db/profile` refuses the
+ * dialect before its SQL branch (tests/api/db/profile.test.ts), both row menus withhold Generate
+ * Test Data on a topic (tests/unit/components/object-tree-row-actions.test.ts,
+ * tests/components/schema-explorer/TableItem.test.tsx), and the import dialog offers no topic as a
+ * target, since it offers only kinds that declare row writes and no Kafka kind declares them
+ * (tests/unit/db/kafka/objects.test.ts).
+ */
+describe("quoteIdentifier and quoteObjectPath on a Kafka path (#1088)", () => {
+  test("answer a topic's name as it is, where the SQL arm would quote it", () => {
+    expect(quoteIdentifier("orders", kafkaCaps)).toBe("orders");
+    expect(quoteObjectPath(["orders"], kafkaCaps)).toBe("orders");
+    // A legal topic name, of Kafka's own characters, that the SQL arm quotes.
+    expect(quoteIdentifier("Orders.v2-eu", kafkaCaps)).toBe("Orders.v2-eu");
+    expect(quoteObjectPath(["Orders.v2-eu"], kafkaCaps)).toBe("Orders.v2-eu");
+    // The control: the same names on the SQL helper are quoted, so the answers above are the JSON arm's.
+    expect(quoteIdentifier("Orders.v2-eu", makeCaps())).toBe('"Orders.v2-eu"');
+    expect(quoteObjectPath(["Orders.v2-eu"], makeCaps())).toBe('"Orders.v2-eu"');
   });
 });
 

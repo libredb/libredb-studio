@@ -263,6 +263,8 @@ export interface AgentNotices {
    * arguments did not parse, so no call was made and no ledger entry exists. Re-sending the same
    * request produces the same failure, which is why this is a sentence rather than a retry.
    */
+  /** Said when a stopping turn wrote a tool CALL into the message text rather than calling. */
+  readonly toolCallAsText: string;
   readonly unreadableToolCall: string;
 }
 

@@ -35,7 +35,8 @@ mock.module("@/lib/storage/providers/postgres", () => ({
 }));
 
 // Import factory AFTER mocking providers
-import { getStorageProvider, closeStorageProvider, getStorageProviderType } from "@/lib/storage/factory";
+import { getStorageProvider, closeStorageProvider } from "@/lib/storage/factory";
+import { getStorageProviderType } from "@/lib/storage/provider-type";
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 

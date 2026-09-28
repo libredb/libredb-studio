@@ -37,6 +37,8 @@ import type { ClientRequest, IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { urlToHttpOptions } from "node:url";
 import { rejectRedirect } from "@/lib/db/http/endpoint";
+import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import type { SSLConfig } from "@/lib/types";
 
 /** One request, built whole by the caller. */
@@ -175,7 +177,8 @@ function abortFailure(signal: AbortSignal): RequestFailure {
 }
 
 /** Whatever a send raised, as a failure whose message holds a code at most. */
-function failureFrom(error: unknown, signal: AbortSignal): RequestFailure {
+function failureFrom(error: unknown, signal: AbortSignal): RequestFailure | DatabaseConfigError {
+  if (error instanceof DatabaseConfigError) return error;
   // Raised on purpose inside a send, and already worded.
   if (error instanceof RequestFailure) return error;
   // Whatever the runtime threw once the signal fired, the signal says which kind of stop it was.
@@ -216,7 +219,7 @@ async function readCapped(body: Response["body"], maxBytes: number): Promise<str
 async function sendPlain(request: OutboundRequest): Promise<InboundResponse> {
   let response: Response;
   try {
-    response = await globalThis.fetch(request.url, {
+    response = await httpTransportFetch(request.url, {
       method: request.method,
       headers: request.headers,
       body: request.body,
@@ -273,7 +276,16 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
 
     try {
       clientRequest = httpsRequest(
-        { protocol, hostname, port, path, method: request.method, headers: request.headers, ...tls },
+        {
+          protocol,
+          hostname,
+          port,
+          path,
+          method: request.method,
+          headers: request.headers,
+          ...tls,
+          ...guardedNodeOptions(hostname),
+        },
         (incoming) => {
           response = incoming;
           incoming.on("error", failWith);

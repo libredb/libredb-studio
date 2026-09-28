@@ -1,0 +1,559 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumer.fetch(orders partition 1 offset 5, READ_COMMITTED)"
+ },
+ "outcome": "pass",
+ "payload": {
+  "throttleTimeMs": 0,
+  "errorCode": 0,
+  "sessionId": 924070985,
+  "nodeEndpoints": [],
+  "responses": [
+   {
+    "topicId": "ae5fd052-88d6-4c94-ac08-d450f3fe6a48",
+    "partitions": [
+     {
+      "partitionIndex": 1,
+      "errorCode": 0,
+      "highWatermark": {
+       "$bigint": "12"
+      },
+      "lastStableOffset": {
+       "$bigint": "12"
+      },
+      "logStartOffset": {
+       "$bigint": "0"
+      },
+      "divergingEpoch": {
+       "epoch": -1,
+       "endOffset": {
+        "$bigint": "-1"
+       }
+      },
+      "currentLeader": {
+       "leaderId": -1,
+       "leaderEpoch": -1
+      },
+      "snapshotId": {
+       "endOffset": {
+        "$bigint": "-1"
+       },
+       "epoch": -1
+      },
+      "abortedTransactions": [],
+      "preferredReadReplica": -1,
+      "records": [
+       {
+        "firstOffset": {
+         "$bigint": "0"
+        },
+        "length": 1113,
+        "partitionLeaderEpoch": 0,
+        "magic": 2,
+        "crc": 367151639,
+        "attributes": 0,
+        "lastOffsetDelta": 11,
+        "firstTimestamp": {
+         "$bigint": "1790275771452"
+        },
+        "maxTimestamp": {
+         "$bigint": "1790275771462"
+        },
+        "producerId": {
+         "$bigint": "0"
+        },
+        "producerEpoch": 0,
+        "firstSequence": 0,
+        "records": [
+         {
+          "length": 85,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "0"
+          },
+          "offsetDelta": 0,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDAsICJjb3VudHJ5IjogIlRSIiwgIm5vdGUiOiAiw7wgw7Yg5pel5pysIn0="
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDA="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTA="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djA="
+            }
+           ]
+          ]
+         },
+         {
+          "length": 85,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "7"
+          },
+          "offsetDelta": 1,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDUsICJjb3VudHJ5IjogIlVTIiwgIm5vdGUiOiAiw7wgw7Yg5pel5pysIn0="
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDI="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTI="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djU="
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "8"
+          },
+          "offsetDelta": 2,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDEwLCAiY291bnRyeSI6ICJERSIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDE="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTE="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djEw"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "8"
+          },
+          "offsetDelta": 3,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDE1LCAiY291bnRyeSI6ICJUUiIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDA="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTA="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djE1"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "8"
+          },
+          "offsetDelta": 4,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDIwLCAiY291bnRyeSI6ICJVUyIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDI="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTI="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djIw"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "9"
+          },
+          "offsetDelta": 5,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDI1LCAiY291bnRyeSI6ICJERSIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDE="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTE="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djI1"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "9"
+          },
+          "offsetDelta": 6,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDMwLCAiY291bnRyeSI6ICJUUiIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDA="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTA="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djMw"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "9"
+          },
+          "offsetDelta": 7,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDM1LCAiY291bnRyeSI6ICJVUyIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDI="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTI="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djM1"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "9"
+          },
+          "offsetDelta": 8,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDQwLCAiY291bnRyeSI6ICJERSIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDE="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTE="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djQw"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "10"
+          },
+          "offsetDelta": 9,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDQ1LCAiY291bnRyeSI6ICJUUiIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDA="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTA="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djQ1"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "10"
+          },
+          "offsetDelta": 10,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDUwLCAiY291bnRyeSI6ICJVUyIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDI="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTI="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djUw"
+            }
+           ]
+          ]
+         },
+         {
+          "length": 87,
+          "attributes": 0,
+          "timestampDelta": {
+           "$bigint": "10"
+          },
+          "offsetDelta": 11,
+          "key": {
+           "$bytes": "a2V5LTA="
+          },
+          "value": {
+           "$bytes": "eyJpZCI6IDU1LCAiY291bnRyeSI6ICJERSIsICJub3RlIjogIsO8IMO2IOaXpeacrCJ9"
+          },
+          "headers": [
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dDE="
+            }
+           ],
+           [
+            {
+             "$bytes": "dHJhY2U="
+            },
+            {
+             "$bytes": "dTE="
+            }
+           ],
+           [
+            {
+             "$bytes": "aDE="
+            },
+            {
+             "$bytes": "djU1"
+            }
+           ]
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

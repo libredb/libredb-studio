@@ -15,6 +15,7 @@ const DEFAULT_PORTS: Record<string, string> = {
   mongodb: "27017",
   redis: "6379",
   couchbase: "8091",
+  kafka: "9092",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -36,6 +37,9 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   druid: ["host", "port", "user", "password"],
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
+  // The mechanism is a field of its own and no database is taken: under the fallback below
+  // `buildConnection` would write a `database` and never a `saslMechanism`.
+  kafka: ["host", "port", "saslMechanism", "user", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -55,9 +59,11 @@ mock.module("@/lib/db-ui-config", () => ({
     connectionFields: mockFields(type),
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
+  // Mirrors the real table: `kafka` is the one entry that declares `showSshTunnel: false`.
+  offersSshTunnel: (type: string) => type !== "kafka",
 }));
 
-import { useConnectionForm } from "@/hooks/use-connection-form";
+import { CONNECTION_FORM_DEFAULTS, useConnectionForm } from "@/hooks/use-connection-form";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
@@ -293,6 +299,137 @@ describe("useConnectionForm", () => {
     expect(result.current.type).toBe("postgres");
     expect(result.current.host).toBe("localhost");
     expect(result.current.port).toBe("5432");
+  });
+
+  /**
+   * The TLS, SSH, environment and Advanced fields are connection-scoped like the
+   * credentials above (#1125): a leftover CA certificate or client key is sent with the
+   * next connection's test and saved onto it, and a leftover tunnel routes the next
+   * connection through the previous one's bastion.
+   */
+  test("closing a new connection resets its TLS, SSH, environment and Advanced fields", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setShowSSL(true);
+      result.current.setSSLMode("verify-full");
+      result.current.setCaCert("-----BEGIN CERTIFICATE-----ca");
+      result.current.setClientCert("-----BEGIN CERTIFICATE-----client");
+      // Opaque on purpose: a "BEGIN PRIVATE KEY" literal trips the Secret Scan.
+      result.current.setClientKey("client-key-pem");
+      result.current.setShowSSH(true);
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion.example.com");
+      result.current.setSSHPort("2222");
+      result.current.setSSHUsername("tunneluser");
+      result.current.setSSHAuthMethod("privateKey");
+      result.current.setSSHPassword("tunnel-secret");
+      result.current.setSSHPrivateKey("-----BEGIN OPENSSH PRIVATE KEY-----");
+      result.current.setSSHPassphrase("key-passphrase");
+      result.current.setEnvironment("production");
+      result.current.setShowAdvanced(true);
+      result.current.setServiceName("ORCLPDB1");
+      result.current.setInstanceName("SQLEXPRESS");
+    });
+
+    rerender({ ...defaultProps, isOpen: false });
+    rerender({ ...defaultProps, isOpen: true });
+
+    expect(result.current.showSSL).toBe(false);
+    expect(result.current.sslMode).toBe("disable");
+    expect(result.current.caCert).toBe("");
+    expect(result.current.clientCert).toBe("");
+    expect(result.current.clientKey).toBe("");
+    expect(result.current.showSSH).toBe(false);
+    expect(result.current.sshEnabled).toBe(false);
+    expect(result.current.sshHost).toBe("");
+    expect(result.current.sshPort).toBe("22");
+    expect(result.current.sshUsername).toBe("");
+    expect(result.current.sshAuthMethod).toBe("password");
+    expect(result.current.sshPassword).toBe("");
+    expect(result.current.sshPrivateKey).toBe("");
+    expect(result.current.sshPassphrase).toBe("");
+    expect(result.current.environment).toBe("local");
+    expect(result.current.showAdvanced).toBe(false);
+    expect(result.current.serviceName).toBe("");
+    expect(result.current.instanceName).toBe("");
+  });
+
+  test("the next test-connection request after a closed TLS and SSH connection carries neither", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setSSLMode("verify-full");
+      result.current.setCaCert("-----BEGIN CERTIFICATE-----ca");
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion.example.com");
+      result.current.setSSHUsername("tunneluser");
+      result.current.setSSHPassword("tunnel-secret");
+    });
+
+    rerender({ ...defaultProps, isOpen: false });
+    rerender({ ...defaultProps, isOpen: true });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect("ssl" in body).toBe(false);
+    expect("sshTunnel" in body).toBe(false);
+  });
+
+  /**
+   * Every field in the defaults object is reset, not only the ones named above: the
+   * object is what the reset iterates, so a field added to it is covered here without
+   * another assertion.
+   */
+  test("closing a new connection puts every field of CONNECTION_FORM_DEFAULTS back to its default", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+    const setterFor = (key: string) =>
+      Object.entries(result.current).find(([name]) => name.toLowerCase() === `set${key}`.toLowerCase())?.[1] as
+        | ((value: unknown) => void)
+        | undefined;
+
+    const changed: Record<string, unknown> = {
+      type: "mysql",
+      port: "3306",
+      host: "db.example.com",
+      mongoConnectionMode: "connectionString",
+      sslMode: "require",
+      sshAuthMethod: "privateKey",
+      sshPort: "2222",
+      environment: "staging",
+      saslMechanism: "PLAIN",
+    };
+    act(() => {
+      for (const [key, fallback] of Object.entries(CONNECTION_FORM_DEFAULTS)) {
+        const setter = setterFor(key);
+        expect(setter).toBeDefined();
+        const value = key in changed ? changed[key] : typeof fallback === "boolean" ? !fallback : `${key}-leftover`;
+        setter?.(value);
+      }
+    });
+    for (const key of Object.keys(CONNECTION_FORM_DEFAULTS)) {
+      expect(result.current[key as keyof typeof result.current]).not.toEqual(
+        CONNECTION_FORM_DEFAULTS[key as keyof typeof CONNECTION_FORM_DEFAULTS],
+      );
+    }
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    for (const [key, value] of Object.entries(CONNECTION_FORM_DEFAULTS)) {
+      expect({ key, value: result.current[key as keyof typeof result.current] }).toEqual({ key, value });
+    }
   });
 
   /**
@@ -1226,6 +1363,7 @@ describe("useConnectionForm", () => {
     libsql: true,
     duckdb: true,
     prometheus: true,
+    kafka: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -1904,6 +2042,289 @@ describe("useConnectionForm", () => {
     rerender({ ...defaultProps, isOpen: false });
 
     expect(result.current.authSource).toBe("");
+  });
+
+  // ── Kafka's SASL mechanism (#1088 6.1) ─────────────────────────────────
+
+  /** The JSON body of every POST the hook sent to the test-connection route, in order. */
+  const testConnectionBodies = (fetchMock: ReturnType<typeof mockGlobalFetch>): Record<string, unknown>[] =>
+    fetchMock.mock.calls
+      .filter((call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"))
+      .map((call) => JSON.parse(call[1]!.body as string) as Record<string, unknown>);
+
+  const KAFKA_WITH_MECHANISM: DatabaseConnection = {
+    id: "k1",
+    name: "Events",
+    type: "kafka",
+    host: "broker.internal",
+    port: 9092,
+    user: "reader",
+    password: "reader-password",
+    saslMechanism: "SCRAM-SHA-512",
+    ssl: { mode: "verify-full" },
+    createdAt: new Date(),
+  };
+
+  test("a chosen SASL mechanism reaches both the tested and the saved Kafka connection", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setHost("broker.internal");
+      result.current.setPort("9092");
+      result.current.setSaslMechanism("SCRAM-SHA-512");
+      result.current.setUser("reader");
+      result.current.setPassword("reader-password");
+    });
+    expect(result.current.saslMechanism).toBe("SCRAM-SHA-512");
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const bodies = testConnectionBodies(fetchMock);
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body.type).toBe("kafka");
+      expect(body.saslMechanism).toBe("SCRAM-SHA-512");
+      // No database box: one connection is one cluster.
+      expect("database" in body).toBe(false);
+    }
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0].saslMechanism).toBe("SCRAM-SHA-512");
+  });
+
+  test("choosing None sends no mechanism at all, rather than an empty one", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setSaslMechanism("SCRAM-SHA-256");
+    });
+    act(() => {
+      result.current.setSaslMechanism("");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect(body.type).toBe("kafka");
+    expect("saslMechanism" in body).toBe(false);
+  });
+
+  test("a mechanism chosen and then left behind by a switch to another engine is not sent", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setSaslMechanism("PLAIN");
+    });
+    act(() => {
+      result.current.setType("postgres");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect(body.type).toBe("postgres");
+    expect("saslMechanism" in body).toBe(false);
+  });
+
+  test("editing a saved SCRAM-SHA-512 connection shows and keeps its mechanism", async () => {
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: KAFKA_WITH_MECHANISM,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    expect(result.current.saslMechanism).toBe("SCRAM-SHA-512");
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0].saslMechanism).toBe("SCRAM-SHA-512");
+  });
+
+  test("choosing None while editing clears the stored mechanism rather than preserving it", async () => {
+    // The select owns the field (`FIELD_OWNERSHIP.saslMechanism` is "edited"), so a cleared
+    // choice is saved as absent. Preserving it would keep a mechanism the user took away.
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: KAFKA_WITH_MECHANISM,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    act(() => {
+      result.current.setSaslMechanism("");
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("saslMechanism" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("editing a Kafka connection without a mechanism does not inherit the last one", () => {
+    // The edit load OVERWRITES: a connection with no mechanism must show None, or the previously
+    // edited connection's mechanism is saved onto it.
+    const withoutMechanism: DatabaseConnection = {
+      id: "k2",
+      name: "Plaintext",
+      type: "kafka",
+      host: "broker-2.internal",
+      port: 9092,
+      createdAt: new Date(),
+    };
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: KAFKA_WITH_MECHANISM },
+    });
+
+    expect(result.current.saslMechanism).toBe("SCRAM-SHA-512");
+
+    rerender({ ...defaultProps, editConnection: withoutMechanism });
+
+    expect(result.current.saslMechanism).toBe("");
+  });
+
+  test("closing the dialog clears the mechanism before the next new connection", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setSaslMechanism("PLAIN");
+    });
+
+    expect(result.current.saslMechanism).toBe("PLAIN");
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.saslMechanism).toBe("");
+  });
+
+  // ── The SSH tunnel is written only for an engine that offers one (#1088 6.1) ──
+
+  test("a tunnel switched on under PostgreSQL is not sent once the dialog is switched to Kafka", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion.test.com");
+      result.current.setSSHUsername("tunnel");
+      result.current.setSSHAuthMethod("password");
+      result.current.setSSHPassword("tunnelpass");
+    });
+    // The control: under PostgreSQL the same state sends its tunnel.
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setHost("broker.internal");
+      result.current.setPort("9092");
+    });
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const [underPostgres, underKafka, savedUnderKafka] = testConnectionBodies(fetchMock);
+    expect(underPostgres.type).toBe("postgres");
+    expect((underPostgres.sshTunnel as { host?: string } | undefined)?.host).toBe("bastion.test.com");
+    for (const body of [underKafka, savedUnderKafka]) {
+      expect(body.type).toBe("kafka");
+      expect("sshTunnel" in body).toBe(false);
+    }
+    // The tunnel is still switched on in the dialog's state: only the write is withheld.
+    expect(result.current.sshEnabled).toBe(true);
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("sshTunnel" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("a tunnel left in the dialog's state by the connection edited before is not sent for a Kafka edit", async () => {
+    // The dialog's SSH state carries from one edit target to the next and survives the close
+    // reset (a pre-existing leak, recorded in docs/BACKLOG.md). The write gate is what keeps it
+    // off a Kafka connection.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const tunnelledPostgres: DatabaseConnection = {
+      id: "pg-ssh",
+      name: "Tunnelled PG",
+      type: "postgres",
+      host: "internal.example.com",
+      port: 5432,
+      createdAt: new Date(),
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "tunneluser",
+        authMethod: "password",
+        password: "tunnel-secret",
+      },
+    };
+    const kafkaWithoutTunnel: DatabaseConnection = {
+      id: "k3",
+      name: "Events",
+      type: "kafka",
+      host: "broker.internal",
+      port: 9092,
+      createdAt: new Date(),
+    };
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true, editConnection: tunnelledPostgres },
+    });
+    rerender({ ...defaultProps, isOpen: false, editConnection: tunnelledPostgres });
+    rerender({ ...defaultProps, isOpen: true, editConnection: kafkaWithoutTunnel });
+
+    // The leak itself: the Kafka edit opens with the PostgreSQL connection's tunnel still on.
+    expect(result.current.type).toBe("kafka");
+    expect(result.current.sshEnabled).toBe(true);
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect(body.type).toBe("kafka");
+    expect("sshTunnel" in body).toBe(false);
   });
 
   // ── buildConnection with the Elasticsearch API key pair ─────────────────

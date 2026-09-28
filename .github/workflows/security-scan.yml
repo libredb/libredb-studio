@@ -28,11 +28,13 @@ name: Security Scan
 #                     pull request red; the maintainer still learns within a day,
 #                     which is what control 2.1 asks for. GitHub emails the owner
 #                     when a scheduled run fails, so a red cron is not silent.
-#   image-scan        never fails. Measured 2026-08-09 against
-#                     node:24.16.0-trixie-slim: 4 critical and 18 high Debian
-#                     CVEs, and 167 of 168 findings have no fixed package. A gate
-#                     over that is a permanent red with nothing to do about it -
-#                     which is how a gate becomes a continue-on-error line.
+#   image-scan        reports everything, gates on one slice. Measured
+#                     2026-09-28 against 0.16.1: 184 findings, 155 of them with
+#                     no fixed package. A gate over all of that is a permanent
+#                     red with nothing to do about it, which is how a gate
+#                     becomes a continue-on-error line. Filtered to Critical
+#                     with a fix available it is three, and three is actionable:
+#                     that slice, and only that slice, fails the job.
 #
 # secret-scan IS a required check (promoted 2026-08-22). The other two are not,
 # and should not be: their verdict is a function of a feed rather than of the
@@ -436,8 +438,8 @@ jobs:
     # what this job measures on the Debian one, so leaving them unscanned would
     # publish a security claim nothing checks - and the slim variant's runtime
     # base is Alpine's own `nodejs` package rather than the official image, a
-    # third OS layer with its own answer. fail-fast off: this job reports and
-    # never gates, so one unreadable tag must not cancel the others.
+    # third OS layer with its own answer. fail-fast off: one unreadable tag,
+    # or one variant's gate, must not cancel the others' reports.
     strategy:
       fail-fast: false
       matrix:
@@ -449,6 +451,11 @@ jobs:
           - variant: alpine-slim
             tag: latest-alpine-slim
     steps:
+      - name: Checkout code
+        # Only for .trivyignore.yaml, which the gate at the end of this job
+        # reads. Nothing here needs history.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
       - name: Compute the database cache day
         id: day
         run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
@@ -490,11 +497,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-out"
-          # No severity filter and no exit code. This job's entire job is to make
-          # the OS layer visible: measured 2026-08-09, the runtime base image
-          # carries 4 critical and 18 high Debian CVEs of which 167 of 168
-          # findings have no fixed package available. There is nothing to gate on
-          # and pretending otherwise ends with the workflow disabled.
+          # No severity filter and no exit code on THIS step. Its job is to make
+          # the whole OS layer visible: measured 2026-09-28 on 0.16.1, 184
+          # findings of which 155 have no fixed package available. Gating on that
+          # is a permanent red and ends with the workflow disabled. The last step
+          # in this job gates on the slice that does have fixes.
           #
           # ~/.docker/config.json carries the GHCR credentials from the login
           # step, which is what lets Trivy resolve the image inside the container.
@@ -560,8 +567,8 @@ jobs:
             echo "even if a release retags it while this job is running."
             echo
             echo "Critical and high findings only. On the Debian variant most carry no fixed"
-            echo "package - the distro has not shipped one - which is why this job reports and"
-            echo "never gates. The actionable subset is the one with a Fixed Version column"
+            echo "package - the distro has not shipped one - and those are reported, not gated."
+            echo "The actionable subset is the one with a Fixed Version column"
             echo "entry: that is a base-image bump in \`${{ matrix.variant == 'debian' && 'Dockerfile' || format('Dockerfile.{0}', matrix.variant) }}\`."
             echo
             echo '```'
@@ -582,3 +589,129 @@ jobs:
           path: ${{ runner.temp }}/trivy-out/image.cdx.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Fail on Critical findings that have a fix
+        id: gate
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          # The scan above is deliberately unfiltered and deliberately ungated,
+          # and the reason it gives is sound: most of what the Debian base
+          # carries has no fixed package, so gating on all of it would leave the
+          # workflow permanently red and therefore switched off. --ignore-unfixed
+          # is the other half of that argument. It leaves only the findings
+          # somebody can actually act on, and those are worth stopping for.
+          #
+          # Measured on 0.16.1, 2026-09-28: unfiltered, 184 findings, 155 of them
+          # with no fixed package, which is the noise the step above describes.
+          # Filtered this way, three, all of them perl-base, all cleared by one
+          # base-image bump. We did not find those three. A downstream store
+          # scanned our published image, found them, and told us, which is the
+          # wrong direction for that news to travel.
+          #
+          # This runs as a second scan rather than a second read of image.json
+          # because `trivy convert` does not honour --ignore-unfixed (measured
+          # 2026-08-09, noted on the lockfile scan above). --skip-db-update
+          # pins it to the database the report above already used: this step
+          # runs minutes later, after the SBOM, and Trivy re-downloads once the
+          # database's own NextUpdate passes, a day after the last one, so
+          # without it the SARIF published to the security
+          # tab and the verdict that reddens the job can come from two
+          # different feeds. --ignorefile is the escape valve the lockfile gate
+          # already has, and the reason the header's warning does not apply
+          # here: a Critical whose fix the distribution has published but the
+          # upstream base image has not yet picked up would otherwise be a red
+          # cron with no action available to anyone, and the only lever left
+          # would be continue-on-error. Verified 2026-09-28 against 0.16.1:
+          # exit 2 unsuppressed, exit 0 with the three perl-base ids entered.
+          #
+          # Last in the job so the report, the SARIF upload and the SBOM are all
+          # published before it can fail.
+          # --exit-code 2, not 1, so a finding is distinguishable from a crash.
+          # Trivy exits 1 for its own fatal errors - an unreachable registry, a
+          # missing ignorefile, a cold cache under --skip-db-update - and the
+          # explainer below asserts a CRITICAL is present, which on those paths
+          # would be a lie told to whoever is least able to diagnose it. Measured
+          # 2026-09-28: finding 2, unreachable image 1, clean 0.
+          set +e
+          docker run --rm \
+            -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+            -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            -v "$RUNNER_TEMP/trivy-out:/out" \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln \
+              --pkg-types os \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --skip-db-update \
+              --exit-code 2 \
+              --ignorefile /repo/.trivyignore.yaml \
+              --format table \
+              --output /out/gate.txt \
+              "$IMAGE_REF"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT" || true
+          set -e
+          # The table above this step is the UNFILTERED report, and on a red run
+          # it is the first thing a reader sees. Left alone it reads as the
+          # reason the job is red even when the job is red for a registry
+          # timeout, so the summary has to say which of the three states this
+          # run is in and, when it is a finding, show the gate's own rows.
+          {
+            echo
+            echo "### Image gate"
+            echo
+            if [ "$rc" -eq 2 ]; then
+              echo "**Red: a CRITICAL OS-package finding with a fix available is present and not**"
+              echo "**suppressed.** These rows are the gate's own filtered view, not the table above."
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/trivy-out/gate.txt"
+              echo '```'
+            elif [ "$rc" -eq 0 ]; then
+              echo "Green: no CRITICAL OS-package finding with a fix available."
+            else
+              echo "**Red, but not because of a finding.** Trivy exited $rc, which is a scan"
+              echo "failure rather than a verdict: an unreachable registry, a missing or malformed"
+              echo "\`.trivyignore.yaml\`, or a cold database. The table above is the earlier"
+              echo "report and is not the reason this job is red. The step log has the error."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Explain a failed image gate
+        # Same shape and the same reasoning as the dependency gate's explainer
+        # above, but conditioned on the gate's exit code rather than its
+        # outcome: outcome is `failure` for a registry timeout too, and this
+        # text asserts a CRITICAL is present. rc == 2 is the one path where that
+        # is true. failure() is still required because an `if:` with no status
+        # function gets `success() &&` prepended.
+        if: failure() && steps.gate.outputs.rc == '2'
+        run: |
+          {
+            echo "## The image gate failed on \`${{ matrix.variant }}\`"
+            echo
+            echo "A CRITICAL OS-package finding with a fixed package is present in the image"
+            echo "users are pulling right now, and it is not suppressed. The gate is scoped to"
+            echo "\`--pkg-types os\`; application packages are the dependency gate's job, so the"
+            echo "remedy below is always a base-image one."
+            echo
+            echo "1. Bump the runtime base image tag in"
+            echo "   \`${{ matrix.variant == 'debian' && 'Dockerfile' || format('Dockerfile.{0}', matrix.variant) }}\`, then cut a release. Scanning changes"
+            echo "   nothing about what is being pulled, and the moving tags this job reads are"
+            echo "   republished only from a release."
+            echo "2. If the distribution has shipped the fix but the upstream base image has not"
+            echo "   picked it up yet, add an entry to \`.trivyignore.yaml\` with an \`expired_at\` no"
+            echo "   more than 90 days out and a \`statement\` naming the image and the tag being"
+            echo "   waited on. Trivy re-reports an expired entry, so the wait gets re-argued"
+            echo "   rather than inherited. That file is asserted empty by"
+            echo "   \`tests/unit/trivyignore-policy.test.ts\`, so the same change updates that"
+            echo "   test: it records the expected state, it is not a rule that it stay empty."
+            echo "3. Do not add \`continue-on-error\` to the gate. If the threshold is wrong,"
+            echo "   change the threshold in review."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,30 +1,38 @@
-# Vulnerability suppressions for the dependency gate (security programme control 2.1).
+# Vulnerability suppressions for both gates (security programme control 2.1):
+# the dependency gate in dependency-scan, and the image gate in image-scan.
 #
-# WHAT THE GATE ACTUALLY FAILS ON
+# WHAT THE GATES ACTUALLY FAIL ON
 #
-# CRITICAL severity, in a lockfile, with a fixed version available, not covered
-# by an unexpired entry below. Everything else - HIGH, MEDIUM, LOW, and anything
-# with no available fix - is reported to the job summary and to the Security tab,
-# and fails nothing. That threshold is not leniency: measured on 2026-08-09 the
-# shipped container image carries 168 OS-package findings of which 167 have no
-# fixed package at all, and a gate over those would be permanently red with no
-# action available to anyone here - which is the state in which somebody adds
-# continue-on-error at two in the morning.
+# CRITICAL severity, with a fixed version available, not covered by an unexpired
+# entry below - in a lockfile for the dependency gate, in the published container
+# image for the image gate. Everything else - HIGH, MEDIUM, LOW, and anything with
+# no available fix - is reported to the job summary and to the Security tab, and
+# fails nothing. That threshold is not leniency: measured on 2026-09-28 the 0.16.1
+# image carried 184 findings, 182 of them OS packages, and 155 of the 184 have no
+# fixed package at all. A gate over those would be permanently red with no action
+# available to anyone here, which is the state in which somebody adds
+# continue-on-error at two in the morning. Filtered to CRITICAL with a fix it was
+# three, all one base-image bump away, and we heard about them from a downstream
+# store rather than from CI.
 #
 # SO THIS FILE SHOULD ALMOST ALWAYS BE EMPTY.
 #
-# It exists for the one case the threshold does not cover: a critical advisory
-# with a fix this repository cannot take yet - a breaking major, a transitive
-# pin held by a dependency that has not released. Reaching for it for anything
-# else means the threshold is wrong; change the threshold, in review, instead.
+# It exists for the cases the threshold does not cover: a critical advisory with a
+# fix this repository cannot take yet - a breaking major, a transitive pin held by
+# a dependency that has not released - or, for the image gate, a fix the
+# distribution has published that the upstream base image has not picked up, where
+# the only action available here is to wait for the next base tag. Reaching for it
+# for anything else means the threshold is wrong; change the threshold, in review,
+# instead.
 #
 # AN ENTRY MUST CARRY
 #
 #   id           the CVE or GHSA identifier exactly as Trivy reports it
 #   statement    why this is not exploitable HERE, or why the fix cannot be taken
 #                yet, in one or two sentences. "Not exploitable" on its own is not
-#                a statement - name the reachability argument, or name the
-#                blocking dependency and its issue
+#                a statement - name the reachability argument, name the blocking
+#                dependency and its issue, or for an image finding name the base
+#                image and the tag being waited on
 #   expired_at   a date no more than 90 days out
 #
 # Verified behaviour (Trivy 0.73.0): an entry whose expired_at has passed is
@@ -44,5 +52,13 @@
 #     fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
 #        --ignorefile /repo/.trivyignore.yaml \
 #        --skip-dirs node_modules --skip-dirs .next --skip-dirs dist --skip-dirs coverage .
+#
+# And the image gate, which exits 2 on a finding and 1 on its own failure:
+#
+#   docker run --rm -v "$PWD:/repo:ro" \
+#     aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+#     image --scanners vuln --pkg-types os --severity CRITICAL --ignore-unfixed \
+#        --exit-code 2 --ignorefile /repo/.trivyignore.yaml \
+#        ghcr.io/libredb/libredb-studio:latest
 
 vulnerabilities: []

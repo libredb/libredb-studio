@@ -32,6 +32,8 @@
  */
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { isSQLiteInt64Digits } from "../sqlite-int64";
 import {
@@ -440,7 +442,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
 
   public async serverVersion(): Promise<string | null> {
     try {
-      const response = await fetch(endpointUrl(this.origin, VERSION_PATH), {
+      const response = await httpTransportFetch(endpointUrl(this.origin, VERSION_PATH), {
         method: "GET",
         headers: this.headers(),
         // Not followed, like every other request: a 3xx is one more "no version".
@@ -449,7 +451,8 @@ export class LibSQLHranaTransport implements LibSQLTransport {
       if (!response.ok) return null;
       const text = (await response.text()).trim();
       return text === "" ? null : text;
-    } catch {
+    } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
       // A deployment without the route, and a deployment that could not be
       // reached at all, are both "no version to show" for this call. The version
       // panel's connection has already been established by the time it runs, so a
@@ -473,7 +476,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     const url = endpointUrl(this.origin, path);
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: "POST",
         headers: this.headers(),
         body,
@@ -485,6 +488,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
         signal: timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs),
       });
     } catch (cause) {
+      if (cause instanceof DatabaseConfigError) throw cause;
       const reason = cause instanceof Error ? cause.message : String(cause);
       throw new LibSQLTransportError(`libSQL request failed: ${reason}`, 0);
     }

@@ -1332,7 +1332,7 @@ The owner is the segment the DECLARATION assigns to the `schema` container level
 is the LAST path segment; neither is read by a literal index.
 
 **The Monaco language id is `sql`, and that is a compromise this provider states rather than hides.**
-MEASURED on the installed monaco-editor 0.56.0: `plsql` is not among the 89 language ids the bundle
+MEASURED on the installed monaco-editor 0.57.0: `plsql` is not among the 89 language ids the bundle
 registers, and an unregistered id degrades to plain text SILENTLY, with no throw and nothing
 observable. A PL/SQL body therefore renders under the SQL grammar, which highlights the DML and
 misses `IS`, `BEGIN`, `EXCEPTION` and the block structure.
@@ -1744,12 +1744,18 @@ boundary preserves those states without a falsy test that would erase a genuine 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+`runMaintenance(type, target?, container?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+
+A `container` is the OWNER the row carries as `schemaName` (#772). It moves every read off the
+`USER_*` catalogs and onto their `ALL_*` twins with the owner bound, passes that owner as the
+first `GATHER_TABLE_STATS` / `GATHER_SCHEMA_STATS` argument in place of `USER`, and qualifies
+each `ALTER INDEX "<owner>"."<index>" REBUILD`. Without one the connected user is the owner,
+which is the reading every column below used before the parameter existed.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
-| `analyze` | `DBMS_STATS.GATHER_TABLE_STATS(USER, '<t>')` | `DBMS_STATS.GATHER_SCHEMA_STATS(USER)` |
-| `optimize` | rebuild the indexes THAT TABLE owns: `SELECT INDEX_NAME FROM USER_INDEXES WHERE TABLE_NAME = :t AND INDEX_TYPE = 'NORMAL'`, then `ALTER INDEX "<i>" REBUILD` for each (own try/catch) | rebuild **every** normal user index (`USER_INDEXES`, each in its own try/catch) |
+| `analyze` | `DBMS_STATS.GATHER_TABLE_STATS(<owner>, '<t>')` | `DBMS_STATS.GATHER_SCHEMA_STATS(<owner>)` |
+| `optimize` | rebuild the indexes THAT TABLE owns: `SELECT INDEX_NAME FROM USER_INDEXES WHERE TABLE_NAME = :t AND INDEX_TYPE = 'NORMAL'` (or `ALL_INDEXES` with `OWNER = :owner`), then `ALTER INDEX "<i>" REBUILD` for each (own try/catch) | rebuild **every** normal user index (`USER_INDEXES` / `ALL_INDEXES`, each in its own try/catch) |
 | `kill` | `ALTER SYSTEM KILL SESSION '<SID,SERIAL#>'` | throws (`SID,SERIAL#` required) |
 
 `getCapabilities().maintenanceOperations = ['analyze', 'optimize', 'kill']`. Targets are
@@ -1853,6 +1859,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `statementTerminator` | `'none'` - node-oracledb sends one statement and `;` is not part of it (see [§3.2a](#32a-a-generated-statement-carries-no-terminator)) |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | one level, `schema` - and on Oracle that level is a USER ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
+| `containerPathShapes` | `exact`: only `[schema]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | nine: table, view, materialized view, synonym, sequence, package, procedure, function, trigger. No `index` kind ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)) |
 
 ### Labels — overridden (`getLabels()`, [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
@@ -2101,4 +2108,4 @@ the object tree's own routes under `POST /api/db/objects/*`
 - Errors (incl. `ORA-*` mapping): [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Trino](./trino.md) · [Redis](./redis.md)

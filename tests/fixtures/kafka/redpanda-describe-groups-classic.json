@@ -1,0 +1,26 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.describeGroups({ groups: [\"lag-classic\"] })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "$map": [
+   [
+    "lag-classic",
+    {
+     "id": "lag-classic",
+     "state": "Empty",
+     "protocolType": "consumer",
+     "protocol": "",
+     "members": {
+      "$map": []
+     },
+     "authorizedOperations": -2147483648
+    }
+   ]
+  ]
+ }
+}

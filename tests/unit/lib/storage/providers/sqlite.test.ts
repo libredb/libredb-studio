@@ -10,7 +10,11 @@ const mockPrepare = mock((): any => ({
   run: mock((..._args: any[]) => {}),
 }));
 const mockExec = mock((..._args: any[]) => {});
-const mockPragma = mock((..._args: any[]) => {});
+// The foreign-key read-back answers 1 unless a case says the engine refused to enable them.
+let foreignKeysReadBack = 1;
+const mockPragma = mock((...args: any[]): any =>
+  args[0] === "foreign_keys" && args[1]?.simple === true ? foreignKeysReadBack : undefined,
+);
 const mockClose = mock(() => {});
 
 const mockDbInstance = {
@@ -63,9 +67,25 @@ describe("SQLiteStorageProvider", () => {
   test("initialize creates table and enables WAL", async () => {
     await provider.initialize();
     expect(mockPragma).toHaveBeenCalledWith("journal_mode = WAL");
+    expect(mockPragma).toHaveBeenCalledWith("foreign_keys = ON");
     expect(mockExec).toHaveBeenCalledTimes(1);
     const sql = (mockExec.mock.calls as unknown[][])[0][0] as string;
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS user_storage");
+    for (const table of ["passkey_users", "passkey_credentials", "passkey_spent_challenges"]) {
+      expect(sql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    }
+  });
+
+  test("initialize refuses to start when foreign keys cannot be enabled", async () => {
+    foreignKeysReadBack = 0;
+    try {
+      await expect(provider.initialize()).rejects.toThrow(
+        "SQLite storage cannot enforce foreign keys, which passkeys need to follow their account",
+      );
+      expect(mockExec).not.toHaveBeenCalled();
+    } finally {
+      foreignKeysReadBack = 1;
+    }
   });
 
   test("getAllData returns parsed collections", async () => {

@@ -921,7 +921,7 @@ abstract class SearchProvider extends SQLBaseProvider {
    */
   private describeConnectFailure(error: unknown): Error {
     const mapped = this.mapSearchError(error);
-    if (mapped instanceof AuthenticationError) return mapped;
+    if (mapped instanceof AuthenticationError || mapped instanceof DatabaseConfigError) return mapped;
 
     return new ConnectionError(
       `Failed to connect to ${this.product.label}: ${mapped.message}`,

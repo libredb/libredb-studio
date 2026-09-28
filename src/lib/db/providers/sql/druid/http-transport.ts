@@ -30,6 +30,8 @@
  */
 
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 // Shared with `lib/explain/druid-native.ts`, which parses the EXPLAIN plan columns:
 // those arrive as JSON *text* inside this body, so the pass below correctly leaves
@@ -563,7 +565,7 @@ export class DruidHttpTransport implements DruidTransport {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(this.endpoint, {
+      response = await httpTransportFetch(this.endpoint, {
         method: "POST",
         headers: {
           "content-type": JSON_CONTENT_TYPE,
@@ -576,6 +578,7 @@ export class DruidHttpTransport implements DruidTransport {
       });
       text = await response.text();
     } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.
       throw transportError(error);

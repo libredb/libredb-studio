@@ -697,6 +697,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
+                    // A held key would toggle once per auto-repeat, for the reason the key row states.
+                    if (event.repeat) return;
                     setDatabaseOpen((wasOpen) => !wasOpen);
                   }}
                   onFocus={focus}
@@ -823,6 +825,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" && event.key !== " ") return;
                   event.preventDefault();
+                  // Every auto-repeat of a held key is another keydown, and without this one long
+                  // press opened a tab per repeat. Prevented all the same, so it never scrolls.
+                  if (event.repeat) return;
                   activate();
                 }}
                 // The project's own row recipe, plus the database row above this one, so a key two

@@ -1,11 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Override with E2E_PORT when localhost:3000 is occupied by another instance.
+// Ports of every Playwright configuration, so none collides with another: this file's main server
+// 3000 (E2E_PORT), offline server 3010 (E2E_OFFLINE_PORT) and passkey server 3011 (E2E_PASSKEY_PORT);
+// playwright.base-path.config.ts's app 3020 and proxy 3021. Override one with its variable when
+// that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
-// offline-editor.spec.ts gets its own server process on its own port - see the webServer array
-// below for why. Override with E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
+// offline-editor.spec.ts and kafka-provider.spec.ts get a second server process on its own port -
+// see the projects and the webServer array below for why. Override with E2E_OFFLINE_PORT under the
+// same collision circumstances as E2E_PORT.
 const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
+
+// passkey.spec.ts gets a third server process: see the chromium-passkey project for why.
+const passkeyPort = Number(process.env.E2E_PASSKEY_PORT ?? 3011);
 
 const testCredentials = {
   JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
@@ -44,8 +51,9 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      // offline-editor.spec.ts runs under "chromium-offline-editor" below, against its own server.
-      testIgnore: /(?:offline-editor|base-path)\.spec\.ts/,
+      // offline-editor.spec.ts and kafka-provider.spec.ts run under their own projects below,
+      // against the second server, and passkey.spec.ts against the third.
+      testIgnore: /(?:offline-editor|base-path|kafka-provider|passkey)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -63,6 +71,25 @@ export default defineConfig({
       name: "chromium-offline-editor",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /offline-editor\.spec\.ts/,
+    },
+    {
+      // kafka-provider.spec.ts drives Test Connection, which spends the same per-account "query"
+      // bucket, and on the shared server it met the budget the specs before it had spent: CI run
+      // 36263561882 answered its refusal check "Too many requests. Try again in 38 seconds." on all
+      // three attempts. It runs against the second server for the reason offline-editor.spec.ts
+      // does; the two specs together stay far below that bucket's 120 requests a minute.
+      name: "chromium-kafka",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /kafka-provider\.spec\.ts/,
+    },
+    {
+      // Passkeys need an account registry, so this server runs in store mode (STORAGE_PROVIDER=sqlite)
+      // with PASSKEY_ORIGIN set; the servers above keep the default local mode, where passkeys are off
+      // and the Permissions-Policy still denies publickey-credentials-get. Chromium only: the virtual
+      // authenticator is a Chrome DevTools Protocol feature (e2e/helpers/virtual-authenticator.ts).
+      name: "chromium-passkey",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${passkeyPort}` },
+      testMatch: /(^|\/)passkey\.spec\.ts$/,
     },
     {
       // Scoped to the CSP spec only. The desktop shell renders under WebKitGTK, and this is the
@@ -101,6 +128,29 @@ export default defineConfig({
       env: {
         PORT: String(offlinePort),
         STORAGE_SQLITE_PATH: "./data-e2e-offline/libredb-storage.db",
+        ...testCredentials,
+      },
+    },
+    {
+      // The same shared build as the server above. rm -rf first: the account registry lives in this
+      // data dir, and a store left by an earlier run would keep its accounts and passkeys.
+      command: "rm -rf data-e2e-passkey && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
+      url: `http://localhost:${passkeyPort}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        PORT: String(passkeyPort),
+        STORAGE_PROVIDER: "sqlite",
+        STORAGE_SQLITE_PATH: "./data-e2e-passkey/libredb-storage.db",
+        // The address the browser opens; WebAuthn accepts plain http only on the host name localhost.
+        PASSKEY_ORIGIN: `http://localhost:${passkeyPort}`,
+        // Both embedded samples off: their files take a single-writer lock no spec here needs.
+        LIBREDB_EMBEDDED_SAMPLE: "false",
+        SQLITE_EMBEDDED_SAMPLE: "false",
+        // Without a trusted proxy every request comes from the address "unknown", so all the negative
+        // cases of passkey.spec.ts share one client budget; the defaults (5 and 10) would refuse them.
+        RATE_LIMIT_LOGIN_MAX: "100",
+        RATE_LIMIT_PASSKEY_MAX: "100",
         ...testCredentials,
       },
     },

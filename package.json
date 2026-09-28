@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.16.2",
+  "version": "0.17.0",
   "description": "The database editor that deploys next to your data, not onto your laptop.",
   "keywords": [
     "sql",
@@ -126,9 +126,9 @@
     "oracledb",
     "ssh2"
   ],
-  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly. adm-zip: cassandra-driver asks for ~0.5.10 and CVE-2026-39244 (denial of service through a crafted ZIP that forces excessive memory allocation) is fixed in 0.6.0, which is OUTSIDE that range - so unlike lodash above this holds the dependency past what its parent would ever resolve to, and it must be re-checked whenever cassandra-driver moves. The vulnerable path is not reachable from this product: adm-zip has exactly one consumer in the driver, lib/datastax/cloud/index.js, whose init() returns immediately unless a `cloud` option is set, and that option is only for Astra DB secure-connect bundles, which no connection here sets. The pin is taken anyway rather than argued away, and 0.6.0 was verified against the live server: the cloud module loads, an adm-zip write and read round-trips, and a connect plus query answers on Apache Cassandra 5.0.9.",
+  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly. adm-zip: cassandra-driver 4.10.0 asks for ~0.6.0 and CVE-2026-77301 (denial of service through uncontrolled memory allocation) is fixed in 0.6.1. The fix is inside the parent's range, so like lodash this only forces resolution forward - remove the entry once cassandra-driver raises its own floor to 0.6.1. CVE-2026-76845 (arbitrary file overwrite through a symlink) is advised against >= 0.5.9, <= 0.6.0 with no patched version named, so 0.6.1 is outside it too. Neither path is reachable from this product: adm-zip has exactly one consumer in the driver, lib/datastax/cloud/index.js, whose init() returns immediately unless a `cloud` option is set, and that option is only for Astra DB secure-connect bundles, which no connection here sets. The pin is taken anyway rather than argued away, and 0.6.1 was verified against the live server: the cloud module loads, an adm-zip write and read round-trips, and a connect plus query answers on Apache Cassandra 5.0.9.",
   "overrides": {
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "lodash": "^4.18.1",
     "tedious": "^20.0.5"
   },
@@ -170,12 +170,13 @@
     "security:check": "node scripts/security-check.mjs",
     "test:e2e:base-path": "playwright test --config=playwright.base-path.config.ts"
   },
-  "//dependencies": "@duckdb/node-api is the one exact pin in this list. Its versions carry a prerelease suffix (1.5.5-r.4 = DuckDB 1.5.5, driver revision 4), and npm and bun treat a caret over a prerelease tag inconsistently - `^1.5.5-r.4` would resolve forward across 1.x in a way neither tool agrees on - so the range is written out. The driver is four packages, not one: @duckdb/node-api -> @duckdb/node-bindings -> a per-platform, per-libc @duckdb/node-bindings-<platform>-<arch>[-musl] holding duckdb.node next to the ~70 MB libduckdb.so it links against. None of the four declares a scripts block or a binding.gyp, so no trustedDependencies entry is needed. Bumping it is a provider change, not a routine bump (see docs/providers/duckdb.md and the tri-sync rule in CLAUDE.md).",
+  "//dependencies": "@duckdb/node-api is pinned to an exact version. Its versions carry a prerelease suffix (1.5.5-r.4 = DuckDB 1.5.5, driver revision 4), and npm and bun treat a caret over a prerelease tag inconsistently - `^1.5.5-r.4` would resolve forward across 1.x in a way neither tool agrees on - so the range is written out. The driver is four packages, not one: @duckdb/node-api -> @duckdb/node-bindings -> a per-platform, per-libc @duckdb/node-bindings-<platform>-<arch>[-musl] holding duckdb.node next to the ~70 MB libduckdb.so it links against. None of the four declares a scripts block or a binding.gyp, so no trustedDependencies entry is needed. Bumping it is a provider change, not a routine bump (see docs/providers/duckdb.md and the tri-sync rule in CLAUDE.md). @platformatic/kafka is pinned exactly too, because the Kafka provider was measured against 2.11.0 and re-verified live against 2.12.0 (docs/providers/kafka.md section 11.4), so bumping it is a provider change too. ajv is listed although nothing in this repository imports it: @platformatic/kafka loads ajv-draft-04, whose optional peer is ajv ^8.5.0 and which requires ajv/dist/core at load time, and bun hoists ajv-draft-04 to the top of node_modules, where ajv was otherwise eslint's 6.x with no dist/core. Without this entry the Kafka client fails to load in a clean install (a Docker build, CI); with it ajv 8 sits at the top and eslint keeps its 6.x nested. That is why knip.json ignores ajv, and tests/unit/db/kafka/dependency-resolution.test.ts fails if the entry goes. The entry fixes this repository's own install only: a host that installs the published package with bun and leaves an ajv 6 at the top of its own node_modules meets the same failure, which the provider's connect() refuses with a DatabaseConfigError naming ajv/dist/core, and docs/providers/kafka.md section 2.5 says what such a host needs.",
   "dependencies": {
     "@duckdb/node-api": "1.5.5-r.5",
     "@google/generative-ai": "^0.24.1",
     "@libredb/libredb": "^0.2.2",
     "@monaco-editor/react": "^4.7.0",
+    "@platformatic/kafka": "2.12.0",
     "@radix-ui/react-accordion": "^1.2.20",
     "@radix-ui/react-alert-dialog": "^1.1.23",
     "@radix-ui/react-aspect-ratio": "^1.1.15",
@@ -202,10 +203,13 @@
     "@radix-ui/react-toggle": "^1.1.18",
     "@radix-ui/react-toggle-group": "^1.1.19",
     "@radix-ui/react-tooltip": "^1.2.16",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "@tanstack/react-table": "^9.2.4",
     "@tanstack/react-virtual": "^3.14.10",
     "@xyflow/react": "^12.11.6",
     "@zumer/snapdom": "2.15.0",
+    "ajv": "^8.17.1",
     "better-sqlite3": "^13.0.3",
     "cassandra-driver": "^4.9.0",
     "class-variance-authority": "^0.7.1",
@@ -220,7 +224,7 @@
     "ioredis": "^5.11.1",
     "jose": "^6.2.12",
     "lucide-react": "^1.41.0",
-    "monaco-editor": "^0.56.0",
+    "monaco-editor": "^0.57.0",
     "mongodb": "^7.6.0",
     "mssql": "^12.7.0",
     "mysql2": "^3.24.3",
@@ -249,6 +253,9 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.12",
     "@eslint/compat": "^2.1.1",
+    "@modelcontextprotocol/client": "2.1.0",
+    "@modelcontextprotocol/server": "2.1.0",
+    "@peculiar/x509": "^2.1.0",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/react": "^16.3.3",

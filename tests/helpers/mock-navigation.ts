@@ -39,13 +39,17 @@ export function resetMockPathname() {
   mockPathname = "/";
 }
 
+// One instance, as Next's own `useRouter` answers: a fresh object per call would give every
+// handler built on the router a new identity per render, which the app never sees.
+const mockRouter = {
+  push: mockRouterPush,
+  refresh: mockRouterRefresh,
+  back: mockRouterBack,
+  forward: mockRouterForward,
+};
+
 mock.module("next/navigation", () => ({
-  useRouter: () => ({
-    push: mockRouterPush,
-    refresh: mockRouterRefresh,
-    back: mockRouterBack,
-    forward: mockRouterForward,
-  }),
+  useRouter: () => mockRouter,
   usePathname: () => mockPathname,
   useSearchParams: () => mockSearchParams,
   redirect: mockRedirect,

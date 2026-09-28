@@ -79,7 +79,7 @@ describe("ShortcutsDialog", () => {
   });
 
   test("pressing ? inside Monaco's edit-context element does not open the dialog", () => {
-    // Monaco 0.56 focuses a div.native-edit-context inside .monaco-editor — neither an
+    // Monaco 0.57 focuses a div.native-edit-context inside .monaco-editor — neither an
     // <input>/<textarea> nor contentEditable, which is exactly why this needs its own check
     // rather than being caught by the three above.
     const { queryByText, container } = render(

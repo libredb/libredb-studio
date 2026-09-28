@@ -433,9 +433,10 @@ function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
  * and a MongoDB `deleteMany` ran with no confirmation at all, on both execution
  * paths, while the same intent on every SQL engine asked (S8). Their vocabulary now
  * comes from `@/lib/db/destructive-commands`, one table per type read by one
- * function, and it names only what each provider can actually dispatch. PromQL's row
- * in the same table names nothing and is the whole answer: PromQL has no write path
- * (#1085, section 2), and read as SQL a metric named `update` or `delete` was a write.
+ * function, and it names only what each provider can actually dispatch. PromQL's and
+ * Kafka's rows in the same table name nothing and are the whole answer: neither has a
+ * write path (#1085 and #1088, section 2), and read as SQL a metric named `update` or
+ * `delete` was a write.
  *
  * `databaseType` is the connection the statement is about to run on, and both
  * call sites hold one (#292). It decides the characters the engines read
@@ -453,19 +454,20 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // "not there".
   //
   // Only where the text IS SQL, though. Both execution paths ask about whatever is
-  // in the editor, so this predicate is handed MongoDB documents, Redis commands and
-  // PromQL expressions as well, and an escaped quote that a SQL span reader cannot
+  // in the editor, so this predicate is handed MongoDB documents, Redis commands, PromQL
+  // expressions and Kafka read requests as well, and an escaped quote that a SQL span reader cannot
   // resolve closes perfectly in the grammar those are written in. For MongoDB and
   // Redis the keyword tests below still run: narrowing this rule is not switching the
   // gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
 
   // A type whose own vocabulary is the whole answer is not read as SQL at all, and
-  // PromQL is that type. An expression can start with a metric name the server's data
-  // chooses, `update`, `delete` and `drop` are legal names, and the keyword test below
-  // read the tree's own selector for such a metric as a write, about text that only
-  // ever reaches a query endpoint that cannot write (#1085, section 2). Which types
-  // decide alone is a fact of the same table, not a type test written here.
+  // PromQL and Kafka are those types. A PromQL expression can start with a metric name the
+  // server's data chooses, `update`, `delete` and `drop` are legal names, and the keyword
+  // test below read the tree's own selector for such a metric as a write, about text that
+  // only ever reaches a query endpoint that cannot write (#1085, section 2); a Kafka read
+  // request names a topic, which can carry those names too, and can only read it (#1088,
+  // section 2). Which types decide alone is a fact of the same table, not a type test here.
   if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;

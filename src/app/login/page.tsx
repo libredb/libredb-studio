@@ -1,3 +1,4 @@
+import { passkeySignInOffer } from "@/lib/passkey/config";
 import LoginForm from "./login-form";
 
 // Force dynamic rendering so env vars are read at runtime, not build time.
@@ -7,5 +8,5 @@ export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
   const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
-  return <LoginForm authProvider={authProvider} />;
+  return <LoginForm authProvider={authProvider} passkey={passkeySignInOffer()} />;
 }

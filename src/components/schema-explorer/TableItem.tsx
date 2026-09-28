@@ -303,12 +303,13 @@ export const TableItem = React.memo(function TableItem({
 
             <div
               title={table.rowCount === undefined ? undefined : formatRowCountTitle(table.rowCount)}
-              className="shrink-0 relative w-8 h-6 flex items-center justify-center"
+              // Stacked where hover swaps them, side by side where the button is always shown.
+              className="shrink-0 relative w-8 h-6 flex items-center justify-center [@media(hover:none)]:w-auto [@media(hover:none)]:gap-1"
             >
               {table.rowCount !== undefined && (
                 <span
                   title={formatRowCountTitle(table.rowCount)}
-                  className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none"
+                  className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none [@media(hover:none)]:static"
                 >
                   {formatRowCount(table.rowCount)}
                 </span>
@@ -318,7 +319,7 @@ export const TableItem = React.memo(function TableItem({
                   <button
                     aria-label={actionsLabel}
                     title={actionsLabel}
-                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
+                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:w-6 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <EllipsisVertical

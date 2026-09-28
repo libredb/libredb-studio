@@ -34,7 +34,7 @@ channel count.
 
 ## Coverage snapshot
 
-**39 channels · 33 live · 5 pending · 1 deprecated**
+**40 channels · 33 live · 6 pending · 1 deprecated**
 
 Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · Kubernetes 4 · Cloud 13**
 
@@ -42,7 +42,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · K
 | --- | ---: | ---: | ---: |
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
-| Kubernetes & operators | 3 | 0 | 0 |
+| Kubernetes & operators | 3 | 1 | 0 |
 | Package managers | 5 | 0 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 11 | 3 | 0 |
@@ -64,6 +64,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · K
 | [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
 | [OperatorHub / OpenShift](https://operatorhub.io/operator/libredb-studio-operator) | Kubernetes & operators | Kubernetes | live | Automated PR, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Rancher Partner Charts](https://www.suse.com/pcsc/viewVersionPage?versionID=26969) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [ZopDev Helm Charts](https://github.com/zopdev/helm-charts) | Kubernetes & operators | Kubernetes | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |

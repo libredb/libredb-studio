@@ -290,7 +290,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
           <table className="w-full text-xs font-mono">
             <thead className="sticky top-0 z-10 bg-raised">
               <tr>
-                <th className="text-left px-3 py-2 text-fg-muted border-b border-r border-hairline font-mediumr">
+                <th className="text-left px-3 py-2 text-fg-muted border-b border-r border-hairline font-medium">
                   {rowField}
                 </th>
                 {pivotData.colKeys.map((ck) => (

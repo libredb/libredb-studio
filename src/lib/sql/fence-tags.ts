@@ -75,6 +75,11 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `/api/v1/query` (#1085), and it is the tag the planning contract asks a model for. The
   // `promql` alias below spells the language, and it still names this engine: see its entry.
   prometheus: true,
+  // A ```kafka block holds a JSON read request the editor sends to the provider as it is
+  // (#1088). No alias is registered below: `json` is the tempting one and it is the wrong one,
+  // because a MongoDB document is JSON too, and `fenceTagEngine` is what decides whether a plan's
+  // deliverable was written for THIS connection.
+  kafka: true,
 });
 
 /**

@@ -559,6 +559,65 @@ const RESOLVED: ResolvedRow[] = [
     suppressesPlanReasoning: true,
     turnTimeoutMs: 150_000,
   },
+  // The 3b end of granite4.1, whose 8b and 30b already resolve above. On the defaults,
+  // like both siblings, so the family needs no per-size setting at any of its three sizes.
+  {
+    id: "granite4.1:3b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The first phi4-mini on the roster, and the fastest sweep here after granite4.1:3b.
+  // On the defaults.
+  {
+    id: "phi4-mini:3.8b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The 3b end of ministral-3, whose 8b and 14b already resolve above. On the defaults.
+  {
+    id: "ministral-3:3b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The first qwen3 above 14b. Four Qwen entries needed a setting written for them and
+  // this one did not, which is the same counter-example qwen2.5:14b makes about generation.
+  {
+    id: "qwen3:30b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The 3b end of granite4.2, whose 8b already resolves above. On the defaults, though it
+  // took the most attempts of the five before it closed - attempts are not settings.
+  {
+    id: "granite4.2:3b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
 ];
 
 describe("every resolver's answer, pinned before the profiles moved", () => {
@@ -588,7 +647,13 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(35);
+    // The literal stays literal HERE, and not for want of trying to derive it: `RESOLVED` is three
+    // rows longer than the roster on purpose - a case variant, a tag-less name and a model released
+    // tomorrow, which pin the resolver's fallbacks rather than a shipped profile. Deriving from it
+    // would assert 43 against 40 and deriving from the profiles would assert nothing at all. The
+    // loop above is what guarantees coverage; this is the second half, that the roster is the size
+    // the change intended. `model-roster-docs.test.ts` derives the same count for the docs.
+    expect(Object.keys(modelProfiles())).toHaveLength(40);
   });
 });
 
@@ -663,6 +728,11 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen3-coder:30b": "bcf4ade23a0dab26370f0da178af8630025620510a4d239d237407f404bfe655",
     "gpt-oss:20b": "289cbda6c810233c189f2cfb7984bc61a86b29009d4edf6c99eeb547194d3034",
     "glm-4.7-flash:latest": "36f84723b7d527a9276900bb97c84653fbe5d1862ecc49efdbd5dd3d5f8b95bb",
+    "granite4.1:3b": "e2e79d196bee1ded7cfde8843a6c4bec0827d6008f2f4a5f72e88e8052a249b4",
+    "phi4-mini:3.8b": "7ad1bb63606df67d3e3973afd885bef62156eb3f47ebc7c40bb8285901149f9b",
+    "ministral-3:3b": "5522600e4e25e5c2eefa34fd215e2ddf9b936ea609119c99cad5cdd5e423a7ac",
+    "qwen3:30b": "c322fa51bfdf5dc84e82d10cdee7748154da0960fa8b0ef629f55ee077e4d3ec",
+    "granite4.2:3b": "27db8b46210ea045ee05c56b99fe237a46b961faaccd5180bbd1269a2a93f3c8",
   };
 
   test("every model's record survives the move, character for character", () => {

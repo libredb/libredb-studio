@@ -43,6 +43,28 @@ Configuration:
   Autoscaling:      {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas
 {{- end }}
 
+{{- $storage := include "libredb-studio.storageProvider" . }}
+{{- if and .Values.config.passkeyOrigin (eq $storage "local") }}
+
+WARNING: config.passkeyOrigin is set, but passkeys stay off until
+config.storageProvider is sqlite or postgres: with the browser-local store
+there is no account registry to keep them in. See docs/PASSKEYS.md.
+{{- end }}
+{{- if and .Values.config.passkeyOrigin (ne .Values.authProvider "local") }}
+
+WARNING: config.passkeyOrigin has no effect with authProvider={{ .Values.authProvider }}:
+OIDC sign-ins manage their passkeys at the identity provider.
+{{- end }}
+{{- /* Only a TLS ingress can suggest an origin: browsers refuse passkeys over plain
+       http anywhere but localhost, so a plain-http ingress has none that works. Nor can
+       an ingress whose first host is empty or missing: there is no name to build it from. */}}
+{{- $passkeyHost := "" }}
+{{- with .Values.ingress.hosts }}{{ $passkeyHost = (first .).host | default "" }}{{ end }}
+{{- if and (not .Values.config.passkeyOrigin) .Values.ingress.enabled .Values.ingress.tls $passkeyHost (ne $storage "local") (eq .Values.authProvider "local") }}
+
+Passkey sign-in (docs/PASSKEYS.md): --set config.passkeyOrigin=https://{{ $passkeyHost }}
+{{- end }}
+
 Health check:
   kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:{{ .Values.service.targetPort }}/api/db/health
 

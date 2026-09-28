@@ -52,6 +52,22 @@ const schema: DetailedObject = {
   ],
 };
 
+/**
+ * A MySQL/MariaDB reading (#1033): `type` is the type AS DECLARED and `baseType` the family.
+ * An `ENUM` carries its VALUES in the declaration, so `enum('int','text')` answers a
+ * substring test for `int` and picks a generator that writes numbers into a string column.
+ */
+const declaredTypeSchema: DetailedObject = {
+  name: "lentest",
+  kind: "table",
+  path: ["lentest"],
+  indexes: [],
+  columns: [
+    { name: "qty", type: "int unsigned", baseType: "int", nullable: true, isPrimary: false },
+    { name: "flavour", type: "enum('int','text')", baseType: "enum", nullable: true, isPrimary: false },
+  ],
+};
+
 describe("TestDataGenerator", () => {
   afterEach(() => {
     cleanup();
@@ -156,6 +172,34 @@ describe("TestDataGenerator", () => {
     const text = container.textContent || "";
     expect(text).toContain("('+1-555-");
     expect(text).not.toContain("(+1-555-");
+  });
+
+  test("quotes a numeric-looking value for an ENUM whose values spell a number type (#1033)", () => {
+    // The mirror of the test above: here the VALUE is honest and the TYPE misleads. MySQL
+    // reports `enum('int','x')` in `type`, which a substring test reads as an integer column,
+    // so the `age` generator's number went into the statement bare. Measured on MySQL 26.7.0,
+    // a bare number into an ENUM is an INDEX into its value list: `1` silently stores 'int',
+    // and `42` is error 1265. The family in `baseType` is `enum`, so the value is quoted.
+    const enumAge: DetailedObject = {
+      name: "people",
+      kind: "table",
+      path: ["people"],
+      indexes: [],
+      columns: [{ name: "age", type: "enum('int','x')", baseType: "enum", nullable: true, isPrimary: false }],
+    };
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["people"]}
+        tableSchema={enumAge}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+
+    const text = container.textContent || "";
+    expect(text).toMatch(/\('\d+'\)/);
+    expect(text).not.toMatch(/\(\d+\)/);
   });
 
   test("row count buttons change output", () => {
@@ -391,6 +435,23 @@ describe("TestDataGenerator", () => {
     expect(text).toContain("email: email");
     expect(text).toContain("name: fullName");
     expect(text).toContain("salary: price");
+  });
+
+  test("picks a generator from the type FAMILY, not the declaration (#1033)", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["lentest"]}
+        tableSchema={declaredTypeSchema}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    // `int unsigned` IS an integer and `enum('int','text')` is not, and the declaration alone
+    // cannot say so.
+    expect(text).toContain("qty: integer");
+    expect(text).toContain("flavour: text");
   });
 
   // ── Row count 25 generates 25 rows ─────────────────────────────────────────

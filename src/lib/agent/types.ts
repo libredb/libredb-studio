@@ -778,6 +778,18 @@ export type AgentGuidanceNotice =
    */
   | "report-reserve"
   /**
+   * An optimization run that has just READ a plan, told what its report will be judged on.
+   * Delivered as a `user` message riding on the turn that was about to be taken, so it spends
+   * no turn of its own; once per run, and bounded across a resume by the ledger.
+   *
+   * Every other sentence about this bar is delivered by holding `compose_report`, and a hold
+   * inside the report reserve is suppressed - a run held with no turn left files no report at
+   * all. So a run that spends its turns reading is never told: `laguna-xs-2.1` lost this cell
+   * five times out of five holding THREE plans, everything a comparison needs, having heard
+   * nothing about what one was for.
+   */
+  | "plan-bar"
+  /**
    * A run that stopped having read nothing, on a set holding both reading tools.
    * Delivered as a `user` message; once per run, and only where the model's profile
    * says the retry earned its turn.
@@ -804,7 +816,8 @@ export type AgentGuidanceNotice =
    * A `compose_report` from a run holding the two plans a comparison would use.
    * Delivered as a TOOL RESULT instead of running the call; once per run.
    */
-  | "compare-before-report";
+  | "compare-before-report"
+  | "tool-call-as-text";
 
 /**
  * The semantic events one run emits, in the vocabulary a user reads in the rail

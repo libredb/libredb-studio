@@ -912,6 +912,111 @@ describe("useQueryAdapter", () => {
     expect(tabs[0].allRows).toHaveLength(2);
     expect(tabs[0].currentOffset).toBe(50);
     expect(tabs[0].isLoadingMore).toBe(false);
+    // The page is what failed, so nothing is said inline over rows that are intact.
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  /**
+   * A failed NEW run, on each of the three entry points that replace the grid, is the
+   * mirror of the standalone test of the same name in `use-query-execution.test.ts`.
+   * It matters more here: the embedded shell mounts no Toaster, so before this the
+   * failure left the previous rows up and said nothing at all.
+   */
+  describe("a failed new run replaces the previous result with its error", () => {
+    const shownTab = () =>
+      makeTab({
+        result: {
+          rows: [{ id: 1 }],
+          fields: ["id"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 1, wasLimited: false },
+        },
+        resultQuery: "SELECT * FROM users",
+        allRows: [{ id: 1 }],
+        currentOffset: 1,
+      });
+
+    /** One host that refuses `SELEC` and answers everything else. */
+    const hostRefusingTypos = () =>
+      mock((_id: string, sql: string) =>
+        sql.startsWith("SELEC ")
+          ? Promise.reject(new Error('near "SELEC": syntax error'))
+          : Promise.resolve(makeQueryResult()),
+      );
+
+    function expectFailureShown(tab: QueryTab) {
+      expect(tab.isExecuting).toBe(false);
+      expect(tab.runError).toBe('near "SELEC": syntax error');
+      expect(tab.result).toBeNull();
+      expect(tab.resultQuery).toBeUndefined();
+      expect(tab.allRows).toBeUndefined();
+      expect(tab.currentOffset).toBe(0);
+    }
+
+    test("on executeQuery, and the next success clears it", async () => {
+      const tab = shownTab();
+      const { tabs, setTabs } = createMutableTabs([tab]);
+      const params = makeHookParams({ onQueryExecute: hostRefusingTypos(), tabs, setTabs, currentTab: tab });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELEC * FROM x");
+      });
+      expectFailureShown(tabs[0]);
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+      expect(tabs[0].runError).toBeUndefined();
+      expect(tabs[0].result?.rows).toHaveLength(2);
+    });
+
+    test("on forceExecuteQuery, and the next success clears it", async () => {
+      const tab = shownTab();
+      const { tabs, setTabs } = createMutableTabs([tab]);
+      const params = makeHookParams({ onQueryExecute: hostRefusingTypos(), tabs, setTabs, currentTab: tab });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      await act(async () => {
+        result.current.forceExecuteQuery("SELEC * FROM x");
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expectFailureShown(tabs[0]);
+
+      await act(async () => {
+        result.current.forceExecuteQuery("SELECT * FROM users");
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(tabs[0].runError).toBeUndefined();
+      expect(tabs[0].result?.rows).toHaveLength(2);
+    });
+
+    test("on handleUnlimitedQuery, and the next success clears it", async () => {
+      const tab = shownTab();
+      const { tabs, setTabs } = createMutableTabs([tab]);
+      const params = makeHookParams({ onQueryExecute: hostRefusingTypos(), tabs, setTabs, currentTab: tab });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELEC * FROM x", tabId: "tab-1" });
+      });
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expectFailureShown(tabs[0]);
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM users", tabId: "tab-1" });
+      });
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(tabs[0].runError).toBeUndefined();
+      expect(tabs[0].result?.rows).toHaveLength(2);
+    });
   });
 
   /**

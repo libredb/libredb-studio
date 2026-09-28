@@ -20,7 +20,7 @@ interface UseMonitoringDataReturn {
   setRefreshInterval: (ms: number) => void;
   refresh: () => Promise<void>;
   killSession: (pid: number | string) => Promise<boolean>;
-  runMaintenance: (type: string, target?: string) => Promise<boolean>;
+  runMaintenance: (type: string, target?: string, container?: string) => Promise<boolean>;
 }
 
 const DEFAULT_REFRESH_INTERVAL = 30000; // 30 seconds
@@ -250,7 +250,7 @@ export function useMonitoringData(
   );
 
   const runMaintenance = useCallback(
-    async (type: string, target?: string): Promise<boolean> => {
+    async (type: string, target?: string, container?: string): Promise<boolean> => {
       const currentConnection = connectionRef.current;
       if (!currentConnection) return false;
 
@@ -261,6 +261,7 @@ export function useMonitoringData(
           body: JSON.stringify({
             type,
             target,
+            container,
             ...buildConnectionPayload(currentConnection),
           }),
         });

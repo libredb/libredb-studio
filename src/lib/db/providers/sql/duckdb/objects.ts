@@ -37,7 +37,7 @@
  */
 
 import { QueryError } from "../../../errors";
-import { containerDepth } from "../../../object-kinds";
+import { assertContainerPathShape, containerDepth, type ContainerPathShapeEngine } from "../../../object-kinds";
 import { comparePaths } from "../../../object-path";
 import { unquoteLiteral } from "@/lib/sql/values";
 import { displayName } from "./introspect";
@@ -51,6 +51,18 @@ import type {
   ObjectSourceOrigin,
   ProviderCapabilities,
 } from "../../../types";
+
+/**
+ * DuckDB's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()` (`./index.ts`), which the object routes read too (#1147).
+ */
+const DUCKDB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "duckdb",
+  label: "A DuckDB",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // The macro vocabulary, derived from the ENGINE
@@ -757,35 +769,19 @@ function requiredSegment(
 }
 
 /**
- * The container paths this engine accepts, outermost first, as segment NAMES.
+ * The catalog segment of a listing parent, read as a tree CURSOR and not as an address.
  *
- * Every prefix of the declared levels, which at two levels means a catalog alone or a
- * catalog and a schema. Both are real containers: the tree only draws folders at the
- * deepest level (`src/components/object-tree/flatten.ts`), but `assertContainerDepth` in
- * `src/lib/api/object-route.ts` admits any path down to the declared depth and
- * `tests/helpers/object-surface-conformance.ts` reads counts at the OUTER one, so "how
- * many tables does this whole catalog hold" is a question with a true answer rather than
- * a caller mistake. SQL Server answered the same way for the same reason.
- *
- * The names in the message are the declared LABELS, the engine's own word for a person
- * reading a refusal; the code addresses the same segments by `ContainerLevelSpec.id`. The
- * depth behind both is `containerDepth()`, so the check and the sentence cannot disagree.
+ * `listContainers()` takes a parent to say where in the tree to list, and the route holds a
+ * parent to the depth ceiling alone. `containerPathShapes` governs the paths an object read
+ * ADDRESSES, so running `assertContainerPathShape` here would refuse a valid `[database]` the
+ * moment the declaration said `exact`, while the route had already accepted it.
  */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  return names.map((_, index) => names.slice(0, index + 1));
+export function parentCatalog(capabilities: ProviderCapabilities, parent: readonly string[]): string {
+  return requiredSegment(containerSegments(capabilities, parent), "catalog");
 }
 
-/**
- * The shapes above, spelled for a message: `[database] or [database, schema]`.
- *
- * A declaration carrying no container level has no shape at all, and the empty join would
- * print "a DuckDB container path is , received []", which reads as a formatting bug rather
- * than as the fact it is. Reachable only through a declaration this engine does not have,
- * and pinned by the test that hands the provider one.
- */
+/** The one shape a DuckDB object path takes, spelled for the message in `objectRead()`. */
 function shapeList(shapes: readonly string[][]): string {
-  if (shapes.length === 0) return "nothing: this declaration carries no container level";
   return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
 }
 
@@ -801,13 +797,7 @@ function containerTarget(
   capabilities: ProviderCapabilities,
   container: readonly string[],
 ): Partial<Record<ContainerLevelSpec["id"], string>> {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A DuckDB container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      "duckdb",
-    );
-  }
+  assertContainerPathShape(capabilities, container, DUCKDB_CONTAINER_PATH_ENGINE);
   return containerSegments(capabilities, container);
 }
 

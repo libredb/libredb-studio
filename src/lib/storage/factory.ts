@@ -6,6 +6,7 @@
 
 import type { ServerStorageProvider, StorageConfigResponse } from "./types";
 import { withCredentialEncryption } from "./encrypting-provider";
+import { getStorageProviderType } from "./provider-type";
 
 let _provider: ServerStorageProvider | null = null;
 let _initialized = false;
@@ -18,18 +19,6 @@ let _initialized = false;
  * overwrites the first mid-initialize, leaking its connections.
  */
 let _initPromise: Promise<ServerStorageProvider | null> | null = null;
-
-export type StorageProviderType = "local" | "sqlite" | "postgres";
-
-/**
- * Get the configured storage provider type from environment.
- * Returns 'local' if not set or invalid.
- */
-export function getStorageProviderType(): StorageProviderType {
-  const env = process.env.STORAGE_PROVIDER?.toLowerCase();
-  if (env === "sqlite" || env === "postgres") return env;
-  return "local";
-}
 
 /**
  * Check if server-side storage is enabled.

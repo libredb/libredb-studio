@@ -60,7 +60,10 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
           <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-yellow" />
         ) : isFk ? (
           <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-blue" />
-        ) : column.type.toLowerCase().includes("int") ? (
+        ) : // The FAMILY, where the provider reports one beside the declaration (#1033): MySQL
+        // and MariaDB report `enum('int','text')` in `type`, which contains the four
+        // characters this test looks for and is not an integer.
+        (column.baseType ?? column.type).toLowerCase().includes("int") ? (
           <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />
         ) : (
           <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />

@@ -73,4 +73,35 @@ describe("ChunkBoundary", () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
   });
+
+  // A dialog's chunk failing has no place of its own in the layout, so the caller
+  // positions the notice, the same way ViewLoading takes its className.
+  test("takes the caller's positioning for the notice", () => {
+    const { getByTestId } = render(
+      <ChunkBoundary label="The connection dialog" className="fixed inset-0">
+        <Boom />
+      </ChunkBoundary>,
+    );
+
+    expect(getByTestId("chunk-error").className).toContain("fixed inset-0");
+  });
+
+  test("offers Close only when the caller can take the view away", () => {
+    const onDismiss = mock(() => {});
+    const withClose = render(
+      <ChunkBoundary label="The diagram" onDismiss={onDismiss}>
+        <Boom />
+      </ChunkBoundary>,
+    );
+    fireEvent.click(withClose.getByText("Close"));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    withClose.unmount();
+
+    const without = render(
+      <ChunkBoundary label="Charts">
+        <Boom />
+      </ChunkBoundary>,
+    );
+    expect(without.queryByText("Close")).toBeNull();
+  });
 });

@@ -240,12 +240,15 @@ export function OperationsTab() {
     [],
   );
 
-  const handleRunMaintenance = async (type: string, target?: string) => {
+  // Same reason as TablesTab: `table.schemaName` is the namespace for every engine, and the
+  // row keys on it already. The log entry keeps naming the table alone, since that is what an
+  // operator reads back (#772).
+  const handleRunMaintenance = async (type: string, target?: string, container?: string) => {
     const actionId = `${type}-${target || "global"}`;
     setActionLoading(actionId);
     const start = Date.now();
     try {
-      const success = await runMaintenance(type, target);
+      const success = await runMaintenance(type, target, container);
       const duration = Date.now() - start;
       addLogEntry(type.toUpperCase(), target || "all", success ? "success" : "failure", duration);
     } catch {
@@ -598,7 +601,7 @@ export function OperationsTab() {
                             variant="ghost"
                             className={`w-7 h-7 text-fg-muted ${hover}`}
                             title={label}
-                            onClick={() => handleRunMaintenance(type, table.tableName)}
+                            onClick={() => handleRunMaintenance(type, table.tableName, table.schemaName)}
                             disabled={!!actionLoading}
                           >
                             {actionLoading === `${type}-${table.tableName}` ? (

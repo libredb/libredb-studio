@@ -387,6 +387,25 @@ const defaultsProbeFixture: DetailedObject[] = [
   },
 ];
 
+/**
+ * A MySQL/MariaDB reading (#1033): `type` is the type AS DECLARED and `baseType` the family.
+ * `enum('int','text')` contains the four characters `int`, so the row icon chosen from the
+ * declaration alone calls this column a number.
+ */
+const declaredTypeFixture: DetailedObject[] = [
+  {
+    name: "lentest",
+    kind: "table",
+    path: ["lentest"],
+    columns: [
+      { name: "qty", type: "int unsigned", baseType: "int", nullable: true, isPrimary: false },
+      { name: "flag", type: "enum('int','text')", baseType: "enum", nullable: true, isPrimary: false },
+    ],
+    indexes: [],
+    foreignKeys: [],
+  },
+];
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -975,6 +994,18 @@ describe("SchemaDiagram", () => {
       expect(rowTitle("d")).toBe("d: text\nDefault: abc");
       expect(rowTitle("n")).toBe("n: text");
       expect(container.querySelectorAll('[title*="Default"]').length).toBe(2);
+    });
+
+    test("the row icon reads the type FAMILY, not the declaration (#1033)", () => {
+      const props = createDefaultProps({ schema: declaredTypeFixture });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const iconOf = (column: string) =>
+        container.querySelector(`[title^="${column}: "] svg`)?.getAttribute("class") ?? "";
+
+      // `int unsigned` is an integer and `enum('int','text')` is not, and neither says so to a
+      // substring test on the declaration.
+      expect(iconOf("qty")).toContain("lucide-hash");
+      expect(iconOf("flag")).toContain("lucide-type");
     });
 
     test("compact mode hides column details", () => {

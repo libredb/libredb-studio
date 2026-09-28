@@ -41,6 +41,7 @@ import {
   DEFAULT_PORT,
   startupUrl,
   LauncherUsageError,
+  mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
   preservePayloadData,
@@ -50,6 +51,7 @@ import {
   resolveBindAddress,
   resolveCacheDir,
   resolveLedgerDir,
+  resolvePathVariables,
   sha256File,
 } from "./lib/launcher-utils.mjs";
 
@@ -92,8 +94,10 @@ The server binds to 127.0.0.1 by default; exposing it on the network is an
 explicit opt-in (--host, LIBREDB_BIND, or a HOSTNAME that differs from this
 machine's own name). All environment variables are forwarded to the server
 (PORT, HOSTNAME, JWT_SECRET, ADMIN_PASSWORD, STORAGE_PROVIDER,
-STORAGE_SQLITE_PATH, ...). When JWT_SECRET or ADMIN_PASSWORD are not set, the
-server generates them on first run and prints the admin credentials once.
+STORAGE_SQLITE_PATH, ...). A relative path in a path variable such as
+SEED_CONFIG_PATH resolves against the directory the command is run from.
+When JWT_SECRET or ADMIN_PASSWORD are not set, the server generates them on
+first run and prints the admin credentials once.
 
 The AI agent appears once LLM_API_KEY (and the other LLM_* settings) are set;
 its run history is kept in ~/.libredb-studio/workflow-data unless
@@ -311,7 +315,9 @@ function verifyProvenance(archivePath, name) {
  * @param {string | null} host
  */
 function startServer(payloadDir, port, host) {
-  const env = { ...process.env };
+  // The server runs with its cwd in the payload cache, so a relative path the operator set is
+  // resolved here, against the directory the command was run from.
+  const env = resolvePathVariables(process.env, process.cwd());
   if (port !== null) env.PORT = String(port);
   env.HOSTNAME = resolveBindAddress({
     host,
@@ -327,6 +333,10 @@ function startServer(payloadDir, port, host) {
   // per-user directory keeps one history across folders and upgrades; an operator
   // who sets the variable keeps whatever they set.
   if (!env.WORKFLOW_LOCAL_DATA_DIR) env.WORKFLOW_LOCAL_DATA_DIR = resolveLedgerDir(os.homedir());
+  // The MCP endpoint's canonical address (#246), which every token is bound to: derived from the
+  // address and port this server is about to take, unless the operator set one, such as a public
+  // address behind a reverse proxy.
+  if (!env.LIBREDB_MCP_URL?.trim()) env.LIBREDB_MCP_URL = mcpUrlFor(env.HOSTNAME, env.PORT);
   // Log-line contract: npx-engine-smoke.yml parses the resolved version from
   // "Starting LibreDB Studio <version> " - keep the prefix stable.
   console.log(`Starting LibreDB Studio ${pkg.version} on ${startupUrl(env.HOSTNAME, env.PORT)}`);

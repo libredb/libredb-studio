@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import {
-  assertContainerDepth,
+  assertContainerAddress,
   dedupePaths,
   handleObjectRequest,
   INVENTORY_LIMIT,
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/inventory", async (provider, body): Promise<ObjectInventory> => {
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
     const named = optionalContainerList(body, "containers");
-    named?.forEach((container) => assertContainerDepth(provider, "containers", container));
+    named?.forEach((container) => assertContainerAddress(provider, "containers", container));
 
     // Deduplicated before the fan-out is built, not after: a repeated container costs one full
     // listing round trip per kind, and a body may name the same one any number of times.

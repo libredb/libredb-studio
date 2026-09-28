@@ -37,9 +37,10 @@ export const dynamic = "force-dynamic";
  * race, which is a worse inconsistency than the race.
  *
  * The budget is SHARED and this route carries no bucket of its own: `handleObjectRequest` meters
- * every object route into the `query` bucket (`src/lib/api/object-route.ts:73`), 120 requests per
- * 60 seconds by default, shared with `POST /api/db/query` and the storage sync routes. A reader
- * with many rows open therefore spends the same allowance their statements do.
+ * every object route into the `query` bucket through its `guardRoute` call
+ * (`src/lib/api/object-route.ts`), 120 requests per 60 seconds by default, shared with
+ * `POST /api/db/query` and the storage sync routes. A reader with many rows open therefore spends
+ * the same allowance their statements do.
  *
  * `kind` is required in the body, not optional and not inferred. The provider method takes it as
  * its second argument for the reason recorded on the epic: without it a provider has to guess what

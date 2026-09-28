@@ -197,6 +197,15 @@ export async function createDatabaseProvider(
       return new PrometheusProvider(connection, options);
     }
 
+    // Message logs - dynamically imported
+    case "kafka": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { KafkaProvider } = await import("./providers/stream/kafka/index");
+      return new KafkaProvider(connection, options);
+    }
+
     // Embedded databases - dynamically imported
     case "libredb": {
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
@@ -208,7 +217,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, prometheus, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, prometheus, kafka, libredb`,
         connection.type,
       );
   }
@@ -428,8 +437,11 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  *
  * The profile stays in the key because the two caches' isolation is per profile: an
  * `agent-read-only` acquisition may never be served what `agent-operations` opened.
+ *
+ * Exported for one caller that must join concurrent first acquisitions on exactly this key
+ * without deriving a second one: src/lib/mcp/context.ts.
  */
-async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
+export async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
   const key = await providerCacheKey(connection);
   return `${profile.length}:${profile}${key}`;
 }
@@ -626,7 +638,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
  * statements, so it is served only where the engine itself can bound one, and only
- * `postgres.ts` and `sqlite.ts` implement that. `agent-operations` sends no statement
+ * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB
+ * and SQL Server (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

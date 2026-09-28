@@ -279,6 +279,19 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    #1088. The planning contract asks for a block tagged with the connection's type-id, so a Kafka
+    run fences its read request as ```kafka, and that block is its deliverable. It names one engine
+    like any type-id, so on another connection it is the `mysql` case above.
+  */
+  test("a read request fenced as kafka is the deliverable of a Kafka run, and of no other engine's", () => {
+    const request = '{"topic": "orders", "from": "latest", "limit": 50}';
+    const kafka = ["```kafka", request, "```"].join("\n");
+
+    expect(readPlanStatement(kafka, "kafka")).toEqual({ kind: "statement", sql: request, tag: "kafka" });
+    expect(readPlanStatement(kafka, "mongodb")).toEqual({ kind: "absent" });
+  });
+
+  /*
     A run that refused and also pasted an illustrative block has not drafted a
     deliverable, and offering that block to the editor as the answer would be exactly
     the mislabelling this event exists to prevent.
@@ -596,6 +609,25 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
     expect(validatePlanStatement(PROMQL, null, "promql").identifiers).toEqual({ kind: "not-applicable" });
     // The control: the same text on a SQL engine is judged, and the guard objects to it.
     expect(validatePlanStatement(PROMQL, INVENTORY, "sql").guardViolation).toBe("NON_READ_STATEMENT");
+  });
+
+  test("a Kafka read request is declined the same way: it is JSON, and the reader speaks SQL (#1088)", () => {
+    // Kafka declares `queryLanguage: "json"`, and its dialect never reaches this guard: the language
+    // alone answers not-applicable, which is correct for a read request as it is for MongoDB's JSON.
+    const REQUEST = '{"topic": "orders", "partition": 0, "from": {"offset": "120"}, "limit": 50}';
+
+    expect(validatePlanStatement(REQUEST, INVENTORY, "json")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(REQUEST, null, "json").identifiers).toEqual({ kind: "not-applicable" });
+    // The control: the same text on a SQL engine is judged, and the guard objects to it. It finds no
+    // operative keyword in a JSON object, so its objection is that there is no statement at all.
+    expect(validatePlanStatement(REQUEST, INVENTORY, "sql")).toMatchObject({
+      guardApplicable: true,
+      guardViolation: "NO_STATEMENT",
+    });
   });
 });
 

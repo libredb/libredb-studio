@@ -15,8 +15,9 @@ export default defineConfig({
   use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${proxyPort}`, trace: "retain-on-failure" },
   webServer: [
     {
-      // Run after the ordinary suite: this rebuilds .next with a different prefix.
-      command: "bun run build && bun start",
+      // Run after the ordinary suite: this rebuilds .next with a different prefix. rm -rf first: the
+      // server runs in store mode, and a registry left by an earlier run would keep its passkeys.
+      command: "rm -rf data-e2e-base-path && bun run build && bun start",
       url: `http://127.0.0.1:${appPort}${prefix}/api/db/health`,
       timeout: 180_000,
       reuseExistingServer: false,
@@ -29,7 +30,12 @@ export default defineConfig({
         ADMIN_PASSWORD: "test-admin",
         USER_EMAIL: "user@libredb.org",
         USER_PASSWORD: "test-user",
+        // Store mode, so base-path.spec.ts also registers and signs in with a passkey under the prefix.
+        // Its origin is the proxy's, on the host name localhost: the browser sees the proxy, and
+        // WebAuthn accepts plain http only on localhost. The existing test runs in store mode too.
+        STORAGE_PROVIDER: "sqlite",
         STORAGE_SQLITE_PATH: "./data-e2e-base-path/libredb-storage.db",
+        PASSKEY_ORIGIN: `http://localhost:${proxyPort}`,
         NEXT_TELEMETRY_DISABLED: "1",
       },
     },

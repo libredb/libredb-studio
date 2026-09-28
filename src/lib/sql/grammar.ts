@@ -431,10 +431,10 @@ const CASSANDRA_GRAMMAR: SqlGrammar = {
  *
  * A dialect absent from this table is at the compatibility default because its
  * rule was not established, NOT because it agrees with the default. Currently
- * absent: `couchbase`, `druid`, `libredb` and the non-SQL `mongodb`, `redis` -
- * whose providers never reach these readers on the QUERY path, though the
- * confirmation gate reads their editor text as SQL only where `readsSqlText` says
- * the text IS SQL, which for those two it does not (#297). Present for one fact and
+ * absent: `couchbase`, `druid`, `libredb` and every non-SQL dialect `NON_SQL_DIALECTS`
+ * names below - whose providers never reach these readers on the QUERY path, though
+ * the confirmation gate reads their editor text as SQL only where `readsSqlText`
+ * says the text IS SQL, which for those it does not (#297). Present for one fact and
  * undecided about another: `mysql` and `oracle` carry no established BRACKET
  * reading (see the row below), `elasticsearch` carries none either - `[` is not
  * in its grammar at all - and neither search row carries a `//` reading, because
@@ -610,6 +610,10 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * that never closes, which is the false prompt #297 measured on Redis. Its provider
  * extends `BaseDatabaseProvider` as well.
  *
+ * `kafka` takes a JSON read request (#1088), one object naming a topic and where to read it
+ * from, which is not SQL text either: its strings escape with a backslash as a MongoDB
+ * document's do. Its provider extends `BaseDatabaseProvider` and parses the text itself.
+ *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
@@ -634,7 +638,7 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
  * gate that never asks or a gate an operator learns to click through.
  */
-const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis", "prometheus"]);
+const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis", "prometheus", "kafka"]);
 
 /**
  * Whether this dialect's query text is SQL - the question BEFORE which SQL grammar

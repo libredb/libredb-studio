@@ -83,6 +83,11 @@ export async function providerCacheKey(connection: DatabaseConnection & WithTunn
  * - `ssl` decides both what the client PRESENTS (`clientCert`, `clientKey`, which are an
  *   authentication method on their own under PostgreSQL's `cert` auth) and what it TRUSTS
  *   (`mode`, `caCert`, `rejectUnauthorized`).
+ * - `saslMechanism` decides which stored credential the broker checks the password against,
+ *   because Kafka keeps a SCRAM credential per mechanism (#1088), so the same user and password
+ *   under another mechanism are another principal's secret. Nothing asks for it here: this list is
+ *   hand-kept and no compiler walks `DatabaseConnection` for it, and without it two connections
+ *   differing only in the mechanism would share one cached provider.
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
@@ -99,6 +104,7 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     ssl?.clientCert ?? "",
     ssl?.clientKey ?? "",
     ssl === undefined ? "" : String(ssl.rejectUnauthorized ?? ""),
+    connection.saslMechanism ?? "",
     tunnel?.authMethod ?? "",
     tunnel?.password ?? "",
     tunnel?.privateKey ?? "",

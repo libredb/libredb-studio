@@ -809,7 +809,7 @@ function ChangeWorkflowButton({
   );
 }
 
-export function AgentRail({
+export const AgentRail = React.memo(function AgentRail({
   connectionId: connection,
   connectionName,
   connectionType = null,
@@ -3025,4 +3025,4 @@ export function AgentRail({
       {content}
     </div>
   );
-}
+});

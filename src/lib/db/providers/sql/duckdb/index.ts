@@ -119,6 +119,7 @@ import {
   bulkPrimaryKeySql,
   bulkTargetSql,
   containerRead,
+  parentCatalog,
   groupByObject,
   objectDetailFromRows,
   type OfObject,
@@ -424,6 +425,9 @@ export class DuckDBProvider extends SQLBaseProvider {
         { id: "catalog", label: "Database", labelPlural: "Databases" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
       ],
+      // A database alone is an address as well as a database and a schema, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       // Four kinds, one `duckdb_*` table function behind each (`objects.ts`).
       //
       // NO trigger and NO stored procedure, because DuckDB has neither: `CREATE TRIGGER`
@@ -445,7 +449,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // publishes a definition text for each of them and no fifth kind is declared, so
       // the "declares nothing" half of this engine's row in #789 is empty. `sql` is the
       // honest id rather than a compromise: DuckDB's dialect is PostgreSQL-shaped, the
-      // installed monaco-editor 0.56.0 registers no DuckDB id, and the text the engine
+      // installed monaco-editor 0.57.0 registers no DuckDB id, and the text the engine
       // publishes is ordinary SQL. The `macro` text is the only `partial` form ON THIS
       // ENGINE, not in the fleet: the #789 design names PostgreSQL `view` and
       // `materialized_view` and Couchbase `function` as producers of the same arm, and
@@ -867,7 +871,7 @@ export class DuckDBProvider extends SQLBaseProvider {
     }
     if (level >= containerDepth(capabilities)) return [];
 
-    const { catalog } = containerRead(capabilities, parentPath);
+    const catalog = parentCatalog(capabilities, parentPath);
     const rows = await this.runObjectRows<SchemaNameRow>(SCHEMAS_SQL, [catalog]);
     return rows.map((row) => ({
       path: [...parentPath, row.schema_name],
@@ -1268,7 +1272,12 @@ export class DuckDBProvider extends SQLBaseProvider {
    * resolved into `main`, DuckDB's default schema; `schema.table` is quoted part by
    * part. Mirrors `postgres.ts`'s `qualifyMaintenanceTarget`.
    */
-  private qualifyMaintenanceTarget(target: string): string {
+  private qualifyMaintenanceTarget(target: string, container?: string): string {
+    // A caller-supplied container is authoritative: `main` is only the fallback for a name
+    // that arrives without one, and a container can itself contain a dot.
+    if (container) {
+      return this.escapeIdentifier(container) + "." + this.escapeIdentifier(target);
+    }
     if (target.includes(".")) {
       return target
         .split(".")
@@ -1278,11 +1287,11 @@ export class DuckDBProvider extends SQLBaseProvider {
     return `${this.escapeIdentifier(DEFAULT_SCHEMA)}.${this.escapeIdentifier(target)}`;
   }
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
-      const qualified = target ? this.qualifyMaintenanceTarget(target) : "";
+      const qualified = target ? this.qualifyMaintenanceTarget(target, container) : "";
       let sql = "";
 
       switch (type) {

@@ -1,7 +1,20 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { printStartupBanner } from "@/lib/startup-banner";
 
-const ENV_KEYS = ["LIBREDB_NO_BANNER", "NEXT_PUBLIC_APP_VERSION", "PORT", "HOSTNAME"] as const;
+const ENV_KEYS = [
+  "LIBREDB_NO_BANNER",
+  "NEXT_PUBLIC_APP_VERSION",
+  "PORT",
+  "HOSTNAME",
+  "PASSKEY_ORIGIN",
+  "STORAGE_PROVIDER",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
+] as const;
+
+/** The printed lines, trimmed, so a line-start check ignores the block's indentation. */
+function lines(output: string): string[] {
+  return output.split("\n").map((line) => line.trim());
+}
 
 /** Run the banner with console.log captured and return everything it printed. */
 function capture(): string {
@@ -131,6 +144,47 @@ describe("printStartupBanner", () => {
       process.env.LIBREDB_NO_BANNER = value;
       expect(capture()).toContain("LibreDB Studio");
     }
+  });
+
+  test("names the passkey origin, or why passkeys are unavailable, when PASSKEY_ORIGIN is set", () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
+    process.env.PASSKEY_ORIGIN = "http://localhost:3000";
+    const ready = capture();
+    expect(ready).toContain("Passkeys  ->  http://localhost:3000");
+    expect(ready).not.toContain("Passkeys are unavailable");
+
+    process.env.STORAGE_PROVIDER = "local";
+    const localStore = capture();
+    expect(localStore).toContain(
+      "Passkeys are unavailable: Passkeys need STORAGE_PROVIDER=sqlite or postgres: with STORAGE_PROVIDER=local there is no account registry to keep them in.",
+    );
+    expect(localStore).not.toContain("Passkeys  ->");
+
+    process.env.STORAGE_PROVIDER = "sqlite";
+    // A marker host no reason text contains, so the no-leak check cannot collide with the example domain.
+    process.env.PASSKEY_ORIGIN = "https://passkeys.internal.test/studio";
+    const invalid = capture();
+    expect(invalid).toContain(
+      "Passkeys are unavailable: PASSKEY_ORIGIN must be an origin (scheme, host and optional port) with no path, query or fragment; a BASE_PATH prefix does not belong in it.",
+    );
+    expect(invalid).not.toContain("passkeys.internal.test");
+  });
+
+  test("says nothing about passkeys when PASSKEY_ORIGIN is unset", () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
+
+    const output = capture();
+
+    expect(output).toContain("LibreDB Studio");
+    expect(lines(output).some((line) => line.startsWith("Passkeys"))).toBe(false);
+  });
+
+  test("LIBREDB_NO_BANNER still silences everything", () => {
+    process.env.LIBREDB_NO_BANNER = "1";
+    process.env.STORAGE_PROVIDER = "sqlite";
+    process.env.PASSKEY_ORIGIN = "http://localhost:3000";
+
+    expect(capture()).toBe("");
   });
 
   test("never throws when console.log fails", () => {

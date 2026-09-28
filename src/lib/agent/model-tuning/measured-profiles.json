@@ -274,6 +274,24 @@
       "rationale": {}
     },
     {
+      "id": "granite4.1:3b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults with no tuning layered over them (every run's driver-resolved event records tuning origin \"bundled\"). Investigate 2s · Optimize 13s · Assess 1s · Operate 5s · Analyze 4s · Plan 1s (medians of the passing runs) — 26s of model time for the whole sweep. The smallest granite4.1 that drives every surface, and it is the fastest full sweep on record here: six cells in 26 seconds of model time. Its 8b and 30b siblings were already measured; this extends the family down to 3b, where the whole point is that a 3b model on a laptop can run Agent mode at all.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
       "id": "granite4.1:8b",
       "measured": "3/6 modes locked, 24/30 runs passed AT THE DEFAULTS. Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5. Those are the numbers these settings were added for rather than the numbers they produced: with the worked refusal examples and the empty-turn retry the model locks 6/6 and passes 30/30, every surface 5/5.",
       "settings": {
@@ -299,6 +317,24 @@
           "The cell reads 3/5 on a rested machine and 4/5 on the build from before this branch merged `main`, so it is the model rather than the laptop and rather than anything changed here — its 5/5 came from one lucky five. Both losing ledgers read identically: a statement drafted, the read completed, the report reminder delivered, and the run ends `model-stopped` carrying no text at all — neither `model-stopped-saying` nor `closing-statement`, and both are written whenever a turn holds any. An EMPTY completion, which the loop reads as a model that chose to stop.",
           "That is what took `gemma4:26b` from fifteen losses on one cell to 5/5. Same signature, same switch, and the same bound: once per drive."
         ]
+      }
+    },
+    {
+      "id": "granite4.2:3b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults with no tuning layered over them (every run's driver-resolved event records tuning origin \"bundled\"). Investigate 19s · Optimize 1m29s · Assess 58s · Operate 12s · Analyze 2m00s · Plan 52s (medians of the passing runs) — 5m50s of model time for the whole sweep. The 3b end of granite4.2, whose 8b already ships. The slowest sweep of the five at 5m50s, and analyze is its hard cell at 120s; it was also the model that cost the most attempts before it closed, which is why the row is worth recording rather than assuming from the 8b.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
       }
     },
     {
@@ -350,6 +386,24 @@
     {
       "id": "ministral-3:14b",
       "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt. Investigate 19s · Optimize 27s · Assess 34s · Operate 13s · Analyze 15s · Plan 8s (medians of the passing runs). Measured because its 8b sibling had just locked everything, on the one rule with evidence behind it — the larger member of a family that has already won — and it is the only prediction this work has made that then held.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
+      "id": "ministral-3:3b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults with no tuning layered over them (every run's driver-resolved event records tuning origin \"bundled\"). Investigate 4s · Optimize 21s · Assess 16s · Operate 8s · Analyze 5s · Plan 5s (medians of the passing runs) — 59s of model time for the whole sweep. The 3b end of a family whose 8b and 14b already ship, and the only one of the three small enough to run beside a database on the same laptop. Optimize is its slow cell at 21s; every other surface is under 16.",
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -551,6 +605,24 @@
           "Its last open cell, and the loss is `no-statement` twice over.",
           "The closing prose is not a bad plan — it names all eight tables, their columns and their keys, correctly. What it never writes is a runnable statement or the explicit `NO STATEMENT:` refusal, and plan mode's bar is one of those two. `qwen3:14b` lost the same cell the same way and the extra turn won it."
         ]
+      }
+    },
+    {
+      "id": "phi4-mini:3.8b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults with no tuning layered over them (every run's driver-resolved event records tuning origin \"bundled\"). Investigate 7s · Optimize 5s · Assess 7s · Operate 1s · Analyze 5s · Plan 1s (medians of the passing runs) — 26s of model time for the whole sweep. The first phi4-mini measured here and the second-fastest sweep on record, 26 seconds across six cells with operate and plan under two seconds each. Nothing in the family shipped before this, so the entry is new coverage rather than a new size of a known quantity.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
       }
     },
     {
@@ -860,6 +932,24 @@
           "Planning had no notice for that: the prose arrives, `conclude` files it as the closing statement, and the run is over. So the mechanism is new, and it is off by default — a plan run that produced prose has answered or it has not, and 24 models clear this bar unaided. One turn, offered to this model only, costing 15 seconds of a run that spends 15.",
           "The notice offers the refusal as plainly as the statement. Asking only for SQL would push a model whose inventory cannot answer into inventing a table name to satisfy the bar, which is the failure the verifier accepts refusals to avoid."
         ]
+      }
+    },
+    {
+      "id": "qwen3:30b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults with no tuning layered over them (every run's driver-resolved event records tuning origin \"bundled\"). Investigate 12s · Optimize 1m21s · Assess 54s · Operate 34s · Analyze 32s · Plan 34s (medians of the passing runs) — 4m07s of model time for the whole sweep. A size qwen3 did not have here: 4b, 8b and 14b shipped, and the 30b MoE is the first of the family measured above 14b. Slower than the small models by an order of magnitude - optimize 81s, four minutes for the whole sweep - and it closed all six cells in a single sitting without a retry.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
       }
     },
     {

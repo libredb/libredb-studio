@@ -210,7 +210,7 @@ describe("POST /api/auth/login", () => {
     await POST(req as never);
 
     expect(mockLogin).toHaveBeenCalledTimes(1);
-    expect(mockLogin).toHaveBeenCalledWith("admin", "admin@libredb.org");
+    expect(mockLogin).toHaveBeenCalledWith("admin", "admin@libredb.org", undefined);
   });
 
   test("calls login() with role and email for user", async () => {
@@ -222,7 +222,7 @@ describe("POST /api/auth/login", () => {
     await POST(req as never);
 
     expect(mockLogin).toHaveBeenCalledTimes(1);
-    expect(mockLogin).toHaveBeenCalledWith("user", "user@libredb.org");
+    expect(mockLogin).toHaveBeenCalledWith("user", "user@libredb.org", undefined);
   });
 
   test("returns 503 with an actionable message when ADMIN_PASSWORD is missing", async () => {
@@ -428,7 +428,7 @@ describe("POST /api/auth/login", () => {
       expect(res.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.role).toBe("admin");
-      expect(mockLogin).toHaveBeenCalledWith("admin", "admin@libredb.org");
+      expect(mockLogin).toHaveBeenCalledWith("admin", "admin@libredb.org", undefined);
     });
 
     test("distinguishes a wrong code from a missing one", async () => {

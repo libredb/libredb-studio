@@ -78,6 +78,10 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
   // produced nothing and the run kept going.
   "turn-cut-off": "A turn ran long and was cut; asked again",
   "report-reserve": "Told this is its last turn",
+  "plan-bar": "Told what the report is judged on",
+  // The call the model wrote out instead of making: the reader sees a turn that did nothing,
+  // and this names what it actually was.
+  "tool-call-as-text": "Wrote a tool call as text; asked to make it properly",
   "unread-stop": "Asked to read the database itself",
   "tool-call-unreadable": "Told its tool call could not be read",
   /*

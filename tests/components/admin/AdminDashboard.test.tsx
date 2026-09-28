@@ -60,7 +60,7 @@ describe("AdminDashboard", () => {
     expect(renderResult!.queryByText("Admin Dashboard")).not.toBeNull();
   });
 
-  test("shows 5 section nav links with routes", async () => {
+  test("shows the section nav links with routes", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
       renderResult = render(<AdminDashboard>content</AdminDashboard>);
@@ -71,6 +71,7 @@ describe("AdminDashboard", () => {
     expect(getByText("Operations").closest("a")?.getAttribute("href")).toBe("/admin/operations");
     expect(getByText("Monitoring").closest("a")?.getAttribute("href")).toBe("/admin/monitoring");
     expect(getByText("Security").closest("a")?.getAttribute("href")).toBe("/admin/security");
+    expect(getByText("Accounts").closest("a")?.getAttribute("href")).toBe("/admin/accounts");
     expect(getByText("Audit").closest("a")?.getAttribute("href")).toBe("/admin/audit");
     expect(getByRole("navigation", { name: "Admin sections" })).not.toBeNull();
   });

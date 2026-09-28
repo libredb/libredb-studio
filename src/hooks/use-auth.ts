@@ -12,6 +12,7 @@ interface AuthUser {
 
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [sessionEnded, setSessionEnded] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -22,6 +23,8 @@ export function useAuth() {
         if (res.ok) {
           const data = await res.json();
           setUser(data.user);
+        } else if (res.status === 401) {
+          setSessionEnded(true);
         }
       } catch (error) {
         logger.warn("Failed to fetch the signed-in user", {
@@ -32,6 +35,12 @@ export function useAuth() {
     };
     fetchUser();
   }, []);
+
+  // The server ended this session (for example the account was disabled) and cleared the cookie.
+  // The proxy cannot know that, so the tab goes to the login screen from here.
+  useEffect(() => {
+    if (sessionEnded) router.push("/login");
+  }, [sessionEnded, router]);
 
   const isAdmin = user?.role === "admin";
 

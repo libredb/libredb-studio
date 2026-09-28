@@ -5,6 +5,7 @@ import { Code, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { ColumnSchema } from "@/lib/types";
 import { objectPathLabel } from "@/lib/db/object-path";
 import { objectSegment } from "@/lib/query-generators";
 
@@ -29,10 +30,7 @@ const LANGUAGES: { id: Language; label: string; ext: string }[] = [
 ];
 
 export function toPascalCase(str: string): string {
-  return str
-    .replace(/[_-](\w)/g, (_, c) => c.toUpperCase())
-    .replace(/^\w/, (c) => c.toUpperCase())
-    .replace(/s$/, ""); // Remove trailing 's' (pluralized table name)
+  return str.replace(/[_-](\w)/g, (_, c) => c.toUpperCase()).replace(/^\w/, (c) => c.toUpperCase());
 }
 
 /**
@@ -58,13 +56,17 @@ export function toPascalCase(str: string): string {
  * rescue it — the surviving stem names the wrong thing, or nothing — and it
  * would break the other five, so the Unicode classes stand and the Prisma output
  * for such a name is left where it already was before this function existed.
+ *
+ * The trailing `s` strip singularizes a table name (`users` gives `User`) and lives HERE,
+ * not in `toPascalCase()`: that one also names fields, and a field must keep the column's
+ * name, or `status` becomes `statu` and the generated type no longer describes the row (#1138).
  */
 export function toIdentifier(str: string): string {
   // The trim is `^_|_$`, not `^_+|_+$`: the collapse above has already reduced
   // every run of separators to ONE underscore, so a repeated quantifier here can
   // never match more — it only adds the backtracking that makes the pattern
   // super-linear on a long run of separators (SonarCloud S5852).
-  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, ""));
+  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, "")).replace(/s$/, "");
   if (!/^\p{L}/u.test(result)) return result ? `T${result}` : "Record";
   return result;
 }
@@ -178,6 +180,19 @@ export function mapSqlTypeToJava(sqlType: string): string {
   return "String";
 }
 
+/**
+ * The type these mappers decide on, which is not always the one the browser shows.
+ *
+ * Every mapper below matches a type FAMILY - by `===` for the integer arms, by substring for
+ * the rest - and a DECLARED type is not one. MySQL and MariaDB report `int unsigned`,
+ * `varchar(20)` and `enum('x','y')` (#1033), so `t === "int"` matches none of them and the
+ * column falls through to the string default, while `enum('int','text')` matches the
+ * substring test for `int` and is typed a number. `baseType` is the provider's own answer to
+ * that question and is absent wherever an engine draws no such distinction, which is the same
+ * rule `decidableType` in `src/lib/agent/table-profile.ts` applies.
+ */
+const decidableType = (column: ColumnSchema): string => column.baseType ?? column.type;
+
 export function generateCode(lang: Language, table: DetailedObject): string {
   // The type, model or struct NAME is for a person to read, so it is derived from the display
   // label. The Prisma `@@map` below is not: it is what Prisma addresses the table by, so it
@@ -188,7 +203,7 @@ export function generateCode(lang: Language, table: DetailedObject): string {
   switch (lang) {
     case "typescript": {
       const fields = columns.map((c) => {
-        const tsType = mapSqlTypeToTS(c.type);
+        const tsType = mapSqlTypeToTS(decidableType(c));
         const nullable = c.nullable ? " | null" : "";
         return `  ${toCamelCase(c.name)}: ${tsType}${nullable};`;
       });
@@ -196,7 +211,7 @@ export function generateCode(lang: Language, table: DetailedObject): string {
     }
     case "zod": {
       const fields = columns.map((c) => {
-        let zodType = mapSqlTypeToZod(c.type);
+        let zodType = mapSqlTypeToZod(decidableType(c));
         if (c.nullable) zodType += ".nullable()";
         return `  ${toCamelCase(c.name)}: ${zodType},`;
       });
@@ -204,36 +219,36 @@ export function generateCode(lang: Language, table: DetailedObject): string {
     }
     case "prisma": {
       const fields = columns.map((c) => {
-        const prismaType = mapSqlTypeToPrisma(c.type);
+        const prismaType = mapSqlTypeToPrisma(decidableType(c));
         const nullable = c.nullable ? "?" : "";
         const pk = c.isPrimary ? " @id" : "";
-        const auto = c.type.toLowerCase().includes("serial") ? " @default(autoincrement())" : "";
+        const auto = decidableType(c).toLowerCase().includes("serial") ? " @default(autoincrement())" : "";
         return `  ${c.name}  ${prismaType}${nullable}${pk}${auto}`;
       });
       return `model ${name} {\n${fields.join("\n")}\n\n  @@map("${objectSegment(table.path)}")\n}`;
     }
     case "go": {
       const fields = columns.map((c) => {
-        const goType = mapSqlTypeToGo(c.type);
+        const goType = mapSqlTypeToGo(decidableType(c));
         const nullable = c.nullable ? "*" : "";
         const fieldName = toPascalCase(c.name);
         return `\t${fieldName} ${nullable}${goType} \`json:"${c.name}" db:"${c.name}"\``;
       });
       const needsTime = columns.some(
-        (c) => c.type.toLowerCase().includes("date") || c.type.toLowerCase().includes("time"),
+        (c) => decidableType(c).toLowerCase().includes("date") || decidableType(c).toLowerCase().includes("time"),
       );
       const imports = needsTime ? '\nimport "time"\n' : "";
       return `package models${imports}\n\ntype ${name} struct {\n${fields.join("\n")}\n}`;
     }
     case "python": {
       const fields = columns.map((c) => {
-        const pyType = mapSqlTypeToPython(c.type);
+        const pyType = mapSqlTypeToPython(decidableType(c));
         const optional = c.nullable ? `Optional[${pyType}]` : pyType;
         return `    ${toSnakeCase(c.name)}: ${optional}`;
       });
       const needsOptional = columns.some((c) => c.nullable);
       const needsDatetime = columns.some(
-        (c) => c.type.toLowerCase().includes("date") || c.type.toLowerCase().includes("time"),
+        (c) => decidableType(c).toLowerCase().includes("date") || decidableType(c).toLowerCase().includes("time"),
       );
       const imports: string[] = ["from dataclasses import dataclass"];
       if (needsOptional) imports.push("from typing import Optional");
@@ -242,11 +257,11 @@ export function generateCode(lang: Language, table: DetailedObject): string {
     }
     case "java": {
       const fields = columns.map((c) => {
-        const javaType = mapSqlTypeToJava(c.type);
+        const javaType = mapSqlTypeToJava(decidableType(c));
         return `    private ${javaType} ${toCamelCase(c.name)};`;
       });
       const needsLocalDateTime = columns.some(
-        (c) => c.type.toLowerCase().includes("date") || c.type.toLowerCase().includes("time"),
+        (c) => decidableType(c).toLowerCase().includes("date") || decidableType(c).toLowerCase().includes("time"),
       );
       const imports = needsLocalDateTime ? "import java.time.LocalDateTime;\n\n" : "";
       return `${imports}public class ${name} {\n${fields.join("\n")}\n}`;

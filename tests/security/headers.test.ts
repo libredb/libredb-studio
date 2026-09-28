@@ -169,6 +169,30 @@ describe("securityHeaders", () => {
     expect(policy?.includes("=(self)")).toBe(false);
   });
 
+  test("keeps the publickey-credentials-get denial by default", () => {
+    const policy = securityHeaders()["Permissions-Policy"];
+
+    expect(policy).toContain("publickey-credentials-get=()");
+    // Registration keeps its default 'self' allowlist: listing create here would break adding a passkey.
+    expect(policy).not.toContain("publickey-credentials-create");
+  });
+
+  // The option is the only way the denial goes, and it moves nothing else.
+  test("allowWebAuthnGet drops only the publickey-credentials-get denial", () => {
+    const shipped = securityHeaders();
+    const allowed = securityHeaders({ allowWebAuthnGet: true });
+    const withoutGet = shipped["Permissions-Policy"]
+      .split(", ")
+      .filter((entry) => entry !== "publickey-credentials-get=()");
+
+    expect(allowed["Permissions-Policy"]).not.toContain("publickey-credentials");
+    expect(allowed["Permissions-Policy"].split(", ")).toEqual(withoutGet);
+    // Non-vacuity: the default policy carried the denial and more than it.
+    expect(withoutGet.length).toBe(shipped["Permissions-Policy"].split(", ").length - 1);
+    expect(withoutGet.length).toBeGreaterThan(0);
+    expect({ ...allowed, "Permissions-Policy": "" }).toEqual({ ...shipped, "Permissions-Policy": "" });
+  });
+
   test("sends HSTS for 180 days without includeSubDomains by default", () => {
     expect(securityHeaders()["Strict-Transport-Security"]).toBe(`max-age=${HSTS_MAX_AGE_SECONDS}`);
     expect(HSTS_MAX_AGE_SECONDS).toBe(15552000);

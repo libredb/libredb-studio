@@ -19,10 +19,12 @@ import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   requireEditableKind,
@@ -73,6 +75,18 @@ import {
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 
 /**
+ * Redis's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const REDIS_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "redis",
+  label: "A Redis",
+  shapeNames: "label",
+};
+
+/**
  * The server's own words for "you asked me to discard and there is nothing queued".
  *
  * MEASURED on redis 7.4.11 through ioredis 5.11.1: `DISCARD` on a connection with no open
@@ -97,6 +111,112 @@ const QUEUED_REPLY = "QUEUED";
 
 /** `PING`'s own reply, the other half of the reading above. */
 const PONG_REPLY = "PONG";
+
+/**
+ * Commands that change the CONNECTION rather than the data, refused by `query()` (#1107).
+ *
+ * `getOrCreateProvider` caches this provider per connection for the whole process and it runs
+ * every statement on one client, so connection state a statement sets is state every later
+ * request inherits, whoever sends it. MEASURED 2026-09-25 on redis 8.10.2 through ioredis
+ * 5.11.1, on a connection configured for database 2 as ACL user `ro` (`+@read`):
+ * - `SELECT 0` answered OK and every later `GET` read database 0; `MULTI` / `SELECT 0` /
+ *   `EXEC` did the same, which is why the refusal is by command and not by reply.
+ * - `RESET` answered RESET and left the connection in database 0 AND authenticated as
+ *   `default`: the read-only user could `SET` afterwards.
+ * - `AUTH default <anything>` answered OK against a stock `default nopass` and did the same.
+ * - `HELLO 3` switched the reply protocol and ioredis raised "Protocol error, got \"%\"".
+ * `SWAPDB`, `MOVE` and a script's `redis.call('SELECT', n)` were measured too and leave the
+ * connection where it was, so they are not listed.
+ */
+const SESSION_STATE_COMMANDS: ReadonlySet<string> = new Set(["SELECT", "RESET", "AUTH", "HELLO"]);
+
+/**
+ * Commands after which the shared client stops answering later requests, refused by `query()`
+ * for the reason above (#1107). `CLIENT REPLY` belongs here too and is matched by its subcommand
+ * in `sharedConnectionRefusal`. MEASURED 2026-09-28 on redis 8.10.2 through ioredis 5.11.1:
+ * - `SUBSCRIBE`, `PSUBSCRIBE` and `SSUBSCRIBE` never answered, ioredis threw an uncaught
+ *   TypeError, and every later command failed "Connection in subscriber mode". Through
+ *   `POST /api/db/query`, one `SUBSCRIBE` from a `user` session failed the connection for every
+ *   user, admin included, until the idle sweep evicted the provider.
+ * - `QUIT` answered OK and closed the socket for good: every later command failed "Connection is
+ *   closed.", while `isConnected()` still said true, so the provider cache kept serving it.
+ * - `MONITOR` turned the connection into a feed of every command the server runs, which ioredis
+ *   read as replies to later commands.
+ * - `CLIENT REPLY OFF` and `CLIENT REPLY SKIP` stopped the server replying, so every later
+ *   command waited for an answer that never came.
+ * `UNSUBSCRIBE`, `PUNSUBSCRIBE` and `SUNSUBSCRIBE` outside subscriber mode answered 0 and changed
+ * nothing, so they run.
+ */
+const UNANSWERING_COMMANDS: ReadonlySet<string> = new Set(["QUIT", "SUBSCRIBE", "PSUBSCRIBE", "SSUBSCRIBE", "MONITOR"]);
+
+/**
+ * Commands that hold the connection until data or their timeout arrives, refused by `query()`
+ * (#1107). The shared client answers in order, so every other request on the connection waits
+ * behind one. MEASURED 2026-09-28 on redis 8.10.2 through ioredis 5.11.1: with a timeout of 0,
+ * each of these, and `XREAD` / `XREADGROUP` with `BLOCK 0`, never returned and neither did any
+ * later command; a `GET` sent while `BLPOP queue 3` waited answered after 3 seconds. So the
+ * refusal does not depend on the timeout. `XREAD` and `XREADGROUP` block only with their BLOCK
+ * option, which `streamReadBlocks` looks for.
+ */
+const BLOCKING_COMMANDS: ReadonlySet<string> = new Set([
+  "BLPOP",
+  "BRPOP",
+  "BRPOPLPUSH",
+  "BLMOVE",
+  "BLMPOP",
+  "BZPOPMIN",
+  "BZPOPMAX",
+  "BZMPOP",
+  "WAIT",
+  "WAITAOF",
+]);
+
+/**
+ * A command word as the server may match it: upper-cased, and cut at the first NUL.
+ *
+ * MEASURED 2026-09-28 on redis 8.10.2: the server reuses the previous command's lookup when the
+ * next name matches it as a C string, so the match stops at a NUL. On a raw socket `SELECT\0 0`
+ * answered OK right after `SELECT 2` and "unknown command" right after `PING`. `openClient` sends
+ * `SELECT <db>` on connect, so a check on the whole word let the first statement on a fresh
+ * provider, `SELECT\0 0`, move the connection to database 0 through `POST /api/db/query`.
+ */
+function commandWord(text: string): string {
+  return text.split("\u0000", 1)[0].toUpperCase();
+}
+
+/**
+ * Whether an `XREAD` or `XREADGROUP` carries its BLOCK option. The options come before `STREAMS`,
+ * after which every word is a key or an id, and `GROUP` takes a group and a consumer name, so a
+ * key or a group named "BLOCK" is not the option.
+ */
+function streamReadBlocks(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const word = commandWord(args[i]);
+    if (word === "STREAMS") return false;
+    if (word === "BLOCK") return true;
+    if (word === "GROUP") i += 2;
+  }
+  return false;
+}
+
+/** Why `query()` does not send this command on the shared client, or `null` when it does (#1107). */
+function sharedConnectionRefusal(command: string, args: readonly string[]): string | null {
+  const name = commandWord(command);
+  if (SESSION_STATE_COMMANDS.has(name)) {
+    const instead =
+      name === "SELECT" ? " Pick the database in the Keys panel, or change the connection's Database field." : "";
+    return `${name} is not run here: it would change the shared connection for every later request.${instead}`;
+  }
+  const replySubcommand = name === "CLIENT" && args.length > 0 && commandWord(args[0]) === "REPLY";
+  if (UNANSWERING_COMMANDS.has(name) || replySubcommand) {
+    return `${replySubcommand ? "CLIENT REPLY" : name} is not run here: the shared connection would stop answering later requests.`;
+  }
+  const streamBlocks = (name === "XREAD" || name === "XREADGROUP") && streamReadBlocks(args);
+  if (BLOCKING_COMMANDS.has(name) || streamBlocks) {
+    return `${streamBlocks ? `${name} BLOCK` : name} is not run here: every other request on the shared connection would wait until it returns.`;
+  }
+  return null;
+}
 
 // JSON query payload: { "command": "GET", "args": ["key"] }
 type RedisJsonCommand = { command: string; args?: string[] };
@@ -317,14 +437,7 @@ function containerSegment(
  * limit of the deployment, which this function does not know without a second round trip.
  */
 function containerDatabase(capabilities: ProviderCapabilities, container: readonly string[]): number {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `A Redis container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "redis",
-    );
-  }
+  assertContainerPathShape(capabilities, container, REDIS_CONTAINER_PATH_ENGINE);
   const segment = containerSegment(capabilities, container, "schema");
   if (!/^\d+$/.test(segment)) {
     throw new QueryError(`A Redis database is a number, received ${JSON.stringify(segment)}`, "redis");
@@ -885,6 +998,9 @@ export class RedisProvider extends BaseDatabaseProvider {
       // The object model (#789). Both are module constants: see their docblocks for the
       // measurements behind the one container level and the two kinds.
       containerLevels: REDIS_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: REDIS_OBJECT_KINDS,
       // The key-space walk. `defaultCount` is the batch a caller that names none gets, and it
       // is larger than the object surface's `COUNT 100` on purpose: this is a WALK a person
@@ -1349,6 +1465,8 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   private async runCommand(command: string, args: string[]): Promise<Omit<QueryResult, "executionTime">> {
+    const refusal = sharedConnectionRefusal(command, args);
+    if (refusal !== null) throw new QueryError(refusal, "redis");
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (this.client as any).call(command, ...args);

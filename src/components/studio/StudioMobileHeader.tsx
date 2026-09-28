@@ -13,6 +13,8 @@ import {
   Database,
   PenLine,
   Gauge,
+  KeyRound,
+  ShieldCheck,
   LogOut,
   EllipsisVertical,
   Pencil,
@@ -89,7 +91,7 @@ interface StudioMobileHeaderProps {
   onAskAgent?: () => void;
 }
 
-export function StudioMobileHeader({
+export const StudioMobileHeader = React.memo(function StudioMobileHeader({
   connections,
   activeConnection,
   connectionPulse,
@@ -223,6 +225,12 @@ export function StudioMobileHeader({
                 )}
                 <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
                   <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/settings/mcp")} className="cursor-pointer">
+                  <KeyRound strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> MCP
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/settings/authenticator")} className="cursor-pointer">
+                  <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Sign-in security
                 </DropdownMenuItem>
                 <div className="border-t border-hairline my-1" />
                 {/*
@@ -396,4 +404,4 @@ export function StudioMobileHeader({
       )}
     </header>
   );
-}
+});

@@ -94,7 +94,7 @@ interface SidebarProps {
   onOpenKey?: (key: string, type: string | null, database: number | null) => void;
 }
 
-export function Sidebar({
+export const Sidebar = React.memo(function Sidebar({
   connections,
   activeConnection,
   onSelectConnection,
@@ -412,4 +412,4 @@ export function Sidebar({
       </div>
     </div>
   );
-}
+});

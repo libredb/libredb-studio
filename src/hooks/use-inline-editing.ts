@@ -87,8 +87,11 @@ type KeyColumnKind = "date-time" | "float64" | "decimal" | "declared" | "undecla
  * `time` and `time with time zone` are deliberately ABSENT. `pg` and `mysql2` both hand a
  * time-of-day back as the string the engine prints (`'10:00:00'`), which is its own
  * identity and matches when sent back, so refusing one would take away a key that works.
- * A date or a timestamp is the opposite: those same two drivers hand back a JavaScript
- * `Date`, and that is the value this whole check exists for.
+ * A date or a timestamp is the opposite: mysql2 hands back a JavaScript `Date`, and so does
+ * `pg` for `timestamp with time zone`, and that is the value this whole check exists for.
+ * `pg`'s `date` and `timestamp without time zone` arrive as the engine's own text since the
+ * provider's per-pool parsers, and are still refused here: the refusal reads the declaration,
+ * which is conservative for those two rather than wrong.
  */
 const INSTANT_TYPE_NAMES: ReadonlySet<string> = new Set([
   "date",
@@ -486,7 +489,7 @@ function isSerializedDate(value: string): boolean {
  * MySQL accepted it and matched nothing — so the apply answered "some of the rows you
  * edited are no longer in the table. Run the query again" about a row that `SELECT
  * count(*)` put at one. The advice is a loop: the same query produces the same Buffer and
- * the same refusal for ever. A `timestamp` is the same defect with a different value —
+ * the same refusal for ever. A `timestamptz` is the same defect with a different value:
  * `pg` hands back a Date, which has no microseconds to hand back, and `String(date)` has
  * no fractional seconds at all.
  *

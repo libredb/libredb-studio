@@ -1,0 +1,75 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "7L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:58:40.194Z",
+  "surface": "admin.listTopics() with TLS to the plaintext port localhost:9092"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Listing topics failed.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "metadata failed 2 times.",
+    "code": "PLT_KFK_MULTIPLE",
+    "class": "MultipleErrors",
+    "errors": [
+     {
+      "message": "Cannot connect to any broker.",
+      "code": "PLT_KFK_MULTIPLE",
+      "class": "MultipleErrors",
+      "errors": [
+       {
+        "message": "Connection to localhost:9092 failed.",
+        "code": "PLT_KFK_NETWORK",
+        "canRetry": true,
+        "class": "NetworkError",
+        "cause": {
+         "message": "TLS handshake failed. Please verify the broker supports TLS.",
+         "code": "PLT_KFK_USER",
+         "canRetry": false,
+         "class": "UserError",
+         "cause": {
+          "code": "ECONNRESET",
+          "host": "localhost",
+          "port": 9092,
+          "class": "Error",
+          "message": "Client network socket disconnected before secure TLS connection was established"
+         }
+        }
+       }
+      ]
+     },
+     {
+      "message": "Cannot connect to any broker.",
+      "code": "PLT_KFK_MULTIPLE",
+      "class": "MultipleErrors",
+      "errors": [
+       {
+        "message": "Connection to localhost:9092 failed.",
+        "code": "PLT_KFK_NETWORK",
+        "canRetry": true,
+        "class": "NetworkError",
+        "cause": {
+         "message": "TLS handshake failed. Please verify the broker supports TLS.",
+         "code": "PLT_KFK_USER",
+         "canRetry": false,
+         "class": "UserError",
+         "cause": {
+          "code": "ECONNRESET",
+          "host": "localhost",
+          "port": 9092,
+          "class": "Error",
+          "message": "Client network socket disconnected before secure TLS connection was established"
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

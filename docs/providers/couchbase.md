@@ -6,6 +6,8 @@
 > design, architecture, usage, and tests. If you are reading the code, extending Couchbase support,
 > or authoring a new provider, start here.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -672,6 +674,9 @@ provider in [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)
 | `function` | routine | `[bucket, scope, function]` | `system:functions`, and the only kind here declaring `hasSource` ([§6b](#6b-object-source-789)) |
 | `index` | config, `attachedTo: collection` | `[bucket, scope, collection, index]` | `system:indexes` |
 
+A bucket alone is a real address as well as a bucket and a scope, and the declaration states it as `containerPathShapes: "prefixes"` ([§9](#9-capabilities--labels)).
+A bucket-level container carries no scope, and that is absent rather than `_default`, because `_default` is a real scope holding real collections.
+
 A collection declares `acceptsRowWrites: true`. That is the per-kind fact and it is deliberately
 separate from the engine-wide `supportsInlineRowEdit: false` this provider also declares: the
 results grid's `UPDATE ... SET` cannot address a document through the `__id` projection
@@ -1111,13 +1116,20 @@ edge one. Omitted, the same panels render `N/A` / "Not measured" and score the c
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)`
+`runMaintenance(type, target?, container?)`
 ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)). All three operations
 **require** a target.
 
+A `container` is the row's `schemaName` (#772), and the keyspace it addresses is decided from it:
+the bucket's own name (the only Tables row this provider has, `getTableStats()`) means the
+bucket's default collection, so the row's Analyze button addresses `` `bucket`.`_default`.`_default` ``
+rather than a scope that does not exist; any other container is the SCOPE the collection sits in,
+used as one instead of being parsed back out of the display name. Without a container the
+display-name rule stands: `scope.collection`, or the default scope for a bare name.
+
 | Type | Couchbase action | Notes |
 |------|------------------|-------|
-| `analyze` | `UPDATE STATISTICS FOR <keyspace> INDEX ALL` | **Enterprise Edition only.** A Community cluster answers "'Update Statistics' is an enterprise level feature." — returned verbatim as a failed result, not swallowed or reworded |
+| `analyze` | `UPDATE STATISTICS FOR <keyspace> INDEX ALL` | **Enterprise Edition only.** A Community cluster answers "'Update Statistics' is an enterprise level feature.", returned verbatim as a failed result, not swallowed or reworded. The success reply names the same keyspace the statement addressed (``Updated statistics for `travel`.`inventory`.`hotel` ``), so a row whose target is the bucket cannot report as if the bucket itself had been touched (#1091 review) |
 | `reindex` | `BUILD INDEX ON <keyspace>(...)` over the keyspace's deferred indexes | Reports "No deferred indexes on X" when there are none |
 | `kill` | `DELETE FROM system:active_requests WHERE requestId = $1` | Target is the request id shown in active sessions |
 
@@ -1176,6 +1188,9 @@ stays absent, and that card never renders either.
 | `maintenanceOperations` | `['analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `8091` |
+| `containerLevels` | two levels, `catalog` labelled Bucket then `schema` labelled Scope ([§6a.1](#6a1-what-is-declared)) |
+| `containerPathShapes` | `prefixes`: `[bucket]` and `[bucket, scope]` both address a container, because a bucket alone is a real address ([§6a.1](#6a1-what-is-declared)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `objectKinds` | `collection`, `function`, `index` ([§6a](#6a-the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER)\s+(COLLECTION\|SCOPE\|INDEX)\b` |
 
 `supportsCreateTable: false` is deliberate: `CreateTableModal` builds `CREATE TABLE` from a column
@@ -1436,4 +1451,4 @@ Everything else:
 - USE clause (`USE KEYS`): <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/hints.html>
 - INFER: <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/infer.html>
 - EXPLAIN: <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/explain.html>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

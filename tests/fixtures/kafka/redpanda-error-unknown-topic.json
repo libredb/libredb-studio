@@ -1,0 +1,15 @@
+{
+ "$captured": {
+  "image": "redpandadata/redpanda:v26.2.2",
+  "clusterId": "redpanda.1a4a61b6-33c7-4ff6-90db-fa12346feb59",
+  "date": "2026-09-24T18:58:18.530Z",
+  "surface": "admin.metadata({ topics: [\"no-such-topic\"], autocreateTopics: false })"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Unknown topic no-such-topic.",
+  "code": "PLT_KFK_USER",
+  "canRetry": false,
+  "class": "UserError"
+ }
+}

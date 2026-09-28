@@ -96,8 +96,8 @@ const ORDER_NOTICE = "Without an ORDER BY the engine may return rows that repeat
  * once the answer has arrived: its matrix cell budget leaves out whole series, which are
  * columns of the wide grid, and on an engine that ignores `limit` its series cap leaves out
  * series the server sent. So the sentence names neither rows nor fetching. It points at no
- * warning either, because the limiter writes none, and it stays true of a limiter bound the
- * result fit inside, where nothing lies beyond the bound.
+ * warning either, because the limiter writes none. A limiter bound sets the badge only when
+ * the page fills; a shorter result does not imply that anything was left out.
  */
 const AUTO_LIMIT_BADGE = "limited";
 const AUTO_LIMIT_NOTICE = "Studio bounded this result. Anything beyond the bound is not in it.";

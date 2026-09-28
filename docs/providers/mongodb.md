@@ -155,11 +155,10 @@ A `find` with no explicit `options.limit` is capped at **100** documents
 `options` to the cursor** (no `limit`/`skip`) and has no default cap, so a pipeline without a
 `$limit` stage can return an unbounded result set.
 
-`prepareQuery()` does **not** modify the query (it injects no limit — the JSON is passed through
-unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 100`, and the
-`/api/db/query` route uses that returned `limit`/`wasLimited` for pagination metadata
-(`hasMore = rows.length === prepared.limit`). The `unlimited` option is **not** honoured — see
-[Known limitations](#13-known-limitations--future-work).
+`prepareQuery()` does **not** modify the query (it injects no limit, and the JSON is passed through unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 100` and `wasLimited: false`, and the `/api/db/query` route builds its pagination metadata from them.
+The route computes `hasMore = prepared.wasLimited && rows.length === prepared.limit`, so every MongoDB result answers `hasMore: false` and `wasLimited: false`, and the provider declares `supportsResultPagination: false`, so no Load More is offered.
+Measured 2026-09-27 on MongoDB 8.3 through the route: a `find` over 150 documents returned 100 rows with `hasMore: false` and `wasLimited: false`, so a result the 100 cap cut carries no "limited" badge.
+The `unlimited` option is **not** honoured; see [Known limitations](#13-known-limitations--future-work).
 
 ---
 
@@ -913,8 +912,14 @@ something was measured:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+`runMaintenance(type, target?, container?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 maps the generic operations onto MongoDB admin commands:
+
+A `container` is a DATABASE name (#772). The provider is bound to one database and no admin command
+can retarget mid-command, so the bound name is accepted and any OTHER name is refused with
+`bound to the database "<name>"` rather than quietly acted on against the wrong one. The comparison
+uses `getDatabaseName()`, the name `connect()` opened - a connection-string connection sets no
+`config.database`, and comparing with that alone refused the bound database itself.
 
 | Type | MongoDB action |
 |------|----------------|
@@ -972,6 +977,7 @@ request here.
 | `defaultPort` | `27017` |
 | `schemaRefreshPattern` | `"operation"\s*:\s*"(insert\|delete\|update)` |
 | `containerLevels` | one level, `{ id: 'schema', label: 'Database' }` — the object surface's container ([§6](#the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `collection` (relation, `acceptsRowWrites`) and `view` (relation). No `index`, no routine kind, no `timeseries` kind; each absence is measured in [§6](#what-is-not-declared-and-why-each-absence-is-a-measurement) |
 
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections
@@ -1150,9 +1156,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   not an authenticated user. *Future:* map from `op.effectiveUsers`/`op.users` (MongoDB 5.0+).
 - **`getIndexStats().indexType` only distinguishes `text` vs `btree`** — `hashed`, geospatial
   (`2dsphere`/`2d`), wildcard (`$**`), and clustered indexes are all reported as `btree`.
-- **The `unlimited` query option is ignored.** `prepareQuery()` always returns `limit:
-  options.limit || 100`; combined with the route's `hasMore = rows.length === prepared.limit`, an
-  "unlimited" request can report an incorrect `hasMore`.
+- **The `unlimited` query option is ignored, and a `find` the 100 cap cut is not marked.** `prepareQuery()` always returns `limit: options.limit || 100` with `wasLimited: false`, so an "unlimited" `find` is still capped at 100 documents.
+  The route then answers `hasMore: false` and `wasLimited: false`, so the result strip shows no "limited" badge for a result the cap cut ([§3.4](#34-find-is-capped-at-100-aggregate-is-not)).
 - **A folder's columns are SAMPLED, and the sample is bounded per collection.** `describeObjects`
   reads a whole container-and-kind folder in one `$unionWith` chain rather than one call per
   collection, chunked at `SAMPLE_CHUNK_SIZE = 100` collections per pipeline so a wide folder cannot
@@ -1172,4 +1177,4 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md) · query format also in [`CLAUDE.md`](../../CLAUDE.md)
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [Trino](./trino.md) · [Redis](./redis.md)

@@ -1,0 +1,54 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "7L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:58:40.194Z",
+  "surface": "admin.metadata({ topics: [\"orders\"], autocreateTopics: false }) as reader (no ACL)"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Received response with error while executing API Metadata(v12)",
+  "code": "PLT_KFK_RESPONSE",
+  "response": {
+   "throttleTimeMs": 0,
+   "brokers": [
+    {
+     "nodeId": 1,
+     "host": "localhost",
+     "port": 19094,
+     "rack": null
+    }
+   ],
+   "clusterId": "7L6g3nShT-eMCtK--X86sw",
+   "controllerId": 1,
+   "topics": [
+    {
+     "errorCode": 29,
+     "name": "orders",
+     "topicId": "00000000-0000-0000-0000-000000000000",
+     "isInternal": false,
+     "partitions": [],
+     "topicAuthorizedOperations": -2147483648
+    }
+   ]
+  },
+  "class": "ResponseError",
+  "errors": [
+   {
+    "message": "Topic authorization failed.",
+    "code": "PLT_KFK_PROTOCOL",
+    "apiId": "TOPIC_AUTHORIZATION_FAILED",
+    "apiCode": 29,
+    "serverErrorMessage": null,
+    "canRetry": false,
+    "hasStaleMetadata": false,
+    "needsRejoin": false,
+    "producerFenced": false,
+    "rebalanceInProgress": false,
+    "unknownMemberId": false,
+    "path": "/topics/0",
+    "class": "ProtocolError"
+   }
+  ]
+ }
+}

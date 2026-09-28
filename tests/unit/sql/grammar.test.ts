@@ -420,6 +420,8 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   redis: "default",
   // PromQL, not SQL (#1085): no SQL grammar is established for it, and none is read.
   prometheus: "default",
+  // A JSON read request, not SQL (#1088): no SQL grammar is established for it, and none is read.
+  kafka: "default",
 };
 
 describe("every database type has a recorded grammar decision", () => {
@@ -467,6 +469,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A PromQL expression is not SQL text: its strings escape with a backslash, which a SQL span
   // reader cannot follow (#1085).
   prometheus: false,
+  // A Kafka read request is one JSON object, not SQL text: its strings escape with a backslash,
+  // which a SQL span reader cannot follow either (#1088).
+  kafka: false,
 };
 
 describe("readsSqlText", () => {

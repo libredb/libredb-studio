@@ -31,6 +31,12 @@
 #ADMIN_TOTP_SECRET=
 #USER_TOTP_SECRET=
 #
+# Passkey sign-in, optional, off while unset. Set it to the exact address people
+# open Studio at, and open exactly that address: http://localhost:3000, not the
+# http://127.0.0.1:3000 the service binds to, since browsers refuse passkeys on
+# an IP address. Guide: docs/PASSKEYS.md
+#PASSKEY_ORIGIN=http://localhost:3000
+#
 # AI query assistance (optional).
 #LLM_PROVIDER=gemini
 #LLM_API_KEY=

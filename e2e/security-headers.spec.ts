@@ -98,3 +98,10 @@ test.describe("Content-Security-Policy against the real asset surface", () => {
     expect(await readViolations(page)).toEqual([]);
   });
 });
+
+// The passkey server (chromium-passkey) drops this denial; a server without passkeys keeps it.
+test("the default server still denies publickey-credentials-get", async ({ page }) => {
+  const loginResponse = await page.goto("/login");
+  expect(loginResponse).not.toBeNull();
+  expect(loginResponse?.headers()["permissions-policy"]).toContain("publickey-credentials-get=()");
+});

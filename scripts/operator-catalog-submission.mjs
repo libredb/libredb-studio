@@ -22,6 +22,12 @@
  *
  * Both were measured, the second on community-operators-prod#11106.
  *
+ * On the FBC catalog a version directory is not yet a node of that graph. The
+ * graph is the channel in `catalog-templates/basic.yaml`, and a merged bundle
+ * only joins it when the bot's separate "Catalog update" pull request merges.
+ * So there the predecessor must be a channel entry too, not just a directory
+ * (measured on community-operators-prod#11290, see channelEntries).
+ *
  * Pure functions are unit tested in tests/unit/operator-catalog-submission.test.ts.
  */
 
@@ -137,12 +143,83 @@ export function blockingSubmissions(openSubmissions, version) {
 }
 
 /**
+ * The versions the FBC channel template links, ascending: the
+ * `- name: <operator>.vX.Y.Z` entries of its one `olm.channel`.
+ *
+ * Why this exists. On community-operators-prod a merged bundle directory is
+ * not in the channel graph yet: `rh-operator-bundle-bot` adds it to
+ * `catalog-templates/basic.yaml` in a separate "Catalog update" pull request,
+ * and the hosted pipeline's `add-bundle-to-fbc-dryrun` renders that template
+ * from the submission branch and runs `opm validate`. MEASURED: 0.16.0's
+ * bundle merged on 2026-09-17, its catalog update (#11204) stayed open for
+ * nine days, and 0.16.1 was submitted as #11290 with `replaces` v0.16.0. The
+ * dry run failed with "multiple channel heads found in graph:
+ * libredb-studio-operator.v0.15.0, libredb-studio-operator.v0.16.1", because
+ * the template on that branch still ended at v0.15.0. The catalog update
+ * touches no version directory, so the open-submission check cannot see it;
+ * the template is the state that says whether it has landed.
+ *
+ * A line parser rather than a YAML dependency, because the file is written by
+ * one bot in one fixed shape (fetched from upstream main for the test
+ * fixture) and this script runs on node builtins alone, straight from a
+ * checkout. The tolerance is one-directional: anything it does not recognise
+ * is thrown, never read as "no entries", since an unread channel that let a
+ * submission through is exactly the failure above. The `olm.bundle` image
+ * lines are not counted - an image without a channel entry is that failure's
+ * state, not a node.
+ *
+ * One channel only. release-config.yaml targets `alpha`, and with a second
+ * channel a union of entries could vouch for a predecessor that is in the
+ * wrong one, so a second `olm.channel` is thrown rather than guessed at.
+ */
+export function channelEntries(templateText, operator) {
+  // Top-level items of the template's `entries:` list start at column 0.
+  const items = [];
+  for (const line of templateText.split(/\r?\n/)) {
+    if (line.startsWith("- ")) {
+      items.push([line]);
+    } else if (items.length > 0 && line.startsWith(" ")) {
+      items[items.length - 1].push(line);
+    }
+  }
+  const channels = items.filter((item) => item.some((line) => /^(?:- | {2})schema:\s*olm\.channel\s*$/.test(line)));
+  if (channels.length === 0) {
+    throw new Error(
+      "the catalog template has no olm.channel entry: its layout changed upstream, or it is not the bot's",
+    );
+  }
+  if (channels.length > 1) {
+    throw new Error("the catalog template has more than one olm.channel; only a single channel can be read");
+  }
+  const prefix = `${operator}.v`;
+  const versions = [];
+  for (const line of channels[0]) {
+    const entry = line.match(/^\s+- name:\s*["']?([^"'\s]+)["']?\s*$/);
+    if (!entry) {
+      continue;
+    }
+    const version = entry[1].startsWith(prefix) ? entry[1].slice(prefix.length) : null;
+    if (version === null || !SEMVER.test(version)) {
+      throw new Error(`the catalog template's channel names '${entry[1]}', which is not a ${prefix}X.Y.Z bundle`);
+    }
+    versions.push(version);
+  }
+  if (versions.length === 0) {
+    throw new Error("the catalog template's olm.channel names no entry");
+  }
+  return versions.sort(compareVersions);
+}
+
+/**
  * @param {{version: string, operator: string, entries: string[] | null,
- *           openSubmissions: {number: number, versions: string[], managed: boolean}[]}} input
+ *           openSubmissions: {number: number, versions: string[], managed: boolean}[],
+ *           channel?: string[] | null}} input
  *   `entries` is null when the operator directory is absent upstream.
+ *   `channel` is the channelEntries of an FBC catalog, and null (or absent)
+ *   for a catalog with no channel template, where a directory is the listing.
  * @returns {{enabled: boolean, reason: string, predecessor: string | null}}
  */
-export function submissionDecision({ version, operator, entries, openSubmissions }) {
+export function submissionDecision({ version, operator, entries, openSubmissions, channel = null }) {
   if (entries === null) {
     return {
       enabled: false,
@@ -181,6 +258,16 @@ export function submissionDecision({ version, operator, entries, openSubmissions
     };
   }
   const predecessor = predecessorVersion(entries, version);
+  // Last, so every earlier answer reads the same on both catalogs. On FBC the
+  // predecessor has to be a node of the channel, or `replaces` points at
+  // nothing and the dry run finds two heads - see channelEntries.
+  if (predecessor !== null && channel !== null && !channel.includes(predecessor)) {
+    return {
+      enabled: false,
+      reason: `${predecessor} is a bundle in this catalog but not yet an entry of its channel; its catalog update has to merge first, then submit ${version}`,
+      predecessor: null,
+    };
+  }
   return {
     enabled: true,
     reason: predecessor
@@ -258,6 +345,23 @@ export function readOperatorEntries(operatorDir) {
     }
     return null;
   }
+}
+
+/**
+ * The channel entries of a checked-out FBC operator dir, or null when it has
+ * no `catalog-templates` directory, which is what the non-FBC catalog looks
+ * like and where a version directory is the whole listing.
+ *
+ * A `catalog-templates` directory without `basic.yaml` is thrown rather than
+ * read as non-FBC: that would skip the channel check and submit, which is the
+ * one direction this must never fail in.
+ */
+export function readChannelEntries(operatorDir, operator) {
+  const templates = path.join(operatorDir, "catalog-templates");
+  if (!fs.statSync(templates, { throwIfNoEntry: false })) {
+    return null;
+  }
+  return channelEntries(fs.readFileSync(path.join(templates, "basic.yaml"), "utf8"), operator);
 }
 
 /**
@@ -397,7 +501,8 @@ async function decide(argv) {
   const needsSearch = entries !== null && !catalogVersions(entries).includes(version);
   const openSubmissions = needsSearch ? await readOpenSubmissions({ apiBase, repo, operator, fork, version }) : [];
 
-  const decision = submissionDecision({ version, operator, entries, openSubmissions });
+  const channel = entries === null ? null : readChannelEntries(operatorDir, operator);
+  const decision = submissionDecision({ version, operator, entries, openSubmissions, channel });
   for (const line of submissionOutputs(decision, operator)) {
     console.log(line);
   }

@@ -4,7 +4,6 @@ import { Lock, Trash2, Pencil, Copy, Star, GripVertical } from "lucide-react";
 import { getDBIcon } from "@/lib/db-ui-config";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
 
 interface ConnectionItemProps {
   connection: DatabaseConnection;
@@ -48,8 +47,13 @@ export const ConnectionItem = React.memo(function ConnectionItem({
   onDrop,
 }: ConnectionItemProps) {
   return (
-    <motion.div
-      initial={false}
+    <div
+      // A real `<button>` cannot wrap the edit/duplicate/delete buttons below (nested
+      // buttons are invalid HTML), so the row is a `role="button"` with keyboard support
+      // instead. This replaces the `motion.div` that used to hide the same handlers.
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
+      role="button"
+      tabIndex={0}
       draggable={draggable}
       onDragStart={draggable ? () => onDragStart?.() : undefined}
       onDragEnter={draggable ? () => onDragEnter?.() : undefined}
@@ -70,6 +74,15 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         isDragOver && "ring-1 ring-inset ring-brand-solid/50",
       )}
       onClick={() => onSelect(conn)}
+      onKeyDown={(e) => {
+        // Only the row's own keys: a keydown bubbling up from one of the buttons below
+        // belongs to that button, and preventDefault here would cancel its activation.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(conn);
+        }
+      }}
     >
       {draggable && (
         <span
@@ -81,9 +94,8 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         </span>
       )}
       {isActive && (
-        <motion.div
-          layoutId="active-indicator"
-          className="absolute left-0 w-1 h-4 rounded-r-full"
+        <div
+          className="absolute left-0 w-1 h-4 rounded-r-full transition-all duration-200"
           style={{ backgroundColor: conn.color || "#3b82f6" }}
         />
       )}
@@ -180,6 +192,6 @@ export const ConnectionItem = React.memo(function ConnectionItem({
           </button>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 });

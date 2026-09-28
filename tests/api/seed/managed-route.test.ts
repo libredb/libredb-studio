@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "path";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
@@ -25,6 +27,37 @@ describe("GET /api/connections/managed", () => {
     resetCache();
     // Reset mock to default admin session
     (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "admin", username: "admin@test.com" }));
+  });
+
+  // One seed entry whose MCP opt-in is not a boolean fails the whole file, as any invalid field
+  // does, and the failure names itself (#246).
+  it("names the seed configuration when one connection's mcp is not a boolean", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-mcp-"));
+    const file = path.join(dir, "seed-connections.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { id: "shop", name: "Shop", type: "sqlite", database: path.join(dir, "shop.db"), roles: ["*"], mcp: "yes" },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+    try {
+      const res = await GET();
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({
+        error: "Failed to load managed connections",
+        reason: SEED_CONFIG_UNREADABLE_REASON,
+      });
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("returns managed connections for admin role", async () => {

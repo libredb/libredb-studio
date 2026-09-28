@@ -1023,6 +1023,8 @@ for a second reason: the rows are derived groupings, see 5.3.
 | `supportsConnectionString` | `false` |
 | `defaultPort` | `null` |
 | `schemaRefreshPattern` | `\\b(put\|delete)\\b` |
+| `containerPathShapes` | `exact`: the declaration names no container level (`containerLevels` is absent), so only the empty path `[]` addresses a container and any segment is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `objectKinds` | `table`, `collection`, `keyspace` ([§6.1](#61-the-object-surface-789)) |
 
 `schemaRefreshPattern` tells the UI which executed commands should trigger a schema (key-pattern)
 refresh — `put` and `delete` both add or remove keys.

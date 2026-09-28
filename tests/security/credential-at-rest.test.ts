@@ -89,6 +89,36 @@ class CaptureProvider implements ServerStorageProvider {
     for (const [key, value] of Object.entries(data)) this.rows.set(key, value);
   }
 
+  async listAccounts() {
+    return [];
+  }
+  async getAccount() {
+    return null;
+  }
+  async insertAccount() {}
+  async updateAccount() {
+    return 0;
+  }
+  async deleteAccount() {}
+  async listPasskeys() {
+    return [];
+  }
+  async countPasskeys() {
+    return new Map<string, number>();
+  }
+  async getPasskeyUserHandle() {
+    return null;
+  }
+  async findPasskey() {
+    return null;
+  }
+  async insertPasskey() {}
+  async recordPasskeySignIn() {}
+  async renamePasskey() {
+    return false;
+  }
+  async deletePasskey() {}
+
   /** Everything this store holds, as the bytes a dump would contain. */
   persisted(): string {
     return JSON.stringify([...this.rows.entries()]);

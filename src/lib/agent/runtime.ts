@@ -319,7 +319,29 @@ function classifyDriveFailure(error: unknown): AgentRunFailureReason {
   */
   if (error instanceof LLMRateLimitError) return "model-rate-limited";
   if (error instanceof LLMAuthError) return "model-unauthorized";
-  if (error instanceof LLMError) return "model-unavailable";
+  if (error instanceof LLMError) {
+    /*
+      A run collapsed to the widest reason still says why, in the log if not in the ledger.
+
+      `model-unavailable` is the catch-all of the three and carries nothing about WHAT the provider
+      did: the ledger records the verdict and never the error behind it. Measured 2026-09-21,
+      `ministral-3:3b` lost eight runs here, every one of them AFTER five to ten successful tool
+      calls, and `isRetryableError` retried none - so the fault was not in the retryable class and
+      widening that bound would have changed nothing. Which subclass and message it is was the only
+      thing that could say what to fix, and there was no way to find out.
+
+      An operator reading a run that died "model-unavailable" is in the same position. So the error
+      is named at warn level - its class and the first 200 characters, which is what distinguishes a
+      refused connection from a context overflow from a model that was pulled mid-run - while the
+      reason returned to the run is unchanged.
+    */
+    logger.warn("LLMError mapped to model-unavailable", {
+      route: "agent/runtime",
+      error: error.name,
+      message: error.message.slice(0, 200),
+    });
+    return "model-unavailable";
+  }
 
   // Everything else, deliberately unnamed: a provider that could not be built and a
   // programming error are both "this server could not carry the run", and guessing

@@ -312,6 +312,47 @@ describe("what these models actually write, read off their ledgers", () => {
     expect((action.input as { claims?: unknown[] }).claims).toHaveLength(1);
   });
 
+  test("a closing bracket the model got wrong does not cost the report", () => {
+    /*
+      The mirror of the truncation above: not a payload cut short, but one closed WRONG. The
+      evidence array ends `}]]` where it should end `}]}`, and the whole finished report - claim,
+      source, an artifact id from this run's own tool call - is discarded on the extra bracket.
+
+      Counted over the ledgers: of the runs that ended in prose holding a tool-call-shaped object,
+      113 held one that would not parse. Dropping closers that match nothing on the stack and
+      appending the ones still owed recovers 22, and every one of those 22 cites an id its own run
+      produced. `command-r7b:7b` wrote 16 of them.
+
+      The repair may never change a VALUE, which is the same line the truncation repair holds. It
+      drops a closer that cannot belong and appends one that is owed, and it does not touch string
+      contents. The test below pins the case that bounds it: a reply whose quote is left hanging is
+      NOT repaired, because supplying the missing quote would decide where a value ends. Closing
+      the string instead of refusing recovers nine more objects and two of them cite nothing this
+      run ever read - which is exactly the fabrication the refusal exists to prevent.
+    */
+    const miscounted =
+      '{"action": "compose_report", "arguments": {"claims": [{"claim": "Development has the highest salary cost.",' +
+      ' "evidence": [{"source": "artifact", "correlationId": "6b4ad49d-3314-4816-ad47-cfbf4c2bcecb"}]]}]}}';
+
+    const action = readPromptedAction(miscounted);
+    if (action === null) throw new Error("expected the miscounted payload to be recovered");
+    expect(action.name).toBe("compose_report");
+    expect((action.input as { claims: { evidence: Record<string, string>[] }[] }).claims[0]?.evidence[0]).toEqual({
+      source: "artifact",
+      correlationId: "6b4ad49d-3314-4816-ad47-cfbf4c2bcecb",
+    });
+  });
+
+  test("a string left open is not closed for the model", () => {
+    // The bound on the repair. Where the quote is missing, where the value ends is a guess, and a
+    // reader that guesses is a reader that can file a report the run never established.
+    const dangling =
+      '{"action": "compose_report", "arguments": {"claims": [{"claim": "The employee table scans.,' +
+      ' "evidence": [{"source": "artifact", "correlationId": "0563d4a6-1111-4222-8333-444444444444"}]}]}}';
+
+    expect(readPromptedAction(dangling)).toBeNull();
+  });
+
   test("a call wrapped in an envelope is read out of it", () => {
     /*
       Another, investigation: the intended call is legible twice over — the key
@@ -336,6 +377,65 @@ describe("what these models actually write, read off their ledgers", () => {
 
     const action = readPromptedAction(enveloped, [schema, report]);
     expect(action).toEqual({ name: "inspect_schema", input: { kind: "columns", table: "employee" } });
+  });
+
+  test("a call naming its tool under `name`, with the arguments beside it, is read", () => {
+    /*
+      The shape the fleet writes most often, and the one this reader could not see. Counted
+      over the open cells' ledgers: of 191 turns that stopped with prose, 46 held a
+      tool-call-shaped object, and 45 of those came from three models writing the OpenAI
+      wire form - the tool named as a VALUE under `name`, the arguments under `parameters`:
+
+          {"name": "compose_report", "parameters": {"claims": [...]}}
+
+      `llama3.1:8b` wrote it 18 times, `command-r7b:7b` 17, `aya-expanse:8b` 10. Every one
+      of those payloads was complete and cited real artifact ids from its own run.
+
+      Nothing recovered them. `actionSchema` wants `action`, `readEnvelope` wants the tool
+      as a KEY, and `readPromptedPayload` matches the bare arguments - the wrapper fits no
+      tool's schema, so it matched nothing either. The run then ended `no-report` holding a
+      finished report.
+
+      What makes it worse is that the server already RECOGNISED the shape: the notice path
+      tests the same `name|action|tool|function` keys to tell the model it used the wrong
+      channel, then discards the call it just identified. The detector and the executor
+      disagreed, and the detector was right.
+
+      The reader's standing rule is kept: the named tool must be one this run holds, or
+      nothing is recovered. An unheld name is a model inventing a tool, not a transport
+      mistake.
+    */
+    const wireForm = JSON.stringify({
+      name: "compose_report",
+      parameters: { claims: [{ claim: "SELECT * FROM employee scans.", evidence: [{ correlationId: "a-b-c" }] }] },
+    });
+
+    const action = readPromptedAction(wireForm, [schema, report]);
+    expect(action).toEqual({
+      name: "compose_report",
+      input: { claims: [{ claim: "SELECT * FROM employee scans.", evidence: [{ correlationId: "a-b-c" }] }] },
+    });
+  });
+
+  test("the same call under the other spellings of the naming key", () => {
+    // `tool`, `function`, `tool_name`, `function_name` - the aliases the notice path already
+    // tests for. Each is the same mistake with a different word, so each reads the same.
+    for (const key of ["tool", "function", "tool_name", "function_name"]) {
+      const written = JSON.stringify({ [key]: "inspect_schema", arguments: { kind: "columns" } });
+      expect(readPromptedAction(written, [schema, report])).toEqual({
+        name: "inspect_schema",
+        input: { kind: "columns" },
+      });
+    }
+  });
+
+  test("a naming key pointing at a tool this run does not hold recovers nothing", () => {
+    // The bound on the whole reading: a name is only evidence of intent when it names
+    // something real. `drop_table` is a model inventing a capability, and running the
+    // nearest held tool instead would be this reader deciding what it meant.
+    const invented = JSON.stringify({ name: "drop_table", parameters: { table: "employee" } });
+
+    expect(readPromptedAction(invented, [schema, report])).toBeNull();
   });
 
   test("an envelope naming two held tools is refused rather than guessed", () => {

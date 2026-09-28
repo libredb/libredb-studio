@@ -28,20 +28,22 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D119, U17 · 64
+- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 73
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X19, U2–U49 · 37
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 41
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3–DOC7 · 4
+- [Documentation](#documentation) — DOC3-DOC8 · 5
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H12 · 3
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B88 · 29
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B91 · 32
+- [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
 ---
 
@@ -341,6 +343,7 @@ Restored 2026-08-27 from `35294140`.
 Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
 fifth of five instances of one gap, and the fix already exists in the codebase.
 Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
+Amended 2026-09-25: the mapping now exists three times, the third in the Kafka provider (#1088), deliberate for the same reason.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -362,11 +365,15 @@ It is not a copy of the Couchbase helper: it adds what that helper lacks, an `Ab
 Neither follows a redirect: Prometheus refuses one on both paths through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts`, and Couchbase does on its `fetch` path since #1086, while its `node:https` path reports a 3xx as an HTTP failure (`docs/providers/couchbase.md` section 4.4).
 So the consolidation this entry asks for now has two sources to reconcile rather than one pattern to copy, and the shared helper should start from the Prometheus shape, which is the superset, and adopt `rejectRedirect` on its TLS path as that shape does.
 
+**A third mapping exists, by the same decision.**
+The Kafka provider (#1088, section 3.5) maps the TLS panel in `tlsOptions` of `src/lib/db/providers/stream/kafka/connection-options.ts`, `ca`, `cert` and `key` from the panel and the same `rejectUnauthorized` rule, because that PR too was decided to touch no other provider.
+It is a mapping only: the TLS connection is the Kafka client's own, over `node:tls`, so there is no request path to share, and it adds the server-name rule a Kafka client needs (SNI for a DNS host, none for an IP literal).
+
 Not a defect in what any of them measures - it is a field the form offers and the transport
 discards, which is the kind of silence a security setting must not have.
 
 **Done when:** the TLS material mapping and the TLS request path exist once, outside any provider directory.
-Couchbase and Prometheus both route through it and keep their own copies no longer.
+Couchbase and Prometheus both route through it and keep their own copies no longer, and Kafka takes its material mapping from it.
 Every `fetch` transport that reads `ssl.mode` today (ClickHouse, Druid, Elasticsearch/OpenSearch, Trino, libSQL) routes TLS through it.
 One test per transport pins that a supplied CA and a `verify-*` mode reach the request options, plus one that a `require` mode does not verify.
 
@@ -374,47 +381,32 @@ One test per transport pins that a supplied CA and a `verify-*` mode reach the r
 
 ### D39. A slow-query source nobody could read is still a row, and on the other path it is silence
 
-Found 2026-08-27 by the audit that closed the curated health projection's cap-as-count defect. #512
-removed MySQL's fabricated "Performance schema not available" row; three providers still ship the
-same shape, in the same field:
+Found 2026-08-27 by the audit that closed the curated health projection's cap-as-count defect.
+#512 removed MySQL's fabricated "Performance schema not available" row; four providers still ship the same shape, in the same field:
 
-- `src/lib/db/providers/sql/postgres.ts:1241` - a database without `pg_stat_statements` answers
-  `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
-- `src/lib/db/providers/document/mongodb.ts:785` - a database whose profiler is off answers
-  `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch
-  at `:830` answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
-- `src/lib/db/providers/sql/sqlite.ts:707-717` - EVERY SQLite database answers two synthetic rows,
-  `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
+- `getHealth()` in `src/lib/db/providers/sql/postgres.ts`: a database without `pg_stat_statements` answers `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
+- `getHealth()` in `src/lib/db/providers/document/mongodb.ts`: a database whose profiler is off answers `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch of the same method answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
+- `getHealth()` in `src/lib/db/providers/sql/sqlite.ts`: EVERY SQLite database answers two synthetic rows, `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
+- `readHealth()` in `src/lib/db/providers/sql/libsql/introspect.ts`: every libSQL database answers the same two synthetic rows, `Integrity: OK|FAILED` and `Journal Mode: <mode>`.
 
-A sentence wearing a row's clothes is the fabrication the absence rule (#477) forbids, and here it is
-worse than a zero: a caller counting the list gets 1, 1 and 2 rather than 0. Nothing counts it in the
-app any more - the agent's curated reading stopped, and `HealthInfo.slowQueries` now has no
-production consumer at all - but `POST /api/db/health` serialises the whole `HealthInfo`
-(`docs/API_DOCS.md`), so anyone embedding `@libredb/studio` and reading that body inherits all three.
+A sentence wearing a row's clothes is the fabrication the absence rule (#477) forbids, and here it is worse than a zero: a caller counting the list gets 1, 1, 2 and 2 rather than 0.
+Nothing counts it in the app any more - the agent's curated reading stopped, and `HealthInfo.slowQueries` now has no production consumer at all - but `POST /api/db/health` serialises the whole `HealthInfo` (`docs/API_DOCS.md`), so anyone embedding `@libredb/studio` and reading that body inherits all four.
 
 **The fix is a type change with a 15-type-id blast radius, which is why it is here and not in #512's
 PR.** `HealthInfo.slowQueries` is a required `SlowQuery[]` (`src/lib/db/types.ts`) with no field a
-reason could travel in, so "nobody could look" has no representation. Making it optional the way
-`activeConnections` already is touches every provider, every provider doc and every provider test
-file, and falsifies `src/lib/db/compatibility.ts:267`, `docs/providers/postgres.md:164`,
-`tests/integration/db/postgres-provider.test.ts:1325`, `tests/integration/db/sqlite-provider.test.ts`
-and `tests/helpers/sqlite-node-harness.ts:104`, all of which pin the current sentences.
+reason could travel in, so "nobody could look" has no representation.
+Making it optional the way `activeConnections` already is touches every provider, every provider doc and every provider test file, and falsifies the AlloyDB Omni caveat in `WIRE_COMPATIBLE_ENGINES` (`src/lib/db/compatibility.ts`), section "3.5 Resilient monitoring" of `docs/providers/postgres.md`, the test "pg_stat_statements fallback when extension is not enabled" in `tests/integration/db/postgres-provider.test.ts`, `tests/integration/db/sqlite-provider.test.ts`, `tests/integration/db/sqlite-node-harness.ts`, `tests/integration/db/libsql-provider.test.ts` and `tests/unit/db/libsql/introspect.test.ts`, all of which pin the current sentences.
 
-**The other path swallows instead of fabricating, and that is not better.** On the `slow-queries`
-reading the agent actually uses, `src/lib/db/providers/keyvalue/redis.ts:622-624` and
-`src/lib/db/providers/document/mongodb.ts:1041-1043` `return []` from their catch where MySQL now
-rejects. So a denied grant reaches the model as an empty reading, and the run prompt tells it
-`"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query,
-no unused index is what a healthy server looks like"` (`src/lib/agent/investigation.ts:1485`). It
-also costs the operator the reason: `getMonitoringData` records `errors.slowQueries` from a REJECTION
-(`src/lib/db/base-provider.ts:147`), and a resolved `[]` records nothing, so the panel says "no slow
-queries" where the truth is that the profiler is off.
+**The other path swallows instead of fabricating, and that is not better.**
+On the `slow-queries` reading the agent actually uses, `getSlowQueries()` in `src/lib/db/providers/keyvalue/redis.ts` and `getSlowQueries()` in `src/lib/db/providers/document/mongodb.ts` `return []` from their catch where MySQL now rejects.
+So a denied grant reaches the model as an empty reading, and the run prompt tells it `"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query, no unused index is what a healthy server looks like"` (`WORKFLOW_TOOL_RULES` in `src/lib/agent/investigation.ts`).
+It also costs the operator the reason: `getMonitoringData()` in `src/lib/db/base-provider.ts` records `errors.slowQueries` from a REJECTION, and a resolved `[]` records nothing, so the panel says "no slow queries" where the truth is that the profiler is off.
 
 **Done when:** a slow-query source that could not be read is absent-with-a-reason on both paths - no
 provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
 count of type-ids the type change touched is stated in the PR rather than discovered during it.
 
-### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 18 type-ids
+### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 4 of 19 type-ids
 
 Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
 round 17). `DatabaseOverview.activeConnections` and `DatabaseOverview.databaseSizeBytes` are optional
@@ -422,24 +414,14 @@ for the SAME stated reason (`src/lib/db/types.ts`, the D17 docblock): absence an
 facts. The round closed the first field on three providers. The second is unclosed almost everywhere.
 
 **Two providers get it right, and one of them wrote the argument down.**
-`src/lib/db/providers/sql/cassandra/introspect.ts:582` omits the key with the comment "a zero is a
-measurement, and the Storage tab read `?? 0` and rendered '0 B' with a 0.0% breakdown from it", and
-MongoDB's `getOverview()` catch now omits it too.
+`getOverview()` in `src/lib/db/providers/sql/cassandra/introspect.ts` omits the key with the comment "a zero is a measurement, and the Storage tab read `?? 0` and rendered '0 B' with a 0.0% breakdown from it", and MongoDB's `getOverview()` catch now omits it too.
 
 **The rest fabricate.** Measured by reading every `databaseSizeBytes` assignment under
 `src/lib/db/providers/`:
-- Self-contradicting within one object, and the clearest cases, because the sibling string field
-  already says the figure is unavailable: `sql/trino/introspect.ts:621` pairs a literal `0` with
-  `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts:849` pairs `sizeBytes ?? 0` with
-  `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
-- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts:1111`,
-  `sql/oracle.ts:1154`, `sql/sqlite.ts:794`.
-- Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts:578` and
-  `sql/clickhouse/index.ts:833` through their local `asNumber`.
-- Coerced inline: `sql/postgres.ts:1360` and `sql/mysql.ts:1158` (`parseInt(... || "0")`),
-  `sql/libsql/introspect.ts:399` and `document/couchbase/index.ts:606` (`?? 0`),
-  `keyvalue/redis.ts:590`, and `embedded/libredb.ts:709`, whose `fileSizeBytes()` returns 0 when the
-  `statSync` throws.
+- Self-contradicting within one object, and the clearest cases, because the sibling string field already says the figure is unavailable: `sql/trino/introspect.ts` pairs a literal `0` with `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts` pairs `sizeBytes ?? 0` with `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
+- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts`, `sql/oracle.ts`, `sql/sqlite.ts`.
+- Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts` and `sql/clickhouse/index.ts` through their local `asNumber`.
+- Coerced inline: `sql/postgres.ts` and `sql/mysql.ts` (`parseInt(... || "0")`), `sql/libsql/introspect.ts` and `document/couchbase/index.ts` (`?? 0`), `keyvalue/redis.ts`, and `embedded/libredb.ts`, whose `fileSizeBytes()` returns 0 when the `statSync` throws.
 
 **The consumer makes it visible.** `src/components/monitoring/tabs/StorageTab.tsx` keys its entire
 breakdown off `overview?.databaseSizeBytes !== undefined`: present, and the card renders percentages
@@ -454,17 +436,21 @@ file. That round also measured a mechanism this entry had missed: Couchbase does
 wraps the read in `degradeTo(..., {})`, so a REFUSED bucket read reaches `basicStats?.diskUsed ?? 0` and
 publishes a measured-looking zero - see D51, which is the same shape on the field beside this one.
 
+**Seven of the eleven are closed on main since** - they now leave `databaseSizeBytes` out when the size is unknown.
+PostgreSQL and MySQL in #627, SQLite and LibreDB in #1050 (for #546), SQL Server and Oracle in #579, and libSQL in #569.
+The symbols are `getOverview()` in `src/lib/db/providers/sql/postgres.ts`, `src/lib/db/providers/sql/mysql.ts`, `src/lib/db/providers/sql/sqlite.ts`, `src/lib/db/providers/sql/mssql.ts` and `src/lib/db/providers/sql/oracle.ts`, `readOverview()` in `src/lib/db/providers/sql/libsql/introspect.ts`, and `getOverview()` in `src/lib/db/providers/embedded/libredb.ts`.
+
 **The counts moved for a second reason.** DuckDB arrived as a seventeenth type-id in #516 and gets this
 right without being asked: `duckdb/introspect.ts` spreads the key conditionally and spells the string
 `"N/A"` when the database is in-memory. So it is a fourth correct provider rather than a fifteenth
 fabricating one, and it independently reached the same encoding this entry prescribes.
-Prometheus, the eighteenth type-id (#1085), leaves the key absent too (`overviewFrom` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts`), so the eleven that fabricate are eleven of eighteen.
+Prometheus, the eighteenth type-id (#1085), leaves the key absent too (`overviewFrom` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts`).
+Kafka, the nineteenth type-id (#1088), does the same (`overviewFrom` in `src/lib/db/providers/stream/kafka/monitoring.ts`), so the four that fabricate are four of nineteen.
 
-**Done when:** an unknown size is absent rather than 0 on the remaining eleven type-ids, a real zero
+**Done when:** an unknown size is absent rather than 0 on the remaining four type-ids, a real zero
 still reads as zero, each provider's doc records it, and each provider's test pins both arms - the same
-shape D40 used, applied to the field beside it. Remaining: `sql/postgres.ts`, `sql/mysql.ts`,
-`sql/sqlite.ts`, `sql/mssql.ts`, `sql/oracle.ts`, `sql/libsql/introspect.ts`, `sql/druid/introspect.ts`,
-`sql/clickhouse/index.ts`, `document/couchbase/index.ts`, `keyvalue/redis.ts` and `embedded/libredb.ts`.
+shape D40 used, applied to the field beside it.
+Remaining: `getOverview()` in `src/lib/db/providers/sql/druid/introspect.ts` and in `src/lib/db/providers/sql/clickhouse/index.ts` (the local `asNumber`, which returns 0 for an absent value), `getOverview()` in `src/lib/db/providers/document/couchbase/index.ts` (`basicStats?.diskUsed ?? 0`), and `getOverview()` in `src/lib/db/providers/keyvalue/redis.ts` (`parseInt(parsed.used_memory || "0")`).
 MongoDB is NOT on that list: its catch and its success path both spread conditionally already.
 
 Doing it per family, one PR each, is the cheap ordering, and #517 is the pattern to copy - including the
@@ -509,47 +495,6 @@ current database, and that permission cannot be granted in `master`.
 `SERVERPROPERTY('ProductMajorVersion')` to pick the permission name - and an incomplete count is absent
 rather than published. Measured on a real instance with a login that has neither grant, because the
 whole entry rests on a permission boundary no fixture can prove.
-
-### D49. Per-table maintenance drops the schema, so every table outside the default one refuses
-
-Found 2026-08-27 in the BROWSER while registering `duckdb` (issue #424). Not DuckDB's defect - the
-provider is the half that behaves - and no gate could have caught it: the six local gates, 100%
-line coverage and a four-lens adversarial review all passed over it, because the two halves are
-correct in isolation and only the running product puts them together.
-
-`TablesTab.tsx:390` calls `handleMaintenance(type, table.tableName)` - the BARE table name - from a
-row whose very next line (`:350`) renders `table.schemaName` beside it. Every provider's
-`qualifyMaintenanceTarget` then supplies a default schema for an unqualified target:
-`postgres.ts:1287` returns `"public." + escapeIdentifier(target)`, and
-`duckdb/index.ts:712` returns `"main"."<target>"`. So the statement names a table that is not there.
-
-Measured on DuckDB v1.5.5, clicking **Analyze Table** on the `analytics.events` row:
-
-```
-Catalog Error: Table with name events does not exist! Did you mean "analytics.events"?
-LINE 1: ANALYZE "main"."events"
-```
-
-`POST /api/db/maintenance` answers 400 and the panel prints the engine's message, so it is visible
-rather than silent - but the button cannot succeed on any table outside the default schema, on any
-engine. It went unnoticed because the fixtures the other engines are exercised with keep their
-tables in the default schema; DuckDB is simply the first whose fixture carries a second one.
-
-This is #U9 one layer up. #U9 was an operation DECLARED in the wrong placement (Oracle offered
-`optimize` per table, and the target it sent was rejected); this is the right placement sending an
-under-qualified target.
-
-Deliberately not fixed in the provider PR that found it. The one-line repair - passing
-`` `${table.schemaName}.${table.tableName}` `` - changes the target string reaching all TWELVE
-providers that implement `runMaintenance` (postgres, mysql, mssql, oracle, sqlite, libsql, duckdb,
-clickhouse, cassandra, druid, trino, search), and each has its own qualification and its own
-statement grammar: SQLite has no user schemas, MySQL's `OPTIMIZE TABLE` takes `db.table`, and the
-HTTP engines build their own paths. That is a twelve-engine live verification, not a provider
-change.
-
-**Done when:** the row passes the qualified name, every one of the twelve providers has been
-measured against a table outside its default schema (or recorded as having no such concept), and a
-component test pins the target the row sends so it cannot silently revert to the bare name.
 
 ### D51. Four providers degrade a refused monitoring read to no rows, then read the absent row as 0
 
@@ -1234,47 +1179,6 @@ test pins the behaviour that was chosen.
 
 ---
 
-# D94 (proposed): hand-copied source coordinates across this repository are stale by thousands of lines
-
-**Status:** proposed, wave 6 slot B fix round.
-
-Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
-moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
-`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
-Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
-`64ee0e3f^` was wrong before this round touched anything:
-
-| Citation | Cited in | Anchor actually at |
-|---|---|---|
-| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
-| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
-| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
-| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
-| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
-| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
-| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
-| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
-| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
-
-Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
-follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
-agent that re-derives its own citations after an edit, which this epic has now asked for three
-times, is paying a per-commit tax on coordinates that were never right.
-
-Two halves, and the second is what stops it recurring:
-
-1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
-   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
-   a number is correct only until the next commit.
-2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
-   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
-   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
-   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
-
-**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
-and the citations present at that commit all resolve. The test needs one case per shape it must
-accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
-
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
 
 `grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 39 hits, re-measured 2026-09-23. Seven of
@@ -1473,7 +1377,7 @@ checker rather than two copies of it.
 
 `CTE_PK_INFO` and `CTE_FK_INFO` in `src/lib/db/providers/sql/postgres.ts` read
 `information_schema.table_constraints`, which PostgreSQL defines as showing only constraints on
-tables a currently enabled role owns.
+tables the current user owns or holds some privilege other than `SELECT` on.
 A connection made as an ordinary `SELECT`-only role therefore sees every column and every index and
 NO key at all, and the answer is a claim rather than an absence: `describeObject` returns
 `isPrimary: false` on every column and `foreignKeys: []`.
@@ -1485,6 +1389,8 @@ and the bulk statement beside it, so the ER diagram, the mobile schema explorer 
 `includeColumns` answer have carried it too.
 What the object tree changed is that the key mark is now on screen, where an absent key reads as a
 table without one.
+The MCP server's `inspect_schema` (#246) carries it as well, and there it is not a corner case either: `docs/MCP.md` requires a least-privilege principal, and `src/lib/mcp/tools/inspect-schema.ts` copies `column.isPrimary` into `is_primary_key`.
+Measured 2026-09-26 in the PR #1070 live check: as a `SELECT`-only `mcp_reader`, `inspect_schema` with `include_indexes: true` answered `is_primary_key: false` for `mcp_events.id` while listing `mcp_events_pkey` among its indexes, and `information_schema.table_constraints` answered 0 primary keys for `mcp_events` to that role and 1 to `postgres`.
 
 Measured 2026-09-22 against PostgreSQL 18 holding `dvdrental`, `public.film`, tables owned by
 `postgres`, probed through `POST /api/db/objects/describe`:
@@ -1812,13 +1718,13 @@ Not fixed there: the cache key is shared by every engine.
 
 Found 2026-09-24 in the browser while verifying #843 (PR #1106), on a connection opened with `appdata` whose tree also lists `analytics`.
 Both hold a collection called `events`.
-The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and `runMaintenance(type, target)` takes a bare collection name.
+The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and since #1091 `runMaintenance()` takes the row's container but refuses one that is not the connected database.
 So the row a person presses for the collection they chose is the connected database's same-named collection, which is the shape #843 removed from the query path.
 
 Not fixed in #1106, which is scoped to the statement grammar.
-The target is a bare string in `runMaintenance(type, target)`'s contract for every provider, so passing a path is the D49 change, and the monitoring tabs are session-scoped on every engine.
+Since #1091 the contract carries the container, `runMaintenance(type, target, container)`, so what is left is the provider running in a database other than the connected one, and the monitoring tabs, which are session-scoped on every engine.
 
-**Done when:** a MongoDB maintenance target names its database, the deep link either opens the collection's own database or refuses a path outside the connected one, and a test pins that `Validate` on `analytics.events` reaches `analytics`.
+**Done when:** the deep link either opens the collection's own database or refuses a path outside the connected one, and a test pins that `Validate` on `analytics.events` reaches `analytics`.
 
 ### D119. On RisingWave every column reads nullable, a `NOT NULL` column and a primary key included
 
@@ -1833,6 +1739,158 @@ Changing the nullability source changes the column read on every PostgreSQL wire
 A primary key column is not nullable by definition, so that half needs no catalog at all.
 
 **Done when:** on RisingWave a `NOT NULL` column and a primary key column both read as not nullable, every other engine reads the same nullability as before, measured live, and a test pins both halves.
+
+### D120. Kafka connections take no OAUTHBEARER, so Azure Event Hubs and Confluent OAuth are out of reach
+
+`saslMechanism` on `DatabaseConnection` (`src/lib/types.ts`) and `SeedConnectionSchema` (`src/lib/seed/types.ts`) take `PLAIN`, `SCRAM-SHA-256` and `SCRAM-SHA-512` only, and `saslOptions` in `src/lib/db/providers/stream/kafka/connection-options.ts` refuses anything else.
+The client does implement OAUTHBEARER: `@platformatic/kafka` 2.11.0 ships `dist/protocol/sasl/oauth-bearer.js`, and its connection takes a `token` or an `authenticate` callback (`dist/network/connection.js`).
+Azure Event Hubs' Kafka endpoint and Confluent Cloud's OAuth sign in only that way, so neither can be browsed today.
+A token pasted into the password box would expire within hours, and this product has no refresh flow, which is why v1 left the mechanism out (#1088, section 2); GSSAPI and AWS MSK IAM are out for the same reason and a native dependency or SigV4 signing each.
+
+Found 2026-09-23 while designing the Kafka provider (#1088).
+
+**Done when:** a Kafka connection can authenticate with OAUTHBEARER through a token source that refreshes before expiry, the credential is classified secret where the token lives, and a test drives an expiring token through a refresh.
+
+### D121. Kafka values in Avro, Protobuf or JSON Schema show their schema id, not their fields
+
+`decode.ts` in `src/lib/db/providers/stream/kafka/` labels a value that starts with the Confluent wire format (magic byte 0, then a 4-byte schema id) as `schema id <N>, not decoded`, encoding `confluent`, and reads no Schema Registry, so a topic written with a registry serializer shows no field of any record.
+The client ships a registry reader (`dist/registries/confluent-schema-registry.js`), but decoding needs the registry's address and credentials as connection fields, and each of the three formats its own decoder.
+The labelling rule also has a stated false positive, a text value that happens to start with `0x00` (`docs/providers/kafka.md` section 5.3), which a registry lookup would settle.
+
+Found 2026-09-23 while designing the Kafka provider (#1088, section 2).
+
+**Done when:** a Kafka connection can name a Schema Registry, a framed value is decoded against the schema its id names, a value the registry does not know keeps the `confluent` label, and a test pins each format over a captured payload.
+
+### D122. Requests to `platformatic/kafka`, drafted for the maintainer and not filed
+
+The Kafka provider (#1088) works around, or states, twelve behaviours of `@platformatic/kafka` 2.11.0, each measured while it was built.
+Each is drafted below as an upstream issue, for the maintainer to approve, reword or drop; none has been posted anywhere.
+
+1. **An Admin method for ConsumerGroupDescribe (API 69).**
+   `Admin.describeGroups` reports a KIP-848 group as `Dead` while the broker says `Empty`, so describing a `consumer`-protocol group needs API 69, which the Admin does not offer; the provider sends it through the exported `consumerGroupDescribeV0` on a one-off `Connection`.
+   Draft: "Please add an Admin method for ConsumerGroupDescribe (KIP-848), so a consumer-protocol group can be described without the raw protocol module."
+2. **A cap on decompressed size.**
+   `dist/protocol/compression.js` and `dist/protocol/records.js` decompress every batch of a fetch answer whole, synchronously and with no output cap, and the broker bounds only the compressed batch, so one answer can grow by the codec's ratio, measured at about 1,029 to 1 for gzip and 32,692 to 1 for zstd.
+   Draft: "Please add an option that bounds the decompressed bytes of a fetch answer and fails the fetch past it."
+   Wrapping the exported `compressionsAlgorithms` table in the meantime is left to the maintainer's decision.
+3. **Group decoding that trusts the member metadata.**
+   `describeGroups` decodes each member's metadata as a consumer subscription whatever the group's protocol type, and a member's assignment without checking its length, and a parse error there, thrown in a response callback, escapes the call's promise: for a Kafka Connect or Schema Registry group, or a malformed assignment, the call never settles where uncaught exceptions are handled and a Node process that installs no handler exits.
+   Draft: "describeGroups should decode member metadata only for protocol type `consumer` or empty, check lengths, and reject its promise on a parse error."
+4. **Internal topics in the metadata cache.**
+   The metadata cache answers an internal topic's name with `undefined` (`dist/clients/base/base.js`), and `listOffsets` dereferences it inside the socket handler, with the same unsettled call.
+   Draft: "listOffsets on an internal topic should reject with an error rather than throw inside the socket handler."
+5. **`tlsServerName` and IP literals.**
+   With `tlsServerName: true` the client sends the connection's host as the server name even when it is an IP literal, which Node 26 and Bun refuse with `ERR_INVALID_ARG_VALUE` and Node 24 warns on (DEP0123); the provider rebuilds its clients without the option when a broker is advertised by IP.
+   Draft: "Skip SNI for a host that is an IP literal, as RFC 6066 requires."
+6. **A fetch session epoch left behind.**
+   A fetch answered with a partition error leaves the client's fetch session epoch behind the broker's, so the next fetch to that broker meets INVALID_FETCH_SESSION_EPOCH; the provider's own fetches open no session.
+   Draft: "After a fetch that answers a partition error, the session epoch should follow the broker's, or the session be reset."
+7. **`isolationLevel` typed as a string.**
+   `Consumer.listOffsets` declares `isolationLevel` a string while its allowed values are numbers, so the client's strict mode refuses every isolation level; the provider runs the default mode, which validates no option.
+   Draft: "The listOffsets option schema should accept the numeric isolation levels it documents."
+8. **The READ_COMMITTED filter throws in the socket handler.**
+   `#filterUncommittedMessages` in `dist/clients/consumer/consumer.js` reads `batch.records[0].key` and `abortedRanges.get(producerId)[1]` unguarded, in the response callback the socket data handler calls outside any try, so an empty control batch, which Kafka's log cleaner keeps of a transactions V2 producer's last marker, or an ABORT marker of a producer the answer does not list, beside a listed aborted transaction, throws a TypeError out of the handler after the request left the client's timers; that fetch never settles in a process that handles uncaught exceptions, and a Node process that installs none exits.
+   Measured on 2026-09-25 on a cleaned Kafka 4.3.1 log and against a local broker under Node 24.14.0 and Bun 1.4.2; the provider sends its own Fetch v13 instead.
+   Draft: "Guard the control-batch and aborted-range reads of the READ_COMMITTED filter, and reject the fetch rather than throw from the socket handler."
+9. **The socket's error dropped on close.**
+   A request in flight on a connection whose socket failed rejects with a bare "Connection closed" (`#onError` and `#onClose` in `dist/network/connection.js`), and the pool's error listener only drops the connection, so the socket's error, such as the TLS alert of a broker that refuses the client's certificate under TLS 1.3, reaches no caller; the provider can only report a lost connection.
+   Draft: "Carry the socket's error as the cause of the request's rejection."
+10. **No upper bound on the SCRAM iteration count.**
+    `performAuthentication` in `dist/protocol/sasl/scram-sha.js` checks the server-first message's iteration count against a minimum only (4,096) and runs PBKDF2 over the password with whatever count the broker asks, on the runtime's thread pool, where it goes on after the connect has timed out and the client is closed, while Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations (`ScramMechanism`); the provider states it (`docs/providers/kafka.md` section 4.2), since the client's only hooks either replace the whole mechanism or run after the PBKDF2.
+    Measured on 2026-09-26: 4,000,000 SHA-512 iterations took 1,367 ms under Node 24.14.0 and 1,233 ms under Bun 1.4.2, a connect asked for them twice, and with four such exchanges running under Node a file read took 4,490 ms.
+    Draft: "Please bound the iteration count a SCRAM server-first message may ask for, with an option that defaults to a sane maximum such as Apache Kafka's own 16,384, and fail the authentication past it before PBKDF2 runs."
+11. **No floor on the SASL session lifetime.**
+    `#onSaslAuthenticationValidation` in `dist/network/connection.js` arms `reauthenticate()` at 80% of whatever session lifetime a SaslAuthenticate answer carries (KIP-368), and each re-authentication arms it again, for as long as the connection is open, with no floor; the provider states it (`docs/providers/kafka.md` section 4.2), since `authBytesValidator` never sees the lifetime.
+    Measured on 2026-09-26 on one connection over five idle seconds with a lifetime of 1 ms: 3,926 re-authentications under Node 24.14.0 and 3,005 under Bun 1.4.2 with PLAIN, and 1,559 and 1,609 with SCRAM-SHA-512 at about 60% of a core, where a lifetime of 0 or of one hour made none; closing the connection stops the loop.
+    Draft: "Please apply a floor to the session lifetime a SaslAuthenticate answer sets, with an option, and fail or clamp a lifetime below it, so a broker cannot drive a connection's re-authentication in a loop."
+12. **`ajv-draft-04` loaded at import time.**
+   The entry re-exports the schema registries, whose module imports `ajv-draft-04` at module scope, so every import of the client loads it, and `ajv-draft-04` requires `ajv/dist/core` from where it is installed.
+   bun hoists it beside an `ajv` 6 at the top of a host's `node_modules` (oven-sh/bun#17297, open), and the whole client then fails to load, schema registry or not; the provider refuses such a connect with a `DatabaseConfigError` naming the module, and a comment for the bun issue is drafted beside this one.
+   Measured on 2026-09-26 on packed installs of the package with bun 1.4.2, under Node 24.14.0 and Bun 1.4.2, while npm 11.9.0 nests it beside `ajv` 8 (plan Task 21, finding r2-contract-1).
+   Draft: "Load ajv-draft-04 when a draft-04 JSON Schema is first compiled, so a client that uses no schema registry does not depend on where the package manager puts it."
+
+Found 2026-09-23 to 2026-09-26 while building the Kafka provider (#1088, sections 3.6 and 12).
+Not filed: an outward report makes claims about another project's code, so each goes out only with the maintainer's approval.
+The maintainer decided on 2026-09-26 to keep all twelve here as backlog work rather than file them upstream now.
+
+**Done when:** each draft is filed upstream, reworded or dropped by the maintainer's decision, and the item records the issue link or the reason; a fix that ships upstream is followed by removing the provider's workaround where it has one.
+
+### D123. A Kafka read the budget stops answers older rows than the newest that would fit
+
+`readMessages` in `src/lib/db/providers/stream/kafka/read.ts` reads a topic's partitions one after another, each forward from its start, and the result byte budget stops the whole read.
+So a `"latest"` read whose early partitions hold large records can stop before it reads a partition whose newer rows alone would fit, and answers older rows than an unbounded read would; its warning names where it stopped and the partitions it did not read (`docs/providers/kafka.md` section 5.4).
+Reproduced by the displaced-rows case of `tests/unit/db/kafka/read.test.ts`, "a latest read can be stopped although the rows an unbounded read answers would fit": five 200-byte records of partition 0 and five 10-byte newer records of partition 1, under a 650-byte budget, answer partition 0's offsets 0 to 2, where the unbounded read answers partition 1's five rows, 50 bytes.
+The alternative is to hold, in place of stopping, the rows of the answer's near end that fit, which answers the rows an unbounded read answers whenever they fit, whatever the partition order.
+Its cost is reading every partition's window, up to `limit` records each, whatever the record size, where the stop bounds the fetched work too (K5).
+
+Found 2026-09-25 while building the Kafka provider (#1088, section 5.4).
+Not fixed there: the trade between bounded work and a complete window is a design decision, not a defect of either rule.
+
+**Done when:** a ruling chooses between the stop and the held window, and either the displaced-rows case answers partition 1's rows, or the stop stays with the reason recorded beside the rule in `read.ts`.
+
+### D124. Cassandra and Couchbase also reach addresses the server advertises, which an SSH tunnel does not carry
+
+The Kafka provider refuses an SSH tunnel because a Kafka client reaches every broker at the address the broker advertises (#1088, section 6.1); two other providers discover addresses the same way and take a tunnel anyway.
+`cassandraClientOptions` in `src/lib/db/providers/sql/cassandra/driver-transport.ts` gives the driver the configured host as its one contact point, and the driver discovers the rest of the ring from the node's peers table, whose addresses a tunnel to one host does not forward.
+`pickQueryEndpoint` in `src/lib/db/providers/document/couchbase/http-transport.ts` takes the query service's address from the cluster's node map, so behind a tunnel the management port goes through it and the query service is asked for at the node's own name; D52 records the same discovery handing back an address a port mapping does not reach.
+Read from the code, not measured through a tunnel.
+
+Found 2026-09-24 while designing the Kafka provider's tunnel refusal (#1088, section 6.1).
+Not fixed there: that PR changes no other provider.
+
+**Done when:** each of the two either routes its discovered addresses through the tunnel, or refuses a tunnel with a sentence that says why, as Kafka does, and a test pins the choice for each.
+
+### D125. A Kafka broker with a failed log directory fails the three monitoring panels
+
+`logDirs` in `src/lib/db/providers/stream/kafka/platformatic-client.ts` asks every broker for its log directories, and the client throws on a directory the broker answers with an error.
+A broker whose second log directory has failed answers that directory with `KAFKA_STORAGE_ERROR`, so `getOverview`, `getHealth` and `getStorageStats` in `src/lib/db/providers/stream/kafka/index.ts` all fail with "The request to the broker failed (KAFKA_STORAGE_ERROR)", while the topic listing shows the affected topic `offline` and every other surface answers.
+Reproduced live on 2026-09-25 by `tests/live/kafka-read-only.ts --bootstrap localhost:9095` against a throwaway `apache/kafka:4.3.1` node with two log directories, the second made unreadable (`docs/providers/kafka.md` section 11.4).
+The panels could instead sum the directories that answered and name the failed one, the way the adapter already reads a metadata answer that carries a leaderless partition.
+
+Found 2026-09-25 by the Kafka provider's live read-only check (#1088, KM8).
+Not fixed there: the change is to the adapter's log-dir read, whose error table and seam guard the PR had already settled, and a failed directory is rarer than the offline partition it causes.
+
+**Done when:** a broker with one failed log directory answers the overview, health and storage panels with the directories that answered, the failed directory is named, and a test over a captured `KAFKA_STORAGE_ERROR` answer pins it.
+
+### D126. Concurrent first acquisitions of one connection and profile each open a provider
+
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:715-812`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:809`).
+Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
+The editor and agent paths reach this function the same way.
+`/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
+
+**Done when:** the factory deduplicates in-flight acquisitions itself, MCP's own map is removed, and a test pins that N concurrent first acquisitions construct one provider.
+
+### D127. Two seed-loading paths drop a connection without telling the caller
+
+`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:89-99`).
+The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:57-59`, `:68-70`).
+Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
+
+**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:17-33`), or a recorded decision says why a partial list is the right answer.
+
+### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
+
+`queryReadOnly` takes no signal (`src/lib/db/types.ts:951`), and `cancelQuery` cannot find its statement.
+When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, and on SQLite while blocking the process (A1).
+A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
+This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
+
+**Done when:** `queryReadOnly` accepts an `AbortSignal`, each of the four providers stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
+
+### D129. `attachedSegment`, the object-path policy, is still a constant in each provider file rather than part of the declaration
+
+`ObjectPathShapeEngine.attachedSegment` in `src/lib/db/object-kinds.ts` (#978) decides whether an attached kind, such as a trigger on a table or an index, may also be addressed by the bare shape `[...levels, name]`.
+MySQL and Oracle set `"optional"`; the other twelve engines that reach `assertObjectPathShape` set `"required"`, each in its own descriptor constant.
+That is the shape #1147 removed for container paths: a per-engine acceptance rule that only the provider can read, which is why the kernel rule in `docs/ARCHITECTURE.md` names it as its one pre-existing exception.
+
+Measured on 2026-09-27, on `main` at ef1748e3:
+- The object routes (`describe`, `source`, `edit-plan`) check nothing about an object path's shape: `requireObjectPath` in `src/lib/api/object-route.ts` refuses only a path that is not an array of strings or is empty, so the provider is the only layer that refuses a wrong-shaped one, with `code: QUERY_ERROR`.
+- SQL Server, Trino and DuckDB do not reach `assertObjectPathShape` at all: `mssql.ts`, `trino/objects.ts` and `duckdb/objects.ts` still build the `path is [...]` sentence with a local `shapeList`.
+
+Do it after #1148 has merged, in a PR of its own, and not alongside another architectural change: the owner asked for the two to stay apart.
+
+**Done when:** which object-path shapes an engine accepts is part of its declaration, read through one kernel reader in the way `acceptedContainerShapes()` reads `containerPathShapes`; `attachedSegment` is gone from `ObjectPathShapeEngine`; the three local `shapeList` object-path sentences go through the shared renderer; the object routes refuse a path the engine does not accept by the same reader, before the provider is called; and every provider refusal sentence stays byte-identical.
 
 ## Value interpolation
 
@@ -1945,14 +2003,13 @@ writers. `csv.ts` and `result-export.ts` are pure and hold no browser reference 
 can reuse them; `download.ts` is the only browser-bound module there. Worth costing against the
 agent's own export gap (B33, B34), which wants the same route.
 
-### X5. `Studio.tsx` re-renders its whole tree on every keystroke
+### X5. `Studio.tsx` still re-renders three children and its inline dialogs on every keystroke
 
-14 `useState`, no `useMemo`/`useCallback`, no memoized children, React Compiler off. #422's
-code-splitting is not this fix and does not help it. It touches every prop in the shell, which is why
-it was not mixed into a correctness PR.
-
-`framer-motion` is also still in the first load: `Studio.tsx`, `ConnectionModal`, `SchemaExplorer`,
-`ConnectionItem` and `TableItem` all import it statically and all mount on arrival.
+#1127 memoized the shell's children and took `framer-motion` out of the first load.
+Measured with a commit counter in a real browser, 27 keystrokes in the editor: the sidebar, the agent rail, the toolbar, the connections list and the desktop header no longer re-render, and the shell's component renders fell from 11961 to 6588.
+Three memoized children still re-render on each keystroke, because each is handed the tab or its text: `BottomPanel` (`currentTab`), `StudioTabBar` (`tabs`) and `StudioMobileHeader` (`currentQuery`), which also take inline handlers.
+Most of the remaining renders are the dialogs `Studio.tsx` still renders inline, about a dozen Radix `Dialog`s per keystroke, plus `CommandPalette` and `MobileNav`, which are not memoized.
+The first group needs those children handed what they show rather than the whole tab, which changes `BottomPanel`'s props; the second is moving the dialogs into a component of their own.
 
 ### X9. What `columnTypes` still cannot name, measured
 
@@ -2214,7 +2271,7 @@ So one condition gets two wrong answers. The five existing object routes that go
 was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
 Neither tells the caller their request was too large.
 
-The two routes added by #789 Phase 3 do NOT inherit this: `readBoundedJson` reads `content-length` and
+The two routes added by #789 Phase 3 do NOT inherit this: `readObjectRouteBody` reads `content-length` and
 answers 413 above `EDIT_BODY_BYTE_LIMIT` (8,388,608), which sits below the framework's wall, so an
 oversized edit body meets a sentence that names the size. They do not fix it anywhere else, and that is
 stated in `readDefaultBody`'s own docblock.
@@ -2568,7 +2625,7 @@ Not fixed in #1085: registering Redis differently changes how every Redis tab is
 
 `src/components/studio/StudioMobileHeader.tsx` renders the Import Data item with `onClick={onImport}`, disabled only while no connection is active, and `src/components/Studio.tsx` hands it `onImport` unconditionally.
 The desktop toolbar withholds the same action off SQL: `src/components/studio/QueryToolbar.tsx` draws its Import control only when `metadata?.capabilities.queryLanguage === "sql"`.
-`src/components/DataImportModal.tsx` writes `CREATE TABLE` and `INSERT INTO` text and hands it to its `onImport`, which `src/components/Studio.tsx` wires to `executeQuery`, so on a phone a MongoDB, Redis, LibreDB or Prometheus connection can open the dialog and send SQL text to an engine that speaks none.
+`src/components/DataImportModal.tsx` writes `CREATE TABLE` and `INSERT INTO` text and hands it to its `onImport`, which `src/components/Studio.tsx` wires to `executeQuery`, so on a phone a MongoDB, Redis, LibreDB, Prometheus or Apache Kafka connection can open the dialog and send SQL text to an engine that speaks none.
 Read from the code, not measured on a device: the engine is expected to answer with a parse error and write nothing.
 
 Found 2026-09-23 while classifying the shared surfaces for the Prometheus provider (#1085, section 3.2).
@@ -2725,6 +2782,59 @@ Found 2026-09-24 by the #1113 review.
 Not fixed in #1113: the fixed width before it was cut at that setting too, so this is not a regression of that change.
 
 **Done when:** the header width follows the root font size, either by scaling the result or by stating the constants in rem, and a test at a 20px root pins a name that is shown whole.
+
+### U51. The admin Operations list says "No tables found." beside an overview that counts tables
+
+`OperationsTab.tsx` in `src/components/admin/tabs/` answers an empty table list with "No tables found." whenever no `tableStatsCaption` scopes it, while the monitoring Tables tab, `TablesTab.tsx` in `src/components/monitoring/tabs/`, answers the same empty list beside an overview whose `tableCount` is above 0 with "No table statistics available." (`statsAbsent`), because the statistics are absent rather than the tables.
+Redis shows it today, and Apache Kafka does too, whose `getTableStats` answers `[]` because a topic has no honest message count while its overview counts every topic (#1088, section 7.1).
+Reproduced by the committed tests: "an empty list keeps its empty-state copy under a caption, and one beside a counted overview carries none" in `tests/components/admin/OperationsTab.test.tsx` pins "No tables found." beside `tableCount: 344`, and `tests/components/monitoring/TablesTab.test.tsx` pins "No table statistics available." for the same shape.
+D111, MySQL's capped list, is a different defect of the same list: there the list holds rows, and a search outside them answers "No tables found.".
+
+Found 2026-09-24 while classifying #1104's diff for the Kafka provider (#1088).
+Not fixed there: the list and its copy are shared by every engine.
+
+**Done when:** the Operations list answers an empty list beside a counted overview as the Tables tab does, and the Operations test pins it.
+
+### U52. A Kafka read request gets no completion or validation in the editor
+
+A Kafka tab renders in Monaco's built-in `json` mode with no schema, and `QueryEditor.tsx` in `src/components/` registers the MongoDB completion provider only where no JSON dialect is declared, so a read request gets bracket matching and JSON syntax errors and nothing about its own keys.
+An unknown key, a misplaced `offset`, or a timestamp without a zone is found only when the request runs and the provider refuses it (`docs/providers/kafka.md` section 5.1).
+`monaco.languages.json.jsonDefaults.setDiagnosticsOptions` takes a JSON schema per model, which could carry the request's schema of `parseReadRequest` in `src/lib/db/providers/stream/kafka/request.ts`; nothing in `src/` calls it today.
+
+Found 2026-09-23 while designing the Kafka provider (#1088, section 3.3).
+
+**Done when:** a Kafka tab offers the request's keys and `from` forms as completions and marks an unknown key or a wrong type before the run, from one schema a test holds equal to what `parseReadRequest` accepts, and no other `json` tab takes that schema.
+
+### U53. The development server's built-in MCP endpoint answers without a session
+
+`next dev` serves its own MCP endpoint at `/_next/mcp`, and `src/proxy.ts` lets every path that starts with `/_next` through without a session.
+With `bun dev` bound beyond loopback, that endpoint answers anyone who can reach the port.
+Measured 2026-09-26 on Next.js 16.3.5 in the PR #1070 live check: with `HOSTNAME=0.0.0.0 PORT=3100 bun dev --hostname 0.0.0.0 --port 3100`, a `POST /_next/mcp` from the LAN address with no cookie answered `initialize`, `tools/list` and `tools/call` for `get_project_metadata` with 200, and the last one returned the absolute project path.
+Only a request carrying a foreign `Origin` was refused, with 403.
+The production build does not serve the endpoint; `/api/mcp`, Studio's own MCP server, is a different route and was not involved.
+
+Repro: `HOSTNAME=0.0.0.0 PORT=3100 bun dev --hostname 0.0.0.0 --port 3100`, then from another host `curl -X POST http://<lan-ip>:3100/_next/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_project_metadata","arguments":{}}}'`.
+
+Found 2026-09-26 by the PR #1070 live check.
+Not fixed in #1070: the endpoint is the framework's, and whether to gate it in the proxy or to document it is a decision about the dev server, not about Studio's MCP server.
+
+**Done when:** the endpoint is unreachable without a session on a development server bound beyond loopback, or the development docs state the exposure where a contributor meets it.
+
+### U54. The agent rail keeps a pending start, and the last run, from the connection before a switch
+
+Two cases, both reproduced in a browser in the PR #1070 live check on 2026-09-26.
+
+- **The consent step outlives a connection switch.** Select Live SQLite, choose Agent mode, type an objective and press Start, so the step reads "This run will open as Analyze on Live SQLite". Click Live PostgreSQL in the sidebar: the rail header changes to "on Live PostgreSQL" and the step stays. Pressing "Start run" opens the run on `seed:live-sqlite`.
+- **The previous connection's last run stays on screen.** Run plan mode on Live DuckDB, then click Live SQLite. The rail says "on Live SQLite" and "Connection changed, so this question started a new conversation", and still shows the DuckDB run and its outcome.
+
+Nothing runs in the wrong place: `ConsentCard` is bound to the snapshot on purpose (`src/components/agent/ConsentCard.tsx`, the `connectionName` docblock), so its sentence names the connection the run opens on.
+The defect is that the rail then shows two different connections at once, and a user who reads the header rather than the step starts a run somewhere else than they think.
+`pendingStart` in `src/components/agent/AgentRail.tsx` is not cleared when the shell's connection changes.
+
+Found 2026-09-26 by the PR #1070 live check.
+Not fixed in #1070: the PR does not touch the agent rail.
+
+**Done when:** a connection switch either closes the consent step or keeps it with the rail header naming the step's connection, the rail stops showing the previous connection's run after the switch, and a component test pins both across a connection change.
 
 ## Dependencies
 
@@ -2921,6 +3031,15 @@ Four of the eight doc sentences mirror the comments; the other four have no code
 - `docs/providers/postgres.md`, section 3.1.4, "this is the line the fifteen other providers are read against", written when the implementations were sixteen.
   Each of these four counts one short now.
 
+Amended 2026-09-25: the Kafka provider (#1088) made the shipped type-ids nineteen, served by eighteen implementations, and each count above is now one further behind.
+It edits none of these files, and it leaves as they were these fleet counts in comments that the list above did not hold, found by the numeral grep over `src`, `tests` and `e2e`:
+- `src/lib/api/object-route.ts`, the source-bound slicer's docblock: "all sixteen providers cut through `applySourceBound`".
+- `src/lib/db/types.ts`: "Sixteen engines answer `listObjects` from a stored definition", in the key-scan docblock #1095 wrote, and "fourteen of the seventeen type ids on day one", in the `buildObjectEdit` docblock.
+- `src/components/sidebar/Sidebar.tsx`, #1095's key-tab docblock: "the other sixteen shipped type ids are untouched by it".
+- `src/lib/agent/schema-stats.ts`, the no-statistics docblock: "on the twelve type-ids whose inventory comes from their own provider", which are seventeen now.
+- `tests/unit/db/duckdb/seam-guard.test.ts`, the header: "the fourteen engines that are not DuckDB".
+- `e2e/login.spec.ts` and `tests/components/LoginPage.test.tsx`: "forty named products" and the "twenty-six" relatives, written for the gap each test closes and true of the registry then.
+
 Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: that PR edits another provider's doc only where a shared surface it changed alters what the doc describes, and no count here is about such a surface; the four comments sit in other providers' directories, which it does not edit, so their mirrors stay with them to change together.
 
@@ -2938,6 +3057,48 @@ Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: rewriting one paragraph in four languages is the per-language follow-up #1055 leaves to a speaker of each.
 
 **Done when:** each of the four paragraphs says what `README.md` says about the panel, Oracle's certificate caveat and the libSQL connection string included.
+
+### DOC8. Hand-copied source coordinates across this repository are stale by thousands of lines
+
+Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
+moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
+`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
+Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
+`64ee0e3f^` was wrong before this round touched anything:
+
+| Citation | Cited in | Anchor actually at |
+|---|---|---|
+| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
+| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
+| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
+| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
+| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
+| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
+| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
+| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
+| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
+
+Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
+follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
+agent that re-derives its own citations after an edit, which this epic has now asked for three
+times, is paying a per-commit tax on coordinates that were never right.
+
+Two halves, and the second is what stops it recurring:
+
+1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
+   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
+   a number is correct only until the next commit.
+2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
+   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
+   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
+   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
+
+DOC4 is the same class in the provider docs.
+This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
+
+**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
+and the citations present at that commit all resolve. The test needs one case per shape it must
+accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
 
 ---
 
@@ -3154,6 +3315,16 @@ through the anon bucket like every other `permission_denied` line.
 **Done when:** the verification-failure arm of that catch emits an audit event naming the route and
 the reason, distinct from a missing token, with the row 1.4 residual in `docs/SECURITY.md` deleted.
 
+### H14. A 500 hands the caller the raw error message, including a storage database address
+
+The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` returns `error.message` verbatim for any error it does not classify.
+With `STORAGE_PROVIDER=postgres` and the database unreachable, `POST /api/auth/login` and the account routes answer `{"error":"connect ECONNREFUSED 127.0.0.1:55432"}` (measured against a local container), which tells an unauthenticated caller the internal address of the store.
+Found by the red-team pass on #1122, where the account registry made the login route depend on the store; the branch itself predates that PR and serves every route.
+
+Not fixed there because the branch is shared: some routes rely on the message reaching the caller, and changing it is a behaviour change across the API surface that needs its own audit of which errors are meant to be shown.
+
+**Done when:** an unclassified error answers a fixed message with its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
+
 ---
 
 ## Security Phase 2 deferrals
@@ -3234,34 +3405,6 @@ a CC BY-SA database with no note connecting them.
 **Done when:** a generated `NOTICE` (or `THIRD_PARTY_LICENSES`) ships at the root of the image and the
 tarballs, names the sample database's separate terms explicitly, and is regenerated from the lockfile
 rather than hand-maintained.
-
-### C10. The last DOMPurify advisories are held open by Monaco's pin
-
-`dompurify` via `monaco-editor` is the only advisory chain that reaches a user. Everything else
-`bun audit` reports — `minimatch`, `brace-expansion`, `flatted`, `picomatch`, `esbuild`, `@babel/core`,
-`undici` — arrives through `eslint`, `typescript-eslint`, `knip`, `tsup`, `workflow` and `@ai-sdk/*`,
-and none of it is in the image. `undici` was checked specifically, because the agent runtime sits in
-`devDependencies` by design yet reaches the standalone build: building with `DOCKER_BUILD=true` shows
-no `undici` anywhere under `.next/standalone`, since `@ai-sdk/provider-utils` reaches it through a
-`createRequire` call that output tracing cannot follow.
-
-#374 moved the shipped copy from 3.2.7 to 3.4.8 by upgrading Monaco itself, clearing 14 of the 17.
-**Four remain** on GitHub Advanced Security's count, and none can be closed here: they need 3.4.9,
-3.4.11, 3.4.12 and 3.4.13. Monaco pins dompurify exactly, and 0.56.0 is its newest release.
-
-**Do not "fix" these with a `package.json` override.** Monaco ships DOMPurify inlined in its prebuilt
-`min/vs` bundle and nothing in `src/` imports the package. An override would change a lockfile entry no
-shipped code reads, leave the bundle byte-identical, and turn `bun audit` and Trivy green at once. The
-GHAS findings land on `bun.lock:<line>`, which is the tell: every one of those tools reads the
-manifest, not the artefact.
-
-Two related non-findings, so they are not re-derived. `dompurify` is dual-licensed (MPL-2.0 OR
-Apache-2.0), so the copyleft half can simply not be chosen. And the LGPL-3.0 `@img/sharp-libvips-*`
-binaries never reach the runtime image, because the runner stage copies `node_modules` selectively and
-nothing in `src/` uses `next/image`.
-
-**Done when:** Monaco ships a dompurify at or past 3.4.13. Re-check on each Monaco release, and verify
-by grepping the staged bundle for the version literal rather than trusting the lockfile.
 
 ### C11. The published SBOM carries no component for the bundled Node.js runtime
 
@@ -3350,10 +3493,6 @@ Two things keep it open rather than settled.
 The CodeQL check reports SUCCESS because alerts do not fail the job, so a green rollup hides this.
 And the code does not exist on `main`: it arrives only if #1070 merges, and a dismissal must be made against the merged location.
 
-Related and separate: the test that claims to cover this (`tests/unit/mcp/serializer.test.ts:104`) cannot fail for the flagged branch, because its payload has no `://` and so never reaches the `[^/\s]+@` quantifier.
-A catastrophic variant of the same rule measured 0.06 ms on that payload, inside its 100 ms budget, and 653 ms on `"http://"` plus 37 characters.
-That one is the contributor's to fix and was raised on #1070.
-
 **Done when:** alert 536 carries a written ruling, either dismissed as a false positive with the reason recorded, or the expression narrowed so the alert closes on its own.
 
 ---
@@ -3362,7 +3501,7 @@ That one is the contributor's to fix and was raised on #1070.
 
 Each was decided while building the operation/policy layer, not overlooked.
 
-### A1. A SQLite agent statement can block the runtime for its whole duration
+### A1. A SQLite agent or MCP statement can block the runtime for its whole duration
 
 `sqlite.ts`'s `queryReadOnly` enforces `statementTimeoutMs` as a post-execution deadline: the result of
 an overrunning statement is refused, but the statement is never preempted. SQLite has no
@@ -3373,8 +3512,9 @@ Because both drivers are synchronous, a hostile recursive CTE blocks the whole r
 Same property as the normal SQLite query path, but the input source differs in kind: there the SQL
 comes from an authenticated operator, here from an agent.
 
-**Done when:** either driver exposes an interrupt/progress hook, or agent SQLite execution moves to a
-worker that can be killed on deadline.
+`/api/mcp`'s `run_read_query` reaches the same path, `queryReadOnly` under `agent-read-only`, with SQL from an external MCP client, and `docs/MCP.md` states the risk.
+
+**Done when:** either driver exposes an interrupt or progress hook, or agent and MCP SQLite execution moves to a worker that can be killed on deadline.
 
 ### A2. `VACUUM INTO` can create an empty file at an agent-chosen path
 
@@ -3549,29 +3689,11 @@ ratified package, which that test's allowed-ignore set names explicitly.
 gains the matching adapter in the same change. The `Record<LLMProviderType, AgentProviderAdapter>` will
 not compile until it does.
 
-### B4. `mapDatabaseError` discards the text that distinguishes a timeout cancel from an operator cancel
+### B4. `mapDatabaseError` classifies on a substring a table or column name can satisfy
 
-`mapDatabaseError` matches `canceling statement` before its timeout branch and returns
-`new QueryCancelledError("Query was cancelled", provider, query)`, replacing the engine's own wording.
-PostgreSQL says `canceling statement due to statement timeout` for a `statement_timeout` and
-`canceling statement due to user request` for `pg_cancel_backend`. After this mapping **no** consumer
-can tell them apart. The discriminator is gone, not merely unexamined.
-
-That is why the agent tool layer classifies a cancel as a repairable statement failure: the reachable
-case on the agent path is the timeout this layer itself installs via `SET LOCAL statement_timeout`, and
-narrowing the read is the repair that helps. The cost is stated there — an operator cancel arriving
-mid-statement is also offered a repair, so a run cancellation has to be enforced by the run loop's own
-persisted state between tool calls rather than by expecting the driver's cancel to propagate.
-
-The fix is in shared code and has editor-visible consequences, which is why it is not in #329.
-Reordering the timeout check ahead of the cancellation check, or preserving the original message on
-`QueryCancelledError`, changes what the query panel shows when a statement is cancelled versus times
-out. The reordering is the substantive one and needs the editor's cancel/timeout UX re-checked
-(`postgres.ts` sets `queryTimeout` on the pool as well, so both paths exist).
-
-**The same mapper has a wider imprecision, and the agent's repairable-versus-environment split inherits
-it.** Classification is **substring** matching on the engine's message, so an identifier can decide the
-class. Verified against the live mapper:
+`mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
+decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
+Verified against the live mapper:
 
 - `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
   relation is treated as an environment fault and ends the run.
@@ -3585,11 +3707,9 @@ Neither direction is a boundary failure: nothing runs that policy did not allow,
 repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
 consumer sees the error, so no consumer can correct it.
 
-**Done when:** a statement timeout and a user cancellation are distinguishable by type or by preserved
-message, with the editor's consumers updated and the agent's cancel classification revisited against
-the new signal — and when classification no longer depends on a substring a table or column name can
-satisfy. Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not
-collide, and each provider already has access to its own.
+**Done when:** classification no longer depends on a substring a table or column name can satisfy.
+Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
+each provider already has access to its own.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 
@@ -3973,10 +4093,9 @@ and a test drives an engine whose top level exceeds the cap.
 
 Reproducible in a browser in one click. Select a depth-0 connection (SQLite), then a depth-2 one
 (DuckDB): the first request the tree issues is `POST /api/db/objects/counts` with
-`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400 "A DuckDB container
-path is [database] or [database, schema], received []". The tree then re-reads correctly and the
-final paint is right, so nothing is visible to the user; the 400 is in the server log on every such
-switch.
+`{"connectionId":"seed:t28b-duckdb","container":[]}`, which answers HTTP 400.
+Since #1147 the route refuses it itself, as `duckdb accepts "container" as [database] or [database, schema], received []`; before that the provider did, as "A DuckDB container path is [database] or [database, schema], received []".
+The tree then re-reads correctly and the final paint is right, so nothing is visible to the user; the 400 shows in the browser's network log on every such switch, and since #1147 it is no longer logged as a `Query error` warning by `createErrorResponse` (`src/lib/api/errors.ts`), because the route's own refusals are not.
 
 The cause is a one-commit prop skew rather than anything in the tree: `Sidebar` renders `ObjectTree`
 with `activeConnection` and `metadata`, `useProviderMetadata` clears its metadata in an EFFECT, and a
@@ -4126,3 +4245,130 @@ Found 2026-09-24 while checking the VictoriaMetrics relative after #1104.
 Not fixed there: both rules of the walk are documented decisions (the `walkObjectInventory` docblock), so changing either is a ruling rather than a fix.
 
 **Done when:** a ruling chooses between recording a refused kind in the inventory, with the engine's sentence, while keeping the kinds that were read, and keeping the whole-capture refusal with a message that names the refused kind rather than an unreachable server; and a test drives the walk over a provider whose one kind's listing throws.
+
+### B89. On a Kafka cluster past the topic cap, plan mode grounds topics and nothing else
+
+The grounding walk, `walkObjectInventory` in `src/lib/agent/tools.ts`, ends at the first truncated `describeObjects` batch, as B84 records for Prometheus, and stops at its object budget, `INVENTORY_LIMIT` (5,000) in `src/lib/db/inventory-bounds.ts`.
+The Kafka provider (#1088) declares its kinds as topics, consumer groups, brokers, the order the tree draws its folders in, and its topic listing is capped at `KAFKA_TOPIC_LIST_CAP` (2,000) in `src/lib/db/providers/stream/kafka/objects.ts`, below the object budget, with its topic batch marked truncated past the cap.
+So on a cluster with more than 2,000 topics a plan run's inventory holds 2,000 topics and no consumer group or broker, and on a smaller cluster with more consumer groups than the budget leaves after its topics it holds no broker.
+The inventory's `truncated` tells the run that the reading is incomplete; what it cannot reach is the groups' lag and the brokers a question about consumers or the cluster needs.
+Pinned through the real walk over the Kafka module's own object functions by the KM1 cases of `tests/unit/lib/agent/context-snapshot.test.ts`, since no live fixture reaches 2,000 topics.
+
+Found 2026-09-24 while designing the Kafka provider (#1088, section 11, KM1).
+Not fixed there: reordering the kinds would reorder the tree, and a per-kind share of the object budget changes every engine that grounds through its provider, the trade B84 already records, so a fix of the walk closes both.
+
+**Done when:** a plan run against a Kafka cluster past the topic cap holds its consumer groups and brokers, with a test that drives the grounding walk over a provider whose first kind's batch is truncated and asserts that the later kinds are still read.
+
+---
+
+### B90. The worked example a refused call could copy is off by default, and off is where the models that need it are
+
+`offersRefusalExamples` gates the worked call that `compose_report`, `recommend_change` and `present_answer` attach to a refusal, and `refusalExamples` defaults to false: 2 of the 40 shipped profiles turn it on (`granite4.1:8b`, `nemotron3:33b`).
+The refusal is not bare without it - it names the failing field paths, `readSerializedClaims` recovers a claims array the model serialized as text, `readMisfiledEvidence` resolves evidence filed under the wrong source, and `citableEvidence` offers what the run actually holds - so what the flag withholds is the one thing a model can copy rather than parse.
+A model earns the flag by being measured, and the models that reach these refusals most are the ones nobody has measured yet, so the default lands the wrong way round for them.
+Measured 2026-09-28 on the local harness with the flag off: `qwen2.5:3b-instruct` earned 155 `compose_report:INVALID_TOOL_INPUT` refusals in ONE data-analysis cell and 92 in one assessment cell, `lfm2.5:8b` 8 in one analysis cell, `mistral-small:24b` 3.
+Whether the example would have moved those runs is not established here and is the question a ruling needs: the same capture shows the evidence contract is already obeyed by most calls that reach it - of 2,713 citations in 1,004 refused reports, 874 name a real artifact and 587 the schema snapshot correctly, while 1,185 name an id the run never produced, which no example can fix.
+
+Found 2026-09-28 while measuring five models to 30/30 (#1192).
+Not fixed there: turning the example on by default lengthens every refusal on every model, which is a ruling about prompt cost rather than a correction, and the branch that found it changes no defaults.
+
+**Done when:** a ruling chooses between a default-on example, an example offered only on a repeated refusal of the same tool in one run, and the present per-model flag; and if the default moves, a measurement says what it cost the models that already pass without it.
+
+### B91. The MCP settings page hands OpenCode a snippet OpenCode cannot read
+`src/lib/mcp/client-config.ts` renders the OpenCode snippet under `mcp.servers.libredb`; OpenCode reads `mcp.libredb` and requires an `enabled` field, so a user copying the snippet from the settings UI gets a configuration error rather than a server.
+Measured 2026-09-28 on macOS against the four documented install channels: every other client's snippet on that page connected, and this one did not.
+The same page's request path has no body-size limit either - a 2 MB JSON-RPC body was accepted with HTTP 200 - so an unauthenticated reach at `POST /api/mcp` is bounded by the platform default rather than by the route.
+Found 2026-09-28 while testing MCP end to end on macOS.
+Not fixed in #1192: that branch is the agent's measurement path and touches nothing under `src/lib/mcp/`, and a size limit is a ruling about the route's contract rather than a snippet correction.
+**Done when:** the OpenCode snippet uses the key that client reads, with a test asserting each client's snippet against that client's documented shape, and the MCP route rejects a body past a stated bound with a refusal that names it.
+
+## Passkey deferrals (#785)
+
+Each was decided when passkey sign-in was designed, not overlooked.
+The user guide is [`docs/PASSKEYS.md`](PASSKEYS.md).
+
+### PK1. Passkey autofill (conditional mediation) in the email field
+
+The login page offers passkeys through one explicit "Use a passkey" button (`src/app/login/login-form.tsx`), and nothing calls `navigator.credentials.get` with `mediation: "conditional"`.
+Autofill was left out because a pending conditional `get()` blocks every other WebAuthn call in the document until it is aborted, needs abort-on-unmount and restart-before-expiry handling, touches the email field every password manager reads, and had no verified end-to-end path under the CDP virtual authenticator.
+
+**Done when:** the email field offers passkeys through conditional mediation next to the button, the pending request is aborted on unmount and before the button starts its own ceremony, it restarts before the ceremony token expires, and `e2e/passkey.spec.ts` proves an autofill sign-in and a button sign-in on the same page.
+
+### PK2. The WebAuthn Signal API is not used
+
+A passkey removed from Studio stays in the user's password manager, which keeps offering it; the sign-in refusal and the removal dialog tell the user to delete it by hand.
+`signalAllAcceptedCredentials`, `signalUnknownCredential` and `signalCurrentUserDetails` could tidy that up, but an incomplete accepted list hides a valid passkey irreversibly, Firefox has no implementation, and none of them replaces server-side revocation.
+
+**Done when:** after a successful sign-in the page signals the account's complete accepted credential list (or, at minimum, `signalUnknownCredential` after a `passkey_unknown` refusal), feature-detected so browsers without the API are unaffected, with a test that an incomplete list can never be sent.
+
+### PK3. Passkey step-up and passkey-only accounts
+
+Adding or removing a passkey asks for the current password, and a current code when the account has TOTP (`confirmOwner` in `src/lib/local-accounts.ts`, called by `src/lib/passkey/management.ts`).
+For an account with a passkey but no TOTP, NIST SP 800-63B-4 section 4.1.2.1 would ask for an existing passkey (AAL2) before binding another; Studio accepts the password, a deviation stated in `docs/PASSKEYS.md` and `docs/SECURITY.md`.
+Every account also keeps its password, so there are no passkey-only accounts.
+Both need the same thing: a passkey ceremony accepted as the confirmation for a factor change, and for passkey-only accounts recovery codes as well.
+
+**Done when:** `register-options` and `remove` accept a fresh passkey assertion of the same account in place of the password, the account settings can remove the password once another factor and recovery codes exist, and the recovery path for a passkey-only account is documented and tested.
+
+### PK4. No in-session notice of a passkey added since the last visit
+
+Studio has no out-of-band channel, so the substitutes for a "new passkey" notification are the audit line, the dated list under Sign-in security and the admin's per-account count.
+An owner who never opens that page does not learn that someone added a passkey to their account.
+
+**Done when:** the account keeps a last-seen marker, the first page after sign-in names every passkey added since then with its date, and a test covers a passkey added from another session.
+
+### PK5. Owners cannot change their own password
+
+No route under `src/app/api/auth` changes the signed-in account's password; an admin sets it through `PATCH /api/admin/accounts/<email>`.
+Passkeys make that gap more visible, because adding or removing one asks for the current password, and the passkey dialogs tell the user that an admin sets a forgotten one.
+
+**Done when:** an owner changes their own password after confirming the current one (and a current code when TOTP is on), the change ends their other sessions and MCP tokens like an admin password set, it is charged to the login budgets like the other confirmations, and the passkey dialogs point at it.
+
+### PK6. Converge the older copies of the shared helpers
+
+The passkey work added one derivation, `derivedSigningKey(label)` in `src/lib/config/auth-env.ts`, one `isRecord` in `src/lib/is-record.ts`, and one reader of the store mode (`passkeyAvailability` in `src/lib/passkey/config.ts`), and did not migrate the copies that predate them, because a feature PR does not refactor unrequested code.
+The copies are:
+
+- Three HMAC(`JWT_SECRET`, label) derivations: `driveSigningKey` in `src/lib/agent/drive-token.ts`, `mcpSigningKey` in `src/lib/mcp/token.ts` and `planSigningKey` in `src/lib/api/object-edit-plan-token.ts`.
+- Twelve private `isRecord` functions (`src/lib/agent/history.ts`, `src/lib/agent/plan-summary.ts`, `src/lib/agent/run-store.ts`, `src/lib/local-accounts.ts`, `src/lib/api/object-edit-wire.ts`, `src/lib/explain/duckdb-json.ts`, `src/lib/explain/trino-json.ts`, `src/lib/explain/couchbase-json.ts`, `src/lib/explain/clickhouse-json.ts`, `src/lib/explain/druid-native.ts`, `src/components/object-source/source-reader.ts`, `src/components/object-tree/use-tree-nodes.ts`) and the exported one in `src/lib/explain/text-plan.ts`.
+- Four separate tests of OIDC mode and the storage provider inside `src/lib/local-accounts.ts` (`requireAccountStore`, the login user lookup, `storedAccountAllows` and `ownFactorStatus`).
+
+Each derived key must keep its label, so that a token of one purpose still never verifies as another, and each converged site must keep its current behaviour.
+
+**Done when:** the three derivations call `derivedSigningKey` with their existing labels and their tokens still verify across the change, every `isRecord` in `src/` is imported from `src/lib/is-record.ts`, the four store-mode tests read one exported reader, and no test changes its expectation.
+
+### PK7. One bounded request-body reader
+
+`src/lib/api/bounded-json.ts` `readBoundedJson` refuses a declared `Content-Length` over the limit and cancels the stream as soon as the count passes it; the passkey routes and, through `src/lib/api/object-route.ts`, the object edit routes use it.
+One older reader remains: `src/lib/mcp/preprocess.ts` reads `/api/mcp` bodies through the MCP SDK's `readRequestBody`.
+
+**Done when:** `/api/mcp` reads its body through `src/lib/api/bounded-json.ts` and keeps its current status codes and JSON-RPC error bodies.
+
+### PK9. `initialize()` still needs CREATE on the schema when every table exists
+
+`PostgresStorageProvider.initialize` in `src/lib/storage/providers/postgres.ts` runs `CREATE TABLE IF NOT EXISTS` for all five tables on every start.
+PostgreSQL checks CREATE on the schema even for a table that already exists (measured on PostgreSQL 17.11), and a default PostgreSQL 17 `public` schema grants other roles no CREATE, so a schema a DBA created in full still fails to start with an app user that holds only data grants; the start fails with the error that names the privileges and `docs/STORAGE.md` "Manual Table Creation".
+Which earlier PostgreSQL versions behave the same is not measured.
+
+**Done when:** `initialize()` checks which tables exist first and creates only the missing ones, a start against a complete DBA-created schema needs no CREATE, and a test against a real PostgreSQL proves it with a user that holds only `SELECT`, `INSERT`, `UPDATE` and `DELETE`.
+
+---
+
+## MCP server deferrals (#246)
+
+Each was decided when PR #1070's MCP server was redesigned, not overlooked.
+
+### MCP1. MCP clients authenticate with a static bearer token, not OAuth
+
+Phase 1 of `/api/mcp` accepts only a bearer token that Studio mints for one user (`src/lib/mcp/token.ts`).
+The MCP authorization specification is optional, but an HTTP implementation that supports authorization should follow it, and a hosted client such as claude.ai or ChatGPT needs OAuth to act for one person.
+No protected resource metadata document is served, because one without an authorization server is non-conformant.
+
+Two tests belong to this work and are written first:
+
+- The metadata document's `resource` equals the canonical MCP URL, `basePath` included, and its `authorization_servers` is not empty.
+- The `resource_metadata` in the 401 challenge points at the document that is served.
+
+Under a `basePath`, the root `/.well-known/` path cannot be served by a route inside the app; a redirect, a rewrite to an absolute URL or a proxy in front can serve it, and a live test pins the one chosen.
+
+**Done when:** an authorization server issues tokens audience-bound to the canonical MCP URL, `/api/mcp` validates them, the metadata document and the challenge pointer exist, and the two tests above pass.

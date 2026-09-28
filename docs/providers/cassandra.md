@@ -16,7 +16,7 @@
 | **Status** | Implemented & shipped |
 | **Database type id** | `cassandra` |
 | **Family** | SQL (`src/lib/db/providers/sql/cassandra/`) |
-| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.9.0 — Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
+| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0 — Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
 | **Query language** | `sql` — CQL is SQL-*shaped*: no JOIN, no subquery, no OFFSET, no EXPLAIN ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | **Default port** | `9042` — the native protocol. Thrift (9160) is gone from 4.0 onwards; 7000/7001 are internode and 7199 is JMX |
 | **Connection pooling** | The driver's own, one session per connection: core 1 connection per local host, 2048 requests in flight per connection |
@@ -1172,6 +1172,9 @@ because there are no table statistics to list at all.)
   supportsConnectionString: false,   // no URI carries localDataCenter (§4.2)
   defaultPort: 9042,
   schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\b",
+  containerLevels: [{ id: "schema", label: "Keyspace", labelPlural: "Keyspaces" }], // one level: CQL has none above a keyspace and none below it (§6.4)
+  containerPathShapes: "exact",      // only [keyspace] addresses a container; any other path is refused (§6.4, #1147)
+  objectKinds: ["table", "materialized_view", "index", "type", "function", "aggregate", "trigger"], // declared in this order (§6.4)
 }
 ```
 
@@ -1462,7 +1465,7 @@ first and then the remaining columns alphabetically, with all twenty table optio
 Nothing in the database holds the author's own bytes.
 
 **`cql` IS NOT A MONACO LANGUAGE ID**, and every row above says `sql` because of it. The installed
-monaco-editor 0.56.0 bundle registers 89 ids and `cql` is not among them; an unregistered id degrades
+monaco-editor 0.57.0 bundle registers 89 ids and `cql` is not among them; an unregistered id degrades
 to plain text with no throw and nothing observable. `sql` is the closest registered dialect, so a
 `CREATE TABLE` renders correctly and the CQL-only spellings (`PRIMARY KEY ((a), b)`,
 `frozen<address>`, a `$$ ... $$` function body) are highlighted as whatever the SQL tokenizer makes

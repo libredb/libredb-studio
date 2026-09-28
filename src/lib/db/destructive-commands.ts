@@ -13,8 +13,9 @@ import type { DatabaseType } from "@/lib/types";
  * Scope rule, and the reason this file is short: it names ONLY what each provider
  * can really run. Each was read before its table below was written -
  * `src/lib/db/providers/keyvalue/redis.ts`,
- * `src/lib/db/providers/document/mongodb.ts` and
- * `src/lib/db/providers/timeseries/prometheus/` - and none was probed against a live
+ * `src/lib/db/providers/document/mongodb.ts`,
+ * `src/lib/db/providers/timeseries/prometheus/` and
+ * `src/lib/db/providers/stream/kafka/` - and none was probed against a live
  * server for the rows here, so nothing here is claimed as measured behaviour. What
  * each command or operation DOES is taken from the engines' own command references;
  * what can REACH the engine is taken from the provider code.
@@ -71,7 +72,14 @@ const MONGODB_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set([
  * `CLUSTER SHARDS` are the reads); every form of it reassigns a slot, which is what
  * puts it beside `CLUSTER RESET` and `CLUSTER FORGET`.
  *
- * Every name here can reach the server: `runCommand` calls
+ * Every name here is a command the provider runs: `query()` refuses some commands
+ * before they reach the server (`sharedConnectionRefusal` in
+ * `src/lib/db/providers/keyvalue/redis.ts`, documented in section 5.2b of
+ * `docs/providers/redis.md`), and a confirmation followed by that refusal would be
+ * the double take this gate exists to avoid. The blocking list and sorted-set pops
+ * (`BLPOP`, `BZPOPMIN` and the rest of the `B` forms) are refused that way, so only their
+ * non-blocking forms (`LPOP`, `RPOP`, `LMPOP`, `LMOVE`, `RPOPLPUSH`, `ZPOPMIN`,
+ * `ZPOPMAX`, `ZMPOP`) are here. `runCommand` itself calls
  * `client.call(command, ...args)` with no allow-list of any kind, so the vocabulary
  * is bounded by what Redis accepts rather than by what this provider implements.
  * Container commands are spelled with their subcommand (`CONFIG SET`), which the
@@ -132,16 +140,11 @@ const REDIS_DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set([
   "LPOP",
   "RPOP",
   "LMPOP",
-  "BLPOP",
-  "BRPOP",
-  "BLMPOP",
   "LSET",
   "LREM",
   "LTRIM",
   "LMOVE",
-  "BLMOVE",
   "RPOPLPUSH",
-  "BRPOPLPUSH",
   // Sets
   "SPOP",
   "SREM",
@@ -156,10 +159,7 @@ const REDIS_DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set([
   "ZREMRANGEBYLEX",
   "ZPOPMIN",
   "ZPOPMAX",
-  "BZPOPMIN",
-  "BZPOPMAX",
   "ZMPOP",
-  "BZMPOP",
   "ZUNIONSTORE",
   "ZINTERSTORE",
   "ZDIFFSTORE",
@@ -205,6 +205,17 @@ const REDIS_DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set([
 const PROMETHEUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
 
 /**
+ * Kafka read-request operations that destroy or change anything: none, so the set is empty.
+ *
+ * Not an omission. The editor text is one JSON read request (#1088, section 5.1): a topic, a
+ * partition, where to start and how many messages, and the provider refuses any other key. It
+ * names no operation at all, and the provider sends nothing that writes: it never produces,
+ * commits an offset, joins a group or creates a topic, and `tests/unit/db/kafka/seam-guard.test.ts`
+ * holds the one file that calls its client library to an allowlist of reads (#1088, section 2).
+ */
+const KAFKA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+
+/**
  * The names a query would run, or `undefined` when the text cannot be read as one.
  *
  * `undefined` is not "nothing to run": it means the reader could not tell WHAT would
@@ -229,7 +240,8 @@ interface DestructiveVocabulary {
    * True where reading the text as SQL is wrong rather than cautious. A PromQL
    * expression can start with a metric name the server's data chooses, `update`,
    * `delete` and `drop` are legal names, and read as SQL the tree's own selector for
-   * such a metric is a write.
+   * such a metric is a write. A Kafka read request names its topic, which can carry
+   * any of those names too, in text that can only ever read that topic.
    */
   readonly decidesAlone: boolean;
 }
@@ -366,12 +378,22 @@ const readRedisOperations: OperationReader = (query) => {
 const readPrometheusOperations: OperationReader = () => [];
 
 /**
+ * What a Kafka buffer would run: never an operation this gate asks about.
+ *
+ * Nothing to resolve here either: whatever the text says, the provider either parses it as one
+ * read of one topic's messages or refuses it before anything is sent, so text it cannot parse
+ * changes nothing and asks nothing.
+ */
+const readKafkaOperations: OperationReader = () => [];
+
+/**
  * The single type-to-facts table. It has a row for exactly the types that
  * `readsSqlText` in `@/lib/sql/grammar` reports as not SQL, and a test holds the two
  * tables to that. A type with no row here is one whose statements the SQL half of the
  * gate reads; a row would be a second, weaker opinion about the same text.
  */
 export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseType, DestructiveVocabulary>>> = {
+  kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   mongodb: { operations: MONGODB_DESTRUCTIVE_OPERATIONS, read: readMongodbOperations, decidesAlone: false },
   prometheus: { operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS, read: readPrometheusOperations, decidesAlone: true },
   redis: { operations: REDIS_DESTRUCTIVE_COMMANDS, read: readRedisOperations, decidesAlone: false },

@@ -117,6 +117,10 @@ describe("the classification is exhaustive by construction", () => {
         "password",
         "port",
         "queryTimeout",
+        // Kafka's SASL mechanism (#1088). A mechanism NAME (`SCRAM-SHA-512`), which the
+        // broker's own configuration lists in the clear, so `public`; the password it checks
+        // is the secret and is classified above.
+        "saslMechanism",
         "seedId",
         // Whether this browser reads the catalog when the connection opens (#765). A
         // display preference: it grants nothing and unlocks nothing.
@@ -159,6 +163,10 @@ describe("the classification is exhaustive by construction", () => {
   test("a certificate is not a secret and stays readable for diagnosis", () => {
     expect(SSL_FIELDS.caCert).toBe("public");
     expect(SSL_FIELDS.clientCert).toBe("public");
+  });
+
+  test("a SASL mechanism names how the password is checked, and is no secret itself", () => {
+    expect(CONNECTION_FIELDS.saslMechanism).toBe("public");
   });
 });
 

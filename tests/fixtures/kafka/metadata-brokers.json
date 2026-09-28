@@ -1,0 +1,29 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.metadata({ topics: [], autocreateTopics: false, forceUpdate: true })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "id": "4L6g3nShT-eMCtK--X86sw",
+  "brokers": {
+   "$map": [
+    [
+     1,
+     {
+      "host": "localhost",
+      "port": 9092,
+      "rack": null
+     }
+    ]
+   ]
+  },
+  "topics": {
+   "$map": []
+  },
+  "lastUpdate": 1790276214321,
+  "controllerId": 1
+ }
+}

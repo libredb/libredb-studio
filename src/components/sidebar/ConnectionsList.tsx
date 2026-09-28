@@ -36,7 +36,7 @@ function inSameSection(favoriteConnectionIds: Set<string> | undefined, a: string
   return (favoriteConnectionIds?.has(a) ?? false) === (favoriteConnectionIds?.has(b) ?? false);
 }
 
-export function ConnectionsList({
+export const ConnectionsList = React.memo(function ConnectionsList({
   connections,
   activeConnection,
   onSelectConnection,
@@ -142,4 +142,4 @@ export function ConnectionsList({
       )}
     </>
   );
-}
+});

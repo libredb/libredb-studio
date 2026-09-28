@@ -9,11 +9,16 @@
  * credentials banner in auth-bootstrap.ts. Nothing here touches the network -
  * the star invitation is a static line, never a live count.
  *
+ * With PASSKEY_ORIGIN set, one more line names the origin to open for passkeys,
+ * or why they are unavailable: the URL above is often 127.0.0.1, where browsers
+ * never offer passkeys, and the reason never quotes the value.
+ *
  * Set LIBREDB_NO_BANNER=1 (or true) to silence it.
  */
 
 import { getAppVersion } from "@/lib/app-version";
 import { REPO_URL } from "@/lib/community/repo";
+import { passkeyAvailability, passkeyOriginIsSet } from "@/lib/passkey/config";
 
 const DEFAULT_PORT = "3000";
 const DEFAULT_HOST = "127.0.0.1";
@@ -40,6 +45,14 @@ function resolveUrl(): string {
   return `http://${host}:${port || DEFAULT_PORT}`;
 }
 
+/** The passkey line, or none when the operator has not asked for passkeys. */
+function passkeyLines(): string[] {
+  if (!passkeyOriginIsSet()) return [];
+  const availability = passkeyAvailability();
+  if (availability.state === "ready") return [`Passkeys  ->  ${availability.origin}`];
+  return [`Passkeys are unavailable: ${availability.reason}`];
+}
+
 /**
  * Print the boot banner. Never throws: a failure here must not break boot.
  */
@@ -52,7 +65,15 @@ export function printStartupBanner(): void {
     const title = version ? `LibreDB Studio ${version}` : "LibreDB Studio";
 
     console.log(
-      ["", `${title}  ->  ${resolveUrl()}`, "", "  Star the project if it helps you:", `  ${REPO_URL}`, ""].join("\n"),
+      [
+        "",
+        `${title}  ->  ${resolveUrl()}`,
+        ...passkeyLines(),
+        "",
+        "  Star the project if it helps you:",
+        `  ${REPO_URL}`,
+        "",
+      ].join("\n"),
     );
   } catch {
     // A banner is never worth a failed boot - stay silent and carry on.

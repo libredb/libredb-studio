@@ -22,12 +22,13 @@ test.describe("Admin Dashboard", () => {
     await expect(page.getByRole("heading", { name: "Admin Dashboard" })).toBeVisible({ timeout: 10000 });
   });
 
-  test("shows 5 section nav links", async ({ page }) => {
+  test("shows the section nav links", async ({ page }) => {
     const nav = page.getByRole("navigation", { name: "Admin sections" });
     await expect(nav.getByRole("link", { name: /Overview/i })).toBeVisible({ timeout: 10000 });
     await expect(nav.getByRole("link", { name: /Operations/i })).toBeVisible();
     await expect(nav.getByRole("link", { name: /Monitoring/i })).toBeVisible();
     await expect(nav.getByRole("link", { name: /Security/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /Accounts/i })).toBeVisible();
     await expect(nav.getByRole("link", { name: /Audit/i })).toBeVisible();
   });
 

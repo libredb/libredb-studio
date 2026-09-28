@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 /**
@@ -145,6 +146,8 @@ describe("rowActions on an object row", () => {
       { ...postgres, queryDialect: "redis" as const },
       { ...postgres, queryDialect: "libredb" as const },
       { ...postgres, queryLanguage: "promql" as const },
+      // A read request has no count grammar: it reads messages and counts none (#1088).
+      { ...postgres, queryDialect: "kafka" as const },
     ]) {
       expect(idsFor(objectRow("table"), capabilities, handlers)).not.toContain("generate-count");
     }
@@ -683,5 +686,34 @@ describe("the actions whose destination speaks only some query languages", () =>
   test("the control: MongoDB's JSON, with no dialect, is profiled and generates code", () => {
     const mongodb = capabilitiesOf({ queryLanguage: "json", objectKinds: [table] });
     expect(idsFor(objectRow("table"), mongodb)).toEqual(["generate-select", "profile", "generate-code"]);
+  });
+
+  test("a Kafka topic is offered Generate Query and View Source, and nothing that profiles, models, counts or writes its rows (#1088)", () => {
+    // The provider's own declaration, so the menu is the one a topic row is really offered: its
+    // text is a read request, which the profile route builds no statement in, whose fixed columns
+    // the generated models reject, which has no count grammar, and whose topic takes no row writes.
+    const kafka = new KafkaProvider({
+      id: "kafka-row-actions",
+      name: "Kafka",
+      type: "kafka",
+      host: "localhost",
+      port: 9092,
+      createdAt: new Date(0),
+    }).getCapabilities();
+    const topic: DatabaseObject = { path: ["orders"], name: "orders", kind: "topic" };
+    const topicRow: TreeRowModel = { ...objectRow("topic"), path: ["orders"] };
+    const handlers: TreeRowActionHandlers = { ...allHandlers(), onGenerateCount: () => {} };
+
+    expect(idsFor(topicRow, kafka, handlers, topic)).toEqual(["generate-select", "view-source"]);
+    // The control, in the one field under test: the same declaration with the dialect removed is
+    // MongoDB's JSON, which is profiled, counted and generates code, so the refusals above are the
+    // dialect's. Generate Test Data stays withheld there too: no Kafka kind declares row writes.
+    expect(idsFor(topicRow, { ...kafka, queryDialect: undefined }, handlers, topic)).toEqual([
+      "generate-select",
+      "generate-count",
+      "profile",
+      "generate-code",
+      "view-source",
+    ]);
   });
 });

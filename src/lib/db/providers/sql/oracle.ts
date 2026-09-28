@@ -41,10 +41,12 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
 } from "../../object-kinds";
@@ -62,6 +64,18 @@ import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * Oracle's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "oracle",
+  label: "An Oracle",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // SQL Statements
@@ -197,6 +211,26 @@ const SCHEMA_NORMAL_INDEXES_SQL = `SELECT INDEX_NAME FROM USER_INDEXES WHERE IND
 const TABLE_IS_KNOWN_SQL = `SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME = :tableName`;
 
 // ============================================================================
+// Owner-aware twins (#772)
+// ----------------------------------------------------------------------------
+// The `USER_*` views above answer for the CONNECTED user only, which is why a table
+// owned by anyone else read as "this schema owns no TABLE named ...". `ALL_*` carries
+// an OWNER column, so the same questions are asked with the owner bound. Kept as
+// separate statements rather than adding an `OR :owner IS NULL` to the originals: a
+// predicate that switches off is a predicate the optimizer cannot plan around, and the
+// two call shapes want different proofs.
+// ============================================================================
+const OWNED_TABLE_INDEXES_SQL = `SELECT INDEX_NAME
+           FROM ALL_INDEXES
+           WHERE OWNER = :owner AND TABLE_NAME = :tableName AND INDEX_TYPE = 'NORMAL'`;
+
+const OWNED_SCHEMA_NORMAL_INDEXES_SQL = `SELECT INDEX_NAME
+           FROM ALL_INDEXES
+           WHERE OWNER = :owner AND INDEX_TYPE = 'NORMAL'`;
+
+const OWNED_TABLE_IS_KNOWN_SQL = `SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :owner AND TABLE_NAME = :tableName`;
+
+// ============================================================================
 // Object surface SQL (#789)
 // ----------------------------------------------------------------------------
 // Hoisted to module scope for the same coverage reason as the schema SQL above.
@@ -253,7 +287,7 @@ const PACKAGE_BODY_OBJECT_TYPE = { dictionary: "PACKAGE BODY", metadata: "PACKAG
  * no "declares nothing" list for this provider, and the integration suite asserts that
  * emptiness in both directions so a tenth kind cannot quietly gain a Source tab.
  *
- * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.56.0: `plsql` is not
+ * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.57.0: `plsql` is not
  * among the 89 language ids the bundle registers, and an unregistered id degrades to plain
  * text SILENTLY, with no throw and nothing observable. A PL/SQL body therefore renders under
  * the SQL grammar, which highlights the DML and misses `IS`/`BEGIN`/`EXCEPTION`. That is a
@@ -936,14 +970,7 @@ function notableStatus(status: string): { status?: string } {
  * `CREATE USER "app"` is legal, so upper-casing here would make that owner unreachable.
  */
 function containerOwner(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `An Oracle container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "oracle",
-    );
-  }
+  assertContainerPathShape(capabilities, container, ORACLE_CONTAINER_PATH_ENGINE);
   return ownerSegment(capabilities, container);
 }
 
@@ -1420,6 +1447,9 @@ export class OracleProvider extends SQLBaseProvider {
       // pool is opened against one service and nothing in the product can switch the
       // pluggable database on a live connection.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Nine kinds, all nine answered by `ALL_OBJECTS.OBJECT_TYPE` (#789).
       //
       // No `index` kind, deliberately. Oracle's own dictionary models an index as an
@@ -2440,7 +2470,7 @@ export class OracleProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -2449,16 +2479,23 @@ export class OracleProvider extends SQLBaseProvider {
         conn = await this.pool!.getConnection();
         let sql = "";
 
+        // What stands in the owner position of the DBMS_STATS calls: the connected user
+        // when the caller named no container, else the container as a quoted literal.
+        // `USER` is a keyword rather than a string, so it is NOT quoted.
+        const ownerArg = container ? `'${container.replace(/'/g, "''")}'` : "USER";
+
         switch (type) {
           case "analyze":
-            if (target) {
-              sql = `BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, '${target.replace(/'/g, "''")}'); END;`;
-            } else {
-              sql = `BEGIN DBMS_STATS.GATHER_SCHEMA_STATS(USER); END;`;
-            }
+            // `USER` is the connected user, so an owner named by the caller is passed
+            // through instead. Both arguments are inline-escaped literals because
+            // DBMS_STATS takes no binds for them, and an owner is upper-cased the way the
+            // data dictionary stores it unless the caller quoted the identifier.
+            sql = target
+              ? `BEGIN DBMS_STATS.GATHER_TABLE_STATS(${ownerArg}, '${target.replace(/'/g, "''")}'); END;`
+              : `BEGIN DBMS_STATS.GATHER_SCHEMA_STATS(${ownerArg}); END;`;
             break;
           case "optimize":
-            return await this.rebuildIndexes(conn, target);
+            return await this.rebuildIndexes(conn, target, container);
           case "kill":
             if (!target) {
               throw new QueryError("Target SID,SERIAL# is required for kill operation", "oracle");
@@ -2522,17 +2559,26 @@ export class OracleProvider extends SQLBaseProvider {
   private async rebuildIndexes(
     conn: oracledb.Connection,
     target?: string,
+    owner?: string,
   ): Promise<{ success: boolean; message: string }> {
     // The table name is a bind here, unlike the inline-escaped literals elsewhere in
-    // runMaintenance: this one sits in a WHERE clause, which does take a bind.
-    const indexes = target
-      ? await conn.execute(TABLE_INDEXES_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
-      : await conn.execute(SCHEMA_NORMAL_INDEXES_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+    // runMaintenance: this one sits in a WHERE clause, which does take a bind. An owner
+    // switches the question to the `ALL_*` catalogs, which answer for any schema rather
+    // than the connected one.
+    const indexes = owner
+      ? target
+        ? await conn.execute(OWNED_TABLE_INDEXES_SQL, [owner, target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+        : await conn.execute(OWNED_SCHEMA_NORMAL_INDEXES_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+      : target
+        ? await conn.execute(TABLE_INDEXES_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+        : await conn.execute(SCHEMA_NORMAL_INDEXES_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
     const rows = (indexes.rows || []) as Record<string, unknown>[];
 
     if (target && rows.length === 0) {
-      const known = await conn.execute(TABLE_IS_KNOWN_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+      const known = owner
+        ? await conn.execute(OWNED_TABLE_IS_KNOWN_SQL, [owner, target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+        : await conn.execute(TABLE_IS_KNOWN_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT });
       if (((known.rows || []) as unknown[]).length === 0) {
         return {
           success: false,
@@ -2543,7 +2589,7 @@ export class OracleProvider extends SQLBaseProvider {
           // too, and blaming only the spelling would misdirect a caller who spelled it
           // right. `USER_TABLES` does hold a materialized view's container table, so that
           // case reaches the rebuild rather than this branch.
-          message: `OPTIMIZE failed: this schema owns no TABLE named ${target}. A view or a synonym has no index to rebuild, and an unquoted name is folded to upper case, so a lower-case spelling will not match the catalog.`,
+          message: `OPTIMIZE failed: ${owner ? `the schema "${owner}"` : "this schema"} owns no TABLE named ${target}. A view or a synonym has no index to rebuild, and an unquoted name is folded to upper case, so a lower-case spelling will not match the catalog.`,
         };
       }
     }
@@ -2556,8 +2602,13 @@ export class OracleProvider extends SQLBaseProvider {
     // and this reported success in 14 ms.
     let firstFailure: string | undefined;
     for (const row of rows) {
+      // With an owner this list came from `ALL_INDEXES`, which answers for any schema, so the
+      // rebuild names that owner too: a bare `ALTER INDEX` rebuilds in the CONNECTED schema,
+      // which is not the schema the indexes were read from (#1091 review).
+      const indexName = `"${String(row.INDEX_NAME).replace(/"/g, '""')}"`;
+      const qualified = owner ? `"${owner.replace(/"/g, '""')}".${indexName}` : indexName;
       try {
-        await conn.execute(`ALTER INDEX "${String(row.INDEX_NAME).replace(/"/g, '""')}" REBUILD`);
+        await conn.execute(`ALTER INDEX ${qualified} REBUILD`);
         rebuilt++;
       } catch (error) {
         // One index failing is still a completed run (an offline tablespace or an unusable

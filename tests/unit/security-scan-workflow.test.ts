@@ -167,7 +167,7 @@ describe("security-scan.yml wiring", () => {
     // this guards: `if: steps.gate.outcome == 'failure'` collapses to
     // `success() && steps.gate.outcome == 'failure'`, which can never be true.
     const STATUS_FN = /^(failure|success|always|cancelled)\(\)/;
-    const STEP_OUTCOME = /steps\.[A-Za-z0-9_-]+\.(outcome|conclusion)/;
+    const STEP_OUTCOME = /steps\.[A-Za-z0-9_-]+\.(outcome|conclusion|outputs)/;
     let checked = 0;
     for (const step of allSteps) {
       if (!step.if || !STEP_OUTCOME.test(step.if)) continue;
@@ -420,7 +420,7 @@ describe("dependency-scan reports on pull requests and gates elsewhere", () => {
   });
 });
 
-describe("image-scan reports and never gates", () => {
+describe("image-scan reports everything and gates on the actionable slice", () => {
   const job = workflow.jobs["image-scan"];
   const steps = job?.steps ?? [];
   const resolve = steps.find((s) => s.id === "image");
@@ -447,8 +447,10 @@ describe("image-scan reports and never gates", () => {
   test("scans every published variant, not only the default tag", () => {
     // Three images ship from this repository (#840), and their OS layers are
     // three different answers: the Alpine variants exist BECAUSE the Debian
-    // base scores 3 CRITICAL / 52 HIGH. A scan that only ever looked at
-    // `:latest` would leave the tags carrying the security claim unmeasured.
+    // base carries the larger OS surface. Measured 2026-09-28 on the current
+    // `:latest`: 156 findings, 44 of them HIGH, none Critical with a fix. A
+    // scan that only ever looked at `:latest` would leave the tags carrying
+    // the security claim unmeasured.
     const tags = (job?.strategy?.matrix?.include ?? []).map((entry) => entry.tag).sort();
 
     expect(tags).toEqual(["latest", "latest-alpine", "latest-alpine-slim"]);
@@ -468,17 +470,75 @@ describe("image-scan reports and never gates", () => {
     expect(sbom?.run).toContain('"$IMAGE_REF"');
   });
 
-  test("cannot fail: no exit code anywhere in this job", () => {
-    // Measured 2026-08-09: the runtime base carries 4 critical and 18 high
-    // Debian CVEs, and 167 of 168 findings have no fixed package. Any
-    // --exit-code here is a permanent red, which ends with the workflow being
-    // disabled rather than the CVEs being fixed.
+  test("no step in this job is advisory", () => {
+    // secret-scan and dependency-scan both have this guard. This job had no
+    // reason to until it gained a gate; now its own explainer prints "Do not
+    // add continue-on-error to the gate", so the promise needs enforcing.
     for (const step of steps) {
-      expect({ name: step.name, gates: (step.run ?? "").includes("--exit-code") }).toEqual({
+      expect({ name: step.name, advisory: step["continue-on-error"] === true }).toEqual({
         name: step.name,
-        gates: false,
+        advisory: false,
       });
     }
+  });
+
+  test("only the last step gates, and only on the actionable slice", () => {
+    // The reporting steps still cannot fail. Measured 2026-08-09 and again
+    // 2026-09-28 on 0.16.1: 184 findings, 155 of them with no fixed package. An
+    // --exit-code over all of that is a permanent red, which ends with the
+    // workflow disabled rather than the CVEs fixed.
+    //
+    // The slice that DOES have a fix is a different argument, and until now it
+    // was only made on dependency-scan. On 0.16.1 that slice was three findings,
+    // all of them one base-image bump away, and we learned of them from a
+    // downstream store's scanner rather than from this job. So exactly one step
+    // gates; it is the last one, so the report, the SARIF upload and the SBOM
+    // all publish before it can fail; and it carries --ignore-unfixed so it can
+    // only ever go red on something someone can act on.
+    const gating = steps.filter((step) => (step.run ?? "").includes("--exit-code"));
+    expect(gating.map((step) => step.name)).toEqual(["Fail on Critical findings that have a fix"]);
+
+    // Second to last, with its explainer behind it - the same ordering the
+    // dependency gate uses. Everything that publishes runs before either.
+    expect(steps.slice(-2).map((step) => step.name)).toEqual([
+      "Fail on Critical findings that have a fix",
+      "Explain a failed image gate",
+    ]);
+    // Conditioned on the exit code, not the outcome: outcome is `failure` for a
+    // registry timeout too, and the explainer's text asserts a CRITICAL is
+    // present. Measured 2026-09-28: finding 2, unreachable image 1, clean 0.
+    expect(steps.at(-1)?.if).toBe("failure() && steps.gate.outputs.rc == '2'");
+
+    const gate = gating[0] ?? {};
+    expect(gate.id).toBe("gate");
+    const run = gate.run ?? "";
+    expect(run).toContain("--severity CRITICAL");
+    // Scoped to the OS layer. Application packages are the dependency gate's
+    // job, and both remedies this job prints name a base image, which is only
+    // ever the right instruction for an OS package.
+    expect(run).toContain("--pkg-types os");
+    expect(run).toContain("--ignore-unfixed");
+    expect(run).toContain("--exit-code 2");
+    expect(run).toContain('echo "rc=$rc" >> "$GITHUB_OUTPUT"');
+
+    // --ignorefile resolves only because this job now checks the repository out
+    // and mounts it. Remove either and the gate becomes a permanent exit-1 red
+    // with the explainer silent, which is the one failure the exit-code split
+    // exists to prevent.
+    expect(steps[0]?.uses ?? "").toContain("actions/checkout");
+    expect(run).toContain('-v "$GITHUB_WORKSPACE:/repo:ro"');
+
+    // The summary has to name which of the three states a run is in. Without
+    // this the unfiltered CRITICAL/HIGH table published earlier stands as the
+    // apparent cause of a red that a registry timeout actually caused.
+    expect(run).toContain("$GITHUB_STEP_SUMMARY");
+    expect(run).toContain("Red, but not because of a finding.");
+    // The escape valve, and the reason the header's case against gating this
+    // job does not apply to this one step.
+    expect(run).toContain("--ignorefile /repo/.trivyignore.yaml");
+    // Pinned to the database the report above used, so the security tab and
+    // this verdict cannot disagree inside one run.
+    expect(run).toContain("--skip-db-update");
   });
 
   test("uploads under its own category so it does not overwrite the dependency results", () => {

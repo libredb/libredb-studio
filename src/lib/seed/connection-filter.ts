@@ -63,12 +63,18 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // about for skipObjectScan below.
         apiKeyId: conn.apiKeyId,
         apiKeySecret: conn.apiKeySecret,
+        // Kafka's SASL mechanism (#1088). Dropping it here would list a seeded SCRAM connection
+        // with its user and password and no mechanism to send them by, which the provider refuses.
+        saslMechanism: conn.saslMechanism,
         schema: conn.schema,
         // The second half of the seed round-trip, and the half a zod field cannot cover:
         // this mapper is a hand-written field list, so a field validated above and not
         // copied here reaches the browser as `undefined` and the seeded connection scans
         // the catalog the deployment asked it not to (#765).
         skipObjectScan: conn.skipObjectScan,
+        // The MCP opt-in (#246), copied for the reason skipObjectScan is: dropped here, a seed that
+        // opted in would reach the MCP context without its opt-in and never be visible.
+        mcp: conn.mcp,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

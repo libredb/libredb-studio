@@ -162,6 +162,78 @@ describe("a failed statement is told what the table actually holds", () => {
     expect(told).toContain("name");
   });
 
+  test("and a column named with no table at all is answered by naming where it lives", async () => {
+    /*
+      The same remedy, and the shape it could not reach. `columnsThatExist` requires the engine to
+      have QUALIFIED the column - `no such column: salary.dept_no` - because the qualifier is what
+      finds the table in our snapshot. A model that writes a bare column name gets nothing:
+
+          SELECT dept_name, SUM(amount) FROM salary JOIN employee ...
+          -> no such column: dept_name          (no qualifier, no remedy)
+          SELECT dept_no,   SUM(amount) FROM salary JOIN employee ...
+          -> no such column: dept_no            (same wall)
+          -> gives up, presents the table profile instead
+          -> ANSWER_NOT_A_DATA_READ
+
+      Measured 2026-09-23 on `granite4:3b`: 121 refusals of that last step in one sweep, and the
+      cell - data-analysis, 0/5 - is the only one between that model and 30/30. The run was never
+      short of ability; it was never told that `dept_name` lives in another table.
+
+      Unqualified, there is no table to list columns for, so what is named is where the column IS.
+      The inventory already in hand answers that, and it is the half of the sentence that moves a
+      model: a join it can write, rather than a fact about a table it did not ask about.
+    */
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: name");
+      },
+    });
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT name FROM orders", rationale: "count" }),
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
+
+    const told = scripted.turns.at(-1)?.transcript ?? "";
+    expect(told).toContain("name is in");
+  });
+
+  test("and an alias the inventory cannot resolve still gets told where the column lives", async () => {
+    /*
+      The step after the one above, measured on the same model in the same cell.
+
+      Told where a bare `dept_name` lived, `granite4:3b` rewrote its statement with the right join
+      and met `no such column: e.dept_no` - qualified, but by an ALIAS. That branch returned
+      nothing, on the reasoning that resolving `e` to `employee` needs the FROM clause and
+      inventing a mapping is worse than silence. The run then sent the identical statement three
+      more times, because the refusal carried nothing to act on.
+
+      Listing a table's columns does need the table. Saying where the column LIVES does not, and
+      that is the half that moves a model - it is the join, not a fact about a table it did not
+      name.
+    */
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: e.name");
+      },
+    });
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT e.name FROM engineering e", rationale: "count" }),
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
+
+    const told = scripted.turns.at(-1)?.transcript ?? "";
+    expect(told).toContain("name is in");
+    // The transcript is JSON, so the quotes around the alias arrive escaped; the sentence is what
+    // matters, not how the transport spelled it.
+    expect(told).toContain("is not one of them");
+  });
+
   test("and the ledger records that answering it is what made the attempt free", async () => {
     /*
       The other half of the same decision, and the half a reader of the ledger could not see.

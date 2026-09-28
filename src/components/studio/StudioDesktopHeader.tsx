@@ -4,7 +4,7 @@ import React from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Database, Gauge, LogOut, Settings, User } from "lucide-react";
+import { Database, Gauge, KeyRound, LogOut, Settings, ShieldCheck, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +23,7 @@ interface StudioDesktopHeaderProps {
   onLogout: () => void;
 }
 
-export function StudioDesktopHeader({
+export const StudioDesktopHeader = React.memo(function StudioDesktopHeader({
   activeConnection,
   connectionPulse,
   user,
@@ -93,7 +93,7 @@ export function StudioDesktopHeader({
         {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 gap-2 hover:bg-fill px-2">
+              <Button variant="ghost" size="sm" className="h-8 gap-2 hover:bg-fill px-2" aria-label="User menu">
                 <User strokeWidth={1.5} className="w-3 h-3 text-brand" />
               </Button>
             </DropdownMenuTrigger>
@@ -105,6 +105,12 @@ export function StudioDesktopHeader({
               )}
               <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
                 <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push("/settings/mcp")} className="cursor-pointer">
+                <KeyRound strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> MCP
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => router.push("/settings/authenticator")} className="cursor-pointer">
+                <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Sign-in security
               </DropdownMenuItem>
               <div className="border-t border-hairline my-1" />
               <DropdownMenuItem onClick={onLogout} className="text-danger cursor-pointer">
@@ -120,4 +126,4 @@ export function StudioDesktopHeader({
       </div>
     </header>
   );
-}
+});

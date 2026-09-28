@@ -6,6 +6,8 @@
 > ClickHouse provider: design, architecture, usage, and tests. If you are reading the code, extending
 > ClickHouse support, or authoring a new provider, start here.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -123,16 +125,18 @@ ClickHouseProvider (clickhouse/index.ts)
 Couchbase does — because the dialect really is standard on the points the shared helpers care
 about: double-quoted identifiers and `LIMIT n OFFSET m` are both correct here, live-verified
 (`SELECT "id" FROM "probe"` and the bare unquoted form both parse). This is exactly the case
-[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse for. Only `prepareQuery()`
-is overridden, for the trailing-clause trap in [§3.8](#38-the-preparequery-override).
+[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse for. `escapeIdentifier()`
+carries one dialect correction, below; `prepareQuery()` is overridden for the trailing-clause trap
+in [§3.8](#38-the-preparequery-override).
 
 ### 2.3 What `SQLBaseProvider` gives for free
 
-`ClickHouseProvider` reuses these inherited members rather than reimplementing them:
+`ClickHouseProvider` reuses these inherited members rather than reimplementing them, except where
+the table says otherwise:
 
 | Member | Purpose |
 |--------|---------|
-| `escapeIdentifier()` | Double-quoted, since `this.type` (`clickhouse`) falls through to the default branch — the same quoting PostgreSQL uses. Both quoted and unquoted forms parse (live-verified) |
+| `escapeIdentifier()` | **Overridden here.** Double-quoted, the same quoting PostgreSQL uses, plus a doubled BACKSLASH: the inherited form doubles only the quote character, and a backslash is an ESCAPE inside a quoted identifier on this engine, so a name ending in one swallowed its own closing quote (#1091 review). See [§8](#8-maintenance) |
 | `buildLimitClause()` | `LIMIT n` / `LIMIT n OFFSET m` |
 | `shouldEnableSSL()` | Inherited but **never called**, and deliberately so. It infers TLS from substrings in the host (`cloud`, `aws`, …), which would silently switch a self-hosted node whose hostname merely contains one of them. TLS here comes from the connection's own `ssl` config or from an `https://` scheme, never from a guess ([§4.3](#43-tls)) |
 | `prepareQuery()` (base) | The shared query limiter; `ClickHouseProvider` calls it first and only overrides the trailing-clause case |
@@ -1070,7 +1074,7 @@ the author typed, so a reader must never be shown it as an original. The fixture
 carrying a `SETTINGS index_granularity = 8192` clause nobody wrote.
 
 `sql` is the right Monaco id and no part of it is a compromise: ClickHouse SQL is SQL, and the
-installed monaco-editor 0.56.0 registers `sql`. The three ids this design had to refuse
+installed monaco-editor 0.57.0 registers `sql`. The three ids this design had to refuse
 elsewhere, `plsql`, `tsql` and `cql`, are not registered at all and are not needed here.
 
 #### The read takes NO identifier position, and that is the security decision
@@ -1264,8 +1268,10 @@ curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo
 
 ### 6.3 Object edit (#789)
 
-This engine is a REFUSAL, and the reason is that no measured escaper exists for its identifiers.
-A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and all three identifier quoters in this tree emit `"x\"` for the name `x\`, so the statement a plan would carry is not the statement the author addressed.
+This engine is a REFUSAL, recorded because no escaper for its identifiers had been measured.
+A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and the shared quoters (the default branch of `SQLBaseProvider.escapeIdentifier`, `quoteIdentifier` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) and `escapeIdentifier` in [`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts)) emit `"x\"` for the name `x\`, so a statement built through any of them is not the statement the author addressed.
+Since #1091 this provider's own `escapeIdentifier()` escapes the backslash as well, and it is measured ([§8](#8-maintenance)).
+No edit statement is built through it and none has been measured, so the refusal stands.
 One question here is UNMEASURED and is recorded as such rather than answered: whether a dictionary's credential is really redacted in the text the Phase 2 read returns.
 No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-declarations.test.ts` is what holds that absence and this section together.
 
@@ -1300,9 +1306,14 @@ Two honest zeroes in the overview, so neither reads as a measurement:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)`
+`runMaintenance(type, target?, container?)`
 ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)). `optimize` and `kill` **require**
 a target; `analyze` does not.
+
+A `container` is the DATABASE the row carries as `schemaName` (#772), used as the database outright:
+`database.table` cannot be told apart from a name that contains a dot, while a container is already
+the database on its own. Without one the old reading stands, splitting the name and falling back to
+the pinned database.
 
 | Type | ClickHouse action | Notes |
 |------|--------------------|-------|
@@ -1317,6 +1328,15 @@ Calling `runMaintenance` with one directly throws a `QueryError` naming the thre
 operations. A target is qualified through
 `escapeIdentifier()` (`"database"."table"`, defaulting the database to the pinned one when the
 target names none), so a hostile or oddly-named table cannot break out of the generated statement.
+That helper is OVERRIDDEN here rather than inherited, and the reason is the identifier escape
+measured in [§6.3](#63-object-edit-789): a backslash inside a quoted identifier is an escape on this
+engine, so the inherited form, which doubles only the quote character, left a name ending in one
+with its closing quote swallowed and the rest of the statement reparsed around it. A container of
+`x\` was the reachable case (#1091 review): the target that followed became more statement text
+rather than a second segment. The override escapes the backslash first, the order `literal()` in
+`objects.ts` uses.
+Live-verified on 26.7.1.1315 against the fixture's own `` demo.`bs_one\` ``: the target `bs_one\`, the target `demo.bs_one\`, and the target `bs_one\` with the container `demo` all optimize it, where the inherited spelling answers `Double quoted string is not closed` on the same table.
+The container `x\` with the target `.t FINAL SETTINGS optimize_throw_if_noop = 1 --` is refused with `UNKNOWN_DATABASE`, for a database named `x\`.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
@@ -1374,6 +1394,9 @@ rather than silent.
 | `maintenanceOperations` | `['optimize', 'analyze', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `8123` |
+| `containerLevels` | one level, `schema`, labelled Database: ClickHouse has no schema level below a database ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container ([§6.1](#61-the-object-surface-789)), so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `objectKinds` | `table`, `view`, `materialized_view`, `dictionary`, `function` ([§6.1](#61-the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER\|RENAME\|TRUNCATE\|ATTACH\|DETACH)\b` |
 
 `supportsCreateTable: false` is deliberate, not an oversight — see
@@ -1636,4 +1659,4 @@ database-wide statistics. Transaction and cancel routes do not apply — see
   <https://clickhouse.com/docs/en/operations/system-tables/columns>,
   <https://clickhouse.com/docs/en/operations/system-tables/data_skipping_indices>
 - EXPLAIN: <https://clickhouse.com/docs/en/sql-reference/statements/explain>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

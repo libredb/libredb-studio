@@ -67,6 +67,11 @@ const WORDS: Readonly<Record<number, string>> = {
   33: "Thirty-three",
   34: "Thirty-four",
   35: "Thirty-five",
+  36: "Thirty-six",
+  37: "Thirty-seven",
+  38: "Thirty-eight",
+  39: "Thirty-nine",
+  40: "Forty",
 };
 
 describe("the roster count the docs state is the roster the product ships", () => {

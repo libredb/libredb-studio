@@ -9,10 +9,11 @@ import {
   INVENTORY_PAIR_LIMIT,
   ObjectRouteError,
   handleObjectRequest,
-  readBoundedJson,
+  readObjectRouteBody,
   type ObjectRequestContext,
 } from "@/lib/api/object-route";
 import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import { EDIT_BODY_BYTE_LIMIT } from "@/lib/db/object-edit";
 // The CLIENT's shape check, imported into the route's own suite on purpose: the route carries a
 // refusal sentence through untouched and the client refuses that document, and one test pinning
 // both ends is the only thing that keeps the pair from drifting into a contradiction (#789).
@@ -30,6 +31,7 @@ import type {
   ObjectKindSpec,
   ObjectSourceDocument,
   ObjectSourcePart,
+  ProviderCapabilities,
 } from "@/lib/db/types";
 import {
   DatabaseError,
@@ -163,6 +165,7 @@ const VIEW_KIND: ObjectKindSpec = { id: "view", role: "relation", label: "View",
 interface ProviderShape {
   type?: DatabaseProvider["type"];
   containerLevels?: ContainerLevels;
+  containerPathShapes?: ProviderCapabilities["containerPathShapes"];
   objectKinds?: readonly ObjectKindSpec[];
   listContainers?: DatabaseProvider["listContainers"];
   countObjects?: DatabaseProvider["countObjects"];
@@ -178,6 +181,7 @@ function objectProvider(shape: ProviderShape = {}): DatabaseProvider {
     type: shape.type,
     capabilities: {
       containerLevels: shape.containerLevels ?? [SCHEMA_LEVEL],
+      ...(shape.containerPathShapes === undefined ? {} : { containerPathShapes: shape.containerPathShapes }),
       objectKinds: shape.objectKinds ?? [TABLE_KIND, VIEW_KIND],
     },
   });
@@ -403,6 +407,45 @@ describe("POST /api/db/objects/containers", () => {
       '"parent" must be an array of path segments',
     );
   });
+
+  test("a parent AT the declared depth reaches the provider", async () => {
+    // On one level both rules accept `["app"]`, so this proves only that the route lets it through;
+    // the test below is the one that tells the depth ceiling from the address rule.
+    const listContainers = mock(async (): Promise<Container[]> => []);
+    activeProvider = objectProvider({ listContainers });
+
+    const response = await containersRoute.POST(
+      createMockRequest("/api/db/objects/containers", {
+        method: "POST",
+        body: { connection, parent: ["app"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON<Container[]>(response)).toEqual([]);
+    expect(listContainers).toHaveBeenCalledWith(["app"]);
+  });
+
+  test("a parent SHORTER than an exact engine's address still passes", async () => {
+    // The address rule would refuse `["main"]` on this declaration, so a 200 here proves `parent`
+    // is checked by the depth ceiling and not by the address shapes.
+    const listContainers = mock(async (): Promise<Container[]> => []);
+    activeProvider = objectProvider({
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      containerPathShapes: "exact",
+      listContainers,
+    });
+
+    const response = await containersRoute.POST(
+      createMockRequest("/api/db/objects/containers", {
+        method: "POST",
+        body: { connection, parent: ["main"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(listContainers).toHaveBeenCalledWith(["main"]);
+  });
 });
 
 // ============================================================================
@@ -439,7 +482,9 @@ describe("POST /api/db/objects/counts", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await parseResponseJSON(response)).toMatchObject({ error: expect.stringContaining("container depth") });
+    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+      error: 'postgres accepts "container" as [schema], received ["app","nested"]',
+    });
     expect(countObjects).toHaveBeenCalledTimes(0);
   });
 
@@ -476,11 +521,163 @@ describe("POST /api/db/objects/counts", () => {
 
     expect(response.status).toBe(400);
     // The exact message, not just the word: a string container has a `.length` of its own, so
-    // dropping the shape check would still produce a 400 from the DEPTH check and a loose
+    // dropping the shape check would still produce a 400 from the ADDRESS check and a loose
     // assertion would not notice.
     expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
       '"container" must be an array of path segments',
     );
+  });
+
+  test("refuses a container SHORTER than an exact engine accepts, at the edge and with no code", async () => {
+    const countObjects = mock(async () => ({}));
+    activeProvider = objectProvider({ countObjects });
+
+    const response = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: [] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+      error: 'postgres accepts "container" as [schema], received []',
+    });
+    expect(countObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("a too-short and a too-long container meet one sentence and one wire shape", async () => {
+    const countObjects = mock(async () => ({}));
+    activeProvider = objectProvider({ countObjects });
+    const post = async (container: readonly string[]) => {
+      const response = await countsRoute.POST(
+        createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container } }) as never,
+      );
+      return { status: response.status, body: await parseResponseJSON<Record<string, string>>(response) };
+    };
+
+    const short = await post([]);
+    const long = await post(["app", "nested"]);
+
+    expect(short.status).toBe(400);
+    expect(long.status).toBe(400);
+    expect(Object.keys(short.body)).toEqual(["error"]);
+    expect(Object.keys(long.body)).toEqual(["error"]);
+    const opening = (body: Record<string, string>) => body.error.replace(/received .*$/, "");
+    expect(opening(short.body)).toBe(opening(long.body));
+    expect(opening(short.body)).toBe('postgres accepts "container" as [schema], ');
+    expect(countObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("on a prefixes engine an outer-level container reaches the provider", async () => {
+    const countObjects = mock(async () => ({}));
+    activeProvider = objectProvider({
+      type: "trino",
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      containerPathShapes: "prefixes",
+      countObjects,
+    });
+
+    const outer = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: ["memory"] },
+      }) as never,
+    );
+    expect(outer.status).toBe(200);
+    expect(countObjects).toHaveBeenCalledWith(["memory"]);
+
+    const full = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: ["memory", "app"] },
+      }) as never,
+    );
+    expect(full.status).toBe(200);
+    expect(countObjects).toHaveBeenCalledWith(["memory", "app"]);
+  });
+
+  test("on a prefixes engine the empty and the too-long container are refused naming every shape", async () => {
+    const countObjects = mock(async () => ({}));
+    activeProvider = objectProvider({
+      type: "trino",
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      containerPathShapes: "prefixes",
+      countObjects,
+    });
+
+    const empty = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
+    );
+    expect(empty.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(empty)).toEqual({
+      error: 'trino accepts "container" as [catalog] or [catalog, schema], received []',
+    });
+
+    const long = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: ["memory", "app", "x"] },
+      }) as never,
+    );
+    expect(long.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(long)).toEqual({
+      error: 'trino accepts "container" as [catalog] or [catalog, schema], received ["memory","app","x"]',
+    });
+    expect(countObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("an engine with no container level accepts only the empty container", async () => {
+    const countObjects = mock(async () => ({}));
+    activeProvider = objectProvider({ type: "sqlite", containerLevels: [], countObjects });
+
+    const named = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", {
+        method: "POST",
+        body: { connection, container: ["main"] },
+      }) as never,
+    );
+    expect(named.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(named)).toEqual({
+      error: 'sqlite accepts "container" as empty, received ["main"]',
+    });
+    expect(countObjects).toHaveBeenCalledTimes(0);
+
+    const empty = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
+    );
+    expect(empty.status).toBe(200);
+    expect(countObjects).toHaveBeenCalledWith([]);
+  });
+
+  test("the route spells a shape by the lowercased LABEL, whatever the provider spells", async () => {
+    activeProvider = objectProvider({
+      containerLevels: [{ id: "schema", label: "Namespace", labelPlural: "Namespaces" }],
+    });
+
+    const response = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+      error: 'postgres accepts "container" as [namespace], received []',
+    });
+  });
+
+  test("a prefixes declaration with no level accepts no container at all", async () => {
+    const countObjects = mock(async () => ({}));
+    activeProvider = objectProvider({ containerLevels: [], containerPathShapes: "prefixes", countObjects });
+
+    const response = await countsRoute.POST(
+      createMockRequest("/api/db/objects/counts", { method: "POST", body: { connection, container: [] } }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+      error: 'postgres accepts "container" as nothing: this declaration carries no container level, received []',
+    });
+    expect(countObjects).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -519,7 +716,9 @@ describe("POST /api/db/objects/list", () => {
     );
 
     expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("container depth");
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      'postgres accepts "container" as [schema], received ["app","nested"]',
+    );
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 
@@ -563,6 +762,44 @@ describe("POST /api/db/objects/list", () => {
     );
 
     expect(listObjects).toHaveBeenCalledWith(["app"], "table");
+  });
+
+  test("refuses a container SHORTER than an exact engine accepts", async () => {
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({ listObjects });
+
+    const response = await listRoute.POST(
+      createMockRequest("/api/db/objects/list", {
+        method: "POST",
+        body: { connection, container: [], kind: "table" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+      error: 'postgres accepts "container" as [schema], received []',
+    });
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("on a prefixes engine an outer-level container reaches the provider", async () => {
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({
+      type: "trino",
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      containerPathShapes: "prefixes",
+      listObjects,
+    });
+
+    const response = await listRoute.POST(
+      createMockRequest("/api/db/objects/list", {
+        method: "POST",
+        body: { connection, container: ["memory"], kind: "table" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(listObjects).toHaveBeenCalledWith(["memory"], "table");
   });
 });
 
@@ -1159,9 +1396,10 @@ describe("POST /api/db/objects/inventory", () => {
   });
 
   test("refuses a named container deeper than the engine declares", async () => {
+    const listObjects = mock(async () => []);
     activeProvider = objectProvider({
       listContainers: mock(async () => []),
-      listObjects: mock(async () => []),
+      listObjects,
     });
 
     const response = await inventoryRoute.POST(
@@ -1172,7 +1410,51 @@ describe("POST /api/db/objects/inventory", () => {
     );
 
     expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("container depth");
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      'postgres accepts "containers" as [schema], received ["app","nested"]',
+    );
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("refuses a named container shorter than an exact engine accepts, before any listing", async () => {
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({ listContainers: mock(async () => []), listObjects });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [["app"], []] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    // The first entry is valid, so a check that ran inside the fan-out would have listed it first.
+    expect(await parseResponseJSON<{ error: string }>(response)).toEqual({
+      error: 'postgres accepts "containers" as [schema], received []',
+    });
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("on a prefixes engine outer-level named containers reach the provider", async () => {
+    const listObjects = mock(async () => []);
+    activeProvider = objectProvider({
+      type: "trino",
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      containerPathShapes: "prefixes",
+      objectKinds: [TABLE_KIND],
+      listObjects,
+    });
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [["memory"], ["memory", "app"]] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(listObjects).toHaveBeenCalledWith(["memory"], "table");
+    expect(listObjects).toHaveBeenCalledWith(["memory", "app"], "table");
   });
 
   test("refuses a containers value that is not a list of paths", async () => {
@@ -1904,12 +2186,12 @@ describe("the body read the handler actually performs", () => {
   });
 
   test("the two reads DIVERGE on an empty JSON object, and the divergence is pinned here", async () => {
-    // `readDefaultBody` refuses `{}` itself; `readBoundedJson` RETURNS it and `resolveConnection` is
+    // `readDefaultBody` refuses `{}` itself; `readObjectRouteBody` RETURNS it and `resolveConnection` is
     // what then refuses. Both answers are 400 and both sentences are true of the body, but they are
     // different sentences on one handler, so the pair is asserted rather than left for a later reader
     // to discover from a bug report.
     const response = await handleObjectRequest(post({}), probeRoute, async () => ({ ok: true }), {
-      readBody: (req) => readBoundedJson(req, 1024),
+      readBody: (req) => readObjectRouteBody(req, 1024),
     });
 
     expect(response.status).toBe(400);
@@ -1918,16 +2200,16 @@ describe("the body read the handler actually performs", () => {
     });
   });
 
-  test("readBoundedJson's 413 reaches the wire THROUGH the handler, sentence and status", async () => {
+  test("readObjectRouteBody's 413 reaches the wire THROUGH the handler, sentence and status", async () => {
     // The edit routes' exact call shape, with a small limit standing in for EDIT_BODY_BYTE_LIMIT so
-    // the body is a test-sized one. Before this, `readBoundedJson` had never once been reached
+    // the body is a test-sized one. Before this, `readObjectRouteBody` had never once been reached
     // through `handleObjectRequest`, so nothing proved its `ObjectRouteError` was rendered by the
     // catch rather than escaping as a 500.
     const response = await handleObjectRequest(
       post({ text: "x".repeat(2048) }),
       probeRoute,
       async () => ({ ok: true }),
-      { readBody: (req) => readBoundedJson(req, 1024) },
+      { readBody: (req) => readObjectRouteBody(req, 1024) },
     );
 
     expect(response.status).toBe(413);
@@ -1948,6 +2230,70 @@ describe("the body read the handler actually performs", () => {
       error: "that plan is not one this server will run",
       code: "EDIT_PLAN_INVALID",
     });
+  });
+});
+
+/**
+ * The two refusals the edit routes' body read took from the shared reader in
+ * `src/lib/api/bounded-json.ts`, measured through the real route handlers. Before that reader, a
+ * byte that is not UTF-8 was decoded to U+FFFD and parsed, and a declared Content-Length over the
+ * bound was read before it was refused.
+ */
+describe("the edit routes' body read", () => {
+  const editRoutes = ["edit-plan", "edit-apply"] as const;
+
+  test("a body that is not valid UTF-8 answers 400 with the not-valid-JSON sentence", async () => {
+    const prefix = new TextEncoder().encode('{"connectionId":"seed-1","sql":"');
+    const bytes = new Uint8Array([...prefix, 0xff, 0x22, 0x7d]);
+    for (const name of editRoutes) {
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      const response = await objectRoutes[name].POST(
+        new Request(`http://localhost:3000/api/db/objects/${name}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: bytes,
+        }) as never,
+      );
+      expect(response.status).toBe(400);
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+        error: "this request body is not valid JSON",
+      });
+    }
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
+  });
+
+  test("a declared Content-Length over the bound answers 413 before the body is read", async () => {
+    for (const name of editRoutes) {
+      let pulls = 0;
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls += 1;
+            controller.enqueue(new TextEncoder().encode('{"connectionId":"seed-1"}'));
+            controller.close();
+          },
+        },
+        // No read-ahead: a pull happens only when the reader asks, so a zero count proves no read.
+        { highWaterMark: 0 },
+      );
+      const request = new Request(`http://localhost:3000/api/db/objects/${name}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(EDIT_BODY_BYTE_LIMIT + 1) },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      const response = await objectRoutes[name].POST(request as never);
+      expect(response.status).toBe(413);
+      // oxlint-disable-next-line no-await-in-loop -- one route after the other, so a failure names its route.
+      expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+        error: `this request body is larger than ${EDIT_BODY_BYTE_LIMIT} bytes`,
+      });
+      expect(pulls).toBe(0);
+      expect(request.bodyUsed).toBe(false);
+    }
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(0);
   });
 });
 

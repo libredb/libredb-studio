@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { LoaderCircle, PencilLine, RotateCcw, Square, TriangleAlert } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
@@ -472,7 +472,7 @@ export function answerCardState(timeline: AgentRunTimeline): AnswerState | null 
   return OPEN_STATUSES.has(timeline.status) ? "running" : null;
 }
 
-export function AnswerCard({
+export const AnswerCard = memo(function AnswerCard({
   timeline,
   capabilities,
   onApplyStatement,
@@ -527,7 +527,7 @@ export function AnswerCard({
       {state === "running" && <RunningAnswer timeline={timeline} onStop={onStop} />}
     </section>
   );
-}
+});
 
 /** How the run ended, for the endings the server calls failures. */
 function FailureNote({
