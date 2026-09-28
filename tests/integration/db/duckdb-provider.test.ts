@@ -1416,7 +1416,7 @@ describe("object surface", () => {
    * docblock) this test is what refuses it until a read exists.
    *
    * All four are `sql` and not a dialect id. `plsql`, `tsql` and `cql` are not registrable
-   * ids in the installed monaco-editor 0.56.0 bundle and DuckDB has no id of its own
+   * ids in the installed monaco-editor 0.57.0 bundle and DuckDB has no id of its own
    * either, so `sql` is the honest choice rather than a compromise here: DuckDB's dialect
    * is PostgreSQL-shaped and the text the engine publishes is ordinary SQL.
    */

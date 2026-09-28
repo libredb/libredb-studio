@@ -2761,7 +2761,7 @@ describe("object surface", () => {
       .sort();
 
     // `sql` and NOT `tsql`. MEASURED in this epic: `tsql` is not one of the 89 language ids
-    // the installed monaco-editor 0.56.0 bundle registers, and an unregistered id degrades
+    // the installed monaco-editor 0.57.0 bundle registers, and an unregistered id degrades
     // to plain text with no throw and nothing observable (#789).
     expect(declared).toEqual([
       ["function", "sql"],

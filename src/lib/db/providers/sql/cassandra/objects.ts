@@ -158,7 +158,7 @@ export const CASSANDRA_CONTAINER_LEVELS: ContainerLevels = Object.freeze([
 /**
  * The Monaco id every readable kind here renders under, and the reason it is a compromise.
  *
- * `cql` IS NOT A MONACO LANGUAGE ID. Measured against the installed monaco-editor 0.56.0
+ * `cql` IS NOT A MONACO LANGUAGE ID. Measured against the installed monaco-editor 0.57.0
  * bundle in this epic: it registers 89 ids and `cql` is not one of them, and an unregistered
  * id degrades to plain text with no throw and nothing observable. `sql` is the closest
  * registered dialect, so a `CREATE TABLE` renders correctly and CQL-only spellings

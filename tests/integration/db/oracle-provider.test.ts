@@ -2818,7 +2818,7 @@ describe("object surface", () => {
       .sort();
     // All nine, because DBMS_METADATA.GET_DDL answers every one of them and the translation
     // table this provider already ships names a metadata type for each. `sql` and NOT
-    // `plsql`: measured, `plsql` is not among the 89 language ids monaco-editor 0.56.0
+    // `plsql`: measured, `plsql` is not among the 89 language ids monaco-editor 0.57.0
     // registers, and an unregistered id degrades to plain text silently (#789).
     expect(declared).toEqual([
       ["function", "sql"],

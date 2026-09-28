@@ -1074,7 +1074,7 @@ the author typed, so a reader must never be shown it as an original. The fixture
 carrying a `SETTINGS index_granularity = 8192` clause nobody wrote.
 
 `sql` is the right Monaco id and no part of it is a compromise: ClickHouse SQL is SQL, and the
-installed monaco-editor 0.56.0 registers `sql`. The three ids this design had to refuse
+installed monaco-editor 0.57.0 registers `sql`. The three ids this design had to refuse
 elsewhere, `plsql`, `tsql` and `cql`, are not registered at all and are not needed here.
 
 #### The read takes NO identifier position, and that is the security decision

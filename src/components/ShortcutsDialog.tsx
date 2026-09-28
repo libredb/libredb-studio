@@ -76,7 +76,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
   if (target.isContentEditable) return true;
-  // Monaco 0.56 focuses a `div.native-edit-context`, not a textarea or a contentEditable
+  // Monaco 0.57 focuses a `div.native-edit-context`, not a textarea or a contentEditable
   // element, so neither check above sees it - and `?` is the positional-parameter
   // placeholder in SQLite and MySQL, so missing this let the dialog eat the keystroke
   // mid-query. `.monaco-editor` is Monaco's own stable root class, not an internal we're

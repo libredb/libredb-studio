@@ -449,7 +449,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // publishes a definition text for each of them and no fifth kind is declared, so
       // the "declares nothing" half of this engine's row in #789 is empty. `sql` is the
       // honest id rather than a compromise: DuckDB's dialect is PostgreSQL-shaped, the
-      // installed monaco-editor 0.56.0 registers no DuckDB id, and the text the engine
+      // installed monaco-editor 0.57.0 registers no DuckDB id, and the text the engine
       // publishes is ordinary SQL. The `macro` text is the only `partial` form ON THIS
       // ENGINE, not in the fleet: the #789 design names PostgreSQL `view` and
       // `materialized_view` and Couchbase `function` as producers of the same arm, and

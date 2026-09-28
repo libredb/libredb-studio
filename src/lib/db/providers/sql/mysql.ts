@@ -1083,7 +1083,7 @@ const BULK_DETAIL_SQL: Record<string, BulkDetailStatements> = Object.fromEntries
  * `hasSource` and miss its language: an absent or unregistered Monaco id degrades to plain text
  * with no throw and nothing observable, which is a Source tab that silently stops highlighting.
  *
- * `mysql` is a language id the installed monaco-editor 0.56.0 bundle really registers, unlike
+ * `mysql` is a language id the installed monaco-editor 0.57.0 bundle really registers, unlike
  * `plsql`, `tsql` and `cql`, which the design's first-pass table named and the bundle does not
  * have. The same id serves MariaDB: the two servers share one dialect for everything here
  * except the ORACLE-mode package, whose text Monaco highlights as MySQL with the quoted

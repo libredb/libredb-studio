@@ -287,7 +287,7 @@ const PACKAGE_BODY_OBJECT_TYPE = { dictionary: "PACKAGE BODY", metadata: "PACKAG
  * no "declares nothing" list for this provider, and the integration suite asserts that
  * emptiness in both directions so a tenth kind cannot quietly gain a Source tab.
  *
- * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.56.0: `plsql` is not
+ * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.57.0: `plsql` is not
  * among the 89 language ids the bundle registers, and an unregistered id degrades to plain
  * text SILENTLY, with no throw and nothing observable. A PL/SQL body therefore renders under
  * the SQL grammar, which highlights the DML and misses `IS`/`BEGIN`/`EXCEPTION`. That is a

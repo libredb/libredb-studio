@@ -886,7 +886,7 @@ sentence names the catalog view and the column the decision came from instead.
   encryption at all.
 
 **`sql` and not `tsql`.**
-MEASURED in #789: `tsql` is not among the 89 language ids the installed monaco-editor 0.56.0 bundle
+MEASURED in #789: `tsql` is not among the 89 language ids the installed monaco-editor 0.57.0 bundle
 registers, and an unregistered id degrades to plain text silently.
 So a T-SQL definition renders under the generic `sql` grammar, and T-SQL-only spellings
 (`OUTER APPLY`, `MERGE ... OUTPUT`, `@variable`) draw as plain identifiers.

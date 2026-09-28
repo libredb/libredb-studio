@@ -716,7 +716,7 @@ One writer for both, because two copies are two chances for the read to answer "
 `pg_get_function_identity_arguments()` is not used, for the reason [§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it) gives: it renders parameter names.
 
 **`pgsql` is a real Monaco language id and is no compromise here.**
-It is among the ids the installed `monaco-editor` 0.56.0 registers, unlike `plsql` and `tsql`, which Oracle and SQL Server have to render under `sql`.
+It is among the ids the installed `monaco-editor` 0.57.0 registers, unlike `plsql` and `tsql`, which Oracle and SQL Server have to render under `sql`.
 A PL/pgSQL body inside a `$function$` dollar-quoted string is highlighted as PostgreSQL SQL rather than as a procedural language, which is the closest this bundle can come.
 
 ### 3.1.6 Object edit (#789)

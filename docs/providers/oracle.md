@@ -1332,7 +1332,7 @@ The owner is the segment the DECLARATION assigns to the `schema` container level
 is the LAST path segment; neither is read by a literal index.
 
 **The Monaco language id is `sql`, and that is a compromise this provider states rather than hides.**
-MEASURED on the installed monaco-editor 0.56.0: `plsql` is not among the 89 language ids the bundle
+MEASURED on the installed monaco-editor 0.57.0: `plsql` is not among the 89 language ids the bundle
 registers, and an unregistered id degrades to plain text SILENTLY, with no throw and nothing
 observable. A PL/SQL body therefore renders under the SQL grammar, which highlights the DML and
 misses `IS`, `BEGIN`, `EXCEPTION` and the block structure.

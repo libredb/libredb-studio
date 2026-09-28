@@ -37,7 +37,7 @@ None of it is a GitHub issue.
 - [Release pipeline](#release-pipeline) — REL1–REL4 · 4
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 7
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
@@ -3405,34 +3405,6 @@ a CC BY-SA database with no note connecting them.
 **Done when:** a generated `NOTICE` (or `THIRD_PARTY_LICENSES`) ships at the root of the image and the
 tarballs, names the sample database's separate terms explicitly, and is regenerated from the lockfile
 rather than hand-maintained.
-
-### C10. The last DOMPurify advisories are held open by Monaco's pin
-
-`dompurify` via `monaco-editor` is the only advisory chain that reaches a user. Everything else
-`bun audit` reports — `minimatch`, `brace-expansion`, `flatted`, `picomatch`, `esbuild`, `@babel/core`,
-`undici` — arrives through `eslint`, `typescript-eslint`, `knip`, `tsup`, `workflow` and `@ai-sdk/*`,
-and none of it is in the image. `undici` was checked specifically, because the agent runtime sits in
-`devDependencies` by design yet reaches the standalone build: building with `DOCKER_BUILD=true` shows
-no `undici` anywhere under `.next/standalone`, since `@ai-sdk/provider-utils` reaches it through a
-`createRequire` call that output tracing cannot follow.
-
-#374 moved the shipped copy from 3.2.7 to 3.4.8 by upgrading Monaco itself, clearing 14 of the 17.
-**Four remain** on GitHub Advanced Security's count, and none can be closed here: they need 3.4.9,
-3.4.11, 3.4.12 and 3.4.13. Monaco pins dompurify exactly, and 0.56.0 is its newest release.
-
-**Do not "fix" these with a `package.json` override.** Monaco ships DOMPurify inlined in its prebuilt
-`min/vs` bundle and nothing in `src/` imports the package. An override would change a lockfile entry no
-shipped code reads, leave the bundle byte-identical, and turn `bun audit` and Trivy green at once. The
-GHAS findings land on `bun.lock:<line>`, which is the tell: every one of those tools reads the
-manifest, not the artefact.
-
-Two related non-findings, so they are not re-derived. `dompurify` is dual-licensed (MPL-2.0 OR
-Apache-2.0), so the copyleft half can simply not be chosen. And the LGPL-3.0 `@img/sharp-libvips-*`
-binaries never reach the runtime image, because the runner stage copies `node_modules` selectively and
-nothing in `src/` uses `next/image`.
-
-**Done when:** Monaco ships a dompurify at or past 3.4.13. Re-check on each Monaco release, and verify
-by grepping the staged bundle for the version literal rather than trusting the lockfile.
 
 ### C11. The published SBOM carries no component for the bundled Node.js runtime
 

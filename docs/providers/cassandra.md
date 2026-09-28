@@ -1465,7 +1465,7 @@ first and then the remaining columns alphabetically, with all twenty table optio
 Nothing in the database holds the author's own bytes.
 
 **`cql` IS NOT A MONACO LANGUAGE ID**, and every row above says `sql` because of it. The installed
-monaco-editor 0.56.0 bundle registers 89 ids and `cql` is not among them; an unregistered id degrades
+monaco-editor 0.57.0 bundle registers 89 ids and `cql` is not among them; an unregistered id degrades
 to plain text with no throw and nothing observable. `sql` is the closest registered dialect, so a
 `CREATE TABLE` renders correctly and the CQL-only spellings (`PRIMARY KEY ((a), b)`,
 `frozen<address>`, a `$$ ... $$` function body) are highlighted as whatever the SQL tokenizer makes

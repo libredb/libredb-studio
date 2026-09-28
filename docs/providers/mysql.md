@@ -1114,7 +1114,7 @@ CALL bulk26a1.seed();
 parts. **Every kind either server declares can answer**, which makes this the one provider in the
 fleet with no kind that declares nothing: MySQL's six and MariaDB's eight each have a `SHOW CREATE`
 form. The Monaco language id is `mysql` on all eight; `mysql` is an id the installed monaco-editor
-0.56.0 bundle really registers, unlike `plsql`, `tsql` and `cql`.
+0.57.0 bundle really registers, unlike `plsql`, `tsql` and `cql`.
 
 Measured 2026-09-13 on **MySQL 26.7.0** and **MariaDB 12.3.2** against the two committed fixtures.
 

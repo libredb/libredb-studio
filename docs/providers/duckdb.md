@@ -880,7 +880,7 @@ Every declared kind publishes a definition text, so **all four declare `hasSourc
 one object and answers a document of exactly one part.
 
 `sql` is the honest Monaco id rather than a compromise. DuckDB's dialect is PostgreSQL-shaped, the
-installed monaco-editor 0.56.0 registers no DuckDB id, and the text the engine publishes is ordinary
+installed monaco-editor 0.57.0 registers no DuckDB id, and the text the engine publishes is ordinary
 SQL. This is unlike Oracle, SQL Server and Cassandra, where `plsql`, `tsql` and `cql` are not
 registrable ids in that bundle and `sql` really is a compromise those provider docs record.
 

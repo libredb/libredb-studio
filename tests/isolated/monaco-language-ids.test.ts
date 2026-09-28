@@ -17,7 +17,7 @@
  * - The four RICH languages (`css`, `html`, `json`, `typescript`) are separate worker-backed
  *   modules under `vs/language/`, each giving its id a full language service rather than the
  *   tokenizer a basic contribution registers. Three of those four ids are ALSO registered by the
- *   basic contribution, and `json` IS THE ONE THAT IS NOT: measured on 0.56.0, of the 89 basic ids
+ *   basic contribution, and `json` IS THE ONE THAT IS NOT: measured on 0.57.0, of the 89 basic ids
  *   `css`, `html` and `typescript` are present and `json` is absent. That single absence is the
  *   whole reason the rich half of this guard is load-bearing, because `json` is the declared
  *   language of fourteen source-bearing kinds across the two search products, MongoDB, Prometheus
@@ -44,8 +44,8 @@
  * contribution file were measured byte-identical with `cmp`, so the package directory is the same
  * bundle one step earlier and it is the one that is always on disk after `bun install`.
  *
- * Measured on monaco-editor 0.56.0, 2026-09-13: 89 basic ids, 4 rich ids, and exactly one of the
- * four rich ids (`json`) absent from the 89.
+ * Measured on monaco-editor 0.57.0, 2026-09-28: 89 basic ids, 4 rich ids, and exactly one of the
+ * four rich ids (`json`) absent from the 89, the same counts 0.56.0 gave on 2026-09-13.
  *
  * WHAT THIS FILE CANNOT SHARE A PROCESS WITH (#789). It builds providers through the REAL
  * `createDatabaseProvider`, which is the whole point: a declaration census that read a double
@@ -93,7 +93,7 @@ const RICH_LANGUAGE_DIR = join(MONACO_ROOT, "min/vs/language");
  * re-measure rather than to edit the digit. Read from the installed package so a dependency bump
  * fails here first, with the old and the new version both on screen.
  */
-const MONACO_VERSION = "0.56.0";
+const MONACO_VERSION = "0.57.0";
 const BASIC_LANGUAGE_COUNT = 89;
 
 /**

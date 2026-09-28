@@ -439,7 +439,7 @@ const TRIGGER_KIND = "trigger";
  * stopped highlighting.
  *
  * `sql` and NOT `tsql`. MEASURED in #789: `tsql` is not among the 89 language ids the
- * installed monaco-editor 0.56.0 bundle registers, and neither are `plsql` and `cql`, so
+ * installed monaco-editor 0.57.0 bundle registers, and neither are `plsql` and `cql`, so
  * the one id in the bundle that highlights this dialect is the generic one. T-SQL keywords
  * the generic grammar does not know (`OUTER APPLY`, `MERGE ... OUTPUT`) render as plain
  * identifiers, which is a compromise `docs/providers/mssql.md` records rather than hides.

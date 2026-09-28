@@ -1026,7 +1026,7 @@ reach this arm is a declaration somebody removed.
 |---|---|---|
 | `id` | `definition` | one part, always: a library has one Lua text |
 | `label` | `Definition` | rendered as-is |
-| `language` | the kind's declared `sourceLanguage`, which is `lua` | `lua` IS a Monaco language id the installed 0.56.0 bundle registers, unlike `plsql`, `tsql` and `cql` |
+| `language` | the kind's declared `sourceLanguage`, which is `lua` | `lua` IS a Monaco language id the installed 0.57.0 bundle registers, unlike `plsql`, `tsql` and `cql` |
 | `form` | `complete` | the text runs as given: it is what `FUNCTION LOAD` was handed |
 | `origin` | `stored` | the author's own bytes. Measured on Redis 8.10.0: `WITHCODE` answers the shebang line and the body exactly as they were loaded, with no reformatting |
 

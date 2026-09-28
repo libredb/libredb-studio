@@ -196,7 +196,7 @@ export const COUCHBASE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     // statement this product composed from the keys. The index KEYS are in
     // `describeObject`, which is where a fact the catalog does publish belongs.
     hasSource: true,
-    // SQL++, and `sql` is the closest id the installed monaco-editor 0.56.0 registers.
+    // SQL++, and `sql` is the closest id the installed monaco-editor 0.57.0 registers.
     // There is no `n1ql` and no `sqlpp` in its 89 ids, and an unregistered id degrades to
     // plain text with no throw and nothing observable.
     sourceLanguage: "sql",
