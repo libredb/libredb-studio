@@ -2082,6 +2082,199 @@ describe("MSSQLProvider declared column types", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Zoneless value types (#1132)
+// ---------------------------------------------------------------------------
+
+/**
+ * A `Date` read the way tedious reads a zoneless value (`value-parser.js`): the millisecond
+ * part sits in the `Date` and the remainder rides beside it as a non-enumerable
+ * `nanosecondsDelta`. A fixture that only set the `Date` would let a fix that drops the
+ * sub-millisecond digits pass.
+ */
+function tediousDate(milliseconds: number, nanosecondsDelta: number): Date {
+  const date = new Date(milliseconds);
+  Object.defineProperty(date, "nanosecondsDelta", { enumerable: false, value: nanosecondsDelta });
+  return date;
+}
+
+/**
+ * `time`, `date` and `datetime2` do not hold a moment, and the driver hands all three back
+ * as a `Date` that pretends they do: `time` becomes a time-of-day on an invented
+ * 1970-01-01, `date` a UTC midnight, `datetime2` a wall-clock reading mapped through UTC.
+ * Serialized as ISO instants they report moments none of them holds, and a `time(7)` loses
+ * four of its seven digits to the format.
+ *
+ * `datetimeoffset` is the control that must NOT be converted: it IS an instant, so its ISO
+ * shape is the honest one.
+ */
+describe("MSSQLProvider zoneless value types (#1132)", () => {
+  let provider: MSSQLProvider;
+
+  /** A recordset the way `mssql` builds one: an array with a `columns` map on it. */
+  function withColumns(
+    rows: Record<string, unknown>[],
+    columns: Record<string, { declaration: string; scale?: number }>,
+  ) {
+    const recordset = rows as Record<string, unknown>[] & { columns: unknown };
+    recordset.columns = Object.fromEntries(
+      Object.entries(columns).map(([name, entry]) => [
+        name,
+        { name, type: { declaration: entry.declaration }, scale: entry.scale },
+      ]),
+    );
+    return recordset;
+  }
+
+  beforeEach(() => {
+    capturedInputs = [];
+    cancelShouldThrow = false;
+    provider = new MSSQLProvider(baseConfig);
+  });
+
+  afterEach(async () => {
+    try {
+      await provider.disconnect();
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("time(7) keeps all seven digits, from the millisecond part and the driver's remainder together", async () => {
+    // What the driver built for `CAST('10:30:00.1234567' AS time(7))`: the `Date` holds
+    // 10:30:00.123 and the four remaining digits ride as the remainder.
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ t: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567) }], {
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe("10:30:00.1234567");
+    expect(result.fields).toEqual(["t"]);
+  });
+
+  test("time(3) and time(0) carry exactly the digits their scale declares", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            t3: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0),
+            t0: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 0), 0),
+          },
+        ],
+        { t3: { declaration: "time", scale: 3 }, t0: { declaration: "time", scale: 0 } },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t3, t0 FROM types");
+
+    expect(result.rows[0].t3).toBe("10:30:00.123");
+    expect(result.rows[0].t0).toBe("10:30:00");
+  });
+
+  test("a time Date that arrived without the driver's remainder keeps its milliseconds, padded to the scale", async () => {
+    // The remainder is on every value tedious reads; a Date that lost it must not put
+    // `NaN` into the text, and its milliseconds are still the ones the column holds.
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ t: new Date(Date.UTC(1970, 0, 1, 10, 30, 0, 123)) }], {
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe("10:30:00.1230000");
+  });
+
+  test("date reads as the calendar day it is, not as a UTC midnight instant", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ d: new Date(Date.UTC(2026, 8, 1)) }], { d: { declaration: "date" } }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT d FROM types");
+
+    expect(result.rows[0].d).toBe("2026-09-01");
+  });
+
+  test("datetime2 reads as the engine's wall-clock text, fraction included when the scale has one", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            at7: tediousDate(Date.UTC(2026, 8, 1, 10, 30, 0, 123), 0.0004567),
+            at0: new Date(Date.UTC(2026, 8, 1, 10, 30, 0)),
+          },
+        ],
+        { at7: { declaration: "datetime2", scale: 7 }, at0: { declaration: "datetime2", scale: 0 } },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT at7, at0 FROM types");
+
+    expect(result.rows[0].at7).toBe("2026-09-01 10:30:00.1234567");
+    expect(result.rows[0].at0).toBe("2026-09-01 10:30:00");
+  });
+
+  test("datetimeoffset stays an instant, and neither a NULL nor any other declaration is touched", async () => {
+    const instant = tediousDate(Date.UTC(2026, 8, 1, 10, 30, 0, 123), 0.0004567);
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ at: instant, id: 19, name: "x", t: null }], {
+        at: { declaration: "datetimeoffset", scale: 7 },
+        id: { declaration: "bigint" },
+        name: { declaration: "nvarchar" },
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT at, id, name, t FROM types");
+
+    expect(result.rows[0].at).toBe(instant);
+    expect(result.rows[0].id).toBe(19);
+    expect(result.rows[0].name).toBe("x");
+    expect(result.rows[0].t).toBeNull();
+  });
+
+  test("a result without the driver's column map is left exactly as the driver built it", async () => {
+    const untyped = tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567);
+    mockQueryFn = async () => ({ recordset: [{ t: untyped }], rowsAffected: [1] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe(untyped);
+  });
+
+  test("queryInTransaction() reads the same map, so its values convert the same way", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ t: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567) }], {
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe("10:30:00.1234567");
+    await provider.rollbackTransaction();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The object surface (#789)
 // ---------------------------------------------------------------------------
 
@@ -5336,6 +5529,16 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     expect(typed.fields).toEqual(["ok"]);
     expect(typed.columnTypes).toEqual({ ok: "int" });
+  });
+
+  test("a zoneless value served under the profile is the engine's text too, on the same column map (#1132)", async () => {
+    const profiled = await openProfiled();
+    engine.rows = [{ t: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567) }];
+    engine.columns = { t: { name: "t", type: { declaration: "time" }, scale: 7 } };
+
+    const result = await profiled.queryReadOnly(READ_SELECT.sql, budget());
+
+    expect(result.rows[0].t).toBe("10:30:00.1234567");
   });
 
   // -------------------------------------------------------------------------

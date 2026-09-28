@@ -367,6 +367,33 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   1234567890123456.7891234567 as the number 1234567890123456.8; `MONEY` 922337203685477.5807 as
   922337203685477.6; `NUMERIC(20,4)` and `INT` as numbers of their own value. Fetching the three
   that round as strings would preserve fidelity.
+- **`time`, `date` and `datetime2` read as the engine's OWN TEXT (#1132), because none of them
+  holds a moment.** `tedious` reads all three as a `Date` built in UTC - `time` as a time-of-day
+  on an invented 1970-01-01, `date` as UTC midnight, `datetime2` as a wall-clock reading mapped
+  through UTC - and a `time(7)` loses the four digits a `Date` cannot carry. Serialized as an
+  ISO instant, `CAST('10:30:00.1234567' AS time(7))` arrived as `1970-01-01T10:30:00.123Z`: a
+  moment it does not hold, and four digits short. `query()`, `queryReadOnly()` and
+  `queryInTransaction()` now rewrite the three declarations into the engine's text, keyed on
+  `recordset.columns` - the same map [§5.4](#54-declared-column-types) reads - and reconstruct
+  the fraction from the remainder the driver keeps on the value (`nanosecondsDelta`), so
+  `time(7)` keeps all seven digits. `datetimeoffset` is deliberately untouched: it IS an
+  instant. Measured 2026-09-28 on SQL Server 2022 CU27 (16.0.4295.3) through `mssql` 12.7.2 /
+  `tedious` 20.3.0, one row:
+
+  | declared | engine's own text | read BEFORE (the driver's `Date`) | read now |
+  |---|---|---|---|
+  | `TIME(7)` `10:30:00.1234567` | `10:30:00.1234567` | `1970-01-01T10:30:00.123Z` | `10:30:00.1234567` |
+  | `TIME(3)` `10:30:00.123` | `10:30:00.123` | `1970-01-01T10:30:00.123Z` | `10:30:00.123` |
+  | `TIME(0)` `10:30:00` | `10:30:00` | `1970-01-01T10:30:00.000Z` | `10:30:00` |
+  | `DATE` `2026-09-01` | `2026-09-01` | `2026-09-01T00:00:00.000Z` | `2026-09-01` |
+  | `DATETIME2(7)` `2026-09-01 10:30:00.1234567` | `2026-09-01 10:30:00.1234567` | `2026-09-01T10:30:00.123Z` | `2026-09-01 10:30:00.1234567` |
+  | `DATETIME2(0)` `2026-09-01 10:30:00` | `2026-09-01 10:30:00` | `2026-09-01T10:30:00.000Z` | `2026-09-01 10:30:00` |
+  | `DATETIMEOFFSET(7)` `… +05:30` | (an instant, unconverted) | `2026-09-01T05:00:00.123Z` | `2026-09-01T05:00:00.123Z` |
+
+  The engine's own text is what the guard compares against - `CONVERT(varchar, …)` of the same
+  row, not a hardcoded spelling; rerun with
+  [`tests/live/mssql-zoneless-values.ts`](../../tests/live/mssql-zoneless-values.ts)
+  ([§13.4](#134-optional-verifying-against-a-live-sql-server)).
 - **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
@@ -1648,6 +1675,17 @@ docker run --rm -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
 
 `--cpus 4` is not decoration on a many-core host: SQL Server asserts on the processor topology in a
 container, which is the same reason `database-compose.yml` pins `2022-latest`.
+
+`tests/live/mssql-zoneless-values.ts` (#1132, [§5.3](#53-data-type--parameter-handling)) holds the
+zoneless-value reading against the server itself: it creates a throwaway database, reads
+`time`/`date`/`datetime2`/`datetimeoffset` through the provider AND as the engine's own `CONVERT`
+text, and requires the two to agree - including that the raw driver value is still the invented
+`Date` the conversion compensates for. Its expectations are the server's own printed text, not
+hardcoded spellings. Supply the password configured on the container:
+
+```bash
+MSSQL_TEST_PORT=1433 MSSQL_TEST_PASSWORD="$PROBE_PASSWORD" bun tests/live/mssql-zoneless-values.ts
+```
 
 For the object surface, apply the fixture first. The image has **no init-script directory** (no
 `/docker-entrypoint-initdb.d`, no `/container-entrypoint-initdb.d`), so it cannot be mounted the way
