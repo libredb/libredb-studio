@@ -96,15 +96,15 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/libredb/libredb-studio/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/hero-editor.png</image>
+      <image>https://raw.githubusercontent.com/libredb/libredb-studio/faf1667c8771edcc14493b19514e782c4127f073/public/screenshots/hero-editor.png</image>
       <caption>Running a query and browsing results in the SQL editor</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/libredb/libredb-studio/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/connection-modal.png</image>
+      <image>https://raw.githubusercontent.com/libredb/libredb-studio/faf1667c8771edcc14493b19514e782c4127f073/public/screenshots/connection-modal.png</image>
       <caption>Adding a database connection</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/libredb/libredb-studio/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/erd-diagram.png</image>
+      <image>https://raw.githubusercontent.com/libredb/libredb-studio/faf1667c8771edcc14493b19514e782c4127f073/public/screenshots/erd-diagram.png</image>
       <caption>Entity-relationship diagram of a schema</caption>
     </screenshot>
   </screenshots>
