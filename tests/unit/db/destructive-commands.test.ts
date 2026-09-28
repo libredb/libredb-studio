@@ -143,6 +143,20 @@ describe("isDestructiveNonSqlQuery", () => {
   });
 
   test.each<[string]>([
+    ["LPOP queue"],
+    ["RPOP queue"],
+    ["LMPOP 1 queue LEFT COUNT 1"],
+    ["LMOVE src dst LEFT RIGHT"],
+    ["RPOPLPUSH src dst"],
+    ["ZPOPMIN z"],
+    ["ZPOPMAX z"],
+    ["ZMPOP 1 z MIN COUNT 1"],
+  ])("still asks before %s, the non-blocking form of a refused command", (query) => {
+    // The provider runs these, and each one removes what it returns.
+    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(true);
+  });
+
+  test.each<[string]>([
     ["GET k"],
     ["HGETALL user:1"],
     ["SCAN 0 MATCH session:* COUNT 50"],

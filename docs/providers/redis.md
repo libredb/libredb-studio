@@ -281,9 +281,9 @@ vocabulary - key, expiry, string, hash, list, set, sorted-set and stream writes,
 entry points, and the server and access commands, with container commands such as `CONFIG SET`
 matched on their two-token spelling - while a body it cannot read (broken JSON, a JSON body whose
 `command` is not a string) asks rather than staying silent. The vocabulary names only commands the
-provider runs: the blocking list-pop family is refused before it reaches the server
-([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)), so their non-blocking forms are the ones the
-gate asks about.
+provider runs: the blocking list and sorted-set pops are refused before they reach the server
+([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)), so their non-blocking
+forms are the ones the gate asks about.
 
 ### 3.5 Reply normalisation into the shared grid
 

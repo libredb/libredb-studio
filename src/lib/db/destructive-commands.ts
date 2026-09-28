@@ -76,8 +76,8 @@ const MONGODB_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set([
  * before they reach the server (`sharedConnectionRefusal` in
  * `src/lib/db/providers/keyvalue/redis.ts`, documented in section 5.2b of
  * `docs/providers/redis.md`), and a confirmation followed by that refusal would be
- * the double take this gate exists to avoid. The blocking list-pop commands
- * (`BLPOP` and its `B...` family) are refused that way, so only their
+ * the double take this gate exists to avoid. The blocking list and sorted-set pops
+ * (`BLPOP`, `BZPOPMIN` and the rest of the `B` forms) are refused that way, so only their
  * non-blocking forms (`LPOP`, `RPOP`, `LMPOP`, `LMOVE`, `RPOPLPUSH`, `ZPOPMIN`,
  * `ZPOPMAX`, `ZMPOP`) are here. `runCommand` itself calls
  * `client.call(command, ...args)` with no allow-list of any kind, so the vocabulary
