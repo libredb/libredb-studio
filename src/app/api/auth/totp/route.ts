@@ -15,7 +15,7 @@ type TotpAction = (request: Request, email: string, body: unknown) => Promise<Re
  */
 const ACTIONS: Record<string, TotpAction> = {
   begin: async (request, email, body) =>
-    NextResponse.json(await withLoginBudget(request, email, () => beginTotpEnrolment(email, body))),
+    NextResponse.json(await withLoginBudget(request, email, ROUTE, () => beginTotpEnrolment(email, body))),
   confirm: async (_request, email, body) => {
     const code =
       typeof body === "object" && body !== null && "code" in body && typeof body.code === "string" ? body.code : "";
@@ -23,7 +23,7 @@ const ACTIONS: Record<string, TotpAction> = {
     return NextResponse.json({ ok: true });
   },
   disable: async (request, email, body) => {
-    await withLoginBudget(request, email, () => disableOwnTotp(email, body));
+    await withLoginBudget(request, email, ROUTE, () => disableOwnTotp(email, body));
     return NextResponse.json({ ok: true });
   },
 };

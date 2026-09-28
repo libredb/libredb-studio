@@ -66,8 +66,14 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
 
   const session = await page.evaluate(async (path) => (await fetch(`${path}/api/auth/me`)).json(), prefix);
   expect(session.user.role).toBe("user");
+  // The redirect lands on the editor, which checks the active connection's health once it mounts.
+  // Wait for that check here: sent after the logout below, it would carry no cookie and answer 401.
+  const pulse = page.waitForResponse(
+    (response) => response.url().endsWith(`${prefix}/api/db/health`) && response.request().method() === "POST",
+  );
   await page.goto(`${prefix}/admin`);
   await expect(page).toHaveURL(new RegExp(`${prefix}/?$`));
+  expect((await pulse).status()).toBe(200);
 
   expect((await request.get(`${prefix}/logo.svg`)).status()).toBe(200);
   expect((await request.get(`${prefix}/monaco/vs/loader.js`)).status()).toBe(200);

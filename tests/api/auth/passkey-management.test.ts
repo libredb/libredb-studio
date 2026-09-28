@@ -80,6 +80,14 @@ async function signIn(email: string, password: string, totp?: string): Promise<s
   return currentToken();
 }
 
+function rateLimitTrips(): Array<Record<string, unknown>> {
+  return log.mock.calls
+    .map((call) => call[0])
+    .filter((line): line is string => typeof line === "string" && line.startsWith("{"))
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((line) => line.event === "rate_limit_exceeded");
+}
+
 function currentToken(): string {
   const entry = cookieJar.get("auth-token");
   if (!entry) throw new Error("no auth-token cookie");
@@ -177,6 +185,11 @@ describe("the passkey management route", () => {
       expect((await post({ action: "register-options", password: WRONG_PASSWORD }, "198.51.100.1")).status).toBe(401);
     }
     expect((await post({ action: "register-options", password: ALICE_PASSWORD }, "198.51.100.1")).status).toBe(429);
+    expect((await post({ action: "register-options", password: ALICE_PASSWORD }, "198.51.100.1")).status).toBe(429);
+    // Each wrong password is audited on its own; the budget filling is one more event, once.
+    expect(rateLimitTrips()).toEqual([
+      expect.objectContaining({ route: "POST /api/auth/passkey", bucket: "login_client", actor: ALICE }),
+    ]);
 
     clearRateLimitState();
     for (let i = 0; i < 20; i++) {

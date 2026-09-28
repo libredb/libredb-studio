@@ -143,6 +143,7 @@ An assertion without user verification is refused on every account.
 
 A passkey sign-in creates the same session a password sign-in does, carrying the stored account's current role and session version, so disabling the account, changing its role or setting its password ends it as it ends any other session.
 A disabled or deleted account cannot sign in with a passkey, and a role change applies to the next passkey session.
+The account is checked again inside the write that spends the challenge, so a change that lands during a sign-in refuses it rather than answering with a session the next request would end.
 
 Every refusal answers the same message, whatever the reason: "That passkey could not sign you in. If it was removed from Studio, delete it from your password manager too. Sign in with your password."
 The reason is recorded only in the audit log (see [Troubleshooting](#troubleshooting)).
@@ -375,7 +376,7 @@ The challenge of a ceremony that already succeeded was presented again, on this 
 A legitimate browser never does this; check that replica clocks agree if it appears without a reason.
 
 **`passkey_account_unavailable`.**
-A valid passkey of an account that is disabled or no longer exists.
+A valid passkey of an account that is disabled or no longer exists, or whose role or session version changed while the sign-in was in flight.
 
 **`passkey_duplicate`.**
 A registration presented a credential already registered to an account, this one or another.

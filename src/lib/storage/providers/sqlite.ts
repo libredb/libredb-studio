@@ -397,7 +397,20 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
 
   async recordPasskeySignIn(write: PasskeySignInWrite): Promise<void> {
     this.ensureDb();
+    // The account row first, under the immediate write lock, so the session the route mints is the
+    // account as this transaction left it.
     const record = this.db!.transaction(() => {
+      const account = this.db!.prepare("SELECT role, disabled, session_version FROM accounts WHERE email = ?").get(
+        write.email,
+      ) as Pick<AccountRow, "role" | "disabled" | "session_version"> | undefined;
+      if (
+        !account ||
+        Number(account.disabled) === 1 ||
+        account.role !== write.expectedRole ||
+        Number(account.session_version) !== write.expectedSessionVersion
+      ) {
+        throw new PasskeySignInConflict("account_changed");
+      }
       if (!this.spendChallenge(write.challenge, write.purgeSpentBefore)) {
         throw new PasskeySignInConflict("challenge_spent");
       }

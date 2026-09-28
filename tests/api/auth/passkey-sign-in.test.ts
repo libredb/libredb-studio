@@ -211,6 +211,35 @@ describe("POST /api/auth/passkey/sign-in", () => {
     expect(session?.sessionVersion).toBe(stored?.sessionVersion as number);
   });
 
+  test("an account disabled between the service's read and the store write answers the uniform 401 and sets no session", async () => {
+    const owner = await enrol({ role: "admin" });
+    const ip = freshAddress();
+    const { response } = await assertion(owner.authenticator, ip);
+    const provider = await fixture.provider();
+    const original = provider.recordPasskeySignIn.bind(provider);
+    const spy = spyOn(provider, "recordPasskeySignIn").mockImplementation(async (write) => {
+      await disable(owner.email);
+      return original(write);
+    });
+    try {
+      const answer = await verify(response, ip);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(answer.status).toBe(401);
+      expect(await answer.json()).toEqual({ success: false, message: SIGN_IN_FAILED });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(cookieJar.get("auth-token")).toBeUndefined();
+    expect(routeEvents()).toEqual([
+      expect.objectContaining({
+        type: "login_failure",
+        user: owner.email,
+        reason: "passkey_account_unavailable",
+        passkey: owner.passkeyId,
+      }),
+    ]);
+  });
+
   test("a passkey signs in an account that has TOTP without a code", async () => {
     const owner = await enrol({ totpSecret: "JBSWY3DPEHPK3PXP" });
     const ip = freshAddress();

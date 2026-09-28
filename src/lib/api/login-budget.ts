@@ -43,17 +43,21 @@ export function enforceLoginLimit(bucket: LoginBucket, key: string, actor: strin
  * For routes that check the current password or code of a signed-in owner (TOTP setup and
  * removal, passkey registration and removal), which makes each a guessing surface. It spends the
  * login route's two budgets, keyed the same way, so the guesses a caller gets are the same
- * whichever route they use.
+ * whichever route they use. The refusal goes through enforceLoginLimit, so the trip is audited
+ * once per window against the calling route, as it is on the login route.
  */
-export async function withLoginBudget<T>(request: Request, email: string, run: () => Promise<T>): Promise<T> {
+export async function withLoginBudget<T>(
+  request: Request,
+  email: string,
+  route: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const ip = clientAddress(request);
   const budgets = [
-    { bucket: "login_client", key: clientAddress(request) },
+    { bucket: "login_client", key: ip },
     { bucket: "login_account", key: hmacHex(email.toLowerCase()) },
   ] as const;
-  for (const { bucket, key } of budgets) {
-    const decision = peekRateLimit(bucket, key);
-    if (!decision.allowed) throw new RateLimitError(decision.retryAfterSeconds);
-  }
+  for (const { bucket, key } of budgets) enforceLoginLimit(bucket, key, email, ip, route);
   try {
     return await run();
   } catch (error) {

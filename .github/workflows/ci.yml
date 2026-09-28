@@ -385,6 +385,22 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
+      - name: Passkey storage contract on PostgreSQL
+        # The same contract cases tests/unit/lib/storage/providers/sqlite-passkeys.test.ts runs on
+        # SQLite in `bun run test`, against a real PostgreSQL: its casts, row locks and ON CONFLICT
+        # behaviour under concurrency are what the multi-replica guarantees rest on, and a mocked
+        # pg cannot show them. Superuser, because one case deletes an account with foreign keys off.
+        run: |
+          docker run -d --rm --name passkey-contract-pg -e POSTGRES_PASSWORD=contract -p 127.0.0.1:55432:5432 postgres:17
+          for i in $(seq 1 60); do
+            docker exec passkey-contract-pg psql -U postgres -tAc "select 1" > /dev/null 2>&1 && break
+            sleep 1
+          done
+          bun tests/live/passkey-store-postgres.ts
+          docker rm -f passkey-contract-pg
+        env:
+          LIBREDB_LIVE_POSTGRES_URL: postgresql://postgres:contract@127.0.0.1:55432/postgres?sslmode=disable
+
       - name: Install Playwright browsers
         # chromium only and no --with-deps: ubuntu-latest ships Google Chrome,
         # so chromium's shared libraries are already present, and this job runs

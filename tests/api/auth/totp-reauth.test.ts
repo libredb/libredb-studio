@@ -252,12 +252,24 @@ describe("changing your own second factor needs more than the session", () => {
   });
 
   test("wrong answers spend the login budget, so the two routes share one guess limit", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
     for (let i = 0; i < 5; i++) {
       expect((await totpRoute.POST(request({ action: "begin", password: `guess-${i}` }))).status).toBe(401);
     }
     const throttled = await totpRoute.POST(request({ action: "begin", password: ALICE_PASSWORD }));
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get("retry-after")).not.toBeNull();
+    expect((await totpRoute.POST(request({ action: "begin", password: ALICE_PASSWORD }))).status).toBe(429);
+    const trips = log.mock.calls
+      .map((call) => call[0])
+      .filter((line): line is string => typeof line === "string" && line.startsWith("{"))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line.event === "rate_limit_exceeded");
+    log.mockRestore();
+    // The budget filling is recorded once for the window, however many refusals follow.
+    expect(trips).toEqual([
+      expect.objectContaining({ route: "POST /api/auth/totp", bucket: "login_client", actor: ALICE }),
+    ]);
     // Same address, the login route: the budget is already spent.
     const viaLogin = await login(
       new Request("http://localhost/api/auth/login", {

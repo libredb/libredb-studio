@@ -6,6 +6,7 @@ import { AccountError } from "@/lib/local-accounts";
 
 const ADDRESS = "203.0.113.1";
 const EMAIL = "Owner@Example.com";
+const ROUTE = "POST /api/auth/passkey";
 
 function requestFrom(address: string): Request {
   return new Request("http://localhost/api/x", { method: "POST", headers: { "x-forwarded-for": address } });
@@ -95,25 +96,25 @@ describe("withLoginBudget", () => {
   }
 
   test("withLoginBudget charges both buckets only for a 401 AccountError", async () => {
-    const wrong = withLoginBudget(requestFrom(ADDRESS), EMAIL, async () => {
+    const wrong = withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, async () => {
       throw new AccountError(401, "wrong password");
     });
     await expect(wrong).rejects.toBeInstanceOf(AccountError);
     expect(spent()).toEqual({ client: true, account: true });
 
     clearRateLimitState();
-    const invalid = withLoginBudget(requestFrom(ADDRESS), EMAIL, async () => {
+    const invalid = withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, async () => {
       throw new AccountError(400, "invalid");
     });
     await expect(invalid).rejects.toBeInstanceOf(AccountError);
-    const plain = withLoginBudget(requestFrom(ADDRESS), EMAIL, async () => {
+    const plain = withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, async () => {
       throw new Error("boom");
     });
     await expect(plain).rejects.toThrow("boom");
     expect(spent()).toEqual({ client: false, account: false });
 
     clearRateLimitState();
-    expect(await withLoginBudget(requestFrom(ADDRESS), EMAIL, async () => "done")).toBe("done");
+    expect(await withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, async () => "done")).toBe("done");
     expect(spent()).toEqual({ client: false, account: false });
   });
 
@@ -125,12 +126,35 @@ describe("withLoginBudget", () => {
     };
 
     for (let i = 0; i < 5; i++) consumeRateLimit("login_client", ADDRESS);
-    await expect(withLoginBudget(requestFrom(ADDRESS), EMAIL, run)).rejects.toBeInstanceOf(RateLimitError);
+    await expect(withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, run)).rejects.toBeInstanceOf(RateLimitError);
 
     clearRateLimitState();
     for (let i = 0; i < 20; i++) consumeRateLimit("login_account", accountKey);
-    await expect(withLoginBudget(requestFrom(ADDRESS), EMAIL, run)).rejects.toBeInstanceOf(RateLimitError);
+    await expect(withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, run)).rejects.toBeInstanceOf(RateLimitError);
 
     expect(ran).toBe(0);
+  });
+
+  test("withLoginBudget audits the trip once per window, naming the route, the bucket and the owner", async () => {
+    const run = async () => "ran";
+    expect(await withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, run)).toBe("ran");
+    expect(auditLines(log)).toHaveLength(0);
+
+    for (let i = 0; i < 5; i++) consumeRateLimit("login_client", ADDRESS);
+    for (let i = 0; i < 2; i++) {
+      // oxlint-disable-next-line no-await-in-loop -- the second refusal must follow the first in the same window.
+      await expect(withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, run)).rejects.toBeInstanceOf(RateLimitError);
+    }
+    const trips = auditLines(log).filter((line) => line.event === "rate_limit_exceeded");
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({ route: ROUTE, bucket: "login_client", actor: EMAIL, ip: ADDRESS });
+
+    clearRateLimitState();
+    log.mockClear();
+    for (let i = 0; i < 20; i++) consumeRateLimit("login_account", accountKey);
+    await expect(withLoginBudget(requestFrom(ADDRESS), EMAIL, ROUTE, run)).rejects.toBeInstanceOf(RateLimitError);
+    const accountTrips = auditLines(log).filter((line) => line.event === "rate_limit_exceeded");
+    expect(accountTrips).toHaveLength(1);
+    expect(accountTrips[0]).toMatchObject({ route: ROUTE, bucket: "login_account", actor: EMAIL });
   });
 });

@@ -37,13 +37,15 @@ type PasskeyAction = (request: Request, session: UserPayload, body: unknown) => 
 const ACTIONS: Record<string, PasskeyAction> = {
   "register-options": async (request, session, body) =>
     NextResponse.json({
-      options: await withLoginBudget(request, session.username, () => beginPasskeyRegistration(session, body)),
+      options: await withLoginBudget(request, session.username, POST_ROUTE, () =>
+        beginPasskeyRegistration(session, body),
+      ),
     }),
   "register-verify": async (_request, session, body) =>
     NextResponse.json({ passkey: await completePasskeyRegistration(session, body) }),
   rename: async (_request, session, body) => NextResponse.json({ passkey: await renameOwnPasskey(session, body) }),
   remove: async (request, session, body) => {
-    const next = await withLoginBudget(request, session.username, () => removeOwnPasskey(session, body));
+    const next = await withLoginBudget(request, session.username, POST_ROUTE, () => removeOwnPasskey(session, body));
     // The removal ended every session of the account; the caller's own continues on the new version.
     await login(session.role, session.username, next);
     return NextResponse.json({ ok: true });

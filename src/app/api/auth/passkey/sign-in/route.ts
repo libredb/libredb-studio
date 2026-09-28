@@ -73,7 +73,7 @@ async function verify(body: unknown, ip: string): Promise<NextResponse> {
     return answer({ success: false, message: SIGN_IN_FAILED }, 401);
   }
   const { account, passkeyId } = signIn;
-  // The account row read after the signature verified, so the session carries its current role and version.
+  // The store confirmed this account, enabled and at this role and version, inside the write that spent the challenge.
   await login(account.role, account.email, account.sessionVersion);
   audit({ type: "login_success", user: account.email, result: "success", passkey: passkeyId }, ip);
   return answer({ success: true, role: account.role });

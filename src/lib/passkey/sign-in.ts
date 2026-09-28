@@ -5,8 +5,9 @@
  * user handle presence, credential lookup, user handle ownership, stored RP ID, signature (RP ID, UP, UV),
  * backup eligibility, account present and enabled, and only then the store transaction that spends the
  * challenge and advances the counter. State is written last because 7.2 step 24 defers every update until the
- * relying party's own checks pass, so a refused assertion leaves no row behind. The route mints the session
- * from the account returned here.
+ * relying party's own checks pass, so a refused assertion leaves no row behind. That transaction refuses unless
+ * the account is still enabled at the role and session version read here, so the session the route mints from
+ * the account returned here is one the next request accepts.
  *
  * Timing is not equalized: an unknown credential ID is refused before any signature check, so it answers
  * faster than a known one. A caller only learns about random, authenticator-chosen IDs it already holds, which
@@ -32,6 +33,7 @@ export interface PasskeySignIn {
 }
 
 const CONFLICT_REFUSAL: Record<PasskeySignInConflictReason, PasskeyRefusalReason> = {
+  account_changed: "passkey_account_unavailable",
   challenge_spent: "passkey_replayed",
   counter_not_increased: "passkey_counter",
   credential_missing: "passkey_unknown",
@@ -78,6 +80,9 @@ export async function completePasskeySignIn(body: unknown, clock: () => number =
   try {
     await provider.recordPasskeySignIn({
       id: match.passkey.id,
+      email: account.email,
+      expectedSessionVersion: account.sessionVersion,
+      expectedRole: account.role,
       signCount: verified.signCount,
       backupState: verified.backupState,
       usedAt: new Date(now).toISOString(),

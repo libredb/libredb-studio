@@ -913,21 +913,44 @@ describe("PostgresStorageProvider", () => {
     }
   });
 
+  const SIGN_IN = {
+    id: PASSKEY.id,
+    email: ACCOUNT.email,
+    expectedSessionVersion: ACCOUNT.sessionVersion,
+    expectedRole: ACCOUNT.role,
+    signCount: 5,
+    backupState: false,
+    usedAt: "2026-09-28T00:05:00.000Z",
+    challenge: CHALLENGE,
+    purgeSpentBefore: PURGE_BEFORE,
+  };
+
+  /** Answers the sign-in's account read with ACCOUNT unless `reply` answers the statement first. */
+  function signInReplies(reply: (sql: string) => Reply | undefined = () => undefined) {
+    return (sql: string): Reply =>
+      reply(sql) ??
+      (sql.includes("FROM accounts") ? { rows: [{ role: "user", disabled: 0, session_version: 3 }] } : {});
+  }
+
+  test("recordPasskeySignIn locks the account row before any passkey statement", async () => {
+    await provider.initialize();
+    const client = scriptedClient(signInReplies());
+    await provider.recordPasskeySignIn(SIGN_IN);
+    expect(client.statements.slice(0, 3)).toEqual([
+      { sql: "BEGIN", params: [] },
+      {
+        sql: "SELECT role, disabled, session_version FROM accounts WHERE email = $1 FOR SHARE",
+        params: [ACCOUNT.email],
+      },
+      { sql: "DELETE FROM passkey_spent_challenges WHERE expires_at < $1", params: [PURGE_BEFORE] },
+    ]);
+    expect(client.sql().at(-1)).toBe("COMMIT");
+  });
+
   test("every counter parameter is cast to bigint", async () => {
     await provider.initialize();
-    const client = scriptedClient();
-    await provider.recordPasskeySignIn({
-      id: PASSKEY.id,
-      signCount: 3000000000,
-      backupState: true,
-      usedAt: "2026-09-28T00:05:00.000Z",
-      challenge: CHALLENGE,
-      purgeSpentBefore: PURGE_BEFORE,
-    });
-    expect(client.statements[1]).toEqual({
-      sql: "DELETE FROM passkey_spent_challenges WHERE expires_at < $1",
-      params: [PURGE_BEFORE],
-    });
+    const client = scriptedClient(signInReplies());
+    await provider.recordPasskeySignIn({ ...SIGN_IN, signCount: 3000000000, backupState: true });
     const update = client.statements.find((statement) => statement.sql.startsWith("UPDATE passkey_credentials"));
     expect(update?.sql).toBe(
       "UPDATE passkey_credentials SET sign_count = $1::bigint, backup_state = $2, last_used_at = $3 WHERE id = $4 AND ((sign_count = 0 AND $1::bigint = 0) OR sign_count < $1::bigint)",
@@ -938,33 +961,42 @@ describe("PostgresStorageProvider", () => {
 
   test("recordPasskeySignIn maps each refusal to its conflict", async () => {
     await provider.initialize();
-    const write = {
-      id: PASSKEY.id,
-      signCount: 5,
-      backupState: false,
-      usedAt: "2026-09-28T00:05:00.000Z",
-      challenge: CHALLENGE,
-      purgeSpentBefore: PURGE_BEFORE,
-    };
-    const cases: [(sql: string) => Reply, string][] = [
-      [(sql) => (sql.startsWith("INSERT INTO passkey_spent_challenges") ? { rowCount: 0 } : {}), "challenge_spent"],
+    const account = (row: Record<string, unknown>) => (sql: string) =>
+      sql.includes("FROM accounts") ? { rows: [{ role: "user", disabled: 0, session_version: 3, ...row }] } : undefined;
+    const cases: [(sql: string) => Reply | undefined, string][] = [
+      [(sql) => (sql.includes("FROM accounts") ? { rows: [] } : undefined), "account_changed"],
+      [account({ disabled: 1 }), "account_changed"],
+      [account({ role: "admin" }), "account_changed"],
+      [account({ session_version: "4" }), "account_changed"],
+      [
+        (sql) => (sql.startsWith("INSERT INTO passkey_spent_challenges") ? { rowCount: 0 } : undefined),
+        "challenge_spent",
+      ],
       [
         (sql) =>
-          sql.startsWith("UPDATE") ? { rowCount: 0 } : sql.startsWith("SELECT 1") ? { rows: [{ "?column?": 1 }] } : {},
+          sql.startsWith("UPDATE")
+            ? { rowCount: 0 }
+            : sql.startsWith("SELECT 1")
+              ? { rows: [{ "?column?": 1 }] }
+              : undefined,
         "counter_not_increased",
       ],
-      [(sql) => (sql.startsWith("UPDATE") ? { rowCount: 0 } : {}), "credential_missing"],
+      [(sql) => (sql.startsWith("UPDATE") ? { rowCount: 0 } : undefined), "credential_missing"],
     ];
     for (const [reply, reason] of cases) {
-      const client = scriptedClient(reply);
+      const client = scriptedClient(signInReplies(reply));
       // oxlint-disable-next-line no-await-in-loop -- each case replaces the pool client, so they run in turn.
-      const failure = await provider.recordPasskeySignIn(write).then(
+      const failure = await provider.recordPasskeySignIn(SIGN_IN).then(
         () => null,
         (error: unknown) => error,
       );
       expect(failure).toBeInstanceOf(PasskeySignInConflict);
       expect((failure as PasskeySignInConflict).reason).toBe(reason as PasskeySignInConflict["reason"]);
       expect(client.sql().at(-1)).toBe("ROLLBACK");
+      // An account refusal comes before the challenge is spent.
+      if (reason === "account_changed") {
+        expect(client.sql().some((sql) => sql.includes("passkey_spent_challenges"))).toBe(false);
+      }
     }
   });
 

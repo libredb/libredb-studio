@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B91 · 32
-- [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 9
+- [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
 ---
@@ -4343,14 +4343,6 @@ Each derived key must keep its label, so that a token of one purpose still never
 One older reader remains: `src/lib/mcp/preprocess.ts` reads `/api/mcp` bodies through the MCP SDK's `readRequestBody`.
 
 **Done when:** `/api/mcp` reads its body through `src/lib/api/bounded-json.ts` and keeps its current status codes and JSON-RPC error bodies.
-
-### PK8. The PostgreSQL leg of the passkey storage contract does not run in CI
-
-`tests/helpers/passkey-store-contract.ts` is one list of cases for both engines.
-`tests/unit/lib/storage/providers/sqlite-passkeys.test.ts` runs it in `bun run test`, but `tests/live/passkey-store-postgres.ts`, which runs the same list against a real PostgreSQL, is hand-run with `LIBREDB_LIVE_POSTGRES_URL`, like every other `tests/live/` guard.
-The row locks, cascades, `ON CONFLICT` behaviour under concurrency and the `::bigint` counter casts that the multi-replica guarantees rest on are therefore checked only when someone runs it.
-
-**Done when:** a CI job starts a throwaway PostgreSQL (as `functional-smoke` in `.github/workflows/ci.yml` already does), runs `bun tests/live/passkey-store-postgres.ts` against it, and fails the build on any case, and `docs/SECURITY.md` "Known limits" drops the hand-run note.
 
 ### PK9. `initialize()` still needs CREATE on the schema when every table exists
 

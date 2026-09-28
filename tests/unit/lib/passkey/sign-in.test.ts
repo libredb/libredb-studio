@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { AuthenticationResponseJSON, PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/server";
 import Database from "better-sqlite3";
 import type { PasskeyRefusalReason } from "@/lib/passkey/webauthn";
+import type { ServerStorageProvider } from "@/lib/storage/types";
 import { type AssertionOverrides, SoftAuthenticator } from "../../../helpers/passkey-authenticator";
 import {
   openStoreFixture,
@@ -449,16 +450,14 @@ describe("completePasskeySignIn", () => {
     const enrolled = await enrol();
     const provider = await fixture.provider();
     const original = provider.recordPasskeySignIn.bind(provider);
+    // A writer outside Studio: only the credential row goes, so the account is still as the service read it.
     const spy = spyOn(provider, "recordPasskeySignIn").mockImplementation(async (write) => {
-      const account = await provider.getAccount(enrolled.email);
-      if (!account) throw new Error("account missing");
-      await provider.deletePasskey({
-        email: enrolled.email,
-        id: enrolled.passkeyId,
-        expectedSessionVersion: account.sessionVersion,
-        nextSessionVersion: account.sessionVersion + 1,
-        updatedAt: new Date().toISOString(),
-      });
+      const db = new Database(join(fixture.dir, "store.db"));
+      try {
+        db.prepare("DELETE FROM passkey_credentials WHERE id = ?").run(enrolled.passkeyId);
+      } finally {
+        db.close();
+      }
       return original(write);
     });
     try {
@@ -471,6 +470,60 @@ describe("completePasskeySignIn", () => {
       expect(spentHashes()).toEqual(spentBefore);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  describe("an account changed between the service's read and its write is refused as unavailable", () => {
+    const changes: { name: string; change: (provider: ServerStorageProvider, email: string) => Promise<void> }[] = [
+      {
+        name: "disabled",
+        change: async (provider, email) => {
+          const read = await provider.getAccount(email);
+          if (!read) throw new Error("account missing");
+          await provider.updateAccount(
+            { ...read, disabled: true, sessionVersion: read.sessionVersion + 1, updatedAt: new Date().toISOString() },
+            { expected: read },
+          );
+        },
+      },
+      {
+        name: "passkey removed, which moves the session version",
+        change: async (provider, email) => {
+          const read = await provider.getAccount(email);
+          if (!read) throw new Error("account missing");
+          const [passkey] = await provider.listPasskeys(email);
+          await provider.deletePasskey({
+            email,
+            id: passkey.id,
+            expectedSessionVersion: read.sessionVersion,
+            nextSessionVersion: read.sessionVersion + 1,
+            updatedAt: new Date().toISOString(),
+          });
+        },
+      },
+      { name: "deleted", change: (provider, email) => provider.deleteAccount(email) },
+    ];
+    for (const { name, change } of changes) {
+      test(name, async () => {
+        const enrolled = await enrol();
+        const provider = await fixture.provider();
+        const original = provider.recordPasskeySignIn.bind(provider);
+        const spy = spyOn(provider, "recordPasskeySignIn").mockImplementation(async (write) => {
+          await change(provider, enrolled.email);
+          return original(write);
+        });
+        try {
+          const { body } = await attempt(enrolled);
+          const spentBefore = spentHashes();
+          const refusal = await refusalOf(completePasskeySignIn(body));
+          expect(spy).toHaveBeenCalledTimes(1);
+          expect(refusal.reason).toBe("passkey_account_unavailable");
+          expect(refusal.context).toEqual({ email: enrolled.email, passkeyId: enrolled.passkeyId });
+          expect(spentHashes()).toEqual(spentBefore);
+        } finally {
+          spy.mockRestore();
+        }
+      });
     }
   });
 

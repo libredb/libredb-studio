@@ -175,6 +175,10 @@ export interface PasskeyRegistrationWrite {
 
 export interface PasskeySignInWrite {
   id: string;
+  /** The account the service read and will mint the session for; the write refuses unless it is unchanged. */
+  email: string;
+  expectedSessionVersion: number;
+  expectedRole: StoredAccount["role"];
   signCount: number;
   backupState: boolean;
   usedAt: string;
@@ -200,7 +204,11 @@ export type PasskeyRegistrationConflictReason =
   | "passkey_limit"
   | "user_handle_changed"
   | "credential_registered";
-export type PasskeySignInConflictReason = "challenge_spent" | "counter_not_increased" | "credential_missing";
+export type PasskeySignInConflictReason =
+  | "account_changed"
+  | "challenge_spent"
+  | "counter_not_increased"
+  | "credential_missing";
 export type PasskeyRemovalConflictReason = "session_changed" | "credential_missing";
 
 /** A registration the store refused on its own invariants. Nothing was written. */
@@ -242,8 +250,9 @@ export interface PasskeyStore {
    */
   insertPasskey(write: PasskeyRegistrationWrite): Promise<void>;
   /**
-   * Purge old spent rows, spend the challenge, advance counter, backup state and last use while
-   * the counter increases: one transaction.
+   * Check the account is present, enabled and at the role and session version the caller read, purge
+   * old spent rows, spend the challenge, advance counter, backup state and last use while the counter
+   * increases: one transaction.
    */
   recordPasskeySignIn(write: PasskeySignInWrite): Promise<void>;
   /** Rename one passkey of the account; false when it has none with that id. */

@@ -405,6 +405,22 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async recordPasskeySignIn(write: PasskeySignInWrite): Promise<void> {
     this.ensurePool();
     await this.transaction(async (client) => {
+      // The account row first, the one lock order. FOR SHARE holds off every account write until
+      // commit, so the session the route mints is the account as it was here, while sign-ins to the
+      // same account still run side by side.
+      const account = await client.query(
+        "SELECT role, disabled, session_version FROM accounts WHERE email = $1 FOR SHARE",
+        [write.email],
+      );
+      const locked = (account.rows as Pick<AccountRow, "role" | "disabled" | "session_version">[])[0];
+      if (
+        !locked ||
+        Number(locked.disabled) === 1 ||
+        locked.role !== write.expectedRole ||
+        Number(locked.session_version) !== write.expectedSessionVersion
+      ) {
+        throw new PasskeySignInConflict("account_changed");
+      }
       if (!(await this.spendChallenge(client, write.challenge, write.purgeSpentBefore))) {
         throw new PasskeySignInConflict("challenge_spent");
       }

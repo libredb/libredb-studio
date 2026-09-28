@@ -70,7 +70,8 @@ interface Ctx {
     email: string,
     overrides?: Partial<Omit<PasskeyRegistrationWrite, "passkey">> & { passkey?: Partial<StoredPasskey> },
   ): PasskeyRegistrationWrite;
-  signIn(id: string, signCount: number, overrides?: Partial<PasskeySignInWrite>): PasskeySignInWrite;
+  /** A sign-in write for the passkey, expecting its account as `account()` creates it unless overridden. */
+  signIn(passkey: StoredPasskey, signCount: number, overrides?: Partial<PasskeySignInWrite>): PasskeySignInWrite;
   handle(email: string): string;
   reread(email: string): Promise<StoredAccount>;
   /** Remove the account row, leaving its passkey rows behind where the engine allows it. */
@@ -147,8 +148,11 @@ function contractCase(name: string, body: (ctx: Ctx) => Promise<void>): Contract
           await provider.insertPasskey(write);
           return write.passkey;
         },
-        signIn: (id, signCount, overrides = {}) => ({
-          id,
+        signIn: (passkey, signCount, overrides = {}) => ({
+          id: passkey.id,
+          email: passkey.accountEmail,
+          expectedSessionVersion: 0,
+          expectedRole: "user",
           signCount,
           backupState: false,
           usedAt: iso(),
@@ -312,7 +316,7 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
     const { email } = await c.account();
     const passkey = await c.register(email);
     const usedAt = iso();
-    const write = c.signIn(passkey.id, 5, { backupState: true, usedAt });
+    const write = c.signIn(passkey, 5, { backupState: true, usedAt });
 
     await c.provider.recordPasskeySignIn(write);
     await refusedSignIn(c.provider.recordPasskeySignIn({ ...write, signCount: 6 }), "challenge_spent");
@@ -330,16 +334,16 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
       const counted = await c.register(email, { passkey: { signCount: 10 } });
       const zero = await c.register(email);
 
-      const same = c.signIn(counted.id, 10);
+      const same = c.signIn(counted, 10);
       await refusedSignIn(c.provider.recordPasskeySignIn(same), "counter_not_increased");
-      await refusedSignIn(c.provider.recordPasskeySignIn(c.signIn(counted.id, 9)), "counter_not_increased");
+      await refusedSignIn(c.provider.recordPasskeySignIn(c.signIn(counted, 9)), "counter_not_increased");
       assert.equal((await stored(c.provider, email, counted.id)).signCount, 10);
       assert.equal((await stored(c.provider, email, counted.id)).lastUsedAt, null);
       // The refusal rolled the spent challenge back.
       await c.provider.recordPasskeySignIn({ ...same, signCount: 11 });
 
-      await c.provider.recordPasskeySignIn(c.signIn(zero.id, 0));
-      await c.provider.recordPasskeySignIn(c.signIn(zero.id, 0));
+      await c.provider.recordPasskeySignIn(c.signIn(zero, 0));
+      await c.provider.recordPasskeySignIn(c.signIn(zero, 0));
       assert.equal((await stored(c.provider, email, zero.id)).signCount, 0);
     },
   ),
@@ -348,9 +352,9 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
     const { email } = await c.account();
     const passkey = await c.register(email);
 
-    await c.provider.recordPasskeySignIn(c.signIn(passkey.id, 3000000000));
-    await c.provider.recordPasskeySignIn(c.signIn(passkey.id, 3000000001));
-    await refusedSignIn(c.provider.recordPasskeySignIn(c.signIn(passkey.id, 3000000001)), "counter_not_increased");
+    await c.provider.recordPasskeySignIn(c.signIn(passkey, 3000000000));
+    await c.provider.recordPasskeySignIn(c.signIn(passkey, 3000000001));
+    await refusedSignIn(c.provider.recordPasskeySignIn(c.signIn(passkey, 3000000001)), "counter_not_increased");
 
     assert.equal((await stored(c.provider, email, passkey.id)).signCount, 3000000001);
   }),
@@ -366,8 +370,77 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
       updatedAt: iso(),
     });
 
-    await refusedSignIn(c.provider.recordPasskeySignIn(c.signIn(passkey.id, 1)), "credential_missing");
+    // The removal moved the session version, so the write expects the moved one and only the credential is gone.
+    await refusedSignIn(
+      c.provider.recordPasskeySignIn(c.signIn(passkey, 1, { expectedSessionVersion: 1 })),
+      "credential_missing",
+    );
   }),
+
+  contractCase("a sign-in for the account as the caller read it succeeds", async (c) => {
+    const { email } = await c.account({ role: "admin", sessionVersion: 7 });
+    const passkey = await c.register(email, { expectedSessionVersion: 7 });
+
+    await c.provider.recordPasskeySignIn(c.signIn(passkey, 1, { expectedSessionVersion: 7, expectedRole: "admin" }));
+
+    assert.equal((await stored(c.provider, email, passkey.id)).signCount, 1);
+  }),
+
+  contractCase(
+    "a sign-in whose account was disabled is an account_changed conflict and writes nothing, the challenge included",
+    async (c) => {
+      const { email } = await c.account();
+      const passkey = await c.register(email);
+      const read = await c.reread(email);
+      // The version is left alone, so only the disabled flag can refuse the write.
+      const disabled = { ...read, disabled: true, updatedAt: iso(1) };
+      await c.provider.updateAccount(disabled, { expected: read });
+      const write = c.signIn(passkey, 1);
+
+      await refusedSignIn(c.provider.recordPasskeySignIn(write), "account_changed");
+
+      const after = await stored(c.provider, email, passkey.id);
+      assert.equal(after.signCount, 0);
+      assert.equal(after.lastUsedAt, null);
+      await c.provider.updateAccount({ ...disabled, disabled: false, updatedAt: iso(2) }, { expected: disabled });
+      await c.provider.recordPasskeySignIn(write);
+    },
+  ),
+
+  contractCase(
+    "a sign-in whose session version or role moved is an account_changed conflict and writes nothing, the challenge included",
+    async (c) => {
+      const { email } = await c.account({ sessionVersion: 4 });
+      const passkey = await c.register(email, { expectedSessionVersion: 4 });
+      const stale = c.signIn(passkey, 1, { expectedSessionVersion: 3 });
+      const promoted = c.signIn(passkey, 1, { expectedSessionVersion: 4, expectedRole: "admin" });
+
+      await refusedSignIn(c.provider.recordPasskeySignIn(stale), "account_changed");
+      await refusedSignIn(c.provider.recordPasskeySignIn(promoted), "account_changed");
+
+      const after = await stored(c.provider, email, passkey.id);
+      assert.equal(after.signCount, 0);
+      assert.equal(after.lastUsedAt, null);
+      await c.provider.recordPasskeySignIn({ ...stale, expectedSessionVersion: 4 });
+      await c.provider.recordPasskeySignIn({ ...promoted, expectedRole: "user", signCount: 2 });
+    },
+  ),
+
+  contractCase(
+    "a sign-in whose account was deleted is an account_changed conflict and leaves the challenge unspent",
+    async (c) => {
+      const { email } = await c.account();
+      const passkey = await c.register(email);
+      const write = c.signIn(passkey, 1);
+      await c.orphan(email);
+
+      await refusedSignIn(c.provider.recordPasskeySignIn(write), "account_changed");
+
+      const other = await c.account();
+      const next = await c.register(other.email);
+      await c.provider.recordPasskeySignIn(c.signIn(next, 1, { challenge: write.challenge }));
+    },
+  ),
 
   contractCase("a spent challenge is kept until purgeSpentBefore passes its expiry, then purged", async (c) => {
     const { email } = await c.account();
@@ -376,13 +449,13 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
     const before = iso(-7201);
     const after = iso(-7199);
     const challenge = makeChallenge(expiresAt);
-    await c.provider.recordPasskeySignIn(c.signIn(passkey.id, 0, { challenge, purgeSpentBefore: before }));
+    await c.provider.recordPasskeySignIn(c.signIn(passkey, 0, { challenge, purgeSpentBefore: before }));
 
     await refusedSignIn(
-      c.provider.recordPasskeySignIn(c.signIn(passkey.id, 0, { challenge, purgeSpentBefore: before })),
+      c.provider.recordPasskeySignIn(c.signIn(passkey, 0, { challenge, purgeSpentBefore: before })),
       "challenge_spent",
     );
-    await c.provider.recordPasskeySignIn(c.signIn(passkey.id, 0, { challenge, purgeSpentBefore: after }));
+    await c.provider.recordPasskeySignIn(c.signIn(passkey, 0, { challenge, purgeSpentBefore: after }));
   }),
 
   contractCase(
@@ -601,8 +674,8 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
     const passkey = await c.register(email, { passkey: { signCount: 5 } });
 
     const results = await Promise.allSettled([
-      c.provider.recordPasskeySignIn(c.signIn(passkey.id, 6)),
-      c.provider.recordPasskeySignIn(c.signIn(passkey.id, 7)),
+      c.provider.recordPasskeySignIn(c.signIn(passkey, 6)),
+      c.provider.recordPasskeySignIn(c.signIn(passkey, 7)),
     ]);
 
     for (const result of results) {
@@ -623,13 +696,13 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
     const expired = [makeChallenge(iso(-7200)), makeChallenge(iso(-7100)), makeChallenge(iso(-7000))];
     await Promise.all(
       expired.map((challenge) =>
-        c.provider.recordPasskeySignIn(c.signIn(first.id, 0, { challenge, purgeSpentBefore: iso(-86400) })),
+        c.provider.recordPasskeySignIn(c.signIn(first, 0, { challenge, purgeSpentBefore: iso(-86400) })),
       ),
     );
 
     const results = await Promise.allSettled([
-      c.provider.recordPasskeySignIn(c.signIn(first.id, 0, { purgeSpentBefore: iso(-600) })),
-      c.provider.recordPasskeySignIn(c.signIn(second.id, 0, { purgeSpentBefore: iso(-600) })),
+      c.provider.recordPasskeySignIn(c.signIn(first, 0, { purgeSpentBefore: iso(-600) })),
+      c.provider.recordPasskeySignIn(c.signIn(second, 0, { purgeSpentBefore: iso(-600) })),
     ]);
 
     assert.deepEqual(
@@ -639,7 +712,7 @@ export const PASSKEY_STORE_CONTRACT: readonly ContractCase[] = [
     // The purge really removed them: each hash can be spent again.
     await Promise.all(
       expired.map((challenge) =>
-        c.provider.recordPasskeySignIn(c.signIn(second.id, 0, { challenge, purgeSpentBefore: iso(-86400) })),
+        c.provider.recordPasskeySignIn(c.signIn(second, 0, { challenge, purgeSpentBefore: iso(-86400) })),
       ),
     );
   }),

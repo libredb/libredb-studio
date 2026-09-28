@@ -13,7 +13,8 @@
  * when missing, works under random `contract-...@example.com` accounts and deletes them again.
  * It prints one line per case and exits non-zero on the first failure. It is NOT in
  * `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
- * `tests/runner/discover.ts`).
+ * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL)" job of
+ * .github/workflows/ci.yml, against a throwaway postgres:17.
  *
  *   LIBREDB_LIVE_POSTGRES_URL='postgresql://postgres:pk@127.0.0.1:55432/postgres?sslmode=disable' \
  *     bun tests/live/passkey-store-postgres.ts

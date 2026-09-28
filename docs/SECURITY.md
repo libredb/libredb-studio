@@ -516,7 +516,6 @@ These are real, current, and not oversights. Each is a decision with a reason.
 - **While passkeys are ready, injected script can request assertions for a parent domain.** WebAuthn lets a document on `studio.example.com` ask for credentials whose RP ID is a registrable parent such as `example.com`, so script injected into a Studio page could exercise another application's passkeys when that application uses the parent as its RP ID and accepts subdomain origins.
   Where passkeys are off, the Permissions-Policy of 1.1 denies `publickey-credentials-get` and Chromium blocks that; while they are ready the denial is dropped, because it would also block Studio's own sign-in.
   Studio's own RP ID is always its full hostname, never a parent.
-- **The PostgreSQL leg of the passkey storage contract runs by hand.** CI runs the contract against SQLite; against PostgreSQL it is [`tests/live/passkey-store-postgres.ts`](../tests/live/passkey-store-postgres.ts), run by hand like every other `tests/live/` guard.
 - **A test linked from this table is checked to exist and to run — not to be true.** Nothing
   verifies that a linked test actually exercises the control it is linked from. That is the
   residual this page carries knowingly; the same limitation is recorded for the route-guard

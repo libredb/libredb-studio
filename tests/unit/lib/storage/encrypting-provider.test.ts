@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { logger } from "@/lib/logger";
 import { UNDECRYPTABLE_WARNING_PREFIX, withCredentialEncryption } from "@/lib/storage/encrypting-provider";
 import { encryptSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
-import type { AccountUpdateOptions, ServerStorageProvider, StoredAccount } from "@/lib/storage/types";
+import {
+  type AccountUpdateOptions,
+  PasskeySignInConflict,
+  type ServerStorageProvider,
+  type StoredAccount,
+} from "@/lib/storage/types";
 import { verifyTotp } from "@/lib/totp";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -115,6 +120,16 @@ describe("delegation", () => {
 });
 
 describe("passkeys", () => {
+  test("passes a sign-in conflict through unchanged", async () => {
+    const conflict = new PasskeySignInConflict("account_changed");
+    const recordPasskeySignIn = mock(async () => {
+      throw conflict;
+    });
+    const wrapped = withCredentialEncryption(stubProvider({ recordPasskeySignIn } as never));
+
+    await expect(wrapped.recordPasskeySignIn({ id: "pk-1" } as never)).rejects.toBe(conflict);
+  });
+
   test("passes every passkey method through unchanged", async () => {
     // Nothing passkey-related is sealed: a public key, a user handle and a name are not secrets.
     const results = {
@@ -131,7 +146,13 @@ describe("passkeys", () => {
     const updateAccount = mock(async () => 3);
     const wrapped = withCredentialEncryption(stubProvider({ ...mocks, updateAccount } as never));
     const registration = { passkey: { id: "pk-1" }, userHandle: "handle" } as never;
-    const signIn = { id: "pk-1", signCount: 2 } as never;
+    const signIn = {
+      id: "pk-1",
+      email: "ada@example.com",
+      expectedSessionVersion: 3,
+      expectedRole: "user",
+      signCount: 2,
+    } as never;
     const removal = { email: "ada@example.com", id: "pk-1" } as never;
 
     expect(await wrapped.listPasskeys("ada@example.com")).toBe(results.listPasskeys as never);
