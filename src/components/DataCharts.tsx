@@ -248,24 +248,22 @@ export function formatNumber(value: number): string {
   return value.toLocaleString();
 }
 
+const ISO_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?$/;
+
 /**
  * Tick text for a rotated category axis.
  *
- * A date is drawn as MM-DD, or MM-DD HH:mm when the value has a time, so an
- * ISO timestamp fits the plot. The row itself is unchanged, which is what the
- * tooltip reads. Every other value is returned whole.
+ * An ISO date-time loses its fractional seconds and its zone, and a space
+ * replaces the T, so a timestamp fits the plot. The year and the seconds stay,
+ * or two ticks a year or a few seconds apart would read the same. The row
+ * itself is unchanged, which is what the tooltip reads. Every other value,
+ * including a plain date, is returned whole.
  */
 function formatAxisTick(value: unknown, shortenDates: boolean): string {
   const text = value == null ? "" : String(value);
   if (!shortenDates) return text;
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(text);
-  if (!match) return text;
-  const month = match[2];
-  const day = match[3];
-  const hour = match[4];
-  const minute = match[5];
-  if (hour === undefined) return `${month}-${day}`;
-  return `${month}-${day} ${hour}:${minute}`;
+  const match = ISO_DATE_TIME.exec(text);
+  return match ? `${match[1]} ${match[2]}` : text;
 }
 
 function RotatedXAxis({

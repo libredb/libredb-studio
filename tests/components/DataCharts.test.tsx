@@ -564,9 +564,17 @@ describe("DataCharts", () => {
       expect(tickOf().height).toBe("auto");
     });
     const formatDate = tickOf().tickFormatter!;
-    expect(formatDate("2026-09-26T22:36:00.000Z")).toBe("09-26 22:36");
-    expect(formatDate("2026-09-26 22:38:00")).toBe("09-26 22:38");
-    expect(formatDate("2026-09-26")).toBe("09-26");
+    expect(formatDate("2026-09-26T22:36:00.000Z")).toBe("2026-09-26 22:36:00");
+    expect(formatDate("2026-09-26T22:36:00+03:00")).toBe("2026-09-26 22:36:00");
+    expect(formatDate("2026-09-26 22:38:00")).toBe("2026-09-26 22:38:00");
+    expect(formatDate("2026-09-26 22:38")).toBe("2026-09-26 22:38");
+    // Two years, or two seconds of one minute, must not read as the same tick.
+    expect(formatDate("2025-01-01")).toBe("2025-01-01");
+    expect(formatDate("2026-01-01")).toBe("2026-01-01");
+    expect(formatDate("2026-09-26T22:34:15.000Z")).toBe("2026-09-26 22:34:15");
+    expect(formatDate("2026-09-26T22:34:45.000Z")).toBe("2026-09-26 22:34:45");
+    // A value that only starts with a date is not a date, so it stays whole.
+    expect(formatDate("2026-09-26_add_users")).toBe("2026-09-26_add_users");
     expect(formatDate("09/26/2026")).toBe("09/26/2026");
     expect(formatDate(null)).toBe("");
     expect(formatDate(undefined)).toBe("");
