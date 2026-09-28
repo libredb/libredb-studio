@@ -62,7 +62,7 @@ async function signIn(email: string, password: string): Promise<string> {
   return token;
 }
 
-function use(token: string) {
+function presentCookie(token: string) {
   cookieStore["auth-token"] = { value: token };
 }
 
@@ -115,50 +115,50 @@ describe("a live session follows its stored account", () => {
 
   test("a token with no session version, as minted before the registry existed, is refused", async () => {
     // Upgrade path: the cookie predates the accounts table. Signing in again once is the cost.
-    use(await signJWT({ role: "admin", username: "admin@libredb.org" }));
+    presentCookie(await signJWT({ role: "admin", username: "admin@libredb.org" }));
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(401);
     admin = await signIn("admin@libredb.org", adminPassword);
-    use(admin);
+    presentCookie(admin);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);
   });
 
   test("a token for an email the registry does not hold is refused", async () => {
-    use(await signJWT({ role: "admin", username: "ghost@example.com" }));
+    presentCookie(await signJWT({ role: "admin", username: "ghost@example.com" }));
     expect((await whoami()).status).toBe(401);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(401);
   });
 
   test("disabling ends the live session, and enabling again does not revive it", async () => {
-    use(admin);
+    presentCookie(admin);
     await create("dave@example.com", "dave-pass-1", "user");
     const dave = await signIn("dave@example.com", "dave-pass-1");
-    use(dave);
+    presentCookie(dave);
     expect((await storageRoute.GET(request("GET", "/api/storage") as never)).status).toBe(200);
 
-    use(admin);
+    presentCookie(admin);
     expect((await patch("dave@example.com", { disabled: true })).status).toBe(200);
-    use(dave);
+    presentCookie(dave);
     expect((await storageRoute.GET(request("GET", "/api/storage") as never)).status).toBe(401);
     expect((await putConnections("dave-after-disable")).status).toBe(401);
 
-    use(admin);
+    presentCookie(admin);
     expect((await patch("dave@example.com", { disabled: false })).status).toBe(200);
-    use(dave);
+    presentCookie(dave);
     expect((await whoami()).status).toBe(401);
-    use(await signIn("dave@example.com", "dave-pass-1"));
+    presentCookie(await signIn("dave@example.com", "dave-pass-1"));
     expect((await whoami()).status).toBe(200);
   });
 
   test("a demoted admin loses the registry at the next request and cannot promote itself back", async () => {
-    use(admin);
+    presentCookie(admin);
     await create("erin@example.com", "erin-pass-1", "admin");
     const erin = await signIn("erin@example.com", "erin-pass-1");
-    use(erin);
+    presentCookie(erin);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);
 
-    use(admin);
+    presentCookie(admin);
     expect((await patch("erin@example.com", { role: "user" })).status).toBe(200);
-    use(erin);
+    presentCookie(erin);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(401);
     expect((await patch("erin@example.com", { role: "admin" })).status).toBe(401);
     const provider = await getStorageProvider();
@@ -166,28 +166,28 @@ describe("a live session follows its stored account", () => {
   });
 
   test("a deleted account's live session cannot write rows for a later account with the same email", async () => {
-    use(admin);
+    presentCookie(admin);
     await create("frank@example.com", "frank-pass-1", "user");
     const frank = await signIn("frank@example.com", "frank-pass-1");
-    use(frank);
+    presentCookie(frank);
     expect((await putConnections("frank-before-delete")).status).toBe(200);
 
-    use(admin);
+    presentCookie(admin);
     const removed = await emailRoute.DELETE(request("DELETE", "/api/admin/accounts/frank@example.com"), {
       params: Promise.resolve({ email: "frank@example.com" }),
     });
     expect(removed.status).toBe(200);
-    use(frank);
+    presentCookie(frank);
     expect((await putConnections("frank-ghost")).status).toBe(401);
     const provider = await getStorageProvider();
     expect(await provider?.getCollection("frank@example.com", "connections")).toBeNull();
 
-    use(admin);
+    presentCookie(admin);
     await create("frank@example.com", "frank-pass-2", "user");
     // The new account shares the email, not the old one's sessions.
-    use(frank);
+    presentCookie(frank);
     expect((await whoami()).status).toBe(401);
-    use(await signIn("frank@example.com", "frank-pass-2"));
+    presentCookie(await signIn("frank@example.com", "frank-pass-2"));
     const view = (await (await storageRoute.GET(request("GET", "/api/storage") as never)).json()) as {
       connections?: unknown;
     };
@@ -195,22 +195,22 @@ describe("a live session follows its stored account", () => {
   });
 
   test("an admin password reset ends the account's sessions; changing your own keeps the current one", async () => {
-    use(admin);
+    presentCookie(admin);
     await create("gina@example.com", "gina-pass-1", "user");
     const gina = await signIn("gina@example.com", "gina-pass-1");
-    use(admin);
+    presentCookie(admin);
     expect((await patch("gina@example.com", { password: "gina-pass-2" })).status).toBe(200);
-    use(gina);
+    presentCookie(gina);
     expect((await whoami()).status).toBe(401);
 
     const olderAdmin = await signIn("admin@libredb.org", adminPassword);
-    use(admin);
+    presentCookie(admin);
     expect((await patch("admin@libredb.org", { password: "admin-pass-rotated" })).status).toBe(200);
     // The route re-issued the actor's cookie with the new session version.
     expect(cookieStore["auth-token"]?.value).not.toBe(admin);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);
     admin = cookieStore["auth-token"]?.value ?? "";
-    use(olderAdmin);
+    presentCookie(olderAdmin);
     expect((await whoami()).status).toBe(401);
   });
 
@@ -220,21 +220,21 @@ describe("a live session follows its stored account", () => {
     const failure = spyOn(provider, "getAccount").mockRejectedValue(new Error("database is locked"));
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
-      use(admin);
+      presentCookie(admin);
       expect((await whoami()).status).toBe(401);
       expect(errorSpy.mock.calls.flat().map(String).join("\n")).toContain("database is locked");
     } finally {
       failure.mockRestore();
       errorSpy.mockRestore();
     }
-    use(admin);
+    presentCookie(admin);
     expect((await whoami()).status).toBe(200);
   });
 
   test("OIDC sessions are not checked against the registry", async () => {
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
     try {
-      use(await signJWT({ role: "user", username: "issuer-only@example.com" }));
+      presentCookie(await signJWT({ role: "user", username: "issuer-only@example.com" }));
       expect((await whoami()).status).toBe(200);
       expect((await storageRoute.GET(request("GET", "/api/storage") as never)).status).toBe(200);
     } finally {
