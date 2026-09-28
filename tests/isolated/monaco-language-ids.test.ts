@@ -249,7 +249,12 @@ describe("the installed editor's language ids", () => {
     // first.
     expect(declared.map((entry) => entry.where)).toContain("mysql/package");
     expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
-    expect(declared).toHaveLength(69);
+    // 74 with openGauss against 69 without it (#815): the walk builds the real provider
+    // for every type-id, and openGauss is a PostgresProvider subclass, so it contributes
+    // that provider's five `pgsql` kinds under its own type-id. The figure moved because
+    // the population grew, which is what this number is for - it is not a count of
+    // engines, and the language set below it is unchanged because `pgsql` was already in it.
+    expect(declared).toHaveLength(74);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This
