@@ -196,6 +196,14 @@ describe("changing your own second factor needs more than the session", () => {
     expect((await totpRoute.POST(request({ action: "disable", password: ALICE_PASSWORD }))).status).toBe(200);
   });
 
+  test("an action that is not one of the three is refused, including inherited object keys", async () => {
+    for (const action of ["nope", "toString", "constructor", "__proto__", 7, null]) {
+      const res = await totpRoute.POST(request({ action, password: "password" }));
+      expect({ action, status: res.status }).toEqual({ action, status: 400 });
+    }
+    expect(await storedFactor()).toEqual({ secret: null, pending: null });
+  });
+
   test("GET says whether this account has a factor, and needs a session", async () => {
     const status = () => totpRoute.GET(new Request("http://localhost/api/auth/totp"));
     expect(await (await status()).json()).toEqual({ available: true, enabled: false });
