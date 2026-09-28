@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -201,6 +201,25 @@ describe("changing your own second factor needs more than the session", () => {
     expect(await (await status()).json()).toEqual({ available: true, enabled: true });
     delete cookieStore["auth-token"];
     expect((await status()).status).toBe(401);
+  });
+
+  test("GET answers a registry that fails mid-request as a server error, not as a status", async () => {
+    const provider = await getStorageProvider();
+    if (!provider) throw new Error("sqlite provider missing");
+    const row = await provider.getAccount(ALICE);
+    // The session check reads the row first; the status read after it is the one that fails.
+    const failure = spyOn(provider, "getAccount")
+      .mockResolvedValueOnce(row)
+      .mockRejectedValueOnce(new Error("database is locked"));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await totpRoute.GET(new Request("http://localhost/api/auth/totp"));
+      expect(res.status).toBe(500);
+      expect(await res.json()).not.toHaveProperty("available");
+    } finally {
+      failure.mockRestore();
+      errors.mockRestore();
+    }
   });
 
   test("GET explains why setup is not offered under OIDC or without a server store", async () => {
