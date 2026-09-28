@@ -127,6 +127,22 @@ describe("isDestructiveNonSqlQuery", () => {
   });
 
   test.each<[string]>([
+    ["BLPOP queue 0"],
+    ["BRPOP queue 0"],
+    ["BLMPOP 2 2 queue LEFT COUNT 1"],
+    ["BLMOVE src dst LEFT RIGHT 0"],
+    ["BRPOPLPUSH src dst 0"],
+    ["BZPOPMIN z 0"],
+    ["BZPOPMAX z 0"],
+    ["BZMPOP 2 1 z MIN COUNT 1"],
+  ])("does not ask before the Redis command %s, which the provider refuses before it reaches the server", (query) => {
+    // Since #1121 `RedisProvider.query()` refuses the blocking commands through
+    // `sharedConnectionRefusal`, so a confirmation followed by a refusal is the
+    // double take this gate exists to avoid. The dialog is for commands that run.
+    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+  });
+
+  test.each<[string]>([
     ["GET k"],
     ["HGETALL user:1"],
     ["SCAN 0 MATCH session:* COUNT 50"],

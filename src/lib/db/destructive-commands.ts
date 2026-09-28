@@ -72,7 +72,14 @@ const MONGODB_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set([
  * `CLUSTER SHARDS` are the reads); every form of it reassigns a slot, which is what
  * puts it beside `CLUSTER RESET` and `CLUSTER FORGET`.
  *
- * Every name here can reach the server: `runCommand` calls
+ * Every name here is a command the provider runs: `query()` refuses some commands
+ * before they reach the server (`sharedConnectionRefusal` in
+ * `src/lib/db/providers/keyvalue/redis.ts`, documented in section 5.2b of
+ * `docs/providers/redis.md`), and a confirmation followed by that refusal would be
+ * the double take this gate exists to avoid. The blocking list-pop commands
+ * (`BLPOP` and its `B...` family) are refused that way, so only their
+ * non-blocking forms (`LPOP`, `RPOP`, `LMPOP`, `LMOVE`, `RPOPLPUSH`, `ZPOPMIN`,
+ * `ZPOPMAX`, `ZMPOP`) are here. `runCommand` itself calls
  * `client.call(command, ...args)` with no allow-list of any kind, so the vocabulary
  * is bounded by what Redis accepts rather than by what this provider implements.
  * Container commands are spelled with their subcommand (`CONFIG SET`), which the
@@ -133,16 +140,11 @@ const REDIS_DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set([
   "LPOP",
   "RPOP",
   "LMPOP",
-  "BLPOP",
-  "BRPOP",
-  "BLMPOP",
   "LSET",
   "LREM",
   "LTRIM",
   "LMOVE",
-  "BLMOVE",
   "RPOPLPUSH",
-  "BRPOPLPUSH",
   // Sets
   "SPOP",
   "SREM",
@@ -157,10 +159,7 @@ const REDIS_DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set([
   "ZREMRANGEBYLEX",
   "ZPOPMIN",
   "ZPOPMAX",
-  "BZPOPMIN",
-  "BZPOPMAX",
   "ZMPOP",
-  "BZMPOP",
   "ZUNIONSTORE",
   "ZINTERSTORE",
   "ZDIFFSTORE",
