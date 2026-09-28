@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import {
   callerBoundTruncationReason,
   isSourcePartUnavailable,
@@ -2109,6 +2109,19 @@ function tediousDate(milliseconds: number, nanosecondsDelta: number): Date {
  */
 describe("MSSQLProvider zoneless value types (#1132)", () => {
   let provider: MSSQLProvider;
+
+  // CI runs at UTC, where a local getter and a UTC one read the same field, so the
+  // assertions below would pass against either. Held at St. John's for this block: west
+  // of UTC and on a half-hour offset, so a local getter moves the hour and the minute,
+  // and puts a UTC-midnight `date` on the previous day.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/St_Johns";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
 
   /** A recordset the way `mssql` builds one: an array with a `columns` map on it. */
   function withColumns(
