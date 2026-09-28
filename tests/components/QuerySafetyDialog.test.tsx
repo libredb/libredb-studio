@@ -4,7 +4,7 @@ import "../helpers/mock-navigation";
 
 import React from "react";
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
@@ -139,6 +139,56 @@ describe("QuerySafetyDialog", () => {
     fireEvent.click(executeButton);
     expect(onProceed).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
+  // one, so the element that had focus is what the dialog itself must return to.
+  test.each([
+    ["Escape", () => fireEvent.keyDown(document, { key: "Escape" })],
+    ["Cancel", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+  ])("after %s, focus is back where it was when the dialog opened", async (_label, dismiss) => {
+    function Editor() {
+      const [open, setOpen] = React.useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>RUN</button>
+          <QuerySafetyDialog
+            isOpen={open}
+            query="DELETE FROM employee WHERE 1 = 0"
+            schemaContext=""
+            onClose={() => setOpen(false)}
+            onProceed={onProceed}
+          />
+        </>
+      );
+    }
+    const { getByRole, queryByRole } = render(<Editor />);
+    const run = getByRole("button", { name: "RUN" });
+    run.focus();
+    fireEvent.click(run);
+    expect(document.activeElement?.textContent).toBe("Cancel");
+    dismiss();
+    await waitFor(() => expect(queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(run));
+    expect(onProceed).not.toHaveBeenCalled();
+  });
+
+  test("keeps the primitive's phone gutter", () => {
+    // `max-w-lg` alone would replace the primitive's `max-w-[calc(100%-2rem)]`, and at 390px wide
+    // the dialog would touch both edges of the screen, where main kept 16px on each side.
+    const { getByRole } = render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM employee"
+        schemaContext=""
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    const classes = getByRole("alertdialog").className.split(/\s+/);
+    expect(classes).toContain("max-w-[calc(100%-2rem)]");
+    expect(classes).toContain("sm:max-w-lg");
+    expect(classes).not.toContain("max-w-lg");
   });
 
   test("renders parsed high-risk analysis and caution action label", async () => {
