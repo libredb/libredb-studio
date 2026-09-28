@@ -44,6 +44,9 @@ const KEYS = [
 ];
 const savedEnv: Record<string, string | undefined> = {};
 
+// Placeholders, not credentials: a realistic literal here is what secret scanners flag.
+const TEST_PASSWORD = "password";
+const NEW_TEST_PASSWORD = "password-new";
 function request(method: string, path: string, body?: unknown) {
   return new Request(`http://localhost${path}`, {
     method,
@@ -130,8 +133,8 @@ describe("a live session follows its stored account", () => {
 
   test("disabling ends the live session, and enabling again does not revive it", async () => {
     presentCookie(admin);
-    await create("dave@example.com", "dave-pass-1", "user");
-    const dave = await signIn("dave@example.com", "dave-pass-1");
+    await create("dave@example.com", TEST_PASSWORD, "user");
+    const dave = await signIn("dave@example.com", TEST_PASSWORD);
     presentCookie(dave);
     expect((await storageRoute.GET(request("GET", "/api/storage") as never)).status).toBe(200);
 
@@ -148,14 +151,14 @@ describe("a live session follows its stored account", () => {
     expect((await patch("dave@example.com", { disabled: false })).status).toBe(200);
     presentCookie(dave);
     expect((await whoami()).status).toBe(401);
-    presentCookie(await signIn("dave@example.com", "dave-pass-1"));
+    presentCookie(await signIn("dave@example.com", TEST_PASSWORD));
     expect((await whoami()).status).toBe(200);
   });
 
   test("a demoted admin loses the registry at the next request and cannot promote itself back", async () => {
     presentCookie(admin);
-    await create("erin@example.com", "erin-pass-1", "admin");
-    const erin = await signIn("erin@example.com", "erin-pass-1");
+    await create("erin@example.com", TEST_PASSWORD, "admin");
+    const erin = await signIn("erin@example.com", TEST_PASSWORD);
     presentCookie(erin);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);
 
@@ -170,8 +173,8 @@ describe("a live session follows its stored account", () => {
 
   test("a deleted account's live session cannot write rows for a later account with the same email", async () => {
     presentCookie(admin);
-    await create("frank@example.com", "frank-pass-1", "user");
-    const frank = await signIn("frank@example.com", "frank-pass-1");
+    await create("frank@example.com", TEST_PASSWORD, "user");
+    const frank = await signIn("frank@example.com", TEST_PASSWORD);
     presentCookie(frank);
     expect((await putConnections("frank-before-delete")).status).toBe(200);
 
@@ -186,11 +189,11 @@ describe("a live session follows its stored account", () => {
     expect(await provider?.getCollection("frank@example.com", "connections")).toBeNull();
 
     presentCookie(admin);
-    await create("frank@example.com", "frank-pass-2", "user");
+    await create("frank@example.com", NEW_TEST_PASSWORD, "user");
     // The new account shares the email, not the old one's sessions.
     presentCookie(frank);
     expect((await whoami()).status).toBe(401);
-    presentCookie(await signIn("frank@example.com", "frank-pass-2"));
+    presentCookie(await signIn("frank@example.com", NEW_TEST_PASSWORD));
     const view = (await (await storageRoute.GET(request("GET", "/api/storage") as never)).json()) as {
       connections?: unknown;
     };
@@ -199,16 +202,16 @@ describe("a live session follows its stored account", () => {
 
   test("an admin password reset ends the account's sessions; changing your own keeps the current one", async () => {
     presentCookie(admin);
-    await create("gina@example.com", "gina-pass-1", "user");
-    const gina = await signIn("gina@example.com", "gina-pass-1");
+    await create("gina@example.com", TEST_PASSWORD, "user");
+    const gina = await signIn("gina@example.com", TEST_PASSWORD);
     presentCookie(admin);
-    expect((await patch("gina@example.com", { password: "gina-pass-2" })).status).toBe(200);
+    expect((await patch("gina@example.com", { password: NEW_TEST_PASSWORD })).status).toBe(200);
     presentCookie(gina);
     expect((await whoami()).status).toBe(401);
 
     const olderAdmin = await signIn("admin@libredb.org", adminPassword);
     presentCookie(admin);
-    expect((await patch("admin@libredb.org", { password: "admin-pass-rotated" })).status).toBe(200);
+    expect((await patch("admin@libredb.org", { password: NEW_TEST_PASSWORD })).status).toBe(200);
     // The route re-issued the actor's cookie with the new session version.
     expect(cookieStore["auth-token"]?.value).not.toBe(admin);
     expect((await accountsRoute.GET(request("GET", "/api/admin/accounts"))).status).toBe(200);

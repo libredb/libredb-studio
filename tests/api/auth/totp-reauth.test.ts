@@ -42,8 +42,10 @@ const KEYS = [
 ];
 const savedEnv: Record<string, string | undefined> = {};
 const ALICE = "alice@example.com";
-const ALICE_PASSWORD = "alice-pass-1";
+const ALICE_PASSWORD = "password";
 
+// Placeholders, not credentials: a realistic literal here is what secret scanners flag.
+const WRONG_PASSWORD = "not-the-password";
 function request(body: unknown, ip = "203.0.113.50") {
   return new Request("http://localhost/api/auth/totp", {
     method: "POST",
@@ -132,7 +134,7 @@ describe("changing your own second factor needs more than the session", () => {
   test("setup without the current password is refused and writes nothing", async () => {
     const missing = await totpRoute.POST(request({ action: "begin" }));
     expect(missing.status).toBe(400);
-    const wrong = await totpRoute.POST(request({ action: "begin", password: "not-alice" }));
+    const wrong = await totpRoute.POST(request({ action: "begin", password: WRONG_PASSWORD }));
     expect(wrong.status).toBe(401);
     expect(await storedFactor()).toEqual({ secret: null, pending: null });
   });
@@ -165,7 +167,7 @@ describe("changing your own second factor needs more than the session", () => {
     // A missing field is not a guess: 400, and nothing is charged.
     expect((await totpRoute.POST(request({ action: "disable", password: ALICE_PASSWORD }))).status).toBe(400);
     expect(
-      (await totpRoute.POST(request({ action: "disable", password: "not-alice", code: codeFor(secret) }))).status,
+      (await totpRoute.POST(request({ action: "disable", password: WRONG_PASSWORD, code: codeFor(secret) }))).status,
     ).toBe(401);
     expect(
       (await totpRoute.POST(request({ action: "disable", password: ALICE_PASSWORD, code: "000000" }))).status,
@@ -190,7 +192,7 @@ describe("changing your own second factor needs more than the session", () => {
   });
 
   test("turning off with no factor active still needs the password", async () => {
-    expect((await totpRoute.POST(request({ action: "disable", password: "not-alice" }))).status).toBe(401);
+    expect((await totpRoute.POST(request({ action: "disable", password: WRONG_PASSWORD }))).status).toBe(401);
     expect((await totpRoute.POST(request({ action: "disable", password: ALICE_PASSWORD }))).status).toBe(200);
   });
 

@@ -30,6 +30,9 @@ const KEYS = [
 const savedEnv: Record<string, string | undefined> = {};
 let restoreChannel: () => void = () => {};
 
+// Placeholders, not credentials: a realistic literal here is what secret scanners flag.
+const TEST_PASSWORD = "password";
+const NEW_TEST_PASSWORD = "password-new";
 async function tokenFor(email: string, role: "admin" | "user", withVersion = true): Promise<string> {
   const provider = await getStorageProvider();
   const row = await provider?.getAccount(email);
@@ -82,12 +85,12 @@ describe("an MCP token for a stored account", () => {
   });
 
   test("works while the account is unchanged", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-ok@example.com", password: "mcp-pass-1", role: "user" });
+    await createAccount("admin@libredb.org", { email: "mcp-ok@example.com", password: TEST_PASSWORD, role: "user" });
     expect((await listTools(await tokenFor("mcp-ok@example.com", "user"))).status).toBe(200);
   });
 
   test("is refused once the account is disabled, with the answer an invalid token gets", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-off@example.com", password: "mcp-pass-1", role: "user" });
+    await createAccount("admin@libredb.org", { email: "mcp-off@example.com", password: TEST_PASSWORD, role: "user" });
     const token = await tokenFor("mcp-off@example.com", "user");
     await changeAccount("admin@libredb.org", "mcp-off@example.com", { disabled: true });
     const log = spyOn(console, "log").mockImplementation(() => {});
@@ -103,35 +106,43 @@ describe("an MCP token for a stored account", () => {
   });
 
   test("minted as admin is refused once the account is demoted", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-admin@example.com", password: "mcp-pass-1", role: "admin" });
+    await createAccount("admin@libredb.org", {
+      email: "mcp-admin@example.com",
+      password: TEST_PASSWORD,
+      role: "admin",
+    });
     const token = await tokenFor("mcp-admin@example.com", "admin");
     await changeAccount("admin@libredb.org", "mcp-admin@example.com", { role: "user" });
     await expectRevoked(await listTools(token));
   });
 
   test("is refused once the account is deleted, and a new account with that email does not revive it", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-gone@example.com", password: "mcp-pass-1", role: "user" });
+    await createAccount("admin@libredb.org", { email: "mcp-gone@example.com", password: TEST_PASSWORD, role: "user" });
     const token = await tokenFor("mcp-gone@example.com", "user");
     await removeAccount("admin@libredb.org", "mcp-gone@example.com");
     await expectRevoked(await listTools(token));
-    await createAccount("admin@libredb.org", { email: "mcp-gone@example.com", password: "mcp-pass-2", role: "user" });
+    await createAccount("admin@libredb.org", {
+      email: "mcp-gone@example.com",
+      password: NEW_TEST_PASSWORD,
+      role: "user",
+    });
     await expectRevoked(await listTools(token));
   });
 
   test("is refused once an admin resets the account's password", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-reset@example.com", password: "mcp-pass-1", role: "user" });
+    await createAccount("admin@libredb.org", { email: "mcp-reset@example.com", password: TEST_PASSWORD, role: "user" });
     const token = await tokenFor("mcp-reset@example.com", "user");
-    await changeAccount("admin@libredb.org", "mcp-reset@example.com", { password: "mcp-pass-2" });
+    await changeAccount("admin@libredb.org", "mcp-reset@example.com", { password: NEW_TEST_PASSWORD });
     await expectRevoked(await listTools(token));
   });
 
   test("minted with no session version is refused", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-nov@example.com", password: "mcp-pass-1", role: "user" });
+    await createAccount("admin@libredb.org", { email: "mcp-nov@example.com", password: TEST_PASSWORD, role: "user" });
     await expectRevoked(await listTools(await tokenFor("mcp-nov@example.com", "user", false)));
   });
 
   test("is refused when the registry cannot be read", async () => {
-    await createAccount("admin@libredb.org", { email: "mcp-db@example.com", password: "mcp-pass-1", role: "user" });
+    await createAccount("admin@libredb.org", { email: "mcp-db@example.com", password: TEST_PASSWORD, role: "user" });
     const token = await tokenFor("mcp-db@example.com", "user");
     const provider = await getStorageProvider();
     if (!provider) throw new Error("sqlite provider missing");

@@ -43,6 +43,12 @@ const savedEnv: Record<string, string | undefined> = {};
 // A valid 160-bit base32 secret; not a credential anywhere.
 const TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
+// Placeholders, not credentials: a realistic literal here is what secret scanners flag.
+const ENV_PASSWORD = "password";
+const ROTATED_ENV_PASSWORD = "password-rotated";
+const RESET_ENV_PASSWORD = "password-reset";
+const UI_PASSWORD = "password-ui";
+const TEST_PASSWORD = "password-second";
 function request(method: string, path: string, body?: unknown) {
   return new Request(`http://localhost${path}`, {
     method,
@@ -83,10 +89,10 @@ describe("the environment admin after the registry is seeded", () => {
     await restart();
     process.env.STORAGE_SQLITE_PATH = join(dir, `store-${crypto.randomUUID()}.db`);
     process.env.ADMIN_EMAIL = ADMIN;
-    process.env.ADMIN_PASSWORD = "password-A-000";
+    process.env.ADMIN_PASSWORD = ENV_PASSWORD;
     delete process.env.ADMIN_PASSWORD_RESET;
     delete process.env.ADMIN_TOTP_SECRET;
-    expect((await attempt(ADMIN, "password-A-000")).status).toBe(200);
+    expect((await attempt(ADMIN, ENV_PASSWORD)).status).toBe(200);
     warn = spyOn(console, "warn").mockImplementation(() => {});
     info = spyOn(console, "log").mockImplementation(() => {});
   });
@@ -107,46 +113,46 @@ describe("the environment admin after the registry is seeded", () => {
   });
 
   test("a rotated ADMIN_PASSWORD is reported at the next start, not applied", async () => {
-    process.env.ADMIN_PASSWORD = "password-B-000";
+    process.env.ADMIN_PASSWORD = ROTATED_ENV_PASSWORD;
     await restart();
-    expect((await attempt(ADMIN, "password-B-000")).status).toBe(401);
-    expect((await attempt(ADMIN, "password-A-000")).status).toBe(200);
+    expect((await attempt(ADMIN, ROTATED_ENV_PASSWORD)).status).toBe(401);
+    expect((await attempt(ADMIN, ENV_PASSWORD)).status).toBe(200);
     expect(logged(warn)).toContain("ADMIN_PASSWORD does not match the stored password");
     expect(logged(warn)).toContain("ADMIN_PASSWORD_RESET=true");
   });
 
   test("an unchanged ADMIN_PASSWORD reports nothing", async () => {
     await restart();
-    expect((await attempt(ADMIN, "password-A-000")).status).toBe(200);
+    expect((await attempt(ADMIN, ENV_PASSWORD)).status).toBe(200);
     expect(logged(warn)).not.toContain("ADMIN_PASSWORD");
   });
 
   test("an ADMIN_EMAIL with no row is reported, not created", async () => {
     process.env.ADMIN_EMAIL = "new-admin@libredb.org";
     await restart();
-    expect((await attempt("new-admin@libredb.org", "password-A-000")).status).toBe(401);
+    expect((await attempt("new-admin@libredb.org", ENV_PASSWORD)).status).toBe(401);
     expect(logged(warn)).toContain("new-admin@libredb.org is not in the account registry");
   });
 
   test("ADMIN_PASSWORD_RESET=true restores a disabled, demoted admin and ends its old sessions", async () => {
-    const old = await attempt(ADMIN, "password-A-000");
+    const old = await attempt(ADMIN, ENV_PASSWORD);
     cookieStore["auth-token"] = { value: old.token };
     const created = await accountsRoute.POST(
-      request("POST", "/api/admin/accounts", { email: "second@libredb.org", password: "second-pass-1", role: "admin" }),
+      request("POST", "/api/admin/accounts", { email: "second@libredb.org", password: TEST_PASSWORD, role: "admin" }),
     );
     expect(created.status).toBe(201);
-    cookieStore["auth-token"] = { value: (await attempt("second@libredb.org", "second-pass-1")).token };
-    for (const body of [{ password: "changed-in-ui-1" }, { role: "user" }, { disabled: true }]) {
+    cookieStore["auth-token"] = { value: (await attempt("second@libredb.org", TEST_PASSWORD)).token };
+    for (const body of [{ password: UI_PASSWORD }, { role: "user" }, { disabled: true }]) {
       const res = await emailRoute.PATCH(request("PATCH", `/api/admin/accounts/${ADMIN}`, body), {
         params: Promise.resolve({ email: ADMIN }),
       });
       expect(res.status).toBe(200);
     }
 
-    process.env.ADMIN_PASSWORD = "password-C-000";
+    process.env.ADMIN_PASSWORD = RESET_ENV_PASSWORD;
     process.env.ADMIN_PASSWORD_RESET = "true";
     await restart();
-    const restored = await attempt(ADMIN, "password-C-000");
+    const restored = await attempt(ADMIN, RESET_ENV_PASSWORD);
     expect(restored.status).toBe(200);
     const provider = await getStorageProvider();
     const row = await provider?.getAccount(ADMIN);
@@ -162,11 +168,11 @@ describe("the environment admin after the registry is seeded", () => {
   });
 
   test("ADMIN_PASSWORD_RESET recreates a deleted env admin", async () => {
-    cookieStore["auth-token"] = { value: (await attempt(ADMIN, "password-A-000")).token };
+    cookieStore["auth-token"] = { value: (await attempt(ADMIN, ENV_PASSWORD)).token };
     await accountsRoute.POST(
-      request("POST", "/api/admin/accounts", { email: "second@libredb.org", password: "second-pass-1", role: "admin" }),
+      request("POST", "/api/admin/accounts", { email: "second@libredb.org", password: TEST_PASSWORD, role: "admin" }),
     );
-    cookieStore["auth-token"] = { value: (await attempt("second@libredb.org", "second-pass-1")).token };
+    cookieStore["auth-token"] = { value: (await attempt("second@libredb.org", TEST_PASSWORD)).token };
     const removed = await emailRoute.DELETE(request("DELETE", `/api/admin/accounts/${ADMIN}`), {
       params: Promise.resolve({ email: ADMIN }),
     });
@@ -174,29 +180,29 @@ describe("the environment admin after the registry is seeded", () => {
 
     process.env.ADMIN_PASSWORD_RESET = "1";
     await restart();
-    expect((await attempt(ADMIN, "password-A-000")).status).toBe(200);
+    expect((await attempt(ADMIN, ENV_PASSWORD)).status).toBe(200);
   });
 
   test("ADMIN_PASSWORD_RESET takes the second factor from ADMIN_TOTP_SECRET, or clears it", async () => {
     process.env.ADMIN_PASSWORD_RESET = "true";
     process.env.ADMIN_TOTP_SECRET = TOTP_SECRET;
     await restart();
-    const withFactor = await attempt(ADMIN, "password-A-000");
+    const withFactor = await attempt(ADMIN, ENV_PASSWORD);
     expect(withFactor.status).toBe(401);
     const provider = await getStorageProvider();
     expect((await provider?.getAccount(ADMIN))?.totpSecret).toBe(TOTP_SECRET);
 
     delete process.env.ADMIN_TOTP_SECRET;
     await restart();
-    expect((await attempt(ADMIN, "password-A-000")).status).toBe(200);
+    expect((await attempt(ADMIN, ENV_PASSWORD)).status).toBe(200);
     expect((await (await getStorageProvider())?.getAccount(ADMIN))?.totpSecret).toBeNull();
   });
 
   test("an unrecognised ADMIN_PASSWORD_RESET value is reported and ignored", async () => {
-    process.env.ADMIN_PASSWORD = "password-B-000";
+    process.env.ADMIN_PASSWORD = ROTATED_ENV_PASSWORD;
     process.env.ADMIN_PASSWORD_RESET = "yes please";
     await restart();
-    expect((await attempt(ADMIN, "password-B-000")).status).toBe(401);
+    expect((await attempt(ADMIN, ROTATED_ENV_PASSWORD)).status).toBe(401);
     expect(logged(warn)).toContain('unrecognized ADMIN_PASSWORD_RESET value "yes please"');
   });
 });

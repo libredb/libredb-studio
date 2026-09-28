@@ -20,6 +20,8 @@ const KEYS = [
 const savedEnv: Record<string, string | undefined> = {};
 const ENV_ADMIN = "admin@libredb.org";
 
+// Placeholders, not credentials: a realistic literal here is what secret scanners flag.
+const TEST_PASSWORD = "password";
 async function enabledAdmins(): Promise<string[]> {
   const provider = await getStorageProvider();
   return ((await provider?.listAccounts()) ?? [])
@@ -42,7 +44,7 @@ describe("the last enabled admin under concurrent changes", () => {
     const provider = await getStorageProvider();
     if (!provider) throw new Error("sqlite provider missing");
     await seedAccountsIfEmpty(provider);
-    await createAccount(ENV_ADMIN, { email: "second@libredb.org", password: "second-pass-1", role: "admin" });
+    await createAccount(ENV_ADMIN, { email: "second@libredb.org", password: TEST_PASSWORD, role: "admin" });
     expect(await enabledAdmins()).toHaveLength(2);
   });
 
@@ -84,7 +86,7 @@ describe("the last enabled admin under concurrent changes", () => {
       await expect(changeAccount(ENV_ADMIN, ENV_ADMIN, { disabled: true })).rejects.toMatchObject({ status: 409 });
       await expect(removeAccount(ENV_ADMIN, "nobody@libredb.org")).rejects.toMatchObject({ status: 404 });
       await expect(
-        createAccount(ENV_ADMIN, { email: "second@libredb.org", password: "second-pass-1", role: "user" }),
+        createAccount(ENV_ADMIN, { email: "second@libredb.org", password: TEST_PASSWORD, role: "user" }),
       ).rejects.toMatchObject({ status: 409 });
       const refused = (log.mock.calls as unknown[][])
         .map((call) => JSON.parse(String(call[0])) as Record<string, string>)
@@ -100,7 +102,7 @@ describe("the last enabled admin under concurrent changes", () => {
   });
 
   test("a change that keeps an admin is not held back by the check", async () => {
-    await createAccount(ENV_ADMIN, { email: "someone@libredb.org", password: "someone-pass-1", role: "user" });
+    await createAccount(ENV_ADMIN, { email: "someone@libredb.org", password: TEST_PASSWORD, role: "user" });
     const outcomes = await Promise.allSettled([
       changeAccount(ENV_ADMIN, "second@libredb.org", { role: "user" }),
       changeAccount(ENV_ADMIN, "someone@libredb.org", { disabled: true }),
