@@ -8,20 +8,29 @@ import React from "react";
 // Props the chart hands to recharts. The mock draws nothing, so the overlap
 // itself is proved in Playwright; this is the pin that the axis options changed.
 const capturedXAxisProps: Record<string, unknown>[] = [];
+const capturedChartProps: Record<string, unknown>[] = [];
 
 // ── Mock Recharts ───────────────────────────────────────────────────────────
 mock.module("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: unknown }) => children,
-  AreaChart: ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": "mock-area-chart", ...props }, children as React.ReactNode),
-  BarChart: ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": "mock-bar-chart", ...props }, children as React.ReactNode),
-  LineChart: ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": "mock-line-chart", ...props }, children as React.ReactNode),
+  AreaChart: ({ children, ...props }: Record<string, unknown>) => {
+    capturedChartProps.push(props);
+    return React.createElement("div", { "data-testid": "mock-area-chart", ...props }, children as React.ReactNode);
+  },
+  BarChart: ({ children, ...props }: Record<string, unknown>) => {
+    capturedChartProps.push(props);
+    return React.createElement("div", { "data-testid": "mock-bar-chart", ...props }, children as React.ReactNode);
+  },
+  LineChart: ({ children, ...props }: Record<string, unknown>) => {
+    capturedChartProps.push(props);
+    return React.createElement("div", { "data-testid": "mock-line-chart", ...props }, children as React.ReactNode);
+  },
   PieChart: ({ children, ...props }: Record<string, unknown>) =>
     React.createElement("div", { "data-testid": "mock-pie-chart", ...props }, children as React.ReactNode),
-  ScatterChart: ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": "mock-scatter-chart", ...props }, children as React.ReactNode),
+  ScatterChart: ({ children, ...props }: Record<string, unknown>) => {
+    capturedChartProps.push(props);
+    return React.createElement("div", { "data-testid": "mock-scatter-chart", ...props }, children as React.ReactNode);
+  },
   RadialBarChart: ({ children }: { children: unknown }) =>
     React.createElement("div", { "data-testid": "mock-radial-chart" }, children as React.ReactNode),
   Area: () => null,
@@ -327,6 +336,7 @@ describe("DataCharts", () => {
 
   beforeEach(() => {
     capturedXAxisProps.length = 0;
+    capturedChartProps.length = 0;
     // Clear localStorage saved charts
     if (typeof localStorage !== "undefined") {
       try {
@@ -616,6 +626,25 @@ describe("DataCharts", () => {
     // The tooltip is a separate element and is not given the tick formatter.
     expect(document.body.textContent).toContain("tooltip_label");
     expect(document.body.textContent).not.toContain("09-26");
+  });
+
+  test("a chart with a rotated axis leaves no empty band under its legend", async () => {
+    // Recharts draws the legend `margin.bottom` above the chart's bottom edge, and
+    // a rotated axis measures its own labels, so the bottom margin is only a gap.
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    const marginAfterClick = async (label: string) => {
+      capturedChartProps.length = 0;
+      fireEvent.click(queryByText(label)!);
+      await waitFor(() => {
+        expect(capturedChartProps.length).toBeGreaterThan(0);
+      });
+      return capturedChartProps.at(-1)?.margin;
+    };
+    for (const label of ["Bar", "Line", "Area", "Histogram", "Stacked", "Stack Area"]) {
+      expect(await marginAfterClick(label)).toEqual({ top: 20, right: 30, left: 20, bottom: 10 });
+    }
+    // Scatter draws its x-axis name inside the bottom margin, so it keeps the room.
+    expect(await marginAfterClick("Scatter")).toEqual({ top: 20, right: 30, left: 20, bottom: 60 });
   });
 
   test("suggests pie for few categorical rows", () => {

@@ -40,13 +40,17 @@ test.describe("Chart axis labels", () => {
     const layout = await page.evaluate(() => {
       const labelGroup = document.querySelector(".recharts-xAxis-tick-labels");
       const svg = labelGroup instanceof SVGElement ? labelGroup.ownerSVGElement : null;
-      const legendEl = labelGroup?.closest(".recharts-wrapper")?.querySelector(".recharts-legend-wrapper") ?? null;
+      const wrapper = labelGroup?.closest(".recharts-wrapper") ?? null;
+      const legendEl = wrapper?.querySelector(".recharts-legend-wrapper") ?? null;
       const ticks = [...document.querySelectorAll(".recharts-xAxis-tick-labels .recharts-cartesian-axis-tick-value")];
-      if (!svg || !legendEl || ticks.length === 0) {
+      if (!svg || !wrapper || !legendEl || ticks.length === 0) {
         return { ok: false, reason: "missing chart pieces", ticks: ticks.length };
       }
       const svgBox = svg.getBoundingClientRect();
       const legendBox = legendEl.getBoundingClientRect();
+      // The legend sits `margin.bottom` above the chart's edge, and the space
+      // below it draws nothing, so it must not take the plot's height.
+      const gapBelowLegend = wrapper.getBoundingClientRect().bottom - legendBox.bottom;
       const boxes = ticks
         .map((node) => {
           const box = node.getBoundingClientRect();
@@ -56,10 +60,12 @@ test.describe("Chart axis labels", () => {
       const first = boxes[0];
       const aboveLegend = boxes.every((box) => box.bottom <= legendBox.top + 1);
       const insideSvg = first.left >= svgBox.left - 1;
+      const tightBelowLegend = gapBelowLegend <= 16;
       return {
-        ok: aboveLegend && insideSvg,
+        ok: aboveLegend && insideSvg && tightBelowLegend,
         aboveLegend,
         insideSvg,
+        gapBelowLegend,
         first,
         svgLeft: svgBox.left,
         legendTop: legendBox.top,

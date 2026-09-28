@@ -290,6 +290,11 @@ function RotatedXAxis({
   );
 }
 
+// Recharts draws the legend `margin.bottom` above the chart's edge, and a
+// rotated axis measures its own labels, so a larger bottom margin is only an
+// empty band the plot pays for.
+const ROTATED_AXIS_MARGIN = { top: 20, right: 30, left: 20, bottom: 10 };
+
 interface TooltipProps {
   active?: boolean;
   payload?: Array<{
@@ -991,7 +996,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             {chartType === "bar" ? (
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
                 <RotatedXAxis
                   dataKey={xAxis}
@@ -1007,7 +1012,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 ))}
               </BarChart>
             ) : chartType === "line" ? (
-              <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <LineChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
                 <RotatedXAxis
                   dataKey={xAxis}
@@ -1031,7 +1036,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 ))}
               </LineChart>
             ) : chartType === "area" ? (
-              <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
                 <RotatedXAxis
                   dataKey={xAxis}
@@ -1076,7 +1081,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <Scatter name={`${xAxis} vs ${scatterY}`} data={chartData} fill={CHART_COLORS[0]} shape="circle" />
               </ScatterChart>
             ) : chartType === "histogram" ? (
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
                 <RotatedXAxis dataKey="range" fill={viz.axis} fontSize={10} shortenDates={false} />
                 <YAxis
@@ -1087,7 +1092,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <Bar dataKey="count" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
               </BarChart>
             ) : chartType === "stacked-bar" ? (
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
                 <RotatedXAxis
                   dataKey={xAxis}
@@ -1103,7 +1108,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 ))}
               </BarChart>
             ) : chartType === "stacked-area" ? (
-              <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
                 <RotatedXAxis
                   dataKey={xAxis}
