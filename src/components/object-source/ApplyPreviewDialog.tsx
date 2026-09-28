@@ -328,10 +328,9 @@ function WarningRow({ testId, children }: { testId: string; children: React.Reac
  * The preview the reader approves, which is the bytes the apply sends (ruling 1a, #789 Phase 3).
  *
  * Mounted by `ObjectSourceView` and by nothing else. The shell is this repository's own Radix
- * modal, so `role="dialog"`, `aria-modal`, the focus trap, focus return and the `sr-only` close
- * label all come from `DialogContent` and none of them is hand-rolled here. `QuerySafetyDialog` is
- * the closest prior art by intent and the worst model to copy: MEASURED, it is a `fixed inset-0`
- * div with no dialog role, no `aria-modal`, no focus trap and no Escape handler.
+ * modal, so `role="dialog"`, hiding the rest of the page from assistive technology with `aria-hidden`
+ * (`hideOthers` in `@radix-ui/react-dialog`), the focus trap, focus return and the `sr-only` close
+ * label all come from `DialogContent` and none of them is hand-rolled here.
  *
  * `SchemaDiff` is not reused and could not be: MEASURED, it is a structural snapshot diff over
  * `DetailedObject[]`, its vocabulary is `ColumnDiff`/`TableDiff`, it holds no text on either side

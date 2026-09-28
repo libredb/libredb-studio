@@ -4,6 +4,13 @@ import { appFetch } from "@/lib/config/base-path";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
@@ -207,18 +214,21 @@ export function QuerySafetyDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, query]);
 
-  if (!isOpen) return null;
-
   const risk = analysis ? RISK_CONFIG[analysis.riskLevel] || RISK_CONFIG.medium : null;
   const RiskIcon = risk?.icon || ShieldAlert;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <AlertDialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <AlertDialogContent className="p-0 gap-0 bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
             <ShieldAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-warning" />
-            <span className="text-xs font-medium text-fg">Query Safety Check</span>
+            <AlertDialogTitle className="text-xs font-medium text-fg">Query Safety Check</AlertDialogTitle>
           </div>
           <button
             onClick={onClose}
@@ -231,9 +241,11 @@ export function QuerySafetyDialog({
         </div>
 
         <div className="px-5 py-3 bg-surface border-b border-hairline">
-          <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
-            {query.length > 300 ? query.substring(0, 300) + "..." : query}
-          </pre>
+          <AlertDialogDescription asChild>
+            <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
+              {query.length > 300 ? query.substring(0, 300) + "..." : query}
+            </pre>
+          </AlertDialogDescription>
         </div>
 
         <div className="px-5 py-4 max-h-80 overflow-auto">
@@ -334,12 +346,9 @@ export function QuerySafetyDialog({
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-hairline bg-surface">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-fill text-fg-tertiary text-xs font-medium hover:bg-fill-strong transition-colors"
-          >
+          <AlertDialogCancel className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong hover:text-fg-tertiary rounded-lg">
             <span>Cancel</span>
-          </button>
+          </AlertDialogCancel>
           <button
             onClick={onProceed}
             disabled={isAnalyzing}
@@ -359,8 +368,8 @@ export function QuerySafetyDialog({
                 : "Execute Query"}
           </button>
         </div>
-      </div>
-    </div>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
