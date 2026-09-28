@@ -380,6 +380,27 @@ in an `extraEnv` `HOSTNAME` entry, which wins over it) in front of a dual-stack 
 an IPv6 address that refuses every connection, and the install notes warn about exactly that. See
 [Network exposure](#network-exposure-bind-address).
 
+## Terraform module (Kubernetes, pending)
+
+Issue [#1010](https://github.com/libredb/libredb-studio/issues/1010) tracks a separate public
+`libredb/terraform-kubernetes-libredb-studio` repository with one root module wrapping the OCI
+chart. Six configurations under `examples/` show SQLite on a PVC, external PostgreSQL, OIDC,
+caller-managed Secrets, ephemeral storage, and a full configuration with bundled PostgreSQL,
+OIDC, persistence, TLS ingress, and agent mode. The module keeps the chart's persistence default;
+the SQLite quickstart enables its own PVC. The module does not provision a managed database or
+Vault. It points at an existing Kubernetes Secret when that is the caller's secret source.
+
+The initial module release is planned as `v0.1.0`, defaulting to chart `0.1.71` (app `0.17.0`).
+Module versions are independent of chart and app versions. The `terraform-kubernetes` inventory
+row stays `pending` until the organization repository is public, the quickstart and full examples
+pass apply/destroy CI, a semver tag exists, and the Terraform Registry listing is connected through
+GitHub sign-in. Its remote pin will then read the module version from the Registry API rather than
+compare it to the app version.
+
+This module is **not** the Google Cloud Marketplace Terraform Kubernetes app. That listing's
+Terraform artifact lives only in Google's Producer Portal and remains a separate manual submission
+(see [Google Cloud Marketplace](#google-cloud-marketplace)).
+
 ## OpenShift operator (OperatorHub)
 
 `operator/` packages the published Helm chart as a codeless helm-operator
@@ -1566,10 +1587,14 @@ what produced a false coverage claim in the scorecard.
 **Kind** (`kind` on every channel) is the technical shape of the artefact — a Helm
 chart, a container image, a curated marketplace listing — and is validated against a
 fixed enum in `scripts/distribution-check.mjs` (`CHANNEL_KINDS`). It is independent of
-`category`: `kubernetes-operators` (category) spans `helm-chart`, `operator-catalog`
+`category`: `kubernetes-operators` (category) spans `helm-chart`, `terraform-module`, `operator-catalog`
 and `partner-catalog` (kind), and `paas-template` (kind) spans both `paas-catalogs` and
 `deploy-recipes` (category). Neither axis determines the other, so both are kept and
 validated separately rather than collapsed into one.
+
+`pin.expected_version` is an optional independent semver expected value. The Terraform module
+uses it because its release stream is separate from `package.json`; other channels continue to
+compare their observed pins with the app version. A pending row is not probed until publication.
 
 **Platforms** (`platforms` on every channel, at least one) are the user-facing axis rendered
 in [`docs/CHANNELS.md`](CHANNELS.md): `linux`, `macos`, `windows`, `container`, `kubernetes`,

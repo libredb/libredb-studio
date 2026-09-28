@@ -12,7 +12,7 @@
 #   kind                      the technical shape of the artefact (what it
 #                             literally is), independent of category (the audience-facing
 #                             bucket several kinds can share): one of release-assets |
-#                             container-image | package-registry | helm-chart |
+#                             container-image | package-registry | helm-chart | terraform-module |
 #                             package-manager | os-package | one-click-template |
 #                             paas-template | deploy-button | operator-catalog |
 #                             partner-catalog | curated-catalog | marketplace
@@ -67,6 +67,9 @@
 #                             local_file / remote_file; all matches in a source
 #                             must agree (ambiguity is reported, never resolved
 #                             to the first hit)
+#   pin.expected_version      optional independent semver stream to compare with
+#                             the observed pin instead of package.json (Terraform
+#                             module releases are independent of app releases)
 
 channels:
   # ---- Tier 0: core registries, published directly by release CI ----------
@@ -285,6 +288,32 @@ channels:
         headless server package) is what FlatPark pins as extra-data.
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
+
+  - id: terraform-kubernetes
+    name: Terraform Registry module (Kubernetes)
+    short_name: Terraform module
+    status: pending
+    category: kubernetes-operators
+    platforms: [kubernetes]
+    runtime: channel_supplied
+    tier: 2
+    kind: terraform-module
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/1010
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: remote_file
+      url: https://registry.terraform.io/v1/modules/libredb/libredb-studio/kubernetes
+      expected_version: 0.1.0
+      extract: '"version":\s*"(\d+\.\d+\.\d+)"'
+      note: A Terraform module is its own kind because its state-managed Helm release is not a chart
+        package or an operator. Kubernetes & operators is the audience bucket because this deploys
+        into a Kubernetes cluster. The module has an independent version stream and the Registry API
+        reports its latest tag. Pending until the public libredb module repository is created, its
+        first tag passes CI and it is connected to the Registry through GitHub sign-in.
 
   - id: railway-template
     name: Railway one-click template

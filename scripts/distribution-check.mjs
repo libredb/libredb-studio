@@ -58,9 +58,9 @@ export const CATEGORY_LABELS = {
  * Technical shape of the artefact a channel actually is - independent of
  * `category` (the audience-facing bucket several kinds can share). Neither
  * axis determines the other: `kubernetes-operators` (category) spans
- * `helm-chart`, `operator-catalog` and `partner-catalog` (kind), while
+ * `helm-chart`, `terraform-module`, `operator-catalog` and `partner-catalog` (kind), while
  * `paas-template` (kind) spans both `paas-catalogs` and `deploy-recipes`
- * (category). Exactly the 13 values in use across the inventory - a closed
+ * (category). Exactly the 14 values in use across the inventory - a closed
  * enum so a typo becomes a startup error instead of an unvalidated label
  * that nothing ever reads.
  */
@@ -69,6 +69,7 @@ export const CHANNEL_KINDS = [
   "container-image",
   "package-registry",
   "helm-chart",
+  "terraform-module",
   "package-manager",
   "os-package",
   "one-click-template",
@@ -491,6 +492,9 @@ export function parseChannels(yamlText) {
         throw new Error(`${CHANNELS_YAML}: ${id}: pin.extract must be a regex with exactly one capture group`);
       }
     }
+    if (pin.expected_version !== undefined && !/^\d+\.\d+\.\d+$/.test(pin.expected_version)) {
+      throw new Error(`${CHANNELS_YAML}: ${id}: pin.expected_version must be a semantic version`);
+    }
   }
   return doc.channels;
 }
@@ -541,7 +545,7 @@ export function evaluateChannel(channel, pkgVersion, sources) {
     method: channel.update.method,
     sla: channel.update.sla,
     links: channel.links ?? {},
-    expected: pkgVersion,
+    expected: channel.pin.expected_version ?? pkgVersion,
     observed: "-",
     detail: channel.pin.note ?? "",
   };
@@ -559,7 +563,7 @@ export function evaluateChannel(channel, pkgVersion, sources) {
     return { ...row, status: "drift", observed: unique.join(", "), detail: `sources disagree: ${disagreement}` };
   }
   const observed = unique[0];
-  return { ...row, status: observed === pkgVersion ? "ok" : "drift", observed, detail: detail ?? row.detail };
+  return { ...row, status: observed === row.expected ? "ok" : "drift", observed, detail: detail ?? row.detail };
 }
 
 /** Where the CLI parks a channel's probe result for evaluateChannel to read. */

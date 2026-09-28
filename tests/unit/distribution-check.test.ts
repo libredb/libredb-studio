@@ -94,6 +94,24 @@ const PROBE_ROW = `  - id: docker-ghcr
         manifest: https://ghcr.io/v2/libredb/libredb-studio/manifests/{ref}
 `;
 
+const TERRAFORM_ROW = `  - id: terraform-kubernetes
+    name: Terraform module for Kubernetes
+    status: live
+    category: kubernetes-operators
+    platforms: [kubernetes]
+    runtime: channel_supplied
+    tier: 2
+    kind: terraform-module
+    update:
+      method: commit
+      sla: on_demand
+    pin:
+      strategy: remote_file
+      url: https://registry.terraform.io/v1/modules/libredb/libredb-studio/kubernetes
+      expected_version: 0.1.0
+      extract: '"version":\\s*"(\\d+\\.\\d+\\.\\d+)"'
+`;
+
 describe("parseChannels", () => {
   test("parses a valid inventory", () => {
     const channels = parseChannels(channelsYaml(HELM_ROW + NONE_ROW));
@@ -149,6 +167,12 @@ describe("parseChannels", () => {
   test("accepts a known kind", () => {
     const channels = parseChannels(channelsYaml(NONE_ROW));
     expect(channels[0].kind).toBe("package-registry");
+    expect(parseChannels(channelsYaml(TERRAFORM_ROW))[0].kind).toBe("terraform-module");
+  });
+
+  test("rejects a malformed independent pin version", () => {
+    const bad = TERRAFORM_ROW.replace("expected_version: 0.1.0", "expected_version: latest");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/expected_version/);
   });
 
   test("throws when platforms is missing", () => {
@@ -442,6 +466,15 @@ describe("evaluateChannel", () => {
     expect(row.status).toBe("ok");
     expect(row.observed).toBe("0.9.53");
     expect(row.expected).toBe("0.9.53");
+  });
+
+  test("a Terraform module pin follows its own version stream", () => {
+    const channel = parseChannels(channelsYaml(TERRAFORM_ROW))[0];
+    const url = channel.pin.url;
+    const matching = evaluateChannel(channel, "0.17.0", { [url]: '{"version":"0.1.0"}' });
+    expect(matching.status).toBe("ok");
+    expect(matching.expected).toBe("0.1.0");
+    expect(evaluateChannel(channel, "0.17.0", { [url]: '{"version":"0.1.1"}' }).status).toBe("drift");
   });
 
   test("a drifted local pin is drift", () => {
@@ -916,6 +949,23 @@ describe("CLI (remote pins against a local server)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("DRIFT");
     expect(result.stdout).toContain("0.9.27");
+  });
+
+  spawnTest("a Terraform Registry response uses the module version, not the app version", async () => {
+    const url = serve(() => Response.json({ version: "0.1.0" }));
+    const root = mkdtempSync(join(tmpdir(), "dist-check-terraform-"));
+    fixtureRoots.push(root);
+    writeFixture(
+      root,
+      "0.9.53",
+      channelsYaml(
+        TERRAFORM_ROW.replace("https://registry.terraform.io/v1/modules/libredb/libredb-studio/kubernetes", url),
+      ),
+    );
+    const result = await runCheckAsync(root);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| OK | terraform-kubernetes |");
+    expect(result.stdout).toContain("| 0.1.0 | 0.1.0 |");
   });
 
   spawnTest("a failing remote fetch degrades to UNKNOWN and still exits 0", async () => {
