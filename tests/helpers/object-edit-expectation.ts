@@ -19,6 +19,12 @@ import type { DatabaseType } from "@/lib/types";
 export const EXPECTED_EDITABLE_KINDS: readonly (readonly [DatabaseType, string])[] = Object.freeze([
   ["postgres", "function"],
   ["postgres", "procedure"],
+  // Inherited from the PostgreSQL provider (#815): openGauss is the same provider behind a
+  // different authentication handshake, so its editable pair is the PostgreSQL pair rather
+  // than a second measurement. The engine it was measured against for the handshake itself is
+  // openGauss 5.0.0.
+  ["opengauss", "function"],
+  ["opengauss", "procedure"],
   ["redis", "function"],
   ["trino", "function"],
 ] as const);

@@ -162,9 +162,9 @@ versions are documented and validated for every release.
 
 ## Key features (bullet form, if the catalog template asks for them)
 
-- Eighteen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
+- Nineteen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
   SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
-  Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka
+  Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka and openGauss
 - One-click install from the Rancher Apps catalog — deployable with default values,
   zero configuration required
 - Optional AI assistance (Gemini, OpenAI, or a self-hosted model; off by default):

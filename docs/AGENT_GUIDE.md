@@ -214,7 +214,7 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
-connection, which is the other seventeen (MySQL, Oracle, SQL Server, libSQL, DuckDB, MongoDB, Redis,
+connection, which is the other eighteen (MySQL, Oracle, SQL Server, libSQL, DuckDB, openGauss, MongoDB, Redis,
 ClickHouse, Couchbase, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Prometheus, Apache Kafka and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
@@ -228,9 +228,9 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all nineteen engines.
-- **Agent mode — PostgreSQL, SQLite, DuckDB and SQL Server.** What a run may DO by itself. Its tools
-  execute statements and need a database-native read-only path, which only those four providers implement, so a
+  statement path, because the provider reading sends no statement, so it reaches all twenty engines.
+- **Agent mode — PostgreSQL, SQLite, DuckDB, SQL Server and openGauss.** What a run may DO by itself. Its tools
+  execute statements and need a database-native read-only path, which only those five providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
   engine: it offers no read-only execution profile."* — after grounding has succeeded, which is
   slightly odd to watch and entirely honest: the run knows your schema and still may not read a row.
@@ -403,7 +403,7 @@ as an ordinary citable result.
 Two consequences you will notice:
 
 - **It runs on every engine.** The other workflows need a database-native read-only statement path,
-  which only PostgreSQL, SQLite, DuckDB and SQL Server have; this one needs none, so a run opened on
+  which only PostgreSQL, SQLite, DuckDB, SQL Server and openGauss have; this one needs none, so a run opened on
   MySQL, Oracle, Cassandra, MongoDB or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
@@ -945,9 +945,10 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
   query is neither policy-checked nor written to the agent audit trail. The controls above describe
   what the agent is held to, not a guarantee the whole product enforces.
-- **Agent mode runs on PostgreSQL, SQLite, DuckDB and SQL Server only.** The read-only profile has to
-  be implemented by the provider, and only four do: `queryReadOnly` exists on `postgres.ts`,
-  `sqlite.ts`, `duckdb/index.ts` and `mssql.ts`. The four do not draw the boundary the same way, and
+- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server and openGauss only.** The read-only profile has to
+  be implemented by the provider, and only five do: `queryReadOnly` exists on `postgres.ts`,
+  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts` and `opengauss.ts`, which inherits the PostgreSQL profile
+  behind its own authentication handshake. The five do not draw the boundary the same way, and
   SQL Server is the one that could not: it has no read-only transaction and no session-level
   read-only switch, so there the boundary is a session principal verified at open to be unable to
   write, an admission step that asks the optimizer to compile each statement without running it, a
@@ -962,7 +963,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other seventeen: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other eighteen: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

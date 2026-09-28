@@ -109,12 +109,13 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Eighteen external engines share one interface.
-The nineteenth row is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Nineteen external engines share one interface.
+The twentieth row is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | EXPLAIN plans, transactions, query cancellation, SSL/TLS, SSH tunnel |
+| **openGauss** | `pg` over a socket answering openGauss's SHA-256 and md5-SHA-256 handshakes | PostgreSQL's wire and SQL, either handshake; `EXPLAIN (FORMAT JSON)`, transactions, read-only agent |
 | **MySQL** | `mysql2` | EXPLAIN plans, transactions, `KILL QUERY`, SSL/TLS, SSH tunnel |
 | **Oracle** | `oracledb` (thin) | `FETCH FIRST` pagination, `V$` monitoring, `ANALYZE`, transactions |
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
@@ -139,7 +140,7 @@ Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the eighteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Engines that behave identically share a row, and all twenty-eight are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the nineteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Every one was measured against a real instance, and how much of the product works is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -177,7 +178,7 @@ Details, probed versions and each caveat: [`docs/providers/README.md`](https://g
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode executes on PostgreSQL, SQLite, DuckDB and SQL Server only** — the four engines with a database-native read-only execution profile; anywhere else a statement-sending run is refused at the start, with `engine-unsupported`. Plan mode is toolless, runs no statement of yours, and is grounded in your own schema on every engine. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode executes on PostgreSQL, openGauss, SQLite, DuckDB and SQL Server only** — the five engines with a database-native read-only execution profile; anywhere else a statement-sending run is refused at the start, with `engine-unsupported`. Plan mode is toolless, runs no statement of yours, and is grounded in your own schema on every engine. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [Flow](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
 - **Model-backed helpers** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no `LLM_*` variables at all, no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.

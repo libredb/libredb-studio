@@ -22,6 +22,11 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // `standard_conforming_strings` has been on by default since PostgreSQL 9.1, so
   // a backslash in a plain literal is data.
   postgres: "standard",
+  // The same reading, inherited with the dialect rather than re-measured (#815): openGauss
+  // is 9.2-based and carries `standard_conforming_strings` on. docs/providers/opengauss.md
+  // keeps the facts this entry was added for - the handshake - apart from the ones that
+  // ride the PostgreSQL path.
+  opengauss: "standard",
   sqlite: "standard",
   // Measured on sqld 0.24.33: `SELECT 'it''s'` answers `it's`, and a backslash has no
   // special meaning - the same standard doubling SQLite defines.

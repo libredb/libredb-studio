@@ -475,3 +475,30 @@ export const KafkaIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="m10.9 13.35 3.86 2.17" />
   </svg>
 );
+
+/**
+ * openGauss: PostgreSQL's wire with a handshake of its own.
+ *
+ * Not the brand's mark, and that is the choice: openGauss's own is a red ring, which at the
+ * 14px (`w-3.5`) size the sidebar renders a DB icon at would read as a spinner. This draws
+ * the cylinder every server-backed engine here shares, marked with the one thing that tells
+ * this entry apart: a keyhole, because authentication - requests 10 and 11, the SHA256 and
+ * MD5_SHA256 handshakes - is the entire difference this provider exists for (#815).
+ */
+export const OpenGaussIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <ellipse cx="12" cy="5.5" rx="7" ry="2.5" />
+    <path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13" />
+    <circle cx="12" cy="12.8" r="1.3" />
+    <path d="M12 14.1v2.4" />
+  </svg>
+);

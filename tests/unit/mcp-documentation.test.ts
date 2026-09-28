@@ -95,8 +95,9 @@ describe("docs/MCP.md", () => {
     );
   });
 
-  test("says run_read_query on PostgreSQL and SQL Server needs a least-privilege seed principal", () => {
+  test("says run_read_query on PostgreSQL, openGauss and SQL Server needs a least-privilege seed principal", () => {
     expect(MCP_DOC).toContain("On PostgreSQL the seed's role must not be a superuser");
+    expect(MCP_DOC).toContain("On openGauss it must be neither a superuser nor a system administrator");
     expect(MCP_DOC).toContain("and it must be granted `SHOWPLAN`");
     expect(MCP_DOC).toContain("A seed entry cannot carry a separate agent credential");
   });

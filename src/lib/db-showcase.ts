@@ -58,11 +58,16 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // page and the one an evaluator is least likely to have met, but it is a product
   // name (Turso's server) rather than our own, so it goes ahead of `libredb`.
   libsql: 17,
+  // Behind libSQL and ahead of the embedded store (#815): the newest name on this page,
+  // and the one a reader outside the banking and public-sector installations openGauss is
+  // built for meets here for the first time - but it is a database somebody already RUNS,
+  // which is the entry's whole use case, not a product of ours.
+  opengauss: 18,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 18,
+  libredb: 19,
 };
 
 /**

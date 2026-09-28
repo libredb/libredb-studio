@@ -7,6 +7,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Provider | type-id | Family | Driver | Query language | Reference |
 |----------|---------|--------|--------|----------------|-----------|
 | PostgreSQL | `postgres` | SQL | `pg` | SQL | [postgres.md](./postgres.md) |
+| openGauss | `opengauss` | SQL | `pg`, over a socket that answers openGauss's own SHA-256 and md5-SHA-256 password handshakes | SQL (PostgreSQL dialect) | [opengauss.md](./opengauss.md) |
 | MySQL | `mysql` | SQL | `mysql2` | SQL | [mysql.md](./mysql.md) |
 | Oracle | `oracle` | SQL | `oracledb` (Thin) | SQL | [oracle.md](./oracle.md) |
 | Microsoft SQL Server | `mssql` | SQL | `mssql` | SQL (T-SQL) | [mssql.md](./mssql.md) |

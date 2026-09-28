@@ -94,7 +94,15 @@ export type DatabaseType =
   // `queryLanguage: "json"` with a `queryDialect` of its own. The connection is one bootstrap
   // address plus TLS and an optional SASL credential, `saslMechanism` below naming how `user` and
   // `password` are checked; the client learns every other broker from the cluster's metadata.
-  | "kafka";
+  | "kafka"
+  // openGauss (#815). A PostgreSQL-wire engine whose authentication is its own: requests
+  // 10 and 11 mean SHA256 and MD5_SHA256 where PostgreSQL's mean SASL and its continuation,
+  // so the stock driver answers the wrong handshake ("Only mechanism(s) SCRAM-SHA-256 are
+  // supported") before a single query is sent. That handshake is code - and engines derived
+  // from openGauss share it, Huawei GaussDB and Vastbase among them - which is why this is
+  // a shipped type-id rather than a relative of `postgres`: its provider extends
+  // PostgresProvider and swaps only the authentication.
+  | "opengauss";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

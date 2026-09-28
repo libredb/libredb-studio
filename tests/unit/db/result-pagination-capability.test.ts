@@ -45,6 +45,9 @@ const STATEMENT = "SELECT * FROM t";
  */
 const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
+  // The PostgreSQL arm's `prepareQuery`, inherited by the provider (#815): the same
+  // offset clause is emitted.
+  opengauss: true,
   mysql: true,
   sqlite: true,
   libsql: true,

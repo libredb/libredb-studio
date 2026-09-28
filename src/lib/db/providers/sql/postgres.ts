@@ -2075,6 +2075,16 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   private measuredExplainFormat: ExplainFormat | undefined = "postgres-json";
 
+  /**
+   * The engine's own name, for the validation messages below. A getter rather
+   * than a literal because `OpenGaussProvider` extends this class and says
+   * "openGauss" here - the one place a subclass needs the name differently
+   * (#815).
+   */
+  protected get engineLabel(): string {
+    return "PostgreSQL";
+  }
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     // Server-injected only (see ProviderExecutionContext): the editor path
@@ -2246,10 +2256,10 @@ export class PostgresProvider extends SQLBaseProvider {
 
     if (!this.config.connectionString) {
       if (!this.config.host) {
-        throw new DatabaseConfigError("Host is required for PostgreSQL", "postgres");
+        throw new DatabaseConfigError(`Host is required for ${this.engineLabel}`, this.config.type);
       }
       if (!this.config.database) {
-        throw new DatabaseConfigError("Database name is required for PostgreSQL", "postgres");
+        throw new DatabaseConfigError(`Database name is required for ${this.engineLabel}`, this.config.type);
       }
     }
   }
@@ -2273,7 +2283,7 @@ export class PostgresProvider extends SQLBaseProvider {
         // Under the profile, the role itself is part of the boundary — verify it
         // on the same client this connect already borrowed.
         if (this.readOnlyProfile) {
-          assertAgentRoleIsUnprivileged((await client.query(AGENT_ROLE_PRIVILEGE_SQL)).rows);
+          assertAgentRoleIsUnprivileged((await client.query(this.readOnlyPrivilegeSql())).rows);
         }
         // Never under the read-only profile. That connection's invariant is that every
         // statement it runs arrives inside a `BEGIN READ ONLY` envelope
@@ -2349,7 +2359,10 @@ export class PostgresProvider extends SQLBaseProvider {
     });
   }
 
-  private buildPoolConfig(): PgPoolConfig {
+  // Protected rather than private: `OpenGaussProvider` extends this class and
+  // reuses this builder and `buildSSLConfig` below, adding only the socket that
+  // answers openGauss's authentication requests (#815).
+  protected buildPoolConfig(): PgPoolConfig {
     const sslConfig = this.buildSSLConfig();
 
     const baseConfig: PgPoolConfig = {
@@ -2380,7 +2393,7 @@ export class PostgresProvider extends SQLBaseProvider {
     };
   }
 
-  private buildSSLConfig(): PgPoolConfig["ssl"] {
+  protected buildSSLConfig(): PgPoolConfig["ssl"] {
     const connSSL = this.config.ssl;
 
     // Explicit SSL config from connection takes priority
@@ -2542,9 +2555,11 @@ export class PostgresProvider extends SQLBaseProvider {
             // Session state a rollback does NOT undo: an advisory lock taken
             // inside the transaction survives it (verified on PostgreSQL 18) and
             // no statement the agent path admits could release it, so a pooled
-            // client would carry it into every later execution. DISCARD ALL
-            // cannot run inside a transaction block, hence after the ROLLBACK.
-            await client.query("DISCARD ALL");
+            // client would carry it into every later execution. The cleanup
+            // cannot run inside a transaction block, hence after the ROLLBACK,
+            // and is a method rather than a literal because the one engine that
+            // has no DISCARD statement - openGauss - overrides it (#815).
+            await this.discardSessionState(client);
             client.release();
           } catch (cleanupError) {
             client.release(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)));
@@ -2576,6 +2591,29 @@ export class PostgresProvider extends SQLBaseProvider {
         executionTime,
       };
     });
+  }
+
+  /**
+   * Drops the session state a rollback does not undo, after the ROLLBACK and
+   * before the client returns to the pool. `DISCARD ALL` here; the one subclass
+   * that changes it is `OpenGaussProvider` (#815), whose engine has no DISCARD
+   * statement at all (measured on 5.0.0) and releases the advisory locks this
+   * cleanup exists for with `pg_advisory_unlock_all()` instead.
+   */
+  protected async discardSessionState(client: PoolClient): Promise<void> {
+    await client.query("DISCARD ALL");
+  }
+
+  /**
+   * The privilege questions the read-only profile's role check asks, in
+   * PostgreSQL's spelling. A subclass whose engine answers them in a different
+   * vocabulary overrides this and keeps the row shape: four boolean columns,
+   * `true` meaning this session holds that capability - and
+   * `assertAgentRoleIsUnprivileged` refuses anything that is not exactly
+   * `false`, so a shape it cannot read fails closed (#815).
+   */
+  protected readOnlyPrivilegeSql(): string {
+    return AGENT_ROLE_PRIVILEGE_SQL;
   }
 
   // ============================================================================

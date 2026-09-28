@@ -829,6 +829,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "duckdb",
     "prometheus",
     "kafka",
+    // The PostgreSQL wire with an authentication handshake of its own (#815), so it is a tile of
+    // its own rather than a relabel of postgres: the server, not the operator, chooses which
+    // handshake runs.
+    "opengauss",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

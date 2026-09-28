@@ -1453,6 +1453,10 @@ describe("useConnectionForm", () => {
     duckdb: true,
     prometheus: true,
     kafka: true,
+    // The first picker tile for an engine that speaks the PostgreSQL wire with a
+    // handshake of its own (#815); selectable like every shipped type, because this
+    // form EDITS existing connections too.
+    opengauss: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

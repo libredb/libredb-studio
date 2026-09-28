@@ -108,11 +108,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">اٹھارہ engines، ایک interface</span>
+### <span dir="rtl">انیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · openGauss
 
 <div dir="rtl" align="right">
 
@@ -123,6 +123,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | ڈیٹا بیس | Driver | صلاحیتیں |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | <span dir="rtl">مکمل SQL IDE، EXPLAIN execution plans، transactions، query cancellation (`pg_cancel_backend`)</span> |
+| **openGauss** | `pg`، <span dir="rtl">socket کے اوپر جو openGauss کے اپنے SHA-256 اور md5-SHA-256 password handshakes کا جواب دیتا ہے</span> | <span dir="rtl">PostgreSQL wire protocol پر مکمل SQL IDE، دونوں handshakes کے ساتھ: کون سا چلے گا یہ dialog کا انتخاب نہیں، server کا request طے کرتا ہے۔ `EXPLAIN (FORMAT JSON)` plans، transactions، agent کے لیے `EXPLAIN`، اور read-only investigation agent</span> |
 | **MySQL** | `mysql2` | <span dir="rtl">مکمل SQL IDE، EXPLAIN، transactions، query cancellation (`KILL QUERY`)</span> |
 | **Oracle** | <span dir="rtl">`oracledb` (Thin موڈ)</span> | <span dir="rtl">مکمل SQL IDE، `FETCH FIRST N ROWS` کے ساتھ pagination، `V$` monitoring views، `ANALYZE TABLE`، `ALTER INDEX REBUILD`، transactions</span> |
 | **SQL Server** | <span dir="rtl">`mssql` (tedious)</span> | <span dir="rtl">مکمل SQL IDE، `TOP N` / `OFFSET FETCH` کے ساتھ pagination، `sys.dm_*` DMV، `UPDATE STATISTICS`، `DBCC CHECKDB`، transactions، Azure SQL کی خودکار شناخت</span> |

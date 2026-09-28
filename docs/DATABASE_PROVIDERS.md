@@ -187,8 +187,8 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Nineteen type-ids are supported by eighteen provider modules: `elasticsearch` and `opensearch` share
-one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
+Nineteen type-ids are supported by nineteen provider modules: `elasticsearch` and `opensearch` share
+one, `providers/sql/search/`, and openGauss is its own module over the PostgreSQL wire protocol. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
 monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:

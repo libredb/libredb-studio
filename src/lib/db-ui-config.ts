@@ -1,6 +1,7 @@
 import { type LucideIcon } from "lucide-react";
 import {
   PostgreSQLIcon,
+  OpenGaussIcon,
   MySQLIcon,
   SQLiteIcon,
   MongoDBIcon,
@@ -379,6 +380,25 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
         { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
       ],
     },
+  },
+  opengauss: {
+    icon: OpenGaussIcon,
+    // openGauss's own mark is red. `red` is Oracle's and `rose` is Redis's, so this takes
+    // `rose-alt`, the declared second step of that family and a free one - the same base/alt
+    // pairing ClickHouse and DuckDB use on yellow. The distinct-colour assertion in
+    // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-hue-rose-alt",
+    label: "openGauss",
+    // The stock port, the same number PostgreSQL listens on: the wire is the same and a
+    // default install answers there (#815).
+    defaultPort: "5432",
+    // No URI toggle, as on the PostgreSQL entry above: the scheme would be PostgreSQL's own,
+    // and two engines cannot own one scheme (connection-string-parser.ts).
+    showConnectionStringToggle: false,
+    // The PostgreSQL field set, because authentication is the server's to ask for rather than
+    // the operator's to select (#815): which handshake runs is decided by the request the
+    // server sends, never by a dialog choice.
+    connectionFields: ["host", "port", "user", "password", "database"],
   },
   libredb: {
     icon: LibreDBIcon,

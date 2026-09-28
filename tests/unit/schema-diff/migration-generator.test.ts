@@ -1017,6 +1017,9 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     // Error: No support for that ALTER TABLE option yet!".
     duckdb: { label: "DuckDB", distinguishingClause: "ALTER TABLE cannot add one yet;" },
     postgres: "key-follows-in-an-alter",
+    // Measured on 5.0.0 (#815): `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY`
+    // answers OK, so the key rides in the same trailing statement.
+    opengauss: "key-follows-in-an-alter",
     mysql: "key-follows-in-an-alter",
     oracle: "key-follows-in-an-alter",
     mssql: "key-follows-in-an-alter",
@@ -1112,6 +1115,10 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // it is a measured decision that the shared arm is correct here, and the test below
   // pins the DDL rather than a comment.
   duckdb: "postgres-branch-measured",
+  // The second id to reach the PostgreSQL arm with every statement measured, this one
+  // against a live 5.0.0 server (#815): ADD COLUMN, DROP COLUMN, ALTER COLUMN TYPE,
+  // SET NOT NULL, SET DEFAULT and DROP DEFAULT all answered OK on a probe table.
+  opengauss: "postgres-branch-measured",
   oracle: "has-own-branch",
   mssql: "has-own-branch",
   clickhouse: "has-own-branch",
@@ -1336,6 +1343,9 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
  */
 const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANSACTION;" | false> = {
   postgres: "BEGIN;",
+  // Measured on 5.0.0 (#815): `BEGIN; CREATE TABLE ...; ROLLBACK;` left no table
+  // behind, so DDL is transactional and the wrapper is real.
+  opengauss: "BEGIN;",
   mysql: "BEGIN;",
   // Measured live via @duckdb/node-api 1.5.5-r.4 (DuckDB v1.5.5, in-process, no server
   // needed): `BEGIN;` opens a real transaction around DDL, so a `CREATE TABLE` issued

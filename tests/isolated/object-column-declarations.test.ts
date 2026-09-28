@@ -85,6 +85,9 @@ import { CENSUS_CONNECTION } from "../helpers/census-connection";
  */
 const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> = Object.freeze({
   postgres: ["table", "view", "materialized_view", "sequence"],
+  // Inherited from the PostgreSQL provider (#815): OpenGaussProvider extends it and
+  // swaps only the handshake, so these declarations are PostgreSQL's.
+  opengauss: ["table", "view", "materialized_view", "sequence"],
   mysql: ["table", "view"],
   oracle: ["table", "view", "materialized_view"],
   mssql: ["table", "view"],
@@ -190,7 +193,7 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(19);
+    expect(CENSUS_TYPES).toHaveLength(20);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, and the design's
     // table has no such row: every engine has at least one kind with columns.

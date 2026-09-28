@@ -93,6 +93,9 @@ import { CENSUS_CONNECTION } from "../helpers/census-connection";
  */
 const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = Object.freeze({
   postgres: ["view/pgsql", "materialized_view/pgsql", "function/pgsql", "procedure/pgsql", "trigger/pgsql"],
+  // Inherited from the PostgreSQL provider (#815), like its column census: only the
+  // handshake differs.
+  opengauss: ["view/pgsql", "materialized_view/pgsql", "function/pgsql", "procedure/pgsql", "trigger/pgsql"],
   // The MySQL branch only. MariaDB's two extra kinds are asserted separately, because an
   // unconnected provider cannot show them.
   mysql: ["table/mysql", "view/mysql", "procedure/mysql", "function/mysql", "trigger/mysql", "event/mysql"],
@@ -217,7 +220,7 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(19);
+    expect(CENSUS_TYPES).toHaveLength(20);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -235,10 +238,10 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(67);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(67);
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(22);
-    expect(rows).toHaveLength(89);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(72);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(72);
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(24);
+    expect(rows).toHaveLength(96);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -264,10 +267,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 69 on a MariaDB connection against 67 unconnected: the design states both numbers because
+    // 74 on a MariaDB connection against 72 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(69);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(74);
   });
 
   /*
@@ -353,7 +356,7 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    expect(rows).toHaveLength(97);
+    expect(rows).toHaveLength(104);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

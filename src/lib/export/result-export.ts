@@ -348,6 +348,22 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
     "timestamp without time zone",
     "timestamp with time zone",
   ],
+  // The same names PostgreSQL's row lists, inherited with the dialect rather than re-measured
+  // cell by cell (#815): openGauss is 9.2-based and its manual carries the same type
+  // vocabulary. This entry was added for the handshake, and what the export emits for it is
+  // portable SQL meant to run on the engine it names.
+  opengauss: [
+    "character varying",
+    "varchar",
+    "text",
+    "bytea",
+    "numeric",
+    "decimal",
+    "money",
+    "timestamp",
+    "timestamp without time zone",
+    "timestamp with time zone",
+  ],
   mysql: [
     "text",
     "tinytext",
@@ -619,6 +635,10 @@ type BinaryLiteral = "standard-hex" | "zero-x" | "pg-bytea" | "hextoraw" | "unhe
 
 const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   postgres: "pg-bytea",
+  // The PostgreSQL wire, inherited rather than re-measured (#815): openGauss's `bytea` is the
+  // type the row above is about, and docs/providers/opengauss.md records the handshake as the
+  // measured surface and the dialect as the followed one.
+  opengauss: "pg-bytea",
   // Measured on MySQL 26.7.0: `SELECT HEX(X'0102deadbeef')` answers `0102DEADBEEF` and
   // `SELECT LENGTH(X'')` answers 0, so MySQL is here rather than in `zero-x` even
   // though it accepts `0x0102deadbeef` too — a zero-length value has no `0x` spelling

@@ -71,6 +71,12 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
   // once a gate-4 probe has measured one, never because the protocol answers.
   kafka: true,
+  // openGauss (#815): its own provider, doc page and integration test. Not a relative below,
+  // and the distinction is the point: it needs CODE. Its authentication requests 10 and 11 are
+  // SHA256 and MD5_SHA256 where PostgreSQL's are the SASL pair, so the stock driver answers the
+  // wrong handshake before a query is sent - which is also why the engines derived from it
+  // (Huawei GaussDB, Vastbase among them) share this id rather than each getting a row there.
+  opengauss: true,
   libredb: true,
 });
 
@@ -121,6 +127,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   prometheus: true,
   // A cluster the user already runs, reached over the Kafka protocol.
   kafka: true,
+  // A server the user already runs, reached over the PostgreSQL wire (#815).
+  opengauss: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
