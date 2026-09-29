@@ -688,10 +688,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
         What the save may NOT become is silent. The first click reports what the server
         refused, in its own words, and saves nothing; only a second one saves. The
-        acknowledgement is withdrawn whenever the dialog stops being about that
-        connection - when it closes, and when a different edit target is applied to it
-        while it stays open - so the next connection shown here is told too. A successful
-        save withdraws it as well (#1167).
+        acknowledgement is withdrawn when the dialog closes, and when a different edit
+        target is applied while it stays open, so the next connection shown here is told
+        too.
       */
       if (result.degraded === true && !degradedSaveAcknowledged) {
         setDegradedSaveAcknowledged(true);
