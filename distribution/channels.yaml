@@ -183,7 +183,7 @@ channels:
       strategy: local_file
       files:
         - charts/libredb-studio/Chart.yaml
-      extract: 'appVersion: "(\d+\.\d+\.\d+)"'
+      extract: "appVersion:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: Enforcement lives in the required chart:check CI gate (#138); this row is visibility.
 
   - id: homebrew
@@ -206,7 +206,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/libredb/homebrew-tap/main/Formula/libredb-studio.rb
-      extract: 'version "(\d+\.\d+\.\d+)"'
+      extract: "version\\s+[\"'](\\d+\\.\\d+\\.\\d+)"
       note: Confirms the release-CI tap push actually landed.
 
   - id: snap
@@ -425,7 +425,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml
-      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+      extract: "defaultValue:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: The single CapRover row. A LibreDB-owned 3rd-party repo
         (libredb/caprover-one-click-apps) served the app while this submission was in review and was
         retired once it merged; it had its own inventory entry until that duplicated CapRover in the
@@ -508,7 +508,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/kubero-dev/kubero/main/services/libredb-studio/app.yaml
-      extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+      extract: "ghcr\\.io/libredb/libredb-studio\\s+tag:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
 
   - id: sealos
     name: Sealos App Store template
@@ -561,7 +561,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/truenas/apps/master/ix-dev/community/libredb-studio/ix_values.yaml
-      extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+      extract: "ghcr\\.io/libredb/libredb-studio\\s+tag:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: Merged in truenas/apps#5501 (14 Aug 2026); live in the TrueNAS SCALE community catalog. The pin
         reads the ghcr repo and tag in ix-dev/community/libredb-studio/ix_values.yaml (the maintainer-edited
         source a bump PR touches) - the container_utils_image tag is a different repository and must not be
@@ -785,7 +785,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/YunoHost-Apps/libredb_studio_ynh/master/manifest.toml
-      extract: 'version = "(\d+\.\d+\.\d+)~ynh\d+"'
+      extract: "version\\s*=\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: Listed by YunoHost/apps#3618, merged 2026-09-20. Unlike the other self-hosting catalogs here, the
         package installs no container; it unpacks the standalone Linux tarball under systemd and fetches its
         own Node 24 through YunoHost's `n`, which is why platforms is linux and the runtime is
