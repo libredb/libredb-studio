@@ -41,6 +41,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { createHash, createHmac, pbkdf2Sync } from "node:crypto";
+import net from "node:net";
 import {
   deriveSha256Keys,
   encodeIteration,
@@ -53,9 +54,11 @@ import {
   passwordMessageFrame,
   sha256Password,
   verifySha256ServerSignature,
+  type Md5Sha256AuthRequest,
   type Sha256AuthRequest,
 } from "@/lib/db/providers/sql/opengauss-auth";
 import { OpenGaussProvider } from "@/lib/db/providers/sql/opengauss";
+import { OpenGaussSocket } from "@/lib/db/providers/sql/opengauss-socket";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** The two hex fields and the token, at the widths the wire carries them. */
@@ -384,6 +387,32 @@ describe("OpenGaussProvider", () => {
     expect(poolConfig.ssl).toBe(false);
   });
 
+  test("hands `pg` a socket carrying this connection's own password and TLS settings", () => {
+    const poolConfig = provider.buildPoolConfig() as {
+      stream: () => { destroy(): void };
+    };
+    const socket = poolConfig.stream();
+
+    // Invoking the factory is the point, not merely checking it exists: the socket it
+    // returns is what carries the handshake, and the two values in it are the connection's
+    // own, so a socket built with a blank password or with TLS dropped would answer the
+    // server with the wrong proof or on a channel the filter cannot see.
+    expect(socket).toBeInstanceOf(OpenGaussSocket);
+    socket.destroy();
+  });
+
+  test("builds a plain socket when the connection asks for no TLS", () => {
+    // The connection's `ssl` is a settings object or absent, never a boolean, so "no TLS"
+    // is expressed by leaving it off rather than by setting it false.
+    const { ssl: _ssl, ...withoutSsl } = config;
+    const plain = new OpenGaussProvider(withoutSsl as DatabaseConnection);
+    const poolConfig = (plain as unknown as { buildPoolConfig(): { stream: () => OpenGaussSocket } }).buildPoolConfig();
+    const socket = poolConfig.stream();
+
+    expect(socket).toBeInstanceOf(OpenGaussSocket);
+    socket.destroy();
+  });
+
   test("asks the role question in this engine's vocabulary, in the four columns the shared check reads", () => {
     const sql = provider.readOnlyPrivilegeSql();
 
@@ -421,5 +450,310 @@ describe("OpenGaussProvider", () => {
 
   test("names itself in validation messages, so a config error says which engine refused", () => {
     expect(provider.engineLabel).toBe("openGauss");
+  });
+});
+
+// ============================================================================
+// The socket: the frame filter `pg` never sees, driven over a real loopback server
+// ----------------------------------------------------------------------------
+// Every group above tests a pure function. The filter is not one: it answers a frame,
+// swallows it, forwards the rest, and splits a TCP stream's arbitrary chunk boundaries.
+// So these drive the class itself against a `net.Server` on 127.0.0.1 and assert on what
+// the server received - the only direction that can fail if the filter is wrong, since a
+// filter that answers nothing is indistinguishable from a working one when the client's
+// own reads are not being checked. The server is a stand-in for 5.0.0's socket, not a
+// mock of the code under test: it is the counterpart, and it knows nothing of the parser.
+// ============================================================================
+
+describe("OpenGaussSocket — the frame filter over a real socket", () => {
+  interface Harness {
+    readonly port: number;
+    readonly received: Buffer[];
+    readonly socket: OpenGaussSocket;
+    close(): Promise<void>;
+  }
+
+  /**
+   * A server that runs `script` against each accepted connection and collects the bytes
+   * it was sent. The client is the class under test, connected for real; `script` gets the
+   * server's side of the socket so it can push frames in whatever chunk sizes it likes.
+   */
+  const serve = (script: (conn: import("node:net").Socket, received: Buffer[]) => void): Promise<Harness> => {
+    const received: Buffer[] = [];
+    const server = net.createServer((conn) => {
+      conn.on("data", (chunk: Buffer) => received.push(chunk));
+      conn.on("error", () => {});
+      script(conn, received);
+    });
+    return new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address() as net.AddressInfo;
+        const socket = new OpenGaussSocket({ password: PASSWORD });
+        // The harness hands back an unconnected socket: connecting is the test's business,
+        // because a test that wants a refused connection must never connect at all.
+        resolve({
+          port,
+          received,
+          socket,
+          close: () =>
+            new Promise<void>((done) => {
+              socket.destroy();
+              server.close(() => done());
+            }),
+        });
+      });
+    });
+  };
+
+  /**
+   * Connect and resolve once the driver-visible "connect" event fires. The listener goes on
+   * BEFORE `connect()` rather than after: the event is emitted from the inner socket's own
+   * connect handler, so a listener attached afterwards can miss a loopback connection that
+   * completed in between and the test waits out the timeout on a socket that is already up.
+   */
+  const connected = (h: Harness): Promise<void> =>
+    new Promise((resolve, reject) => {
+      h.socket.once("connect", () => resolve());
+      h.socket.once("error", reject);
+      // `pg` always has a consumer on this stream by the time it connects, and so must the
+      // test: a Readable with no reader does not flow, and the `connect` event the Duplex
+      // re-emits from its own attach path is delivered only once something is reading.
+      // Without this the await below never resolves and the test fails as a bare timeout,
+      // which says nothing about the code under test.
+      h.socket.resume();
+      h.socket.connect(h.port, "127.0.0.1");
+    });
+
+  const bytes = (chunks: Buffer[]): Buffer => Buffer.concat(chunks);
+
+  /**
+   * The text a `PasswordMessage` carried, read out of the bytes the server received.
+   * The payload is `[type][length][response][NUL]`, so the text stops one byte short of
+   * the end - otherwise the terminator is compared against the expected reply and a
+   * correct answer reads as a mismatch, since the two strings print identically.
+   */
+  const replyText = (chunks: Buffer[]): string => {
+    const frame = bytes(chunks);
+    return frame.subarray(5, frame.length - 1).toString("utf8");
+  };
+
+  /** The code-11 request in the shape the derivation reads, so the socket's reply is recomputed. */
+  const md5Request = (): Md5Sha256AuthRequest => ({
+    kind: "md5_sha256",
+    salt: SALT,
+    md5Salt: Buffer.from("1234", "ascii"),
+    iterations: OPENGAUSS_DEFAULT_ITERATIONS,
+  });
+
+  /** A whole `R` frame: the payload the server sends, wrapped in its type byte and length. */
+  const asResponseFrame = (payload: Buffer): Buffer => {
+    const header = Buffer.alloc(5);
+    header.write("R", 0, "ascii");
+    header.writeInt32BE(4 + payload.length, 1);
+    return Buffer.concat([header, payload]);
+  };
+
+  test("answers a request-10 frame on the wire and never forwards it to the driver", async () => {
+    const h = await serve((conn) => conn.write(asResponseFrame(sha256Payload())));
+    await connected(h);
+
+    await Bun.sleep(150);
+
+    // The server got a PasswordMessage, byte for byte, and the driver got nothing - the
+    // whole point of the filter. `received` is the server's view of what the client sent.
+    const sent = bytes(h.received);
+    expect(sent[0]).toBe(0x70);
+    expect(replyText(h.received)).toBe(sha256Password(PASSWORD, sha256Request()));
+    // Nothing readable by the driver: the frame was consumed, not relayed.
+    const forwarded: Buffer[] = [];
+    h.socket.on("data", (c: Buffer) => forwarded.push(c));
+    await Bun.sleep(50);
+    expect(forwarded).toHaveLength(0);
+    await h.close();
+  });
+
+  test("answers a request-11 frame the same way", async () => {
+    const h = await serve((conn) => conn.write(asResponseFrame(md5Sha256Payload())));
+    await connected(h);
+    await Bun.sleep(150);
+
+    const sent = bytes(h.received);
+    expect(sent[0]).toBe(0x70);
+    expect(replyText(h.received)).toBe(md5Sha256Password(PASSWORD, md5Request()));
+    await h.close();
+  });
+
+  test("forwards a frame it does not own, so AuthenticationOk reaches the driver", async () => {
+    // Code 0 is AuthenticationOk: an `R` frame that is not one of this engine's two
+    // requests is passed through untouched, which is what keeps `trust` connections and
+    // real PostgreSQL SASL working through the same socket.
+    const ok = asResponseFrame(Buffer.from([0, 0, 0, 0]));
+    const h = await serve((conn) => conn.write(ok));
+    const got: Buffer[] = [];
+    h.socket.on("data", (c: Buffer) => got.push(c));
+    await connected(h);
+    await Bun.sleep(150);
+
+    expect(bytes(got)).toEqual(ok);
+    expect(h.received).toHaveLength(0);
+    await h.close();
+  });
+
+  test("reassembles a frame split across TCP segments, and answers it once", async () => {
+    const frame = asResponseFrame(sha256Payload());
+    const h = await serve((conn) => {
+      // One byte at a time is the worst case a stream can produce, and it is what a
+      // half-consumed buffer would silently mishandle.
+      let i = 0;
+      const timer = setInterval(() => {
+        if (i >= frame.length) {
+          clearInterval(timer);
+          return;
+        }
+        conn.write(frame.subarray(i, i + 1));
+        i += 1;
+      }, 1);
+    });
+    await connected(h);
+    await Bun.sleep(600);
+
+    const replies = h.received.filter((c) => c[0] === 0x70);
+    expect(replies).toHaveLength(1);
+    expect(replyText(replies)).toBe(sha256Password(PASSWORD, sha256Request()));
+    await h.close();
+  });
+
+  test("answers two handshakes in sequence on one connection", async () => {
+    const h = await serve((conn) => {
+      conn.write(asResponseFrame(sha256Payload()));
+      setTimeout(() => conn.write(asResponseFrame(md5Sha256Payload())), 40);
+    });
+    await connected(h);
+    await Bun.sleep(300);
+
+    const replies = h.received.filter((c) => c[0] === 0x70);
+    expect(replies).toHaveLength(2);
+    await h.close();
+  });
+
+  test("passes the driver's writes through to the server", async () => {
+    const h = await serve(() => {});
+    await connected(h);
+    h.socket.write(Buffer.from("startup", "ascii"));
+    await Bun.sleep(100);
+
+    expect(bytes(h.received).toString("utf8")).toBe("startup");
+    await h.close();
+  });
+
+  test("refuses a write before the socket is open, rather than dropping it silently", async () => {
+    const socket = new OpenGaussSocket({ password: PASSWORD });
+    // A write-callback error is ALSO re-emitted on the stream, so a test that only reads
+    // the callback turns a correct refusal into an unhandled `error` and fails on the
+    // throw rather than on the assertion. The listener is what makes the refusal
+    // observable instead of fatal, which is the same thing `pg` does.
+    const emitted = new Promise<Error>((resolve) => socket.once("error", resolve));
+    const error = await new Promise<Error | null | undefined>((resolve) => {
+      socket.write(Buffer.from("early"), (e) => resolve(e));
+    });
+    expect(error).toBeInstanceOf(Error);
+    expect(error?.message).toBe("openGauss connection is not open");
+    // The same object, so the two paths cannot drift into reporting different causes.
+    expect(await emitted).toBe(error as Error);
+    socket.destroy();
+  });
+
+  test("surfaces a refused connection as an error on the socket", async () => {
+    // Port 1 on loopback has nothing listening, so `connect` fails at the TCP layer. The
+    // listener is attached first, or the refusal can arrive before anyone is listening.
+    const socket = new OpenGaussSocket({ password: PASSWORD });
+    const error = await new Promise<Error>((resolve) => {
+      socket.once("error", resolve);
+      socket.resume();
+      socket.connect(1, "127.0.0.1");
+    });
+    expect(error).toBeInstanceOf(Error);
+    socket.destroy();
+  });
+
+  test("ends cleanly when the server closes its side", async () => {
+    const h = await serve((conn) => setTimeout(() => conn.end(), 60));
+    const ended = new Promise<void>((resolve) => {
+      h.socket.once("end", () => resolve());
+      h.socket.once("close", () => resolve());
+    });
+    await connected(h);
+    await ended;
+    await h.close();
+  });
+
+  test("is idempotent on connect, so a second call cannot open a second socket", async () => {
+    const h = await serve(() => {});
+    await connected(h);
+    // `pg` connects once, but the guard is load-bearing: a second net.connect would leak
+    // a socket the first one already owns.
+    h.socket.connect(h.port, "127.0.0.1");
+    await Bun.sleep(60);
+    expect(h.socket.destroyed).toBe(false);
+    await h.close();
+  });
+
+  test("applies the socket options `pg` sets before connect", async () => {
+    const h = await serve(() => {});
+    // These are the calls the driver makes between construction and the first write, and
+    // each is a no-op on a socket that does not exist yet.
+    expect(h.socket.setNoDelay(true)).toBe(h.socket);
+    expect(h.socket.setKeepAlive(true, 1000)).toBe(h.socket);
+    expect(h.socket.ref()).toBe(h.socket);
+    await connected(h);
+    expect(h.socket.setNoDelay(false)).toBe(h.socket);
+    expect(h.socket.unref()).toBe(h.socket);
+    await h.close();
+  });
+
+  test("destroys without a socket ever being opened", async () => {
+    const socket = new OpenGaussSocket({ password: PASSWORD });
+    socket.destroy();
+    expect(socket.destroyed).toBe(true);
+  });
+
+  test("ends without a socket ever being opened", async () => {
+    const socket = new OpenGaussSocket({ password: PASSWORD });
+    const error = await new Promise<Error | null | undefined>((resolve) => socket.end(() => resolve(undefined)));
+    expect(error).toBeUndefined();
+    socket.destroy();
+  });
+
+  test("requests TLS itself and reports a refusal in `pg`'s own words", async () => {
+    // The socket writes the SSLRequest, so a server that answers anything but "S" must
+    // produce the message `pg` itself uses for a refused SSLRequest - a socket that hung
+    // instead would leave the connection waiting with no diagnostic.
+    const h = await serve((conn) => conn.write(Buffer.from("N", "ascii")));
+    const socket = new OpenGaussSocket({
+      password: PASSWORD,
+      tls: { rejectUnauthorized: false },
+    });
+    const error = await new Promise<Error>((resolve) => {
+      socket.once("error", resolve);
+      socket.resume();
+      socket.connect(h.port, "127.0.0.1");
+    });
+
+    expect(error.message).toBe("The server does not support SSL connections");
+    socket.destroy();
+    await h.close();
+  });
+
+  test("sends the SSLRequest the protocol defines when TLS is configured", async () => {
+    const h = await serve(() => {});
+    const socket = new OpenGaussSocket({ password: PASSWORD, tls: { rejectUnauthorized: false } });
+    socket.resume();
+    socket.connect(h.port, "127.0.0.1");
+    await Bun.sleep(200);
+
+    // 80877103 in the 8-byte SSLRequest message, sent by the socket and not by `pg`.
+    expect(bytes(h.received).toString("hex")).toBe("0000000804d2162f");
+    socket.destroy();
+    await h.close();
   });
 });

@@ -106,6 +106,7 @@ Todos os motores SQL compartilham o mesmo explorador de esquema, diagramas ER, c
 | Banco de dados | Driver | Capacidades |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | IDE SQL completo, planos EXPLAIN, transações, cancelamento de consultas (`pg_cancel_backend`) |
+| **openGauss** | `pg`, over a socket that answers openGauss's own SHA-256 and md5-SHA-256 password handshakes | Full SQL IDE on the PostgreSQL wire protocol, over either handshake: which one runs is the server's request, not a dialog choice. `EXPLAIN (FORMAT JSON)` plans, transactions, `EXPLAIN` driven by the agent, and the read-only investigation agent |
 | **MySQL** | `mysql2` | IDE SQL completo, EXPLAIN, transações, cancelamento de consultas (`KILL QUERY`) |
 | **Oracle** | `oracledb` (modo Thin) | IDE SQL completo, paginação com `FETCH FIRST N ROWS`, views de monitoramento `V$`, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transações |
 | **SQL Server** | `mssql` (tedious) | IDE SQL completo, paginação com `TOP N` / `OFFSET FETCH`, DMVs `sys.dm_*`, `UPDATE STATISTICS`, `DBCC CHECKDB`, transações, detecção automática de Azure SQL |

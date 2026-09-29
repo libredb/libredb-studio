@@ -112,6 +112,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 | СУБД | Драйвер | Возможности |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | Полноценная SQL IDE, планы выполнения EXPLAIN, транзакции, отмена запросов (`pg_cancel_backend`) |
+| **openGauss** | `pg`, over a socket that answers openGauss's own SHA-256 and md5-SHA-256 password handshakes | Full SQL IDE on the PostgreSQL wire protocol, over either handshake: which one runs is the server's request, not a dialog choice. `EXPLAIN (FORMAT JSON)` plans, transactions, `EXPLAIN` driven by the agent, and the read-only investigation agent |
 | **MySQL** | `mysql2` | Полноценная SQL IDE, EXPLAIN, транзакции, отмена запросов (`KILL QUERY`) |
 | **Oracle** | `oracledb` (тонкий клиент, режим Thin) | Полноценная SQL IDE, постраничный вывод через `FETCH FIRST N ROWS`, представления мониторинга `V$`, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, транзакции |
 | **SQL Server** | `mssql` (tedious) | Полноценная SQL IDE, постраничный вывод через `TOP N` / `OFFSET FETCH`, системные представления `sys.dm_*`, `UPDATE STATISTICS`, `DBCC CHECKDB`, транзакции, автоопределение Azure SQL |
