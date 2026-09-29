@@ -1553,7 +1553,7 @@ export default function Studio() {
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
+            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg dark:bg-fill dark:hover:bg-fill-strong">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
@@ -1593,7 +1593,7 @@ export default function Studio() {
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
+            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg dark:bg-fill dark:hover:bg-fill-strong">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction

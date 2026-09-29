@@ -358,7 +358,7 @@ export function QuerySafetyDialog({
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-hairline bg-surface">
-          <AlertDialogCancel className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong hover:text-fg-tertiary rounded-lg">
+          <AlertDialogCancel className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong dark:bg-fill dark:hover:bg-fill-strong hover:text-fg-tertiary rounded-lg">
             <span>Cancel</span>
           </AlertDialogCancel>
           <button
