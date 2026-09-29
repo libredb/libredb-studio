@@ -121,6 +121,17 @@ describe("useConnectionForm", () => {
     expect(result.current.queryTimeout).toBe("");
   });
 
+  const POSTGRES_CONN: DatabaseConnection = {
+    id: "conn-base",
+    name: "Base",
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    database: "app",
+    user: "app",
+    createdAt: new Date(),
+  };
+
   test("reopens a saved timeout and clearing it restores the default", async () => {
     const onConnect = mock((_connection: DatabaseConnection) => {});
     const editConnection: DatabaseConnection = {
@@ -1009,6 +1020,84 @@ describe("useConnectionForm", () => {
     });
 
     expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  test("applying a new edit target while the dialog is open withdraws the acknowledgement", async () => {
+    // #1180. A host of the published modal can swap `editConnection` without closing,
+    // because the close path is the only thing that used to withdraw the acknowledgement.
+    // The next target then inherits the previous one's warning, is saved on its FIRST
+    // click having reported nothing, and shows a banner about a connection that is no
+    // longer on screen.
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const x: DatabaseConnection = { ...POSTGRES_CONN, id: "conn-x", name: "X" };
+    const y: DatabaseConnection = { ...POSTGRES_CONN, id: "conn-y", name: "Y" };
+    const onConnect = mock(() => {});
+    const { result, rerender } = renderHook(
+      (props: { isOpen: boolean; editConnection: DatabaseConnection }) =>
+        useConnectionForm({ ...defaultProps, onConnect, isOpen: props.isOpen, editConnection: props.editConnection }),
+      { initialProps: { isOpen: true, editConnection: x } },
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.tone).toBe("warning");
+
+    // The dialog never closes, so nothing has withdrawn the acknowledgement but the
+    // target change itself.
+    act(() => {
+      rerender({ isOpen: true, editConnection: y });
+    });
+    expect(result.current.testResult).toBeNull();
+    expect(result.current.name).toBe("Y");
+
+    // Y is now warned about on its own first click, and only saves on the second.
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.tone).toBe("warning");
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect((onConnect.mock.calls[0] as unknown as [DatabaseConnection])[0].id).toBe("conn-y");
+  });
+
+  test("a rerender that does not change the edit target does not withdraw the acknowledgement", async () => {
+    // The other side of #1180, and the reason the fix keeps the block's existing trigger
+    // rather than adding an id comparison: a rerender carrying the SAME target is not a
+    // new connection, so asking again would make the second click unreachable for every
+    // host that re-renders while the dialog is open.
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const x: DatabaseConnection = { ...POSTGRES_CONN, id: "conn-x", name: "X" };
+    const onConnect = mock(() => {});
+    const { result, rerender } = renderHook(
+      (props: { isOpen: boolean; editConnection: DatabaseConnection }) =>
+        useConnectionForm({ ...defaultProps, onConnect, isOpen: props.isOpen, editConnection: props.editConnection }),
+      { initialProps: { isOpen: true, editConnection: x } },
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+
+    act(() => {
+      rerender({ isOpen: true, editConnection: x });
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    // Saved on this click, with no second warning: the acknowledgement survived.
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect((onConnect.mock.calls[0] as unknown as [DatabaseConnection])[0].id).toBe("conn-x");
   });
 
   test("the platform adapter carries the same two facts", async () => {

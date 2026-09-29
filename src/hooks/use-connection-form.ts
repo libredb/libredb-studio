@@ -338,6 +338,25 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
   const isEditMode = !!editConnection;
 
+  /*
+    The four values that describe the last thing the dialog showed, rather than the
+    connection being edited: the health verdict, the paste box, and the degraded-save
+    acknowledgement.
+
+    One function, two callers, because the two lists drifted once already: closing the
+    dialog cleared all four while applying a new edit target cleared none, so a host that
+    swaps `editConnection` without closing inherited the previous target's "click again"
+    and saved the next one on its first click having reported nothing (#1180). Two copies
+    of this list would be free to diverge again, so there is one.
+  */
+  const withdrawTransientState = () => {
+    setTestResult(null);
+    setShowPasteInput(false);
+    setPasteInput("");
+    // The next connection typed into this dialog has not been warned about anything.
+    setDegradedSaveAcknowledged(false);
+  };
+
   // Populate form when editing.
   //
   // Adjusted while rendering rather than in an effect, per React's "adjusting some
@@ -352,6 +371,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   if (!appliedEdit || appliedEdit.conn !== editConnection) {
     setAppliedEdit({ conn: editConnection });
     if (editConnection) {
+      // The transient values below belong to whatever was on screen, not to this target,
+      // so applying a new one withdraws them exactly as closing the dialog does. Without
+      // this the previous target's degraded-save acknowledgement carried over and the
+      // next connection was saved on its first click having reported nothing (#1180).
+      withdrawTransientState();
       setType(editConnection.type);
       setName(editConnection.name);
       setHost(editConnection.host || "localhost");
@@ -437,11 +461,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   if (isOpen !== lastReset.isOpen || isEditMode !== lastReset.isEditMode) {
     setLastReset({ isOpen, isEditMode });
     if (!isOpen) {
-      setTestResult(null);
-      setShowPasteInput(false);
-      setPasteInput("");
-      // The next connection typed into this dialog has not been warned about anything.
-      setDegradedSaveAcknowledged(false);
+      withdrawTransientState();
       if (!editConnection) {
         // Every connection-scoped field, from the same object that seeded it (#1125).
         for (const key of Object.keys(CONNECTION_FORM_DEFAULTS) as (keyof ConnectionFormDefaults)[]) {
@@ -668,8 +688,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
         What the save may NOT become is silent. The first click reports what the server
         refused, in its own words, and saves nothing; only a second one saves. The
-        acknowledgement is withdrawn when the dialog closes, so the next connection
-        typed here gets told too.
+        acknowledgement is withdrawn whenever the dialog stops being about that
+        connection - when it closes, and when a different edit target is applied to it
+        while it stays open - so the next connection shown here is told too. A successful
+        save withdraws it as well (#1167).
       */
       if (result.degraded === true && !degradedSaveAcknowledged) {
         setDegradedSaveAcknowledged(true);
