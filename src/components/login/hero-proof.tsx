@@ -25,7 +25,17 @@ const AGENT_MODES: readonly { key: string; label: string; detail: string }[] = [
   {
     key: "agent",
     label: "agent mode",
-    detail: `runs read-only on ${namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label))}`,
+    // The count, not the names. The names are already on screen as the engine pills
+    // directly above this block, and this claim's column is 187px wide: spelling five
+    // engines out pushed it to a fifth line, and the hero column is the tallest child of
+    // its flex row, so one extra line took the page from 800 to 811 at 1280x800 and
+    // scrolled it. That is the same budget #541 and #550 were spent on, and this is the
+    // same exhaustion of it. Measured on a build of this branch against `upstream/main`:
+    // four lines and 78px there, five and 98px here, same width and same font.
+    //
+    // "Read-only" is the word that must survive this, so it stays; only the enumeration
+    // goes. Which engines those are is a `.length` away and the pills say it.
+    detail: `runs read-only on ${namedList([`${AGENT_EXECUTION_ENGINES.length} engines`])}`,
   },
 ];
 
