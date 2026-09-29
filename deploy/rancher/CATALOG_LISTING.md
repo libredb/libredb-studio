@@ -91,7 +91,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > `deploy/azure`, `deploy/railway` and `deploy/caprover` said seventeen from the merge of #1085 and say eighteen from the merge of #1088,
 > because `tests/unit/lib/catalog-copy-engine-count.test.ts` holds every counted numeral there to
 > `EXTERNAL_DATABASE_TYPES` on `main`.
-> So until the CapRover version default and the Railway image pin move from 0.16.2 to a release that carries Prometheus and Apache Kafka, those two name a tag two engines short of their own description, the one exception to the rule below that the number is true at the tag it names.
+> CapRover moved to 0.17.0, which carries both, so its numeral and its tag agree again. The Railway image pin is still on 0.16.2 while its description says eighteen, so it alone names a tag two engines short of its own description, and it is the one exception to the rule below that the number is true at the tag it names.
 > At the DuckDB release they said sixteen - and all three were still on fourteen when it landed, a full engine behind, because
 > libSQL had moved the code and not them. `deploy/railway/template.json` and
 > `deploy/caprover/libredb-studio.yml` were on thirteen once for the same reason: each channel
