@@ -2,7 +2,7 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import {
   AlertDialog,
@@ -11,6 +11,7 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useReturnFocus } from "@/hooks/use-return-focus";
 import { cn } from "@/lib/utils";
 import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
@@ -111,7 +112,7 @@ export function QuerySafetyDialog({
   const [error, setError] = useState<string | null>(null);
   // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
   // one, so the dialog keeps what had focus when it opened and puts focus back there on close.
-  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const returnFocus = useReturnFocus();
 
   /**
    * Whether the client-side reading that opened this dialog could not resolve part
@@ -229,13 +230,7 @@ export function QuerySafetyDialog({
     >
       <AlertDialogContent
         className="p-0 gap-0 bg-overlay border border-hairline-strong rounded-xl shadow-2xl overflow-hidden"
-        onOpenAutoFocus={() => {
-          returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          returnFocusRef.current?.focus();
-        }}
+        {...returnFocus}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">

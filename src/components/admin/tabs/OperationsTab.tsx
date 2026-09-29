@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
+import { useReturnFocus } from "@/hooks/use-return-focus";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { maintenanceControl, type ActiveSessionDetails, type MaintenanceType, type TableStats } from "@/lib/db/types";
@@ -116,6 +117,7 @@ export function OperationsTab() {
     connections.find((c) => c.id === selectedId) ?? (connections.length > 0 ? connections[0] : null);
   const [operationLog, setOperationLog] = useState<OperationLogEntry[]>([]);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
+  const confirmKillReturnFocus = useReturnFocus();
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -784,7 +786,7 @@ export function OperationsTab() {
 
       {/* Kill Session Confirmation Dialog */}
       <AlertDialog open={!!confirmKill} onOpenChange={() => setConfirmKill(null)}>
-        <AlertDialogContent className="bg-surface border-hairline-strong">
+        <AlertDialogContent className="bg-surface border-hairline-strong" {...confirmKillReturnFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle className="text-fg">Terminate Session?</AlertDialogTitle>
             <AlertDialogDescription className="text-fg-tertiary">

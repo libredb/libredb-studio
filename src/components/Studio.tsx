@@ -34,6 +34,7 @@ import { httpSourceApplier, ObjectSourceView, type ObjectSourcePatch } from "@/c
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { useStableCallback } from "@/hooks/use-stable-callback";
+import { useReturnFocus } from "@/hooks/use-return-focus";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import {
   buildResultExport,
@@ -519,6 +520,7 @@ export default function Studio() {
   }, []);
 
   const [pendingDeleteConnectionId, setPendingDeleteConnectionId] = useState<string | null>(null);
+  const deleteConnectionReturnFocus = useReturnFocus();
   const [isCreateTableModalOpen, setIsCreateTableModalOpen] = useState(false);
   const [showDiagram, setShowDiagram] = useState(false);
   const handleShowDiagram = useCallback(() => setShowDiagram(true), []);
@@ -1573,7 +1575,10 @@ export default function Studio() {
           if (!open) setPendingDeleteConnectionId(null);
         }}
       >
-        <AlertDialogContent className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden">
+        <AlertDialogContent
+          className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden"
+          {...deleteConnectionReturnFocus}
+        >
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500/20 to-red-500/10 flex items-center justify-center shrink-0">

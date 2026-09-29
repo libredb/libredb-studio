@@ -887,6 +887,31 @@ describe("Studio", () => {
     expect(dialog.queryByText("Delete connection?")).toBeNull();
   });
 
+  // The dialog opens from state, with no AlertDialogTrigger for Radix to return to (#1198). The
+  // sidebar is mocked, so a button appended to the body stands in for its "Delete connection".
+  test("closing the delete dialog with Escape puts focus back where it was", async () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    render(<Studio />);
+    const opener = document.createElement("button");
+    opener.textContent = "Delete connection";
+    document.body.appendChild(opener);
+    try {
+      opener.focus();
+      const requestDelete = capturedSidebarProps.onDeleteConnection as (id: string) => void;
+      act(() => requestDelete("c1"));
+      const dialog = within(document.body as HTMLElement);
+      await waitFor(() => expect(dialog.queryByText("Delete connection?")).not.toBeNull());
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(() => expect(dialog.queryByText("Delete connection?")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(opener));
+      expect(mockStorageDeleteConnection).not.toHaveBeenCalled();
+    } finally {
+      opener.remove();
+    }
+  });
+
   // --- onObjectClick ---
   test("a relation activated in the object tree opens and runs its tab", () => {
     capabilitiesOverride = {

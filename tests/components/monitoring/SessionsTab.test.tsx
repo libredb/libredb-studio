@@ -15,20 +15,6 @@ mock.module("@/components/ui/tooltip", () => ({
   TooltipContent: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
 }));
 
-mock.module("@/components/ui/alert-dialog", () => ({
-  AlertDialog: ({ children, open }: { children: React.ReactNode; open?: boolean }) =>
-    open ? React.createElement("div", { "data-testid": "alert-dialog" }, children) : null,
-  AlertDialogContent: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
-  AlertDialogHeader: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
-  AlertDialogTitle: ({ children }: { children: React.ReactNode }) => React.createElement("h2", {}, children),
-  AlertDialogDescription: ({ children }: { children: React.ReactNode }) => React.createElement("p", {}, children),
-  AlertDialogFooter: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
-  AlertDialogCancel: ({ children }: { children: React.ReactNode }) =>
-    React.createElement("button", { type: "button" }, children),
-  AlertDialogAction: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) =>
-    React.createElement("button", { type: "button", onClick }, children),
-}));
-
 function makeData(): MonitoringData {
   return {
     timestamp: new Date("2026-02-15T12:00:00Z"),
@@ -165,6 +151,25 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(onKillSession).toHaveBeenCalledWith(101);
     });
+  });
+
+  // The dialog opens from state, with no AlertDialogTrigger for Radix to return to (#1198).
+  test("cancelling the terminate dialog puts focus back on the row's kill button", async () => {
+    const onKillSession = mock(async () => true);
+    const { getByRole, queryByText } = render(
+      <SessionsTab data={makeData()} loading={false} onKillSession={onKillSession} isAdmin />,
+    );
+
+    const killButton = getByRole("button", { name: "Terminate session 101" });
+    killButton.focus();
+    fireEvent.click(killButton);
+    await waitFor(() => expect(queryByText("Terminate Session?")).not.toBeNull());
+
+    fireEvent.click(getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(queryByText("Terminate Session?")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(killButton));
+    expect(onKillSession).not.toHaveBeenCalled();
   });
 
   test("hides admin actions when isAdmin is false", () => {

@@ -102,7 +102,7 @@ mock.module("@/lib/db-ui-config", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, act, cleanup, fireEvent } from "@testing-library/react";
+import { render, act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 
 import { OperationsTab } from "@/components/admin/tabs/OperationsTab";
@@ -914,6 +914,33 @@ describe("OperationsTab", () => {
       fireEvent.click(cancelBtn!);
     });
 
+    expect(mockKillSession).not.toHaveBeenCalled();
+  });
+
+  // The dialog opens from state, with no AlertDialogTrigger for Radix to return to (#1198).
+  test("cancelling the kill dialog puts focus back on the row's kill button", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { getByRole, baseElement } = renderResult!;
+
+    const killBtn = getByRole("button", { name: "Terminate session 1234" });
+    killBtn.focus();
+    await act(async () => {
+      fireEvent.click(killBtn);
+    });
+
+    const cancelBtn = Array.from(baseElement.querySelectorAll("button")).find(
+      (btn) => btn.textContent?.trim() === "Cancel",
+    );
+    expect(cancelBtn).not.toBeUndefined();
+    await act(async () => {
+      fireEvent.click(cancelBtn!);
+    });
+
+    await waitFor(() => expect(baseElement.textContent).not.toContain("Terminate Session?"));
+    await waitFor(() => expect(document.activeElement).toBe(getByRole("button", { name: "Terminate session 1234" })));
     expect(mockKillSession).not.toHaveBeenCalled();
   });
 

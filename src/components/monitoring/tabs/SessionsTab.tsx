@@ -18,6 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useReturnFocus } from "@/hooks/use-return-focus";
 import type { MonitoringData, ActiveSessionDetails, ProviderLabels } from "@/lib/db/types";
 import { PanelUnavailable } from "../PanelUnavailable";
 
@@ -36,6 +37,7 @@ interface SessionsTabProps {
 export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labels }: SessionsTabProps) {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
+  const confirmKillReturnFocus = useReturnFocus();
 
   if (loading && !data) {
     return <SessionsSkeleton />;
@@ -261,7 +263,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
 
       {/* Confirm Kill Dialog */}
       <AlertDialog open={!!confirmKill} onOpenChange={() => setConfirmKill(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent {...confirmKillReturnFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>Terminate Session?</AlertDialogTitle>
             <AlertDialogDescription>
