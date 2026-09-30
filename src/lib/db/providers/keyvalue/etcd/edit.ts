@@ -47,7 +47,7 @@ import {
 import { type EtcdCommand, type EtcdParseLimits, parseEtcdCommand } from "./commands";
 import { type EtcdErrorContext, toProviderError, writeNotApplied } from "./errors";
 import { assessCommand } from "./guard";
-import { decodeUtf8, encodeKey } from "./keys";
+import { decodeUtf8, encodeKey, typedKey } from "./keys";
 import { quoteGoString, quoteTxnWord } from "./lexer";
 import { type EtcdSurfaceContext, surfaceErrorContext } from "./objects";
 import { rangeCovered } from "./permissions";
@@ -174,7 +174,8 @@ export async function buildEtcdValueEdit(
   const protectedKey = refuseBeforeSend(assessCommand(valueEditCommand(key)), context);
   if (protectedKey !== undefined) return refuse("unsupported", protectedKey.message);
 
-  const shown = quoteGoString(key);
+  // The key as a person types it back, the one way every sentence names a key (spec 5.5, 5.6).
+  const shown = typedKey(key, "command-line");
   let answer: EtcdRangeResponse;
   try {
     answer = await client.range({ key, limit: 1 }, { signal: context.signal });
@@ -236,7 +237,13 @@ export async function buildEtcdValueEdit(
       unit: {
         medium: "command",
         name: "txn",
-        arguments: [`mod(${shown}) = "${stored.modRevision}"`, "put", "--ignore-lease", ...afterFlags, keyWord],
+        arguments: [
+          `mod(${quoteGoString(key)}) = "${stored.modRevision}"`,
+          "put",
+          "--ignore-lease",
+          ...afterFlags,
+          keyWord,
+        ],
         payload: {
           text: request.text,
           language: languageOf(viewValue(key, payload, Number.POSITIVE_INFINITY)),
@@ -434,7 +441,7 @@ export async function applyEtcdValueEdit(
   const protectedKey = refuseBeforeSend(assessCommand(txn.command), context);
   if (protectedKey !== undefined) return refused("unsupported", protectedKey.message, elapsed());
 
-  const shown = quoteGoString(txn.key);
+  const shown = typedKey(txn.key, "command-line");
   const errors = surfaceErrorContext(context, "value edit", { write: true, range: shown });
   let answer: EtcdTxnResponse;
   try {

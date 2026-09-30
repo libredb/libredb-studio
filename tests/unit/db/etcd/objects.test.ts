@@ -1199,7 +1199,22 @@ describe("the key's source (spec 4.4, 4.5, E6, E8, E9)", () => {
   test("a key that does not exist is a QueryError naming it", async () => {
     const error = await readKey(keyClient({}), "/app/no-such-key").catch((caught) => caught);
     expect(error).toBeInstanceOf(QueryError);
-    expect(error.message).toBe('etcd holds no key "/app/no-such-key"');
+    expect(error.message).toBe("etcd holds no key /app/no-such-key");
+  });
+
+  test("a missing key is named as a person types it back, so the sentence addresses exactly its bytes (spec 5.5, 5.6)", async () => {
+    const named = [
+      ["/app/a b", "etcd holds no key '/app/a b'"],
+      ["/app/it's", "etcd holds no key '/app/it'\\''s'"],
+      ['/app/"q"', `etcd holds no key '/app/"q"'`],
+      ["/app/new\nline", 'etcd holds no key "/app/new\\nline"'],
+    ] as const;
+    const read = async ([key, sentence]: readonly [string, string]) => {
+      const error = await readKey(keyClient({}), key).catch((caught) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe(sentence);
+    };
+    await Promise.all(named.map(read));
   });
 
   test("a read etcd refuses names the key and what the user may read", async () => {
@@ -1209,6 +1224,16 @@ describe("the key's source (spec 4.4, 4.5, E6, E8, E9)", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toContain("etcd refused the get on /cfg/x");
     expect(error.message).toContain(`etcd user reader may read: ${describeScope(readableScope(grants))}.`);
+  });
+
+  test("a refused read names a key holding a quote, a space or a newline as a person types it back (spec 5.5, 5.6)", async () => {
+    const grants = [grantPrefix("read", "/app/")];
+    const client = keyClient({}, { range: async () => Promise.reject(DENIED()) });
+    const refused = async (key: string) =>
+      (await readKey(client, key, reader(grants)).catch((caught) => caught)).message as string;
+    expect(await refused("/cfg/it's")).toContain("etcd refused the get on '/cfg/it'\\''s':");
+    expect(await refused("/cfg/a b")).toContain("etcd refused the get on '/cfg/a b':");
+    expect(await refused("/cfg/new\nline")).toContain('etcd refused the get on "/cfg/new\\nline":');
   });
 
   test("a caller's bound cuts each part through the shared helper and marks it", async () => {

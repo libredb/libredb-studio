@@ -335,7 +335,7 @@ describe("buildEtcdValueEdit: the read, and what it found (spec 4.4, 4.5, 4.7, E
       STAMP,
     );
     await expect(attempt).rejects.toThrow(QueryError);
-    await expect(attempt).rejects.toThrow('etcd refused the get on "/config/b"');
+    await expect(attempt).rejects.toThrow("etcd refused the get on /config/b:");
     await expect(attempt).rejects.toThrow(`etcd user reader may read: ${describeScope(readable)}.`);
   });
 
@@ -346,7 +346,7 @@ describe("buildEtcdValueEdit: the read, and what it found (spec 4.4, 4.5, 4.7, E
       },
     });
     const attempt = buildEtcdValueEdit(client, surface({ principal: READER }), edit("/app/cfg", "v"), STAMP);
-    await expect(attempt).rejects.toThrow('etcd refused the get on "/app/cfg"');
+    await expect(attempt).rejects.toThrow("etcd refused the get on /app/cfg:");
     await expect(attempt).rejects.toThrow("etcd user reader may read: every key.");
   });
 
@@ -362,8 +362,26 @@ describe("buildEtcdValueEdit: the read, and what it found (spec 4.4, 4.5, 4.7, E
   test("a key etcd no longer holds is a QueryError naming it", async () => {
     const client = createFakeEtcdClient({ range: async () => rangeAnswer([]) });
     await expect(buildEtcdValueEdit(client, surface(), edit("/app/gone", "v"), STAMP)).rejects.toThrow(
-      'etcd holds no key "/app/gone": it may have been deleted since the Source tab read it.',
+      "etcd holds no key /app/gone: it may have been deleted since the Source tab read it.",
     );
+  });
+
+  test("a key holding a quote, a space or a newline is named as a person types it back in the read's sentences (spec 5.5, 5.6)", async () => {
+    const missing = createFakeEtcdClient({ range: async () => rangeAnswer([]) });
+    await expect(buildEtcdValueEdit(missing, surface(), edit("/app/a b", "v"), STAMP)).rejects.toThrow(
+      "etcd holds no key '/app/a b': it may have been deleted since the Source tab read it.",
+    );
+    await expect(buildEtcdValueEdit(missing, surface(), edit("/app/new\nline", "v"), STAMP)).rejects.toThrow(
+      'etcd holds no key "/app/new\\nline": it may have been deleted since the Source tab read it.',
+    );
+    const denied = createFakeEtcdClient({
+      range: async () => {
+        throw toEtcdError(grpc(7, "etcdserver: permission denied"));
+      },
+    });
+    await expect(
+      buildEtcdValueEdit(denied, surface({ principal: READER }), edit("/app/it's", "v"), STAMP),
+    ).rejects.toThrow("etcd refused the get on '/app/it'\\''s':");
   });
 
   test("a key the user may read but not write is refused with 4.4's sentence, after the one read (spec 4.7)", async () => {
@@ -530,7 +548,7 @@ describe("buildEtcdValueEdit: the read, and what it found (spec 4.4, 4.5, 4.7, E
         ),
     });
     await expect(buildEtcdValueEdit(client, surface(), edit(replaced, "w"), STAMP)).rejects.toThrow(
-      `etcd holds no key "${replaced}"`,
+      `etcd holds no key ${replaced}:`,
     );
     // U+FFFD in a path is that character's own bytes, never a stand-in for the bytes a key that is not UTF-8 holds.
     expect(client.calls).toEqual([
@@ -643,7 +661,7 @@ const LIMITS: EtcdParseLimits = {
 };
 
 /** errors.ts's facts for the apply's send, as edit.ts builds them for "/app/cfg" on an unscoped connection. */
-const SENT = { command: "value edit", write: true, range: '"/app/cfg"', connection: CONNECTION };
+const SENT = { command: "value edit", write: true, range: "/app/cfg", connection: CONNECTION };
 
 type CommandUnit = Extract<ObjectEditUnit, { readonly medium: "command" }>;
 
@@ -1057,12 +1075,28 @@ describe("applyEtcdValueEdit: the answer after the send (spec 4.5, 5.6)", () => 
       refusal: {
         refusal: "guard",
         sentence:
-          'The key "/app/cfg" was deleted after the edit read it, so there is no current value to compare with. Nothing was written.',
+          "The key /app/cfg was deleted after the edit read it, so there is no current value to compare with. Nothing was written.",
         at: { within: "none" },
       },
       duration: 0,
     });
     expect(isObjectEditOutcomeShape(outcome)).toBe(true);
+  });
+
+  test("a deleted key holding a space is named as a person types it back (spec 5.5, 5.6)", async () => {
+    const plan = await planFor("/app/a b", "old", "new");
+    const outcome = await applyEtcdValueEdit(
+      createFakeEtcdClient({ txn: async () => notSucceeded([]) }),
+      surface(),
+      plan,
+    );
+    expect(outcome).toMatchObject({
+      outcome: "refused",
+      refusal: {
+        sentence:
+          "The key '/app/a b' was deleted after the edit read it, so there is no current value to compare with. Nothing was written.",
+      },
+    });
   });
 
   test("a failed compare answered without its failure read is raised, since what the key holds is unknown", async () => {

@@ -67,6 +67,7 @@ import {
   prefixWalkResult,
   rangesIntersect,
   stepPrefixWalk,
+  typedKey,
 } from "./keys";
 import { type AccessScope, clipToScope, describeRange, describeScope, rangeCovered, rangeShape } from "./permissions";
 import { type ValueView, viewKey, viewValue } from "./values";
@@ -777,14 +778,16 @@ async function keySource(
 ): Promise<ObjectSourceDocument> {
   const text = path[0];
   const key = exactKey(text);
+  // The key as a person types it back (keys.ts `typedKey`), the one way every sentence names a key (spec 5.5, 5.6).
+  const shown = typedKey(key, "command-line");
   const answer = await surfaceRead(
     () => client.range({ key, limit: 1 }, { signal: context.signal }),
     context,
     "get",
-    text,
+    shown,
   );
   const kv: EtcdKeyValue | undefined = answer.kvs[0];
-  if (kv === undefined) throw new QueryError(`etcd holds no key ${JSON.stringify(text)}`, PROVIDER);
+  if (kv === undefined) throw new QueryError(`etcd holds no key ${shown}`, PROVIDER);
   // The Source tab applies the caller's bound, so the cell bound of 5.4 plays no part here.
   const view = viewValue(kv.key, kv.value, Number.POSITIVE_INFINITY);
   const ttl = await keyLeaseTtl(client, context, kv);
