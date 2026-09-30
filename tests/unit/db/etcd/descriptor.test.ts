@@ -4,18 +4,23 @@
  * `src/lib/db/providers/keyvalue/etcd/proto/descriptor.ts` is a generated artifact: the gRPC adapter hands it to
  * `@grpc/proto-loader`'s `fromJSON`, so the client reads no `.proto` file at run time. This file regenerates it in
  * memory and requires the committed bytes to match, reads the committed module as a file (the seam guard of spec E11
- * allows only the adapter to import it), and loads the regenerated descriptor through `fromJSON` to prove that it
- * carries all 42 RPCs of `rpc.proto` with the field names the `.proto` files spell. The vendored files themselves are
- * held to the digests `proto/README.md` records for them, so the provenance it states cannot drift from the tree.
+ * lets only `grpc-client.ts` and its two transport tests, `grpc-client.test.ts` and `tls-handshake.test.ts`, import
+ * it), and loads the regenerated descriptor through `fromJSON` to prove that it carries all 42 RPCs of `rpc.proto`
+ * with the field names the `.proto` files spell. It runs the generator's command too, in node child processes that
+ * write with `--out` into a temporary directory and never into the tree: directly, through a symlinked checkout, and
+ * imported. The vendored files themselves are held to the digests `proto/README.md` records for them, so the
+ * provenance it states cannot drift from the tree.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { fromJSON, type PackageDefinition } from "@grpc/proto-loader";
 import ts from "typescript";
 import {
+  descriptorOutputFile,
   ETCD_DESCRIPTOR_FILE,
   ETCD_PROTO_DIR,
   loadEtcdDescriptor,
@@ -213,6 +218,105 @@ describe("etcd descriptor generation", () => {
 
   test("the descriptor carries no .proto comments, which no runtime reads", () => {
     expect(JSON.stringify(loadEtcdDescriptor())).not.toContain('"comment"');
+  });
+});
+
+describe("the generator's command, run by node in child processes that write only into a temporary directory", () => {
+  const temporaryDirectories: string[] = [];
+
+  afterEach(() => {
+    // A junction inside is removed as a link: rmSync never follows one into the checkout it names.
+    for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  function temporaryDirectory(): string {
+    const directory = mkdtempSync(path.join(tmpdir(), "etcd-descriptor-"));
+    temporaryDirectories.push(directory);
+    return directory;
+  }
+
+  function node(args: readonly string[], cwd: string): { exitCode: number; stdout: string; stderr: string } {
+    const child = Bun.spawnSync(["node", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    return { exitCode: child.exitCode, stdout: child.stdout.toString(), stderr: child.stderr.toString() };
+  }
+
+  test("with no argument it writes the committed module, and --out names another file, resolved against cwd", () => {
+    // Read here rather than run, because a child process given no argument would write into the tree.
+    expect(descriptorOutputFile([])).toBe(ETCD_DESCRIPTOR_FILE);
+    expect(descriptorOutputFile(["--out", "out/descriptor.ts"])).toBe(path.resolve("out/descriptor.ts"));
+    expect(descriptorOutputFile(["--out", "/elsewhere/descriptor.ts"])).toBe(path.resolve("/elsewhere/descriptor.ts"));
+  });
+
+  test("every other argument list is refused, so a mistyped flag never writes the committed module instead", () => {
+    const refused = [
+      ["--out"],
+      ["--out", ""],
+      ["--out", "-"],
+      ["--out", "--check"],
+      ["--out", "a.ts", "b.ts"],
+      ["--out=a.ts"],
+      ["--output", "a.ts"],
+      ["a.ts"],
+      ["--check"],
+    ];
+    for (const args of refused) expect({ args, file: descriptorOutputFile(args) }).toEqual({ args, file: undefined });
+  });
+
+  test("--out writes the committed bytes to that file, resolved against the working directory, and names it", () => {
+    const cwd = temporaryDirectory();
+    mkdirSync(path.join(cwd, "out"));
+    expect(node([GENERATOR, "--out", "out/descriptor.ts"], cwd)).toEqual({
+      exitCode: 0,
+      stdout: "Wrote out/descriptor.ts\n",
+      stderr: "",
+    });
+    expect(readFileSync(path.join(cwd, "out", "descriptor.ts")).equals(readFileSync(ETCD_DESCRIPTOR_FILE))).toBe(true);
+  });
+
+  test("run through a symlinked checkout it still writes, because the guard compares real paths", () => {
+    // Node keeps the link in process.argv[1] and resolves import.meta.url to the real file, so the first run fails a
+    // comparison of the two as given; --preserve-symlinks-main keeps the link in import.meta.url too, so the second
+    // fails one that makes only argv[1] real. A junction, because it needs no privilege on Windows; on POSIX the
+    // type is ignored.
+    const cwd = temporaryDirectory();
+    const checkout = path.join(cwd, "checkout");
+    symlinkSync(ROOT, checkout, "junction");
+    const linkedGenerator = path.join(checkout, "scripts", "generate-etcd-descriptor.mjs");
+    const runs = [
+      { flags: [], file: "linked.ts" },
+      { flags: ["--preserve-symlinks-main"], file: "preserved.ts" },
+    ];
+    for (const { flags, file } of runs) {
+      expect({ flags, ...node([...flags, linkedGenerator, "--out", file], cwd) }).toEqual({
+        flags,
+        exitCode: 0,
+        stdout: `Wrote ${file}\n`,
+        stderr: "",
+      });
+      expect(readFileSync(path.join(cwd, file)).equals(readFileSync(ETCD_DESCRIPTOR_FILE))).toBe(true);
+    }
+  });
+
+  test("imported, by a script or by node -e with arguments, it runs no command and writes nothing", () => {
+    // Both carry an --out, so a guard that ran the command on import would write it here, never in the tree.
+    const cwd = temporaryDirectory();
+    const importGenerator = `import ${JSON.stringify(pathToFileURL(GENERATOR).href)};`;
+    writeFileSync(path.join(cwd, "importer.mjs"), `${importGenerator}\n`);
+    const quiet = { exitCode: 0, stdout: "", stderr: "" };
+    expect(node([path.join(cwd, "importer.mjs"), "--out", "from-script.ts"], cwd)).toEqual(quiet);
+    // node -e puts its first argument, --out here, in process.argv[1], where no file of that name exists.
+    expect(node(["--input-type=module", "-e", importGenerator, "--", "--out", "from-eval.ts"], cwd)).toEqual(quiet);
+    expect(readdirSync(cwd)).toEqual(["importer.mjs"]);
+  });
+
+  test("any other argument list is refused with the usage line and exit code 2, and nothing is written", () => {
+    const cwd = temporaryDirectory();
+    expect(node([GENERATOR, "--out"], cwd)).toEqual({
+      exitCode: 2,
+      stdout: "",
+      stderr: "Usage: node scripts/generate-etcd-descriptor.mjs [--out <file>]\n",
+    });
+    expect(readdirSync(cwd)).toEqual([]);
   });
 });
 

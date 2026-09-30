@@ -41,7 +41,9 @@ The types `version.proto` extends (`MessageOptions` and the rest) are therefore 
 
 `descriptor.ts` is the output of `scripts/generate-etcd-descriptor.mjs`: every definition `rpc.proto` reaches, resolved, as the JSON that proto-loader's `fromJSON` reads, with the field names the `.proto` files spell (`range_end`, not `rangeEnd`) and without their comments.
 Run `node scripts/generate-etcd-descriptor.mjs` after any change in this directory and commit the result.
+With `--out <file>` it writes the same bytes to that file instead, resolved against the working directory, and leaves `descriptor.ts` alone.
 `tests/unit/db/etcd/descriptor.test.ts` regenerates it in memory and fails on any difference from the committed bytes.
+It also runs the command with `--out` in child processes, directly and through a symlinked checkout, so a broken command fails a test rather than exiting 0 with nothing written.
 
 To move to another etcd release, fetch the same four `.proto` files and `api/LICENSE` at that release's commit, replace them, update the tag, the commit and the digests above, and regenerate.
 That is a provider change, measured again like any other, and `tests/unit/db/etcd/descriptor.test.ts` pins the RPCs `rpc.proto` defines, so a release that adds one fails until the test names it.
