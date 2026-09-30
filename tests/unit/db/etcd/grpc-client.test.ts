@@ -1275,15 +1275,15 @@ describe("spec E4: the token and its bounded renewal", () => {
     E4_ANSWERS.map(([answer, code, details]) => [`${label} meeting ${answer}`, rpc, run, code, details] as const),
   );
   test.each(WRITE_CASES)(
-    "%s is raised as it came, sent once and not renewed, since KE12 has measured no renewal answer as not applied",
+    "%s renews once and is raised as it came, sent once, and the same write after it carries the new token",
     async (_label, rpc, run, code, details) => {
       let changed = 0;
       const { wire, client } = await recorded(
         {
           answers: {
-            "Auth/Authenticate": [signedIn("token-1"), signedIn("token-2")],
-            [rpc]: [refuse(code, details)],
-            "KV/Range": [() => rangeAnswer()],
+            // The renewal answers late: a write raised before its renewal ended would send the next under token-1.
+            "Auth/Authenticate": [signedIn("token-1"), later(20, signedIn("token-2"))],
+            [rpc]: [refuse(code, details), () => MINIMAL[rpc]],
           },
         },
         PASSWORD,
@@ -1291,49 +1291,95 @@ describe("spec E4: the token and its bounded renewal", () => {
       );
       await client.authenticate(options);
       const error = await failure(run(client));
+      // Its own answer, sent once: KE12 has measured no renewal answer as not applied, so its outcome is unknown.
       expect(error).toMatchObject({ category: "unauthenticated", detail: details, grpcCode: code });
       expect(toProviderError(error, context("put", true)).message).toContain("The write may have been applied");
       expect(tokensOf(wire.calls)).toEqual([
         ["Auth/Authenticate", null],
         [rpc, "token-1"],
+        ["Auth/Authenticate", null],
       ]);
-      expect(changed).toBe(0);
+      // R13 D10: the write's renewal names a stale auth revision, and no other answer.
+      expect(changed).toBe(details === AUTH_STORE_OLD ? 1 : 0);
+      await run(client);
+      expect(tokensOf(wire.calls.slice(3))).toEqual([[rpc, "token-2"]]);
     },
   );
 
-  test("the read after a write that met a renewal answer renews, and names a stale auth revision then", async () => {
-    let changed = 0;
+  test.each(E4_ANSWERS)(
+    "a write meeting %s whose renewal fails raises its own answer, never the sign-in's, and the next call signs in again",
+    async (_label, code, details) => {
+      let changed = 0;
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            "Auth/Authenticate": [
+              signedIn("token-1"),
+              refuse(3, "etcdserver: authentication failed, invalid user ID or password"),
+              signedIn("token-2"),
+            ],
+            "KV/Txn": [refuse(code, details)],
+            "KV/Range": [refuse(code, details), () => rangeAnswer()],
+          },
+        },
+        PASSWORD,
+        { onAuthStoreChanged: () => changed++ },
+      );
+      await client.authenticate(options);
+      const error = await failure(client.txn({ compare: [], success: [put], failure: [] }, options));
+      expect(error).toMatchObject({ category: "unauthenticated", detail: details, grpcCode: code });
+      expect(toProviderError(error, context("put", true)).message).toContain("The write may have been applied");
+      // The failed renewal left the token it would have replaced, so the next call meets the answer and renews.
+      await INVOKE["KV/Range"](client);
+      expect(tokensOf(wire.calls)).toEqual([
+        ["Auth/Authenticate", null],
+        ["KV/Txn", "token-1"],
+        ["Auth/Authenticate", null],
+        ["KV/Range", "token-1"],
+        ["Auth/Authenticate", null],
+        ["KV/Range", "token-2"],
+      ]);
+      expect(changed).toBe(details === AUTH_STORE_OLD ? 1 : 0);
+    },
+  );
+
+  test("a write whose signal aborts while it waits for its renewal raises its own answer at once, and sends nothing more", async () => {
     const { wire, client } = await recorded(
       {
         answers: {
-          "Auth/Authenticate": [signedIn("token-1"), signedIn("token-2")],
-          "KV/Txn": [refuse(3, AUTH_STORE_OLD)],
-          "KV/Range": [refuse(3, AUTH_STORE_OLD), () => rangeAnswer()],
+          "Auth/Authenticate": [signedIn("token-1"), never],
+          "KV/DeleteRange": [refuse(16, "etcdserver: invalid auth token")],
         },
       },
       PASSWORD,
-      { onAuthStoreChanged: () => changed++ },
     );
     await client.authenticate(options);
-    await failure(client.txn({ compare: [], success: [put], failure: [] }, options));
-    await INVOKE["KV/Range"](client);
-    expect(tokensOf(wire.calls)).toEqual([
-      ["Auth/Authenticate", null],
-      ["KV/Txn", "token-1"],
-      ["KV/Range", "token-1"],
-      ["Auth/Authenticate", null],
-      ["KV/Range", "token-2"],
-    ]);
-    expect(changed).toBe(1);
+    const cancel = new AbortController();
+    let settled = false;
+    const deleting = INVOKE["KV/DeleteRange"](client, { signal: cancel.signal }).finally(() => {
+      settled = true;
+    });
+    await Bun.sleep(20);
+    // The write waits for the renewal it started, so the next call would carry the new token.
+    expect(settled).toBe(false);
+    cancel.abort();
+    expect(await failure(deleting)).toMatchObject({
+      category: "unauthenticated",
+      detail: "etcdserver: invalid auth token",
+    });
+    expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "KV/DeleteRange", "Auth/Authenticate"]);
+    // The renewal is the client's own call, which close() ends.
+    await client.close();
   });
 
-  test("a keep-alive meeting a renewal answer is a write: raised as it came, its stream cancelled, and not renewed", async () => {
+  test("a keep-alive meeting a renewal answer is a write: renewed once, raised as it came, and its stream cancelled", async () => {
     const { wire, client } = await recorded(
       {
         answers: {
           "Auth/Authenticate": [signedIn("token-1"), signedIn("token-2")],
           "Lease/LeaseKeepAlive": [
             () => ({ messages: [], end: { error: statusError(16, "etcdserver: invalid auth token") } }),
+            () => ({ messages: [{ ID: "7587863092875085100", TTL: "60" }], end: "open" }),
           ],
         },
       },
@@ -1342,8 +1388,18 @@ describe("spec E4: the token and its bounded renewal", () => {
     await client.authenticate(options);
     const error = await failure(client.leaseKeepAliveOnce("7587863092875085100", options));
     expect(error).toMatchObject({ category: "unauthenticated", detail: "etcdserver: invalid auth token" });
-    expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "Lease/LeaseKeepAlive"]);
+    expect(tokensOf(wire.calls)).toEqual([
+      ["Auth/Authenticate", null],
+      ["Lease/LeaseKeepAlive", "token-1"],
+      ["Auth/Authenticate", null],
+    ]);
     expect(wire.cancels).toEqual(["Lease/LeaseKeepAlive"]);
+    expect(await client.leaseKeepAliveOnce("7587863092875085100", options)).toEqual({
+      id: "7587863092875085100",
+      ttl: "60",
+    });
+    expect(tokensOf(wire.calls.slice(3))).toEqual([["Lease/LeaseKeepAlive", "token-2"]]);
+    expect(wire.cancels).toEqual(["Lease/LeaseKeepAlive", "Lease/LeaseKeepAlive"]);
   });
 
   test.each([

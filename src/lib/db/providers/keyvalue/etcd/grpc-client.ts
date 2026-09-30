@@ -732,7 +732,7 @@ export async function createGrpcEtcdClient(
 
   /**
    * One renewal for every call that met one of E4's answers under the same token: a call that meets one while a
-   * renewal runs joins it, and a call whose token another renewal already replaced only sends again (spec E4). The
+   * renewal runs joins it, and a call whose token another renewal already replaced starts none (spec E4). The
    * renewal is cleared in the same step that decides its report, so no answer that joins it goes unreported.
    */
   const renewAfter = (error: EtcdError, sentWith: string | undefined): Promise<void> => {
@@ -764,18 +764,26 @@ export async function createGrpcEtcdClient(
   };
 
   /**
-   * One exchange within spec E4's bound. On one of its three answers a read renews the token once, shared with
-   * every call that met one under the same token, and is sent once more; a second failure is raised. A write is
+   * One exchange within spec E4's bound. On one of its three answers the token is renewed once, shared with every
+   * call that met one under the same token, and a read is sent once more; a second failure is raised. A write is
    * sent once more only when `writeNotApplied` holds its answer as certainly not applied, which no renewal answer
-   * is until KE12 measures one; until then it is raised as it came, in 5.6's class of a write whose outcome is
-   * unknown, and the next call renews.
+   * is until KE12 measures one. Until then a write waits for the renewal it started or joined, so the next call
+   * carries the new token and a stale auth revision is still reported (R13 D10), and is then raised with its own
+   * answer, in 5.6's class of a write whose outcome is unknown, whatever the renewal met.
    */
   const bounded = async <T>(exchange: () => Promise<Attempt<T>>, write: boolean, signal: AbortSignal): Promise<T> => {
     const sentWith = token;
     const first = await exchange();
     if (first.ok) return first.value;
-    if (!renewable(first.error) || (write && !writeNotApplied(first.error))) throw first.error;
-    await until(renewAfter(first.error, sentWith), signal);
+    if (!renewable(first.error)) throw first.error;
+    const renewed = until(renewAfter(first.error, sentWith), signal);
+    if (write && !writeNotApplied(first.error)) {
+      // A failed sign-in never replaces the sentence that the write may have been applied. It leaves the token it
+      // would have replaced, so the next call meets the same answer and signs in again; a read raises that failure.
+      await renewed.catch(() => undefined);
+      throw first.error;
+    }
+    await renewed;
     const second = await exchange();
     if (second.ok) return second.value;
     throw second.error;
