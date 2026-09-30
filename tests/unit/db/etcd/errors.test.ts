@@ -29,6 +29,7 @@ import {
   cancelReasonToEtcdError,
   type EtcdErrorConnection,
   type EtcdErrorContext,
+  etcdWords,
   leaseNotFoundError,
   toEtcdError,
   toProviderError,
@@ -900,5 +901,22 @@ describe("leaseNotFoundError: the answers that arrive as data (a TTL of 0 or -1)
     expect(mapped).toMatchObject({ provider: "etcd" });
     expect(mapped.message).toBe("etcd answered the lease keep-alive: lease 000000000000abcd not found or expired.");
     expect((await respond(mapped)).status).toBe(400);
+  });
+});
+
+describe("etcdWords: etcd's words after a sentence a surface words itself (spec E16)", () => {
+  test("etcd's own text loses its etcdserver: prefix, and the runtime's is kept as it came", () => {
+    expect(etcdWords(new EtcdError("permission-denied", "etcdserver: permission denied", 7))).toBe(
+      " (etcd: permission denied)",
+    );
+    expect(etcdWords(new EtcdError("compacted", "etcdserver: mvcc: required revision has been compacted", 11))).toBe(
+      " (etcd: mvcc: required revision has been compacted)",
+    );
+    expect(etcdWords(new EtcdError("not-connected", "ECONNREFUSED"))).toBe(" (ECONNREFUSED)");
+  });
+
+  test("the same words the table places after its own sentences", () => {
+    const denied = new EtcdError("permission-denied", "etcdserver: permission denied", 7);
+    expect(toProviderError(denied, read("get")).message.endsWith(etcdWords(denied))).toBe(true);
   });
 });

@@ -291,6 +291,16 @@ function answered(detail: string): string {
   return detail.startsWith("etcdserver: ") ? ` (etcd: ${detail.slice("etcdserver: ".length)})` : ` (${detail})`;
 }
 
+/**
+ * etcd's words as this table places them after the provider's (spec E16): " (etcd: <message>)" for
+ * etcd's own "etcdserver: " text, and " (<text>)" for the runtime's. It is for the sentences a surface
+ * words itself, which this table does not raise: the folder refusals of spec 4.3, a member whose alarms
+ * could not be read, and a compaction that overtook a walk pinned to its revision (plan Review Focus 2).
+ */
+export function etcdWords(error: EtcdError): string {
+  return answered(error.detail);
+}
+
 function endpointOf(connection: EtcdErrorConnection): string {
   const host = connection.host.includes(":") ? `[${connection.host}]` : connection.host;
   return `${host}:${connection.port}`;
