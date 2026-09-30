@@ -92,6 +92,16 @@ function TableMaintenanceUnreachableNote({
   );
 }
 
+/** The Global Operations heading, shared by the section's cards and by the line that replaces them. */
+function GlobalOperationsHeading() {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <ShieldAlert className="h-4 w-4 text-brand" />
+      <h3 className="text-sm font-bold text-fg-secondary">Global Operations</h3>
+    </div>
+  );
+}
+
 interface OperationLogEntry {
   id: string;
   timestamp: Date;
@@ -414,12 +424,9 @@ export function OperationsTab() {
           whole-database form. On Couchbase every operation needs a keyspace, so this
           section is absent rather than three cards that answer "requires a
           target" (#496). */}
-      {anyMaintenance && (
+      {anyMaintenance && selectedConnection?.readOnly !== true && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <ShieldAlert className="h-4 w-4 text-brand" />
-            <h3 className="text-sm font-bold text-fg-secondary">Global Operations</h3>
-          </div>
+          <GlobalOperationsHeading />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Analyze */}
             {globalAnalyze && (
@@ -513,6 +520,18 @@ export function OperationsTab() {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* A read-only connection's provider refuses every maintenance operation (#1089), so the section
+          says so in one line in place of every card it would draw. Read from the public field, with no
+          type branch. */}
+      {anyMaintenance && selectedConnection?.readOnly === true && (
+        <div data-testid="operations-read-only">
+          <GlobalOperationsHeading />
+          <p className="text-xs text-fg-muted leading-relaxed">
+            This connection is read-only: use a read-write connection for maintenance
+          </p>
         </div>
       )}
 

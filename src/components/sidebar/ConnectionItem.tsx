@@ -3,6 +3,7 @@ import { DatabaseConnection, ENVIRONMENT_LABELS } from "@/lib/types";
 import { Lock, Trash2, Pencil, Copy, Star, GripVertical } from "lucide-react";
 import { getDBIcon } from "@/lib/db-ui-config";
 import { Button } from "@/components/ui/button";
+import { ReadOnlyMarker } from "@/components/read-only-marker";
 import { cn } from "@/lib/utils";
 
 interface ConnectionItemProps {
@@ -143,6 +144,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             <Star strokeWidth={1.5} className={cn("w-3 h-3", isFavorite && "fill-current")} />
           </button>
         )}
+        {conn.readOnly === true && <ReadOnlyMarker />}
         {conn.managed && (
           <div
             data-testid={`managed-lock-${conn.seedId || conn.id}`}

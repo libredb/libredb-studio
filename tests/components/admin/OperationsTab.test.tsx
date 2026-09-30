@@ -2075,4 +2075,83 @@ describe("OperationsTab", () => {
     // The control: a row that has a schema still prints it, joined by the separator.
     expect(printedName("orders")).toBe("public.orders");
   });
+
+  // =========================================================================
+  // A read-only connection (#1089)
+  // =========================================================================
+
+  describe("a read-only connection", () => {
+    const readOnlyConnection = {
+      id: "c1",
+      name: "Guarded",
+      type: "postgres",
+      host: "localhost",
+      port: 5432,
+      database: "dev",
+      readOnly: true,
+      createdAt: new Date(),
+    };
+    const line = "This connection is read-only: use a read-write connection for maintenance";
+
+    test("shows the one line in place of every global card the section would draw", async () => {
+      mockConnectionsList = [readOnlyConnection];
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OperationsTab />);
+      });
+      const { queryByText, getByTestId } = renderResult!;
+
+      const section = getByTestId("operations-read-only");
+      expect(section.textContent).toContain("Global Operations");
+      expect(section.textContent).toContain(line);
+      for (const card of [
+        "Run Analyze",
+        "Run Vacuum",
+        "Run Reindex",
+        "Update Statistics",
+        "Reclaim Space",
+        "Rebuild Indexes",
+      ]) {
+        expect({ card, drawn: queryByText(card) !== null }).toEqual({ card, drawn: false });
+      }
+      expect(
+        queryByText("These operations can be resource-intensive. Avoid running them during peak traffic hours."),
+      ).toBeNull();
+    });
+
+    test("says nothing where the engine offers no global operation", async () => {
+      mockConnectionsList = [readOnlyConnection];
+      mockMetadata = { capabilities: { supportsMaintenance: false, maintenanceOperations: [] } };
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OperationsTab />);
+      });
+      const { queryByText, queryByTestId } = renderResult!;
+
+      expect(queryByTestId("operations-read-only")).toBeNull();
+      expect(queryByText("Global Operations")).toBeNull();
+    });
+
+    test("a read-write connection keeps its cards and draws no line", async () => {
+      // The file's default connection carries no readOnly.
+      let absentView: ReturnType<typeof render>;
+      await act(async () => {
+        absentView = render(<OperationsTab />);
+      });
+
+      expect(absentView!.queryByTestId("operations-read-only")).toBeNull();
+      expect(absentView!.queryByText("Run Analyze")).not.toBeNull();
+      cleanup();
+
+      // `false` is the same mode as absent, so it keeps the cards too.
+      mockConnectionsList = [{ ...readOnlyConnection, readOnly: false }];
+      let falseView: ReturnType<typeof render>;
+      await act(async () => {
+        falseView = render(<OperationsTab />);
+      });
+
+      expect(falseView!.queryByTestId("operations-read-only")).toBeNull();
+      expect(falseView!.queryByText("Run Analyze")).not.toBeNull();
+    });
+  });
 });

@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ReadOnlyMarker } from "@/components/read-only-marker";
 
 interface StudioDesktopHeaderProps {
   activeConnection: DatabaseConnection | null;
@@ -39,9 +40,12 @@ export const StudioDesktopHeader = React.memo(function StudioDesktopHeader({
           <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-brand" />
         </div>
         <div>
-          <h1 className="text-xs font-medium text-fg truncate max-w-[120px]">
-            {activeConnection ? activeConnection.name : "Quick Access"}
-          </h1>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-xs font-medium text-fg truncate max-w-[120px]">
+              {activeConnection ? activeConnection.name : "Quick Access"}
+            </h1>
+            {activeConnection?.readOnly === true && <ReadOnlyMarker />}
+          </div>
           {activeConnection && (
             <p className="text-xs text-fg-muted font-mono uppercase leading-none mt-0.5">
               {activeConnection.type}
