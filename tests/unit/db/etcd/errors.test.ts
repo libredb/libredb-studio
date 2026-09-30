@@ -28,9 +28,11 @@ import {
 import { EtcdError, type EtcdErrorCategory } from "@/lib/db/providers/keyvalue/etcd/client";
 import {
   cancelReasonToEtcdError,
+  connectStepError,
   type EtcdErrorConnection,
   type EtcdErrorContext,
   etcdWords,
+  isUserNameEmpty,
   leaseNotFoundError,
   toEtcdError,
   toProviderError,
@@ -1109,5 +1111,120 @@ describe("etcdWords: etcd's words after a sentence a surface words itself (spec 
   test("the same words the table places after its own sentences", () => {
     const denied = new EtcdError("permission-denied", "etcdserver: permission denied", 7);
     expect(toProviderError(denied, read("get")).message.endsWith(etcdWords(denied))).toBe(true);
+  });
+});
+
+/**
+ * The connect sequence's refusals (spec 6.1), each worded here because index.ts holds no error table
+ * (spec 3.5). The texts are etcd's own (SRC `etcd__api_v3rpc_rpctypes_error.go`): "authentication is not
+ * enabled" and "user name not found" are FailedPrecondition, and "user name is empty" InvalidArgument,
+ * as the captures `etcd/error-authenticate-not-enabled`, `etcd-auth/error-user-name-not-found` and
+ * `etcd-auth-password/error-user-name-empty-certificate` answered them (Task 2b).
+ */
+describe("connectStepError: the connect sequence's refusals (spec 6.1)", () => {
+  const TLS: EtcdErrorConnection = { ...PLAINTEXT, tls: { serverName: "etcd.test", clientCertificate: true } };
+  const signIn: EtcdErrorContext = { command: "sign-in", write: false, connection: TLS };
+  const notEnabled = () => toEtcdError(grpc(9, "etcdserver: authentication is not enabled"));
+  const notFound = () => toEtcdError(grpc(9, "etcdserver: user name not found"));
+  const nameEmpty = () => toEtcdError(grpc(3, "etcdserver: user name is empty"));
+
+  test("step 1: a password on an etcd whose authentication is off is refused, and the user is told to clear it", async () => {
+    const mapped = connectStepError("authenticate", notEnabled(), signIn);
+    expect(mapped).toBeInstanceOf(DatabaseConfigError);
+    expect(mapped).toMatchObject({ provider: "etcd" });
+    expect(mapped.message).toBe(
+      "Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect. (etcd: authentication is not enabled)",
+    );
+    expect((await respond(mapped)).status).toBe(400);
+  });
+
+  test("step 1: any other sign-in answer is the error table's, a wrong password among them", () => {
+    const wrong = toEtcdError(grpc(3, "etcdserver: authentication failed, invalid user ID or password"));
+    expect(connectStepError("authenticate", wrong, signIn)).toEqual(toProviderError(wrong, signIn));
+    expect(connectStepError("authenticate", wrong, signIn)).toBeInstanceOf(AuthenticationError);
+  });
+
+  test("step 3: authentication on and no credential is refused before any other call, with no etcd answer to word", async () => {
+    const mapped = connectStepError("credential-required", undefined, signIn);
+    expect(mapped).toBeInstanceOf(AuthenticationError);
+    expect(mapped).toMatchObject({ provider: "etcd" });
+    expect(mapped.message).toBe(
+      "This etcd has authentication enabled. Enter a User and Password, or add a client certificate under SSL / TLS whose Common Name is an etcd user.",
+    );
+    const response = await respond(mapped);
+    expect(response.status).toBe(401);
+    expect(response.body.retryable).toBeUndefined();
+  });
+
+  test("step 4: a Common Name etcd does not know is named, in quotes, with etcd's words after it", async () => {
+    const mapped = connectStepError("certificate-user", notFound(), signIn, "unknown-user");
+    expect(mapped).toBeInstanceOf(AuthenticationError);
+    expect(mapped.message).toBe(
+      'The client certificate\'s Common Name "unknown-user" is not an etcd user. (etcd: user name not found)',
+    );
+    expect((await respond(mapped)).status).toBe(401);
+  });
+
+  test("step 4: a Common Name with a quote in it stays one quoted name", () => {
+    expect(connectStepError("certificate-user", notFound(), signIn, 'a"b').message).toBe(
+      'The client certificate\'s Common Name "a\\"b" is not an etcd user. (etcd: user name not found)',
+    );
+  });
+
+  test("step 4: an etcd that did not read the certificate is told to run with --client-cert-auth", async () => {
+    const mapped = connectStepError("certificate-user", nameEmpty(), signIn, "cert-only");
+    expect(mapped).toBeInstanceOf(AuthenticationError);
+    expect(mapped.message).toBe(
+      "etcd did not read the client certificate: the server must run with --client-cert-auth. (etcd: user name is empty)",
+    );
+    expect((await respond(mapped)).status).toBe(401);
+  });
+
+  test("step 4: any other answer to the certificate user's read is the error table's", () => {
+    const denied = toEtcdError(grpc(7, "etcdserver: permission denied"));
+    expect(connectStepError("certificate-user", denied, signIn, "cert-only")).toEqual(toProviderError(denied, signIn));
+  });
+
+  test("a step's own sentence answers only its own step's answer", () => {
+    // "authentication is not enabled" at step 4 and "user name not found" at step 1 are not the refusals
+    // those steps word, so the table answers them; the code and the message decide together.
+    expect(connectStepError("certificate-user", notEnabled(), signIn, "cert-only")).toEqual(
+      toProviderError(notEnabled(), signIn),
+    );
+    expect(connectStepError("authenticate", notFound(), signIn)).toEqual(toProviderError(notFound(), signIn));
+    expect(connectStepError("authenticate", nameEmpty(), signIn)).toEqual(toProviderError(nameEmpty(), signIn));
+    const sameTextOtherCode = toEtcdError(grpc(3, "etcdserver: authentication is not enabled"));
+    expect(connectStepError("authenticate", sameTextOtherCode, signIn)).toEqual(
+      toProviderError(sameTextOtherCode, signIn),
+    );
+    const notFoundOtherCode = toEtcdError(grpc(5, "etcdserver: user name not found"));
+    expect(connectStepError("certificate-user", notFoundOtherCode, signIn, "cert-only")).toEqual(
+      toProviderError(notFoundOtherCode, signIn),
+    );
+  });
+
+  test("a step that words an etcd answer is a programming error when it is handed none", () => {
+    expect(() => connectStepError("authenticate", undefined, signIn)).toThrow(
+      new TypeError('The connect step "authenticate" words an etcd answer, and none was given'),
+    );
+    expect(() => connectStepError("certificate-user", undefined, signIn, "cert-only")).toThrow(
+      new TypeError('The connect step "certificate-user" words an etcd answer, and none was given'),
+    );
+  });
+
+  test("the Common Name is a programming error to leave out where step 4 names it", () => {
+    expect(() => connectStepError("certificate-user", notFound(), signIn)).toThrow(
+      new TypeError('The connect step "certificate-user" names the Common Name, and none was given'),
+    );
+  });
+});
+
+describe("isUserNameEmpty: step 2's reading of an older server (spec 6.1)", () => {
+  test("is etcd's InvalidArgument 'user name is empty' and nothing else", () => {
+    expect(isUserNameEmpty(toEtcdError(grpc(3, "etcdserver: user name is empty")))).toBe(true);
+    expect(isUserNameEmpty(toEtcdError(grpc(16, "etcdserver: user name is empty")))).toBe(false);
+    expect(isUserNameEmpty(toEtcdError(grpc(3, "etcdserver: invalid auth token")))).toBe(false);
+    expect(isUserNameEmpty(grpc(3, "etcdserver: user name is empty"))).toBe(false);
+    expect(isUserNameEmpty(undefined)).toBe(false);
   });
 });

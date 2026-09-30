@@ -555,3 +555,69 @@ export function watchEndError(end: EtcdWatchEnd, context: EtcdErrorContext): Err
       return toProviderError(cancelReasonToEtcdError(end.cancelReason), context);
   }
 }
+
+/**
+ * The steps of the connect sequence whose refusal is worded here (spec 6.1): "authenticate" words
+ * step 1's "authentication is not enabled"; "credential-required" is step 3's local refusal, which
+ * no etcd answer carries; "certificate-user" words step 4's "user name not found" with the Common
+ * Name, and its "user name is empty". index.ts holds no error table (spec 3.5), so the sentences
+ * live here with the rest.
+ */
+export type EtcdConnectStep = "authenticate" | "credential-required" | "certificate-user";
+
+const AUTH_NOT_ENABLED = "etcdserver: authentication is not enabled";
+const USER_NOT_FOUND = "etcdserver: user name not found";
+const USER_NAME_EMPTY = "etcdserver: user name is empty";
+
+/**
+ * etcd's InvalidArgument "user name is empty". Step 2 of the connect sequence reads it as
+ * authentication on: below 3.7 `AuthStatus` needs a token, and 3.7 is the release that answers it
+ * without one (spec 6.1). Code and message together, as every row of this table is read.
+ */
+export function isUserNameEmpty(error: unknown): boolean {
+  return error instanceof EtcdError && error.grpcCode === INVALID_ARGUMENT && error.detail === USER_NAME_EMPTY;
+}
+
+/**
+ * A connect step's refusal, the provider's words first and etcd's after (spec E16). An answer the
+ * step does not word, a wrong password or a lost quorum among them, is the table's own.
+ */
+export function connectStepError(
+  step: EtcdConnectStep,
+  error: EtcdError | undefined,
+  context: EtcdErrorContext,
+  commonName?: string,
+): Error {
+  if (step === "credential-required") {
+    return new AuthenticationError(
+      "This etcd has authentication enabled. Enter a User and Password, or add a client certificate under SSL / TLS whose Common Name is an etcd user.",
+      PROVIDER,
+    );
+  }
+  if (error === undefined) {
+    throw new TypeError(`The connect step "${step}" words an etcd answer, and none was given`);
+  }
+  if (step === "authenticate" && error.grpcCode === FAILED_PRECONDITION && error.detail === AUTH_NOT_ENABLED) {
+    // etcd's own client drops the token in silence here; this says why the fields are refused (spec 6.1).
+    return new DatabaseConfigError(
+      `Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect.${answered(error.detail)}`,
+      PROVIDER,
+    );
+  }
+  if (step === "certificate-user" && error.grpcCode === FAILED_PRECONDITION && error.detail === USER_NOT_FOUND) {
+    if (commonName === undefined) {
+      throw new TypeError(`The connect step "${step}" names the Common Name, and none was given`);
+    }
+    return new AuthenticationError(
+      `The client certificate's Common Name ${JSON.stringify(commonName)} is not an etcd user.${answered(error.detail)}`,
+      PROVIDER,
+    );
+  }
+  if (step === "certificate-user" && isUserNameEmpty(error)) {
+    return new AuthenticationError(
+      `etcd did not read the client certificate: the server must run with --client-cert-auth.${answered(error.detail)}`,
+      PROVIDER,
+    );
+  }
+  return toProviderError(error, context);
+}
