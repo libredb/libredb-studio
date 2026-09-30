@@ -253,7 +253,8 @@ describe("POST /api/db/objects/edit-apply", () => {
   });
 
   test("the OUTCOME event's sink throwing leaves the 200 intact", async () => {
-    // `src/app/api/db/maintenance/route.ts:123-152` verbatim, including its stated reason: the
+    // The completed-run audit row in `POST` of `src/app/api/db/maintenance/route.ts`, verbatim,
+    // including its stated reason: the
     // engine has already acted and a broken sink must not turn a completed apply into a 500 that
     // invites a retry that would be a SECOND DDL.
     const sealed = await mintValidPlan();
@@ -332,7 +333,8 @@ describe("POST /api/db/objects/edit-apply", () => {
 
   test("the audit names the connection and the caller, and falls back through the arms in order", async () => {
     // Fix round 1, finding 8. `connectionName` is `name || database || "unknown"`, inherited
-    // verbatim from `src/app/api/db/maintenance/route.ts:138`, and BOTH its fallback arms had no
+    // verbatim from the `connectionName` fallback in `auditFields` of `POST` in
+    // `src/app/api/db/maintenance/route.ts`, and BOTH its fallback arms had no
     // population: the harness fixture always carries a name, so `?? "unknown"` on that line killed
     // nothing. `resolveConnection` returns an INLINE caller-supplied connection object verbatim, so
     // a connection whose `name` is empty is the caller's to send and is the live population here.
