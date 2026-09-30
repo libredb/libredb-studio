@@ -199,6 +199,8 @@ describe("toEtcdError: TLS causes inside grpc-js's 'No connection established' (
       "chain",
     ],
     ["Error: self-signed certificate", "chain"],
+    // Bun 1.4.2 writes it without the hyphen (measured in tls-handshake.test.ts, Task 13b).
+    ["Error: self signed certificate", "chain"],
     ["Error: unable to get local issuer certificate", "chain"],
     [
       "Error [ERR_TLS_CERT_ALTNAME_INVALID]: Hostname/IP does not match certificate's altnames: IP: 10.0.0.6 is not in the cert's list: 10.0.0.5",
@@ -214,6 +216,8 @@ describe("toEtcdError: TLS causes inside grpc-js's 'No connection established' (
     ],
     ["error:0A000412:SSL routines::sslv3 alert bad certificate", "client-certificate-refused"],
     ["error:0A00010B:SSL routines::wrong version number", "not-tls"],
+    // BoringSSL, under Bun 1.4.2, names the same failure in capitals (measured in tls-handshake.test.ts).
+    ["error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER", "not-tls"],
     ["error:0A0000C6:SSL routines::packet length too long", "not-tls"],
     ["Error: certificate has expired", undefined],
     [

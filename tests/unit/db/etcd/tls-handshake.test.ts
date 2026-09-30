@@ -921,47 +921,6 @@ const CASES: readonly CaseDefinition[] = [
   },
 ];
 
-/**
- * Known defects under Bun, pinned as they are so that the fix fails them (found by Task 13b). errors.ts's TLS_CAUSES
- * reads Node's texts only: Bun writes "self signed certificate" where Node writes "self-signed certificate", and
- * BoringSSL "WRONG_VERSION_NUMBER" where OpenSSL writes "wrong version number". So under Bun both failures lose their
- * cause and read "this runtime does not report why", although Bun reported it, where spec 5.6 gives the chain and the
- * not-TLS sentences. When TLS_CAUSES reads both texts, delete these entries: each case's own expectation, the spec's,
- * then holds under Bun too.
- */
-const BUN_KNOWN_DEFECTS: ReadonlyMap<string, (ports: Listeners) => Expected> = new Map([
-  [
-    VERIFY_FULL_SELF_SIGNED,
-    (ports: Listeners): Expected => ({
-      outcome: "failed",
-      category: "not-connected",
-      grpcCode: 14,
-      text: /Last error: Error: self signed certificate\. /,
-      sentence: noTlsAnswer("bun", `localhost:${ports.selfSigned}`, false),
-    }),
-  ],
-  [
-    VERIFY_SYSTEM_SELF_SIGNED,
-    (ports: Listeners): Expected => ({
-      outcome: "failed",
-      category: "not-connected",
-      grpcCode: 14,
-      text: /Last error: Error: self signed certificate\. /,
-      sentence: noTlsAnswer("bun", `localhost:${ports.selfSigned}`, false),
-    }),
-  ],
-  [
-    TLS_TO_PLAINTEXT,
-    (ports: Listeners): Expected => ({
-      outcome: "failed",
-      category: "not-connected",
-      grpcCode: 14,
-      text: /Last error: Error: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER\. /,
-      sentence: noTlsAnswer("bun", `127.0.0.1:${ports.plaintext}`, false),
-    }),
-  ],
-]);
-
 const CASE_NAMES = CASES.map((definition) => definition.name);
 
 const DEPS: RunnerDeps = {
@@ -1001,10 +960,8 @@ async function runPhases(run: (cases: readonly HandshakeCase[]) => Promise<Hands
   return { outcomes, seenWhileUndialled: seen.undialled, seenWhileDialled: seen.dialled };
 }
 
-/** The spec's expectation for a case under a runtime, or, under Bun, the known defect it is pinned to. */
+/** The spec's expectation for a case under a runtime. */
 function expectationOf(definition: CaseDefinition, runtime: Runtime, version: string | undefined): Expected {
-  const defect = runtime === "bun" ? BUN_KNOWN_DEFECTS.get(definition.name) : undefined;
-  if (defect !== undefined) return defect(listeners);
   const major = version === undefined ? 0 : Number(/^v(\d+)\./.exec(version)?.[1]);
   return definition.expected(listeners)(runtime, major >= 25);
 }
@@ -1071,16 +1028,12 @@ function expectListeners(run: Run | undefined): void {
   expect(run.seenWhileDialled.localForward).toBe(0);
 }
 
-describe("the certificates and the known defects (spec E5)", () => {
+describe("the certificates (spec E5)", () => {
   test("no certificate a tunnel-shaped connection verifies or passes carries 127.0.0.1 or localhost", () => {
     for (const name of ["far-dns", "far-ip"]) {
       const names = new X509Certificate(read(`${name}.crt`)).subjectAltName ?? "";
       expect({ name, names }).toEqual({ name, names: name === "far-dns" ? "DNS:etcd.test" : "IP Address:10.0.0.5" });
     }
-  });
-
-  test("every known defect names a case, so a renamed case cannot leave its entry behind", () => {
-    expect([...BUN_KNOWN_DEFECTS.keys()].filter((name) => !CASE_NAMES.includes(name))).toEqual([]);
   });
 });
 
@@ -1097,9 +1050,7 @@ describe("under Bun (spec E1, E5, 5.6)", () => {
     }
   }, 90_000);
 
-  test.each(
-    CASE_NAMES.map((name) => [BUN_KNOWN_DEFECTS.has(name) ? `${name} (a known defect, pinned as it is)` : name, name]),
-  )("%s", (_title, name) => expectCase(run, "bun", name));
+  test.each(CASE_NAMES)("%s", (name) => expectCase(run, "bun", name));
   test("the listeners saw only what spec E1 and E5 allow", () => expectListeners(run));
 });
 

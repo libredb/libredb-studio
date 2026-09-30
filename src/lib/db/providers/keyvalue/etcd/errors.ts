@@ -115,8 +115,9 @@ const PREFIXED_ANSWERS: ReadonlyArray<readonly [number, string, EtcdErrorCategor
 ];
 
 /**
- * TLS causes grpc-js carries inside "No connection established. Last error: ...", Node's and
- * OpenSSL's texts (R07 M6). The first match decides; `undefined` is a TLS failure of no named part.
+ * TLS causes grpc-js carries inside "No connection established. Last error: ...", in Node's and
+ * OpenSSL's texts (R07 M6) and in Bun's and BoringSSL's ("self signed certificate",
+ * "WRONG_VERSION_NUMBER", measured in tls-handshake.test.ts). The first match decides; `undefined` is a TLS failure of no named part.
  * "not-tls" is a port that answered with bytes that are not TLS. A socket closed before the handshake
  * ("Client network socket disconnected before secure TLS connection was established") names no cause
  * and stays a failure to connect: etcd's plaintext port closes it on a TLS hello (KE6,
@@ -127,8 +128,8 @@ const TLS_CAUSES: ReadonlyArray<readonly [RegExp, EtcdTlsFailure | undefined]> =
   [/alert certificate required/, "client-certificate-required"],
   [/alert (?:unknown ca|bad certificate)/, "client-certificate-refused"],
   [/does not match certificate's altnames/, "name"],
-  [/unable to verify the first certificate|self-signed certificate|unable to get local issuer certificate/, "chain"],
-  [/wrong version number|packet length too long/, "not-tls"],
+  [/unable to verify the first certificate|self[- ]signed certificate|unable to get local issuer certificate/, "chain"],
+  [/wrong version number|WRONG_VERSION_NUMBER|packet length too long/, "not-tls"],
   [/certificate has expired|Setting the TLS ServerName to an IP address is not permitted/, undefined],
 ];
 
