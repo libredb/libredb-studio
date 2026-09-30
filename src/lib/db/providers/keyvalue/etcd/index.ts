@@ -85,7 +85,7 @@ import {
   listEtcdObjects,
   readEtcdObjectSource,
 } from "./objects";
-import { type AccessScope, describeScope, readableScope, writableScope } from "./permissions";
+import { type AccessScope, describeScope, ROOT_ROLE, readableScope, writableScope } from "./permissions";
 import { commandResult } from "./results";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
@@ -179,7 +179,7 @@ async function readGrants(
   const context: EtcdErrorContext = { command: `read of etcd user ${user}'s grants`, write: false, connection: errors };
   try {
     const held = roles ?? (await client.userGet(user, { signal: signal() }));
-    if (held.includes("root")) return EVERY_KEY;
+    if (held.includes(ROOT_ROLE)) return EVERY_KEY;
     // Sent in the order UserGet names the roles, all at once; etcd answers each for a role the caller holds.
     const perRole = await Promise.all(held.map((role) => client.roleGet(role, { signal: signal() })));
     const permissions: readonly EtcdPermission[] = perRole.flat();
