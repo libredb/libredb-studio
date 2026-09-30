@@ -86,7 +86,7 @@ import type {
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
 import { sessionDefaultContainer } from "@/lib/db/container-walk";
-import { containerDepth, declaredKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
+import { containerDepth, enumerableKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 // The inventory route's bounds, and now nobody's second copy of them: one owner, so the
 // agent's grounding walk and `POST /api/db/objects/inventory` cannot come to disagree about
@@ -2833,7 +2833,9 @@ export type AgentObjectInventoryRead =
  * reach the model as the whole keyspace.
  */
 export async function readObjectInventoryForGrounding(context: AgentToolContext): Promise<AgentObjectInventoryRead> {
-  const declared = declaredKinds(context.capabilities);
+  // The kinds the object surface enumerates: a kind only the Keys panel enumerates is declared and
+  // never walked, so no key name reaches the capture (#1089 3.4).
+  const declared = enumerableKinds(context.capabilities);
   // Asked before anything is acquired, charged or audited: an engine that declares no
   // kinds has nothing to answer, and spending a statement to be told so would charge
   // every run on such an engine for a reading that cannot exist.
@@ -2903,7 +2905,11 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
 }
 
 /**
- * The walk itself: every container, every declared kind, under both bounds.
+ * The walk itself: every container, every kind the object surface enumerates, under both bounds.
+ *
+ * `declared` is `enumerableKinds()` and never `declaredKinds()`: a kind only the Keys panel
+ * enumerates is declared so its Source tab and edit resolve, and walking it would put one entry per
+ * key in the capture and in plan mode's prompt (#1089 3.4, E13).
  *
  * Written as one flat pair loop for the reason the route states: two nested loops need a
  * label to leave both, and a check in the outer one re-enters for every later container.

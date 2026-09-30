@@ -2051,3 +2051,199 @@ describe("assertObjectSurface and the hasColumns declaration", () => {
     ]);
   });
 });
+
+/**
+ * A kind only the Keys panel enumerates (#1089 3.4), the shape etcd's `key` has: declared with a
+ * source and an edit, left out of `countObjects` and refused by `listObjects`, so no listing can
+ * produce one. Invariant 1, the editable-kind count guard and the `unexercised` and `zeroed` guards
+ * read the enumerable kinds; the source and edit pairing and the `undriven` refusal keep every
+ * declared kind; and the kind's own read and build are driven through `keyBrowserSample`, the one
+ * path the test author writes. The first test is the positive control for the refusals after it.
+ */
+describe("assertObjectSurface and a kind the Keys panel enumerates", () => {
+  const value = '{"uri":"/hello"}';
+  const absentKey = "/app/no-such-key";
+
+  function keyValueCapabilities() {
+    return {
+      queryLanguage: "json",
+      containerLevels: [],
+      keyScan: { defaultCount: 500, maxCount: 1000 },
+      objectKinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        {
+          id: "member",
+          role: "config",
+          label: "Member",
+          labelPlural: "Members",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+        {
+          id: "key",
+          role: "config",
+          label: "Key",
+          labelPlural: "Keys",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+          acceptsSourceEdits: true,
+        },
+      ],
+    };
+  }
+
+  // Every document this double answers, and the absent key raising the way a provider raises for a
+  // key that does not exist, because the helper drives the absence arm on every provider it certifies.
+  function answer(path: readonly string[], kind: string, limit?: number) {
+    if (path[0] === absentKey) throw new QueryError(`no key ${absentKey} in the key space`, "redis");
+    return {
+      path,
+      kind,
+      parts: [
+        {
+          id: "value",
+          label: "Value",
+          ...applySourceBound(value, limit),
+          language: "json",
+          form: "complete",
+          origin: "rendered",
+        },
+      ],
+    };
+  }
+
+  const refuseEdit = async () => ({
+    built: false,
+    refusal: { refusal: "unsupported", sentence: "this double builds nothing", at: { within: "none" } },
+  });
+
+  function keyValueProvider(overrides: Record<string, unknown> = {}) {
+    return fakeProvider({
+      type: "redis",
+      getCapabilities: () => keyValueCapabilities(),
+      listContainers: async () => [],
+      // The key kind is left out, as a provider that declares it leaves it out (#1089 4.3).
+      countObjects: async () => ({ prefix: { count: 2 }, member: { count: 1 } }),
+      listObjects: async (_c: readonly string[], kind: string) => {
+        if (kind === "key") throw new QueryError('the kind "key" is listed by the Keys panel', "redis");
+        return kind === "member"
+          ? [{ path: ["8e9e05c52164694d"], name: "etcd-1 (8e9e05c52164694d)", kind }]
+          : [
+              { path: ["/app/*"], name: "/app/*", kind },
+              { path: ["/registry/pods/*"], name: "/registry/pods/*", kind },
+            ];
+      },
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => answer(path, kind, limit),
+      buildObjectEdit: refuseEdit,
+      applyObjectEdit: async () => ({ outcome: "interrupted", committed: "unknown", sentence: "no", duration: 0 }),
+      ...overrides,
+    });
+  }
+
+  const expectation = {
+    containers: [],
+    kinds: { prefix: 2, member: 1 },
+    sampleObject: { path: ["/app/*"], kind: "prefix" },
+    absentSource: { path: [absentKey], kind: "key" },
+    keyBrowserSample: { path: ["/app/cfg"], kind: "key" },
+  };
+
+  test("passes a provider that never counts or lists it, and drives its read and its build through the sample", async () => {
+    const reads: unknown[] = [];
+    const builds: unknown[] = [];
+    const provider = keyValueProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        reads.push({ path, kind });
+        return answer(path, kind, limit);
+      },
+      buildObjectEdit: async (request: unknown) => {
+        builds.push(request);
+        return refuseEdit();
+      },
+    });
+
+    await expect(assertObjectSurface(provider as never, expectation)).resolves.toBeUndefined();
+    expect(reads).toContainEqual({ path: ["/app/cfg"], kind: "key" });
+    expect(builds).toEqual([{ path: ["/app/cfg"], kind: "key", partId: "value", text: value }]);
+  });
+
+  test("refuses an expectation that names no keyBrowserSample, since nothing else reaches the kind", async () => {
+    const { keyBrowserSample: _keyBrowserSample, ...noSample } = expectation;
+    await expect(assertObjectSurface(keyValueProvider() as never, noSample)).rejects.toThrow(
+      /redis declares "key" enumeratedBy "key-browser", which no listing produces, and the expectation names no keyBrowserSample/,
+    );
+  });
+
+  test("refuses a keyBrowserSample on a provider that declares no such kind", async () => {
+    const provider = keyValueProvider({
+      getCapabilities: () => ({
+        ...keyValueCapabilities(),
+        objectKinds: keyValueCapabilities().objectKinds.filter((kind) => kind.id !== "key"),
+      }),
+      buildObjectEdit: undefined,
+      applyObjectEdit: undefined,
+    });
+    await expect(
+      assertObjectSurface(provider as never, { ...expectation, absentSource: { path: [absentKey], kind: "member" } }),
+    ).rejects.toThrow(/names a keyBrowserSample under "key" and redis declares no kind enumeratedBy "key-browser"/);
+  });
+
+  test("refuses a keyBrowserSample that names another kind than the one the Keys panel enumerates", async () => {
+    await expect(
+      assertObjectSurface(keyValueProvider() as never, {
+        ...expectation,
+        keyBrowserSample: { path: ["/app/cfg"], kind: "member" },
+      }),
+    ).rejects.toThrow(
+      /keyBrowserSample names the kind "member", and the kind redis enumerates in the Keys panel alone is "key"/,
+    );
+  });
+
+  test("holds the authored key's document to every rule a listed object's document is held to", async () => {
+    const provider = keyValueProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) =>
+        kind === "key" && path[0] === "/app/cfg"
+          ? {
+              path,
+              kind,
+              parts: [
+                { id: "value", label: "Value", text: "  ", language: "json", form: "complete", origin: "rendered" },
+              ],
+            }
+          : answer(path, kind, limit),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /readObjectSource\("key"\) answered a part with no text, which is not a definition/,
+    );
+  });
+
+  test("drives the key kind's build, so a build that answers nothing is refused by the kind's name", async () => {
+    const provider = keyValueProvider({ buildObjectEdit: (async () => undefined) as never });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /buildObjectEdit\("key"\) answered no ObjectEditBuild/,
+    );
+  });
+
+  test("the source pairing counts the key kind, so a provider whose only source is the key's must read it", async () => {
+    const provider = keyValueProvider({
+      getCapabilities: () => ({
+        ...keyValueCapabilities(),
+        objectKinds: keyValueCapabilities().objectKinds.map((kind) =>
+          kind.id === "member" ? { ...kind, hasSource: undefined, sourceLanguage: undefined } : kind,
+        ),
+      }),
+      readObjectSource: undefined,
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /redis declares 1 source-bearing kind\(s\) and does not implement readObjectSource/,
+    );
+  });
+
+  test("the edit pairing counts the key kind, so a provider whose only edit is the key's must build and apply", async () => {
+    const provider = keyValueProvider({ buildObjectEdit: undefined, applyObjectEdit: undefined });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      /redis declares 1 editable kind\(s\) and does not implement both buildObjectEdit and applyObjectEdit/,
+    );
+  });
+});

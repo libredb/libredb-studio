@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
-import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
+import { containerDepth, enumerableKinds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { containerRowId, flattenTree, pathKey, type TreeRowModel } from "./flatten";
@@ -475,7 +475,9 @@ export function useTreeNodes(
   // rather than defaulted in the signature so the two shells share one call path below.
   const reader = source ?? httpObjectSource;
 
-  const kinds = useMemo(() => declaredKinds(capabilities), [capabilities]);
+  // The kinds that draw a folder. A kind only the Keys panel enumerates is declared and draws
+  // none, so no key name reaches the tree (#1089 3.4).
+  const kinds = useMemo(() => enumerableKinds(capabilities), [capabilities]);
   const depth = useMemo(() => containerDepth(capabilities), [capabilities]);
 
   // The cache is thrown away by DERIVING it rather than by resetting it in an effect: a connection

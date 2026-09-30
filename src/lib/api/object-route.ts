@@ -9,7 +9,7 @@ import {
   acceptedContainerShapes,
   applySourceBound,
   containerDepth,
-  declaredKinds,
+  enumerableKinds,
   findKind,
   isSourcePartUnavailable,
   kindAcceptsSourceEdits,
@@ -484,19 +484,34 @@ export function assertContainerAddress(provider: DatabaseProvider, name: string,
 }
 
 /**
- * The declared kinds, narrowed to the ones the caller asked for.
+ * The enumerable kinds, narrowed to the ones the caller asked for.
  *
  * An undeclared kind is a 400 and never an empty result. Answering nothing for `view` on an engine
  * that declares no `view` reads as "this database holds no views", which is a claim about the
  * data; the truth is a claim about the engine.
+ *
+ * A kind only the Keys panel enumerates is a 400 too, pointing there (#1089 3.4). It is declared, so
+ * the Source tab and both edit routes resolve it, and it is never listed here: a provider that
+ * declares it refuses to list it, and a listing of every key would carry every key name into an
+ * inventory, a search and plan mode's prompt. With no `kinds` the answer is `enumerableKinds()`, so
+ * the `inventory` and `search` routes leave that kind out by default and say why only to a caller
+ * who names it.
  */
 export function resolveKinds(provider: DatabaseProvider, requested?: readonly string[]): readonly ObjectKindSpec[] {
   const capabilities = provider.getCapabilities();
-  if (requested === undefined) return declaredKinds(capabilities);
+  const enumerable = enumerableKinds(capabilities);
+  if (requested === undefined) return enumerable;
   return requested.map((id) => {
     const kind = findKind(capabilities, id);
     if (kind === undefined) {
       throw new ObjectRouteError(`${provider.type} declares no object kind "${id}"`, 400);
+    }
+    if (!enumerable.some((listed) => listed.id === id)) {
+      throw new ObjectRouteError(
+        `${provider.type} enumerates the kind "${id}" in the Keys panel alone, so no inventory or search lists it; ` +
+          "browse it in the Keys panel",
+        400,
+      );
     }
     return kind;
   });

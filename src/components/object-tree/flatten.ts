@@ -100,7 +100,10 @@ export interface TreeRowModel {
  * caller cache per node without a second addressing scheme.
  */
 export interface FlattenTreeState {
-  /** Every kind the provider declares, in declaration order, which is the folder order. */
+  /**
+   * Every kind the object surface enumerates (`enumerableKinds()`), in declaration order, which is
+   * the folder order. A kind only the Keys panel enumerates is declared and is not in here (#1089 3.4).
+   */
   readonly kinds: readonly ObjectKindSpec[];
   /** Every container known so far, at every level, as a flat list addressed by `path`. */
   readonly containers: readonly Container[];
@@ -163,7 +166,7 @@ export interface FlattenTreeState {
 
 /**
  * A depth-first walk from a virtual root: containers, nested as deep as the engine
- * declares, then each leaf container's declared kinds in declaration order, then the
+ * declares, then each leaf container's enumerable kinds in declaration order, then the
  * loaded objects of an expanded folder, and then the columns of an expanded object, for the
  * reason `appendObject` records.
  */

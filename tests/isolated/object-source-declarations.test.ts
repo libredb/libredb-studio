@@ -371,6 +371,111 @@ describe("the fleet census of object source declarations", () => {
 });
 
 /**
+ * THE KEY-BROWSER DECLARATION, held to its three conditions (#1089 3.4).
+ *
+ * `enumeratedBy: "key-browser"` takes a declared kind out of every walk over all kinds: the tree
+ * draws no folder for it, the `inventory` and `search` routes and the agent's grounding walk never
+ * list it, and only the Keys panel's activation reaches it, through `keyBrowserKind`. Three
+ * declarations would leave that kind reachable from nowhere, and each is refused by name here, where
+ * every provider's declaration is visible at once:
+ *
+ * - a second such kind, because a key opens ONE kind's Source tab, and `keyBrowserKind` would answer
+ *   the first and hide the other;
+ * - such a kind with no `hasSource`, because activating a key opens that kind's Source tab and there
+ *   would be nothing to read;
+ * - such a kind on capabilities with no `keyScan`, because then no Keys panel exists to enumerate it.
+ *
+ * `KEY_BROWSER_KINDS` is the committed expectation, one `<type-id>/<kind id>` per such kind, and the
+ * registration of an engine that declares one moves it. Before etcd it is empty, so the fleet row
+ * certifies an absence, and the planted declarations are what show each rule refuses what it names.
+ */
+const KEY_BROWSER_KINDS: readonly string[] = Object.freeze([]);
+
+/** The breaches of the three conditions above in one declaration, one sentence each. */
+function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {
+  const browsed = declaredKinds(capabilities).filter((kind) => kind.enumeratedBy !== undefined);
+  const ids = browsed.map((kind) => kind.id).join(", ");
+  const breaches: string[] = [];
+  if (browsed.length > 1) {
+    breaches.push(
+      `${type} declares ${browsed.length} kinds enumeratedBy "key-browser" (${ids}), and the Keys panel opens one`,
+    );
+  }
+  for (const kind of browsed) {
+    if (kind.hasSource !== true) {
+      breaches.push(
+        `${type}/${kind.id} is enumeratedBy "key-browser" and declares no hasSource, so activating a key opens nothing`,
+      );
+    }
+  }
+  if (browsed.length > 0 && capabilities.keyScan === undefined) {
+    breaches.push(`${type} declares ${ids} enumeratedBy "key-browser" and no keyScan, so no Keys panel enumerates it`);
+  }
+  return breaches;
+}
+
+describe("the key-browser declaration", () => {
+  test("the fleet declares exactly the committed key-browser kinds, and no declaration breaches the rules", async () => {
+    const rows = await censusKinds();
+    // The zero-iteration case certifies nothing, so it is refused by name, as the census above does.
+    if (rows.length === 0) {
+      throw new Error("the key-browser census inspected 0 kinds, so it certifies nothing about the fleet");
+    }
+    expect(
+      rows.filter((row) => row.kind.enumeratedBy !== undefined).map((row) => `${row.type}/${row.kind.id}`),
+    ).toEqual([...KEY_BROWSER_KINDS]);
+    const breaches: string[] = [];
+    for (const type of CENSUS_TYPES) {
+      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+      breaches.push(...keyBrowserBreaches(type, capabilities));
+    }
+    expect(breaches).toEqual([]);
+  });
+
+  // PLANTED declarations, because the fleet declares none of this shape before etcd lands, so without
+  // them each rule would be certified by nothing but the absence above.
+  const PREFIX: ObjectKindSpec = { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" };
+  const KEY: ObjectKindSpec = {
+    id: "key",
+    role: "config",
+    label: "Key",
+    labelPlural: "Keys",
+    enumeratedBy: "key-browser",
+    hasSource: true,
+    sourceLanguage: "json",
+  };
+  const keyValue = (kinds: readonly ObjectKindSpec[], withKeyScan = true): ProviderCapabilities =>
+    ({
+      queryLanguage: "json",
+      containerLevels: [],
+      ...(withKeyScan ? { keyScan: { defaultCount: 500, maxCount: 1000 } } : {}),
+      objectKinds: kinds,
+    }) as unknown as ProviderCapabilities;
+
+  test("a declaration that meets all three rules has no breach, the control for the three below", () => {
+    expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY]))).toEqual([]);
+  });
+
+  test("a second key-browser kind is refused by name", () => {
+    expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY, { ...KEY, id: "value" }]))).toEqual([
+      'kv declares 2 kinds enumeratedBy "key-browser" (key, value), and the Keys panel opens one',
+    ]);
+  });
+
+  test("a key-browser kind with no hasSource is refused by name", () => {
+    expect(
+      keyBrowserBreaches("kv", keyValue([PREFIX, { ...KEY, hasSource: undefined, sourceLanguage: undefined }])),
+    ).toEqual(['kv/key is enumeratedBy "key-browser" and declares no hasSource, so activating a key opens nothing']);
+  });
+
+  test("a key-browser kind on capabilities with no keyScan is refused by name", () => {
+    expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY], false))).toEqual([
+      'kv declares key enumeratedBy "key-browser" and no keyScan, so no Keys panel enumerates it',
+    ]);
+  });
+});
+
+/**
  * THE OTHER HALF OF THE QA NEGATIVE, AND WHY IT LIVES BESIDE THE CENSUS (#789).
  *
  * The browser round for Phase 2 was asked to show that a row whose kind declares no definition

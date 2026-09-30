@@ -696,7 +696,9 @@ export interface ProviderCapabilities {
    *
    * A kind that is absent from this list is a different fact from a kind that is
    * declared and holds nothing, which is what `KindCount` carries. Read this through
-   * `declaredKinds()` in `src/lib/db/object-kinds.ts`.
+   * `declaredKinds()` in `src/lib/db/object-kinds.ts`, and walk it through
+   * `enumerableKinds()` there, which leaves out a kind only the Keys panel enumerates
+   * (`ObjectKindSpec.enumeratedBy`, #1089 3.4).
    *
    * Optional for the same published-interface reason as `containerLevels` above.
    *
@@ -1752,6 +1754,22 @@ export interface ObjectKindSpec {
    * both.
    */
   readonly acceptsRowWrites?: boolean;
+  /**
+   * Who enumerates the objects of THIS KIND (#1089 3.4).
+   *
+   * Absent: the object surface does, so the kind draws a folder in the tree, is counted and
+   * listed, and is walked by the `inventory` and `search` routes and by the agent's grounding
+   * read. `"key-browser"`: only the Keys panel does, a page at a time, so the kind draws no folder
+   * and no walk over all kinds lists it, while `findKind` still resolves it for the Source tab and
+   * both edit routes. etcd's `key` is the case: a folder or an inventory entry per key would put
+   * every key name in the tree and in plan mode's prompt.
+   *
+   * Read through `enumerableKinds()` and `keyBrowserKind()` in `src/lib/db/object-kinds.ts`, never
+   * inline. A provider that declares it leaves the kind out of `countObjects` and refuses it by
+   * name in `listObjects`, and `tests/isolated/object-source-declarations.test.ts` refuses a second
+   * such kind, one without `hasSource` and one on capabilities without `keyScan`.
+   */
+  readonly enumeratedBy?: "key-browser";
 }
 
 /** One container level. Zero, one or two of these; the engine says which. */

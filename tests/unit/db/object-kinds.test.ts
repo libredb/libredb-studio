@@ -7,7 +7,9 @@ import {
   type ContainerPathShapeEngine,
   containerDepth,
   declaredKinds,
+  enumerableKinds,
   findKind,
+  keyBrowserKind,
   kindAcceptsRowWrites,
   relationKindIds,
   isCountSampled,
@@ -88,6 +90,66 @@ describe("declaredKinds", () => {
 
   test("findKind answers undefined for a kind this engine never declared", () => {
     expect(findKind(withKinds, "package")).toBeUndefined();
+  });
+});
+
+/**
+ * A kind only the Keys panel enumerates (#1089 3.4). etcd declares one, `key`, because the Source tab
+ * and the guarded edit need a declared kind, while a folder, an inventory listing or a line of plan
+ * mode's prompt per key would put key names where the tree and the agent read them. So the kind leaves
+ * every walk over all kinds and still resolves by id.
+ */
+describe("enumerableKinds and keyBrowserKind", () => {
+  const withKeyBrowser = {
+    ...base,
+    containerLevels: [],
+    keyScan: { defaultCount: 500, maxCount: 1000 },
+    objectKinds: [
+      { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+      {
+        id: "key",
+        role: "config",
+        label: "Key",
+        labelPlural: "Keys",
+        enumeratedBy: "key-browser",
+        hasSource: true,
+        sourceLanguage: "json",
+        acceptsSourceEdits: true,
+      },
+      {
+        id: "member",
+        role: "config",
+        label: "Member",
+        labelPlural: "Members",
+        hasSource: true,
+        sourceLanguage: "json",
+      },
+    ],
+  } as unknown as ProviderCapabilities;
+  const engine = { displayName: "A key-value engine", type: "redis" } as const;
+
+  test("with no enumeratedBy anywhere, every declared kind is enumerable, in declaration order", () => {
+    expect(enumerableKinds(withKinds).map((kind) => kind.id)).toEqual(["table", "view", "procedure"]);
+    expect(enumerableKinds(base)).toEqual([]);
+  });
+
+  test("a kind the Keys panel enumerates leaves the enumerable kinds and stays among the declared ones", () => {
+    expect(enumerableKinds(withKeyBrowser).map((kind) => kind.id)).toEqual(["prefix", "member"]);
+    expect(declaredKinds(withKeyBrowser).map((kind) => kind.id)).toEqual(["prefix", "key", "member"]);
+  });
+
+  test("keyBrowserKind names that one kind, and is undefined on every engine that declares none", () => {
+    expect(keyBrowserKind(withKeyBrowser)?.id).toBe("key");
+    expect(keyBrowserKind(withKinds)).toBeUndefined();
+    expect(keyBrowserKind(base)).toBeUndefined();
+  });
+
+  test("the kind still resolves by id, so its Source tab and both edit routes reach it", () => {
+    expect(findKind(withKeyBrowser, "key")?.enumeratedBy).toBe("key-browser");
+    expect(kindHasSource(withKeyBrowser, "key")).toBe(true);
+    expect(kindAcceptsSourceEdits(withKeyBrowser, "key")).toBe(true);
+    expect(requireSourceKind(withKeyBrowser, "key", engine).sourceLanguage).toBe("json");
+    expect(requireEditableKind(withKeyBrowser, "key", engine).id).toBe("key");
   });
 });
 

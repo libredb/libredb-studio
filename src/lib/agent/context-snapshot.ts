@@ -307,9 +307,9 @@ function composedKindResolver(context: AgentToolContext): ComposedKindResolver {
  * What the composed reading may HONESTLY say the kinds of its inventory are.
  *
  * Not the same answer the provider path gives, and the difference is knowledge rather
- * than taste. There the walk asks the provider for every DECLARED kind, one count and one
- * listing at a time, so every declared kind is a kind the reading covered and the sampled
- * and refused states are facts it measured. Here there is no per-kind reading at all: one
+ * than taste. There the walk asks the provider for every ENUMERABLE kind (`enumerableKinds()`),
+ * one count and one listing at a time, so every such kind is a kind the reading covered and the
+ * sampled and refused states are facts it measured. Here there is no per-kind reading at all: one
  * catalog statement answers whatever it answers, and on PostgreSQL that is only the
  * relations `information_schema.columns` holds - measured on postgres:18, the relkinds
  * `r`, `p`, `v` and `f`, with a materialized view and a sequence absent from that catalog

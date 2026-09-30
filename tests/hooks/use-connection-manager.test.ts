@@ -1326,8 +1326,8 @@ describe("deferring the object scan", () => {
 // mutation that removes the tagging turns them red.
 //
 // The inventory fake below answers the way the ROUTE answers, kinds filter included, rather
-// than replaying one fixed list. `resolveKinds` (`src/lib/api/object-route.ts:227`) returns
-// EVERY declared kind when the body names none, so a fake that ignored the field would be
+// than replaying one fixed list. `resolveKinds` in `src/lib/api/object-route.ts` returns
+// EVERY enumerable kind when the body names none, so a fake that ignored the field would be
 // green for a request that asks for all seven kinds and for one that asks for three, which
 // is exactly the difference the fix round exists to make.
 describe("the object inventory the explorer reads", () => {

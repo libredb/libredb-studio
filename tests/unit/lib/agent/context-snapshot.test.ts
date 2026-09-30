@@ -1845,6 +1845,42 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * A kind only the Keys panel enumerates is never walked (#1089 3.4, E13): the walk reads
+   * `enumerableKinds`, so no listing is sent for it, it is not among the inventory's kinds, and no key
+   * name reaches plan mode's prompt, even from a provider that counted it.
+   */
+  test("a kind the Keys panel enumerates is never listed and never named among the kinds", async () => {
+    const harness = objectHarness({
+      containerLevels: [],
+      kinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        {
+          id: "key",
+          role: "config",
+          label: "Key",
+          labelPlural: "Keys",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+      ],
+      counts: () => ({ prefix: { count: 1 }, key: { count: 3 } }),
+      objects: (container, kind) =>
+        kind === "key"
+          ? [{ path: [...container, "/app/private-key-name"], name: "/app/private-key-name", kind }]
+          : [{ path: [...container, "/app/*"], name: "/app/*", kind }],
+      describeObjects: async () => ({ details: [] }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["/app/*"]);
+    expect(snapshot.kinds?.map((kind) => kind.id)).toEqual(["prefix"]);
+    expect(JSON.stringify(snapshot)).not.toContain("private-key-name");
+  });
+
+  /**
    * Ruling 5g, in this module: the walk down to the containers is derived from
    * `containerDepth()` and never from a hardcoded level count. A two-level engine has to
    * reach the BIND — the second `listContainers` call, with the parent path — or the test
