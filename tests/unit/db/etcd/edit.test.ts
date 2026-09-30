@@ -1172,6 +1172,27 @@ describe("applyEtcdValueEdit: the answer after the send (spec 4.5, 5.6)", () => 
     });
   });
 
+  test("database space exceeded whose read-back meets its deadline names that read, a get and not the write", async () => {
+    const plan = await planFor("/app/cfg", "old", "new");
+    const deadline = toEtcdError(grpc(4, "Deadline exceeded after 3.000s,remote_addr=127.0.0.1:2379"));
+    const client = createFakeEtcdClient({
+      txn: async () => {
+        throw NO_SPACE;
+      },
+      range: async () => {
+        throw deadline;
+      },
+    });
+    const reason = toProviderError(deadline, { ...SENT, command: "get", write: false }).message;
+    expect(reason).toContain("The get reached its deadline");
+    expect(await applyEtcdValueEdit(client, surface(), plan)).toEqual({
+      outcome: "interrupted",
+      committed: "unknown",
+      sentence: `${toProviderError(NO_SPACE, SENT).message} The read of the key that would have told whether it was written failed too: ${reason}`,
+      duration: 0,
+    });
+  });
+
   const UNKNOWN: ReadonlyArray<readonly [name: string, error: EtcdError]> = [
     ["a deadline after the send", toEtcdError(grpc(4, "Deadline exceeded after 3.000s,remote_addr=127.0.0.1:2379"))],
     ["request timed out", toEtcdError(grpc(14, "etcdserver: request timed out"))],
