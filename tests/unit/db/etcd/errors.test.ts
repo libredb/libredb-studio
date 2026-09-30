@@ -8,8 +8,9 @@
  * post-send "remote_addr=" deadline near 1827). Rows the KE6 captures of Task 2b re-confirm under
  * Node and Bun, and must be re-pinned from them when they land: every "No connection established"
  * row (the TLS causes and Bun's bare "Failed to connect"), the TLS-against-a-plaintext-port row
- * (re-pinned: etcd's port answers with a closed socket, where "wrong version number" is another
- * server's answer that R07 did not measure), the pre-send and post-send deadlines,
+ * (re-pinned: etcd's port closes the socket before the handshake, which a forward whose far end
+ * refused does too, so it names no TLS cause; "wrong version number" is a server that answered
+ * with bytes that are not TLS, which R07 did not measure), the pre-send and post-send deadlines,
  * "Connection dropped", the client's receive cap, "no leader" under `hasleader`, and the watch
  * `cancel_reason` forms.
  */
@@ -46,6 +47,15 @@ const PLAINTEXT: EtcdErrorConnection = {
 };
 const TLS_NO_CERT: EtcdErrorConnection = { ...PLAINTEXT, tls: { serverName: "etcd.test", clientCertificate: false } };
 const TLS_CERT: EtcdErrorConnection = { ...PLAINTEXT, tls: { serverName: "etcd.test", clientCertificate: true } };
+
+/**
+ * A TLS connection whose socket closed before the handshake, as Bun and Node both report it: etcd's
+ * plaintext port on a TLS hello (KE6, etcd/error-tls-to-plaintext), and a local listener that
+ * accepts and ends the socket, as an SSH tunnel's forward does when its far end refuses
+ * (src/lib/ssh/tunnel.ts), measured through the adapter in Task 13's repair.
+ */
+const CLOSED_BEFORE_HANDSHAKE =
+  "No connection established. Last error: Error: Client network socket disconnected before secure TLS connection was established. Resolution note: ";
 
 function read(command = "get", connection: EtcdErrorConnection = PLAINTEXT): EtcdErrorContext {
   return { command, write: false, connection };
@@ -181,8 +191,6 @@ describe("toEtcdError: TLS causes inside grpc-js's 'No connection established' (
     ["error:0A000412:SSL routines::sslv3 alert bad certificate", "client-certificate-refused"],
     ["error:0A00010B:SSL routines::wrong version number", "not-tls"],
     ["error:0A0000C6:SSL routines::packet length too long", "not-tls"],
-    // etcd's own plaintext port closes the socket on a TLS hello: KE6's etcd/error-tls-to-plaintext, Bun and Node alike.
-    ["Error: Client network socket disconnected before secure TLS connection was established", "not-tls"],
     ["Error: certificate has expired", undefined],
     [
       "TypeError [ERR_INVALID_ARG_VALUE]: The property 'options.servername' Setting the TLS ServerName to an IP address is not permitted.. Received '127.0.0.1'",
@@ -202,6 +210,14 @@ describe("toEtcdError: TLS causes inside grpc-js's 'No connection established' (
 
   test("a TLS text outside 'No connection established' is not read as a TLS failure", () => {
     expect(toEtcdError(grpc(14, "unable to verify the first certificate")).category).toBe("unavailable");
+  });
+
+  test("a socket closed before the handshake names no TLS cause: etcd's plaintext port and a refused forward close it alike", () => {
+    const mapped = toEtcdError(grpc(14, CLOSED_BEFORE_HANDSHAKE));
+    expect(mapped.category).toBe("not-connected");
+    expect(mapped.tlsFailure).toBeUndefined();
+    expect(mapped.detail).toBe(CLOSED_BEFORE_HANDSHAKE);
+    expect(mapped.grpcCode).toBe(14);
   });
 });
 
@@ -368,6 +384,25 @@ describe("toProviderError: the connection classes (ConnectionError, 503, retryab
     expect(mapped.message).toBe(
       "No TLS connection to etcd at etcd.test:2379 was established, and this runtime does not report why. No client certificate is configured: if this etcd requires one (--client-cert-auth), add it under SSL / TLS; otherwise check the host, the port, the SSL mode and the tunnel. (Failed to connect)",
     );
+  });
+
+  test("a socket closed before the handshake names the host, the port, the SSL mode and the tunnel, never a port without TLS", () => {
+    const error = toEtcdError(grpc(14, CLOSED_BEFORE_HANDSHAKE));
+    const sentences: Array<[EtcdErrorConnection, string]> = [
+      [
+        TLS_NO_CERT,
+        "No etcd answered a TLS connection at etcd.test:2379: check the host, the port, the SSL mode and the tunnel.",
+      ],
+      [
+        { ...TLS_NO_CERT, runtimeReportsTlsCause: false },
+        "No TLS connection to etcd at etcd.test:2379 was established, and this runtime does not report why. No client certificate is configured: if this etcd requires one (--client-cert-auth), add it under SSL / TLS; otherwise check the host, the port, the SSL mode and the tunnel.",
+      ],
+    ];
+    for (const [connection, sentence] of sentences) {
+      const mapped = toProviderError(error, write("put", connection));
+      expect(mapped).toBeInstanceOf(ConnectionError);
+      expect(mapped.message).toBe(`${sentence} (${CLOSED_BEFORE_HANDSHAKE})`);
+    }
   });
 
   test("under a runtime that reports no TLS cause, with a client certificate configured", () => {

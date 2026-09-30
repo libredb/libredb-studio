@@ -940,8 +940,10 @@ describe("capture: each seam method against what etcd v3.7.2 answered (gate 4)",
     "etcd/error-range-compacted": ["compacted"],
     "etcd/error-range-future-revision": ["future-revision"],
     "etcd/error-server-receive-cap": ["request-too-large"],
-    "etcd/error-tls-to-plaintext.bun": ["tls", "not-tls"],
-    "etcd/error-tls-to-plaintext.node": ["tls", "not-tls"],
+    // etcd's plaintext port closes the socket before the handshake, as a listener that accepts and closes does (a
+    // tunnel's forward whose far end refused, pinned over grpc-js below), so the text names no TLS cause.
+    "etcd/error-tls-to-plaintext.bun": ["not-connected"],
+    "etcd/error-tls-to-plaintext.node": ["not-connected"],
     "etcd/error-txn-duplicate-key": ["duplicate-key"],
     "etcd/error-txn-request-too-large": ["request-too-large"],
     "etcd/error-txn-too-many-ops": ["too-many-ops"],
@@ -2976,6 +2978,42 @@ describe("over grpc-js: sockets and names that answer nothing (spec 5.6)", () =>
     await client.close();
     resetting.close();
     expect(error).toMatchObject({ category: "not-connected", grpcCode: 14 });
+  }, 10_000);
+
+  test("TLS to a listener that accepts and closes, as a tunnel's refused forward does, fails as KE6's plaintext port did", async () => {
+    // src/lib/ssh/tunnel.ts ends the local socket when its forward is refused, and etcd's plaintext port closes it on
+    // a TLS hello (KE6, etcd/error-tls-to-plaintext): one text, so it cannot say that the port lacks TLS.
+    const plaintextPort = (etcdCapture("etcd/error-tls-to-plaintext.bun").payload as { details: string }).details;
+    const tlsContext: EtcdErrorContext = {
+      ...context("put", true),
+      connection: {
+        ...context("put", true).connection,
+        tls: { serverName: "etcd.test", clientCertificate: false },
+        runtimeReportsTlsCause: true,
+      },
+    };
+    for (const close of ["end", "destroy"] as const) {
+      const closing = net.createServer((socket) => {
+        socket.on("error", () => undefined);
+        socket[close]();
+      });
+      // oxlint-disable-next-line no-await-in-loop -- one listener after another.
+      await new Promise<void>((resolve) => closing.listen(0, "127.0.0.1", resolve));
+      const { port } = closing.address() as AddressInfo;
+      // oxlint-disable-next-line no-await-in-loop -- one channel per listener.
+      const client = await createGrpcEtcdClient(at(port, { tls: TLS, callTimeoutMs: 3000 }));
+      // oxlint-disable-next-line no-await-in-loop -- the one call on that channel.
+      const error = await failure(client.status(options));
+      // oxlint-disable-next-line no-await-in-loop -- the channel closes before the next listener opens.
+      await client.close();
+      closing.close();
+      expect({ close, error }).toMatchObject({ close, error: { category: "not-connected", grpcCode: 14 } });
+      expect((error as EtcdError).detail).toBe(plaintextPort);
+      expect((error as EtcdError).tlsFailure).toBeUndefined();
+      expect(toProviderError(error, tlsContext).message).toStartWith(
+        "No etcd answered a TLS connection at etcd.test:2379: check the host, the port, the SSL mode and the tunnel.",
+      );
+    }
   }, 10_000);
 
   test("a name that does not resolve is a failure to connect, for a write too, since nothing was dialled", async () => {
