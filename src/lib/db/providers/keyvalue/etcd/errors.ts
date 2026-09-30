@@ -267,7 +267,7 @@ export interface EtcdErrorContext {
 
 const UNKNOWN_OUTCOME = "The write may have been applied: read the key again before you run the command again.";
 const NO_SPACE_RECOVERY =
-  "An admin compacts history, defragments every member over its quota and disarms the alarm, from the Global Operations cards of Admin > Operations.";
+  "An admin compacts history, defragments every member that alarm list names, one at a time through a connection to each member, and then disarms the alarm, from the Global Operations cards of Admin > Operations.";
 
 /** etcd's words after the provider's (spec E16), without etcd's own "etcdserver: " prefix. */
 function answered(detail: string): string {

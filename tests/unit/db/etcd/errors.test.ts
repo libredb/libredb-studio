@@ -544,7 +544,7 @@ describe("toProviderError: a write whose outcome is unknown (QueryError, 400, no
   test("spec 5.6: 'database space exceeded' carries the sentence, and 'request is too large' does not", () => {
     const space = toProviderError(toEtcdError(grpc(8, "etcdserver: mvcc: database space exceeded")), write("put"));
     expect(space.message).toBe(
-      `etcd's database is over its space quota. (etcd: mvcc: database space exceeded) An admin compacts history, defragments every member over its quota and disarms the alarm, from the Global Operations cards of Admin > Operations. ${UNKNOWN_OUTCOME}`,
+      `etcd's database is over its space quota. (etcd: mvcc: database space exceeded) An admin compacts history, defragments every member that alarm list names, one at a time through a connection to each member, and then disarms the alarm, from the Global Operations cards of Admin > Operations. ${UNKNOWN_OUTCOME}`,
     );
     const timedOut = toProviderError(toEtcdError(grpc(14, "etcdserver: request timed out")), write("put"));
     expect(timedOut.message).toEndWith(UNKNOWN_OUTCOME);
@@ -690,7 +690,7 @@ describe("toProviderError: answers in etcd's words (QueryError)", () => {
   test("database space exceeded on a read carries the recovery instruction and no unknown outcome", () => {
     const mapped = toProviderError(toEtcdError(grpc(8, "etcdserver: mvcc: database space exceeded")), read("get"));
     expect(mapped.message).toBe(
-      "etcd's database is over its space quota. (etcd: mvcc: database space exceeded) An admin compacts history, defragments every member over its quota and disarms the alarm, from the Global Operations cards of Admin > Operations.",
+      "etcd's database is over its space quota. (etcd: mvcc: database space exceeded) An admin compacts history, defragments every member that alarm list names, one at a time through a connection to each member, and then disarms the alarm, from the Global Operations cards of Admin > Operations.",
     );
   });
 
