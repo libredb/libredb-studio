@@ -4,13 +4,18 @@ import {
   filterKeyTree,
   flattenKeyTree,
   isUnderPrefix,
+  keyName,
+  keyRowNames,
   keyTreeWindow,
   KEY_ROW_HEIGHT,
+  prefixPattern,
+  sentPattern,
   splitKey,
   KEY_SEPARATOR,
   type KeyTreeNode,
   type KeyTreeRow,
 } from "@/components/key-browser/tree";
+import { keyScanShape } from "@/lib/db/types";
 
 /** The child segments of a node, which is what most of these assertions are about. */
 function segments(node: KeyTreeNode): string[] {
@@ -524,5 +529,241 @@ describe("the ARIA pair every row carries", () => {
     expect(button).toBeDefined();
     expect(folder).toBe((child as number) - 1);
     expect(button?.depth).toBe(child);
+  });
+});
+
+/**
+ * The tree in a declared shape (spec 3.4, 4.6): etcd's `/`, its prefix pattern, and the root row a
+ * leading separator makes. Every helper above ran with no shape, which is Redis's, and answers as it
+ * always did; everything below hands the shape a production caller reads from `keyScanShape`.
+ */
+const ETCD = keyScanShape({
+  defaultCount: 500,
+  maxCount: 1000,
+  separator: "/",
+  cursor: "opaque",
+  pattern: "prefix",
+  totalScope: "walk",
+});
+
+/**
+ * Review Focus 1: keys whose bytes or shape strain the path model. Each is a key etcd can hold, and
+ * each must come back from the tree as exactly the string it went in as: an empty segment, a trailing
+ * separator (the directory marker, which is also the start of its folder's range), the separator
+ * alone, a space, both quotes, a newline, `#`, `$`, a leading `-` in a segment and in the key, and a
+ * key with no leading separator at all.
+ */
+const STRAINING_KEYS = [
+  "/a//b",
+  "/app/",
+  "/app/cfg",
+  "/",
+  "/sp ace/k",
+  "/q'uo\"te/k",
+  "/nl\nx/k",
+  "/#h/k",
+  "/$d/k",
+  "/-lead/k",
+  "-top",
+  "plain",
+];
+
+/** Every node of a tree, depth first, the root excluded. */
+function everyNode(root: KeyTreeNode): KeyTreeNode[] {
+  return root.children.flatMap((child) => [child, ...everyNode(child)]);
+}
+
+describe("the tree in a declared shape", () => {
+  test("splits on the declared separator, and a leading one is an empty first segment", () => {
+    expect(splitKey("/apisix/routes/1", ETCD)).toEqual(["", "apisix", "routes", "1"]);
+    expect(splitKey("/", ETCD)).toEqual(["", ""]);
+    expect(splitKey("/a//b", ETCD)).toEqual(["", "a", "", "b"]);
+    expect(splitKey("/app/", ETCD)).toEqual(["", "app", ""]);
+    // No leading separator, no empty segment: such a key stands beside the root row, not under it.
+    expect(splitKey("k3s/x", ETCD)).toEqual(["k3s", "x"]);
+    // Under this shape a colon is data.
+    expect(splitKey("/a:b/c", ETCD)).toEqual(["", "a:b", "c"]);
+  });
+
+  test("joins every path back to the key it came from", () => {
+    // `keyName` is the inverse of `splitKey`, which is what lets every surface address a key by the
+    // name the tree gives it (Review Focus 1).
+    for (const key of STRAINING_KEYS) expect(keyName(splitKey(key, ETCD), ETCD)).toBe(key);
+    expect(keyName([""], ETCD)).toBe("");
+    expect(keyName(["", "apisix"], ETCD)).toBe("/apisix");
+    // With no shape handed, Redis's `:`, and its leading colon is kept the same way.
+    expect(keyName(["", "foo"])).toBe(":foo");
+  });
+
+  test("draws a key that starts with the separator under the root row, beside one that does not", () => {
+    const root = buildKeyTree(["/apisix/routes/1", "/feature-flag", "k3s/x", "plain"], ETCD);
+
+    // The root row is the node of the empty first segment; `k3s` and `plain` have no leading `/` and
+    // stand beside it (spec 4.6: five of the layouts R09 read have none).
+    expect(segments(root)).toEqual(["", "k3s", "plain"]);
+    expect(at(root, "").count).toBe(2);
+    expect(segments(at(root, ""))).toEqual(["apisix", "feature-flag"]);
+    expect(at(root, "", "apisix", "routes", "1")).toMatchObject({ path: ["", "apisix", "routes", "1"], isKey: true });
+  });
+
+  test("names every node of a straining key space by its stored string, and never with an empty name", () => {
+    const root = buildKeyTree(STRAINING_KEYS, ETCD);
+    const keys = everyNode(root)
+      .filter((node) => node.isKey)
+      .map((node) => keyName(node.path, ETCD));
+
+    // Every key the tree holds is one that went in, and every one that went in is held.
+    expect(keys.sort()).toEqual([...STRAINING_KEYS].sort());
+    for (const node of everyNode(root)) {
+      const names = keyRowNames(node, node.children.length > 0, ETCD);
+      expect(names.label).not.toBe("");
+      expect(names.title).not.toBe("");
+      expect(names.toggle).not.toBe("");
+      expect(`${names.label}${names.title}${names.toggle}`).not.toContain("�");
+    }
+  });
+
+  test("gives the root row, a folder, a key and a directory marker their names", () => {
+    const root = buildKeyTree(["/apisix/routes/1", "/app/", "/app/cfg"], ETCD);
+
+    // The root row: a folder whose full name is empty, so its twisty names the separator instead.
+    expect(keyRowNames(at(root, ""), true, ETCD)).toEqual({ label: "/*", title: "/*", toggle: "/" });
+    expect(keyRowNames(at(root, "", "apisix"), true, ETCD)).toEqual({
+      label: "apisix/*",
+      title: "/apisix/*",
+      toggle: "/apisix",
+    });
+    // A key says its FULL name, and `/app/`, the directory marker, is a key under the folder `app/*`.
+    expect(keyRowNames(at(root, "", "apisix", "routes", "1"), false, ETCD)).toMatchObject({
+      label: "/apisix/routes/1",
+      title: "/apisix/routes/1",
+    });
+    expect(keyRowNames(at(root, "", "app", ""), false, ETCD)).toMatchObject({ label: "/app/", title: "/app/" });
+  });
+
+  test("keeps Redis's names, apart from the root row's twisty", () => {
+    const root = buildKeyTree(["app", "app:env", ":foo"]);
+
+    expect(keyRowNames(at(root, "app"), true)).toEqual({
+      label: "app",
+      title: "app is a key of this database and a prefix: app:*",
+      toggle: "app",
+    });
+    expect(keyRowNames(at(root, "app", "env"), false)).toMatchObject({ label: "app:env", title: "app:env" });
+    // `:foo` makes Redis's own root row: its label and title are today's `:*`, and its twisty, which
+    // announced an empty name before, names the separator.
+    expect(keyRowNames(at(root, ""), true)).toEqual({ label: ":*", title: ":*", toggle: ":" });
+  });
+
+  test("holds a key to its prefix segment by segment under the declared separator", () => {
+    expect(isUnderPrefix("/apisix/routes/1", ["", "apisix"], ETCD)).toBe(true);
+    expect(isUnderPrefix("/apisixx/y", ["", "apisix"], ETCD)).toBe(false);
+    // The directory marker is under its folder, and the folder's own name is not.
+    expect(isUnderPrefix("/app/", ["", "app"], ETCD)).toBe(true);
+    expect(isUnderPrefix("/app", ["", "app"], ETCD)).toBe(false);
+    // Everything that starts with the separator is under the root row, and nothing else is.
+    expect(isUnderPrefix("/", [""], ETCD)).toBe(true);
+    expect(isUnderPrefix("k3s/x", [""], ETCD)).toBe(false);
+  });
+
+  test("builds a prefix etcd can walk, unescaped and with no star", () => {
+    expect(prefixPattern("/apisix/routes/*", ETCD)).toBe("/apisix/routes/");
+    expect(prefixPattern(keyName(["", "apisix"], ETCD), ETCD)).toBe("/apisix/");
+    expect(prefixPattern(keyName([""], ETCD), ETCD)).toBe("/");
+    // A glob metacharacter, a space, both quotes, a `$` and a `-` are bytes of the prefix.
+    expect(prefixPattern("/a[b] *?$'\"-/*", ETCD)).toBe("/a[b] *?$'\"-/");
+    // A path whose last segment is empty is the prefix of the keys under that empty segment.
+    expect(prefixPattern(keyName(["", "a", ""], ETCD), ETCD)).toBe("/a//");
+  });
+
+  test("keeps the glob pattern when no shape is handed", () => {
+    expect(prefixPattern("user:*")).toBe("user:*");
+    expect(prefixPattern("user")).toBe("user:*");
+    expect(prefixPattern("a[b:*")).toBe("a\\[b:*");
+  });
+
+  test("sends the typed prefix, dropping only the star of a trailing separator and star", () => {
+    expect(sentPattern("/apisix/routes/*", ETCD)).toBe("/apisix/routes/");
+    expect(sentPattern("/app/", ETCD)).toBe("/app/");
+    expect(sentPattern("/app", ETCD)).toBe("/app");
+    expect(sentPattern("/*", ETCD)).toBe("/");
+    // A star anywhere else is data, and nothing is trimmed: a prefix is bytes.
+    expect(sentPattern("/a*b/", ETCD)).toBe("/a*b/");
+    expect(sentPattern("*", ETCD)).toBe("*");
+    expect(sentPattern(" a/*", ETCD)).toBe(" a/");
+    // With no shape handed the text is the reader's own glob, untouched.
+    expect(sentPattern("app:*")).toBe("app:*");
+    expect(sentPattern(" app:* ")).toBe(" app:* ");
+  });
+
+  /**
+   * The filter, by the full name every node is known by (spec 4.6). `pruneKeyTree` used to build a
+   * name by appending to its parent's, and a parent whose own name was empty (the root row) lost the
+   * leading separator: `/a/b` was matched as `a/b`, so a typed full key found nothing.
+   */
+  test("finds a full key that starts with the separator", () => {
+    const root = buildKeyTree(["/apisix/routes/1", "/apisix/plugins", "/feature-flag", "k3s/x"], ETCD);
+    const filtered = filterKeyTree(root, "/apisix/routes/1", ETCD);
+
+    expect(segments(filtered)).toEqual([""]);
+    expect(segments(at(filtered, "", "apisix"))).toEqual(["routes"]);
+    expect(at(filtered, "", "apisix", "routes", "1").isKey).toBe(true);
+  });
+
+  test("finds a prefix that starts with the separator, and its whole branch", () => {
+    const root = buildKeyTree(["/apisix/routes/1", "/apisix/plugins", "/feature-flag", "k3s/x"], ETCD);
+
+    // `/apisix/` names the branch, and `/apisix/*`, the folder's advertised name, means the same.
+    for (const term of ["/apisix/", "/apisix/*"]) {
+      const filtered = filterKeyTree(root, term, ETCD);
+      expect(segments(filtered)).toEqual([""]);
+      expect(segments(at(filtered, ""))).toEqual(["apisix"]);
+      expect(segments(at(filtered, "", "apisix")).sort()).toEqual(["plugins", "routes"]);
+    }
+  });
+
+  test("finds a key with no leading separator beside the root row", () => {
+    const filtered = filterKeyTree(buildKeyTree(["/apisix/routes/1", "k3s/x", "k3s/y"], ETCD), "k3s/x", ETCD);
+
+    expect(segments(filtered)).toEqual(["k3s"]);
+    expect(segments(at(filtered, "k3s"))).toEqual(["x"]);
+  });
+
+  test("keeps a Redis key's leading colon, the same fix with no shape handed", () => {
+    // Before the fix `:foo` was matched as `foo`, and typing its full name found nothing.
+    const filtered = filterKeyTree(buildKeyTree([":foo", "bar"]), ":foo");
+
+    expect(segments(filtered)).toEqual([""]);
+    expect(at(filtered, "", "foo").isKey).toBe(true);
+  });
+
+  test("finds every straining key by its own full name", () => {
+    const root = buildKeyTree(STRAINING_KEYS, ETCD);
+
+    for (const key of STRAINING_KEYS) {
+      const found = everyNode(filterKeyTree(root, key, ETCD))
+        .filter((node) => node.isKey)
+        .map((node) => keyName(node.path, ETCD));
+      expect({ key, found: found.includes(key) }).toEqual({ key, found: true });
+    }
+  });
+
+  test("reads a separator of more than one character in every helper", () => {
+    // `separator` is any string, so the folder mark is the separator and a star whatever its length,
+    // and every helper strips or appends exactly that mark rather than a fixed two characters.
+    const wide = keyScanShape({ defaultCount: 1, maxCount: 1, separator: "::", pattern: "prefix" });
+    const wideGlob = keyScanShape({ defaultCount: 1, maxCount: 1, separator: "::" });
+
+    expect(splitKey("a::b::c", wide)).toEqual(["a", "b", "c"]);
+    expect(prefixPattern("a::b::*", wide)).toBe("a::b::");
+    expect(prefixPattern("a::b::*", wideGlob)).toBe("a::b::*");
+    expect(sentPattern("a::b::*", wide)).toBe("a::b::");
+
+    const root = buildKeyTree(["a::b", "a::c"], wide);
+    // The folder mark alone is no filter, and a folder's advertised name finds that folder's branch,
+    // the key named exactly `a::b` included.
+    expect(filterKeyTree(root, "::*", wide)).toBe(root);
+    expect(segments(at(filterKeyTree(root, "a::b::*", wide), "a"))).toEqual(["b"]);
+    expect(keyRowNames(at(root, "a"), true, wide)).toEqual({ label: "a::*", title: "a::*", toggle: "a" });
   });
 });

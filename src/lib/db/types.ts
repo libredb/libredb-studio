@@ -296,6 +296,13 @@ export type ContainerLevels =
  * The declaration is STATIC, like `objectKinds` and for a related reason: it states what the
  * PROVIDER can do, not what the connected server answered. A Redis-wire relative that
  * refuses `SCAN` would be a different provider, not a different capability.
+ *
+ * THE WALK'S SHAPE IS DECLARED TOO, in four optional fields read only through `keyScanShape` below
+ * (spec 3.4): which string separates a key's segments, how the cursor is spelled, what the pattern
+ * is, and what the total counts. An absent field is Redis's walk, the one this interface described
+ * before the fields existed, so a declaration written then still means what it meant. etcd declares
+ * all four: a `/` convention, a cursor only it can read, a literal prefix rather than a glob, and a
+ * total that counts the range the walk covers.
  */
 export interface KeyScanCapability {
   /** Batch size used when the caller names none. */
@@ -306,16 +313,74 @@ export interface KeyScanCapability {
    * nothing, which is a wrong answer about what a batch is. The caller can ask again.
    */
   readonly maxCount: number;
+  /**
+   * What separates one segment of a key from the next in the panel's tree, and in the prefix a
+   * folder stands for. Absent reads `":"`, Redis's convention; etcd's is `"/"`.
+   */
+  readonly separator?: string;
+  /**
+   * How the cursor is spelled. Absent reads `"decimal"`, a run of digits the route shape-checks, as a
+   * Redis cursor is; `"opaque"` is a string only the provider that wrote it can read, which the route
+   * passes through untouched. `"0"` starts and ends a walk under both.
+   */
+  readonly cursor?: "decimal" | "opaque";
+  /**
+   * What `KeyScanOptions.pattern` is. Absent reads `"glob"`, a `MATCH` pattern whose prefix half the
+   * panel escapes; `"prefix"` is the literal bytes every walked key begins with, unescaped, untrimmed
+   * and with no `*`.
+   */
+  readonly pattern?: "glob" | "prefix";
+  /**
+   * What `KeyScanPage.total` counts. Absent reads `"database"`, the engine's own count of the database
+   * walked; `"walk"` is the exact count of the keys this walk covers at its pinned revision.
+   */
+  readonly totalScope?: "database" | "walk";
+}
+
+/**
+ * A key-space walk's shape with every field present: what `keyScanShape` answers for a declaration.
+ *
+ * A TYPE OF ITS OWN SO A READER HOLDS THE ANSWER AND NOT THE QUESTION. A panel that read
+ * `capability.separator ?? ":"` in one place and `capability.separator` in another would draw one key
+ * space two ways; a reader handed this has no default left to forget.
+ */
+export interface KeyScanShape {
+  readonly separator: string;
+  readonly cursor: "decimal" | "opaque";
+  readonly pattern: "glob" | "prefix";
+  readonly totalScope: "database" | "walk";
+}
+
+/**
+ * The one reader of `KeyScanCapability`'s four optional fields (spec 3.4).
+ *
+ * An absent field is today's walk, `":"`, `"decimal"`, `"glob"` and `"database"`: the compatibility
+ * rule `maintenanceControl` states for the optional `maintenanceOperationSpecs`, which is why Redis's
+ * declaration, naming none of the four, keeps its panel as it was.
+ */
+export function keyScanShape(capability: KeyScanCapability): KeyScanShape {
+  return {
+    separator: capability.separator ?? ":",
+    cursor: capability.cursor ?? "decimal",
+    pattern: capability.pattern ?? "glob",
+    totalScope: capability.totalScope ?? "database",
+  };
 }
 
 export interface KeyScanOptions {
-  /** The cursor the previous page answered with; `"0"` starts a walk. */
+  /** The cursor the previous page answered with, in the declaration's `cursor` spelling; `"0"` starts a walk. */
   readonly cursor: string;
-  /** A `MATCH` pattern, or omitted for every key. */
+  /**
+   * The walk's pattern in the declaration's `pattern` shape, or omitted for every key: a `MATCH` glob
+   * under `"glob"`, and under `"prefix"` the literal prefix every walked key begins with.
+   */
   readonly pattern?: string;
   /** Batch size, within `[1, maxCount]`. */
   readonly count: number;
-  /** Which numbered database to walk, for an engine that has more than one. */
+  /**
+   * Which numbered database to walk, for an engine that declares a container level to name. An engine
+   * that declares none walks one key space, and both key routes refuse the field for it (spec 3.4).
+   */
   readonly database?: number;
 }
 
@@ -344,15 +409,19 @@ export interface KeyScanPage {
    */
   readonly types: Readonly<Record<string, string>>;
   /**
-   * The engine's own count of the keys in the database being walked — what a progress
-   * indicator divides by.
+   * What a progress indicator divides by, in the scope the declaration's `totalScope` names (spec 4.6).
    *
-   * SERVER-WIDE, NOT THE WALK'S OWN TOTAL, which is why it looks like a naive field. A
-   * `SCAN` cursor says nothing about how much is left, so no denominator can be computed
-   * from the batches a caller has already seen; this is the one number the engine publishes
-   * (`DBSIZE`, which is O(1)). On a clustered deployment it is the LOCAL node's key count,
-   * because `DBSIZE` has no cluster-wide form and `SCAN` walks one node's slots — a panel
-   * drawing 2000/6355 there is showing a fraction of one node and not of the cluster.
+   * UNDER `"database"`, THE ABSENT DEFAULT, IT IS SERVER-WIDE AND NOT THE WALK'S OWN TOTAL, which is
+   * why it looks like a naive field. A `SCAN` cursor says nothing about how much is left, so no
+   * denominator can be computed from the batches a caller has already seen; this is the one number the
+   * engine publishes (`DBSIZE`, which is O(1)). On a clustered deployment it is the LOCAL node's key
+   * count, because `DBSIZE` has no cluster-wide form and `SCAN` walks one node's slots: a panel drawing
+   * 2000/6355 there is showing a fraction of one node and not of the cluster.
+   *
+   * UNDER `"walk"` IT IS THE EXACT COUNT OF THE KEYS THIS WALK COVERS at the revision its pages are
+   * pinned to: the pattern's prefix range, or the whole key space, and for a caller whose grants are
+   * narrower, the keys of the ranges it may read (spec 4.7). Every page answers it, and a panel replaces
+   * its total with each page's.
    */
   readonly total: number;
   /**
@@ -363,6 +432,15 @@ export interface KeyScanPage {
    * does not say it is clustered, which is the ordinary server.
    */
   readonly clustered?: boolean;
+  /**
+   * Keys this page read and left out, and why: present only when it left any out (spec 4.6).
+   *
+   * A KEY IS LEFT OUT WHEN NO NAME A ROW COULD CARRY ADDRESSES IT. etcd keys are bytes, and one that
+   * is not UTF-8 text, decoded with replacement characters, would name a different key, so it is
+   * counted here rather than listed; a typed read shows it in base64. `reason` is the provider's own
+   * words. Redis's pages never carry it.
+   */
+  readonly skipped?: { readonly count: number; readonly reason: string };
 }
 
 export interface ProviderCapabilities {

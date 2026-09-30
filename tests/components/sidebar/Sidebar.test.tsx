@@ -682,6 +682,43 @@ describe("Sidebar", () => {
     expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("a\\[b:*");
   });
 
+  test("hands Browse Keys the bare prefix and its separator under a prefix declaration", () => {
+    const props = createDefaultProps({
+      activeConnection: mockPostgresConnection,
+      // A walk that reads a literal prefix under `/` and declares no container level: what etcd answers.
+      metadata: {
+        capabilities: {
+          queryLanguage: "json",
+          keyScan: {
+            defaultCount: 500,
+            maxCount: 1000,
+            separator: "/",
+            cursor: "opaque",
+            pattern: "prefix",
+            totalScope: "walk",
+          },
+        },
+      } as unknown as ProviderMetadata,
+      objectActions: { onGenerateSelect: () => {} },
+    });
+    const { queryByTestId } = render(<Sidebar {...props} />);
+
+    // The group's advertised name loses only its star: the separator stays, so the walk does not also
+    // read `/apisix/routes-v2/`, and nothing is escaped, because every byte of a prefix is data.
+    act(() => {
+      capturedBrowseKeys?.({ name: "/apisix/routes/*", path: ["/apisix/routes/*"] });
+    });
+    expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("/apisix/routes/");
+    expect(queryByTestId("key-browser")?.getAttribute("data-request-database")).toBe("none");
+
+    // Review Focus 1: a prefix holding a leading `-`, a space, both quotes, `#`, `$` and a glob
+    // metacharacter is handed over as its string, with no escape.
+    act(() => {
+      capturedBrowseKeys?.({ name: "/-a b'\"#$[x]/*", path: ["/-a b'\"#$[x]/*"] });
+    });
+    expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("/-a b'\"#$[x]/");
+  });
+
   /**
    * The panel is not offered to a shell that answers the reads itself.
    *

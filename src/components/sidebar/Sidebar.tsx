@@ -2,7 +2,7 @@
 
 import React from "react";
 import { DatabaseConnection } from "@/lib/types";
-import type { DatabaseObject } from "@/lib/db/types";
+import { keyScanShape, type DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Plus, Zap, Layers, LoaderCircle, CircleAlert } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -163,6 +163,12 @@ export const Sidebar = React.memo(function Sidebar({
   const keyScan = objectSource === undefined ? metadata?.capabilities.keyScan : undefined;
   const showingKeys = keyScan !== undefined && view === "keys";
   /**
+   * The walk's shape, read once through `keyScanShape`, so the handover below builds the pattern the
+   * engine's walk reads (spec 3.4, 4.6). Undefined where no walk is shown, which is also where no row
+   * offers Browse Keys.
+   */
+  const keyShape = React.useMemo(() => (keyScan === undefined ? undefined : keyScanShape(keyScan)), [keyScan]);
+  /**
    * The container level the walk is pointed at, when the engine declares one.
    *
    * The FIRST declared level is the one a key space belongs to — on Redis that is its numbered
@@ -203,17 +209,18 @@ export const Sidebar = React.memo(function Sidebar({
       const capabilities = metadata?.capabilities;
       const database = capabilities !== undefined && containerDepth(capabilities) > 0 ? object.path[0] : undefined;
       setKeyPatternRequest({
-        // ESCAPED, and only in its prefix half: a key prefix is data that may itself contain a glob
-        // metacharacter, while the `*` the row is advertised with is the one the pattern exists for.
-        // `prefixPattern` is the same helper the scoped walk builds its pattern with, so the two
-        // cannot drift (#427).
-        pattern: prefixPattern(object.name),
+        // IN THE WALK'S OWN SHAPE, from the same helper the scoped walk builds its pattern with, so the
+        // two cannot drift (#427). Under `glob` it is ESCAPED, and only in its prefix half: a key prefix
+        // is data that may itself contain a glob metacharacter, while the `*` the row is advertised with
+        // is the one the pattern exists for. Under `prefix` it is the bare prefix and its separator,
+        // unescaped, so `/apisix/routes/*` hands over `/apisix/routes/` (spec 4.6).
+        pattern: prefixPattern(object.name, keyShape),
         ...(database === undefined ? {} : { database }),
       });
       setView("keys");
       setKeysPanelFor(connectionId);
     },
-    [connectionId, metadata],
+    [connectionId, keyShape, metadata],
   );
   const actions = React.useMemo<TreeRowActionHandlers>(
     // The panel's own item is offered only where the panel exists: the row menu's gate asks the

@@ -1,12 +1,13 @@
 /**
  * The key tree a sampled walk is drawn as.
  *
- * A KEY SPACE IS A FLAT NAMESPACE, AND THIS IS THE ONLY STRUCTURE IN IT. Redis stores keys as
- * opaque bytes: `app:cache:user:1` is not a path, it is a nineteen-byte name that happens to
- * contain two colons, and the server does not know that `app:cache:user` is a prefix of it. So
+ * A KEY SPACE IS A FLAT NAMESPACE, AND THIS IS THE ONLY STRUCTURE IN IT. Redis and etcd store keys
+ * as opaque bytes: `app:cache:user:1` is not a path, it is a sixteen-byte name that happens to
+ * contain three colons, and the server does not know that `app:cache:user` is a prefix of it. So
  * everything below is an ARRANGEMENT of names the caller already holds rather than a reading of
- * anything — the folders exist because the caller decided `:` separates them, and no command can
- * be given a folder to answer for.
+ * anything. The folders exist because the engine's declaration says which string separates them,
+ * `:` on Redis and `/` on etcd, read through `keyScanShape` (spec 3.4), and no command can be given
+ * a folder to answer for.
  *
  * IT IS BUILT FROM A SAMPLE, NOT FROM A CATALOG. A walk that stopped at a batch holds some of the
  * keys; a folder's count is therefore the number of keys THAT WALK SAW under it, and a prefix
@@ -19,14 +20,27 @@
  * would make the tree disagree with the progress bar beside it.
  */
 import { escapeGlob } from "@/lib/query-generators";
+import { keyScanShape, type KeyScanShape } from "@/lib/db/types";
 
 /**
- * What separates one segment from the next. Fixed, and declared here rather than threaded through
- * as an option: the server has no opinion on it, so a configurable separator would be a choice this
- * provider made and then had to keep consistent across a tree, a `MATCH` pattern and a documented
- * behaviour, for a setting nothing else in the product has a use for.
+ * The shape a helper below reads when its caller hands none: what `keyScanShape` answers for a
+ * declaration that sets none of its four optional fields, which is Redis's walk and every call these
+ * helpers had before the fields existed (spec 3.4).
+ *
+ * READ THROUGH THE HELPER RATHER THAN RESTATED, so the defaults have one home and cannot drift from
+ * the ones the route and the panel read. The batch sizes play no part in a shape, so any pair does.
  */
-export const KEY_SEPARATOR = ":";
+const UNDECLARED: KeyScanShape = keyScanShape({ defaultCount: 1, maxCount: 1 });
+
+/**
+ * What separates one segment from the next on a walk that declares no separator: Redis's `:`.
+ *
+ * A DECLARATION NOW, NOT A CONSTANT OF THIS MODULE. The server has no opinion on it, and while Redis
+ * was the only engine with a walk this module fixed it. etcd's convention is `/`, so the separator is
+ * read from the engine's declaration through `keyScanShape` and handed to each helper below as part
+ * of its shape; this is the one a helper reads when it is handed none.
+ */
+export const KEY_SEPARATOR = UNDECLARED.separator;
 
 /**
  * A path's identity as a map key.
@@ -40,7 +54,11 @@ export function pathKey(path: readonly string[]): string {
 }
 
 export interface KeyTreeNode {
-  /** This node's own segment. The ROOT carries the empty string and is not drawn as a row. */
+  /**
+   * This node's own segment. The ROOT carries the empty string and is not drawn as a row. A key that
+   * begins with the separator gives the level below it an empty segment too, and that node IS drawn:
+   * it is the separator's own root row, `/*` on etcd (spec 4.6).
+   */
   readonly segment: string;
   /** Every segment from the root to this node, so a caller never re-derives one. */
   readonly path: readonly string[];
@@ -85,9 +103,26 @@ function createNode(segment: string, path: string[]): MutableNode {
   return { segment, path, children: new Map(), count: 0, isKey: false };
 }
 
-/** The segments of one key name. An empty key is one empty segment rather than no segments. */
-export function splitKey(key: string): string[] {
-  return key.split(KEY_SEPARATOR);
+/**
+ * The segments of one key name, split on the shape's separator.
+ *
+ * An empty key is one empty segment rather than no segments, and a key that begins with the separator
+ * starts with an empty segment: under `/`, `/a/b` is `["", "a", "b"]`, which `keyName` joins back.
+ */
+export function splitKey(key: string, shape: KeyScanShape = UNDECLARED): string[] {
+  return key.split(shape.separator);
+}
+
+/**
+ * A node's FULL name, the one every surface addresses its key by: its path joined on the separator.
+ *
+ * ONE JOIN FOR EVERY READER, which is the leading-separator fix (spec 4.6). Activation, a row's label
+ * and title, and the filter all name a node through this, so none of them can rebuild `/a/b` as `a/b`,
+ * which the filter did while it built each name by appending to a parent whose own name was empty. It
+ * is `splitKey`'s inverse: the segments of any key join back to that key.
+ */
+export function keyName(path: readonly string[], shape: KeyScanShape = UNDECLARED): string {
+  return path.join(shape.separator);
 }
 
 /**
@@ -99,7 +134,7 @@ export function splitKey(key: string): string[] {
  * mutated one tree in place would have two sources of truth for its counts the moment a walk
  * restarted from cursor `"0"`.
  */
-export function buildKeyTree(keys: Iterable<string>): KeyTreeNode {
+export function buildKeyTree(keys: Iterable<string>, shape: KeyScanShape = UNDECLARED): KeyTreeNode {
   const root = createNode("", []);
   const seen = new Set<string>();
 
@@ -111,7 +146,7 @@ export function buildKeyTree(keys: Iterable<string>): KeyTreeNode {
 
     let node = root;
     node.count += 1;
-    for (const segment of splitKey(key)) {
+    for (const segment of splitKey(key, shape)) {
       let child = node.children.get(segment);
       if (child === undefined) {
         child = createNode(segment, [...node.path, segment]);
@@ -255,30 +290,88 @@ function numberSiblings(rows: KeyTreeRow[]): KeyTreeRow[] {
 /**
  * Whether a key name sits UNDER a prefix, compared segment by segment.
  *
- * THIS IS A CORRECTNESS GUARD AND NOT A CONVENIENCE. A scoped walk asks the server for
- * `MATCH <prefix>:*`, and `MATCH` is a glob with no escape: a segment that itself contains `*`, `?`
- * or `[` (Redis keys are arbitrary bytes, so they can) makes the pattern match MORE than the prefix
- * asked about. Nothing can be done about what the server sends back, so the caller filters — and a
- * filter that compared the joined strings would be wrong in the other direction, because
- * `app:env` and `app:envelope` share a prefix of characters and not of segments.
+ * THIS IS A CORRECTNESS GUARD AND NOT A CONVENIENCE. A scoped walk under a `glob` declaration asks
+ * the server for `MATCH <prefix><separator>*`, and `MATCH` is a glob with no escape: a segment that
+ * itself contains `*`, `?` or `[` (Redis keys are arbitrary bytes, so they can) makes the pattern
+ * match MORE than the prefix asked about. Nothing can be done about what the server sends back, so the
+ * caller filters, and a filter that compared the joined strings would be wrong in the other direction,
+ * because `app:env` and `app:envelope` share a prefix of characters and not of segments. A `prefix`
+ * declaration's server answers the byte range exactly, and the same filter holds it to the segments.
  */
-export function isUnderPrefix(key: string, prefix: readonly string[]): boolean {
-  const segments = splitKey(key);
+export function isUnderPrefix(key: string, prefix: readonly string[], shape: KeyScanShape = UNDECLARED): boolean {
+  const segments = splitKey(key, shape);
   return prefix.length < segments.length && prefix.every((segment, index) => segments[index] === segment);
 }
 
 /**
- * The `MATCH` pattern for everything under a prefix.
+ * The pattern that walks everything under a prefix, in the shape the engine declares.
  *
- * ONE PLACE, because the two halves are not interchangeable (#427) and two callers build this string:
- * the PREFIX is data that may contain glob metacharacters and is escaped, while the trailing `:*` is
- * the glob the pattern exists for and never is. It also accepts the form the tree ADVERTISES — a
- * folder is drawn `user:*` — so a caller holding a row's own name need not know that the trailing `*`
- * is not part of the prefix that name stands for.
+ * ONE PLACE, because two callers build this string (#427): the Sidebar's Browse Keys handoff and the
+ * Load more walk. It accepts the form the tree ADVERTISES as well as a bare prefix (a folder is drawn
+ * `user:*` or `routes/*`), so a caller holding a row's own name need not know that the trailing
+ * separator and `*` are not part of the prefix that name stands for.
+ *
+ * UNDER `glob` the two halves are not interchangeable: the PREFIX is data that may contain glob
+ * metacharacters and is escaped, while the trailing `<separator>*` is the glob the pattern exists for
+ * and never is. `user` and `user:*` both give `user:*`.
+ *
+ * UNDER `prefix` the pattern is the bare prefix plus the separator, unescaped and with no `*`, because
+ * a prefix walk reads a byte range and every byte in it is data (spec 4.6): `/apisix/routes/*` gives
+ * `/apisix/routes/`, the path `["", "apisix"]` joined gives `/apisix/`, and the root `[""]` gives `/`.
+ * The separator is kept, because a prefix that lost it would also walk `/apisix/routes-v2/`.
  */
-export function prefixPattern(prefix: string): string {
-  const bare = prefix.endsWith(`${KEY_SEPARATOR}*`) ? prefix.slice(0, -2) : prefix;
-  return `${escapeGlob(bare)}${KEY_SEPARATOR}*`;
+export function prefixPattern(prefix: string, shape: KeyScanShape = UNDECLARED): string {
+  const marker = `${shape.separator}*`;
+  const bare = prefix.endsWith(marker) ? prefix.slice(0, -marker.length) : prefix;
+  return shape.pattern === "prefix" ? `${bare}${shape.separator}` : `${escapeGlob(bare)}${marker}`;
+}
+
+/**
+ * What the pattern box sends for the text a reader typed in it (spec 4.6).
+ *
+ * UNDER `glob` IT IS THE TEXT ITSELF, the reader's own `MATCH` pattern, as it always was.
+ *
+ * UNDER `prefix` IT IS THE TEXT AS THE PREFIX, dropping only the `*` of a trailing separator and `*`,
+ * the form a folder is drawn in, so `/apisix/routes/*` sends `/apisix/routes/`. Nothing else changes:
+ * a `*` anywhere else is data, since a key may contain one, and nothing is trimmed, because a prefix
+ * is bytes and ` a/` is not `a/`. The filter box keeps its own rule (`searchTerm`), which drops both
+ * characters, because it is a substring match rather than a range.
+ */
+export function sentPattern(text: string, shape: KeyScanShape = UNDECLARED): string {
+  if (shape.pattern !== "prefix") return text;
+  return text.endsWith(`${shape.separator}*`) ? text.slice(0, -1) : text;
+}
+
+/**
+ * The three names a row gives its node, in the declared separator (spec 4.6): the label drawn on it,
+ * its title, and the name its twisty's `aria-label` announces.
+ *
+ * A ROW THAT IS A KEY SAYS THE KEY'S FULL NAME, because that is what activating it addresses; a row
+ * that is only a prefix says its own segment with the folder mark, `<segment><separator>*`, and its
+ * title says the whole prefix. A row that is both says both in its title, because a reader needs to
+ * know both and the label can only say one.
+ *
+ * THE ROOT ROW NAMES ITSELF TOO. A key that begins with the separator has an empty first segment, so
+ * the node `[""]` holds every such key and its full name is the empty string: its label and title keep
+ * the folder mark (`/*`, which is also how the object tree labels the prefix `/`, and which a key
+ * named `/` is not), and its twisty, which names a folder by its full name, names the separator
+ * instead. No row's three names are empty but the empty key's own, which only Redis can hold and whose
+ * label this rule does not touch.
+ */
+export function keyRowNames(
+  node: KeyTreeNode,
+  folder: boolean,
+  shape: KeyScanShape = UNDECLARED,
+): { readonly label: string; readonly title: string; readonly toggle: string } {
+  const name = keyName(node.path, shape);
+  const marker = `${shape.separator}*`;
+  const label = folder && !node.isKey ? `${node.segment}${marker}` : name;
+  const title = folder
+    ? node.isKey
+      ? `${name} is a key of this database and a prefix: ${name}${marker}`
+      : `${name}${marker}`
+    : name;
+  return { label, title, toggle: name === "" ? shape.separator : name };
 }
 
 /**
@@ -288,36 +381,39 @@ export function prefixPattern(prefix: string): string {
  * questions a reader asks in the same box. A single word (`cache`) names a segment and means "the
  * branch called that", which is why a matching segment keeps its WHOLE subtree: somebody who typed
  * `cache` is asking for everything under `cache`, not for the rows literally named `cache`. A term
- * with a `:` in it (`queue:jobs:failed:2026:09:23`) names a PATH, and no segment can ever contain it
- * — so a segment-only test answers "no match" for the one input that most obviously identifies a key,
- * which is the defect this rule exists to close.
+ * with the separator in it (`queue:jobs:failed:2026:09:23`, or `/apisix/routes/1` under `/`) names a
+ * PATH, and no segment can ever contain it, so a segment-only test answers "no match" for the one
+ * input that most obviously identifies a key, which is the defect this rule exists to close.
  *
- * The counts are the FULL sample's, not the narrowed tree's. A folder saying `3` while two of its
- * keys are filtered out is the honest answer — three keys are under it — and a count that fell to the
+ * The counts are the FULL sample's, not the narrowed tree's. A folder saying `3` while two of its keys
+ * are filtered out is the honest answer, since three keys are under it, and a count that fell to the
  * size of the current view would make the same folder read differently on every keystroke.
  */
-export function filterKeyTree(root: KeyTreeNode, term: string): KeyTreeNode {
-  const needle = searchTerm(term);
+export function filterKeyTree(root: KeyTreeNode, term: string, shape: KeyScanShape = UNDECLARED): KeyTreeNode {
+  const needle = searchTerm(term, shape);
   if (needle === "") return root;
   // Nothing matched: the root survives with no children, so a caller has one shape to draw an empty
   // state over rather than a null to remember to check.
-  return pruneKeyTree(root, needle, "") ?? { ...root, children: [] };
+  return pruneKeyTree(root, needle, shape) ?? { ...root, children: [] };
 }
 
 /**
  * What the box's text asks for, once it is trimmed and taken out of the form the tree ADVERTISES.
  *
- * A FOLDER IS DRAWN AS `app:*`, so a reader who copies one has typed a name no key has: no key
- * contains a `*` unless the key itself does, and `app:*` would answer "no match" for exactly the
- * branch the row above the box is showing. The trailing `:*` is therefore dropped, and only that
- * form — a `*` anywhere else stays literal, because a real key segment may contain one (#427).
+ * A FOLDER IS DRAWN AS `<segment><separator>*`, `app:*` or `apisix/*`, so a reader who copies one has
+ * typed a name no key has: no key contains a `*` unless the key itself does, and `app:*` would answer
+ * "no match" for exactly the branch the row above the box is showing. The trailing separator and `*`
+ * are therefore dropped, and only that form: a `*` anywhere else stays literal, because a real key
+ * segment may contain one (#427). Both characters go here, where the pattern box keeps the separator
+ * (`sentPattern`), because this is a substring match and not a range.
  *
- * An empty result is NO FILTER rather than a term nothing matches, which is what `:*` alone and an
- * all-whitespace box both mean.
+ * An empty result is NO FILTER rather than a term nothing matches, which is what the folder mark alone
+ * and an all-whitespace box both mean.
  */
-function searchTerm(term: string): string {
+function searchTerm(term: string, shape: KeyScanShape): string {
   const trimmed = term.trim().toLowerCase();
-  return trimmed.endsWith(`${KEY_SEPARATOR}*`) ? trimmed.slice(0, -2) : trimmed;
+  const marker = `${shape.separator}*`;
+  return trimmed.endsWith(marker) ? trimmed.slice(0, -marker.length) : trimmed;
 }
 
 /**
@@ -382,16 +478,18 @@ export function keyTreeWindow(
 /**
  * The node and the ancestors that lead to a match, or null.
  *
- * `prefix` is the parent's own full name, passed down rather than rebuilt by joining the path at
- * every node: the walk already knows it, and a join per node per keystroke is work a filter does not
- * need to do over ten thousand keys.
+ * Each node is matched by its FULL name, the same `keyName` join every reader uses (spec 4.6). The
+ * name used to be built by appending the segment to the parent's own name, and a parent whose name was
+ * empty, the separator's root row, dropped the leading separator: `/a/b` was matched as `a/b`, so a
+ * typed full key found nothing, and a Redis key `:foo` could not be found by its name either. One
+ * join per node per keystroke is the cost, over a tree the panel holds to `HELD_KEY_LIMIT` keys.
  */
-function pruneKeyTree(node: KeyTreeNode, needle: string, prefix: string): KeyTreeNode | null {
-  const name = prefix === "" ? node.segment : `${prefix}${KEY_SEPARATOR}${node.segment}`;
+function pruneKeyTree(node: KeyTreeNode, needle: string, shape: KeyScanShape): KeyTreeNode | null {
+  const name = keyName(node.path, shape);
   if (node.segment.toLowerCase().includes(needle) || name.toLowerCase().includes(needle)) return node;
 
   const children = node.children
-    .map((child) => pruneKeyTree(child, needle, name))
+    .map((child) => pruneKeyTree(child, needle, shape))
     .filter((child): child is KeyTreeNode => child !== null);
 
   return children.length === 0 ? null : { ...node, children };
