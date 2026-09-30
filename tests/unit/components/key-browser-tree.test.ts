@@ -8,6 +8,7 @@ import {
   keyRowNames,
   keyTreeWindow,
   KEY_ROW_HEIGHT,
+  pathPattern,
   prefixPattern,
   sentPattern,
   splitKey,
@@ -694,6 +695,35 @@ describe("the tree in a declared shape", () => {
     expect(prefixPattern("a[b:*")).toBe("a\\[b:*");
   });
 
+  test("walks a folder by its path, so a last segment of a star stays data", () => {
+    // The name `/a/*` is two things: the advertised form of the folder `["", "a"]`, which is how
+    // `prefixPattern` reads it, and the bare name of the folder `["", "a", "*"]`. A caller that holds
+    // the path has nothing to read out of a name, and asks for that folder's own range.
+    expect(prefixPattern(keyName(["", "a", "*"], ETCD), ETCD)).toBe("/a/");
+    expect(pathPattern(["", "a", "*"], ETCD)).toBe("/a/*/");
+    expect(pathPattern(["", "a", "*", "*"], ETCD)).toBe("/a/*/*/");
+    expect(pathPattern(["", "*"], ETCD)).toBe("/*/");
+    // Every other path gives the bare prefix and the separator (spec 4.6): a folder, the root row, a
+    // path whose last segment is empty, and one with no leading separator.
+    expect(pathPattern(["", "apisix"], ETCD)).toBe("/apisix/");
+    expect(pathPattern([""], ETCD)).toBe("/");
+    expect(pathPattern(["", "a", ""], ETCD)).toBe("/a//");
+    expect(pathPattern(["k3s"], ETCD)).toBe("k3s/");
+    // Unescaped: a glob metacharacter is a byte of the prefix.
+    expect(pathPattern(["", "a[b]?"], ETCD)).toBe("/a[b]?/");
+  });
+
+  test("keeps Redis's Load more pattern for a path when no shape is handed", () => {
+    // Under `glob` a path's pattern is what Load more always sent, the joined name through
+    // `prefixPattern`: the prefix half escaped, and the folder mark not.
+    expect(pathPattern(["app", "cache"])).toBe("app:cache:*");
+    expect(pathPattern(["weird[1"])).toBe("weird\\[1:*");
+    expect(pathPattern([""])).toBe(":*");
+    // Unchanged with the rest: under `glob` a last segment of `*` still reads as the folder mark, so
+    // this folder asks for the pattern of the folder above it, as it did before the shape existed.
+    expect(pathPattern(["a", "*"])).toBe("a:*");
+  });
+
   test("sends the typed prefix, dropping only the star of a trailing separator and star", () => {
     expect(sentPattern("/apisix/routes/*", ETCD)).toBe("/apisix/routes/");
     expect(sentPattern("/app/", ETCD)).toBe("/app/");
@@ -770,6 +800,8 @@ describe("the tree in a declared shape", () => {
     expect(prefixPattern("a::b::*", wide)).toBe("a::b::");
     expect(prefixPattern("a::b::*", wideGlob)).toBe("a::b::*");
     expect(sentPattern("a::b::*", wide)).toBe("a::b::");
+    expect(pathPattern(["a", "b"], wide)).toBe("a::b::");
+    expect(pathPattern(["a", "b"], wideGlob)).toBe("a::b::*");
 
     const root = buildKeyTree(["a::b", "a::c"], wide);
     // The folder mark alone is no filter, and a folder's advertised name finds that folder's branch,

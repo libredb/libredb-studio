@@ -1614,6 +1614,38 @@ describe("a panel in a declared shape", () => {
     );
   });
 
+  test("asks the Load more under a folder named by a star for that folder's own range", async () => {
+    // The walk's first page does not end it, so an open folder offers Load more; the scoped page does.
+    const seen: Array<Record<string, unknown>> = [];
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        seen.push(body);
+        return body.pattern === undefined
+          ? { json: { keys: ["/a/*/x", "/a/b/1"], cursor: "k:L2EvYi8x:3:9", total: 9, types: {} } }
+          : { json: { keys: ["/a/*/y"], cursor: "0", total: 2, types: {} } };
+      },
+    });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+    fireEvent.click(screen.getByText("/*"));
+    fireEvent.click(screen.getByText("a/*"));
+    fireEvent.click(screen.getByText("*/*"));
+    expect(rows()).toEqual(["/*@0", "a/*@1", "*/*@2", "/a/*/x@3", "b/*@2"]);
+
+    // The first Load more row in the tree is the one under `*/*`, the deepest open folder.
+    fireEvent.click(screen.getAllByTestId("key-browser-load-more")[0]);
+
+    await waitFor(() => {
+      expect(rows()).toContain("/a/*/y@3");
+    });
+    // Under a prefix declaration a `*` in a key is a byte: the press reads `/a/*/`, the folder's own
+    // range, and not `/a/`, the range of the folder above it.
+    expect(seen.at(-1)).toMatchObject({ pattern: "/a/*/", cursor: "0" });
+  });
+
   test("names the prefix in the held-limit sentence", async () => {
     mockGlobalFetch({
       "/api/db/keys/scan": {

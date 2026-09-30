@@ -26,7 +26,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { keyScanShape, type KeyScanCapability, type KeyScanOptions, type KeyScanPage } from "@/lib/db/types";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
-import { isUnderPrefix, keyName, pathKey, prefixPattern } from "./tree";
+import { isUnderPrefix, pathKey, pathPattern } from "./tree";
 
 /**
  * How many keys one `Scan all` may walk before it stops and says it did.
@@ -496,18 +496,21 @@ export function useKeyScan(options: {
 
       try {
         /*
-         * THE PATTERN COMES FROM `prefixPattern`, in the walk's declared shape, so this walk and the row
-         * menu's handover cannot drift. Under `glob` the prefix half is escaped and the glob is not: a
-         * real key segment can contain a glob metacharacter (`a[b:1` groups to a prefix holding `[`),
-         * and an unescaped one opens a character class matching a different set of keys entirely. Under
-         * `prefix` it is the bare prefix and its separator, `/apisix/` for the folder `["", "apisix"]`
-         * and `/` for the root row (spec 4.6). The asymmetry runs the other way in the filter below:
+         * THE PATTERN COMES FROM `pathPattern`, in the walk's declared shape and from the folder's PATH.
+         * Under `glob` it is `prefixPattern` over the joined name, the helper the row menu's handover
+         * builds its own pattern with, so the two cannot drift: the prefix half is escaped and the glob
+         * is not, because a real key segment can contain a glob metacharacter (`a[b:1` groups to a
+         * prefix holding `[`), and an unescaped one opens a character class matching a different set of
+         * keys entirely. Under `prefix` it is the path's name and its separator, `/apisix/` for the
+         * folder `["", "apisix"]` and `/` for the root row (spec 4.6), with nothing read out of the
+         * name, so a folder whose last segment is `*` is walked over its own range and not over the
+         * range of the folder above it. The asymmetry runs the other way in the filter below:
          * `isUnderPrefix` compares REAL key names, so it stays unescaped, because a key that genuinely
          * contains `*` would be corrupted by it.
          */
         const page = await readPageAt(
           nodeCursor.current.get(key) ?? "0",
-          prefixPattern(keyName(path, shape), shape),
+          pathPattern(path, shape),
           /*
            * THE LARGEST BATCH THE ENGINE DECLARES, where the global walk takes the default.
            *

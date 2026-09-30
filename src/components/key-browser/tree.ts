@@ -306,24 +306,49 @@ export function isUnderPrefix(key: string, prefix: readonly string[], shape: Key
 /**
  * The pattern that walks everything under a prefix, in the shape the engine declares.
  *
- * ONE PLACE, because two callers build this string (#427): the Sidebar's Browse Keys handoff and the
- * Load more walk. It accepts the form the tree ADVERTISES as well as a bare prefix (a folder is drawn
- * `user:*` or `routes/*`), so a caller holding a row's own name need not know that the trailing
- * separator and `*` are not part of the prefix that name stands for.
+ * ONE PLACE, because two callers build this string (#427): the Sidebar's Browse Keys handoff, which
+ * holds a row's NAME, and the Load more walk, which holds a path and asks `pathPattern` below. It
+ * accepts the form the tree ADVERTISES as well as a bare prefix (a folder is drawn `user:*` or
+ * `routes/*`), so a caller holding a row's own name need not know that the trailing separator and `*`
+ * are not part of the prefix that name stands for.
  *
  * UNDER `glob` the two halves are not interchangeable: the PREFIX is data that may contain glob
  * metacharacters and is escaped, while the trailing `<separator>*` is the glob the pattern exists for
  * and never is. `user` and `user:*` both give `user:*`.
  *
  * UNDER `prefix` the pattern is the bare prefix plus the separator, unescaped and with no `*`, because
- * a prefix walk reads a byte range and every byte in it is data (spec 4.6): `/apisix/routes/*` gives
- * `/apisix/routes/`, the path `["", "apisix"]` joined gives `/apisix/`, and the root `[""]` gives `/`.
- * The separator is kept, because a prefix that lost it would also walk `/apisix/routes-v2/`.
+ * a prefix walk reads a byte range and every byte in it is data (spec 4.6): `/apisix/routes/*` and
+ * the bare `/apisix/routes` both give `/apisix/routes/`. The separator is kept, because a prefix that
+ * lost it would also walk `/apisix/routes-v2/`.
+ *
+ * IT READS A NAME, so it cannot tell a folder's advertised form from a bare name that ends in the
+ * separator and `*` itself. A caller that holds the PATH has nothing to read, and asks `pathPattern`.
  */
 export function prefixPattern(prefix: string, shape: KeyScanShape = UNDECLARED): string {
   const marker = `${shape.separator}*`;
   const bare = prefix.endsWith(marker) ? prefix.slice(0, -marker.length) : prefix;
   return shape.pattern === "prefix" ? `${bare}${shape.separator}` : `${escapeGlob(bare)}${marker}`;
+}
+
+/**
+ * The pattern that walks everything under a PATH, which is what a folder's Load more holds.
+ *
+ * UNDER `prefix` IT IS THE PATH'S NAME AND THE SEPARATOR, with nothing read out of the name, because
+ * every byte of a segment is data (spec 4.6): `["", "apisix"]` gives `/apisix/`, and the root row
+ * `[""]` gives `/`. That is `prefixPattern`'s own rule for a bare prefix, and the reason it is not
+ * asked here is the one path that rule misreads: a last segment of `*`. The folder `["", "a", "*"]`
+ * is named `/a/*`, exactly the advertised form of the folder above it, so `prefixPattern` strips the
+ * mark and answers `/a/`, and its Load more would page through the wrong folder's range. From the
+ * path the pattern is `/a/*` and then the separator.
+ *
+ * UNDER `glob` IT IS `prefixPattern` OVER THE JOINED NAME, which is what Load more sent before a walk
+ * declared its shape, so Redis's pattern is unchanged byte for byte: the prefix half escaped, the
+ * folder mark not. That arm still reads a last segment of `*` as the folder mark, `a:*` for
+ * `["a", "*"]`, as it always has.
+ */
+export function pathPattern(path: readonly string[], shape: KeyScanShape = UNDECLARED): string {
+  const name = keyName(path, shape);
+  return shape.pattern === "prefix" ? `${name}${shape.separator}` : prefixPattern(name, shape);
 }
 
 /**

@@ -209,11 +209,13 @@ export const Sidebar = React.memo(function Sidebar({
       const capabilities = metadata?.capabilities;
       const database = capabilities !== undefined && containerDepth(capabilities) > 0 ? object.path[0] : undefined;
       setKeyPatternRequest({
-        // IN THE WALK'S OWN SHAPE, from the same helper the scoped walk builds its pattern with, so the
-        // two cannot drift (#427). Under `glob` it is ESCAPED, and only in its prefix half: a key prefix
-        // is data that may itself contain a glob metacharacter, while the `*` the row is advertised with
-        // is the one the pattern exists for. Under `prefix` it is the bare prefix and its separator,
-        // unescaped, so `/apisix/routes/*` hands over `/apisix/routes/` (spec 4.6).
+        // IN THE WALK'S OWN SHAPE, from `prefixPattern`, which reads the row's NAME. The scoped walk
+        // holds a path and asks `pathPattern`, which is this helper under `glob`, so the two cannot
+        // drift there (#427), and the same rule with no name to read under `prefix`. Under `glob` it is
+        // ESCAPED, and only in its prefix half: a key prefix is data that may itself contain a glob
+        // metacharacter, while the `*` the row is advertised with is the one the pattern exists for.
+        // Under `prefix` it is the bare prefix and its separator, unescaped, so `/apisix/routes/*` hands
+        // over `/apisix/routes/` (spec 4.6).
         pattern: prefixPattern(object.name, keyShape),
         ...(database === undefined ? {} : { database }),
       });

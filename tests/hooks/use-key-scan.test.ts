@@ -1256,7 +1256,7 @@ describe("a walk in a declared shape", () => {
       await result.current.loadMoreUnder(["", "app"]);
     });
 
-    // The bare prefix and its separator, from the same helper the Sidebar hands over with, and the
+    // The bare prefix and its separator, the rule the Sidebar hands a row's name over by, and the
     // largest batch the engine declares, as a Redis Load more asks for.
     expect(bodyAt(fetchMock, 0)).toMatchObject({ cursor: "0", pattern: "/app/", count: 1000 });
     expect(bodyAt(fetchMock, 1)).toMatchObject({ cursor: opaque, pattern: "/app/" });
@@ -1274,6 +1274,20 @@ describe("a walk in a declared shape", () => {
     });
 
     expect(bodyAt(fetchMock, 0)).toMatchObject({ pattern: "/" });
+  });
+
+  test("asks the Load more of a folder whose last segment is a star for that folder's own range", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": page(["/a/*/x"], "0", 1) });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["", "a", "*"]);
+    });
+
+    // Under a prefix declaration `*` is a byte of the segment, so the folder's range is `/a/*/`. Its
+    // joined name `/a/*`, read as a folder's advertised form, would walk `/a/`, the folder above it.
+    expect(bodyAt(fetchMock, 0)).toMatchObject({ cursor: "0", pattern: "/a/*/" });
+    expect(result.current.keys).toEqual(["/a/*/x"]);
   });
 
   test("names the prefix when Scan all stops at its cap", async () => {
