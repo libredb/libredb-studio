@@ -803,6 +803,29 @@ sudo systemctl restart libredb-studio        # apply configuration changes
 - Removal (`apt remove` / `rpm -e`) stops and disables the service; upgrades restart it if it
   is running (standard systemd maintainer scripts, `packaging/linux/scripts/`).
 
+## Arch Linux (AUR)
+
+`libredb-studio-bin` repackages the prebuilt standalone tarball for Arch Linux and its derivatives
+(x86_64 and aarch64). It installs the same launcher, systemd unit and `/etc/libredb-studio/env`
+template as the `.deb` and `.rpm`, so the operating notes in the section above (configuration,
+state directory, `journalctl`) apply unchanged:
+
+```bash
+paru -S libredb-studio-bin        # or yay, or a manual makepkg from the AUR clone
+sudo systemctl enable --now libredb-studio
+journalctl -u libredb-studio      # first run prints the generated admin password here
+```
+
+- **Node.js comes from the distribution**, not from the package: it depends on
+  `nodejs-lts-krypton` (24.x, which provides `/usr/bin/node`) and links the launcher's
+  `node/bin/node` to it. Arch's plain `nodejs` is on 26.x; the 24.x line is the same pin the
+  Homebrew formula uses (`node@24`). The two cannot be installed together.
+- **Status.** The package is staged in [`packaging/aur/`](../packaging/aur) and the channel is
+  `pending` in `distribution/channels.yaml` until the first push to the AUR ([#971](https://github.com/libredb/libredb-studio/issues/971)).
+  The push and every later one are manual (the AUR takes a git push over SSH), so the release
+  checklist in [`packaging/aur/README.md`](../packaging/aur/README.md) is part of cutting a release.
+- **What was verified**, and what was not, is listed in that README.
+
 ## Snap
 
 Published on the [Snap Store](https://snapcraft.io/libredb-studio) for amd64 and arm64 (live

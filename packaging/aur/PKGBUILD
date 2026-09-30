@@ -1,0 +1,74 @@
+# Maintainer: cevheri <cevheribozoglan@gmail.com>
+# Contributor: NormanSMA <normanma8@gmail.com>
+#
+# Repackages the prebuilt standalone server that every LibreDB Studio release
+# publishes, so the AUR rules call for the -bin suffix. Nothing is compiled.
+#
+# The launcher, the systemd unit and the env file come from the tagged source
+# tree (packaging/linux/, the same three files the .deb and .rpm install). They
+# are fetched from that tag and pinned by checksum instead of being copied into
+# this repository, so they cannot drift from packaging/linux/. If a release
+# changes one of them the checksum fails loudly and the bump refreshes it.
+#
+# The standalone tarball carries no Node runtime (the .deb and .rpm add one at
+# build time). The launcher execs $LIBREDB_STUDIO_HOME/node/bin/node, so
+# package() links that path to the distribution's node. The package depends on
+# nodejs-lts-krypton (24.x, the engines.node floor), which also provides
+# /usr/bin/node. It is the same pin as the Homebrew formula's node@24.
+
+pkgname=libredb-studio-bin
+pkgver=0.17.0
+pkgrel=1
+pkgdesc='Web-based SQL IDE for eighteen database engines with AI query assistance (prebuilt standalone server)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/libredb/libredb-studio'
+license=('MIT')
+depends=('nodejs-lts-krypton')
+provides=("libredb-studio=$pkgver")
+conflicts=('libredb-studio')
+# Prebuilt payload: stripping would only warn about the foreign-platform addons.
+options=('!strip' '!debug')
+backup=('etc/libredb-studio/env')
+install="$pkgname.install"
+
+_raw="$url/raw/$pkgver/packaging/linux"
+_release="$url/releases/download/$pkgver"
+
+source=("libredb-studio-launcher-$pkgver::$_raw/libredb-studio"
+        "libredb-studio-$pkgver.service::$_raw/libredb-studio.service"
+        "libredb-studio-$pkgver.env::$_raw/env")
+source_x86_64=("libredb-studio-standalone-$pkgver-linux-x64.tar.gz::$_release/libredb-studio-standalone-$pkgver-linux-x64.tar.gz")
+source_aarch64=("libredb-studio-standalone-$pkgver-linux-arm64.tar.gz::$_release/libredb-studio-standalone-$pkgver-linux-arm64.tar.gz")
+
+# Launcher, unit, env. Digests of packaging/linux/* at the tag.
+sha256sums=('b2cf488646ed67110d5bb4474a533d8fac1f4285f6432d737fc1a99fe04dcbeb'
+            '559b7c97cb0e90e9eedeacfb9c9367052579b811373cf6892dcdfa2336375782'
+            'eae8a1d432e523012458872cefa56f7f722520657dfa1f95bd97e580010b87ad')
+# Taken from the release's SHA256SUMS asset.
+sha256sums_x86_64=('ab64b3c1a8ed00f3e023c5bdafdcbcfaddd5d4b9c992a934c09d528dbbf5c6f0')
+sha256sums_aarch64=('3fd5d51cfd0a6b3c114b2cfd47b3f8f2b9f0d11062ede218002d593c202ff3cb')
+
+package() {
+  local _payload="$pkgdir/usr/lib/libredb-studio"
+
+  install -dm755 "$_payload"
+  cp -a --no-preserve=ownership "$srcdir/libredb-studio-$pkgver/." "$_payload/"
+
+  # research/ holds the paper sources and Python scripts of the agent-failure
+  # study. Next.js traced the folder into the payload, but no compiled code
+  # reads it, and keeping it makes namcap demand a python dependency.
+  rm -rf "$_payload/research"
+
+  # The launcher expects a private runtime here; point it at the system one.
+  install -dm755 "$_payload/node/bin"
+  ln -s /usr/bin/node "$_payload/node/bin/node"
+
+  install -Dm755 "$srcdir/libredb-studio-launcher-$pkgver" "$pkgdir/usr/bin/libredb-studio"
+  install -Dm644 "$srcdir/libredb-studio-$pkgver.service" \
+    "$pkgdir/usr/lib/systemd/system/libredb-studio.service"
+  # 0600 like the .deb: systemd reads it as root, and it holds secrets that the
+  # DynamicUser service account and other local users must not see.
+  install -Dm600 "$srcdir/libredb-studio-$pkgver.env" "$pkgdir/etc/libredb-studio/env"
+  install -Dm644 "$srcdir/libredb-studio-$pkgver/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

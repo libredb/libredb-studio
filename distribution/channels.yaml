@@ -286,6 +286,34 @@ channels:
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
+  - id: aur
+    name: Arch User Repository (libredb-studio-bin)
+    short_name: AUR
+    status: pending
+    category: package-managers
+    platforms: [linux]
+    runtime: channel_supplied
+    tier: 2
+    kind: package-manager
+    update:
+      method: commit
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/971
+      catalog: https://aur.archlinux.org/packages/libredb-studio-bin
+      upstream_repo: https://aur.archlinux.org/libredb-studio-bin.git
+      docs: packaging/aur/README.md
+    pin:
+      strategy: remote_file
+      url: https://aur.archlinux.org/rpc/v5/info/libredb-studio-bin
+      extract: "\"Version\":\"(\\d+\\.\\d+\\.\\d+)-\\d+\""
+      note: Pending until the AUR account exists and the first push lands (#971). The package is
+        staged in packaging/aur and repackages the standalone linux tarball, so the AUR repository
+        is a copy that a maintainer pushes by hand after each release - hence tier 2, method
+        commit. The AUR RPC answers with one document whose Version is "<pkgver>-<pkgrel>"; the
+        pattern keeps the pkgver, so a pkgrel-only rebuild is not drift. Node is the distribution's
+        (depends=nodejs-lts-krypton, the 24.x line, for the same reason Homebrew pins node@24).
+
   - id: railway-template
     name: Railway one-click template
     status: live

@@ -34,7 +34,7 @@ channel count.
 
 ## Coverage snapshot
 
-**40 channels · 33 live · 6 pending · 1 deprecated**
+**41 channels · 33 live · 7 pending · 1 deprecated**
 
 Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · Kubernetes 4 · Cloud 13**
 
@@ -43,7 +43,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · K
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
 | Kubernetes & operators | 3 | 1 | 0 |
-| Package managers | 5 | 0 | 1 |
+| Package managers | 5 | 1 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 11 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
@@ -70,6 +70,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · K
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [AUR](https://aur.archlinux.org/packages/libredb-studio-bin) | Package managers | Linux | pending | Manual, every release | [packaging/aur/README.md](../packaging/aur/README.md) |
 | Flathub | Package managers | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Manual, on demand | [desktop/README.md](../desktop/README.md) |
