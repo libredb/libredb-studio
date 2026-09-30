@@ -42,13 +42,16 @@
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
 #   update.sla                every_release | minor_plus | major_only | on_demand
 #   update.ci_enabled         REQUIRED on, and allowed ONLY on, the switchable
-#                             channels (docker-hub-mirror, homebrew, snap,
-#                             winget, chocolatey): may release CI publish this
-#                             channel? The release workflow reads it, so turning
-#                             a channel off here is the whole switch - no secret
-#                             to delete, no workflow edit. The core release path
-#                             (github-release, docker-ghcr, npm, helm) and the
-#                             required release assets have no flag on purpose.
+#                             channels (SWITCHABLE_CHANNEL_IDS in
+#                             scripts/distribution-check.mjs): may release CI
+#                             publish this channel? The release workflow reads
+#                             it, so turning a channel off here is the whole
+#                             switch - no secret to delete, no workflow edit.
+#                             CI publishes only a live channel, so a pending
+#                             one stays off whatever its flag says. The core
+#                             release path (github-release, docker-ghcr, npm,
+#                             helm) and the required release assets have no
+#                             flag on purpose.
 #   links                     tracking_issue / first_pr / last_bump_pr (nullable
 #                             until the first post-listing bump) / catalog /
 #                             upstream_repo / docs / get (user-facing "where do I
@@ -284,8 +287,6 @@ channels:
         channel); the GUI .deb (libredb-studio-desktop_<version>_<arch>.deb, distinct from the
         headless server package) is what FlatPark pins as extra-data.
 
-  # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
-
   - id: aur
     name: Arch User Repository (libredb-studio-bin)
     short_name: AUR
@@ -293,11 +294,12 @@ channels:
     category: package-managers
     platforms: [linux]
     runtime: channel_supplied
-    tier: 2
+    tier: 1
     kind: package-manager
     update:
-      method: commit
+      method: ci_publish
       sla: every_release
+      ci_enabled: true
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/971
       catalog: https://aur.archlinux.org/packages/libredb-studio-bin
@@ -308,11 +310,14 @@ channels:
       url: https://aur.archlinux.org/rpc/v5/info/libredb-studio-bin
       extract: "\"Version\":\"(\\d+\\.\\d+\\.\\d+)-\\d+\""
       note: Pending until the AUR account exists and the first push lands (#971). The package is
-        staged in packaging/aur and repackages the standalone linux tarball, so the AUR repository
-        is a copy that a maintainer pushes by hand after each release - hence tier 2, method
-        commit. The AUR RPC answers with one document whose Version is "<pkgver>-<pkgrel>"; the
-        pattern keeps the pkgver, so a pkgrel-only rebuild is not drift. Node is the distribution's
-        (depends=nodejs-lts-krypton, the 24.x line, for the same reason Homebrew pins node@24).
+        staged in packaging/aur and repackages the standalone linux tarball. Release CI renders the
+        PKGBUILD for each tag and pushes it (the aur job in release-artifacts.yml), and it does so
+        only once this channel is live - ci_enabled alone does not start it. The AUR RPC answers
+        with one document whose Version is "<pkgver>-<pkgrel>"; the pattern keeps the pkgver, so a
+        pkgrel-only rebuild is not drift. Node is the distribution's (depends=nodejs-lts-krypton,
+        the 24.x line, for the same reason Homebrew pins node@24).
+
+  # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
   - id: railway-template
     name: Railway one-click template

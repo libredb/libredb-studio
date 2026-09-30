@@ -75,6 +75,9 @@ const EXTRA_DIRS = [
   "logs",
   "loop",
   "packaging",
+  // The agent-failure study: paper sources and Python scripts. Tracing it in made
+  // namcap demand a python dependency for the AUR package (#971).
+  "research",
   "scripts",
   "snap",
   "snap-payload",

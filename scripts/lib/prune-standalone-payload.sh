@@ -64,6 +64,9 @@ PRUNE_LIST=(
   e2e
   loop
   packaging
+  # The agent-failure study (paper sources, Python scripts). No compiled
+  # code reads it; shipped, it made namcap demand python for the AUR (#971).
+  research
   scripts
   snap
   src

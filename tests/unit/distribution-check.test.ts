@@ -654,6 +654,7 @@ describe("update.ci_enabled", () => {
     // required release assets are deliberately absent: a flag there would be a
     // way to publish a release with no npm package or no image.
     expect([...SWITCHABLE_CHANNEL_IDS].sort()).toEqual([
+      "aur",
       "chocolatey",
       "docker-hub-mirror",
       "homebrew",
@@ -691,6 +692,16 @@ describe("update.ci_enabled", () => {
     // Dashes become underscores: a GitHub expression cannot dot-access an
     // output name containing a dash.
     expect(ciEnabledOutputs(channels)).toEqual(["snap=true", "docker_hub_mirror=false"]);
+  });
+
+  // The AUR channel is staged before the account that pushes it exists (#971).
+  // Its publish job has to stay off until the channel is live, and flipping the
+  // status is what turns it on: no second switch to forget.
+  test("ciEnabledOutputs emits false for a channel that is not live", () => {
+    const pending = switchableRow("aur", true).replace("status: live", "status: pending");
+    const deprecated = switchableRow("snap", true).replace("status: live", "status: deprecated");
+    const channels = parseChannels(channelsYaml(pending + deprecated + switchableRow("winget", true)));
+    expect(ciEnabledOutputs(channels)).toEqual(["aur=false", "snap=false", "winget=true"]);
   });
 
   test("the real inventory declares the flag for every switchable channel", () => {
@@ -882,6 +893,14 @@ describe("CLI (subprocess against temp fixtures)", () => {
   test("--ci-enabled <id> prints the flag alone", () => {
     const root = makeFixture("0.9.61", channelsYaml(switchableRow("chocolatey", false)));
     const result = runCheck(root, ["--ci-enabled", "chocolatey"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe("false");
+  });
+
+  test("--ci-enabled answers false for a switchable channel that is not live", () => {
+    const pending = switchableRow("aur", true).replace("status: live", "status: pending");
+    const root = makeFixture("0.9.61", channelsYaml(pending));
+    const result = runCheck(root, ["--ci-enabled", "aur"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString().trim()).toBe("false");
   });

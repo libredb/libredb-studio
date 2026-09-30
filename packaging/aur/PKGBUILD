@@ -1,4 +1,4 @@
-# Maintainer: cevheri <cevheribozoglan@gmail.com>
+# Maintainer: LibreDB <channels@libredb.org>
 # Contributor: NormanSMA <normanma8@gmail.com>
 #
 # Repackages the prebuilt standalone server that every LibreDB Studio release
@@ -55,8 +55,10 @@ package() {
   cp -a --no-preserve=ownership "$srcdir/libredb-studio-$pkgver/." "$_payload/"
 
   # research/ holds the paper sources and Python scripts of the agent-failure
-  # study. Next.js traced the folder into the payload, but no compiled code
-  # reads it, and keeping it makes namcap demand a python dependency.
+  # study. Next.js traced the folder into the 0.17.0 payload, but no compiled
+  # code reads it, and keeping it makes namcap demand a python dependency.
+  # Later payloads prune it (scripts/lib/prune-standalone-payload.sh), so from
+  # the next release on this line removes nothing.
   rm -rf "$_payload/research"
 
   # The launcher expects a private runtime here; point it at the system one.
