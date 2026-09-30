@@ -1093,6 +1093,8 @@ const HARD_TEXTS: readonly string[] = [
   "'\\''",
   "\\n",
   "a\\",
+  "=ls",
+  "a=b",
   "/app/config/",
   "/registry/pods/default/nginx",
   ...NOT_PRINTED.map(([, char]) => `/app/${char}x`),
@@ -1127,6 +1129,11 @@ describe("quoteWord, the command line's quoting (spec 5.5, 6.4)", () => {
     ["[a", "'[a'"],
     ["a]", "'a]'"],
     ["!", "'!'"],
+    // zsh expands a word that begins with = to a command's path: a bare =ls read /usr/bin/ls in zsh 5.9, and ==
+    // failed with "= not found" (measured), where bash and dash passed both as written.
+    ["=ls", "'=ls'"],
+    ["==", "'=='"],
+    ["=", "'='"],
   ])("%j is single-quoted as %j", (text, quoted) => {
     expect(quoteWord(text)).toBe(quoted);
   });
@@ -1163,6 +1170,8 @@ describe("quoteTxnWord and quoteGoString, the txn body's quoting (spec 4.5, 6.4)
     expect(quoteTxnWord(utf8("a b"))).toBe('"a b"');
     expect(quoteTxnWord(utf8("it's"))).toBe('"it\'s"');
     expect(quoteTxnWord(utf8("#x"))).toBe('"#x"');
+    expect(quoteTxnWord(utf8("=ls"))).toBe('"=ls"');
+    expect(quoteTxnWord(utf8("a=b"))).toBe("a=b");
     expect(quoteTxnWord(new Uint8Array([0xff]))).toBe('"\\xff"');
   });
 
@@ -1174,8 +1183,40 @@ describe("quoteTxnWord and quoteGoString, the txn body's quoting (spec 4.5, 6.4)
     expect(quoteGoString(utf8("é日本𝄞$'"))).toBe('"é日本𝄞$\'"');
   });
 
-  test("bytes that are not UTF-8 are written byte by byte", () => {
-    expect(quoteGoString(new Uint8Array([0x61, 0xff, 0xc3, 0xa9, 0x0a]))).toBe('"a\\xff\\xc3\\xa9\\n"');
+  /**
+   * strconv.Quote of bytes that are not all UTF-8, as Go 1.27 printed it: each byte that begins no character
+   * (a lead that cannot begin one, an overlong or surrogate form, a code point past U+10FFFF, a sequence cut
+   * short) as \xNN, one byte at a time, and every character around them as Go writes a character.
+   */
+  test.each([
+    ["61ffc3a90a", '"a\\xffé\\n"'],
+    ["e697a5ff", '"日\\xff"'],
+    ["61e280aeff", '"a\\u202e\\xff"'],
+    ["f09d849eff", '"𝄞\\xff"'],
+    ["ffc3a9", '"\\xffé"'],
+    ["efbbbfff", '"\\ufeff\\xff"'],
+    ["c0af", '"\\xc0\\xaf"'],
+    ["e08080", '"\\xe0\\x80\\x80"'],
+    ["eda080", '"\\xed\\xa0\\x80"'],
+    ["f4908080", '"\\xf4\\x90\\x80\\x80"'],
+    ["f09f", '"\\xf0\\x9f"'],
+    ["e241", '"\\xe2A"'],
+    ["2fffe2fe2f", '"/\\xff\\xe2\\xfe/"'],
+  ])("the bytes %s are quoted as strconv.Quote quotes them, %s", (bytes, goQuoted) => {
+    expect(quoteGoString(fromHex(bytes))).toBe(goQuoted);
+    expect(quoteTxnWord(fromHex(bytes))).toBe(goQuoted);
+  });
+
+  // Characters at the edges of the UTF-8 lengths (U+007F, U+07FF, U+0800, U+FFF9 and U+10000), each followed by
+  // another, as Go 1.27's strconv.Quote printed them: a character's span is read from its first byte.
+  test.each([
+    ["7f41", '"\\x7fA"'],
+    ["dfbf41", '"\u07ffA"'],
+    ["e0a08041", '"\u0800A"'],
+    ["efbfb941", '"\\ufff9A"'],
+    ["f090808041", '"\u{10000}A"'],
+  ])("the bytes %s are quoted as %s, one character at a time", (bytes, goQuoted) => {
+    expect(quoteGoString(fromHex(bytes))).toBe(goQuoted);
   });
 
   test.each(NOT_PRINTED)(

@@ -1148,11 +1148,12 @@ const isGoPrint = (char: string): boolean => GO_PRINTED.test(char);
  * A word that reads back as itself in both word rules and in a shell, so it needs no quotes:
  * letters, digits and `_-./:@%+=,^`, and the characters past ASCII that Go's %q prints as
  * themselves. It is conservative on purpose: glob characters, which the lexer reads as data, are
- * quoted too, so a generated command also pastes into a shell as written, and so is every character
- * Go would escape, so no invisible or reordering character is shown bare (spec 5.5).
+ * quoted too, so a generated command also pastes into a shell as written, and so is a word that
+ * begins with `=`, which zsh expands to a command's path (measured: zsh 5.9 read =ls as /usr/bin/ls),
+ * and every character Go would escape, so no invisible or reordering character is shown bare (spec 5.5).
  */
 function isBare(text: string): boolean {
-  if (text === "") return false;
+  if (text === "" || text.startsWith("=")) return false;
   for (const char of text) {
     if (char.charCodeAt(0) < 0x80 ? !BARE_ASCII.has(char) : !isGoPrint(char)) return false;
   }
@@ -1178,6 +1179,12 @@ export function quoteWord(text: string): string {
 
 const hex2 = (value: number): string => value.toString(16).padStart(2, "0");
 
+/**
+ * How many bytes a UTF-8 character beginning with `lead` spans, read from its leading bits. Whether the
+ * bytes are a character at all is the strict decoder's to say: it refuses a byte that begins none.
+ */
+const utf8Span = (lead: number): number => (lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4);
+
 const GO_NAMED: Readonly<Record<number, string>> = {
   0x07: "\\a",
   0x08: "\\b",
@@ -1190,28 +1197,38 @@ const GO_NAMED: Readonly<Record<number, string>> = {
   0x22: '\\"',
 };
 
-function goEscapeByte(byte: number): string {
-  const named = GO_NAMED[byte];
+/** Go's %q for one character: as strconv.Quote writes an ASCII one, and any other as itself or as `\u` or `\U`. */
+function goEscapeChar(char: string): string {
+  const code = char.codePointAt(0) as number;
+  if (code >= 0x80) {
+    if (isGoPrint(char)) return char;
+    return code > 0xffff ? `\\U${code.toString(16).padStart(8, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
+  }
+  const named = GO_NAMED[code];
   if (named !== undefined) return named;
-  return byte < 0x20 || byte >= 0x7f ? `\\x${hex2(byte)}` : String.fromCharCode(byte);
+  return code < 0x20 || code === 0x7f ? `\\x${hex2(code)}` : char;
 }
 
 /**
  * Go's %q, as strconv.Quote writes it, for a compare's key and value and a txn request word that is
  * not bare (spec 5.1.4, 5.5, 6.4): the named escapes, `\xNN` for another ASCII control, `\u` or `\U`
- * for every other rune Go does not print, and every other character as itself. Bytes that are not
- * UTF-8 are written byte by byte, each byte past ASCII as `\xNN`, which strconv.Unquote reads back as
- * that byte.
+ * for every other rune Go does not print, and every other character as itself. Where the bytes are
+ * not UTF-8, each byte that begins no character is written as `\xNN`, one byte at a time, as
+ * strconv.Quote writes it and strconv.Unquote reads it back, and the characters around it as above.
  */
 export function quoteGoString(bytes: Uint8Array): string {
-  const text = decodeStrict(bytes);
-  if (text === undefined) return `"${Array.from(bytes, goEscapeByte).join("")}"`;
   let out = '"';
-  for (const char of text) {
-    const code = char.codePointAt(0) as number;
-    if (code < 0x80) out += goEscapeByte(code);
-    else if (isGoPrint(char)) out += char;
-    else out += code > 0xffff ? `\\U${code.toString(16).padStart(8, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
+  let index = 0;
+  while (index < bytes.length) {
+    const span = utf8Span(bytes[index]);
+    const char = decodeStrict(bytes.subarray(index, index + span));
+    if (char === undefined) {
+      out += `\\x${hex2(bytes[index])}`;
+      index += 1;
+    } else {
+      out += goEscapeChar(char);
+      index += span;
+    }
   }
   return `${out}"`;
 }
