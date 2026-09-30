@@ -915,6 +915,11 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
     ],
     ["its BEGIN line indented by a space", () => ` ${read("etcd-ca.crt")}`, CA_BEGIN_INSIDE_A_LINE],
     [
+      "its BEGIN line indented by a space, under the older X509 CERTIFICATE label",
+      () => ` ${relabelled(read("etcd-ca.crt"), "X509 CERTIFICATE")}`,
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    [
       "every line indented",
       () =>
         read("etcd-ca.crt")
@@ -970,8 +975,8 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
     expect(trusted.startsWith("-----BEGIN TRUSTED CERTIFICATE-----\n")).toBe(true);
     expect(new X509Certificate(trusted).subject).toBe("CN=etcd-ca");
     expect(await verifies(trusted)).toBe(false);
-    // Beside a plain certificate too, since Bun would read the plain one alone.
-    for (const caCert of [trusted, trusted + read("etcd-ca.crt")]) {
+    // Beside a plain certificate too, before it or after it, since Bun would read the plain one alone.
+    for (const caCert of [trusted, trusted + read("etcd-ca.crt"), read("etcd-ca.crt") + trusted]) {
       for (const mode of TLS_ON_MODES) expect(refusalOf({ ...base, ssl: { mode, caCert } })).toBe(CA_TRUSTED_FORM);
     }
   });
