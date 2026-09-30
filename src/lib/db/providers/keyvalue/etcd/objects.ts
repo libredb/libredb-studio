@@ -75,10 +75,18 @@ const PROVIDER: DatabaseType = "etcd";
 
 /** What every surface call carries; index.ts builds one per call. */
 export interface EtcdSurfaceContext {
-  /** What this connection may read (spec 4.7); { kind: "all" } for root or with auth off. */
+  /**
+   * What this connection may read (spec 4.7): `{ kind: "all" }` with auth off, for root, and for a user
+   * whose grants read every key.
+   */
   readonly readable: AccessScope;
   /** What it may write (spec 4.7, the edit offer). */
   readonly writable: AccessScope;
+  /**
+   * The etcd user this connection signs in as: carried whenever auth is on and the user does not hold root
+   * (spec 4.7), whatever its grants read, and never otherwise. A context that carries it is scoped, so the
+   * prefix count, the error table's may-read list (5.6) and the refusals of 4.3 name this user.
+   */
   readonly principal?: { readonly name: string; readonly via: "password" | "certificate" };
   readonly readOnly?: ReadOnlySource;
   readonly signal: AbortSignal;
@@ -203,9 +211,10 @@ const METADATA_NOT_EDITED = "etcd keeps a key's metadata itself: only its value 
 const VALUE_NOT_TEXT = "The value is not UTF-8 text, so it is shown as base64 and is not edited here.";
 
 /**
- * The etcd user a scoped sentence names. A context scoped to grants was built from that user's grants
- * (spec 4.7), so one that carries no principal was built wrong by the provider: a defect, raised rather
- * than worded around.
+ * The etcd user a scoped sentence names. The provider carries the principal whenever auth is on and the
+ * user does not hold root (spec 4.7), the one case in which a scope of ranges exists or etcd refuses a
+ * listing for want of root, so a context that reaches here without one was built wrong by the provider:
+ * a defect, raised rather than worded around.
  */
 function scopedUser(context: EtcdSurfaceContext): string {
   if (context.principal === undefined) {
@@ -217,6 +226,16 @@ function scopedUser(context: EtcdSurfaceContext): string {
 }
 
 /**
+ * The etcd user whose grants scope this context, or undefined for one no grants scope (spec 4.7): a
+ * principal scopes it even when its grants read every key, and a scope of ranges without one raises
+ * `scopedUser`'s defect.
+ */
+function scopedBy(context: EtcdSurfaceContext): string | undefined {
+  if (context.principal === undefined && context.readable.kind === "all") return undefined;
+  return scopedUser(context);
+}
+
+/**
  * The error table's context for one surface call (spec 5.6): the surface's words, whether it writes,
  * the range it asked for, and, where spec 4.7 read the grants, what the user may read.
  */
@@ -225,13 +244,12 @@ export function surfaceErrorContext(
   command: string,
   detail: { readonly write?: boolean; readonly range?: string } = {},
 ): EtcdErrorContext {
+  const user = scopedBy(context);
   return {
     command,
     write: detail.write === true,
     ...(detail.range === undefined ? {} : { range: detail.range }),
-    ...(context.readable.kind === "ranges"
-      ? { readable: { user: scopedUser(context), ranges: describeScope(context.readable) } }
-      : {}),
+    ...(user === undefined ? {} : { readable: { user, ranges: describeScope(context.readable) } }),
     connection: context.errors,
   };
 }
@@ -400,9 +418,11 @@ function prefixRow(group: PrefixGroup, scope: AccessScope): DatabaseObject {
  */
 function prefixSampledFrom(bound: WalkStop | "segment" | undefined, context: EtcdSurfaceContext): string | undefined {
   const walked = bound === undefined ? undefined : WALK_BOUNDS[bound];
-  if (context.readable.kind === "all") return walked;
-  const ranges = context.readable.ranges.length;
-  const scope = `the ${count(ranges)} range${ranges === 1 ? "" : "s"} etcd user ${scopedUser(context)} may read`;
+  const user = scopedBy(context);
+  if (user === undefined) return walked;
+  // The readable ranges as the walk reads them, so grants that read every key are the 1 range.
+  const ranges = clipToScope(ALL_KEYS, context.readable).length;
+  const scope = `the ${count(ranges)} range${ranges === 1 ? "" : "s"} etcd user ${user} may read`;
   return walked === undefined ? scope : `${walked}, over ${scope}`;
 }
 

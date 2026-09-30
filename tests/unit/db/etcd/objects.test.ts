@@ -20,7 +20,7 @@ import type { DatabaseObject, ObjectSourceDocument, ProviderCapabilities } from 
 import { EtcdError, type EtcdPermission, type EtcdRangeRequest } from "@/lib/db/providers/keyvalue/etcd/client";
 import type { EtcdErrorConnection } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { assessCommand } from "@/lib/db/providers/keyvalue/etcd/guard";
-import { ALL_KEYS, groupLabel, prefixGroups, prefixRangeEnd } from "@/lib/db/providers/keyvalue/etcd/keys";
+import { groupLabel, prefixGroups, prefixRangeEnd } from "@/lib/db/providers/keyvalue/etcd/keys";
 import {
   countEtcdObjects,
   describeEtcdObject,
@@ -477,6 +477,10 @@ describe("the permission-aware walk (spec 4.7, plan Review Focus 5)", () => {
   ];
   const guarded = (grants: readonly EtcdPermission[], overrides: Partial<EtcdObjectClient> = {}) =>
     surfaceClient(KEYS, overrides, { readable: grants });
+  /** READ on the whole key space, key 0x00 to range_end 0x00, held without the root role. */
+  const EVERY_KEY_GRANT: readonly EtcdPermission[] = [
+    { type: "read", key: new Uint8Array([0]), rangeEnd: new Uint8Array([0]) },
+  ];
 
   test("granted /app/cfg and the prefix /app/x/, the walk answers /app/x/* alone and asks for nothing outside the grants", async () => {
     const grants = [grantKey("read", "/app/cfg"), grantPrefix("read", "/app/x/")];
@@ -564,21 +568,35 @@ describe("the permission-aware walk (spec 4.7, plan Review Focus 5)", () => {
   });
 
   test("READ on the whole key space without the root role lists every group once, scoped to its one range", async () => {
-    const grants: EtcdPermission[] = [{ type: "read", key: new Uint8Array([0]), rangeEnd: new Uint8Array([0]) }];
-    // The scope as it stands for such a user, one range over every key, and never the `all` of root.
-    const context = surface({
-      readable: { kind: "ranges", ranges: [ALL_KEYS] },
-      writable: { kind: "ranges", ranges: [] },
-      principal: { name: "reader", via: "password" },
-    });
-    const { client, space } = guarded(grants);
+    // The scopes as the provider builds them: a readable union that holds every key is the `all` of root,
+    // so the principal the provider carries for a user who is not root is what scopes the walk (spec 4.7).
+    const context = reader(EVERY_KEY_GRANT);
+    expect(context.readable).toEqual({ kind: "all" });
+    const { client, space } = guarded(EVERY_KEY_GRANT);
     const rows = await listEtcdObjects(client, context, "prefix");
     expect(names(rows)).toEqual(prefixGroups(space.keys).groups.map(groupLabel));
     for (const row of rows) expect(row.readRanges).toBeUndefined();
-    expect((await countEtcdObjects(guarded(grants).client, context)).prefix).toEqual({
+    expect((await countEtcdObjects(guarded(EVERY_KEY_GRANT).client, context)).prefix).toEqual({
       count: rows.length,
       sampledFrom: "the 1 range etcd user reader may read",
     });
+  });
+
+  test("a user who is not root whose grants read every key is still scoped: the users and roles folders carry 4.3's sentences, and a refused walk names what it may read (spec 4.3, 4.7, 5.6)", async () => {
+    const refused = surfaceClient(KEYS, {
+      range: async () => Promise.reject(DENIED()),
+      userList: async () => Promise.reject(DENIED()),
+      roleList: async () => Promise.reject(DENIED()),
+    }).client;
+    const counts = await countEtcdObjects(refused, reader(EVERY_KEY_GRANT));
+    expect(counts.user).toEqual({
+      unavailable: "Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)",
+    });
+    expect(counts.role).toEqual({
+      unavailable: "Listing roles needs the etcd root role, which reader does not hold (etcd: permission denied)",
+    });
+    // The grants changed on the server since they were read: the table's sentence names what they read.
+    expect((counts.prefix as { unavailable: string }).unavailable).toContain("etcd user reader may read: every key.");
   });
 
   test("a walk a bound stopped under a scope names both, the bound and then the ranges (spec 4.3, 4.7)", async () => {
@@ -638,6 +656,13 @@ describe("the permission-aware walk (spec 4.7, plan Review Focus 5)", () => {
       write: true,
       range: "/app/x",
       readable: { user: "reader", ranges: describeScope(readableScope(grants)) },
+      connection: CONNECTION,
+    });
+    // A user who is not root is scoped even when its grants read every key (spec 4.7).
+    expect(surfaceErrorContext(reader(EVERY_KEY_GRANT), "get")).toEqual({
+      command: "get",
+      write: false,
+      readable: { user: "reader", ranges: "every key" },
       connection: CONNECTION,
     });
   });
