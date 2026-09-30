@@ -1071,6 +1071,16 @@ describe("applyEtcdValueEdit: the answer after the send (spec 4.5, 5.6)", () => 
     await expect(applyEtcdValueEdit(client, surface(), plan)).rejects.toThrow(QueryError);
   });
 
+  test("a failed compare answered with a put's response in place of its failure read is raised as well", async () => {
+    const plan = await planFor("/app/cfg", "old", "new");
+    const client = createFakeEtcdClient({
+      txn: async () => ({ header: HEADER, succeeded: false, responses: [{ op: "put", response: { header: HEADER } }] }),
+    });
+    const attempt = applyEtcdValueEdit(client, surface(), plan);
+    await expect(attempt).rejects.toThrow(QueryError);
+    await expect(attempt).rejects.toThrow("without the read of its failure branch");
+  });
+
   const NOT_APPLIED: ReadonlyArray<
     readonly [name: string, error: EtcdError, refusal: "privilege" | "definition" | "unsupported"]
   > = [
