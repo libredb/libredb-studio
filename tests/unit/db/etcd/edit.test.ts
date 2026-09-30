@@ -779,6 +779,10 @@ describe("applyEtcdValueEdit: a plan this provider did not build is raised befor
       "a put of another key",
       (plan, unit) => ({ ...plan, unit: { ...unit, arguments: [...unit.arguments.slice(0, 3), "/app/other"] } }),
     ],
+    [
+      "a put of a key the addressed key begins with",
+      (plan, unit) => ({ ...plan, unit: { ...unit, arguments: [...unit.arguments.slice(0, 3), "/app/cf"] } }),
+    ],
     ["a read of another key", (plan, unit) => ({ ...plan, unit: { ...unit, trailing: ["get", "/app/other"] } })],
     [
       "a compare revision other than the token",
