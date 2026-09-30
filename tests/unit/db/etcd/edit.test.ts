@@ -835,6 +835,10 @@ describe("applyEtcdValueEdit: a plan this provider did not build is raised befor
       (plan, unit) => ({ ...plan, unit: { ...unit, arguments: [unit.arguments[0], "del", "/app/cfg"] } }),
     ],
     [
+      "a second request after the put",
+      (plan, unit) => ({ ...plan, unit: { ...unit, arguments: [...unit.arguments, "x\nget", "/app/x"] } }),
+    ],
+    [
       "a second request in the success list",
       (plan, unit) => ({
         ...plan,
