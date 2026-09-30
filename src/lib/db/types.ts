@@ -1172,8 +1172,13 @@ export interface DatabaseProvider {
    * bolted on. `listObjects` is finite by definition and answers a whole folder; this answers
    * one batch of a walk with no end until the cursor returns `"0"`, and the CALLER holds the
    * position between two calls. Nothing is retained on the provider side, so a page is a round
-   * trip rather than a session, and a cursor arriving after a reconnect is still valid: it is
-   * a position in a hash table, not a handle.
+   * trip rather than a session, and a cursor arriving after a reconnect is still valid: it is a
+   * position, not a handle, spelled as the declaration's `cursor` says. Under `"decimal"` (Redis)
+   * it is a position in a hash table. Under `"opaque"` it is a string only the provider that
+   * wrote it can read, and the engine can overtake it between two pages: etcd's cursor carries
+   * the revision its walk is pinned to, and once a compaction passes that revision the next page
+   * answers the compacted error, which the panel reports with the instruction to start again
+   * (spec 4.6).
    *
    * The optional shape follows `endOpenQueryTransaction`: an engine with no key space of its
    * own has nothing truthful to implement here. `keyScan` is the declaration a route checks
