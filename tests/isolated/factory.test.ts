@@ -1817,7 +1817,7 @@ describe("single-writer file reuse", () => {
       database: join(dir, "..", basename(dir), "borrowed.duckdb"),
     });
     // Relative TO THE CWD, deliberately, and not to the file's own directory. `fileIdentity`
-    // normalises with `path.resolve` (src/lib/db/factory.ts:385), which resolves against
+    // normalises with `path.resolve` (src/lib/db/factory.ts), which resolves against
     // `process.cwd()`, so a spelling relative to anything else would name a different file and
     // this assertion would fail on every platform rather than exercise the borrow.
     //
