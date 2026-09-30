@@ -637,6 +637,8 @@ describe("stepPrefixWalk against prefixGroups (spec 4.3, R13 A1)", () => {
     const all = [
       ...FIXTURES.flatMap(([, keys]) => keys),
       ...["/big/1", "/big/2", "/big/3", "/big/4", "/big/5"].map(utf8),
+      // A flat first segment after every other key, so the walk also finishes inside one.
+      ...["zz/1", "zz/2"].map(utf8),
     ];
     for (let budget = 1; budget <= 4; budget++) {
       const expected = shapeOf(expectedUnderBudget(all, budget));
@@ -678,6 +680,26 @@ describe("stepPrefixWalk against prefixGroups (spec 4.3, R13 A1)", () => {
     expect(first.state.groups.map(groupLabel)).toEqual(["/app/x/*"]);
     expect(named(first.next as EtcdBytes)).toBe("/app/x0");
     const answer = walk(keys, () => 2, 1_000);
+    expect(answer.state.keysRead).toBe(3);
+  });
+
+  test("a page ending on the key a group begins at, the directory marker /a/b/, starts the next at the group's range end (Review Focus 1)", () => {
+    const first = stepPrefixWalk(INITIAL_PREFIX_WALK, { keys: [utf8("/a/b/")], more: true }, { segmentBudget: 1_000 });
+    expect(first.state.groups.map(groupLabel)).toEqual(["/a/b/*"]);
+    expect(named(first.next as EtcdBytes)).toBe("/a/b0");
+    const answer = walk(["/a/b/", "/a/b/c", "/a/d/x"].map(utf8), () => 1, 1_000);
+    expect(answer.groups.map(groupLabel)).toEqual(["/a/b/*", "/a/d/*"]);
+    expect(answer.state.keysRead).toBe(2);
+  });
+
+  test("a page ending on a key equal to a recorded group's range end continues just after it, since a range end is exclusive", () => {
+    const first = stepPrefixWalk(INITIAL_PREFIX_WALK, { keys: [utf8("/a/b/c")], more: true }, { segmentBudget: 1_000 });
+    expect(named(first.next as EtcdBytes)).toBe("/a/b0");
+    const second = stepPrefixWalk(first.state, { keys: [utf8("/a/b0")], more: true }, { segmentBudget: 1_000 });
+    expect(second.state.segment).toMatchObject({ deep: true, keysRead: 2 });
+    expect(hex(second.next)).toBe(`${hex(utf8("/a/b0"))}00`);
+    const answer = walk(["/a/b/c", "/a/b0", "/a/d/x"].map(utf8), () => 1, 1_000);
+    expect(answer.groups.map(groupLabel)).toEqual(["/a/b/*", "/a/d/*"]);
     expect(answer.state.keysRead).toBe(3);
   });
 
@@ -730,6 +752,18 @@ describe("stepPrefixWalk against prefixGroups (spec 4.3, R13 A1)", () => {
     );
     expect(step.state.segment?.deep).toBe(true);
     expect(prefixWalkResult(step.state, true).map(groupLabel)).toEqual(["/a/b/*"]);
+  });
+
+  test("a finished walk decides the flat first segment it ends inside, below the budget, as F/* and not undecided", () => {
+    const step = stepPrefixWalk(
+      INITIAL_PREFIX_WALK,
+      { keys: [utf8("/config/a"), utf8("/config/b")], more: false },
+      { segmentBudget: 5 },
+    );
+    expect(step.state.segment).toMatchObject({ deep: false, keysRead: 2 });
+    expect(shapeOf(prefixWalkResult(step.state, true))).toEqual([
+      { prefix: "/config/", key: "2f636f6e6669672f", end: "2f636f6e66696730", undecided: false },
+    ]);
   });
 
   test("Review Focus 5 and 4.7: the walk over a reader's grants /app/cfg and the prefix /app/x/ answers /app/x/* alone", () => {
