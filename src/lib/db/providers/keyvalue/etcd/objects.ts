@@ -59,6 +59,7 @@ import {
   fromHexId,
   groupLabel,
   INITIAL_PREFIX_WALK,
+  INT64_MAX,
   leaseHexId,
   memberHexId,
   type PrefixGroup,
@@ -882,6 +883,18 @@ function keyEntry(key: EtcdBytes): { readonly key: string; readonly key_encoding
  * `NEGATIVE_LEASE`).
  */
 const NEGATIVE_LEASE_ID = /^-[0-9a-fA-F]+$/;
+const HEX_LEASE_ID = /^[0-9a-fA-F]+$/;
+/** The largest lease id as lease list prints it, derived from the int64 bound keys.ts states once (commands.ts reads it the same way). */
+const LARGEST_LEASE_ID = INT64_MAX.toString(16);
+
+/**
+ * A hex path past the largest int64, in any padding, which keys.ts `fromHexId` reads as a uint64 or refuses
+ * as past 64 bits: a lease id is an int64, so it is refused before any request, in the words the command
+ * grammar refuses `--lease` with (commands.ts `leaseId`).
+ */
+function pastLargestLease(text: string): boolean {
+  return HEX_LEASE_ID.test(text) && BigInt(`0x${text}`) > INT64_MAX;
+}
 
 async function leaseSource(
   client: EtcdObjectClient,
@@ -895,6 +908,9 @@ async function leaseSource(
       `${JSON.stringify(text)} is a negative lease id, as lease list prints one: Studio does not address a negative id, which etcd holds only when a client chose it.`,
       PROVIDER,
     );
+  }
+  if (pastLargestLease(text)) {
+    throw new QueryError(`${JSON.stringify(text)} is past the largest lease id, ${LARGEST_LEASE_ID}.`, PROVIDER);
   }
   const id = fromHexId(text);
   if (id === undefined) {

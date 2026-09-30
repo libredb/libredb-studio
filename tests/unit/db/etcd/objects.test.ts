@@ -1364,6 +1364,24 @@ describe("the member, lease, user and role sources (spec 4.4)", () => {
     expect(fake.calls).toEqual([]);
   });
 
+  test("a lease path past int64 is refused before any request in the grammar's words; the largest id still reads", async () => {
+    const fake = client({
+      leaseTimeToLive: async (id) => ({ header: HEADER, id, ttl: "100", grantedTtl: "3600", keys: [] }),
+    });
+    // 16 digits past 7fffffffffffffff, 17 digits, and a padded path past it: fromHexId reads the first two as a uint64.
+    const past = ["8000000000000000", "ffffffffffffffff", "10000000000000000", "0000FFFFFFFFFFFFFFFF"];
+    for (const text of past) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is checked against a client that recorded no call.
+      const error = await readEtcdObjectSource(fake, surface(), [text], "lease").catch((caught) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe(`${JSON.stringify(text)} is past the largest lease id, 7fffffffffffffff.`);
+    }
+    expect(fake.calls).toEqual([]);
+    const document = await readEtcdObjectSource(fake, surface(), ["7FFFFFFFFFFFFFFF"], "lease");
+    expect(JSON.parse(textOf(document, 0)).id).toBe("7fffffffffffffff");
+    expect(fake.calls.map((call) => call.args.slice(0, 2))).toEqual([["9223372036854775807", true]]);
+  });
+
   test("a user: its name and roles; one etcd does not hold is refused naming it", async () => {
     const fake = client({
       userGet: async (name) =>
