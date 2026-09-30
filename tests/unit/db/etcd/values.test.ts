@@ -110,6 +110,11 @@ describe("the envelope and encryption recognisers (spec E9 rows 2 and 3)", () =>
   test("a header name that is not plain bounded text is left out of the label", () => {
     const withControl = [...field(1, Array.from(utf8("v\n1"))), ...field(2, Array.from(utf8("Pod")))];
     expect(envelopeTypeMeta(bytes([0x6b, 0x38, 0x73, 0x00], field(1, withControl)))).toEqual({ kind: "Pod" });
+    // DEL and the C1 controls, U+0085 among them, are control characters as well.
+    for (const apiVersion of ["v\u007f1", "v\u00851"]) {
+      const typeMeta = [...field(1, Array.from(utf8(apiVersion))), ...field(2, Array.from(utf8("Pod")))];
+      expect(envelopeTypeMeta(bytes([0x6b, 0x38, 0x73, 0x00], field(1, typeMeta)))).toEqual({ kind: "Pod" });
+    }
     const tooLong = [...field(1, Array.from(utf8("v".repeat(129)))), ...field(2, [0xff])];
     expect(envelopeTypeMeta(bytes([0x6b, 0x38, 0x73, 0x00], field(1, tooLong)))).toEqual({});
     const typeMetaWithMore = [...field(1, Array.from(utf8("v1"))), ...field(3, Array.from(utf8("ignored")))];
@@ -170,12 +175,13 @@ describe("spec E9's ordered table, row by row", () => {
       "k8s:enc:aescbc:v1:",
       "k8s:enc::v1:key1:",
       `k8s:enc:${"p".repeat(129)}:v1:key1:`,
+      // A last field that no colon closes is ciphertext, not a key name, so the label repeats none of it.
+      `k8s:enc:aescbc:v1:${SECRET}`,
     ]) {
-      expect(viewValue(utf8("/x"), utf8(prefix), CELL)).toMatchObject({
-        encoding: "withheld",
-        withheld: "kubernetes-encrypted",
-      });
-      expect(viewValue(utf8("/x"), utf8(prefix), CELL).text).toBe(`Kubernetes encrypted, ${utf8(prefix).length} bytes`);
+      const view = viewValue(utf8("/x"), utf8(prefix), CELL);
+      expect(view).toMatchObject({ encoding: "withheld", withheld: "kubernetes-encrypted" });
+      expect(view.text).toBe(`Kubernetes encrypted, ${utf8(prefix).length} bytes`);
+      expect(JSON.stringify(view)).not.toContain(SECRET);
     }
   });
 
@@ -215,6 +221,8 @@ describe("spec E9's ordered table, row by row", () => {
       cut: false,
     });
     expect(viewValue(utf8("/app/cbor"), cbor, CELL).encoding).toBe("base64");
+    // The tag is all three bytes d9 d9 f7: a value that shares only the first two is no CBOR.
+    expect(viewValue(utf8("/registry/x/y"), bytes([0xd9, 0xd9, 0x00, 0x01]), CELL).encoding).toBe("base64");
   });
 
   test("row 5: JSON under a protected prefix is kubernetes-json, the slash-less roots included", () => {
@@ -259,6 +267,13 @@ describe("spec E9's ordered table, row by row", () => {
     );
     expect(withheldLabel(utf8("/x"), envelope({ apiVersion: "v1", kind: "Pod" }, 200))).toBe(
       "Kubernetes protobuf (v1, Pod), 200 bytes",
+    );
+    // A header that holds only its kind, or only its apiVersion, is labelled with the one name it holds.
+    const kindOnly = envelope({ kind: "Pod" });
+    expect(withheldLabel(utf8("/x"), kindOnly)).toBe(`Kubernetes protobuf (Pod), ${kindOnly.length} bytes`);
+    const apiVersionOnly = envelope({ apiVersion: "apps/v1" });
+    expect(withheldLabel(utf8("/x"), apiVersionOnly)).toBe(
+      `Kubernetes protobuf (apps/v1), ${apiVersionOnly.length} bytes`,
     );
     expect(withheldLabel(utf8("/registry/example.com/w"), utf8("{}"))).toBeUndefined();
     expect(withheldLabel(utf8("/app/x"), utf8("plain"))).toBeUndefined();
@@ -364,5 +379,19 @@ describe("viewKey (spec 5.2's key_encoding)", () => {
       encoding: "base64",
     });
     expect(viewKey(utf8("x".repeat(100_000))).text.length).toBe(100_000);
+  });
+});
+
+describe("bytes that are a view into a larger buffer", () => {
+  test("a value and a key are read from their own byteOffset, whole or cut", () => {
+    // protobufjs decodes a bytes field as Buffer.prototype.slice of the message, a view at a nonzero byteOffset.
+    const message = Uint8Array.from([0x0a, 0x03, 0xff, 0xfe, 0xfd, 0x12]);
+    const view = message.subarray(2, 5);
+    expect(viewValue(utf8("/a"), view, CELL)).toMatchObject({ text: "//79", encoding: "base64" });
+    expect(viewKey(view)).toEqual({ text: "//79", encoding: "base64" });
+    expect(viewValue(utf8("/a"), Uint8Array.from([9, 0xff, 1, 2, 3, 4]).subarray(1), 4)).toMatchObject({
+      text: "/wEC",
+      cut: true,
+    });
   });
 });

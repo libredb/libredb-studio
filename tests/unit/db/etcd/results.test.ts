@@ -221,10 +221,15 @@ describe("get (spec 5.2)", () => {
 });
 
 describe("put and del (spec 5.2)", () => {
-  test("a put answers one row with its key and the revision it wrote", () => {
+  test("a put answers one row with its key and the revision it wrote, key_encoding beside a key that is not UTF-8", () => {
     expect(result({ kind: "put", key: utf8("/app/cfg"), response: { header: header("43") } })).toMatchObject({
       fields: ["key", "revision"],
       rows: [{ key: "/app/cfg", revision: "43" }],
+    });
+    const binary = bytes("/", [0xff]);
+    expect(result({ kind: "put", key: binary, response: { header: header("43") } })).toMatchObject({
+      fields: ["key", "key_encoding", "revision"],
+      rows: [{ key: Buffer.from(binary).toString("base64"), key_encoding: "base64", revision: "43" }],
     });
   });
 
@@ -466,6 +471,33 @@ describe("txn (spec 5.2, 5.1.4)", () => {
     expect(JSON.stringify(answer)).not.toContain(SECRET);
   });
 
+  test("a put sent without --prev-kv answers its key alone, and a key that is not UTF-8 adds key_encoding", () => {
+    const key = bytes("/", [0xff]);
+    const answer = result({
+      kind: "txn",
+      request: { compare: [], success: [{ op: "put", request: { key, value: utf8("v") } }], failure: [] },
+      response: {
+        header: header("47"),
+        succeeded: true,
+        responses: [{ op: "put", response: { header: header("47") } }],
+      },
+    });
+    expect(answer.fields).toContain("key_encoding");
+    expect(answer.rows).toEqual([
+      expect.objectContaining({ succeeded: true, revision: "47" }),
+      expect.objectContaining({
+        index: 1,
+        branch: "success",
+        op: "put",
+        key: Buffer.from(key).toString("base64"),
+        key_encoding: "base64",
+        prev_value: null,
+        prev_value_encoding: null,
+        prev_mod_revision: null,
+      }),
+    ]);
+  });
+
   test("a txn that ran an empty branch still answers its succeeded row", () => {
     expect(
       result({
@@ -579,6 +611,36 @@ describe("watch (spec 5.2, 5.3)", () => {
     expect(JSON.stringify(answer)).not.toContain(SECRET);
   });
 
+  test("a DELETE event sent with its previous pair shows the previous value, E9's classes withheld", () => {
+    const answer = result(
+      watch({
+        events: [
+          {
+            type: "delete",
+            kv: pair("/apisix/routes/3", "", { modRevision: "52", version: "0" }),
+            prevKv: pair("/apisix/routes/3", ENVELOPE),
+          },
+        ],
+      }),
+    );
+    expect(answer.rows).toEqual([
+      {
+        revision: "52",
+        type: "DELETE",
+        key: "/apisix/routes/3",
+        value: null,
+        value_encoding: null,
+        create_revision: "10",
+        mod_revision: "52",
+        version: "0",
+        lease: null,
+        prev_value: `Kubernetes protobuf (v1, Pod), ${ENVELOPE.length} bytes`,
+        prev_value_encoding: "withheld",
+      },
+    ]);
+    expect(JSON.stringify(answer)).not.toContain(SECRET);
+  });
+
   test("a watch stopped at the row limit or the byte budget says so and sets wasLimited", () => {
     const events = [{ type: "put" as const, kv: pair("/a", "1") }];
     const rows = result(watch({ events, endedBy: "rows" }));
@@ -627,9 +689,15 @@ describe("leases (spec 5.2)", () => {
     });
     const withKeys = result({ kind: "lease-timetolive", response, keys: true });
     expect(withKeys.fields).toEqual(["lease", "ttl", "granted_ttl", "key", "key_encoding"]);
-    expect(withKeys.rows.map((row) => [row.key, row.key_encoding])).toEqual([
-      ["/leases/a", "text"],
-      [Buffer.from(bytes("/leases/", [0xff])).toString("base64"), "base64"],
+    expect(withKeys.rows).toEqual([
+      { lease: "694d8147df1dc4c8", ttl: "3599", granted_ttl: "3600", key: "/leases/a", key_encoding: "text" },
+      {
+        lease: "694d8147df1dc4c8",
+        ttl: "3599",
+        granted_ttl: "3600",
+        key: Buffer.from(bytes("/leases/", [0xff])).toString("base64"),
+        key_encoding: "base64",
+      },
     ]);
     expect(result({ kind: "lease-timetolive", response: { ...response, keys: [] }, keys: true })).toMatchObject({
       fields: ["lease", "ttl", "granted_ttl", "key"],
@@ -661,6 +729,7 @@ describe("the cluster and access rows (spec 5.2)", () => {
           isLearner: false,
         },
         { id: "255", name: "", peerUrls: ["http://c:2380"], clientUrls: [], isLearner: true },
+        { id: "1", name: "etcd-3", peerUrls: ["http://d:2380"], clientUrls: ["http://d:2379"], isLearner: true },
       ],
     });
     expect(answer.fields).toEqual(["id", "name", "status", "peer_urls", "client_urls", "is_learner"]);
@@ -674,10 +743,19 @@ describe("the cluster and access rows (spec 5.2)", () => {
         is_learner: false,
       },
       { id: "ff", name: "", status: "unstarted", peer_urls: "http://c:2380", client_urls: "", is_learner: true },
+      // A learner that has started: is_learner is etcd's own flag, not a reading of the name.
+      {
+        id: "1",
+        name: "etcd-3",
+        status: "started",
+        peer_urls: "http://d:2380",
+        client_urls: "http://d:2379",
+        is_learner: true,
+      },
     ]);
   });
 
-  test("endpoint status: one row for the configured endpoint, is_leader from the header's member id", () => {
+  test("endpoint status: one row for the configured endpoint, its id and is_leader from the header's member id", () => {
     const status: EtcdStatus = {
       header: header(),
       version: "3.7.2",
@@ -687,7 +765,7 @@ describe("the cluster and access rows (spec 5.2)", () => {
       leader: MEMBER,
       raftIndex: "100",
       raftTerm: "2",
-      raftAppliedIndex: "100",
+      raftAppliedIndex: "99",
       errors: ["memberID:1 alarm:NOSPACE", "second"],
       isLearner: false,
       storageVersion: "3.7.0",
@@ -705,13 +783,32 @@ describe("the cluster and access rows (spec 5.2)", () => {
         is_learner: false,
         raft_term: "2",
         raft_index: "100",
-        raft_applied_index: "100",
+        raft_applied_index: "99",
         errors: "memberID:1 alarm:NOSPACE, second",
       },
     ]);
     expect(
       result({ kind: "endpoint-status", endpoint: "e:1", status: { ...status, leader: "1" } }).rows[0].is_leader,
     ).toBe(false);
+    // A learner follower answers for itself: its own id from the header, never the leader's.
+    const follower: EtcdStatus = { ...status, header: { ...header(), memberId: "255" }, isLearner: true };
+    expect(result({ kind: "endpoint-status", endpoint: "127.0.0.1:22379", status: follower }).rows).toEqual([
+      {
+        endpoint: "127.0.0.1:22379",
+        id: "ff",
+        version: "3.7.2",
+        storage_version: "3.7.0",
+        db_size: "24576",
+        db_size_in_use: "20480",
+        db_size_quota: "2147483648",
+        is_leader: false,
+        is_learner: true,
+        raft_term: "2",
+        raft_index: "100",
+        raft_applied_index: "99",
+        errors: "memberID:1 alarm:NOSPACE, second",
+      },
+    ]);
   });
 
   test("endpoint health: one row, healthy or with etcdctl's error", () => {
@@ -748,6 +845,9 @@ describe("the cluster and access rows (spec 5.2)", () => {
     expect(result({ kind: "auth-status", status: { enabled: true, authRevision: "11" } }).rows).toEqual([
       { enabled: true, auth_revision: "11" },
     ]);
+    expect(result({ kind: "auth-status", status: { enabled: false, authRevision: "1" } }).rows).toEqual([
+      { enabled: false, auth_revision: "1" },
+    ]);
     expect(result({ kind: "user-list", names: ["reader", "root"] }).rows).toEqual([
       { name: "reader" },
       { name: "root" },
@@ -772,13 +872,13 @@ describe("the cluster and access rows (spec 5.2)", () => {
     });
     const detail = result({
       kind: "user-get",
-      name: "reader",
+      name: "alice",
       roles: ["reader"],
       permissions: [{ role: "reader", permission: permissions[0] }],
     });
     expect(detail.fields).toEqual(["name", "roles", "role", "type", "key", "range_end", "prefix"]);
     expect(detail.rows).toEqual([
-      { name: "reader", roles: "reader", role: "reader", type: "READ", key: "/app/", range_end: "/app0", prefix: true },
+      { name: "alice", roles: "reader", role: "reader", type: "READ", key: "/app/", range_end: "/app0", prefix: true },
     ]);
     expect(result({ kind: "user-get", name: "nobody", roles: [], permissions: [] }).rows).toEqual([
       { name: "nobody", roles: "", role: null, type: null, key: null, range_end: null, prefix: null },
