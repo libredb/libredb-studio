@@ -105,6 +105,8 @@ const ACCEPTED: readonly [text: string, command: EtcdCommand][] = [
   ["watch '' --prefix", { kind: "watch", key: b(""), prefix: true, prevKv: false }],
   ["lease grant 60", { kind: "lease-grant", ttlSeconds: 60 }],
   ["lease grant +010", { kind: "lease-grant", ttlSeconds: 10 }],
+  // The largest TTL a number holds exactly is taken; etcd's own ceiling, 9000000000 seconds, stays etcd's to report.
+  ["lease grant 9007199254740991", { kind: "lease-grant", ttlSeconds: Number.MAX_SAFE_INTEGER }],
   ["lease revoke 694d77aa9e38260f", { kind: "lease-revoke", leaseHex: "694d77aa9e38260f" }],
   ["lease revoke 00ff", { kind: "lease-revoke", leaseHex: "00000000000000ff" }],
   ["lease timetolive 694D77AA9E38260F", { kind: "lease-timetolive", leaseHex: "694d77aa9e38260f", keys: false }],

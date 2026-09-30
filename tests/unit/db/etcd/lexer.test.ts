@@ -119,6 +119,11 @@ const WORD_RULES: readonly [rule: string, text: string, words: readonly string[]
   ["a ~ inside a word is data", "put k a~b", ["put", "k", "a~b"]],
   ["a ~ not right after the = or a : of a NAME= word is data", "put k a=b~c a=x:y~", ["put", "k", "a=b~c", "a=x:y~"]],
   [
+    "a ~ after a quoted or escaped : of a NAME= word, or itself quoted or escaped, is data",
+    "put k a=b':'~/x a=b\\:~/y a=\\~/z a='~'/w",
+    ["put", "k", "a=b:~/x", "a=b:~/y", "a=~/z", "a=~/w"],
+  ],
+  [
     "a word whose name is quoted or escaped is no NAME= word",
     'put k "a"=~ a\\=~ 1a=~/x',
     ["put", "k", "a=~", "a=~", "1a=~/x"],
@@ -131,6 +136,7 @@ const WORD_RULES: readonly [rule: string, text: string, words: readonly string[]
   ],
   ["JSON with double quotes loses them, as quote removal does in a shell", 'put k {"a":1}', ["put", "k", "{a:1}"]],
   ["a no-break space is data, not a separator", "get a\u00a0b", ["get", "a\u00a0b"]],
+  ["a form feed and a vertical tab are data, not separators", "put k a\fb c\vd", ["put", "k", "a\fb", "c\vd"]],
   ["a word that begins with - is a word", "get -- -a", ["get", "--", "-a"]],
 ];
 
@@ -1006,11 +1012,13 @@ describe("lexLogicalLine", () => {
 /**
  * Runes Go's strconv.IsPrint does not print, each with strconv.Quote("a" + rune + "b") as Go 1.27
  * (Unicode 17.0.0) printed it: format characters (a bidi override, a zero-width space, a soft hyphen, an
- * isolate, a tag, the Arabic letter mark, the Mongolian vowel separator, an interlinear annotation), a
- * C1 control, private use, unassigned code points and spaces. Bun 1.4.2 and Node 24.14.0 classify every
- * scalar value as Go 1.27 does (measured over all of them).
+ * isolate, a tag, the Arabic letter mark, the Mongolian vowel separator, an interlinear annotation), an
+ * ASCII and a C1 control, private use, unassigned code points and a noncharacter, and spaces. Bun 1.4.2
+ * and Node 24.14.0 classify every scalar value as Go 1.27 does (measured over all of them).
  */
 const NOT_PRINTED: readonly [name: string, char: string, goQuoted: string][] = [
+  ["U+001F, an ASCII control", "\u001f", '"a\\x1fb"'],
+  ["U+FFFF, a noncharacter", "\uffff", '"a\\uffffb"'],
   ["U+202E, a right-to-left override", "\u202e", '"a\\u202eb"'],
   ["U+200B, a zero-width space", "\u200b", '"a\\u200bb"'],
   ["U+00AD, a soft hyphen", "\u00ad", '"a\\u00adb"'],
@@ -1034,6 +1042,8 @@ const PRINTED: readonly [name: string, char: string, goQuoted: string][] = [
   ["U+1D11E, a symbol past the first plane", "𝄞", '"a𝄞b"'],
   ["U+0301, a combining mark", "\u0301", '"a\u0301b"'],
   ["U+00BF, a punctuation mark", "\u00bf", '"a\u00bfb"'],
+  ["U+00B2, a superscript digit", "\u00b2", '"a\u00b2b"'],
+  ["U+0663, an Arabic-Indic digit", "\u0663", '"a\u0663b"'],
 ];
 
 /** Texts a key or a value holds, chosen to break a quoting function. */
@@ -1109,7 +1119,14 @@ describe("quoteWord, the command line's quoting (spec 5.5, 6.4)", () => {
     ["\ufeff", "'\ufeff'"],
     ["\u0080", "'\u0080'"],
     ["\u009f", "'\u009f'"],
+    // Glob characters are not in the bare set: zsh 5.9 refused a bare ?, [a] and [a in an empty directory, where
+    // bash and dash passed them (measured). Nor are ! and ].
     ["*", "'*'"],
+    ["?", "'?'"],
+    ["[a]", "'[a]'"],
+    ["[a", "'[a'"],
+    ["a]", "'a]'"],
+    ["!", "'!'"],
   ])("%j is single-quoted as %j", (text, quoted) => {
     expect(quoteWord(text)).toBe(quoted);
   });
@@ -1173,6 +1190,21 @@ describe("quoteTxnWord and quoteGoString, the txn body's quoting (spec 4.5, 6.4)
     expect(quoteGoString(utf8(`a${char}b`))).toBe(goQuoted);
     expect(quoteTxnWord(utf8(`a${char}b`))).toBe(`a${char}b`);
   });
+
+  // strconv.Quote of each rune alone, as Go 1.27 printed it: an ASCII control as \x, a noncharacter as \u, and
+  // two runes past ASCII that are numbers, so Go prints them and a txn word may hold them bare.
+  test.each([
+    ["U+001F", "\u001f", '"\\x1f"', '"\\x1f"'],
+    ["U+FFFF", "\uffff", '"\\uffff"', '"\\uffff"'],
+    ["U+00B2", "\u00b2", '"\u00b2"', "\u00b2"],
+    ["U+0663", "\u0663", '"\u0663"', "\u0663"],
+  ])(
+    "%s alone is Go-quoted as %%q quotes it, and bare in a txn only where Go prints it",
+    (_name, char, goQuoted, txnWord) => {
+      expect(quoteGoString(utf8(char))).toBe(goQuoted);
+      expect(quoteTxnWord(utf8(char))).toBe(txnWord);
+    },
+  );
 
   const HARD_BYTES: readonly Uint8Array[] = [
     ...HARD_TEXTS.map(utf8),
