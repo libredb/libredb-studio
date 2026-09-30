@@ -491,6 +491,13 @@ describe("buildEtcdValueEdit: the read, and what it found (spec 4.4, 4.5, 4.7, E
     expect(at.built).toBe(true);
   });
 
+  test("the bound counts characters, not bytes: a two-byte character repeated to the limit builds", async () => {
+    const value = "é".repeat(EDIT_CHARACTER_LIMIT);
+    expect(b(value).length).toBe(2 * EDIT_CHARACTER_LIMIT);
+    const answer = await buildEtcdValueEdit(holding("/big", value), surface(), edit("/big", "b"), STAMP);
+    expect(answer.built).toBe(true);
+  });
+
   test("an unchanged text is refused, which is what the conformance helper's unchanged submission meets", async () => {
     expect(
       refusalOf(await buildEtcdValueEdit(holding("/app/cfg", "same"), surface(), edit("/app/cfg", "same"), STAMP)),
