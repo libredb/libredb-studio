@@ -32,7 +32,16 @@
  */
 import { beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import ts from "typescript";
@@ -1381,5 +1390,78 @@ describe("planted violations: the text rules fail by name", () => {
       "write coverage: Lease/LeaseFrobnicate is a write that no editor command or maintenance card gates",
       "write coverage: Lease/LeaseGrant is gated as a write, and classified read",
     ]);
+  });
+});
+
+/**
+ * Spec 3.1's module table, the provider directory's contents exactly (#1089, spec 3.1): every file the table
+ * names and the vendored `proto/` directory, and nothing else, so a module added without its row, or a row
+ * whose module was folded into another, fails here by name.
+ */
+const SPEC_3_1_MODULES: readonly string[] = [
+  "client.ts",
+  "grpc-client.ts",
+  "proto",
+  "connection-options.ts",
+  "lexer.ts",
+  "commands.ts",
+  "keys.ts",
+  "permissions.ts",
+  "guard.ts",
+  "write-policy.ts",
+  "execute.ts",
+  "watch.ts",
+  "values.ts",
+  "results.ts",
+  "objects.ts",
+  "edit.ts",
+  "key-scan.ts",
+  "monitoring.ts",
+  "monitoring-reads.ts",
+  "maintenance.ts",
+  "errors.ts",
+  "labels.ts",
+  "index.ts",
+];
+
+const SPEC_3_1_DIRECTORY = join(import.meta.dir, "../../../../src/lib/db/providers/keyvalue/etcd");
+
+/** Each entry of `directory` the table does not name, then each entry the table names that is missing. */
+function moduleTableViolations(directory: string): string[] {
+  const present = readdirSync(directory);
+  const named = new Set(SPEC_3_1_MODULES);
+  return [
+    ...present
+      .filter((entry) => !named.has(entry))
+      .map((entry) => `${entry} is in the provider directory and not in spec 3.1's module table`),
+    ...SPEC_3_1_MODULES.filter((entry) => !present.includes(entry)).map(
+      (entry) => `${entry} is in spec 3.1's module table and not in the provider directory`,
+    ),
+  ];
+}
+
+describe("the provider directory is spec 3.1's module table (spec 3.1)", () => {
+  test("it holds exactly the table's modules and proto/", () => {
+    expect(moduleTableViolations(SPEC_3_1_DIRECTORY)).toEqual([]);
+    // The control that the read reached the directory: both ends of the table are in it.
+    expect(readdirSync(SPEC_3_1_DIRECTORY)).toContain("client.ts");
+    expect(readdirSync(SPEC_3_1_DIRECTORY)).toContain("index.ts");
+  });
+
+  test("a planted module the table does not name fails by name, and so does a missing one", () => {
+    const planted = mkdtempSync(join(tmpdir(), "etcd-module-table-"));
+    try {
+      for (const entry of SPEC_3_1_MODULES) {
+        if (entry === "proto") mkdirSync(join(planted, entry));
+        else if (entry !== "labels.ts") writeFileSync(join(planted, entry), "");
+      }
+      writeFileSync(join(planted, "helpers.ts"), "");
+      expect(moduleTableViolations(planted)).toEqual([
+        "helpers.ts is in the provider directory and not in spec 3.1's module table",
+        "labels.ts is in spec 3.1's module table and not in the provider directory",
+      ]);
+    } finally {
+      rmSync(planted, { recursive: true, force: true });
+    }
   });
 });
