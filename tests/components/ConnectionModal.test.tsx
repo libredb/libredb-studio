@@ -458,6 +458,12 @@ describe("ConnectionModal", () => {
     mockFormOverrides = { readOnlyOffered: true, readOnly: true };
     rerender(React.createElement(ConnectionModal, createDefaultProps()));
     expect((getByLabelText("Read-only") as HTMLInputElement).checked).toBe(true);
+
+    // The untick is forwarded too: the hint says the mode can be turned off here, and a handler
+    // that forwarded a constant true would pass the tick above on its own.
+    mockSetReadOnly.mockClear();
+    fireEvent.click(getByLabelText("Read-only"));
+    expect(mockSetReadOnly).toHaveBeenCalledWith(false);
   });
 
   test("shows the saved query timeout when editing", () => {
