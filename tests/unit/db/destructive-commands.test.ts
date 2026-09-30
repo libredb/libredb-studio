@@ -363,26 +363,32 @@ describe("vocabularyTypedConfirmation", () => {
   });
 
   test("hands a row's answer through as the row gave it, either shape, and nothing where the row asks nothing", () => {
+    // Each answer carries whitespace a reader could be tempted to tidy, and ` /App/ ` is not `/App/` to etcd: the
+    // reader hands on the row's own objects, the very ones, untouched (#1089, section 5.5).
+    const prefixAsk: TypedConfirmationAsk = { type: "text", text: " /App/ " };
+    const everyKeyAsk: TypedConfirmationAsk = { type: "connection-name", targets: [" every key "] };
     const seen: string[] = [];
     remove = installStandInVocabulary({
       typedConfirmation: (text): TypedConfirmationAsk | undefined => {
         seen.push(text);
-        if (text === "wipe-prefix /App/") return { type: "text", text: "/App/" };
-        if (text === "wipe-all") return { type: "connection-name", targets: ["every key"] };
+        if (text === 'wipe-prefix " /App/ "') return prefixAsk;
+        if (text === "wipe-all") return everyKeyAsk;
         return undefined;
       },
     });
 
-    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "wipe-prefix /App/")).toEqual({ type: "text", text: "/App/" });
-    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "wipe-all")).toEqual({
-      type: "connection-name",
-      targets: ["every key"],
-    });
+    const prefix = vocabularyTypedConfirmation(STAND_IN_TYPE, 'wipe-prefix " /App/ "');
+    expect(prefix).toBe(prefixAsk);
+    // Against a fresh literal as well, since an answer trimmed in place is still the same object.
+    expect(prefix).toEqual({ type: "text", text: " /App/ " });
+    const everyKey = vocabularyTypedConfirmation(STAND_IN_TYPE, "wipe-all");
+    expect(everyKey).toBe(everyKeyAsk);
+    expect(everyKey).toEqual({ type: "connection-name", targets: [" every key "] });
     expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "get /App/")).toBeUndefined();
     // Whitespace around the text is the row's to read: trimmed, this would be the wipe-all ask above.
     expect(vocabularyTypedConfirmation(STAND_IN_TYPE, " wipe-all\n")).toBeUndefined();
     // The text reaches the row as written: no trim, no case folding.
-    expect(seen).toEqual(["wipe-prefix /App/", "wipe-all", "get /App/", " wipe-all\n"]);
+    expect(seen).toEqual(['wipe-prefix " /App/ "', "wipe-all", "get /App/", " wipe-all\n"]);
   });
 });
 
