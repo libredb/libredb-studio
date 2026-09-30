@@ -213,6 +213,18 @@ describe("runEtcdMaintenance: compaction (spec 7.2)", () => {
     expect(client.calls.map((call) => call.method)).toEqual(["status"]);
   });
 
+  test("a Compact etcd did not answer reads as a read's failure, never as a write of unknown outcome, since running it again is harmless", async () => {
+    const client = createFakeEtcdClient({
+      status: async () => status(ETCD_1, "1"),
+      compact: async () => {
+        throw toEtcdError(grpc(14, "etcdserver: leader changed"));
+      },
+    });
+    const attempt = runEtcdMaintenance(client, surface(), "compact");
+    await expect(attempt).rejects.toThrow(ConnectionError);
+    await expect(attempt).rejects.toThrow("etcd did not answer the compaction.");
+  });
+
   test("any other answer to Compact is 5.6's mapped error", async () => {
     const client = createFakeEtcdClient({
       status: async () => status(ETCD_1, "1"),
