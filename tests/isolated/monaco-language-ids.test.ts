@@ -34,6 +34,13 @@
  * So both sets are EXTRACTED from their own location, and the extraction is proved non-empty and
  * proved to contain what it should BEFORE any membership assertion runs.
  *
+ * A THIRD PLACE, THE EDITOR CORE, FOR ONE ID (etcd spec 4.4, R13 D11). Monaco's core registers
+ * `plaintext` itself, in `min/vs/editor-*.js`, so neither set above holds it. It is counted because the
+ * conformance helper admits it as the one language a source part may carry in place of its kind's
+ * declared one (`SOURCE_PART_FALLBACK_LANGUAGE`), which etcd's key uses for a value that is not JSON.
+ * It is extracted from the core's own files like the other two sets and never written into a hand
+ * list, and the first test below pins it as the only id the core registers that way.
+ *
  * WHY THIS READS `node_modules/monaco-editor/min/vs` AND NOT THE SERVED COPY. The plan's snippet
  * said `public/monaco/vs/language`. MEASURED, and the plan is wrong: `/public/monaco/` is
  * gitignored (`.gitignore:30`) and is produced by `scripts/copy-monaco.mjs`, which is wired into
@@ -45,7 +52,8 @@
  * bundle one step earlier and it is the one that is always on disk after `bun install`.
  *
  * Measured on monaco-editor 0.57.0, 2026-09-28: 89 basic ids, 4 rich ids, and exactly one of the
- * four rich ids (`json`) absent from the 89, the same counts 0.56.0 gave on 2026-09-13.
+ * four rich ids (`json`) absent from the 89, the same counts 0.56.0 gave on 2026-09-13; and on
+ * 2026-09-30 one core id, `plaintext`, in the one `min/vs/editor-*.js` file the package ships.
  *
  * WHAT THIS FILE CANNOT SHARE A PROCESS WITH (#789). It builds providers through the REAL
  * `createDatabaseProvider`, which is the whole point: a declaration census that read a double
@@ -68,6 +76,7 @@ import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { PROMQL_LANGUAGE_ID } from "@/lib/editor/promql-language";
 import type { DatabaseType } from "@/lib/types";
+import { SOURCE_PART_FALLBACK_LANGUAGE } from "../helpers/object-surface-conformance";
 
 /**
  * The installed package, located through the resolver rather than by spelling out a path.
@@ -85,6 +94,8 @@ import type { DatabaseType } from "@/lib/types";
 const MONACO_ROOT = dirname(createRequire(import.meta.url).resolve("monaco-editor/package.json"));
 const BASIC_CONTRIBUTION = join(MONACO_ROOT, "min/vs/basic-languages/monaco.contribution.js");
 const RICH_LANGUAGE_DIR = join(MONACO_ROOT, "min/vs/language");
+/** The editor core's own bundle, whose file name carries a build hash: `min/vs/editor-<hash>.js`. */
+const EDITOR_CORE_DIR = join(MONACO_ROOT, "min/vs");
 
 /**
  * The version the two counts below are counts OF.
@@ -115,8 +126,32 @@ function extractBasicLanguageIds(source: string): ReadonlySet<string> {
   return ids;
 }
 
+/**
+ * Pulls the ids the editor CORE registers itself out of its minified bundle (R13 D11).
+ *
+ * The core names each such id once as a constant and registers it through that constant, measured on
+ * 0.57.0 as `const wn="plaintext";ac.registerLanguage({id:wn,extensions:[".txt"],...`. The pattern
+ * requires the same constant in both places, so the public API's own `registerLanguage(o)` wrapper in
+ * the same file, which takes an argument, is not read as a registration.
+ */
+function extractCoreLanguageIds(source: string): ReadonlySet<string> {
+  const ids = new Set<string>();
+  const pattern = /const ([A-Za-z_$][\w$]*)="([A-Za-z0-9_.+-]+)";[A-Za-z_$][\w$]*\.registerLanguage\(\{id:\1,/g;
+  for (const match of source.matchAll(pattern)) {
+    const [, , id] = match;
+    if (id !== undefined) ids.add(id);
+  }
+  return ids;
+}
+
 const basic = extractBasicLanguageIds(readFileSync(BASIC_CONTRIBUTION, "utf8"));
 const rich: readonly string[] = readdirSync(RICH_LANGUAGE_DIR).sort();
+const core = extractCoreLanguageIds(
+  readdirSync(EDITOR_CORE_DIR)
+    .filter((name) => /^editor-[A-Za-z0-9_-]+\.js$/.test(name))
+    .map((name) => readFileSync(join(EDITOR_CORE_DIR, name), "utf8"))
+    .join("\n"),
+);
 
 /** The unconnected connection shape the census uses, for the same reason: nothing here dials. */
 const unconnected = (type: DatabaseType): DatabaseConnection =>
@@ -223,6 +258,17 @@ describe("the installed editor's language ids", () => {
       json: basic.has("json"),
       typescript: basic.has("typescript"),
     }).toEqual({ css: true, html: true, json: false, typescript: true });
+
+    // The editor core's own registrations, the third place (R13 D11): exactly `plaintext`, which neither
+    // set above holds, so the third extraction is load-bearing for it as `vs/language/` is for `json`.
+    expect([...core]).toEqual(["plaintext"]);
+    expect({ basic: basic.has("plaintext"), rich: rich.includes("plaintext") }).toEqual({ basic: false, rich: false });
+  });
+
+  test("the conformance helper's one fallback part language is an id the installed editor's core registers (R13 D11)", () => {
+    // The helper admits this one id beside a kind's declared language, so it has to be one the editor
+    // renders: read from the core's own files, never from the constant it is checked against.
+    expect(core.has(SOURCE_PART_FALLBACK_LANGUAGE)).toBe(true);
   });
 
   test("a language id this repository registers itself is not one the installed editor registers (#1085)", () => {
@@ -236,7 +282,7 @@ describe("the installed editor's language ids", () => {
   });
 
   test("every declared sourceLanguage is an id the installed editor registers", async () => {
-    const registered = new Set([...basic, ...rich]);
+    const registered = new Set([...basic, ...rich, ...core]);
     const declared = await everyDeclaredSourceLanguage();
 
     // The zero-iteration case of the loop below certifies NOTHING about the fleet, and a provider

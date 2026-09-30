@@ -1120,6 +1120,18 @@ async function assertSourceSurface(
 }
 
 /**
+ * The one language a source part may carry in place of its kind's declared `sourceLanguage` (etcd spec
+ * 4.4, R13 D11): Monaco's own `plaintext`, for a part whose text is not in the declared language.
+ *
+ * etcd's `key` kind declares `json` and answers a value that is not JSON as `plaintext`, so a text value
+ * is shown as text and never drawn with JSON diagnostics. Exactly one id, so every other part is still
+ * held to its kind's declaration. `tests/isolated/monaco-language-ids.test.ts` reads it out of the
+ * installed editor's core, where Monaco registers it outside the two sets that census reads for the
+ * declared languages, and holds this constant to that reading.
+ */
+export const SOURCE_PART_FALLBACK_LANGUAGE = "plaintext";
+
+/**
  * One document's own shape.
  *
  * A part carrying BOTH `text` and `unavailable` IS checked here, and the reason is a
@@ -1163,9 +1175,14 @@ function assertSourceDocument(
     if (part.text.trim() === "") {
       throw new Error(`readObjectSource("${kindId}") answered a part with no text, which is not a definition`);
     }
-    if (declaredLanguage !== undefined && part.language !== declaredLanguage) {
+    if (
+      declaredLanguage !== undefined &&
+      part.language !== declaredLanguage &&
+      part.language !== SOURCE_PART_FALLBACK_LANGUAGE
+    ) {
       throw new Error(
-        `kind "${kindId}" declares sourceLanguage "${declaredLanguage}" and the part carries "${part.language}"`,
+        `kind "${kindId}" declares sourceLanguage "${declaredLanguage}" and the part carries "${part.language}", ` +
+          `which is neither that language nor the one fallback "${SOURCE_PART_FALLBACK_LANGUAGE}"`,
       );
     }
   }

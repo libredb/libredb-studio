@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { applySourceBound, callerBoundTruncationReason, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
-import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { assertObjectSurface, SOURCE_PART_FALLBACK_LANGUAGE } from "../../helpers/object-surface-conformance";
 
 function fakeProvider(overrides: Record<string, any> = {}) {
   const base = {
@@ -2239,6 +2239,57 @@ describe("assertObjectSurface and a kind the Keys panel enumerates", () => {
     });
     await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
       /readObjectSource\("key"\) answered a part with no text, which is not a definition/,
+    );
+  });
+
+  // R13 D11: a key whose value is not JSON answers its Part 1 as `plaintext`, the one language a part may
+  // carry in place of the kind's declared one, so a text value is not drawn with JSON diagnostics.
+  test("admits a key part in plaintext, the one fallback in place of the declared sourceLanguage", async () => {
+    const provider = keyValueProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) =>
+        kind === "key" && path[0] === "/app/cfg"
+          ? {
+              path,
+              kind,
+              parts: [
+                {
+                  id: "value",
+                  label: "Value",
+                  ...applySourceBound("postgresql0", limit),
+                  language: SOURCE_PART_FALLBACK_LANGUAGE,
+                  form: "complete",
+                  origin: "stored",
+                },
+              ],
+            }
+          : answer(path, kind, limit),
+    });
+    expect(SOURCE_PART_FALLBACK_LANGUAGE).toBe("plaintext");
+    await expect(assertObjectSurface(provider as never, expectation)).resolves.toBeUndefined();
+  });
+
+  test("refuses a key part in any other language, naming the declared one and the one fallback", async () => {
+    const provider = keyValueProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) =>
+        kind === "key" && path[0] === "/app/cfg"
+          ? {
+              path,
+              kind,
+              parts: [
+                {
+                  id: "value",
+                  label: "Value",
+                  ...applySourceBound("postgresql0", limit),
+                  language: "lua",
+                  form: "complete",
+                  origin: "stored",
+                },
+              ],
+            }
+          : answer(path, kind, limit),
+    });
+    await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+      'kind "key" declares sourceLanguage "json" and the part carries "lua", which is neither that language nor the one fallback "plaintext"',
     );
   });
 
