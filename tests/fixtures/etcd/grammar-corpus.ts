@@ -13,6 +13,7 @@
  * container, and every stored key read back with `get -w json`. What etcdctl answered for a case
  * Studio refuses is noted on the case.
  */
+import type { CommandRefusalCode } from "@/lib/db/providers/keyvalue/etcd/commands";
 import type { LexRefusalCode, LexSection } from "@/lib/db/providers/keyvalue/etcd/lexer";
 
 /** A word as the lexer reads it: where its source starts and ends, and what it holds. */
@@ -50,7 +51,7 @@ export interface GrammarCorpusCase {
   /** What the parser answers: the command's kind and line, or the refusal's code and line. */
   readonly parse:
     | { readonly ok: true; readonly kind: string; readonly line: number }
-    | { readonly ok: false; readonly code: string; readonly line: number };
+    | { readonly ok: false; readonly code: CommandRefusalCode; readonly line: number };
 }
 
 /** A one-line command a shell would expand or refuse, which the lexer refuses at `column` (spec 5.1.1). */
