@@ -328,6 +328,16 @@ describe("reviveEtcdCapture", () => {
   test("a failure needs its class and message", () => {
     const revived = reviveEtcdCapture("etcd/x", { $captured: captured, outcome: "fail", payload: failure });
     expect(revived.payload).toBeInstanceOf(Error);
+    const typed = reviveEtcdCapture("etcd/x", {
+      $captured: captured,
+      outcome: "fail",
+      payload: { class: "TypeError", message: "fetch failed", code: "ECONNREFUSED" },
+    }).payload as Error & { code: string };
+    expect({ name: typed.name, message: typed.message, code: typed.code }).toEqual({
+      name: "TypeError",
+      message: "fetch failed",
+      code: "ECONNREFUSED",
+    });
     for (const payload of [{ message: "m", code: 3 }, { class: "Error", code: 3 }, null]) {
       expect(() => reviveEtcdCapture("etcd/x", { $captured: captured, outcome: "fail", payload })).toThrow(
         "etcd/x is a failure whose payload has no class and message",
@@ -433,6 +443,20 @@ describe("recordedEtcdWire", () => {
       liveCall(),
     );
     expect(created).toEqual(etcdFixture("etcd/txn-guarded-create"));
+  });
+
+  test("an absent linearizable matches a capture whose match holds false, as proto3 sends a false", async () => {
+    const pairs = [
+      ["etcd", "etcd/member-list-serializable"],
+      ["etcd-cluster", "etcd-cluster/member-list-serializable-no-leader"],
+    ] as const;
+    const answers = await Promise.all(
+      pairs.map(([service]) => recordedEtcdWire({ service }).transport({}).unary("Cluster/MemberList", {}, liveCall())),
+    );
+    pairs.forEach(([, serializable], i) => {
+      expect(etcdCapture(serializable).$captured.match).toEqual({ linearizable: false });
+      expect(answers[i]).toEqual(etcdFixture(serializable));
+    });
   });
 
   test("a list in the request matches only a list of the same length", async () => {
@@ -576,6 +600,25 @@ describe("recordedEtcdWire", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     controller.abort();
     await expect(waiting).rejects.toMatchObject({ code: 1 });
+    expect(wire.cancels).toEqual([]);
+  });
+
+  test("a read issued after the stream's signal aborted rejects as cancelled at once", async () => {
+    const wire = recordedEtcdWire({ answers: { "Lease/LeaseKeepAlive": [() => ({ messages: [], end: "open" })] } });
+    const controller = new AbortController();
+    const open = wire.transport({}).stream("Lease/LeaseKeepAlive", liveCall(controller.signal));
+    open.write({ ID: "1" });
+    controller.abort();
+    // A read that waits would leave bun with nothing to run and hang the file, so a timer bounds it.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stillWaiting = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("the read is still waiting")), 1000);
+    });
+    await expect(Promise.race([open.read(), stillWaiting])).rejects.toMatchObject({
+      code: 1,
+      details: "Cancelled on client",
+    });
+    clearTimeout(timer);
     expect(wire.cancels).toEqual([]);
   });
 
