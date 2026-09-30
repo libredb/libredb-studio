@@ -81,6 +81,8 @@ describe("the Gate column of spec 5.1.3, row by row", () => {
     ['del "it\'s/" --prefix', "'it'\\''s/'"],
     ["del --prefix -- -dash/", "-dash/"],
     ["del --prefix '/a\nb/'", '"/a\\nb/"'],
+    // A zero-width space is invisible bare and between single quotes, so the text to type spells it (spec 5.5).
+    ["del --prefix '/app/\u200bcfg'", '"/app/\\u200bcfg"'],
   ])("%j asks for the typed text %s, in the quoting of the command line", (text, typed) => {
     expect(gateRow(text)).toEqual({
       class: "write",

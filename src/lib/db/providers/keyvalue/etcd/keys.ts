@@ -12,7 +12,7 @@
  * its range end.
  */
 import type { EtcdByteRange, EtcdBytes, EtcdInt64 } from "./client";
-import { quoteGoString, quoteTxnWord, quoteWord } from "./lexer";
+import { holdsUnprintedRune, quoteGoString, quoteTxnWord, quoteWord } from "./lexer";
 
 // ============================================================================
 // Bytes and text
@@ -58,27 +58,22 @@ export function decodeUtf8(bytes: EtcdBytes): string | undefined {
   }
 }
 
-/** Unicode's control characters, C0, DEL and C1, which a one-line field cannot show (spec 5.5). */
-function holdsControlCharacter(text: string): boolean {
-  for (let index = 0; index < text.length; index++) {
-    const unit = text.charCodeAt(index);
-    if (unit < 0x20 || (unit >= 0x7f && unit <= 0x9f)) return true;
-  }
-  return false;
-}
-
 /** The word rule a key is written under: the command line's shell rule, or a txn body's (spec 5.1.1, 5.1.4). */
 export type KeyQuoting = "command-line" | "txn";
 
 /**
  * A key as a person reads and types it back (spec 5.5): in the quoting of the rule it was written
  * under, bare when a bare word reads back as the same bytes, and in Go `%q` under either rule when
- * it holds a control character or is not UTF-8, because the typed field is one line and the command
- * line has no escape for a byte that is not text.
+ * it is not UTF-8 or holds a rune Go's `%q` escapes because it does not print (lexer.ts
+ * `holdsUnprintedRune`: a control, a format character such as a bidi override or a zero-width space,
+ * a space other than U+0020, a separator, private use, unassigned). The typed field is one line, the
+ * command line has no escape for a byte that is not text, and such a rune between single quotes would
+ * still be invisible or reorder the line, so the text shown would not be the text typed. A key of
+ * printable runes past ASCII, such as `/app/é`, keeps the rule's quoting.
  */
 export function typedKey(key: EtcdBytes, quoting: KeyQuoting): string {
   const text = decodeUtf8(key);
-  if (text === undefined || holdsControlCharacter(text)) return quoteGoString(key);
+  if (text === undefined || holdsUnprintedRune(text)) return quoteGoString(key);
   return quoting === "command-line" ? quoteWord(text) : quoteTxnWord(key);
 }
 

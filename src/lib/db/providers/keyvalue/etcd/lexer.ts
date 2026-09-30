@@ -1279,6 +1279,21 @@ const GO_PRINTED = /^[\p{L}\p{M}\p{N}\p{P}\p{S}]$/u;
 const isGoPrint = (char: string): boolean => GO_PRINTED.test(char);
 
 /**
+ * Whether `text` holds a rune Go's strconv.IsPrint rejects, which %q writes as an escape because it
+ * does not show as itself: an ASCII control or DEL, or a character past ASCII that `isGoPrint` refuses
+ * (a C1 control, a format character such as a bidi override or a zero-width space, a space other than
+ * U+0020, a separator, private use, unassigned). The quote and the backslash, which %q escapes but
+ * which print, are not among them (spec 5.5).
+ */
+export function holdsUnprintedRune(text: string): boolean {
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    if (code < 0x80 ? code < 0x20 || code === 0x7f : !isGoPrint(char)) return true;
+  }
+  return false;
+}
+
+/**
  * A word that reads back as itself in both word rules and in a shell, so it needs no quotes:
  * letters, digits and `_-./:@%+=,^`, and the characters past ASCII that Go's %q prints as
  * themselves. It is conservative on purpose: glob characters, which the lexer reads as data, are

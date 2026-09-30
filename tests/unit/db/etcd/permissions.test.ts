@@ -323,6 +323,8 @@ describe("describeRange and describeScope (spec 5.6's may-read list)", () => {
     [point("/a b"), "'/a b'"],
     [prefixOf(utf8("/it's/")), "'/it'\\''s/' (prefix)"],
     [point("/a\nb"), '"/a\\nb"'],
+    // A bidi override would reorder the sentence, so the key is named Go-quoted (spec 5.5).
+    [prefixOf(utf8("/a\u202eb/")), '"/a\\u202eb/" (prefix)'],
   ])("describeRange(%#) is %s", (written, sentence) => {
     expect(describeRange(written)).toBe(sentence);
   });

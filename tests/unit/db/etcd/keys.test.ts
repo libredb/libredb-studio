@@ -244,14 +244,41 @@ describe("typedKey (spec 5.5)", () => {
     }
   });
 
-  test("the control characters are C0, DEL and C1 exactly, and the characters beside them keep the rule's quoting", () => {
+  test("the control characters are C0, DEL and C1 exactly, and the printable characters beside them keep the rule's quoting", () => {
     for (const quoting of ["command-line", "txn"] as const) {
       expect(typedKey(utf8("a\u001f"), quoting)).toBe('"a\\x1f"');
       expect(typedKey(utf8("a\u0080"), quoting)).toBe('"a\\u0080"');
       expect(typedKey(utf8("a\u009f"), quoting)).toBe('"a\\u009f"');
     }
     expect(typedKey(utf8("a~"), "command-line")).toBe("'a~'");
-    expect(typedKey(utf8("a\u00a0"), "command-line")).toBe("'a\u00a0'");
+    expect(typedKey(utf8("a b"), "command-line")).toBe("'a b'");
+  });
+
+  test.each([
+    ["U+202E, a right-to-left override", "\u202e", '"/a\\u202eb"'],
+    ["U+200B, a zero-width space", "\u200b", '"/a\\u200bb"'],
+    ["U+FEFF, a byte order mark", "\ufeff", '"/a\\ufeffb"'],
+    ["U+E000, private use", "\ue000", '"/a\\ue000b"'],
+    ["U+0378, unassigned", "\u0378", '"/a\\u0378b"'],
+    ["U+00A0, a no-break space", "\u00a0", '"/a\\u00a0b"'],
+    ["U+2028, a line separator", "\u2028", '"/a\\u2028b"'],
+    ["U+E0001, a language tag past the first plane", "\u{e0001}", '"/a\\U000e0001b"'],
+  ])("a key holding %s, a rune Go's %%q escapes, is typed Go-quoted under either rule", (_name, char, typed) => {
+    for (const quoting of ["command-line", "txn"] as const) {
+      expect(typedKey(utf8(`/a${char}b`), quoting)).toBe(typed);
+    }
+  });
+
+  test.each([
+    ["/app/\u00e9", "/app/\u00e9", "/app/\u00e9"],
+    ["/app/\u4e2d", "/app/\u4e2d", "/app/\u4e2d"],
+    ["/app/\u20ac", "/app/\u20ac", "/app/\u20ac"],
+    ["/app/a\u0301", "/app/a\u0301", "/app/a\u0301"],
+    ["/app/\u00e9 x", "'/app/\u00e9 x'", '"/app/\u00e9 x"'],
+    ["/app/\u4e2d$", "'/app/\u4e2d$'", '"/app/\u4e2d$"'],
+  ])("a key of runes Go prints, %j, keeps the rule's quoting", (text, commandLine, txn) => {
+    expect(typedKey(utf8(text), "command-line")).toBe(commandLine);
+    expect(typedKey(utf8(text), "txn")).toBe(txn);
   });
 
   test("a key that is not UTF-8 is typed in Go %q quoting, each byte past ASCII as \\xNN", () => {

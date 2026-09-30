@@ -11,6 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  holdsUnprintedRune,
   INITIAL_LEX_STATE,
   isFlagText,
   type LexLeadWord,
@@ -1265,6 +1266,28 @@ const HARD_TEXTS: readonly string[] = [
   ...NOT_PRINTED.map(([, char]) => `/app/${char}x`),
   ...PRINTED.map(([, char]) => `/app/${char}x`),
 ];
+
+describe("holdsUnprintedRune, Go's strconv.IsPrint over a text (spec 5.5)", () => {
+  test.each(NOT_PRINTED)("a text holding %s holds a rune Go's %%q escapes", (_name, char) => {
+    expect(holdsUnprintedRune(`a${char}b`)).toBe(true);
+    expect(holdsUnprintedRune(char)).toBe(true);
+  });
+
+  test.each(["\u0000", "\n", "\t", "\u007f"])("the ASCII control %j is one too", (char) => {
+    expect(holdsUnprintedRune(`a${char}`)).toBe(true);
+  });
+
+  test.each(PRINTED)("a text of %s and printable ASCII holds none", (_name, char) => {
+    expect(holdsUnprintedRune(`a${char}b`)).toBe(false);
+  });
+
+  test("printable ASCII, the space, the quote and the backslash among it, holds none", () => {
+    let ascii = "";
+    for (let code = 0x20; code < 0x7f; code++) ascii += String.fromCharCode(code);
+    expect(holdsUnprintedRune(ascii)).toBe(false);
+    expect(holdsUnprintedRune("")).toBe(false);
+  });
+});
 
 describe("quoteWord, the command line's quoting (spec 5.5, 6.4)", () => {
   test.each(["/app/config", "a-b_c.d:e@f%g+h=i,j^k", "-x", "é", "日本語", "0"])("%s stays bare", (text) => {
