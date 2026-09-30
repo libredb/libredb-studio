@@ -736,7 +736,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * THE KIND, at `src/app/api/db/objects/edit-plan/route.ts:89`: that route calls
  * `requireEditableKind(provider.getCapabilities(), kind, ...)` before it reaches the builder, on the
  * CONNECTED provider and never on the client's copy of the declaration, and its comment there cites
- * this docblock by name as the reason. `src/app/api/db/objects/edit-apply/route.ts:141` asks the same
+ * this docblock by name as the reason. `src/app/api/db/objects/edit-apply/route.ts:142` asks the same
  * question of the plan's kind, so neither half of the write path takes a caller's word for it.
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
