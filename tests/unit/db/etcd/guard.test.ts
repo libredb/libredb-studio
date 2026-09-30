@@ -124,6 +124,10 @@ describe("a txn (spec 5.1.3, 5.1.4, 5.5)", () => {
     });
   });
 
+  test("a read-only txn's operations are txn and its request words, as a txn that writes names them", () => {
+    expect(readEtcdOperations(txn('mod("k") > "0"', "", "get k", "", "get k2 --prefix"))).toEqual(["txn", "get"]);
+  });
+
   test("a txn with no request at all is a read", () => {
     expect(gateRow(txn('mod("k") > "0"'))).toMatchObject({ class: "read", gate: "none" });
   });
@@ -166,6 +170,17 @@ describe("a txn (spec 5.1.3, 5.1.4, 5.5)", () => {
     });
   });
 
+  test("two destructive ranges from one key to different ends are two targets, both listed (R13 D2)", () => {
+    expect(gateRow(txn("", "del /a --prefix", "del /a --from-key")).typedConfirmation).toEqual({
+      type: "connection-name",
+      targets: ["/a (prefix)", "/a (from key)"],
+    });
+    expect(gateRow(txn("", "del /a /b", "", "del /a /c")).typedConfirmation).toEqual({
+      type: "connection-name",
+      targets: ["/a to /b (range)", "/a to /c (range)"],
+    });
+  });
+
   test("two different prefix deletes ask for the connection's name and list both prefixes", () => {
     expect(gateRow(txn("", "del /a/ --prefix", "", "del /b/ --prefix")).typedConfirmation).toEqual({
       type: "connection-name",
@@ -202,6 +217,15 @@ describe("a txn (spec 5.1.3, 5.1.4, 5.5)", () => {
     ).toEqual({
       type: "connection-name",
       targets: ["/a to /b (range)", "/c (from key)", '"/q\\nr/" (prefix)', "every key"],
+    });
+  });
+
+  test("several targets are each listed in the Go quoting of a txn request, never the command line's", () => {
+    expect(
+      gateRow(txn("", 'del "/a b/" --prefix', 'del "/c d" "/c e"', "", 'del "/f g" --from-key')).typedConfirmation,
+    ).toEqual({
+      type: "connection-name",
+      targets: ['"/a b/" (prefix)', '"/c d" to "/c e" (range)', '"/f g" (from key)'],
     });
   });
 
