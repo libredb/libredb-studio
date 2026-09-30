@@ -27,8 +27,10 @@
  *
  * `tokenizeLine` reads one physical line from a state, which is what the tokens provider calls;
  * `splitWords` applies the same reading to every line of a text in turn, which is what the parser
- * calls, so the two cannot disagree (spec 3.3). Lines end at CRLF, CR or LF, as the editor's
- * model ends them.
+ * calls, so the two cannot disagree (spec 3.3). The state is bounded whatever the text holds: of the
+ * command line's words it keeps only how far they go among the leading tokens, and of a word still
+ * open only what those read, so the editor keeps one small state per line; `splitWords` joins the
+ * words' text itself, as it reads. Lines end at CRLF, CR or LF, as the editor's model ends them.
  */
 
 // ============================================================================
@@ -45,23 +47,32 @@ export type LexQuote = "none" | "single" | "double";
  */
 export type LexSection = "command" | "compares" | "success" | "failure" | "after-body" | "after-command";
 
-/** A command-line word's text, with one mark per UTF-16 unit: "u" unquoted, "q" quoted or escaped. */
-export interface LexWordText {
-  readonly text: string;
-  readonly quoting: string;
-}
+/**
+ * How far a command line's words go among the leading tokens of spec 5.1.2, which decide its command
+ * word, named by the first role the next word may take: "prompt" for the first word, "env" after a
+ * prompt, "assignment" after env or an assignment (the etcdctl word may come there too), "flag" after
+ * the etcdctl word or a flag, and "flag-value" after --command-timeout; or, once the command word is
+ * read, whether it is "txn" or any other "command".
+ */
+export type LexLead = "prompt" | "env" | "assignment" | "flag" | "flag-value" | "txn" | "command";
 
-/** A command-line word still open at the end of a physical line: a quote, or a backslash-newline. */
-export interface LexPartialWord extends LexWordText {
-  /** 0-based column of the word's first character, on the line it started on. */
-  readonly column: number;
-  /** Line breaks from the word's first line to the line just read. */
-  readonly linesBack: number;
-  /** Where the word's last source character ends: on the line just read (0) or one before (1). */
-  readonly lastLinesBack: number;
-  readonly lastEnd: number;
-  /** The word began with an unquoted `-`, which the tokens provider draws as a flag. */
-  readonly flag: boolean;
+/**
+ * What the leading tokens read of a command-line word still open at the end of a line: its start, its
+ * end, and whether it begins NAME=. It is bounded whatever the word's length, so a word that runs over
+ * many lines leaves a state of the same size behind each of them.
+ */
+export interface LexLeadWord {
+  /** The word's first units, at most 18: one more than --command-timeout, the longest word the leading tokens name. */
+  readonly head: string;
+  /** One mark per unit of `head`: "u" unquoted, "q" quoted or escaped. */
+  readonly quoting: string;
+  /** The word's longest end that /etcdctl begins with, which a path to etcdctl ends in. */
+  readonly tail: string;
+  /**
+   * Whether the word begins NAME=, an assignment: "start" before its first unit, "name" while each unit
+   * so far is an unquoted name character, then "yes" at an unquoted = or "no" at anything else.
+   */
+  readonly assignment: "start" | "name" | "yes" | "no";
 }
 
 export interface LexState {
@@ -70,12 +81,21 @@ export interface LexState {
   readonly quote: LexQuote;
   /** Command line only: the line just read ended with a backslash-newline outside single quotes. */
   readonly continued: boolean;
-  /** Command line only: its words read so far, from which the command word decides the next section. */
-  readonly words: readonly LexWordText[];
-  readonly partial?: LexPartialWord;
+  /** Command line only: a word runs on past the end of the line just read. */
+  readonly inWord: boolean;
+  /** Command line only: how far its words go among the leading tokens, which decides the next section. */
+  readonly lead: LexLead;
+  /** Command line only: what the leading tokens read of the word still open, while they still read words. */
+  readonly leadWord?: LexLeadWord;
 }
 
-export const INITIAL_LEX_STATE: LexState = { section: "command", quote: "none", continued: false, words: [] };
+export const INITIAL_LEX_STATE: LexState = {
+  section: "command",
+  quote: "none",
+  continued: false,
+  inWord: false,
+  lead: "prompt",
+};
 
 export type LexTokenKind = "word" | "flag" | "string" | "comment" | "operator" | "whitespace" | "invalid";
 
@@ -89,21 +109,11 @@ export interface LexToken {
 /** Whether two states are the same, for the tokens provider's state object. */
 export function lexStatesEqual(a: LexState, b: LexState): boolean {
   if (a.section !== b.section || a.quote !== b.quote || a.continued !== b.continued) return false;
-  if (a.words.length !== b.words.length) return false;
-  if (a.words.some((word, index) => word.text !== b.words[index].text || word.quoting !== b.words[index].quoting))
-    return false;
-  if (a.partial === undefined || b.partial === undefined) return a.partial === b.partial;
-  const x = a.partial;
-  const y = b.partial;
-  return (
-    x.text === y.text &&
-    x.quoting === y.quoting &&
-    x.column === y.column &&
-    x.linesBack === y.linesBack &&
-    x.lastLinesBack === y.lastLinesBack &&
-    x.lastEnd === y.lastEnd &&
-    x.flag === y.flag
-  );
+  if (a.inWord !== b.inWord || a.lead !== b.lead) return false;
+  if (a.leadWord === undefined || b.leadWord === undefined) return a.leadWord === b.leadWord;
+  const x = a.leadWord;
+  const y = b.leadWord;
+  return x.head === y.head && x.quoting === y.quoting && x.tail === y.tail && x.assignment === y.assignment;
 }
 
 // ============================================================================
@@ -278,10 +288,9 @@ function positionOf(text: string, offset: number): { readonly line: number; read
 // Refusal sentences
 // ============================================================================
 
-/** A refusal found while reading a line, placed relative to it until the line's number is known. */
+/** A refusal found while reading a line, at a column of it, until the line's number is known. */
 interface LineRefusal {
   readonly code: LexRefusalCode;
-  readonly linesBack: number;
   readonly column: number;
   readonly sentence: (line: number, column: number) => string;
 }
@@ -336,34 +345,46 @@ const compareSentence =
 // The command line: the POSIX shell's quoting (spec 5.1.1)
 // ============================================================================
 
-interface WordBuilder {
+/** A command-line word's text, with one mark per UTF-16 unit: "u" unquoted, "q" quoted or escaped. */
+interface WordText {
+  readonly text: string;
+  readonly quoting: string;
+}
+
+/** The part of a command-line word that one physical line holds. */
+interface WordPart extends WordText {
+  /** The part carries on a word a line before left open; otherwise the word starts on this line, at `column`. */
+  readonly resumed: boolean;
+  readonly column: number;
+  /** The column just past the last source character the part took; undefined when it took none on this line. */
+  readonly end?: number;
+}
+
+interface PartBuilder {
   text: string;
   quoting: string;
-  column: number;
-  linesBack: number;
-  lastLinesBack: number;
-  lastEnd: number;
-  flag: boolean;
-}
-
-/** A word the command line finished on the line just read, placed relative to it. */
-interface ScannedWord extends LexWordText {
+  readonly resumed: boolean;
   readonly column: number;
-  readonly linesBack: number;
-  readonly endLinesBack: number;
-  readonly endColumn: number;
+  end?: number;
+  /** The word began on this line with an unquoted `-`, which the tokens provider draws as a flag. */
+  readonly flag: boolean;
 }
 
+/** What a physical line leaves open for the next: a quote, a backslash-newline, a word. */
 interface ShellCarry {
   readonly quote: LexQuote;
   readonly continued: boolean;
-  readonly partial?: LexPartialWord;
+  readonly inWord: boolean;
 }
 
 interface ShellScan {
   readonly tokens: readonly LexToken[];
-  readonly words: readonly ScannedWord[];
+  /** The words the line finished, each as the part of it the line holds. */
+  readonly words: readonly WordPart[];
+  /** The part of a word the line leaves open. */
+  readonly open?: WordPart;
   readonly carry: ShellCarry;
+  /** Refusals of single characters: a $, a backquote, an operator. A whole word's are its reader's. */
   readonly refusals: readonly LineRefusal[];
 }
 
@@ -414,60 +435,67 @@ function hasAssignmentTilde(text: string, quoting: string): boolean {
   return false;
 }
 
-/** The refusals only a whole word shows, placed at the word's first character. */
-function wordRefusals(word: WordBuilder): LineRefusal[] {
-  const at = { linesBack: word.linesBack, column: word.column };
-  const refusals: LineRefusal[] = [];
-  if (word.text.startsWith("~") && word.quoting[0] === "u")
-    refusals.push({ code: "shell-expansion", ...at, sentence: TILDE });
-  if (hasAssignmentTilde(word.text, word.quoting))
-    refusals.push({ code: "shell-expansion", ...at, sentence: ASSIGNMENT_TILDE });
-  if (hasBraceExpansion(word.text, word.quoting)) refusals.push({ code: "shell-expansion", ...at, sentence: BRACES });
-  return refusals;
+/** A command-line word read whole, across as many lines as it runs over, and where it starts and ends. */
+interface JoinedWord extends WordText {
+  readonly line: number;
+  readonly column: number;
+  readonly endLine: number;
+  readonly endColumn: number;
+}
+
+/** The refusals only a whole word shows, at its first character. */
+function wordRefusals(word: JoinedWord): LexRefusal[] {
+  const sentences: LineRefusal["sentence"][] = [];
+  if (word.text.startsWith("~") && word.quoting[0] === "u") sentences.push(TILDE);
+  if (hasAssignmentTilde(word.text, word.quoting)) sentences.push(ASSIGNMENT_TILDE);
+  if (hasBraceExpansion(word.text, word.quoting)) sentences.push(BRACES);
+  return sentences.map((sentence) => ({
+    code: "shell-expansion",
+    line: word.line,
+    column: word.column,
+    message: sentence(word.line, word.column + 1),
+  }));
 }
 
 /** A `$` stays data only where no shell reads anything after it (measured, see the docblock). */
 const dollarIsData = (next: string | undefined, insideDoubleQuotes: boolean): boolean =>
   next === undefined || isBlank(next) || (insideDoubleQuotes && next === '"');
 
-function resumeWord(partial: LexPartialWord): WordBuilder {
-  return { ...partial, linesBack: partial.linesBack + 1, lastLinesBack: partial.lastLinesBack + 1 };
-}
+const wordPart = (builder: PartBuilder): WordPart => ({
+  text: builder.text,
+  quoting: builder.quoting,
+  resumed: builder.resumed,
+  column: builder.column,
+  ...(builder.end === undefined ? {} : { end: builder.end }),
+});
 
 /** Reads one physical line by the shell's quoting, from what the line before left open. */
 function scanShellLine(line: string, carry: ShellCarry, from = 0): ShellScan {
   const sink = new TokenSink();
-  const words: ScannedWord[] = [];
+  const words: WordPart[] = [];
   const refusals: LineRefusal[] = [];
   let quote = carry.quote;
   let continued = false;
-  let word: WordBuilder | undefined = carry.partial === undefined ? undefined : resumeWord(carry.partial);
+  let word: PartBuilder | undefined = carry.inWord
+    ? { text: "", quoting: "", resumed: true, column: 0, flag: false }
+    : undefined;
   // A quote open across the line break keeps the break as data, unless it was a backslash-newline.
   if (word !== undefined && (quote === "single" || (quote === "double" && !carry.continued))) {
     word.text += "\n";
     word.quoting += "q";
   }
 
-  const take = (current: WordBuilder, text: string, mark: "u" | "q", end: number): void => {
+  const take = (current: PartBuilder, text: string, mark: "u" | "q", end: number): void => {
     current.text += text;
     current.quoting += mark.repeat(text.length);
-    current.lastLinesBack = 0;
-    current.lastEnd = end;
+    current.end = end;
   };
-  const finish = (current: WordBuilder): void => {
-    words.push({
-      text: current.text,
-      quoting: current.quoting,
-      column: current.column,
-      linesBack: current.linesBack,
-      endLinesBack: current.lastLinesBack,
-      endColumn: current.lastEnd,
-    });
-    refusals.push(...wordRefusals(current));
+  const finish = (current: PartBuilder): void => {
+    words.push(wordPart(current));
     word = undefined;
   };
   const refuse = (sentence: LineRefusal["sentence"], code: LexRefusalCode, column: number): void => {
-    refusals.push({ code, linesBack: 0, column, sentence });
+    refusals.push({ code, column, sentence });
   };
 
   let pos = from;
@@ -537,22 +565,14 @@ function scanShellLine(line: string, carry: ShellCarry, from = 0): ShellScan {
       if (word === undefined) sink.add("whitespace", pos, pos + 1);
       else {
         take(word, "", "u", pos + 1);
-        sink.add(word.flag && word.linesBack === 0 ? "flag" : "word", pos, pos + 1);
+        sink.add(word.flag ? "flag" : "word", pos, pos + 1);
       }
       pos += 1;
       continue;
     }
-    const current: WordBuilder = word ?? {
-      text: "",
-      quoting: "",
-      column: pos,
-      linesBack: 0,
-      lastLinesBack: 0,
-      lastEnd: pos,
-      flag: char === "-",
-    };
+    const current: PartBuilder = word ?? { text: "", quoting: "", resumed: false, column: pos, flag: char === "-" };
     word = current;
-    const kind: LexTokenKind = current.flag && current.linesBack === 0 ? "flag" : "word";
+    const kind: LexTokenKind = current.flag ? "flag" : "word";
     if (char === "\\") {
       take(current, line[pos + 1], "q", pos + 2);
       sink.add(kind, pos, pos + 2);
@@ -574,43 +594,91 @@ function scanShellLine(line: string, carry: ShellCarry, from = 0): ShellScan {
     }
   }
 
-  const open = word as WordBuilder | undefined;
+  const open = word as PartBuilder | undefined;
   if (quote !== "none" || continued) {
-    return { tokens: sink.tokens, words, refusals, carry: { quote, continued, partial: open && { ...open } } };
+    const carried: ShellCarry = { quote, continued, inWord: open !== undefined };
+    if (open === undefined) return { tokens: sink.tokens, words, refusals, carry: carried };
+    return { tokens: sink.tokens, words, refusals, carry: carried, open: wordPart(open) };
   }
   if (open !== undefined) finish(open);
-  return { tokens: sink.tokens, words, refusals, carry: { quote: "none", continued: false } };
+  return { tokens: sink.tokens, words, refusals, carry: { quote: "none", continued: false, inWord: false } };
 }
 
-const isPrompt = (word: LexWordText): boolean => (word.text === "$" || word.text === "%") && word.quoting === "u";
-const isAssignment = (word: LexWordText): boolean => {
-  const name = NAME_ASSIGNMENT.exec(word.text);
-  return name !== null && isUnquoted(word.quoting, 0, name[0].length);
-};
-const isEtcdctlWord = (text: string): boolean => text === "etcdctl" || text.endsWith("/etcdctl");
 /** pflag's reading of a word as a flag: it begins with - and is longer than - alone. */
 export const isFlagText = (text: string): boolean => text.length > 1 && text.startsWith("-");
 
-/**
- * What a documented command carries before its command word (spec 5.1.2): a prompt, `env`, a
- * run of assignments, an `etcdctl` word that may carry a path, then global flags, where
- * `--command-timeout` written without `=` takes the next word. The parser refuses what does not
- * belong; this only finds where the command word stands.
- */
-function leadingTokens(words: readonly LexWordText[]): LeadingTokens {
-  const roles: LeadRole[] = [];
-  let index = 0;
-  if (index < words.length && isPrompt(words[index])) roles[index++] = "prompt";
-  if (index < words.length && words[index].text === "env") roles[index++] = "env";
-  while (index < words.length && isAssignment(words[index])) roles[index++] = "assignment";
-  if (index < words.length && isEtcdctlWord(words[index].text)) roles[index++] = "etcdctl";
-  while (index < words.length && isFlagText(words[index].text)) {
-    const takesValue = words[index].text === "--command-timeout";
-    roles[index++] = "flag";
-    if (takesValue && index < words.length) roles[index++] = "flag-value";
+const PROMPTS: ReadonlySet<string> = new Set(["$", "%"]);
+const TIMEOUT_WORD = "--command-timeout";
+const ETCDCTL_PATH = "/etcdctl";
+/** One more unit than the longest word the leading tokens compare whole, so a head this long is none of them. */
+const LEAD_HEAD = TIMEOUT_WORD.length + 1;
+const NAME_FIRST = /^[A-Za-z_]$/;
+const NAME_REST = /^[A-Za-z0-9_]$/;
+
+const START_LEAD_WORD: LexLeadWord = { head: "", quoting: "", tail: "", assignment: "start" };
+
+/** The longest end of `text` that /etcdctl begins with. */
+function etcdctlTail(text: string): string {
+  for (let length = Math.min(text.length, ETCDCTL_PATH.length); length > 0; length--) {
+    const end = text.slice(text.length - length);
+    if (ETCDCTL_PATH.startsWith(end)) return end;
   }
-  return { roles, commandIndex: index };
+  return "";
 }
+
+/**
+ * What the leading tokens read of a word, `word` with `part` added to its end: the same as of the whole
+ * word read at once. The longest end /etcdctl begins with lies within the old one and the part's last
+ * units, since an end longer than the part is the old word's end with the part after it.
+ */
+function extendLeadWord(word: LexLeadWord, part: WordText): LexLeadWord {
+  let assignment = word.assignment;
+  for (let index = 0; index < part.text.length && (assignment === "start" || assignment === "name"); index++) {
+    const char = part.text[index];
+    if (part.quoting[index] !== "u") assignment = "no";
+    else if (assignment === "name" && char === "=") assignment = "yes";
+    else assignment = (assignment === "start" ? NAME_FIRST : NAME_REST).test(char) ? "name" : "no";
+  }
+  const room = LEAD_HEAD - word.head.length;
+  return {
+    head: word.head + part.text.slice(0, room),
+    quoting: word.quoting + part.quoting.slice(0, room),
+    tail: etcdctlTail(word.tail + part.text.slice(-ETCDCTL_PATH.length)),
+    assignment,
+  };
+}
+
+/** The role a command-line word takes: a leading token's, the command word's, or an argument's after it. */
+type WordRole = LeadRole | "command" | "argument";
+
+/** Where the leading tokens stand after one more word, and the role that word takes. */
+interface LeadStep {
+  readonly lead: LexLead;
+  readonly role: WordRole;
+}
+
+/** The stages at which the leading tokens still read a word, in their order (spec 5.1.2). */
+const READING: readonly LexLead[] = ["prompt", "env", "assignment", "flag"];
+
+/**
+ * What a documented command carries before its command word (spec 5.1.2), read one word at a time: a
+ * prompt, `env`, a run of assignments, an `etcdctl` word that may carry a path, then global flags, where
+ * `--command-timeout` written without `=` takes the next word. The parser refuses what does not belong;
+ * this only finds where the command word stands.
+ */
+function readLeadWord(lead: LexLead, word: LexLeadWord): LeadStep {
+  const stage = READING.indexOf(lead);
+  if (stage <= 0 && PROMPTS.has(word.head) && word.quoting === "u") return { lead: "env", role: "prompt" };
+  if (stage <= 1 && word.head === "env") return { lead: "assignment", role: "env" };
+  if (stage <= 2 && word.assignment === "yes") return { lead: "assignment", role: "assignment" };
+  if (stage <= 2 && (word.head === "etcdctl" || word.tail === ETCDCTL_PATH)) return { lead: "flag", role: "etcdctl" };
+  if (isFlagText(word.head)) return { lead: word.head === TIMEOUT_WORD ? "flag-value" : "flag", role: "flag" };
+  return { lead: word.head === "txn" ? "txn" : "command", role: "command" };
+}
+
+/** A word the leading tokens do not read: --command-timeout's value, or an argument after the command word. */
+const passLeadWord = (lead: LexLead): LeadStep =>
+  lead === "flag-value" ? { lead: "flag", role: "flag-value" } : { lead, role: "argument" };
 
 // ============================================================================
 // The txn body: etcdctl's own reading (spec 5.1.4)
@@ -762,7 +830,7 @@ const bodyWord = (line: string, column: number, endColumn: number): BodyWord => 
 function readCompare(line: string, from: number, to: number, sink: TokenSink): BodyReading {
   const shape = (what: string): BodyReading => {
     sink.add("invalid", from, to);
-    return { refusals: [{ code: "txn-syntax", linesBack: 0, column: from, sentence: compareSentence(what) }] };
+    return { refusals: [{ code: "txn-syntax", column: from, sentence: compareSentence(what) }] };
   };
   type Part = { readonly bytes: Uint8Array; readonly end: number };
   const quoted = (at: number, part: "key" | "value"): Part | BodyReading => {
@@ -772,7 +840,7 @@ function readCompare(line: string, from: number, to: number, sink: TokenSink): B
     if (read.kind === "escape") {
       sink.add("invalid", from, to);
       return {
-        refusals: [{ code: "txn-quoting", linesBack: 0, column: read.at, sentence: escapeSentence(read.escape) }],
+        refusals: [{ code: "txn-quoting", column: read.at, sentence: escapeSentence(read.escape) }],
       };
     }
     return { bytes: read.bytes, end: read.end };
@@ -827,12 +895,12 @@ function readRequest(line: string, from: number, to: number, sink: TokenSink): B
   const words: BodyWord[] = [];
   const refusals: LineRefusal[] = [];
   const openQuote = (at: number): void => {
-    refusals.push({ code: "txn-quoting", linesBack: 0, column: at, sentence: openQuoteSentence });
+    refusals.push({ code: "txn-quoting", column: at, sentence: openQuoteSentence });
     sink.add("invalid", at, at + 1);
   };
   const closed = (end: number): void => {
     if (end < to && !isArgifySpace(line[end]))
-      refusals.push({ code: "txn-quoting", linesBack: 0, column: end, sentence: adjacentSentence });
+      refusals.push({ code: "txn-quoting", column: end, sentence: adjacentSentence });
   };
   let pos = from;
   while (pos < to) {
@@ -849,7 +917,7 @@ function readRequest(line: string, from: number, to: number, sink: TokenSink): B
         continue;
       }
       if (read.kind === "escape") {
-        refusals.push({ code: "txn-quoting", linesBack: 0, column: read.at, sentence: escapeSentence(read.escape) });
+        refusals.push({ code: "txn-quoting", column: read.at, sentence: escapeSentence(read.escape) });
         sink.add("invalid", pos, read.end);
       } else {
         words.push({ bytes: read.bytes, column: pos, endColumn: read.end });
@@ -893,29 +961,41 @@ interface LineReading {
   readonly tokens: readonly LexToken[];
   readonly state: LexState;
   readonly role: LexLineRole;
-  /** Command-line words the line finished. */
-  readonly commandWords: readonly ScannedWord[];
+  /** The command-line words the line finished, each as the part of it the line holds, and each one's role. */
+  readonly parts: readonly WordPart[];
+  readonly roles: readonly WordRole[];
+  /** The part of a command-line word the line leaves open. */
+  readonly open?: WordPart;
   readonly body?: BodyReading;
   readonly refusals: readonly LineRefusal[];
 }
 
 function readCommandLine(line: string, state: LexState): LineReading {
   const scan = scanShellLine(line, state);
-  const words = [...state.words, ...scan.words.map(({ text, quoting }) => ({ text, quoting }))];
-  const logical = words.length > 0 || scan.carry.partial !== undefined || state.partial !== undefined;
+  // A word the line before left open is read on from what the state kept of it, which is all the leading
+  // tokens read of it while they still read words.
+  const leadWordOf = (part: WordPart): LexLeadWord =>
+    extendLeadWord(part.resumed ? (state.leadWord as LexLeadWord) : START_LEAD_WORD, part);
+  let lead = state.lead;
+  const roles: WordRole[] = [];
+  for (const part of scan.words) {
+    const step = READING.includes(lead) ? readLeadWord(lead, leadWordOf(part)) : passLeadWord(lead);
+    lead = step.lead;
+    roles.push(step.role);
+  }
+  // A line that resumes a word finishes it, which moves the lead past "prompt", or leaves it open.
+  const logical = lead !== "prompt" || scan.open !== undefined;
   const role: LexLineRole = logical ? "command" : scan.tokens.some((t) => t.kind === "comment") ? "comment" : "blank";
   let next: LexState;
   if (scan.carry.quote !== "none" || scan.carry.continued) {
-    next = { section: "command", quote: scan.carry.quote, continued: scan.carry.continued, words };
-    if (scan.carry.partial !== undefined) next = { ...next, partial: scan.carry.partial };
-  } else if (words.length === 0) {
+    next = { section: "command", ...scan.carry, lead };
+    if (scan.open !== undefined && READING.includes(lead)) next = { ...next, leadWord: leadWordOf(scan.open) };
+  } else if (lead === "prompt") {
     next = INITIAL_LEX_STATE;
   } else {
-    const commandWord = words[leadingTokens(words).commandIndex];
-    const section: LexSection = commandWord?.text === "txn" ? "compares" : "after-command";
-    next = { section, quote: "none", continued: false, words: [] };
+    next = { ...INITIAL_LEX_STATE, section: lead === "txn" ? "compares" : "after-command" };
   }
-  return { tokens: scan.tokens, state: next, role, commandWords: scan.words, refusals: scan.refusals };
+  return { tokens: scan.tokens, state: next, role, parts: scan.words, roles, open: scan.open, refusals: scan.refusals };
 }
 
 function readAfterCommandLine(line: string, state: LexState): LineReading {
@@ -928,7 +1008,7 @@ function readAfterCommandLine(line: string, state: LexState): LineReading {
     role = line[start] === "#" ? "comment" : "content";
     sink.add(role === "comment" ? "comment" : "invalid", start, line.length);
   }
-  return { tokens: sink.tokens, state, role, commandWords: [], refusals: [] };
+  return { tokens: sink.tokens, state, role, parts: [], roles: [], refusals: [] };
 }
 
 function readBodyLine(line: string, state: LexState): LineReading {
@@ -940,7 +1020,7 @@ function readBodyLine(line: string, state: LexState): LineReading {
   if (from > 0) sink.add("whitespace", 0, from);
   const done = (role: LexLineRole, body?: BodyReading, next: LexState = state): LineReading => {
     if (to < line.length) sink.add("whitespace", to, line.length);
-    return { tokens: sink.tokens, state: next, role, commandWords: [], body, refusals: body?.refusals ?? [] };
+    return { tokens: sink.tokens, state: next, role, parts: [], roles: [], body, refusals: body?.refusals ?? [] };
   };
   if (from === to) return done("blank", undefined, { ...state, section: NEXT_BODY_SECTION[state.section] });
   if (line[from] === "#") {
@@ -983,23 +1063,50 @@ const toWord = (bytes: Uint8Array, text: string, start: [number, number], end: [
   endColumn: end[1],
 });
 
-function commandWord(scanned: ScannedWord, line: number): Word {
-  return toWord(
-    encoder.encode(scanned.text),
-    scanned.text,
-    [line - scanned.linesBack, scanned.column],
-    [line - scanned.endLinesBack, scanned.endColumn],
-  );
+const commandWord = (word: JoinedWord): Word =>
+  toWord(encoder.encode(word.text), word.text, [word.line, word.column], [word.endLine, word.endColumn]);
+
+/** `part` added to the word a line before left open, or a word of its own when it starts on `line`. */
+function joinPart(open: JoinedWord | undefined, part: WordPart, line: number): JoinedWord {
+  // A part that starts its word took its first character, so it has an end.
+  if (!part.resumed) {
+    const end = part.end as number;
+    return { text: part.text, quoting: part.quoting, line, column: part.column, endLine: line, endColumn: end };
+  }
+  // A line resumes a word only when the line before left one open.
+  const word = open as JoinedWord;
+  return {
+    ...word,
+    text: word.text + part.text,
+    quoting: word.quoting + part.quoting,
+    ...(part.end === undefined ? {} : { endLine: line, endColumn: part.end }),
+  };
+}
+
+/**
+ * The whole words a line's parts finish and the word it leaves open. Only a line's first part can resume
+ * the word a line before left open, and its open part only when it finishes none.
+ */
+function joinLine(
+  open: JoinedWord | undefined,
+  parts: readonly WordPart[],
+  rest: WordPart | undefined,
+  line: number,
+): { readonly words: readonly JoinedWord[]; readonly open: JoinedWord | undefined } {
+  const words = parts.map((part) => joinPart(open, part, line));
+  return { words, open: rest === undefined ? undefined : joinPart(open, rest, line) };
 }
 
 function lineWord(word: BodyWord, line: number): Word {
   return toWord(word.bytes, lossyDecoder.decode(word.bytes), [line, word.column], [line, word.endColumn]);
 }
 
-const placeRefusal = (refusal: LineRefusal, line: number): LexRefusal => {
-  const at = line - refusal.linesBack;
-  return { code: refusal.code, line: at, column: refusal.column, message: refusal.sentence(at, refusal.column + 1) };
-};
+const placeRefusal = (refusal: LineRefusal, line: number): LexRefusal => ({
+  code: refusal.code,
+  line,
+  column: refusal.column,
+  message: refusal.sentence(line, refusal.column + 1),
+});
 
 const earliest = (refusals: readonly LexRefusal[]): LexRefusal =>
   refusals.reduce((first, next) =>
@@ -1007,10 +1114,15 @@ const earliest = (refusals: readonly LexRefusal[]): LexRefusal =>
   );
 
 /** What a text still holds open when it ends: a quote, or a backslash-newline with no next line. */
-function openAtEnd(state: ShellCarry, lastText: string, lastLine: number): LexRefusal | undefined {
-  if (state.quote !== "none" && state.partial !== undefined) {
-    const line = lastLine - state.partial.linesBack;
-    const column = state.partial.column;
+function openAtEnd(
+  state: ShellCarry,
+  open: JoinedWord | undefined,
+  lastText: string,
+  lastLine: number,
+): LexRefusal | undefined {
+  if (state.quote !== "none") {
+    // A quote opens inside a word, so a word is open.
+    const { line, column } = open as JoinedWord;
     return { code: "unclosed-quote", line, column, message: unclosedSentence(state.quote, line, column + 1) };
   }
   if (state.continued) {
@@ -1044,18 +1156,25 @@ export function splitWords(text: string): SplitResult {
   const physical = physicalLines(text, 0);
   const lines: SplitLine[] = [];
   const command: Word[] = [];
-  const commandTexts: LexWordText[] = [];
+  const roles: LeadRole[] = [];
+  let commandIndex: number | undefined;
   const refusals: LexRefusal[] = [];
+  let open: JoinedWord | undefined;
   let state = INITIAL_LEX_STATE;
   physical.forEach(({ text: lineText }, index) => {
     const line = index + 1;
     const reading = readLine(lineText, state);
-    for (const scanned of reading.commandWords) {
-      command.push(commandWord(scanned, line));
-      commandTexts.push({ text: scanned.text, quoting: scanned.quoting });
-    }
-    const body = reading.body;
     const placed = reading.refusals.map((refusal) => placeRefusal(refusal, line));
+    const joined = joinLine(open, reading.parts, reading.open, line);
+    joined.words.forEach((word, position) => {
+      placed.push(...wordRefusals(word));
+      command.push(commandWord(word));
+      const role = reading.roles[position];
+      if (role === "command") commandIndex = command.length - 1;
+      else if (role !== "argument") roles.push(role);
+    });
+    open = joined.open;
+    const body = reading.body;
     const start = reading.tokens.find((token) => token.kind !== "whitespace")?.start ?? lineText.length;
     let entry: SplitLine = { line, text: lineText, start, section: state.section, role: reading.role };
     if (body === undefined) refusals.push(...placed);
@@ -1077,11 +1196,12 @@ export function splitWords(text: string): SplitResult {
     state = reading.state;
   });
   if (state.section === "command") {
-    const open = openAtEnd(state, physical[physical.length - 1].text, physical.length);
-    if (open !== undefined) refusals.push(open);
+    const refusal = openAtEnd(state, open, physical[physical.length - 1].text, physical.length);
+    if (refusal !== undefined) refusals.push(refusal);
   }
   if (refusals.length > 0) return { ok: false, refusal: earliest(refusals) };
-  return { ok: true, split: { lines, command, lead: leadingTokens(commandTexts) } };
+  // With no command word, its index is the count of the words, as LeadingTokens states.
+  return { ok: true, split: { lines, command, lead: { roles, commandIndex: commandIndex ?? command.length } } };
 }
 
 /**
@@ -1100,7 +1220,8 @@ export function lexLogicalLine(
   const physical = physicalLines(text, startOffset - first.column);
   const words: Word[] = [];
   const refusals: LexRefusal[] = [];
-  let carry: ShellCarry = { quote: "none", continued: false };
+  let carry: ShellCarry = { quote: "none", continued: false, inWord: false };
+  let open: JoinedWord | undefined;
   for (let index = 0; index < physical.length; index++) {
     const line = first.line + index;
     const from = index === 0 ? first.column : 0;
@@ -1111,8 +1232,13 @@ export function lexLogicalLine(
       return { ok: false, refusal: { code: "not-text", line, column, message: surrogateSentence(line, column + 1) } };
     }
     const scan = scanShellLine(lineText, carry, from);
-    words.push(...scan.words.map((scanned) => commandWord(scanned, line)));
     refusals.push(...scan.refusals.map((refusal) => placeRefusal(refusal, line)));
+    const joined = joinLine(open, scan.words, scan.open, line);
+    for (const word of joined.words) {
+      refusals.push(...wordRefusals(word));
+      words.push(commandWord(word));
+    }
+    open = joined.open;
     carry = scan.carry;
     if (carry.quote === "none" && !carry.continued) {
       if (refusals.length > 0) return { ok: false, refusal: earliest(refusals) };
@@ -1120,8 +1246,8 @@ export function lexLogicalLine(
     }
   }
   const lastLine = first.line + physical.length - 1;
-  const open = openAtEnd(carry, physical[physical.length - 1].text, lastLine) as LexRefusal;
-  return { ok: false, refusal: earliest([...refusals, open]) };
+  const unclosed = openAtEnd(carry, open, physical[physical.length - 1].text, lastLine) as LexRefusal;
+  return { ok: false, refusal: earliest([...refusals, unclosed]) };
 }
 
 // ============================================================================

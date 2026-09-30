@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 import {
   INITIAL_LEX_STATE,
   isFlagText,
+  type LexLeadWord,
   type LexState,
   type LexToken,
   type LexTokenKind,
@@ -54,6 +55,15 @@ function bodyLine(text: string, line: number): SplitLine {
   const found = split(text).lines.find((entry) => entry.line === line);
   if (found === undefined) throw new Error(`no line ${line}`);
   return found;
+}
+
+/** The state tokenizeLine leaves after each of `lines`, as the editor's tokens provider keeps one per line. */
+function statesAfter(lines: readonly string[]): LexState[] {
+  let state = INITIAL_LEX_STATE;
+  return lines.map((line) => {
+    state = tokenizeLine(line, state).state;
+    return state;
+  });
 }
 
 /** Reads a whole text through tokenizeLine, as the editor's tokens provider does, line by line. */
@@ -348,8 +358,62 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
     expect(split("- get").lead).toEqual({ roles: [], commandIndex: 0 });
   });
 
+  test("a name begins with a letter or _ and ends at an unquoted =, and only txn itself is txn", () => {
+    expect(split("1A=2 get").lead).toEqual({ roles: [], commandIndex: 0 });
+    expect(split("=A get").lead).toEqual({ roles: [], commandIndex: 0 });
+    expect(split("_A=2 get").lead).toEqual({ roles: ["assignment"], commandIndex: 1 });
+    expect(sectionsOf("txnx\n")).toEqual(["command", "after-command"]);
+    expect(sectionsOf("t'x'n\n")).toEqual(["command", "compares"]);
+  });
+
+  test("an etcdctl word comes before the global flags, and after them it is the command word", () => {
+    expect(split("--debug etcdctl get").lead).toEqual({ roles: ["flag"], commandIndex: 1 });
+  });
+
   test("--command-timeout with no word after it takes nothing", () => {
     expect(split("--command-timeout").lead).toEqual({ roles: ["flag"], commandIndex: 1 });
+  });
+
+  test("a leading token or the command word may run over lines, and is read whole", () => {
+    expect(split("%\\\n get a").lead).toEqual({ roles: ["prompt"], commandIndex: 1 });
+    expect(split("A_NAME_LONGER_THAN_EIGH\\\nTEEN_UNITS=1 get a").lead).toEqual({
+      roles: ["assignment"],
+      commandIndex: 1,
+    });
+    expect(split("/opt/a/long/path/to/et\\\ncdctl get a").lead).toEqual({ roles: ["etcdctl"], commandIndex: 1 });
+    expect(split("--command-\\\ntimeout 5s get a").lead).toEqual({ roles: ["flag", "flag-value"], commandIndex: 2 });
+    expect(sectionsOf('tx\\\nn\nmod("k") > "0"')).toEqual(["command", "command", "compares"]);
+    expect(sectionsOf("ETCDCTL_API='3\n' txn\n")).toEqual(["command", "command", "compares"]);
+    // A newline inside quotes is part of the word, so this command word is not txn.
+    expect(sectionsOf("'tx\nn'\nx")).toEqual(["command", "command", "after-command"]);
+  });
+
+  test("a leading word split by a backslash-newline anywhere reads as the word whole", () => {
+    const words = [
+      "$",
+      "env",
+      "ETCDCTL_API=3",
+      "A_NAME_LONGER_THAN_EIGHTEEN_UNITS=1",
+      "1A=2",
+      "etcdctl",
+      "./etcdctl",
+      "/usr/local/bin/etcdctl",
+      "/opt/etcdctl-3.7/bin/etcdctl",
+      "--command-timeout",
+      "--command-timeout=5s",
+      "--debug",
+      "-",
+      "txn",
+      "get",
+    ];
+    for (const word of words) {
+      const whole = `${word} 5s txn`;
+      for (let at = 1; at < word.length; at++) {
+        const text = `${word.slice(0, at)}\\\n${word.slice(at)} 5s txn`;
+        expect(split(text).lead).toEqual(split(whole).lead);
+        expect(sectionsOf(`${text}\n`).pop()).toBe(sectionsOf(`${whole}\n`).pop());
+      }
+    }
   });
 });
 
@@ -373,6 +437,9 @@ describe("the section and the role of every line (spec 3.3)", () => {
 
   test("the lines of one logical command line are all command lines", () => {
     expect(rolesOf("put k 'a\nb'\nget")).toEqual(["command", "command", "content"]);
+    // The line a first word begins on and runs past is a command line, though it finishes no word.
+    expect(rolesOf("'ge\nt' k")).toEqual(["command", "command"]);
+    expect(rolesOf("ge\\\nt k")).toEqual(["command", "command"]);
     expect(rolesOf("\\\nget a")).toEqual(["blank", "command"]);
   });
 
@@ -655,8 +722,14 @@ describe("Go's space set, where a txn line is trimmed and a compare is split (sp
 // ============================================================================
 
 describe("tokenizeLine (spec 3.3)", () => {
-  test("the initial state is the command line with nothing open", () => {
-    expect(INITIAL_LEX_STATE).toEqual({ section: "command", quote: "none", continued: false, words: [] });
+  test("the initial state is the command line with nothing open and no word read", () => {
+    expect(INITIAL_LEX_STATE).toEqual({
+      section: "command",
+      quote: "none",
+      continued: false,
+      inWord: false,
+      lead: "prompt",
+    });
   });
 
   test("a command line's tokens", () => {
@@ -698,6 +771,12 @@ describe("tokenizeLine (spec 3.3)", () => {
     ]);
   });
 
+  test("a flag word is drawn as a flag on the line it begins, and as a word on the lines it runs on to", () => {
+    const open = tokenizeLine("put k --a\\", INITIAL_LEX_STATE);
+    expect(open.tokens.slice(-1)).toEqual([{ kind: "flag", start: 6, end: 10 }]);
+    expect(tokenizeLine("b", open.state).tokens).toEqual([{ kind: "word", start: 0, end: 1 }]);
+  });
+
   test("a backslash-newline between words is whitespace", () => {
     expect(tokenizeLine("get \\", INITIAL_LEX_STATE).tokens).toEqual([
       { kind: "word", start: 0, end: 3 },
@@ -707,15 +786,21 @@ describe("tokenizeLine (spec 3.3)", () => {
 
   test("a quote open at the end of a line carries into the next, as a string", () => {
     const first = tokenizeLine("put k 'ab", INITIAL_LEX_STATE);
-    expect(first.state).toMatchObject({ section: "command", quote: "single", continued: false });
-    expect(first.state.partial).toMatchObject({ text: "ab", quoting: "qq", column: 6, linesBack: 0 });
+    // The command word is read, so of the open word the state keeps only that it is open.
+    expect(first.state).toEqual({
+      section: "command",
+      quote: "single",
+      continued: false,
+      inWord: true,
+      lead: "command",
+    });
     const second = tokenizeLine("cd' e", first.state);
     expect(second.tokens).toEqual([
       { kind: "string", start: 0, end: 3 },
       { kind: "whitespace", start: 3, end: 4 },
       { kind: "word", start: 4, end: 5 },
     ]);
-    expect(second.state).toEqual({ section: "after-command", quote: "none", continued: false, words: [] });
+    expect(second.state).toEqual({ ...INITIAL_LEX_STATE, section: "after-command" });
   });
 
   test("a double quote open at the end of a line carries a newline, and a backslash-newline carries none", () => {
@@ -727,21 +812,70 @@ describe("tokenizeLine (spec 3.3)", () => {
     expect(commandWords('put k "a\\\nb"')[2]).toBe("ab");
   });
 
-  test("a backslash-newline carries the words read so far and the word it is inside", () => {
-    const between = tokenizeLine("get \\", INITIAL_LEX_STATE).state;
-    expect(between).toMatchObject({ section: "command", continued: true, words: [{ text: "get", quoting: "uuu" }] });
-    expect(between.partial).toBeUndefined();
-    const inside = tokenizeLine("get ab\\", INITIAL_LEX_STATE).state;
-    expect(inside.partial).toMatchObject({ text: "ab", column: 4 });
+  test("a backslash-newline carries where the words stand, and whether one is open", () => {
+    const after = { section: "command", quote: "none", continued: true, lead: "command" } as const;
+    expect(tokenizeLine("get \\", INITIAL_LEX_STATE).state).toEqual({ ...after, inWord: false });
+    expect(tokenizeLine("get ab\\", INITIAL_LEX_STATE).state).toEqual({ ...after, inWord: true });
+  });
+
+  test("before the command word the state keeps what the leading tokens read of an open word, and no more", () => {
+    const open = tokenizeLine("etc\\", INITIAL_LEX_STATE).state;
+    expect(open).toEqual({
+      section: "command",
+      quote: "none",
+      continued: true,
+      inWord: true,
+      lead: "prompt",
+      leadWord: { head: "etc", quoting: "uuu", tail: "", assignment: "name" },
+    });
+    expect(tokenizeLine("dctl txn", open).state.section).toBe("compares");
+    // Its first 18 units, one more than --command-timeout; its longest end that /etcdctl begins with; whether
+    // it begins NAME=.
+    expect(tokenizeLine("ETCDCTL_API='x/etcd", INITIAL_LEX_STATE).state.leadWord).toEqual({
+      head: "ETCDCTL_API=x/etcd",
+      quoting: "uuuuuuuuuuuuqqqqqq",
+      tail: "/etcd",
+      assignment: "yes",
+    });
+    expect(tokenizeLine("ETCDCTL_API='x/etcdc", INITIAL_LEX_STATE).state.leadWord).toEqual({
+      head: "ETCDCTL_API=x/etcd",
+      quoting: "uuuuuuuuuuuuqqqqqq",
+      tail: "/etcdc",
+      assignment: "yes",
+    });
+    expect(tokenizeLine("'A'=\\", INITIAL_LEX_STATE).state.leadWord).toMatchObject({ assignment: "no" });
+    // The value of --command-timeout is read by no leading token, so nothing of it is kept.
+    expect(tokenizeLine("--command-timeout '5", INITIAL_LEX_STATE).state).toEqual({
+      section: "command",
+      quote: "single",
+      continued: false,
+      inWord: true,
+      lead: "flag-value",
+    });
+  });
+
+  test("the state inside a quoted value is the same on each of its lines, however they run", () => {
+    const after = statesAfter(["put /app/cfg '", "a", "b", `${"x".repeat(80)} line 3`, '  {"key": 1},', "'"]);
+    expect(lexStatesEqual(after[1], after[2])).toBe(true);
+    expect(lexStatesEqual(after[2], after[3])).toBe(true);
+    expect(lexStatesEqual(after[3], after[4])).toBe(true);
+    expect(lexStatesEqual(after[4], after[5])).toBe(false);
+  });
+
+  test("a state's size does not grow with the number of lines it has read", () => {
+    const size = (lines: readonly string[]) => JSON.stringify(statesAfter(lines)[lines.length - 1]).length;
+    const numbered = (count: number, line: (index: number) => string) =>
+      Array.from({ length: count }, (_, index) => line(index));
+    // A quoted value after the command word, a quoted value in a leading assignment, and a run of
+    // assignments joined by backslash-newlines, each read to ten lines and to a thousand.
+    const value = (count: number) => ["put /app/cfg '", ...numbered(count, (index) => `{"key": "line ${index}"},`)];
+    const assignment = (count: number) => ["FOO='", ...numbered(count, (index) => `line ${index}`)];
+    const assignments = (count: number) => numbered(count, (index) => `A${index}=${index} \\`);
+    for (const lines of [value, assignment, assignments]) expect(size(lines(1000))).toBe(size(lines(10)));
   });
 
   test("the command word decides the section after the command line", () => {
-    expect(tokenizeLine("txn", INITIAL_LEX_STATE).state).toEqual({
-      section: "compares",
-      quote: "none",
-      continued: false,
-      words: [],
-    });
+    expect(tokenizeLine("txn", INITIAL_LEX_STATE).state).toEqual({ ...INITIAL_LEX_STATE, section: "compares" });
     expect(tokenizeLine("get a", INITIAL_LEX_STATE).state.section).toBe("after-command");
     expect(tokenizeLine("# c", INITIAL_LEX_STATE).state).toEqual(INITIAL_LEX_STATE);
   });
@@ -810,26 +944,25 @@ describe("tokenizeLine (spec 3.3)", () => {
   });
 
   test("lexStatesEqual compares every field", () => {
-    const carried = tokenizeLine("put 'a", INITIAL_LEX_STATE).state;
-    expect(lexStatesEqual(carried, tokenizeLine("put 'a", INITIAL_LEX_STATE).state)).toBe(true);
+    const open = tokenizeLine("ETCDCTL_API='x/etcd", INITIAL_LEX_STATE).state;
+    expect(lexStatesEqual(open, tokenizeLine("ETCDCTL_API='x/etcd", INITIAL_LEX_STATE).state)).toBe(true);
     expect(lexStatesEqual(INITIAL_LEX_STATE, { ...INITIAL_LEX_STATE })).toBe(true);
-    expect(lexStatesEqual(INITIAL_LEX_STATE, { ...INITIAL_LEX_STATE, section: "compares" })).toBe(false);
-    expect(lexStatesEqual(INITIAL_LEX_STATE, { ...INITIAL_LEX_STATE, quote: "single" })).toBe(false);
-    expect(lexStatesEqual(INITIAL_LEX_STATE, { ...INITIAL_LEX_STATE, continued: true })).toBe(false);
-    expect(lexStatesEqual(INITIAL_LEX_STATE, { ...INITIAL_LEX_STATE, words: [{ text: "a", quoting: "u" }] })).toBe(
-      false,
-    );
-    const one = { ...INITIAL_LEX_STATE, words: [{ text: "a", quoting: "u" }] };
-    expect(lexStatesEqual(one, { ...INITIAL_LEX_STATE, words: [{ text: "b", quoting: "u" }] })).toBe(false);
-    expect(lexStatesEqual(one, { ...INITIAL_LEX_STATE, words: [{ text: "a", quoting: "q" }] })).toBe(false);
-    expect(lexStatesEqual(carried, { ...carried, partial: undefined })).toBe(false);
-    expect(lexStatesEqual({ ...carried, partial: undefined }, carried)).toBe(false);
-    const partial = carried.partial;
-    if (partial === undefined) throw new Error("expected a partial word");
-    for (const field of ["text", "quoting", "column", "linesBack", "lastLinesBack", "lastEnd", "flag"] as const) {
-      const changed = { ...partial, [field]: field === "flag" ? !partial.flag : `${partial[field]}x` };
-      expect(lexStatesEqual(carried, { ...carried, partial: changed })).toBe(false);
+    const changed: readonly Partial<LexState>[] = [
+      { section: "compares" },
+      { quote: "single" },
+      { continued: true },
+      { inWord: true },
+      { lead: "flag" },
+    ];
+    for (const change of changed)
+      expect(lexStatesEqual(INITIAL_LEX_STATE, { ...INITIAL_LEX_STATE, ...change })).toBe(false);
+    expect(lexStatesEqual(open, { ...open, leadWord: undefined })).toBe(false);
+    expect(lexStatesEqual({ ...open, leadWord: undefined }, open)).toBe(false);
+    const word = open.leadWord as LexLeadWord;
+    for (const field of ["head", "quoting", "tail"] as const) {
+      expect(lexStatesEqual(open, { ...open, leadWord: { ...word, [field]: `${word[field]}x` } })).toBe(false);
     }
+    expect(lexStatesEqual(open, { ...open, leadWord: { ...word, assignment: "no" } })).toBe(false);
   });
 });
 
