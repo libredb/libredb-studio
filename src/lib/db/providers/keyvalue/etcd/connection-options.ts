@@ -31,7 +31,7 @@
  * addressing fields a provider reads by the `config.<field>` pattern, so this file reads `config.user`
  * as written and never reads a `database` field, since one connection is one cluster (spec 6.1).
  */
-import { X509Certificate } from "node:crypto";
+import { createPrivateKey, type KeyObject, X509Certificate } from "node:crypto";
 import { isIP, isIPv6 } from "node:net";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -129,6 +129,12 @@ const TLS_MODES: Readonly<Record<SSLMode, { readonly mode: EtcdTlsOptions["mode"
 /** CR, LF and NUL: a pasted credential carries one by mistake, and trimming it would send a different secret (spec E2). */
 const FORBIDDEN_IN_CREDENTIAL = /[\r\n\0]/;
 
+/** One PEM certificate block; the text around the blocks is skipped, as both runtimes skip it (checkCa). */
+const PEM_CERTIFICATE_BLOCK = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+
+/** The two encrypted PEM key forms: PKCS#8's own label, and the header of a legacy encrypted key. */
+const ENCRYPTED_PEM_KEY = /-----BEGIN ENCRYPTED PRIVATE KEY-----|^Proc-Type: 4,ENCRYPTED/m;
+
 /** The largest query timeout, the dialog's own bound (`validateQueryTimeout`): above it Node's timers fire at once. */
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
@@ -143,6 +149,14 @@ const CLIENT_PAIR =
   "The Client Certificate and the Client Private Key under SSL / TLS go together: add the missing one, or clear both.";
 const CLIENT_CERTIFICATE_NOT_PEM =
   "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
+const CA_NOT_PEM =
+  "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued etcd's server certificate there.";
+const CLIENT_KEY_NOT_PEM =
+  "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
+const CLIENT_KEY_ENCRYPTED =
+  "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.";
+const CLIENT_KEY_MISMATCH =
+  "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.";
 const TUNNEL_NOT_OPENED =
   "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so etcd was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
@@ -254,6 +268,9 @@ function tlsOptions(config: DatabaseConnection, identity: string): EtcdTlsOption
   const row = TLS_MODES[mode as SSLMode];
   if (row === null) return undefined;
   if ((cert === undefined) !== (key === undefined)) throw configError(CLIENT_PAIR);
+  // In the order the panel draws them, and in every TLS mode, since grpc-js reads all three whatever it verifies.
+  if (ca !== undefined) checkCa(ca);
+  if (cert !== undefined && key !== undefined) checkClientPair(cert, key);
   const identityIsIp = isIP(identity) !== 0;
   return {
     mode: row.mode,
@@ -267,11 +284,58 @@ function tlsOptions(config: DatabaseConnection, identity: string): EtcdTlsOption
 }
 
 /**
+ * The TLS material grpc-js's `createSsl` would otherwise meet unchecked, refused in words before any
+ * channel is built. Measured under Bun 1.4.2 and Node 24.14.0: `createSsl` throws the runtime's own
+ * code for a key that is not PEM (ERR_OSSL_PEM_NO_START_LINE under Bun, ERR_OSSL_UNSUPPORTED under
+ * Node) and for a key that is another certificate's (ERR_OSSL_X509_KEY_VALUES_MISMATCH), and Bun for a
+ * CA that holds no certificate ("Invalid CA", ERR_BORINGSSL) and for a key of another type than the
+ * certificate's (ERR_OSSL_X509_KEY_TYPE_MISMATCH); Node reads no certificate from such a CA, so every
+ * chain fails, and drops a key of another type, so the handshake goes on without the certificate.
+ *
+ * A CA is every PEM certificate block it holds, each read with X509Certificate: the runtimes read the
+ * blocks and skip the text around them, so a bundle's comments are kept, while a field with no block,
+ * or a block that does not read, is refused.
+ */
+function checkCa(pem: string): void {
+  const blocks = pem.match(PEM_CERTIFICATE_BLOCK) ?? [];
+  if (blocks.length === 0) throw configError(CA_NOT_PEM);
+  for (const block of blocks) certificate(block, CA_NOT_PEM);
+}
+
+/**
+ * The client certificate, its key, and that the key is the certificate's own. Every private key form
+ * the runtimes read is taken (PKCS#8, PKCS#1 RSA and SEC1 EC); an encrypted key is refused in its own
+ * words, because the panel has no passphrase field and neither runtime can use the key without one
+ * (spec E2, E5).
+ */
+function checkClientPair(cert: string, key: string): void {
+  const x509 = certificate(cert, CLIENT_CERTIFICATE_NOT_PEM);
+  if (!x509.checkPrivateKey(privateKey(key))) throw configError(CLIENT_KEY_MISMATCH);
+}
+
+function certificate(pem: string, refusal: string): X509Certificate {
+  try {
+    return new X509Certificate(pem);
+  } catch {
+    throw configError(refusal);
+  }
+}
+
+function privateKey(pem: string): KeyObject {
+  try {
+    return createPrivateKey(pem);
+  } catch {
+    // The runtimes disagree on the code (ERR_MISSING_PASSPHRASE under Bun, an OpenSSL one under Node), so the PEM decides.
+    throw configError(ENCRYPTED_PEM_KEY.test(pem) ? CLIENT_KEY_ENCRYPTED : CLIENT_KEY_NOT_PEM);
+  }
+}
+
+/**
  * The sign-in mode of spec 6.1 and who etcd sees (spec 4.7). A user and a password travel together,
  * and only over TLS (spec E2), because `Authenticate` carries the password and every later call the
  * token; a user or a password alone is refused, since no step of the connect sequence would use it.
- * A configured client certificate is read whenever it is present, so a certificate field that holds
- * something else is refused here, in words, rather than by the handshake.
+ * A configured client certificate is read whenever it is present, and `checkClientPair` has refused
+ * one that is not a PEM certificate, in words, rather than the handshake.
  */
 function credentials(
   config: DatabaseConnection,
@@ -311,13 +375,8 @@ function credential(value: unknown, field: "user" | "password"): string | undefi
  * the last CN attribute it meets.
  */
 function commonName(pem: string): string | undefined {
-  let certificate: X509Certificate;
-  try {
-    certificate = new X509Certificate(pem);
-  } catch {
-    throw configError(CLIENT_CERTIFICATE_NOT_PEM);
-  }
-  const names: unknown = certificate.toLegacyObject().subject.CN;
+  // checkClientPair has read this certificate, so it reads.
+  const names: unknown = new X509Certificate(pem).toLegacyObject().subject.CN;
   const last = Array.isArray(names) ? names[names.length - 1] : names;
   return typeof last === "string" ? last : undefined;
 }

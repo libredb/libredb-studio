@@ -7,14 +7,25 @@
  * line. The keys are RSA, made by `req -newkey rsa:2048` as the Kafka TLS test makes its own, the form
  * the Windows and macOS runners' openssl already run. One certificate is signed by an authority made
  * the same way, the shape etcd's --client-cert-auth accepts, so its issuer's Common Name is not its
- * own. The last block runs the mapping under Node, the production runtime, through a bundle, because
- * the error facts say which runtime answered (spec E5, 5.6).
+ * own. The other key forms a client pair may take, PKCS#1 RSA, SEC1 EC and the two encrypted forms,
+ * are written by node:crypto, which writes each the same way on every platform, while the runners'
+ * openssl builds do not share one flag for them; openssl only certifies the EC key. The last block
+ * runs the mapping under Node, the production runtime, through a bundle, because the error facts say
+ * which runtime answered (spec E5, 5.6).
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { X509Certificate } from "node:crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  type KeyObject,
+  type PrivateKeyExportOptions,
+  X509Certificate,
+} from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createSecureContext } from "node:tls";
 import { pathToFileURL } from "node:url";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { EtcdError } from "@/lib/db/providers/keyvalue/etcd/client";
@@ -86,6 +97,14 @@ const CLIENT_PAIR =
   "The Client Certificate and the Client Private Key under SSL / TLS go together: add the missing one, or clear both.";
 const CLIENT_CERTIFICATE_NOT_PEM =
   "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
+const CA_NOT_PEM =
+  "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued etcd's server certificate there.";
+const CLIENT_KEY_NOT_PEM =
+  "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
+const CLIENT_KEY_ENCRYPTED =
+  "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.";
+const CLIENT_KEY_MISMATCH =
+  "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.";
 const TUNNEL_NOT_OPENED =
   "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so etcd was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const QUERY_TIMEOUT_RANGE = "Query timeout must be a whole number between 1 and 2147483647 milliseconds.";
@@ -215,6 +234,34 @@ function signedClientCertificate(name: string, subject: readonly string[], autho
   );
 }
 
+/** A self-signed client certificate for the key already written as `<name>.key`, whatever its algorithm. */
+function certifiedKey(name: string, subject: readonly string[]): void {
+  writeFileSync(
+    at(`${name}.cnf`),
+    ["[req]", "prompt = no", "distinguished_name = dn", "[dn]", ...subject, ""].join("\n"),
+  );
+  openssl(
+    "req",
+    "-config",
+    `${name}.cnf`,
+    "-utf8",
+    "-new",
+    "-x509",
+    "-key",
+    `${name}.key`,
+    "-sha256",
+    "-days",
+    "1",
+    "-out",
+    `${name}.crt`,
+  );
+}
+
+/** A key written as node:crypto exports it: the form is the one `options` names, on every platform alike. */
+function writeKey(file: string, key: KeyObject, options: PrivateKeyExportOptions): void {
+  writeFileSync(at(file), key.export(options));
+}
+
 /** A TLS panel carrying the named certificate and its key. */
 function withCertificate(name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { mode: "verify-full", clientCert: read(`${name}.crt`), clientKey: read(`${name}.key`), ...extra };
@@ -236,6 +283,17 @@ beforeAll(() => {
   // kubeadm's names: the etcd CA, and the client certificate it issues the API server.
   certificateAuthority("etcd-ca", ["CN = etcd-ca"]);
   signedClientCertificate("apiserver", ["CN = kube-apiserver-etcd-client"], "etcd-ca");
+  // The reader's own key in each form node:crypto writes, so every form pairs with reader.crt.
+  const reader = createPrivateKey(read("reader.key"));
+  writeKey("reader-pkcs8.key", reader, { type: "pkcs8", format: "pem" });
+  writeKey("reader-pkcs1.key", reader, { type: "pkcs1", format: "pem" });
+  const encrypted = { cipher: "aes-256-cbc", passphrase: TEST_PASSWORD } as const;
+  writeKey("reader-encrypted-pkcs8.key", reader, { type: "pkcs8", format: "pem", ...encrypted });
+  writeKey("reader-encrypted-pkcs1.key", reader, { type: "pkcs1", format: "pem", ...encrypted });
+  writeFileSync(at("reader.pub"), createPublicKey(reader).export({ type: "spki", format: "pem" }));
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  writeKey("ec-reader.key", privateKey, { type: "sec1", format: "pem" });
+  certifiedKey("ec-reader", ["CN = etcd-ec-reader"]);
 });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -441,8 +499,9 @@ describe("E5: the TLS modes, by one exhaustive table", () => {
   });
 
   test("the pasted CA is carried as configured in every TLS mode, and an empty one is absent: the runtime's roots", () => {
+    const ca = read("etcd-ca.crt");
     for (const mode of ["require", "verify-system", "verify-ca", "verify-full"]) {
-      expect(mapped({ ...base, ssl: { mode, caCert: "CA PEM" } }).tls?.ca).toBe("CA PEM");
+      expect(mapped({ ...base, ssl: { mode, caCert: ca } }).tls?.ca).toBe(ca);
       expect(Object.hasOwn(mapped({ ...base, ssl: { mode, caCert: "" } }).tls ?? {}, "ca")).toBe(false);
     }
   });
@@ -696,6 +755,147 @@ describe("6.1 and 4.7: the client certificate, and the Common Name etcd reads as
         expect(message).not.toContain(key.split("\n")[1]);
       }
     }
+  });
+});
+
+describe("E5 and 6.1: the CA and the client key are read as PEM, before any channel is built", () => {
+  const TLS_ON_MODES = ["require", "verify-system", "verify-ca", "verify-full"] as const;
+  /**
+   * A PEM block of this label around this body. A key's marker lines are always built this way, never
+   * written out whole, because gitleaks' private-key rule, which the Secret Scan check runs over every
+   * commit, reads a committed BEGIN line of a private key as a key.
+   */
+  const pemBlock = (label: string, body: string) => `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----\n`;
+  /** PEM framing around a body that is no certificate: the runtimes read no certificate from it. */
+  const CORRUPT_CERTIFICATE = pemBlock("CERTIFICATE", "AAAA");
+
+  test("a CA of one or more PEM certificates is carried as configured in every TLS mode, the text around its blocks included", () => {
+    const cas = [
+      read("etcd-ca.crt"),
+      read("etcd-ca.crt") + read("reader.crt"),
+      // A bundle's comments, as CA files and `openssl s_client -showcerts` write them: both runtimes skip them.
+      `# etcd CA\n${read("etcd-ca.crt")}subject=CN = etcd-reader\n${read("reader.crt")}`,
+      read("etcd-ca.crt").replaceAll("\n", "\r\n"),
+    ];
+    for (const ca of cas) {
+      // The premise: the runtime takes each as a CA.
+      expect(() => createSecureContext({ ca })).not.toThrow();
+      for (const mode of TLS_ON_MODES) expect(mapped({ ...base, ssl: { mode, caCert: ca } }).tls?.ca).toBe(ca);
+    }
+  });
+
+  test.each([
+    ["text that holds no PEM block", () => "not a certificate"],
+    ["a private key, which holds no certificate", () => read("reader.key")],
+    ["a block whose body is no certificate", () => CORRUPT_CERTIFICATE],
+    [
+      "a certificate and then a block that is none, which the runtimes cut short in silence",
+      () => read("etcd-ca.crt") + CORRUPT_CERTIFICATE,
+    ],
+    [
+      "an indented certificate, which no PEM reader reads",
+      () =>
+        read("etcd-ca.crt")
+          .split("\n")
+          .map((line) => `  ${line}`)
+          .join("\n"),
+    ],
+  ])("a CA that is %s is refused in words in every TLS mode, and never repeated", (_label, value) => {
+    const caCert = value();
+    for (const mode of TLS_ON_MODES) {
+      const message = refusalOf({ ...base, ssl: { mode, caCert } });
+      expect(message).toBe(CA_NOT_PEM);
+      expect(message).not.toContain(caCert.trim().split("\n")[1] ?? caCert);
+    }
+  });
+
+  test("plaintext reads none of the TLS material, so no PEM rule refuses it", () => {
+    const ssl = {
+      mode: "disable",
+      caCert: "not a certificate",
+      clientCert: "not a certificate",
+      clientKey: "not a key",
+    };
+    const options = mapped({ ...base, ssl });
+    expect(Object.hasOwn(options, "tls")).toBe(false);
+    expect(options.auth).toEqual({ kind: "none" });
+  });
+
+  test.each([
+    ["PKCS#8", "reader-pkcs8", "reader", "PRIVATE KEY", "etcd-reader"],
+    ["PKCS#1 RSA", "reader-pkcs1", "reader", "RSA PRIVATE KEY", "etcd-reader"],
+    ["SEC1 EC", "ec-reader", "ec-reader", "EC PRIVATE KEY", "etcd-ec-reader"],
+  ])(
+    "a %s client key is accepted with its certificate and carried as configured",
+    (_form, keyFile, certificateFile, label, name) => {
+      const key = read(`${keyFile}.key`);
+      const cert = read(`${certificateFile}.crt`);
+      // The premises: the key is in this form, and the runtime takes the pair.
+      expect(key.startsWith(`-----BEGIN ${label}-----`)).toBe(true);
+      expect(() => createSecureContext({ key, cert })).not.toThrow();
+      for (const mode of ["require", "verify-full"]) {
+        const options = mapped({ ...base, ssl: { mode, clientCert: cert, clientKey: key } });
+        expect(options.tls?.clientCertificate?.key).toBe(key);
+        expect(options.principal).toEqual({ name, via: "certificate" });
+      }
+    },
+  );
+
+  test.each([
+    ["text that holds no PEM block", () => "not a key"],
+    ["a certificate", () => read("reader.crt")],
+    ["a public key", () => read("reader.pub")],
+    ["a block whose body is no key", () => pemBlock("PRIVATE KEY", "AAAA")],
+  ])(
+    "a Client Private Key that is %s is refused in words, whatever the mode and the sign-in, and never repeated",
+    (_label, value) => {
+      const clientKey = value();
+      for (const mode of ["require", "verify-full"]) {
+        for (const credential of [{}, { user: "root", password: TEST_PASSWORD }]) {
+          const ssl = { mode, clientCert: read("reader.crt"), clientKey };
+          expect(refusalOf({ ...base, ssl, ...credential })).toBe(CLIENT_KEY_NOT_PEM);
+        }
+      }
+    },
+  );
+
+  test.each([
+    ["PKCS#8's encrypted form", "reader-encrypted-pkcs8", "BEGIN ENCRYPTED PRIVATE KEY"],
+    ["the legacy encrypted PKCS#1 form", "reader-encrypted-pkcs1", "Proc-Type: 4,ENCRYPTED"],
+  ])(
+    "a key in %s is refused in its own words: SSL / TLS has no passphrase field to decrypt it with (spec E2, E5)",
+    (_form, file, marker) => {
+      const clientKey = read(`${file}.key`);
+      const cert = read("reader.crt");
+      // The premises: the key is encrypted in this form, and the runtime cannot use it without the passphrase.
+      expect(clientKey).toContain(marker);
+      expect(() => createSecureContext({ key: clientKey, cert })).toThrow();
+      expect(refusalOf({ ...base, ssl: { mode: "verify-full", clientCert: cert, clientKey } })).toBe(
+        CLIENT_KEY_ENCRYPTED,
+      );
+    },
+  );
+
+  test("a Client Private Key that is not the Client Certificate's own is refused, of the same algorithm or another", () => {
+    for (const clientKey of [read("apiserver.key"), read("ec-reader.key")]) {
+      const ssl = { mode: "verify-full", clientCert: read("reader.crt"), clientKey };
+      expect(refusalOf({ ...base, ssl })).toBe(CLIENT_KEY_MISMATCH);
+    }
+  });
+
+  test("the panel is read in the order it is drawn: the CA, the Client Certificate, the Client Private Key, then the pair", () => {
+    const ssl = {
+      mode: "verify-full",
+      caCert: "not a certificate",
+      clientCert: "not a certificate",
+      clientKey: "not a key",
+    };
+    expect(refusalOf({ ...base, ssl })).toBe(CA_NOT_PEM);
+    const withCa = { ...ssl, caCert: read("etcd-ca.crt") };
+    expect(refusalOf({ ...base, ssl: withCa })).toBe(CLIENT_CERTIFICATE_NOT_PEM);
+    expect(refusalOf({ ...base, ssl: { ...withCa, clientCert: read("reader.crt") } })).toBe(CLIENT_KEY_NOT_PEM);
+    const pair = { ...withCa, clientCert: read("reader.crt"), clientKey: read("apiserver.key") };
+    expect(refusalOf({ ...base, ssl: pair })).toBe(CLIENT_KEY_MISMATCH);
   });
 });
 
