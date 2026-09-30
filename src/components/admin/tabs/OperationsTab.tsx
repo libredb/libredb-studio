@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TypedConfirmDialog } from "@/components/typed-confirm";
 import {
   RefreshCw,
   Zap,
@@ -41,7 +42,13 @@ import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { useReturnFocus } from "@/hooks/use-return-focus";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
-import { maintenanceControl, type ActiveSessionDetails, type MaintenanceType, type TableStats } from "@/lib/db/types";
+import {
+  maintenanceControl,
+  type ActiveSessionDetails,
+  type MaintenanceOperation,
+  type MaintenanceType,
+  type TableStats,
+} from "@/lib/db/types";
 import { readObjectPathParam } from "@/lib/db/object-path";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 
@@ -112,6 +119,40 @@ interface OperationLogEntry {
   error?: string;
 }
 
+/**
+ * A whole-database card the provider words itself (#1089, section 7.2): an operation `maintenanceControl` offers
+ * globally with a `title`, drawn with the spec's `label` on its button, the `title` as its heading and the
+ * `description` as its body.
+ */
+interface DeclaredCard {
+  type: MaintenanceOperation;
+  label?: string;
+  title: string;
+  description?: string;
+  /** The spec's `confirmation: "typed"`: the card asks for the connection's name before it sends anything. */
+  typed: boolean;
+}
+
+/** One opening of a declared card's typed dialog, keyed so that every opening mounts a fresh dialog. */
+interface TypedDialogOpening {
+  card: DeclaredCard;
+  /** False keeps the dialog in place while it animates out. */
+  open: boolean;
+  key: number;
+}
+
+/** The same opening, closed. */
+function closedDialog(current: TypedDialogOpening | null): TypedDialogOpening | null {
+  return current ? { ...current, open: false } : current;
+}
+
+/**
+ * Said in a declared card's typed dialog in place of the field, for a stored connection whose name is empty
+ * (#1089, section 3.4): the name is what the dialog asks for, and there is nothing to type.
+ */
+const UNNAMED_CONNECTION =
+  "This operation is confirmed by typing the connection's name, and this connection has none. Give it a name in its connection settings first.";
+
 export function OperationsTab() {
   // Only the operator's CHOICE is state; the list and the selected object are both
   // calculated during render from it. `useAllConnections` is read here, above the
@@ -130,6 +171,10 @@ export function OperationsTab() {
   const confirmKillReturnFocus = useReturnFocus();
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // A declared card's typed dialog, and the count that keys each opening: the dialog keeps its match and any refusal
+  // in its own state, so every opening mounts a fresh one, as the account dialogs do (#1089, section 7.2).
+  const [typedDialog, setTypedDialog] = useState<TypedDialogOpening | null>(null);
+  const [typedDialogOpenings, setTypedDialogOpenings] = useState(0);
 
   /*
     The object an Explorer deep link named (`onOpenMaintenance("tables", object.path)` →
@@ -214,12 +259,32 @@ export function OperationsTab() {
   // Oracle's, MySQL's and ClickHouse's own words written and never shown, and sending
   // `vacuum` to any of those four is a 400 from /api/db/maintenance.
   const vacuumOperation = labels?.vacuumActionOperation ?? "vacuum";
-  const globalAnalyze = offers("analyze", "global");
-  const globalVacuum = offers(vacuumOperation, "global");
+  // One card per operation the gate offers globally with a `title`, in declaration order and in the provider's own
+  // words (#1089, section 7.2). Keyed on the title, not on "offered globally with no card of its own": that rule
+  // would give cards to DuckDB's optimize and to the global check of SQL Server, SQLite, libSQL and MySQL, and a
+  // kill card with no target to every engine on the base default, none of which asked for one.
+  const declaredCards = [...new Set(capabilities?.maintenanceOperations ?? [])].flatMap((type): DeclaredCard[] => {
+    const control = maintenanceControl(capabilities, type, "global");
+    if (!control.offered || control.title === undefined) return [];
+    return [
+      {
+        type,
+        label: control.label,
+        title: control.title,
+        description: control.description,
+        typed: control.confirmation === "typed",
+      },
+    ];
+  });
+  // A declared operation's card is its only one: the card worded from ProviderLabels that would send it is withheld.
+  const declared = new Set(declaredCards.map((card) => card.type));
+  const globalAnalyze = !declared.has("analyze") && offers("analyze", "global");
+  const globalVacuum = !declared.has(vacuumOperation) && offers(vacuumOperation, "global");
   // Never twice: where the vacuum slot already names `reindex`, this card would send
   // the same operation under a second set of words.
-  const globalReindex = vacuumOperation !== "reindex" && offers("reindex", "global");
-  const anyMaintenance = globalAnalyze || globalVacuum || globalReindex;
+  const globalReindex = vacuumOperation !== "reindex" && !declared.has("reindex") && offers("reindex", "global");
+  // Declared cards count: an engine may offer none of the operations the three worded cards send.
+  const anyMaintenance = globalAnalyze || globalVacuum || globalReindex || declaredCards.length > 0;
 
   // The per-row controls, in the provider's own words.
   const tableActions = TABLE_ACTIONS.flatMap((action) => {
@@ -255,7 +320,7 @@ export function OperationsTab() {
   // Same reason as TablesTab: `table.schemaName` is the namespace for every engine, and the
   // row keys on it already. The log entry keeps naming the table alone, since that is what an
   // operator reads back (#772).
-  const handleRunMaintenance = async (type: string, target?: string, container?: string) => {
+  const runMaintenanceNow = async (type: MaintenanceOperation, target?: string, container?: string) => {
     const actionId = `${type}-${target || "global"}`;
     setActionLoading(actionId);
     const start = Date.now();
@@ -269,6 +334,20 @@ export function OperationsTab() {
     } finally {
       setActionLoading(null);
     }
+  };
+
+  // The handler every maintenance control on this tab calls (#1089, section 7.2). A declared card whose spec asks
+  // for a typed confirmation opens the typed dialog here instead, and the dialog sends the operation only once the
+  // connection's name matches. A per-row call carries a target and never asks: no per-row control is declared with
+  // a confirmation.
+  const handleRunMaintenance = async (type: MaintenanceOperation, target?: string, container?: string) => {
+    const typedCard = target === undefined ? declaredCards.find((card) => card.type === type && card.typed) : undefined;
+    if (typedCard !== undefined) {
+      setTypedDialog({ card: typedCard, open: true, key: typedDialogOpenings });
+      setTypedDialogOpenings(typedDialogOpenings + 1);
+      return;
+    }
+    await runMaintenanceNow(type, target, container);
   };
 
   const handleKillClick = (session: ActiveSessionDetails) => {
@@ -508,6 +587,34 @@ export function OperationsTab() {
                 </p>
               </div>
             )}
+
+            {/* The provider's own cards (#1089, section 7.2), one per operation it declares a title for, in its order. */}
+            {declaredCards.map((card) => (
+              <div
+                key={card.type}
+                className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-8 h-8 rounded-lg bg-brand-tint/10 border border-brand-tint/20 flex items-center justify-center">
+                    <Wrench className="w-4 h-4 text-brand" />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-hairline-strong hover:bg-brand-tint/10 hover:text-brand"
+                    onClick={() => handleRunMaintenance(card.type)}
+                    disabled={!!actionLoading || !selectedConnection}
+                  >
+                    {actionLoading === `${card.type}-global` ? (
+                      <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                    ) : null}
+                    {card.label}
+                  </Button>
+                </div>
+                <h4 className="text-sm font-bold text-fg mb-1">{card.title}</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">{card.description}</p>
+              </div>
+            ))}
 
             {/* Warning Card */}
             <div className="p-4 rounded-xl border border-danger-tint/10 bg-danger-tint/5 flex flex-col justify-center">
@@ -834,6 +941,28 @@ export function OperationsTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* A declared card's typed confirmation (#1089, section 7.2): the connection's name, typed exactly. */}
+      {typedDialog && (
+        <TypedConfirmDialog
+          key={typedDialog.key}
+          open={typedDialog.open}
+          onOpenChange={(open) => !open && setTypedDialog(closedDialog)}
+          title={typedDialog.card.title}
+          description={typedDialog.card.description}
+          expected={selectedConnection?.name ?? ""}
+          match="exact"
+          unavailable={selectedConnection?.name ? undefined : UNNAMED_CONNECTION}
+          confirmLabel={typedDialog.card.title}
+          destructive
+          onConfirm={async () => {
+            // The outcome is the notification and the operation log, as for every other control on this tab, so
+            // the dialog closes once the request has answered, whatever it answered.
+            await runMaintenanceNow(typedDialog.card.type);
+            return null;
+          }}
+        />
+      )}
     </div>
   );
 }
