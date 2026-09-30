@@ -505,14 +505,16 @@ const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
 const SIGNED_DECIMAL = /^(?:0|-?[1-9][0-9]*)$/;
 const HEX = /^[0-9a-fA-F]+$/;
 /**
- * A member id is a uint64 and a lease id an int64 (etcdserverpb); derived, never spelled. The lease
- * ids etcd picks are positive, but etcd grants an id a client chooses, a negative one included
- * (etcd v3.7.0: server/etcdserver/v3_server.go LeaseGrant picks an id only for 0, and
- * server/lease/lessor.go Grant refuses only 0), so a listing can hold one.
+ * The bounds of etcdserverpb's 64-bit integers, which the provider states here once: derived, never
+ * spelled, since tests/unit/db/sqlite-int64.test.ts holds the INT64 boundary's digits to the SQLite
+ * module, and grpc-client.ts checks every integer it sends against them. A member id is a uint64 and
+ * a lease id an int64. The lease ids etcd picks are positive, but etcd grants an id a client chooses,
+ * a negative one included (etcd v3.7.0: server/etcdserver/v3_server.go LeaseGrant picks an id only
+ * for 0, and server/lease/lessor.go Grant refuses only 0), so a listing can hold one.
  */
-const UINT64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
-const INT64_MAX = (BigInt(1) << BigInt(63)) - BigInt(1);
-const INT64_MIN = -(BigInt(1) << BigInt(63));
+export const UINT64_MAX = (BigInt(1) << BigInt(64)) - BigInt(1);
+export const INT64_MAX = (BigInt(1) << BigInt(63)) - BigInt(1);
+export const INT64_MIN = -(BigInt(1) << BigInt(63));
 
 function decimalId(decimal: EtcdInt64, pattern: RegExp, max: bigint, what: string): bigint {
   if (!pattern.test(decimal)) throw new TypeError(`${what} is not a decimal integer as the adapter hands ids over`);

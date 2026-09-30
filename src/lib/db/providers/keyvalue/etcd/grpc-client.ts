@@ -60,6 +60,7 @@ import {
 } from "./client";
 import type { EtcdConnectionOptions, EtcdTlsOptions } from "./connection-options";
 import { cancelReasonToEtcdError, toEtcdError, writeNotApplied } from "./errors";
+import { INT64_MAX, INT64_MIN, UINT64_MAX } from "./keys";
 import { ETCD_DESCRIPTOR } from "./proto/descriptor";
 
 /**
@@ -504,9 +505,6 @@ const PERMISSION_NAMES: ReadonlyMap<string, EtcdPermissionType> = new Map([
   ["READWRITE", "readwrite"],
 ]);
 
-const INT64_MIN = BigInt("-9223372036854775808");
-const INT64_MAX = BigInt("9223372036854775807");
-const UINT64_MAX = BigInt("18446744073709551615");
 const DECIMAL = /^-?\d+$/;
 
 /** The descriptor as grpc-js reads it; built once, and read by `grpcWireTransport` alone. */
