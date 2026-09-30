@@ -265,6 +265,34 @@ describe("typedKey (spec 5.5)", () => {
 // ----------------------------------------------------------------------------
 
 describe("ranges (spec E8, R06 2.3)", () => {
+  test("a range is built without writing into the bytes it was given, a Buffer view into an answer included", () => {
+    // grpc-js hands the adapter Buffers that are views into the message it decoded, and a Buffer's
+    // slice() is another view: a range end built by writing into a slice would rewrite the answer.
+    const message = Buffer.from("xx/app/yy");
+    expect(named(prefixRangeEnd(message.subarray(2, 7)))).toBe("/app0");
+    const lastByteFull = Buffer.from([0x61, 0xff]);
+    expect(hex(prefixRangeEnd(lastByteFull))).toBe("62");
+    expect({ message: message.toString(), lastByteFull: hex(lastByteFull) }).toEqual({
+      message: "xx/app/yy",
+      lastByteFull: "61ff",
+    });
+    // The walk makes each group's range from a key of the page: the page's keys stay as etcd sent them.
+    const page = Buffer.from("/a/1/b/2");
+    const keys = [page.subarray(0, 4), page.subarray(4, 8)];
+    const step = stepPrefixWalk(INITIAL_PREFIX_WALK, { keys, more: false }, { segmentBudget: 3 });
+    expect(shapeOf(prefixWalkResult(step.state, true))).toEqual([
+      { prefix: "/a/", key: hex(utf8("/a/")), end: hex(utf8("/a0")), undecided: false },
+      { prefix: "/b/", key: hex(utf8("/b/")), end: hex(utf8("/b0")), undecided: false },
+    ]);
+    expect(page.toString()).toBe("/a/1/b/2");
+    // Nor does a group keep a view into the page, which would hold the whole answer in memory.
+    const [first] = prefixWalkResult(step.state, true);
+    expect({ key: first.range.key.buffer === page.buffer, end: first.range.rangeEnd?.buffer === page.buffer }).toEqual({
+      key: false,
+      end: false,
+    });
+  });
+
   test("prefixRangeEnd raises the last byte below 0xff, and answers 0x00 when there is none", () => {
     expect(named(prefixRangeEnd(utf8("/app/")))).toBe("/app0");
     expect(hex(prefixRangeEnd(key("a", [0xff])))).toBe("62");

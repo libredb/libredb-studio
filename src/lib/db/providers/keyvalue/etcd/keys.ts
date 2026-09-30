@@ -110,7 +110,9 @@ export const ALL_KEYS: EtcdByteRange = Object.freeze({
 export function prefixRangeEnd(prefix: EtcdBytes): EtcdBytes {
   for (let index = prefix.length - 1; index >= 0; index--) {
     if (prefix[index] < 0xff) {
-      const end = prefix.slice(0, index + 1);
+      // A copy, never slice(): a Buffer's slice() is a view, and grpc-js hands the adapter Buffers
+      // that are views into the answer, so writing into a slice would rewrite the answer's keys.
+      const end = Uint8Array.from(prefix.subarray(0, index + 1));
       end[index] += 1;
       return end;
     }
@@ -304,7 +306,7 @@ function placeKey(key: EtcdBytes): KeyPlace {
 
 /** The prefix range of a group's prefix. Its bytes end in "/", so the range end is never the open 0x00. */
 function prefixRangeOf(prefix: EtcdBytes): EtcdByteRange {
-  const key = prefix.slice();
+  const key = Uint8Array.from(prefix);
   return { key, rangeEnd: prefixRangeEnd(key) };
 }
 
