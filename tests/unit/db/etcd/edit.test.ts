@@ -377,6 +377,21 @@ describe("buildEtcdValueEdit: the read, and what it found (spec 4.4, 4.5, 4.7, E
     expect(client.calls.map((call) => call.method)).toEqual(["range"]);
   });
 
+  for (const [name, text] of [
+    ["an unchanged text", "v"],
+    ["a text holding a lone surrogate", "a\uD800"],
+  ] as const) {
+    test(`${name} on a key the user may not write is refused for the key, since 4.5 weighs the text last (spec 4.7)`, async () => {
+      const context = surface({ principal: READER, writable: { kind: "ranges", ranges: [] } });
+      const answer = await buildEtcdValueEdit(holding("/app/cfg", "v"), context, edit("/app/cfg", text), STAMP);
+      expect(refusalOf(answer)).toEqual({
+        refusal: "privilege",
+        sentence: "etcd user reader may read this key but not write it",
+        at: { within: "none" },
+      });
+    });
+  }
+
   test("a context scoped to grants but carrying no principal is a composition defect, raised", async () => {
     const context = surface({ writable: { kind: "ranges", ranges: [] } });
     await expect(buildEtcdValueEdit(holding("/app/cfg", "v"), context, edit("/app/cfg", "w"), STAMP)).rejects.toThrow(
@@ -549,6 +564,18 @@ describe("one fact, one sentence: the Source tab's reason for not offering the e
       new Uint8Array([0xff, 0xfe]),
       {},
     ],
+    [
+      "a value past the edit bound on a key the user may not write (4.7 before the bound)",
+      "/app/cfg",
+      b("a".repeat(EDIT_CHARACTER_LIMIT + 1)),
+      { principal: READER, writable: { kind: "ranges", ranges: [] } },
+    ],
+    [
+      "a value that is not UTF-8 whose base64 is past the edit bound (4.4 before the bound)",
+      "/values/bin",
+      new Uint8Array(EDIT_CHARACTER_LIMIT).fill(0xff),
+      {},
+    ],
   ];
   for (const [name, key, value, over] of CASES) {
     test(name, async () => {
@@ -562,16 +589,19 @@ describe("one fact, one sentence: the Source tab's reason for not offering the e
     });
   }
 
-  test("the metadata part, which etcd keeps itself", async () => {
-    const document = await readEtcdObjectSource(holding("/app/cfg", "v"), surface(), ["/app/cfg"], "key");
-    const part = document.parts.find((candidate) => candidate.id === "metadata");
-    const request = edit("/app/cfg", "{}", { partId: "metadata" });
-    const answer = await buildEtcdValueEdit(holding("/app/cfg", "v"), surface(), request, STAMP);
-    expect(part !== undefined && "edit" in part ? part.edit : "no readable metadata part").toEqual({
-      offered: false,
-      reason: refusalOf(answer).sentence,
+  // A protected key's metadata part is refused as metadata, since the part is decided before E8, as the Source tab says.
+  for (const key of ["/app/cfg", "/registry/configmaps/default/cm"]) {
+    test(`the metadata part, which etcd keeps itself, of ${key}`, async () => {
+      const document = await readEtcdObjectSource(holding(key, "v"), surface(), [key], "key");
+      const part = document.parts.find((candidate) => candidate.id === "metadata");
+      const request = edit(key, "{}", { partId: "metadata" });
+      const answer = await buildEtcdValueEdit(holding(key, "v"), surface(), request, STAMP);
+      expect(part !== undefined && "edit" in part ? part.edit : "no readable metadata part").toEqual({
+        offered: false,
+        reason: refusalOf(answer).sentence,
+      });
     });
-  });
+  }
 });
 
 describe("one fact, one sentence: a value the Source tab does not show is the fact the build refuses (spec 4.4, E9)", () => {
