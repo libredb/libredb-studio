@@ -8,7 +8,8 @@
  * post-send "remote_addr=" deadline near 1827). Rows the KE6 captures of Task 2b re-confirm under
  * Node and Bun, and must be re-pinned from them when they land: every "No connection established"
  * row (the TLS causes and Bun's bare "Failed to connect"), the TLS-against-a-plaintext-port row
- * ("wrong version number", not measured by R07), the pre-send and post-send deadlines,
+ * (re-pinned: etcd's port answers with a closed socket, where "wrong version number" is another
+ * server's answer that R07 did not measure), the pre-send and post-send deadlines,
  * "Connection dropped", the client's receive cap, "no leader" under `hasleader`, and the watch
  * `cancel_reason` forms.
  */
@@ -176,6 +177,8 @@ describe("toEtcdError: TLS causes inside grpc-js's 'No connection established' (
     ["error:0A000412:SSL routines::sslv3 alert bad certificate", "client-certificate-refused"],
     ["error:0A00010B:SSL routines::wrong version number", "not-tls"],
     ["error:0A0000C6:SSL routines::packet length too long", "not-tls"],
+    // etcd's own plaintext port closes the socket on a TLS hello: KE6's etcd/error-tls-to-plaintext, Bun and Node alike.
+    ["Error: Client network socket disconnected before secure TLS connection was established", "not-tls"],
     ["Error: certificate has expired", undefined],
     [
       "TypeError [ERR_INVALID_ARG_VALUE]: The property 'options.servername' Setting the TLS ServerName to an IP address is not permitted.. Received '127.0.0.1'",
