@@ -13,7 +13,16 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -237,7 +246,14 @@ describe("the generator's command, run by node in child processes that write onl
   }
 
   function node(args: readonly string[], cwd: string): { exitCode: number; stdout: string; stderr: string } {
+    // Every run of the command leaves the committed module alone (spec 3.2): a run that also rewrote it with the same
+    // bytes would pass every byte check below, so its modification time is held too.
+    const committed = statSync(ETCD_DESCRIPTOR_FILE).mtimeMs;
     const child = Bun.spawnSync(["node", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    expect({ args, committedModuleWritten: statSync(ETCD_DESCRIPTOR_FILE).mtimeMs !== committed }).toEqual({
+      args,
+      committedModuleWritten: false,
+    });
     return { exitCode: child.exitCode, stdout: child.stdout.toString(), stderr: child.stderr.toString() };
   }
 
