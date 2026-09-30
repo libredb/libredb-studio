@@ -1751,6 +1751,25 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
     expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(REFUSAL);
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
+
+  // The ORDER of the two refusals, pinned: a kind the engine never declared is a claim about the
+  // engine, and telling the caller it lives in the Keys panel would name a kind that does not exist.
+  test("a kind the engine does not declare is still refused as undeclared, never pointed at the Keys panel", async () => {
+    const listObjects = keyValueProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, kinds: ["value"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+      error: 'redis declares no object kind "value"',
+    });
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
 });
 
 // ============================================================================
