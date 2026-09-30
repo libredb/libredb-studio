@@ -624,15 +624,23 @@ describe("toProviderError: a write whose outcome is unknown (QueryError, 400, no
 
 describe("toProviderError: no address from a runtime or grpc-js text, directly or through a tunnel (D-T11-12)", () => {
   /**
-   * The KE6 captures whose details carry an address, found by 127.0.0.1 and ::1 in tests/fixtures/etcd: each
-   * channel dialled 127.0.0.1, which a tunnel's local forward always is, at the port given here. The last
-   * column is what the detail tells the user once its address is gone.
+   * The KE6 error captures whose details carry an address, found by an IPv4 literal, ::1 or remote_addr= in
+   * tests/fixtures/etcd: each channel dialled a loopback address, as a tunnel's local forward is one, at the
+   * port given here. The last column is what the detail tells the user once its address is gone.
    */
   const captures: ReadonlyArray<readonly [string, number, "plaintext" | "tls", string, readonly string[]]> = [
     ["transport/error-refused.bun", 39011, "plaintext", "ECONNREFUSED", []],
     ["transport/error-refused.node", 39011, "plaintext", "ECONNREFUSED", []],
     ["etcd/error-deadline-after-send.bun", 2379, "plaintext", "Deadline exceeded after 1.000s", []],
     ["etcd/error-deadline-after-send.node", 2379, "plaintext", "Deadline exceeded after 1.001s", []],
+    // Member 3 of the cluster, at 127.0.0.4: Bun sent the call, so grpc-js names the peer after its LB pick.
+    [
+      "etcd-cluster/error-deadline-before-pick.bun",
+      2379,
+      "plaintext",
+      "Deadline exceeded after 1.501s,LB pick: 0.001s",
+      [],
+    ],
     // The altname check names the certificate's DNS names and IPs, and the name it was asked for.
     [
       "etcd-auth/error-tls-name.bun",
@@ -667,8 +675,8 @@ describe("toProviderError: no address from a runtime or grpc-js text, directly o
       for (const context of [read("get", connection), write("put", connection)]) {
         test(`${name}, ${shape}, for a ${context.write ? "write" : "read"}: the configured endpoint only, and the detail's words`, () => {
           const detail = (etcdFixture<Error>(name) as Error & { details: string }).details;
-          // The premise: the capture carries the address this rule keeps out.
-          expect(detail).toContain("127.0.0.1");
+          // The premise: the capture carries the loopback address this rule keeps out.
+          expect(detail).toMatch(/\b127(?:\.\d{1,3}){3}\b/);
           const mapped = toProviderError(toEtcdError(etcdFixture(name)), context);
           expect(mapped.message).toContain(` (${reduced})`);
           expect(strayAddresses(mapped.message, connection, names)).toEqual([]);
