@@ -99,7 +99,10 @@ export interface WorkspaceObjectReader {
    */
   listContainers(connectionId: string, parent?: readonly string[]): Promise<readonly Container[]>;
   /**
-   * How many objects of each declared kind this container holds.
+   * How many objects of each kind the object surface enumerates (`enumerableKinds()` in
+   * `src/lib/db/object-kinds.ts`) this container holds; a kind only the Keys panel enumerates
+   * (`ObjectKindSpec.enumeratedBy`) is left out, as the provider leaves it out of `countObjects`
+   * (#1089 3.4).
    *
    * The key is the kind id from the connection's declaration. A kind the engine refused to count
    * answers `{ unavailable: <the engine's own sentence> }` rather than a zero, and a real number
