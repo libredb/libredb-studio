@@ -292,9 +292,10 @@ function appendContainer(
 }
 
 /**
- * A folder is drawn because the provider DECLARED the kind, never because a count
- * answered for it. The four states of `KindCount` are four different facts: an undeclared
- * kind has no folder at all, `{ count: 0 }` draws a zero badge, a refused read carries the
+ * A folder is drawn because the provider DECLARED the kind and the object surface enumerates it
+ * (`enumerableKinds()`), never because a count answered for it. The four states of `KindCount`
+ * are four different facts: an undeclared kind and a kind only the Keys panel enumerates
+ * (#1089 3.4) have no folder at all, `{ count: 0 }` draws a zero badge, a refused read carries the
  * engine's own sentence, and `{ count, sampledFrom }` draws a bounded number. All four are
  * spelled out where they are rendered, in `formatCount` below. A container whose counts
  * have not arrived yet therefore shows all of its folders with no badge, rather than
@@ -393,11 +394,11 @@ function appendObjects(
  * it was landed for exactly this.
  *
  * The twisty is gated on the DECLARATION and never on the answer, which is the rule
- * `appendFolder` states one function up: a folder draws because a kind was declared, not because
- * a count answered. A kind that declares no columns is a leaf, no read is derived for it, and a
- * routine row never offers a twisty that opens on nothing. `kindHasColumns` is why this is not
- * `role === "relation"`: five `config` kinds in the fleet have columns the role would hide, and
- * one `sequence` has none the role would promise.
+ * `appendFolder` states one function up: a folder draws because a kind was declared and the object
+ * surface enumerates it, not because a count answered. A kind that declares no columns is a leaf,
+ * no read is derived for it, and a routine row never offers a twisty that opens on nothing.
+ * `kindHasColumns` is why this is not `role === "relation"`: five `config` kinds in the fleet have
+ * columns the role would hide, and one `sequence` has none the role would promise.
  *
  * `spec.id === object.kind` because the id, the describe request and this gate must read ONE
  * fact. The folder asked for one kind; an answer carrying another gets no twisty rather than a
