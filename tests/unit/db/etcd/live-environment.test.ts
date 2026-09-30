@@ -271,9 +271,12 @@ function readmeKeys(): { readonly count: number; readonly keys: string[] } {
   const keys: string[] = [];
   for (const row of section.split("\n").filter((line) => line.startsWith("| `"))) {
     const cell = row.split("|")[1];
-    const suffixed = /`([^`]+)` followed by the bytes `([0-9a-f ]+)`/.exec(cell);
-    if (suffixed !== null) keys.push(suffixed[1] + bytes(suffixed[2]));
-    else for (const [, key] of cell.matchAll(/`([^`]+)`/g)) keys.push(key);
+    // A key that is not UTF-8 is written "`<text>` followed by the bytes `<hex>`", then optionally "and `<text>`".
+    for (const [, before, hex, after, plain] of cell.matchAll(
+      /`([^`]+)` followed by the bytes `([0-9a-f ]+)`(?: and `([^`]+)`)?|`([^`]+)`/g,
+    )) {
+      keys.push(plain ?? before + bytes(hex) + (after ?? ""));
+    }
   }
   return { count, keys };
 }
@@ -298,8 +301,9 @@ function calls(source: string): { readonly path: string; readonly body: string }
 }
 
 // Every key section 9 of the design names, so dropping one from both seed.sh and the README
-// still fails. The layouts of R09, the prefix-group shapes, the values of 4.4, the history key,
-// the leases, the Kubernetes subtree, the root compaction key and the custom-prefix stand-ins.
+// still fails. The layouts of R09, the prefix-group shapes, the keys that are not UTF-8 in each
+// arm of rule 7 of 4.1 (R13 D8), the values of 4.4, the history key, the leases, the Kubernetes
+// subtree, the root compaction key and the custom-prefix stand-ins.
 const SPEC_KEYS = [
   "/apisix/routes/1",
   "/apisix/plugins",
@@ -311,6 +315,9 @@ const SPEC_KEYS = [
   "/app/cfg",
   "/app/a/b",
   "/app/x/y",
+  "/bin/ok/x",
+  `/bin/${bytes("fffe")}/x`,
+  `/${bytes("fffe")}/x`,
   "/values/not-utf8",
   "/values/large",
   "/values/empty",

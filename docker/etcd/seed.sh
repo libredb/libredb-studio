@@ -33,6 +33,14 @@ new /app/cfg '{"mode":"blue"}'
 new /app/a/b 'nested'
 new /app/x/y 'deeper'
 
+# Rule 7 of the prefix-group rule over keys that are not UTF-8 (R13 D8): a deep first segment
+# whose second segment is not UTF-8 (/bin/ok/* is a group; the key beside it is in no group, yet
+# still makes /bin/ deep), and a first segment that is not UTF-8 (in no group). The flat arm, a
+# second segment that is not UTF-8 under a flat first segment, is /values/key- below.
+new /bin/ok/x 'a deep key beside a segment that is not UTF-8'
+put_new "$(printf '/bin/\377\376/x' | b64)" "$(text 'the second segment is not UTF-8')"
+put_new "$(printf '/\377\376/x' | b64)" "$(text 'the first segment is not UTF-8')"
+
 # Values the Source tab and the result grid must not show as text: bytes that are not UTF-8,
 # one past the cell bound (300,000 bytes, past Kafka's 64 KiB starting point and past 256 KiB),
 # zero bytes, and whitespace only; and a key that is not UTF-8.

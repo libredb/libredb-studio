@@ -65,7 +65,7 @@ docker exec libredb-etcd-auth etcdctl --endpoints=https://127.0.0.1:2379 --cacer
 
 ## The seeded keys
 
-The same 31 keys, at revision 34, on `etcd`, on the cluster and on both auth servers.
+The same 34 keys, at revision 37, on `etcd`, on the cluster and on both auth servers.
 
 | Keys | What they exist for |
 |---|---|
@@ -75,10 +75,12 @@ The same 31 keys, at revision 34, on `etcd`, on the cluster and on both auth ser
 | `/feature-flag`, `plain` | One-segment keys, with and without the leading `/`, in no group |
 | `/config/a`, `/config/b` | A first segment holding only two-segment keys: the group `/config/*` |
 | `/app/cfg`, `/app/a/b`, `/app/x/y` | A first segment mixing both shapes: the groups `/app/a/*` and `/app/x/*`, with `/app/cfg` in no group |
+| `/bin/ok/x`, `/bin/` followed by the bytes `ff fe` and `/x` | A deep first segment whose second segment is not UTF-8: the group `/bin/ok/*`, and the other key in no group, though it still makes `/bin/` deep (rule 7 of the prefix-group rule) |
+| `/` followed by the bytes `ff fe` and `/x` | A first segment that is not UTF-8: in no group (rule 7 of the prefix-group rule) |
 | `/values/not-utf8` | A value that is not UTF-8 (`ff fe 00 01 c3 28`) |
 | `/values/large` | A value of 300,000 bytes, past the cell bound |
 | `/values/empty`, `/values/whitespace` | A value of zero bytes, and one of whitespace only |
-| `/values/key-` followed by the bytes `ff fe` | A key that is not UTF-8 |
+| `/values/key-` followed by the bytes `ff fe` | A key that is not UTF-8, under the flat `/values/`: it belongs to `/values/*` (rule 7 of the prefix-group rule) |
 | `/history/counter` | Three revisions, `1`, `2` and `3`, for `get --rev` and `watch --rev` |
 | `/leases/session-1` | Attached to lease `694d8147df1dc4c8` (7587863092875085000, past 2^53) |
 | `/leases/session-2`, `/registry/events/default/nginx.1` | Attached to lease `694d8147df1dc4c9`, which holds a protected key beside an ordinary one |
