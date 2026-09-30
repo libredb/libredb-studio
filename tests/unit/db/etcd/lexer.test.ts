@@ -219,6 +219,14 @@ const SHELL_REFUSALS: readonly [form: string, text: string, code: string, column
   ["a ~ that begins a word", "get ~/x", "shell-expansion", 4, tilde(1, 5)],
   ["a lone ~", "get ~", "shell-expansion", 4, tilde(1, 5)],
   ["a ~ right after the = of a NAME= word", "put k a=~/x", "shell-expansion", 6, assignmentTilde(1, 7)],
+  // Measured: bash 5.2.21 echoed a1=~/x and A1_B2=~/y with the ~ expanded, and 1a=~/z as written.
+  [
+    "a ~ after the = of a NAME= word whose name holds a digit",
+    "put k a1=~/x",
+    "shell-expansion",
+    6,
+    assignmentTilde(1, 7),
+  ],
   ["a ~ right after a : of a NAME= word", "put k a=b:~/x", "shell-expansion", 6, assignmentTilde(1, 7)],
   ["braces holding a comma", "put k {a,b}", "shell-expansion", 6, braces(1, 7)],
   ["braces holding ..", "put k {1..3}", "shell-expansion", 6, braces(1, 7)],
@@ -358,10 +366,13 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
     expect(split("- get").lead).toEqual({ roles: [], commandIndex: 0 });
   });
 
-  test("a name begins with a letter or _ and ends at an unquoted =, and only txn itself is txn", () => {
+  test("a name begins with a letter or _, goes on with letters, digits and _, and ends at an unquoted =, and only txn itself is txn", () => {
     expect(split("1A=2 get").lead).toEqual({ roles: [], commandIndex: 0 });
     expect(split("=A get").lead).toEqual({ roles: [], commandIndex: 0 });
     expect(split("_A=2 get").lead).toEqual({ roles: ["assignment"], commandIndex: 1 });
+    // Measured: bash 5.2.21, dash and zsh 5.9 each passed A1=x and A1_B2=3 to env as assignments.
+    expect(split("A1=x get").lead).toEqual({ roles: ["assignment"], commandIndex: 1 });
+    expect(sectionsOf("A1_B2=x txn\n")).toEqual(["command", "compares"]);
     expect(sectionsOf("txnx\n")).toEqual(["command", "after-command"]);
     expect(sectionsOf("t'x'n\n")).toEqual(["command", "compares"]);
   });
@@ -394,6 +405,7 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
       "env",
       "ETCDCTL_API=3",
       "A_NAME_LONGER_THAN_EIGHTEEN_UNITS=1",
+      "A1_B2=3",
       "1A=2",
       "etcdctl",
       "./etcdctl",
@@ -1132,6 +1144,24 @@ describe("lexLogicalLine", () => {
       ok: false,
       refusal: { code: "shell-expansion", line: 1, column: 4, message: dollar(1, 5) },
     });
+    // A whole word's own refusals: a ~ that begins it, a ~ after the = of a NAME= word, braces a shell expands.
+    expect(lexLogicalLine("put k ~/x", 0)).toEqual({
+      ok: false,
+      refusal: { code: "shell-expansion", line: 1, column: 6, message: tilde(1, 7) },
+    });
+    expect(lexLogicalLine("put k {a,b}", 0)).toEqual({
+      ok: false,
+      refusal: { code: "shell-expansion", line: 1, column: 6, message: braces(1, 7) },
+    });
+    expect(lexLogicalLine("put k A=~/x", 0)).toEqual({
+      ok: false,
+      refusal: { code: "shell-expansion", line: 1, column: 6, message: assignmentTilde(1, 7) },
+    });
+    // A word that runs over a backslash-newline is refused at its first character, on the line it starts on.
+    expect(lexLogicalLine("put k ~a\\\nb", 0)).toEqual({
+      ok: false,
+      refusal: { code: "shell-expansion", line: 1, column: 6, message: tilde(1, 7) },
+    });
     expect(lexLogicalLine("get 'x", 0)).toMatchObject({ ok: false, refusal: { code: "unclosed-quote" } });
     expect(lexLogicalLine("get x\\", 0)).toMatchObject({ ok: false, refusal: { code: "trailing-backslash" } });
     expect(lexLogicalLine("get \ud800", 0)).toMatchObject({ ok: false, refusal: { code: "not-text" } });
@@ -1146,11 +1176,13 @@ describe("lexLogicalLine", () => {
  * Runes Go's strconv.IsPrint does not print, each with strconv.Quote("a" + rune + "b") as Go 1.27
  * (Unicode 17.0.0) printed it: format characters (a bidi override, a zero-width space, a soft hyphen, an
  * isolate, a tag, the Arabic letter mark, the Mongolian vowel separator, an interlinear annotation), an
- * ASCII and a C1 control, private use, unassigned code points and a noncharacter, and spaces. Bun 1.4.2
- * and Node 24.14.0 classify every scalar value as Go 1.27 does (measured over all of them).
+ * ASCII control and two C1 controls (U+0080, the first rune past ASCII, and U+0090), private use,
+ * unassigned code points and a noncharacter, and spaces. Bun 1.4.2 and Node 24.14.0 classify every scalar
+ * value as Go 1.27 does (measured over all of them).
  */
 const NOT_PRINTED: readonly [name: string, char: string, goQuoted: string][] = [
   ["U+001F, an ASCII control", "\u001f", '"a\\x1fb"'],
+  ["U+0080, a C1 control and the first rune past ASCII", "\u0080", '"a\\u0080b"'],
   ["U+FFFF, a noncharacter", "\uffff", '"a\\uffffb"'],
   ["U+202E, a right-to-left override", "\u202e", '"a\\u202eb"'],
   ["U+200B, a zero-width space", "\u200b", '"a\\u200bb"'],
