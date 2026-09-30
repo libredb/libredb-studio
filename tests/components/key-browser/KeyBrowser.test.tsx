@@ -1565,6 +1565,22 @@ describe("a panel in a declared shape", () => {
     );
   });
 
+  test("keeps Redis's Load more title when the declaration names no shape", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": page(["app:env", "app:x"], "7") });
+    renderBrowser();
+    await waitFor(() => {
+      expect(rows()).toEqual(["app:*@0"]);
+    });
+
+    fireEvent.click(screen.getByText("app:*"));
+
+    // Byte for byte the title the panel drew before the shape existed: a `SCAN` page is a batch of
+    // buckets, and the prefix wording says the walk reads one ordered range, which is false here.
+    expect(screen.getAllByTestId("key-browser-load-more")[0].getAttribute("title")).toBe(
+      "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded.",
+    );
+  });
+
   test("finds a full key, a prefix and a key with no leading separator in the filter", async () => {
     mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/apisix/routes/1", "/apisix/plugins", "k3s/x"]).handler });
     renderBrowser(ETCD_SCAN);
