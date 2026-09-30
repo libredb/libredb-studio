@@ -804,6 +804,7 @@ describe("applyEtcdValueEdit: a plan this provider did not build is raised befor
     ["another kind", (plan) => ({ ...plan, kind: "prefix" })],
     ["another part", (plan) => ({ ...plan, partId: "metadata" })],
     ["a path of two segments", (plan) => ({ ...plan, path: ["/app", "cfg"] })],
+    ["a path of two segments, the first the addressed key", (plan) => ({ ...plan, path: ["/app/cfg", "x"] })],
     ["a path naming another key", (plan) => ({ ...plan, path: ["/app/other"] })],
     // "/app/cfh" is as long as "/app/cfg" and differs only in its last byte: a byte-for-byte comparison refuses it.
     ["a path naming a key of the same length", (plan) => ({ ...plan, path: ["/app/cfh"] })],
