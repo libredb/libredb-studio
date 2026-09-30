@@ -14,8 +14,9 @@
  * next word. Where etcdctl reads a spelling in a way a user would not expect, the subset refuses it
  * rather than guess: an integer in another base (pflag reads --limit=010 as octal 8), a flag given
  * twice (pflag keeps the last), an abbreviated command (cobra runs `ge` as get), a third positional
- * (etcdctl drops it), and a lease id with a sign (etcd grants only positive ids). Each refusal is a
- * whole sentence that names what it refused, and never quotes a flag's value, a value or a line.
+ * (etcdctl drops it), and a lease id with a sign (the ids etcd picks are positive, and Studio does not
+ * address a negative one a client chose). Each refusal is a whole sentence that names what it refused,
+ * and never quotes a flag's value, a value or a line.
  */
 import { isFlagText, type LexRefusalCode, type SplitLine, splitWords, type Word } from "./lexer";
 
@@ -173,9 +174,10 @@ export interface EtcdParseLimits {
 
 const ECHO_LENGTH = 40;
 
-/** A word the user typed, as a refusal may repeat it: at most 40 characters. */
+/** A word the user typed, as a refusal may repeat it: at most 40 characters, cut between two of them. */
 function bounded(text: string): string {
-  return text.length > ECHO_LENGTH ? `${text.slice(0, ECHO_LENGTH)}...` : text;
+  const characters = Array.from(text);
+  return characters.length > ECHO_LENGTH ? `${characters.slice(0, ECHO_LENGTH).join("")}...` : text;
 }
 
 /** A name the user typed, without whatever follows its first `=`: that may be a value or a password. */
@@ -211,14 +213,25 @@ function signedInt64(text: string): string | undefined {
   return value > MAX_INT64 || value < MIN_INT64 ? undefined : value.toString();
 }
 
-type LeaseId = { readonly kind: "ok"; readonly hex: string } | { readonly kind: "not-hex" } | { readonly kind: "past" };
+type LeaseId =
+  | { readonly kind: "ok"; readonly hex: string }
+  | { readonly kind: "signed" }
+  | { readonly kind: "not-hex" }
+  | { readonly kind: "past" };
+
+const SIGNED_HEX_ID = /^[+-][0-9a-fA-F]+$/;
+const NEGATIVE_LEASE = "Studio does not address a negative id, which etcd holds only when a client chose it";
+const UNSIGNED_LEASE = `as lease list prints the ids etcd grants, such as 694d77aa9e38260f: ${NEGATIVE_LEASE}`;
 
 /**
  * A lease id in hexadecimal, any padding and case, as etcdctl's base-16 parse reads it, but with
- * no sign: etcd grants only positive ids (v3_server.go LeaseGrant). Written as `lease list` prints
- * it, 16 lowercase digits.
+ * no sign. Written as `lease list` prints it, 16 lowercase digits. The ids etcd picks itself are
+ * positive (v3_server.go LeaseGrant), but etcd also grants an id a client chooses, a negative one
+ * included (measured on v3.7.2: a grant of -5 was granted, and etcdctl's lease list printed
+ * -000000000000005); Studio does not address such a lease.
  */
 function leaseId(text: string): LeaseId {
+  if (SIGNED_HEX_ID.test(text)) return { kind: "signed" };
   if (!HEX_ID.test(text)) return { kind: "not-hex" };
   const digits = text.replace(/^0+/, "").toLowerCase();
   if (digits.length > 16 || (digits.length === 16 && digits[0] > "7")) return { kind: "past" };
@@ -250,29 +263,51 @@ const DURATION_UNITS: ReadonlyMap<string, number> = new Map([
   ["m", 6e10],
   ["h", 3.6e12],
 ]);
-const DURATION_PART = /^([0-9]*)(?:\.([0-9]*))?([^0-9.]+)/;
+const DURATION_PART = /^([0-9]*)(?:\.([0-9]*))?([^0-9.]*)/;
+const ZERO = BigInt(0);
+const TEN = BigInt(10);
+/** 2^63: what time.ParseDuration lets one part and the sum reach before it applies the sign. */
+const DURATION_CEILING = MAX_INT64 + BigInt(1);
+const NANOS_PER_MS = BigInt(1_000_000);
 
-/** time.ParseDuration's grammar, to nanoseconds; undefined where Go refuses the text. */
-function goDurationNanos(text: string): number | undefined {
+/**
+ * time.ParseDuration, to nanoseconds, with Go's own arithmetic, so a duration reads as etcdctl reads it:
+ * each part's whole digits times its unit, exactly, plus its fraction as Go adds it,
+ * float64(f) * (unit / scale) truncated, where f holds the fraction's digits until one more would pass
+ * 2^63 and scale is ten for each digit f holds. Undefined where Go refuses the text.
+ */
+function goDurationNanos(text: string): bigint | undefined {
   let rest = text;
-  let sign = 1;
+  let negative = false;
   if (rest.startsWith("-") || rest.startsWith("+")) {
-    sign = rest.startsWith("-") ? -1 : 1;
+    negative = rest.startsWith("-");
     rest = rest.slice(1);
   }
-  if (rest === "0") return 0;
+  if (rest === "0") return ZERO;
   if (rest === "") return undefined;
-  let total = 0;
+  let total = ZERO;
   while (rest !== "") {
-    const part = DURATION_PART.exec(rest);
-    if (part === null) return undefined;
-    const [whole, integer, fraction = "", unit] = part;
-    const scale = DURATION_UNITS.get(unit);
-    if ((integer === "" && fraction === "") || scale === undefined) return undefined;
-    total += Number(`${integer || "0"}.${fraction}`) * scale;
+    const [whole, integer, fraction = "", unit] = DURATION_PART.exec(rest) as RegExpExecArray;
+    const unitNanos = DURATION_UNITS.get(unit);
+    if ((integer === "" && fraction === "") || unitNanos === undefined) return undefined;
+    let kept = ZERO;
+    let scale = 1;
+    let full = false;
+    for (const digit of fraction) {
+      const next = kept * TEN + BigInt(digit);
+      if (full || kept > MAX_INT64 / TEN || next > DURATION_CEILING) {
+        full = true;
+        continue;
+      }
+      kept = next;
+      scale *= 10;
+    }
+    total += BigInt(integer) * BigInt(unitNanos) + BigInt(Math.trunc(Number(kept) * (unitNanos / scale)));
     rest = rest.slice(whole.length);
   }
-  return total >= 2 ** 63 ? undefined : sign * total;
+  // Every part adds, so the overflow checks Go makes as it goes come to one bound on the sum: 2^63 ns
+  // before a minus sign is applied, and 2^63 - 1 without one.
+  return total > (negative ? DURATION_CEILING : MAX_INT64) ? undefined : negative ? -total : total;
 }
 
 const formatMs = (ms: number): string => (ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`);
@@ -366,6 +401,7 @@ const CONSISTENCY_FLAG = valued("consistency", "l|s", "s", (text) =>
 
 const LEASE_ID_FLAG = valued("lease", "<hex id>", "694d77aa9e38260f", (text) => {
   const id = leaseId(text);
+  if (id.kind === "signed") return { message: `--lease takes a lease id without a sign, ${UNSIGNED_LEASE}.` };
   if (id.kind === "not-hex") return { message: LEASE_FLAG };
   if (id.kind === "past") return { message: `--lease is past the largest lease id, ${LARGEST_LEASE_ID}.` };
   return { value: id.hex === "0".repeat(16) ? undefined : id.hex };
@@ -374,13 +410,17 @@ const LEASE_ID_FLAG = valued("lease", "<hex id>", "694d77aa9e38260f", (text) => 
 const TIMEOUT_FLAG = valued("command-timeout", "<duration>", "5s", (text) => {
   const nanos = goDurationNanos(text);
   if (nanos === undefined) return { message: "--command-timeout takes a Go duration such as 500ms, 5s or 1m30s." };
-  if (nanos <= 0) return { message: "--command-timeout must be longer than zero." };
-  return { value: Math.ceil(nanos / 1e6) };
+  if (nanos <= ZERO) return { message: "--command-timeout must be longer than zero." };
+  // Up to a whole millisecond, in integers: 2^63 - 1 ns is fewer than 2^53 ms, so the number is exact.
+  return { value: Number((nanos + NANOS_PER_MS - BigInt(1)) / NANOS_PER_MS) };
 });
 
 const WHOLE_RANGE = "the server loads the whole range into memory for it, whatever the limit (spec E14)";
 const NO_TERMINAL = "Studio has no terminal to prompt in";
-const CLUSTER = "Studio dials only the configured endpoint, never the addresses the members advertise (spec E3)";
+const CLUSTER_FLAG: RefusedFlagSpec = {
+  name: "cluster",
+  reason: "Studio dials only the configured endpoint, never the addresses the members advertise (spec E3)",
+};
 
 const flag = (flags: ReadonlyMap<string, FlagOccurrence>, name: string): FlagValue => flags.get(name)?.value;
 const isSet = (flags: ReadonlyMap<string, FlagOccurrence>, name: string): boolean => flag(flags, name) === true;
@@ -598,11 +638,12 @@ function leaseArgument(name: string, input: BuildInput): string | CommandRefusal
   if (isRefusal(word)) return word;
   const id = leaseId(word.text);
   if (id.kind === "ok") return id.hex;
-  const message =
-    id.kind === "past"
-      ? `${name}'s lease id is past the largest lease id, ${LARGEST_LEASE_ID}.`
-      : `${name} takes a lease id in hexadecimal, as lease list prints it, such as 694d77aa9e38260f.`;
-  return refusal("bad-argument", message, at(word));
+  const messages = {
+    past: `${name}'s lease id is past the largest lease id, ${LARGEST_LEASE_ID}.`,
+    signed: `${name} takes a lease id without a sign, ${UNSIGNED_LEASE}.`,
+    "not-hex": `${name} takes a lease id in hexadecimal, as lease list prints it, such as 694d77aa9e38260f.`,
+  };
+  return refusal("bad-argument", messages[id.kind], at(word));
 }
 
 function buildLeaseGrant(input: BuildInput): EtcdCommand | CommandRefusal {
@@ -803,7 +844,7 @@ const COMMANDS: readonly CommandSpec[] = [
     kind: "endpoint-status",
     arguments: "",
     flags: [],
-    refusedFlags: [{ name: "cluster", reason: CLUSTER }],
+    refusedFlags: [CLUSTER_FLAG],
     build: noArguments("endpoint status", { kind: "endpoint-status" }),
   },
   {
@@ -811,7 +852,7 @@ const COMMANDS: readonly CommandSpec[] = [
     kind: "endpoint-health",
     arguments: "",
     flags: [],
-    refusedFlags: [{ name: "cluster", reason: CLUSTER }],
+    refusedFlags: [CLUSTER_FLAG],
     build: noArguments("endpoint health", { kind: "endpoint-health" }),
   },
   {
@@ -1005,6 +1046,27 @@ interface Found {
 
 const labelOf = (spec: CommandSpec): string => spec.words.join(" ");
 
+/**
+ * The flags etcdctl declares on a command group rather than on each of its subcommands, so that it
+ * takes them between the group and its subcommand too: endpoint's --cluster (ep_command.go,
+ * NewEndpointCommand). Each is refused there by name, with its reason.
+ */
+const GROUP_REFUSED_FLAGS: ReadonlyMap<string, readonly RefusedFlagSpec[]> = new Map([["endpoint", [CLUSTER_FLAG]]]);
+
+interface RefusedScope {
+  /** The command or the group the refusal names. */
+  readonly subject: string;
+  readonly flags: readonly RefusedFlagSpec[];
+}
+
+/** What a flag written at `place` belongs to, and the flags etcdctl has there that the subset refuses. */
+function refusedScope(place: FlagPlace): RefusedScope | undefined {
+  if (place.where === "command" || place.where === "request")
+    return { subject: labelOf(place.spec), flags: place.spec.refusedFlags };
+  if (place.where === "subcommand") return { subject: place.group, flags: GROUP_REFUSED_FLAGS.get(place.group) ?? [] };
+  return undefined;
+}
+
 /** The long name a shorthand stands for where it is written, or undefined when none does. */
 function shorthandName(letter: string, place: FlagPlace): string | undefined {
   if (place.where === "command" || place.where === "request") {
@@ -1015,17 +1077,22 @@ function shorthandName(letter: string, place: FlagPlace): string | undefined {
   return ETCD_REFUSED_GLOBAL_FLAGS.find((global) => global.shorthand === `-${letter}`)?.flag.slice(2);
 }
 
+/**
+ * etcdctl takes a command's own flag before the command word or its subcommand when it is written with
+ * `=` (measured on v3.7.2: --prefix=true get /a/ read both keys), and misreads it without (--prefix
+ * get /a/ answered unknown command "/a/"), so Studio takes one place for it in both spellings.
+ */
 function unknownFlag(shown: string, place: FlagPlace, word: Word): CommandRefusal {
   if (place.where === "lead")
     return refusal(
       "unknown-flag",
-      `${shown} comes before the command word, where etcdctl takes only its global flags: write a command's own flags after the command.`,
+      `${shown} comes before the command word, and Studio takes a command's own flags only after the command and its subcommand: write it after them.`,
       at(word),
     );
   if (place.where === "subcommand")
     return refusal(
       "unknown-flag",
-      `${shown} comes before the subcommand of ${place.group}: write it after ${place.group} and its subcommand.`,
+      `${shown} comes between ${place.group} and its subcommand, and Studio takes a command's own flags only after both: write it after ${place.group} and its subcommand.`,
       at(word),
     );
   const label = labelOf(place.spec);
@@ -1067,9 +1134,14 @@ function readFlag(words: readonly Word[], index: number, place: FlagPlace, found
 
   const spec = place.where === "command" || place.where === "request" ? place.spec : undefined;
   const own = spec?.flags.find((candidate) => candidate.name === name);
-  const refusedOwn = spec?.refusedFlags.find((candidate) => candidate.name === name);
-  if (refusedOwn !== undefined && spec !== undefined)
-    return refusal("refused-flag", `${labelOf(spec)} does not take --${name}: ${refusedOwn.reason}.`, at(word));
+  const scope = refusedScope(place);
+  const refusedOwn = scope?.flags.find((candidate) => candidate.name === name);
+  if (refusedOwn !== undefined)
+    return refusal(
+      "refused-flag",
+      `${(scope as RefusedScope).subject} does not take --${name}: ${refusedOwn.reason}.`,
+      at(word),
+    );
   const isTimeout = own === undefined && name === TIMEOUT_FLAG.name;
   if (isTimeout && place.where === "request")
     return refusal(
@@ -1086,9 +1158,8 @@ function readFlag(words: readonly Word[], index: number, place: FlagPlace, found
         at(word),
       );
     if (name === "help") {
-      const subject = spec !== undefined ? labelOf(spec) : place.where === "subcommand" ? place.group : undefined;
       const message =
-        subject === undefined ? `--help is refused: ${HELP}.` : `${subject} does not take --help: ${HELP}.`;
+        scope === undefined ? `--help is refused: ${HELP}.` : `${scope.subject} does not take --help: ${HELP}.`;
       return refusal("refused-flag", message, at(word));
     }
     return unknownFlag(shown, place, word);
@@ -1262,6 +1333,12 @@ function readCompareLine(line: SplitLine): TxnCompareSpec | CommandRefusal {
     spec = { target, key: parts.key.bytes, operator, operand: parts.value.bytes };
   } else if (target === "lease") {
     const id = leaseId(parts.value.text);
+    if (id.kind === "signed")
+      return refusal(
+        "txn-syntax",
+        `${where} compares lease with a signed id: write the id without a sign, as lease list prints the ids etcd grants, or "0" for a key with no lease. ${NEGATIVE_LEASE}.`,
+        at(parts.value),
+      );
     if (id.kind !== "ok")
       return refusal(
         "txn-syntax",
@@ -1306,7 +1383,10 @@ function readRequestLine(line: SplitLine, limits: EtcdParseLimits): TxnRequestSp
     | CommandRefusal;
 }
 
-/** Whether a run of `#` lines starting at `index` may be removed without moving a line (spec 5.1.4). */
+/**
+ * Whether the run of `#` lines starting at `index` is one spec 5.1.4 removes: a run directly above a
+ * compare or a request, or one followed only by `#` and empty lines.
+ */
 function commentRunRemovable(body: readonly SplitLine[], index: number): boolean {
   let next = index;
   while (next < body.length && body[next].role === "comment") next += 1;
@@ -1344,7 +1424,7 @@ function readTxnBody(lines: readonly SplitLine[], limits: EtcdParseLimits): Etcd
     } else if (line.role === "comment" && body[index - 1]?.role !== "comment" && !commentRunRemovable(body, index)) {
       return refusal(
         "txn-syntax",
-        `Line ${line.line} of the txn is a # line followed by an empty line: removing it would change which list the lines after it fall into, so Studio refuses it. Put the # line directly above a compare or a request, or remove it.`,
+        `Line ${line.line} of the txn is a # line that is neither directly above a compare or a request nor followed only by # and empty lines, and a # line above an empty line could read as a list of its own: move it directly above a compare or a request, or remove it.`,
         place,
       );
     }

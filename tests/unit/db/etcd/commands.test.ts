@@ -320,9 +320,45 @@ describe("--command-timeout, the one global flag (spec 5.1.2)", () => {
     ["get /a --command-timeout=+.5s", 500],
     ["get /a --command-timeout=5.s", 5_000],
     ["get /a --command-timeout=60s", 60_000],
+    // Go 1.27's time.ParseDuration, measured: 0.067s is 67000000 ns, 1.1m 66000000000 and 0.0011h 3960000000.
+    ["get /a --command-timeout=0.067s", 67],
+    ["get /a --command-timeout=1.1m", 66_000],
+    ["get /a --command-timeout=0.0011h", 3_960],
+    // The largest duration Go holds, 2^63 - 1 ns, in two spellings.
+    ["get /a --command-timeout=9223372036854775807ns", 9_223_372_036_855],
+    ["get /a --command-timeout=2562047h47m16.854775807s", 9_223_372_036_855],
+    // Go keeps a fraction's digits only while they fit its integer, then adds the fraction in floating point:
+    // it reads 0.999999999999999999999ns as 1 ns (measured), where all 21 digits would make 0 ns.
+    ["get /a --command-timeout=0.999999999999999999999ns", 1],
   ])("%s is %d ms", (text, ms) => {
     const limits = { ...LIMITS, maxCommandTimeoutMs: Number.POSITIVE_INFINITY };
     expect(parsed(text, limits).commandTimeoutMs).toBe(ms);
+  });
+
+  test("every exact millisecond from 0.001s to 20.000s is that many milliseconds, as time.ParseDuration reads it", () => {
+    const limits = { ...LIMITS, maxCommandTimeoutMs: Number.POSITIVE_INFINITY };
+    const wrong: string[] = [];
+    for (let ms = 1; ms <= 20_000; ms++) {
+      const text = `${Math.floor(ms / 1000)}.${String(ms % 1000).padStart(3, "0")}s`;
+      const read = parseEtcdCommand(`get /a --command-timeout=${text}`, limits);
+      if (!read.ok || read.parsed.commandTimeoutMs !== ms) wrong.push(text);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  test("a duration exactly at the cap is taken, and one a millisecond past it is refused", () => {
+    const cap = { ...LIMITS, maxCommandTimeoutMs: 2_011 };
+    expect(parsed("get /a --command-timeout=2.011s", cap).commandTimeoutMs).toBe(2_011);
+    expect(parsed("get /a --command-timeout=2011ms", cap).commandTimeoutMs).toBe(2_011);
+    expect(refusal("get /a --command-timeout=2.012s", cap).code).toBe("limit-too-large");
+    expect(parsed("get /a --command-timeout=60000ms").commandTimeoutMs).toBe(60_000);
+    expect(refusal("get /a --command-timeout=60001ms")).toEqual({
+      code: "limit-too-large",
+      line: 1,
+      column: 7,
+      message:
+        "--command-timeout=60001ms is above this connection's query timeout, 60 s: lower it, or raise Query Timeout in the connection's settings.",
+    });
   });
 
   test("absent, it is absent", () => {
@@ -336,15 +372,26 @@ describe("--command-timeout, the one global flag (spec 5.1.2)", () => {
     });
   });
 
-  test.each(["0", "0s", "-5s", "-0"])("%s is not longer than zero", (value) => {
-    expect(refusal(`get /a --command-timeout=${value}`)).toMatchObject({
-      code: "bad-argument",
-      message: "--command-timeout must be longer than zero.",
-    });
-  });
+  // Go reads 0.0000000000000000000000000001h as 0 ns (measured), so it is no timeout at all, and it holds
+  // -2^63 ns, one nanosecond more than it holds above zero.
+  test.each(["0", "0s", "-5s", "-0", "0.0000000000000000000000000001h", "-9223372036854775808ns"])(
+    "%s is not longer than zero",
+    (value) => {
+      expect(refusal(`get /a --command-timeout=${value}`)).toMatchObject({
+        code: "bad-argument",
+        message: "--command-timeout must be longer than zero.",
+      });
+    },
+  );
 
   test("a duration past what Go holds is no duration", () => {
     expect(refusal("get /a --command-timeout=3000000h").code).toBe("bad-argument");
+    for (const past of ["9223372036854775808ns", "2562047h47m16.854775808s", "-9223372036854775809ns"]) {
+      expect(refusal(`get /a --command-timeout=${past}`)).toMatchObject({
+        code: "bad-argument",
+        message: "--command-timeout takes a Go duration such as 500ms, 5s or 1m30s.",
+      });
+    }
   });
 
   test("above the connection's query timeout it is refused, naming the cap", () => {
@@ -420,14 +467,38 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
     expect(found.message).not.toContain("hunter2");
   });
 
+  test("every assignment is checked, not only the first", () => {
+    expect(refusal("ETCDCTL_API=3 ETCDCTL_ENDPOINTS=x etcdctl get /a")).toEqual({
+      code: "global-flag",
+      line: 1,
+      column: 14,
+      message: `The environment variable ETCDCTL_ENDPOINTS is refused: before a command Studio accepts only ETCDCTL_API=3, because ${WHERE}.`,
+    });
+  });
+
+  test("every flag before the command word is read, the one after --command-timeout's value included", () => {
+    expect(refusal("etcdctl --command-timeout 5s --endpoints=x get /a")).toEqual({
+      code: "global-flag",
+      line: 1,
+      column: 29,
+      message: `The global flag --endpoints is refused: ${WHERE}. The one global flag a command takes is --command-timeout.`,
+    });
+  });
+
+  // Measured with etcdctl v3.7.2: --prefix=true get /a/ printed both keys, endpoint --cluster status and
+  // member --consistency=s list ran, and only the spaced --prefix get /a/ failed, with unknown command "/a/".
+  // Studio takes a command's own flag in one place, after the command and its subcommand.
   test("a command's own flag before the command word is refused", () => {
     expect(refusal("etcdctl --prefix get /a")).toEqual({
       code: "unknown-flag",
       line: 1,
       column: 8,
       message:
-        "--prefix comes before the command word, where etcdctl takes only its global flags: write a command's own flags after the command.",
+        "--prefix comes before the command word, and Studio takes a command's own flags only after the command and its subcommand: write it after them.",
     });
+    expect(refusal("etcdctl --prefix=true get /a").message).toBe(
+      "--prefix comes before the command word, and Studio takes a command's own flags only after the command and its subcommand: write it after them.",
+    );
     expect(refusal("-- get /a")).toMatchObject({
       code: "unknown-flag",
       message: expect.stringContaining("-- comes before"),
@@ -435,11 +506,23 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
   });
 
   test("a flag between a command and its subcommand is refused, but --command-timeout", () => {
+    const between = (flag: string, group: string) =>
+      `${flag} comes between ${group} and its subcommand, and Studio takes a command's own flags only after both: write it after ${group} and its subcommand.`;
     expect(refusal("lease --keys timetolive 1")).toEqual({
       code: "unknown-flag",
       line: 1,
       column: 6,
-      message: "--keys comes before the subcommand of lease: write it after lease and its subcommand.",
+      message: between("--keys", "lease"),
+    });
+    expect(refusal("lease --command-timeout 5s --keys timetolive 1")).toEqual({
+      code: "unknown-flag",
+      line: 1,
+      column: 27,
+      message: between("--keys", "lease"),
+    });
+    expect(refusal("member --consistency=s list")).toMatchObject({
+      code: "unknown-flag",
+      message: between("--consistency", "member"),
     });
     expect(refusal("member --endpoints=x list").code).toBe("global-flag");
     expect(refusal("member --help list")).toMatchObject({
@@ -451,6 +534,24 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
       message: "--help is refused: Studio prints no help, and the provider doc lists every command and flag.",
     });
     expect(parsed("member --command-timeout=5s list")).toMatchObject({ commandTimeoutMs: 5_000 });
+  });
+
+  test("a group's own flag between it and its subcommand is refused by name, with the reason (spec 5.1, E3)", () => {
+    // etcdctl v3.7.2 declares --cluster on the endpoint group (ep_command.go, NewEndpointCommand).
+    const cluster =
+      "endpoint does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise (spec E3).";
+    expect(refusal("endpoint --cluster status")).toEqual({
+      code: "refused-flag",
+      line: 1,
+      column: 9,
+      message: cluster,
+    });
+    expect(refusal("endpoint --cluster=false health")).toMatchObject({ code: "refused-flag", message: cluster });
+    expect(refusal("etcdctl endpoint --command-timeout 5s --cluster status")).toMatchObject({
+      code: "refused-flag",
+      column: 38,
+      message: cluster,
+    });
   });
 
   test("the text holds no command", () => {
@@ -480,10 +581,22 @@ describe("one command per run (spec 5.1.2)", () => {
     });
     expect(refusal("get /a\n  del /b").column).toBe(2);
     expect(refusal("get /a\nFOO=secret-value").message).toContain("begins with FOO:");
+    // The first word ends at a tab as at a space.
+    expect(refusal("get /a\nput\t/db/password hunter2").message).toContain("begins with put:");
   });
 
   test("a long first word is cut", () => {
     expect(refusal(`get /a\n${"x".repeat(80)}`).message).toContain(`begins with ${"x".repeat(40)}...:`);
+  });
+
+  test("a name is cut after 40 characters, and never inside one", () => {
+    // U+1D11E is two UTF-16 units: a cut at the 40th unit would leave half of it.
+    expect(refusal(`${"x".repeat(39)}𝄞𝄞 /a`).message).toBe(
+      `${"x".repeat(39)}𝄞... is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`,
+    );
+    expect(refusal(`${"x".repeat(39)}𝄞 /a`).message).toBe(
+      `${"x".repeat(39)}𝄞 is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`,
+    );
   });
 });
 
@@ -569,6 +682,8 @@ describe("anything else is an unknown command, with the list of commands the pro
     ["ge /a", `ge is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`],
     ["GET /a", `GET is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`],
     ["- /a", `- is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`],
+    // Only etcdctl itself, or a path ending in /etcdctl, is the etcdctl word.
+    ["myetcdctl get /a", `myetcdctl is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`],
     [
       "etcdctl ETCDCTL_PASSWORD=hunter2 get",
       `ETCDCTL_PASSWORD is not an etcdctl command Studio runs. The commands are ${COMMAND_LIST}.`,
@@ -609,6 +724,8 @@ const PLAIN_LIMIT =
   "--limit takes a whole number written in plain decimal digits, such as --limit=50: etcdctl reads 010 as octal 8 and 0x10 as 16, so Studio takes only the plain form.";
 const PLAIN_REV =
   "--rev takes a revision, a whole number of 1 or more written in plain decimal digits, such as --rev=42.";
+const UNSIGNED_LEASE =
+  "as lease list prints the ids etcd grants, such as 694d77aa9e38260f: Studio does not address a negative id, which etcd holds only when a client chose it";
 
 const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] = [
   ["get /a --prefix --from-key", "conflicting-flags", PREFIX_FROM_KEY],
@@ -761,11 +878,16 @@ const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] =
     "bad-argument",
     "lease revoke takes a lease id in hexadecimal, as lease list prints it, such as 694d77aa9e38260f.",
   ],
+  // Measured on etcd v3.7.2: a grant carrying the id -5 was granted, and etcdctl's lease list printed it as
+  // -000000000000005; the ids etcd picks itself are positive (v3_server.go LeaseGrant).
+  ["lease revoke +ff", "bad-argument", `lease revoke takes a lease id without a sign, ${UNSIGNED_LEASE}.`],
+  ["lease timetolive -- -5", "bad-argument", `lease timetolive takes a lease id without a sign, ${UNSIGNED_LEASE}.`],
   [
-    "lease revoke +ff",
+    "lease keep-alive --once -- -000000000000005",
     "bad-argument",
-    "lease revoke takes a lease id in hexadecimal, as lease list prints it, such as 694d77aa9e38260f.",
+    `lease keep-alive takes a lease id without a sign, ${UNSIGNED_LEASE}.`,
   ],
+  ["put /a v --lease=-5", "bad-argument", `--lease takes a lease id without a sign, ${UNSIGNED_LEASE}.`],
   [
     "lease revoke 18000000000000000",
     "bad-argument",
@@ -825,6 +947,43 @@ describe("etcdctl's argument rules, each with its sentence (spec 5.1.3)", () => 
     // A third positional: that word; no key: the command word.
     expect(refusal("get /a /b /c")).toMatchObject({ line: 1, column: 10 });
     expect(refusal("$ get")).toMatchObject({ line: 1, column: 2 });
+    // The later of two flags is the one on the later line, whatever the columns.
+    expect(refusal("get /a --keys-only \\\n --count-only")).toMatchObject({ line: 2, column: 1 });
+    expect(refusal("get --count-only \\\n /a --keys-only")).toMatchObject({ line: 2, column: 4 });
+  });
+
+  test("a value flag written as two words takes the one word after it, and reading goes on", () => {
+    expect(command("get /a --limit 10 --prefix")).toEqual({
+      kind: "get",
+      key: b("/a"),
+      ...GET,
+      prefix: true,
+      limit: 10,
+    });
+    expect(command("put --lease 1234 /a v")).toEqual({
+      kind: "put",
+      key: b("/a"),
+      value: b("v"),
+      ...PUT,
+      lease: "0000000000001234",
+    });
+    expect(command("del /a --command-timeout 5s --prefix")).toEqual({
+      kind: "del",
+      key: b("/a"),
+      ...DEL,
+      prefix: true,
+    });
+  });
+
+  test("P, the first page size, bounds a ranged get only inside a txn (spec 5.1.4)", () => {
+    expect(command("get /a --prefix --limit=200")).toEqual({
+      kind: "get",
+      key: b("/a"),
+      ...GET,
+      prefix: true,
+      limit: 200,
+    });
+    expect(command("get /a /z --limit=500")).toMatchObject({ rangeEnd: b("/z"), limit: 500 });
   });
 
   test("a boolean flag never takes the next word", () => {
@@ -1006,6 +1165,16 @@ describe("the txn body (spec 5.1.4)", () => {
     );
     expect(txnRefusal("\nput k v", { ...LIMITS, maxLimit: 1 }).code).toBe("limit-too-large");
     expect(txn("", { ...LIMITS, maxLimit: 1 }).success).toEqual([]);
+    // The refusal points at the branch's first request line, where it starts.
+    expect(txnRefusal(`\n  ${five.slice(1)}`)).toMatchObject({ code: "limit-too-large", line: 3, column: 2 });
+  });
+
+  test("in the branch count, a range end and --from-key make a get ranged, and a --count-only get is one row", () => {
+    const branch = (request: (n: number) => string) => `\n${[1, 2, 3, 4, 5].map(request).join("\n")}`;
+    expect(txnRefusal(branch((n) => `get a${n} z${n}`)).message).toContain("could answer 501 rows");
+    expect(txnRefusal(branch((n) => `get a${n} --from-key`)).message).toContain("could answer 501 rows");
+    expect(txn(branch((n) => `get a${n} --prefix --count-only`)).success).toHaveLength(5);
+    expect(txn(branch((n) => `get a${n}`)).success).toHaveLength(5);
   });
 
   test("a compare's target, operator and operand are checked", () => {
@@ -1037,6 +1206,10 @@ describe("the txn body (spec 5.1.4)", () => {
         'Line 2 of the txn compares lease with a value that is not a hexadecimal lease id: write the id as lease list prints it, or "0" for a key with no lease.',
     });
     expect(txnRefusal('lease("k") = "8000000000000000"').message).toContain("not a hexadecimal lease id");
+    expect(txnRefusal('lease("k") = "-5"')).toMatchObject({
+      code: "txn-syntax",
+      message: `Line 2 of the txn compares lease with a signed id: write the id without a sign, as lease list prints the ids etcd grants, or "0" for a key with no lease. Studio does not address a negative id, which etcd holds only when a client chose it.`,
+    });
     expect(txnRefusal('mod("k") = "0" trailing')).toMatchObject({
       code: "txn-syntax",
       message: "Line 2 of the txn has text after the compared value, which etcdctl ignores: remove it.",
@@ -1057,6 +1230,16 @@ describe("the txn body (spec 5.1.4)", () => {
     expect(txnRefusal("\nlease grant 5").message).toContain("requests lease,");
     // Argify unquotes a quoted word before cobra reads it, so a quoted put is a put.
     expect(txn('\n"put" k v').success[0]).toMatchObject({ kind: "put", key: b("k") });
+    // No other command of the subset is a request, the bounded watch and txn itself included.
+    expect(txnRefusal("\nwatch k")).toEqual({
+      code: "txn-syntax",
+      line: 3,
+      column: 0,
+      message: "Line 3 of the txn requests watch, which a txn does not take: a request is get, put or del.",
+    });
+    expect(txnRefusal("\ntxn").message).toBe(
+      "Line 3 of the txn requests txn, which a txn does not take: a request is get, put or del.",
+    );
   });
 
   test("global flags are refused inside a request, --command-timeout with the place it belongs", () => {
@@ -1076,17 +1259,20 @@ describe("the txn body (spec 5.1.4)", () => {
     });
   });
 
-  test("any other # line is refused, naming it", () => {
-    const misplaced =
-      "Line 4 of the txn is a # line followed by an empty line: removing it would change which list the lines after it fall into, so Studio refuses it. Put the # line directly above a compare or a request, or remove it.";
+  test("any other # line is refused, naming it and the rule it breaks", () => {
+    const misplaced = (line: number) =>
+      `Line ${line} of the txn is a # line that is neither directly above a compare or a request nor followed only by # and empty lines, and a # line above an empty line could read as a list of its own: move it directly above a compare or a request, or remove it.`;
     expect(txnRefusal('mod("k") > "0"\n\n# yes\n\nput k v')).toEqual({
       code: "txn-syntax",
       line: 4,
       column: 0,
-      message: misplaced,
+      message: misplaced(4),
     });
     expect(txnRefusal('mod("k") > "0"\n\n# a\n# b\n\nput k v').line).toBe(4);
     expect(txnRefusal('mod("k") > "0"\n  # yes\n\nput k v')).toMatchObject({ line: 3, column: 2 });
+    // A # line that ends a list, and one past the failure list: the rule, not a change of list, refuses them.
+    expect(txnRefusal('mod("k") > "0"\n\nput k a\n# trailing\n\nput k b').message).toBe(misplaced(5));
+    expect(txnRefusal("\n\n\n# c\n\nput x y").message).toBe(misplaced(5));
   });
 
   test("a line past the failure list is refused, naming it", () => {
@@ -1207,6 +1393,63 @@ describe("ETCD_COMMAND_TABLE is 5.1.3's table", () => {
       shorthand: "-i",
       reason: "Studio has no terminal to prompt in; write the compares and the requests on the lines below txn",
     });
+  });
+});
+
+describe("the parser answers every row of ETCD_COMMAND_TABLE as the row states it (spec 5.1.3)", () => {
+  /** One sample per placeholder the table names; a new placeholder fails here until it has one. */
+  const SAMPLE_ARGUMENT: Readonly<Partial<Record<string, string>>> = {
+    key: "/a",
+    range_end: "/z",
+    value: "v",
+    "ttl seconds": "60",
+    "hex id": "694d77aa9e38260f",
+    name: "alice",
+  };
+  const SAMPLE_VALUE: Readonly<Partial<Record<string, string>>> = { "<n>": "1", "<hex id>": "1", "l|s": "s" };
+  // What the table's columns cannot say, from 5.1.3's rows: keep-alive runs only with --once, and put takes
+  // its key alone beside --ignore-value.
+  const REQUIRED_FLAG: Readonly<Partial<Record<string, string>>> = { "lease-keep-alive-once": "--once" };
+  const DROPS_VALUE = "--ignore-value";
+  const PLACEHOLDER = /\[<([^>]+)>\]|<([^>]+)>/g;
+
+  const sample = (table: Readonly<Partial<Record<string, string>>>, name: string): string => {
+    const found = table[name];
+    if (found === undefined) throw new Error(`no sample for ${name}`);
+    return found;
+  };
+
+  test.each(ETCD_COMMAND_TABLE.map((row) => [row.words.join(" "), row] as const))("%s", (label, row) => {
+    expect(row.arguments.replace(PLACEHOLDER, "").trim()).toBe("");
+    const places = [...row.arguments.matchAll(PLACEHOLDER)];
+    const required = places.filter((place) => place[2] !== undefined).length;
+    const values = places.map((place) => sample(SAMPLE_ARGUMENT, place[1] ?? place[2] ?? ""));
+    const needed = REQUIRED_FLAG[row.kind];
+    const text = (args: readonly string[], flags: readonly string[] = []) =>
+      [label, ...(needed === undefined || flags.includes(needed) ? [] : [needed]), ...flags, ...args].join(" ");
+    const accepts = (args: readonly string[], flags?: readonly string[]) => {
+      const result = parseEtcdCommand(text(args, flags), LIMITS);
+      expect(result.ok ? result.parsed.command.kind : result.refusal.message).toBe(row.kind);
+    };
+
+    // The fewest and the most arguments the template states parse; one more, and one fewer, do not.
+    accepts(values.slice(0, required));
+    accepts(values);
+    expect(refusal(text([...values, "/extra"])).code).toBe("bad-argument");
+    if (required > 0) expect(refusal(text(values.slice(0, required - 1))).code).toBe("bad-argument");
+
+    for (const flag of row.flags) {
+      const [name, placeholder] = flag.split("=");
+      const spelled = placeholder === undefined ? name : `${name}=${sample(SAMPLE_VALUE, placeholder)}`;
+      accepts(flag === DROPS_VALUE ? values.slice(0, 1) : values.slice(0, required), [spelled]);
+    }
+    for (const refused of row.refusedFlags) {
+      const message = `${label} does not take ${refused.flag}: ${refused.reason}.`;
+      const spellings = refused.shorthand === undefined ? [refused.flag] : [refused.flag, refused.shorthand];
+      for (const spelling of spellings) {
+        expect(refusal(text(values.slice(0, required), [spelling]))).toMatchObject({ code: "refused-flag", message });
+      }
+    }
   });
 });
 
