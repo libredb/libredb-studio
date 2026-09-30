@@ -1,5 +1,5 @@
 /**
- * Real TLS handshakes and real transport failures through the adapter (spec E1, E5, 5.6, gate 1), under both
+ * Real TLS handshakes and real transport failures through the adapter (spec E1, E5, 5.6, E16, gate 1), under both
  * runtimes.
  *
  * Every case is one connection as the dialog or a seed writes it, taken through `buildEtcdConnectionOptions`,
@@ -20,6 +20,10 @@
  * expectations follow the branch that version takes: Node 25 and later, and Bun, refuse an IP address as the TLS
  * server name, which a control connection built here with @grpc/grpc-js directly, without the adapter's override,
  * shows, while the adapter's own connections pass on every runtime (spec E5, reconciliation D0-3).
+ *
+ * Spec E16: once the cases are done, no socket keeps the Node child running, and under Bun, whose
+ * `process.getActiveResourcesInfo` lists nothing, the TLS listener that never answers the handshake holds no
+ * connection open, since its client closed it.
  *
  * The same child is KE16's fallback for a real-transport test, should Bun's HTTP/2 stall (spec section 11).
  */
@@ -260,6 +264,8 @@ const sockets: net.Server[] = [];
 const processes: ReturnType<typeof Bun.spawn>[] = [];
 /** How many Status calls each gRPC server answered, and how many connections each socket listener accepted. */
 const counts: Record<string, number> = {};
+/** The connections the TLS listener that never answers still holds, each until its client closes it (spec E16). */
+const heldBySilentTls = new Set<net.Socket>();
 
 async function gRpcServer(name: string, serverCredentials: grpc.ServerCredentials): Promise<number> {
   counts[name] = 0;
@@ -405,6 +411,8 @@ interface Listeners {
   /** A TCP port no case dials, and the name of the Unix socket in the working directory (spec E1). */
   readonly unixName: number;
   readonly silent: number;
+  /** TCP that reads the client's hello and never answers it, so a TLS handshake never ends (spec E16). */
+  readonly silentTls: number;
   readonly resetting: number;
   readonly closed: number;
 }
@@ -448,6 +456,12 @@ beforeAll(async () => {
     loopback6: await socketListener("loopback6", { host: "::1" }, forwardTo(upstream)),
     unixName,
     silent: await socketListener("silent", { host: "127.0.0.1" }, () => undefined),
+    // It reads what arrives, so it sees the client's close, and it writes nothing.
+    silentTls: await socketListener("silentTls", { host: "127.0.0.1" }, (socket) => {
+      heldBySilentTls.add(socket);
+      socket.on("close", () => heldBySilentTls.delete(socket));
+      socket.resume();
+    }),
     resetting: await socketListener("resetting", { host: "127.0.0.1" }, (socket) => socket.resetAndDestroy()),
     closed: await closedPort(),
   };
@@ -585,6 +599,7 @@ const RESOLVER_NAMES = ["unix", "dns", "ipv4", "ipv6"] as const;
 const VERIFY_FULL_SELF_SIGNED = "verify-full with no CA rejects a self-signed server";
 const VERIFY_SYSTEM_SELF_SIGNED = "verify-system rejects a self-signed server";
 const TLS_TO_PLAINTEXT = "TLS to a plaintext port fails as not TLS, and nothing is sent in plaintext";
+const SILENT_TLS = "a TLS listener that never answers the handshake is a connect timeout: the request never left";
 
 const CASES: readonly CaseDefinition[] = [
   // -- spec E1: nothing is dialled for an endpoint that is refused, or for a host that names a grpc-js resolver
@@ -880,15 +895,32 @@ const CASES: readonly CaseDefinition[] = [
     { timeoutMs: 500 },
   ),
   adapterCase(
+    SILENT_TLS,
+    (ports) => direct("127.0.0.1", ports.silentTls, { mode: "require" }),
+    (ports) => (runtime) => ({
+      outcome: "failed",
+      category: "not-connected",
+      grpcCode: 4,
+      text: /^Deadline exceeded after [\d.]+s,.*Waiting for LB pick$/,
+      sentence: noTlsAnswer(runtime, `127.0.0.1:${ports.silentTls}`, false),
+    }),
+    { timeoutMs: 500 },
+  ),
+  adapterCase(
     "a socket reset on accept is a failure to connect",
     (ports) => direct("127.0.0.1", ports.resetting),
     (ports) => (runtime) => ({
       outcome: "failed",
       category: "not-connected",
       grpcCode: 14,
-      // Node reports the reset as the read's ECONNRESET, or, when the session closes first, as Bun always does (measured
-      // under Node 24.14.0: 7 runs in 8 read ECONNRESET).
-      text: runtime === "node" ? /Last error: (?:read ECONNRESET|Failed to connect)/ : /Last error: Failed to connect/,
+      // Node reports the reset as the read's ECONNRESET, as the connect's when it arrives before the child's loop sees
+      // the connect complete, or, when the session closes first, as Bun always does (measured under Node 24.14.0: 7 runs
+      // in 8 read ECONNRESET; the connect's in 6 runs in 12 right after a case that ends a socket at close(), in none
+      // of 12 otherwise).
+      text:
+        runtime === "node"
+          ? /Last error: (?:read ECONNRESET|Error: connect ECONNRESET|Failed to connect)/
+          : /Last error: Failed to connect/,
       sentence: noPlaintextAnswer(`127.0.0.1:${ports.resetting}`),
     }),
   ),
@@ -1021,6 +1053,8 @@ function expectListeners(run: Run | undefined): void {
   // The controls: the same `::1` listener saw both spellings of the host, and the Unix socket saw grpc-js's dial.
   expect(run.seenWhileDialled.loopback6).toBeGreaterThanOrEqual(2);
   expect(run.seenWhileDialled.unix).toBeGreaterThanOrEqual(1);
+  // The control of spec E16's check: the TLS listener that never answers was dialled.
+  expect(run.seenWhileDialled.silentTls).toBeGreaterThanOrEqual(1);
   // A TLS connection that failed was never tried again in plaintext: the plaintext server answered no call.
   expect(run.seenWhileDialled.plaintext).toBe(0);
   // A refused handshake reached no handler.
@@ -1037,8 +1071,9 @@ describe("the certificates (spec E5)", () => {
   });
 });
 
-describe("under Bun (spec E1, E5, 5.6)", () => {
+describe("under Bun (spec E1, E5, 5.6, E16)", () => {
   let run: Run | undefined;
+  let stillHeld: number | undefined;
   beforeAll(async () => {
     const workingDirectory = process.cwd();
     // The Unix socket is named after a port in the working directory, which is where grpc-js looks for `unix:<port>`.
@@ -1048,10 +1083,19 @@ describe("under Bun (spec E1, E5, 5.6)", () => {
     } finally {
       process.chdir(workingDirectory);
     }
+    // Every client a case built is closed by now, so the listener meets each close shortly after (spec E16).
+    for (const until = Date.now() + 2000; heldBySilentTls.size > 0 && Date.now() < until; ) {
+      // oxlint-disable-next-line no-await-in-loop -- a poll: each check waits for the one before it.
+      await Bun.sleep(50);
+    }
+    stillHeld = heldBySilentTls.size;
   }, 90_000);
 
   test.each(CASE_NAMES)("%s", (name) => expectCase(run, "bun", name));
   test("the listeners saw only what spec E1 and E5 allow", () => expectListeners(run));
+  test("once its cases are done, the TLS listener that never answers holds no connection open (spec E16)", () => {
+    expect(stillHeld).toBe(0);
+  });
 });
 
 describe("in a Node child, the production runtime (spec E5)", () => {

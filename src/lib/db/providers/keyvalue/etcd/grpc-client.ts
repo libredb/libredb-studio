@@ -6,7 +6,8 @@
  * each seam request into the descriptor's wire message and each answer back, attaches the token and the `hasleader`
  * metadata (spec E4, 6.1), puts the connection's deadline and the call's own signal on every call (spec 5.3), renews
  * the token within spec E4's bound, reassembles a fragmented watch answer, ends every watch and keep-alive stream
- * with `call.cancel()` (spec 5.3, E16), and hands every failure to `toEtcdError` (plan C9). Tests run it over the
+ * with `call.cancel()` (spec 5.3, E16), ends a TLS handshake still under way when the channel closes (E16), and hands
+ * every failure to `toEtcdError` (plan C9). Tests run it over the
  * recorded transport of tests/helpers/etcd-fixtures.ts (plan C11), so only the server is fake; the provider runs it
  * over `grpcWireTransport`, the one implementation that knows grpc-js.
  *
@@ -15,13 +16,16 @@
  * tests/unit/db/etcd/wire-fields.test.ts holds each property to the descriptor, so a misspelled field fails a test
  * rather than reading `undefined`.
  */
+import type { Socket } from "node:net";
 import { checkServerIdentity } from "node:tls";
 import {
-  type ChannelCredentials,
+  type CallCredentials,
+  ChannelCredentials,
   type ChannelOptions,
   Client,
   type ClientDuplexStream,
   credentials,
+  type experimental,
   Metadata,
   type VerifyOptions,
 } from "@grpc/grpc-js";
@@ -544,16 +548,18 @@ function channelOptions(options: EtcdConnectionOptions): ChannelOptions {
  * encrypts and checks nothing, the connection's own choice; every other mode checks the chain, against the pasted
  * CA or the runtime's roots, and the name. grpc-js hands `checkServerIdentity` the override name, never the dialled
  * address (reconciliation D0-3), so an IP identity's check closes over the IP and never reads its `host` argument,
- * which is ETCD_IP_SERVER_NAME.
+ * which is ETCD_IP_SERVER_NAME. The TLS credentials end a handshake still under way at close (E16).
  */
 function channelCredentials(tls: EtcdTlsOptions | undefined): ChannelCredentials {
   if (tls === undefined) return credentials.createInsecure();
   const pair = tls.clientCertificate;
-  return credentials.createSsl(
-    tls.ca === undefined ? null : Buffer.from(tls.ca),
-    pair === undefined ? null : Buffer.from(pair.key),
-    pair === undefined ? null : Buffer.from(pair.cert),
-    verifyOptions(tls),
+  return endingHandshakesOnClose(
+    credentials.createSsl(
+      tls.ca === undefined ? null : Buffer.from(tls.ca),
+      pair === undefined ? null : Buffer.from(pair.key),
+      pair === undefined ? null : Buffer.from(pair.cert),
+      verifyOptions(tls),
+    ),
   );
 }
 
@@ -564,6 +570,76 @@ function verifyOptions(tls: EtcdTlsOptions): VerifyOptions {
   return {
     rejectUnauthorized: true,
     checkServerIdentity: (_override, certificate) => checkServerIdentity(ip, certificate),
+  };
+}
+
+/**
+ * Spec E16: grpc-js's own credentials, whose connector also ends a TLS handshake still under way when its channel
+ * closes. In grpc-js 1.14.5, `Http2SubchannelConnector.connect` (transport.ts) hands the TCP socket it connected to
+ * the credentials' connector, whose `connect` (`SecureConnectorImpl`, channel-credentials.ts) waits for the handshake
+ * with no bound, and `client.close()` reaches that connector only through its `destroy()` (`Subchannel.unref`,
+ * subchannel.ts), which does nothing: a peer that accepts TCP and never answers the handshake kept the socket open,
+ * and the process running, after close(). The connector below, the hook `experimental.SecureConnector` describes,
+ * ends on `destroy()` every socket still in its handshake, and at once a socket handed over after it, whose TCP
+ * connect outlived the close, and fails that connect itself, since Node never settles a handshake whose socket was
+ * destroyed (measured under Node 24.14.0; Bun reports ECONNRESET).
+ */
+export function endingHandshakesOnClose(inner: ChannelCredentials): ChannelCredentials {
+  return new HandshakeEndingCredentials(inner);
+}
+
+class HandshakeEndingCredentials extends ChannelCredentials {
+  constructor(private readonly inner: ChannelCredentials) {
+    super();
+  }
+
+  _isSecure(): boolean {
+    return this.inner._isSecure();
+  }
+
+  /** Only themselves, as two clients' own grpc-js TLS credentials never are, so no client shares another's connection. */
+  _equals(other: ChannelCredentials): boolean {
+    return other === this;
+  }
+
+  _createSecureConnector(
+    channelTarget: experimental.GrpcUri,
+    options: ChannelOptions,
+    callCredentials?: CallCredentials,
+  ): experimental.SecureConnector {
+    return handshakeEnding(this.inner._createSecureConnector(channelTarget, options, callCredentials));
+  }
+}
+
+function handshakeEnding(inner: experimental.SecureConnector): experimental.SecureConnector {
+  // Each socket still in its handshake, with the failure that ends its connect.
+  const handshaking = new Map<Socket, (reason: Error) => void>();
+  let destroyed = false;
+  const end = (socket: Socket, fail: (reason: Error) => void) => {
+    // Destroyed without an error: grpc-js listens for none on the TCP socket once it has connected.
+    socket.destroy();
+    fail(new Error("The channel closed before the TLS handshake completed"));
+  };
+  return {
+    connect: (socket) =>
+      new Promise<experimental.SecureConnectResult>((resolve, reject) => {
+        if (destroyed) {
+          end(socket, reject);
+          return;
+        }
+        handshaking.set(socket, reject);
+        inner
+          .connect(socket)
+          .then(resolve, reject)
+          .finally(() => handshaking.delete(socket));
+      }),
+    waitForReady: () => inner.waitForReady(),
+    getCallCredentials: () => inner.getCallCredentials(),
+    destroy: () => {
+      destroyed = true;
+      for (const [socket, fail] of handshaking) end(socket, fail);
+      inner.destroy();
+    },
   };
 }
 
