@@ -104,6 +104,24 @@ describe("the cursor (spec 4.6)", () => {
     });
   });
 
+  test("a revision or a total longer than the largest int64 is refused before any number is built from it", () => {
+    // The route passes an opaque cursor through as it came, so its length is the caller's: a revision
+    // of a million digits must be refused by its length, never parsed.
+    const built: string[] = [];
+    const original = globalThis.BigInt;
+    globalThis.BigInt = ((value: string | number | bigint | boolean) => {
+      built.push(String(value));
+      return original(value);
+    }) as typeof BigInt;
+    try {
+      expect(decodeScanCursor(`k:AA:${"9".repeat(1_000_000)}:1`)).toBeUndefined();
+      expect(decodeScanCursor(`k:AA:1:${"9".repeat(1_000_000)}`)).toBeUndefined();
+    } finally {
+      globalThis.BigInt = original;
+    }
+    expect(built.filter((value) => value.length > 19)).toEqual([]);
+  });
+
   test("a cursor this provider did not write reads as none", () => {
     for (const cursor of [
       "",

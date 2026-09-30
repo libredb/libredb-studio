@@ -22,7 +22,7 @@ import {
   type EtcdRangeResponse,
 } from "./client";
 import { etcdWords, toProviderError } from "./errors";
-import { ALL_KEYS, decodeUtf8, encodeKey, prefixRangeEnd, rangesIntersect } from "./keys";
+import { ALL_KEYS, decodeUtf8, encodeKey, INT64_MAX, prefixRangeEnd, rangesIntersect } from "./keys";
 import { type EtcdSurfaceContext, surfaceErrorContext } from "./objects";
 import { clipToScope, describeRange } from "./permissions";
 
@@ -41,9 +41,12 @@ export const ETCD_KEY_SCAN: KeyScanCapability = Object.freeze<KeyScanCapability>
   totalScope: "walk",
 });
 
-const CURSOR = /^k:([A-Za-z0-9_-]+):([1-9][0-9]{0,18}):(0|[1-9][0-9]{0,18})$/;
-/** The largest revision or count etcd holds (int64): a cursor naming more was not written here. */
-const INT64_MAX = BigInt("9223372036854775807");
+const CURSOR = /^k:([A-Za-z0-9_-]+):([1-9][0-9]*):(0|[1-9][0-9]*)$/;
+/**
+ * The digits of the largest revision or count etcd holds (int64, keys.ts): a longer number was not
+ * written here, and is refused by its length before a number is built from text the caller sent.
+ */
+const INT64_DIGITS = INT64_MAX.toString().length;
 
 const SKIPPED_REASON =
   "they are not UTF-8 text, so no name a row can carry addresses them; read them with a typed get, which shows them in base64";
@@ -60,6 +63,7 @@ export function decodeScanCursor(
   if (cursor === "0") return "start";
   const match = CURSOR.exec(cursor);
   if (match === null) return undefined;
+  if (match[2].length > INT64_DIGITS || match[3].length > INT64_DIGITS) return undefined;
   if (BigInt(match[2]) > INT64_MAX || BigInt(match[3]) > INT64_MAX) return undefined;
   const nextKey = new Uint8Array(Buffer.from(match[1], "base64url"));
   // Only the one spelling this module writes: base64url decoding forgives trailing bits, so two
