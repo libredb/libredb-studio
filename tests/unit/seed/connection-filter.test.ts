@@ -232,3 +232,29 @@ describe("filterByRoles", () => {
     expect(result).toHaveLength(0);
   });
 });
+
+describe("filterByRoles: the read-only mode (#1089)", () => {
+  it("carries a seeded connection's mode through, because the mapper is a hand-written field list", () => {
+    // The load refuses the mode on an engine that does not enforce it; this pins the copy alone.
+    const [managed] = filterByRoles([{ ...baseConn, readOnly: true }], ["admin"]);
+    expect(managed.readOnly).toBe(true);
+  });
+
+  it("leaves it absent for a seed that does not set it", () => {
+    const [managed] = filterByRoles([{ ...baseConn }], ["admin"]);
+    expect(managed.readOnly).toBeUndefined();
+  });
+
+  it("refuses a read-only seed built in memory as unmanaged, naming the seed and both fields", () => {
+    expect(() => filterByRoles([{ ...baseConn, readOnly: true, managed: false }], ["admin"])).toThrow(
+      'Seed connection "test" sets readOnly: true with managed: false.',
+    );
+  });
+
+  it("refuses the pair once defaults.managed: false has been merged, the order the loader runs them in", () => {
+    const merged = mergeDefaults({ ...baseConn, readOnly: true }, { managed: false });
+    expect(() => filterByRoles([merged], ["admin"])).toThrow(
+      'Seed connection "test" sets readOnly: true with managed: false.',
+    );
+  });
+});

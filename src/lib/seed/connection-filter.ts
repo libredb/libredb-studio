@@ -30,11 +30,26 @@ function assertApiKeyPairIsElasticsearch(conn: SeedConnection): void {
   );
 }
 
+/**
+ * A read-only seed must be managed (#1089). The seed schema already refuses the pair at load, with
+ * `defaults.managed` taken into account; this is the mapper's own gate, checked on the connection
+ * `mergeDefaults` produced, so a SeedConnection built in memory (bypassing zod) cannot be projected as
+ * a read-only connection whose password and client key reach the browser, where a duplicate of it
+ * can clear the mode.
+ */
+function assertReadOnlySeedIsManaged(conn: SeedConnection): void {
+  if (conn.readOnly !== true || conn.managed !== false) return;
+  throw new Error(
+    `Seed connection "${conn.id}" sets readOnly: true with managed: false. A read-only seed stays managed, because an unmanaged one is copied into the browser with its credentials, where a duplicate of it can clear the mode; the seed is refused rather than projected as a read-only connection that is not.`,
+  );
+}
+
 export function filterByRoles(connections: SeedConnection[], userRoles: string[]): ManagedConnection[] {
   return connections
     .filter((conn) => rolesMatch(conn.roles, userRoles))
     .map((conn) => {
       assertApiKeyPairIsElasticsearch(conn);
+      assertReadOnlySeedIsManaged(conn);
       return {
         id: `seed:${conn.id}`,
         name: conn.name,
@@ -75,6 +90,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // The MCP opt-in (#246), copied for the reason skipObjectScan is: dropped here, a seed that
         // opted in would reach the MCP context without its opt-in and never be visible.
         mcp: conn.mcp,
+        // The read-only mode (#1089), copied for the reason skipObjectScan is: dropped here, a seed the
+        // operator declared read-only would be listed and opened as a connection that writes.
+        readOnly: conn.readOnly,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
 describe("SeedConnectionSchema", () => {
@@ -406,5 +406,148 @@ describe("SeedConnectionSchema: Kafka's SASL mechanism", () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["saslMechanism"]);
+  });
+});
+
+/**
+ * The read-only mode (#1089). Declared for the reason skipObjectScan is (zod strips an undeclared
+ * key, and a seed file's mode would validate and vanish, leaving a connection that writes), accepted
+ * only on an engine whose provider enforces it, never a reference, never a default, and only on a
+ * managed seed.
+ */
+describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
+  const validConn = {
+    id: "test-pg",
+    name: "Test PG",
+    type: "postgres",
+    host: "localhost",
+    port: 5432,
+    roles: ["admin"],
+  };
+
+  /** The load's refusal of `readOnly: true` on an engine whose provider does not enforce it. */
+  const unenforced = (type: string) =>
+    `readOnly is not offered for ${type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`;
+
+  it("carries readOnly: false through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...validConn, readOnly: false });
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBe(false);
+  });
+
+  it("leaves the mode absent when the seed does not set it", () => {
+    const result = SeedConnectionSchema.safeParse(validConn);
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBeUndefined();
+  });
+
+  it("refuses readOnly: true on every engine whose provider does not enforce it, naming the type and the field", () => {
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+    // Vacuity, by name: an empty population would refuse nothing and pass.
+    expect(refusing).toContain("postgres");
+    for (const type of refusing) {
+      const result = SeedConnectionSchema.safeParse({ ...validConn, type, readOnly: true });
+      expect({ type, issues: result.error?.issues.map((issue) => [issue.path.join("."), issue.message]) }).toEqual({
+        type,
+        issues: [["readOnly", unenforced(type)]],
+      });
+    }
+  });
+
+  it.each([
+    ["the string true", "true"],
+    ["an environment reference", "${SEED_READ_ONLY}"],
+    ["null", null],
+  ])(
+    "refuses %s, naming the field, because the mode is a literal boolean that nothing resolves",
+    (_label, readOnly) => {
+      const result = SeedConnectionSchema.safeParse({ ...validConn, readOnly });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["readOnly"]);
+    },
+  );
+});
+
+describe("SeedDefaultsSchema and the read-only mode (#1089)", () => {
+  it.each([true, false])("refuses readOnly: %p in defaults, naming the per-connection rule", (readOnly) => {
+    // A default is merged only after the file is parsed, past the refusal of an engine whose provider
+    // does not enforce the mode, so a merged default would reach engines that ignore it.
+    const result = SeedDefaultsSchema.safeParse({ managed: true, readOnly });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      [
+        "readOnly",
+        "readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes",
+      ],
+    ]);
+  });
+});
+
+describe("SeedConfigSchema: a read-only seed must be managed (#1089)", () => {
+  const connection = { id: "cluster", name: "Cluster", type: "postgres", host: "h", roles: ["*"] };
+  const issuesOf = (config: unknown) => {
+    const result = SeedConfigSchema.safeParse(config);
+    return result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message]);
+  };
+  const why =
+    "an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.";
+  const onConnection = `readOnly: true needs a managed connection, and this one has managed: false: ${why}`;
+  const fromDefaults = `readOnly: true needs a managed connection, and this one has managed: false from defaults.managed: ${why}`;
+  // No shipped engine enforces the mode yet, so each read-only case also carries the engine's own
+  // refusal first; the managed rule is the second issue, and its absence is the assertion where the
+  // seed is managed. The same cases over an engine that enforces the mode land with its registration.
+  const enginePostgres =
+    "readOnly is not offered for postgres: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.";
+
+  it("refuses readOnly: true beside managed: false, naming both fields", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: true, managed: false }] })).toEqual([
+      ["connections.0.readOnly", enginePostgres],
+      ["connections.0.readOnly", onConnection],
+    ]);
+  });
+
+  it("refuses it when managed: false comes from defaults.managed, and names defaults.managed", () => {
+    expect(
+      issuesOf({ version: "1", defaults: { managed: false }, connections: [{ ...connection, readOnly: true }] }),
+    ).toEqual([
+      ["connections.0.readOnly", enginePostgres],
+      ["connections.0.readOnly", fromDefaults],
+    ]);
+  });
+
+  it("takes the connection's own managed: true over defaults.managed: false, the precedence of the merge", () => {
+    expect(
+      issuesOf({
+        version: "1",
+        defaults: { managed: false },
+        connections: [{ ...connection, readOnly: true, managed: true }],
+      }),
+    ).toEqual([["connections.0.readOnly", enginePostgres]]);
+  });
+
+  it("reads a seed that sets neither as managed, the default the mapper applies", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: true }] })).toEqual([
+      ["connections.0.readOnly", enginePostgres],
+    ]);
+  });
+
+  it("names the connection the refusal belongs to by its index", () => {
+    expect(
+      issuesOf({
+        version: "1",
+        connections: [
+          { ...connection, id: "first", managed: false },
+          { ...connection, id: "second", readOnly: true, managed: false },
+        ],
+      }),
+    ).toEqual([
+      ["connections.1.readOnly", enginePostgres],
+      ["connections.1.readOnly", onConnection],
+    ]);
+  });
+
+  it("asks nothing of a seed that is not read-only, managed or not", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...connection, managed: false }] })).toEqual([]);
+    expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: false, managed: false }] })).toEqual([]);
   });
 });
