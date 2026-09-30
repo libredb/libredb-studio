@@ -18,7 +18,7 @@
  */
 import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
-import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import type { ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
@@ -36,6 +36,11 @@ export interface DetailedObject {
   readonly rowCount?: number;
   /** The engine's own rendering of the object's size, where it publishes one. */
   readonly size?: string;
+  /**
+   * `DatabaseObject.readRanges`, carried for the two generators, which read it off this entry.
+   * It can name a key, so `schemaContextOf` below leaves it out of what the AI panels are handed.
+   */
+  readonly readRanges?: readonly ObjectReadRange[];
 }
 
 /**
@@ -135,8 +140,26 @@ export function detailedObjects(
       foreignKeys: detail?.foreignKeys ?? [],
       ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
       ...(object.sizeBytes === undefined ? {} : { size: formatBytes(object.sizeBytes) }),
+      ...(object.readRanges === undefined ? {} : { readRanges: object.readRanges }),
     };
   });
+}
+
+/**
+ * The schema as the AI panels are handed it, which is `schemaContext` on both shells: its JSON,
+ * with every `readRanges` left out (etcd spec 3.4, E13).
+ *
+ * The ranges are the connection's own grants, and a piece can be a single key, so they are the
+ * one part of a schema entry that may name a key. They travel with the entry for the two
+ * generators alone, and this string is what the query editor's completions, the docs, the safety
+ * review, the profiler and the explain view read, the last two posting it to the model whole.
+ *
+ * A REPLACER rather than a projection, and the choice is what keeps every other engine's context
+ * byte for byte the `JSON.stringify(schema)` it has always been: the replacer answers every other
+ * key's value unchanged, so the output differs only where a range was.
+ */
+export function schemaContextOf(objects: readonly DetailedObject[]): string {
+  return JSON.stringify(objects, (key: string, value: unknown) => (key === "readRanges" ? undefined : value));
 }
 
 /**

@@ -980,3 +980,42 @@ describe("TreeRow trailing slot", () => {
     expect(host.querySelector('[data-testid="tree-row-twisty"]')?.getAttribute("tabindex")).toBe("-1");
   });
 });
+
+/**
+ * A group's readable ranges reach no tree row (etcd spec 3.4, E13).
+ *
+ * `DatabaseObject.readRanges` names the pieces of a group a user who is not root may read, and a
+ * piece can be a single key, so it is the one field of a listed object that may name a key. It
+ * travels with the object for the two browser-side generators alone: the walk builds its rows from
+ * the fields it names, and the drawn row reads `status` and `rowCount` off the object, so neither
+ * the model, the label, the badge nor any title carries a range.
+ */
+describe("a listed object's readable ranges", () => {
+  const scoped: DatabaseObject = {
+    path: ["/config/*"],
+    name: "/config/*",
+    kind: "table",
+    readRanges: [{ key: "grant-key-a" }, { prefix: "grant-prefix-b/" }, { start: "grant-start-c", end: "grant-end-d" }],
+  };
+
+  test("reach neither the rows the walk builds nor the row drawn from the object", () => {
+    const rows = flattenTree(
+      stateOf({
+        kinds,
+        containerDepth: 0,
+        containers: [],
+        expanded: new Set(["table"]),
+        counts: { "": { table: { count: 1, sampledFrom: "the 2 ranges etcd user reader may read" } } },
+        objects: { table: [scoped] },
+      }),
+    );
+    const row = rows.find((candidate) => candidate.kind === "object");
+    if (row === undefined) throw new Error("the walk emitted no object row to draw");
+    expect(JSON.stringify(rows)).not.toContain("grant-");
+    const host = drawRow({ row, object: scoped });
+    expect(host.innerHTML).not.toContain("grant-");
+    // The control: the same instrument reads the row's own label, so an absence above is an
+    // absence and not a row that drew nothing at all.
+    expect(host.textContent).toContain("/config/*");
+  });
+});

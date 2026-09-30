@@ -1741,6 +1741,19 @@ export interface Container {
 }
 
 /**
+ * One piece of an object's key range that this connection may read: a single key, every key
+ * under a prefix, or every key from `start` up to but not including `end`, the three shapes an
+ * etcd grant reads as (etcd spec 3.4, 4.7).
+ *
+ * Keys are the engine's own text, never escaped or quoted here, so a reader that writes one into
+ * a command quotes it for the place it lands.
+ */
+export type ObjectReadRange =
+  | { readonly key: string }
+  | { readonly prefix: string }
+  | { readonly start: string; readonly end: string };
+
+/**
  * One object. `path` ADDRESSES it and `name` LABELS it, and they are allowed to differ.
  *
  * `path` is never a joined string: the old flat model spelled a qualified name
@@ -1802,6 +1815,25 @@ export interface DatabaseObject {
   /** Relations only, and only where the engine counts. */
   readonly rowCount?: number;
   readonly sizeBytes?: number;
+  /**
+   * The pieces of this object's range the connection may read, PRESENT ONLY WHERE THEY DO NOT
+   * COVER IT (etcd spec 3.4, 4.7).
+   *
+   * Absent means the connection may read the whole object, which is the answer of every engine
+   * whose grants never split one. etcd's are the case this exists for: etcd refuses a whole range
+   * the caller's grants do not cover, so a user who is not root, granted one key of a prefix
+   * group, would meet a permission error on the group's own generated read. The tree click's read
+   * and Generate Command are written in the browser from the listed object alone
+   * (`generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts`), so the
+   * pieces travel with it, and the generated read addresses the first piece rather than the group.
+   *
+   * A piece can be a single key, which makes this the one field of a listed object that may name
+   * one, so it is for those two generators and nothing else: the object tree draws no row, badge
+   * or title from it, the agent's inventory walk copies no such field, and `schemaContextOf` in
+   * `src/lib/db/detailed-object.ts` leaves it out of the schema the AI panels are handed (etcd
+   * spec E13).
+   */
+  readonly readRanges?: readonly ObjectReadRange[];
 }
 
 /**

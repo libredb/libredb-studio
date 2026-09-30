@@ -1739,6 +1739,41 @@ describe("captureContextSnapshot — the object surface that says what each entr
     ]);
   });
 
+  /**
+   * A group's readable ranges (etcd spec 3.4, 4.7, E13). They are the connection's own grants and
+   * a piece can be a single key, so they travel with the listed object for the two browser-side
+   * generators alone: the walk builds each inventory object from the fields it names, and neither
+   * the inventory nor the snapshot a run is grounded on carries a range.
+   */
+  test("a listed object's readable ranges reach neither the inventory nor the snapshot", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table"
+            ? [
+                {
+                  path: [...container, "orders"],
+                  name: "orders",
+                  kind,
+                  readRanges: [
+                    { key: "grant-key-a" },
+                    { prefix: "grant-prefix-b/" },
+                    { start: "grant-start-c", end: "grant-end-d" },
+                  ],
+                },
+              ]
+            : [],
+      }),
+    );
+
+    // The control: the object itself was captured, so the absence below is the field's.
+    const orders = snapshot.objects.find((object) => object.kind === "table");
+    if (orders === undefined) throw new Error("the walk captured no table to inspect");
+    expect(Object.hasOwn(orders, "readRanges")).toBe(false);
+    expect(JSON.stringify(snapshot)).not.toContain("grant-");
+  });
+
   test("the kinds the engine declared travel with the inventory, so a renderer can name them", async () => {
     const snapshot = await inventoryOf(objectHarness());
 

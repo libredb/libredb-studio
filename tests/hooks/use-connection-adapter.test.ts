@@ -144,6 +144,34 @@ describe("useConnectionAdapter", () => {
     expect(result.current.isLoadingSchema).toBe(false);
   });
 
+  /**
+   * etcd spec 3.4 and E13, on the embedded shell: a host's object may carry the readable ranges of
+   * a user who is not root, and a piece can be a single key. The schema keeps the host's array for
+   * the two generators, and `schemaContext`, which the AI panels post to the model, leaves it out.
+   */
+  test("schemaContext leaves out the readable ranges the schema keeps as the host gave them", async () => {
+    const ranges = [
+      { key: "grant-key-a" },
+      { prefix: "grant-prefix-b/" },
+      { start: "grant-start-c", end: "grant-end-d" },
+    ];
+    const [users, orders] = makeSchema();
+    const onSchemaFetch = mock(() => Promise.resolve([{ ...users, readRanges: ranges }, orders]));
+    const connections = [makeWorkspaceConnection({ id: "c1" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    await act(async () => {
+      await result.current.fetchSchema(result.current.connections[0]);
+    });
+
+    expect(result.current.schema[0]?.readRanges).toBe(ranges);
+    expect(result.current.schemaContext).toBe(JSON.stringify(makeSchema()));
+    expect(result.current.schemaContext).not.toContain("grant-");
+  });
+
   // ── fetchSchema sets isLoadingSchema during fetch ───────────────────────
 
   test("fetchSchema sets isLoadingSchema during fetch", async () => {

@@ -12,7 +12,7 @@ import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -61,7 +61,13 @@ const providerMeta = (objectKinds: unknown = PG_OBJECT_KINDS) => ({
   json: { capabilities: { queryLanguage: "sql", containerLevels: [{ id: "schema" }], objectKinds }, labels: {} },
 });
 
-type InventoryObject = { name: string; kind: string; path: string[]; rowCount?: number };
+type InventoryObject = {
+  name: string;
+  kind: string;
+  path: string[];
+  rowCount?: number;
+  readRanges?: readonly ObjectReadRange[];
+};
 
 /** The two tables every schema test below reads, as the object surface answers them. */
 const OBJECTS: InventoryObject[] = [
@@ -445,6 +451,31 @@ describe("useConnectionManager", () => {
     });
 
     expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
+  });
+
+  /**
+   * etcd spec 3.4 and E13: a group's readable ranges are the connection's own grants, and a piece
+   * can be a single key. The schema keeps them, because the two generators read them off the
+   * schema entry, and `schemaContext` is what the AI panels post to the model, so it is the same
+   * JSON with the ranges left out.
+   */
+  test("schemaContext leaves out the readable ranges the schema itself keeps", async () => {
+    const ranges: readonly ObjectReadRange[] = [
+      { key: "grant-key-a" },
+      { prefix: "grant-prefix-b/" },
+      { start: "grant-start-c", end: "grant-end-d" },
+    ];
+    mockGlobalFetch(catalogRoutes([{ ...OBJECTS[0], readRanges: ranges }, OBJECTS[1]]));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema[0]?.readRanges).toEqual(ranges);
+    expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
+    expect(result.current.schemaContext).not.toContain("grant-");
   });
 
   // ── isLoadingSchema during fetch ──────────────────────────────────────────

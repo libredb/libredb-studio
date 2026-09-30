@@ -1882,7 +1882,16 @@ interface DatabaseObject {
                            // Absent means ordinary, not unknown.
   rowCount?: number;       // Relations only, and only where the engine counts
   sizeBytes?: number;
+  readRanges?: readonly ObjectReadRange[]; // Present only where this connection may read part of
+                           // the object's range and not all of it: the pieces it may read, as an
+                           // etcd prefix group carries them for a user who is not root.
+                           // Absent means the connection may read the whole object.
 }
+
+type ObjectReadRange =
+  | { key: string }                 // One key
+  | { prefix: string }              // Every key under the prefix
+  | { start: string; end: string }; // Every key from start up to but not including end
 
 interface ColumnSchema {
   name: string;            // Column name
