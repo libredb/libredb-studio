@@ -82,6 +82,17 @@ const ETCD_ANSWERS: ReadonlyArray<readonly [number, string, EtcdErrorCategory]> 
   [NOT_FOUND, "etcdserver: requested lease not found", "lease-not-found"],
 ];
 
+/**
+ * grpc-js 1.14.5's deadline texts for a call that never had a stream to go out on
+ * (`resolving-call.ts` and `load-balancing-call.ts` getDeadlineInfo). Only these are evidence
+ * that a request was never sent; any other deadline may have met a sent request (spec 5.6).
+ */
+const PRE_SEND_DEADLINE_MARKERS: readonly string[] = [
+  "waiting for name resolution",
+  "waiting for metadata filters",
+  "Waiting for LB pick",
+];
+
 /** Answers named by how they begin, because they carry sizes: [code, prefix, category]. */
 const PREFIXED_ANSWERS: ReadonlyArray<readonly [number, string, EtcdErrorCategory]> = [
   // The server's receive cap refused the request before any handler ran (R06 section 8, item 15).
@@ -134,16 +145,15 @@ function classifyStatus(code: number, details: string): EtcdError {
   if (prefixed) return new EtcdError(prefixed[2], details, code);
   switch (code) {
     case CANCELLED:
-      return new EtcdError("cancelled", details, code);
-    case DEADLINE_EXCEEDED:
-      // grpc-js names the subchannel call's peer only once the request has a stream to go out on
-      // (`subchannel-call.ts` getDeadlineInfo); without it the deadline passed during name
-      // resolution or the LB pick, and nothing was sent.
-      return new EtcdError(
-        details.startsWith("etcdserver: ") || details.includes("remote_addr=") ? "deadline-exceeded" : "not-connected",
-        details,
-        code,
-      );
+      // The caller's own cancel is decided by its signal, in toEtcdError; this one is not it.
+      return new EtcdError("cancelled-elsewhere", details, code);
+    case DEADLINE_EXCEEDED: {
+      // Pre-send only on positive evidence: a pre-send marker, and no subchannel peer, which
+      // grpc-js names once the request has a stream (`subchannel-call.ts` getDeadlineInfo).
+      const preSend =
+        !details.includes("remote_addr=") && PRE_SEND_DEADLINE_MARKERS.some((marker) => details.includes(marker));
+      return new EtcdError(preSend ? "not-connected" : "deadline-exceeded", details, code);
+    }
     case UNAVAILABLE: {
       if (!details.includes("No connection established")) return new EtcdError("unavailable", details, code);
       const cause = TLS_CAUSES.find(([pattern]) => pattern.test(details));
@@ -379,6 +389,11 @@ export function toProviderError(error: unknown, context: EtcdErrorContext): Erro
       return context.write
         ? unknownOutcome(error, `The ${command} was cancelled after it was sent.`)
         : new QueryCancelledError(`The ${command} was cancelled.`, PROVIDER);
+    case "cancelled-elsewhere":
+      // Not the caller's cancelQuery, so never a QueryCancelledError, which the client reads as its own.
+      return context.write
+        ? unknownOutcome(error, `The ${command} was cancelled after it was sent.`)
+        : new QueryError(`The ${command} was cancelled before etcd answered.${answered(error.detail)}`, PROVIDER);
     case "unauthenticated":
       // Raised by the adapter only after its one renewal (spec E4). A write meeting one is an unknown
       // outcome until KE12 shows, answer by answer, that such a write was not applied.

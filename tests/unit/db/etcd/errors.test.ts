@@ -112,10 +112,17 @@ describe("toEtcdError: etcd's answers, by code and message together", () => {
     [14, "round_robin: No connection established. Last error: null", "not-connected"],
     [4, "Deadline exceeded after 0.000s,waiting for name resolution", "not-connected"],
     [4, "Deadline exceeded after 3.002s,LB pick: 0.001s,Waiting for LB pick", "not-connected"],
+    [4, "Deadline exceeded after 0.000s,waiting for metadata filters", "not-connected"],
     [4, "Deadline exceeded after 3.000s,remote_addr=127.0.0.1:23794", "deadline-exceeded"],
+    [4, "Deadline exceeded after 3.000s,waiting for name resolution,remote_addr=127.0.0.1:23794", "deadline-exceeded"],
     [4, "etcdserver: context deadline exceeded", "deadline-exceeded"],
-    [1, "Cancelled on client", "cancelled"],
-    [1, "etcdserver: request canceled", "cancelled"],
+    // grpc-go's answer when etcd hands it a raw context error (SRC `v3rpc/util.go` togRPCError).
+    [4, "context deadline exceeded", "deadline-exceeded"],
+    // grpc-js's bare text (`resolving-call.ts`, `single-subchannel-channel.ts`), with no pre-send marker.
+    [4, "Deadline exceeded", "deadline-exceeded"],
+    // A CANCELLED the call's own signal did not cause is not the caller's cancel.
+    [1, "Cancelled on client", "cancelled-elsewhere"],
+    [1, "etcdserver: request canceled", "cancelled-elsewhere"],
     [15, "etcdserver: corrupt cluster", "unknown"],
     [16, "a proxy refused the credentials", "unknown"],
     [8, "some other exhaustion", "unknown"],
@@ -226,9 +233,9 @@ describe("toEtcdError: the call's own abort, told apart by the signal's reason (
     expect(toEtcdError(grpc(7, "etcdserver: permission denied"), controller.signal).category).toBe("permission-denied");
   });
 
-  test("a CANCELLED answer under a signal that did not abort is a cancel", () => {
+  test("a CANCELLED answer under a signal that did not abort is not the caller's cancel", () => {
     const timedOut = new AbortController();
-    expect(toEtcdError(grpc(1, "Cancelled on client"), timedOut.signal).category).toBe("cancelled");
+    expect(toEtcdError(grpc(1, "Cancelled on client"), timedOut.signal).category).toBe("cancelled-elsewhere");
   });
 });
 
@@ -288,7 +295,7 @@ describe("cancelReasonToEtcdError: a watch cancelled in-band (spec 5.3, E4)", ()
       ["rpc error: code = InvalidArgument desc = etcdserver: revision of auth store is old", "unauthenticated", 3],
       ["rpc error: code = InvalidArgument desc = etcdserver: user name is empty", "unauthenticated", 3],
       ["rpc error: code = PermissionDenied desc = etcdserver: permission denied", "permission-denied", 7],
-      ["rpc error: code = Canceled desc = etcdserver: watch canceled", "cancelled", 1],
+      ["rpc error: code = Canceled desc = etcdserver: watch canceled", "cancelled-elsewhere", 1],
       ["rpc error: code = Unknown desc = something new", "unknown", 2],
       ["rpc error: code = NotACode desc = etcdserver: permission denied", "unknown", 2],
       ["rpc error: code = constructor desc = etcdserver: permission denied", "unknown", 2],
@@ -456,6 +463,16 @@ describe("toProviderError: a write whose outcome is unknown (QueryError, 400, no
       "The put reached its deadline before etcd answered. (Deadline exceeded after 3.000s,remote_addr=127.0.0.1:23794)",
     ],
     [
+      "grpc-go's context deadline",
+      toEtcdError(grpc(4, "context deadline exceeded")),
+      "The put reached its deadline before etcd answered. (context deadline exceeded)",
+    ],
+    [
+      "grpc-js's bare deadline",
+      toEtcdError(grpc(4, "Deadline exceeded")),
+      "The put reached its deadline before etcd answered. (Deadline exceeded)",
+    ],
+    [
       "etcd's request canceled",
       toEtcdError(grpc(1, "etcdserver: request canceled")),
       "The put was cancelled after it was sent. (etcd: request canceled)",
@@ -556,6 +573,27 @@ describe("toProviderError: a read's deadline, a cancel, authentication", () => {
     expect(mapped).toBeInstanceOf(QueryCancelledError);
     expect(mapped.message).toBe("The watch was cancelled.");
     expect((await respond(mapped)).status).toBe(499);
+  });
+
+  for (const details of ["context deadline exceeded", "Deadline exceeded"]) {
+    test(`a read's "${details}" with no pre-send marker is a TimeoutError, not a failed connection`, async () => {
+      const mapped = toProviderError(toEtcdError(grpc(4, details)), read("get"));
+      expect(mapped).toBeInstanceOf(TimeoutError);
+      expect(mapped.message).toBe(`The get reached its deadline of 60,000 ms. (${details})`);
+      expect(await respond(mapped)).toMatchObject({ status: 408, body: { retryable: true } });
+    });
+  }
+
+  test("a read cancelled by etcd, under a signal that did not abort, is a QueryError in etcd's words", async () => {
+    const controller = new AbortController();
+    const mapped = toProviderError(
+      toEtcdError(grpc(1, "etcdserver: request canceled"), controller.signal),
+      read("get"),
+    );
+    expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+    expect(mapped).toBeInstanceOf(QueryError);
+    expect(mapped.message).toBe("The get was cancelled before etcd answered. (etcd: request canceled)");
+    expect((await respond(mapped)).status).toBe(400);
   });
 
   test("a wrong password or an unknown user is an AuthenticationError, 401 and not retryable", async () => {
@@ -758,6 +796,8 @@ describe("writeNotApplied: the closed list of spec 4.5, and what never left the 
       grpc(14, "Connection dropped"),
       grpc(4, "Deadline exceeded after 3.000s,remote_addr=127.0.0.1:23794"),
       grpc(1, "etcdserver: request canceled"),
+      grpc(4, "context deadline exceeded"),
+      grpc(4, "Deadline exceeded"),
       grpc(16, "etcdserver: invalid auth token"),
       grpc(3, "etcdserver: revision of auth store is old"),
       grpc(3, "etcdserver: user name is empty"),
@@ -797,6 +837,17 @@ describe("watchEndError: how a watch ended (spec 5.3)", () => {
       read("watch"),
     );
     expect(stale).toBeInstanceOf(AuthenticationError);
+  });
+
+  test("a watch etcd cancelled is a QueryError in etcd's words, never the caller's own cancel", () => {
+    const mapped = watchEndError(
+      { reason: "canceled", cancelReason: "rpc error: code = Canceled desc = etcdserver: watch canceled" },
+      read("watch"),
+    );
+    expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+    expect(mapped).toBeInstanceOf(QueryError);
+    expect(mapped?.message).toContain("(etcd: watch canceled)");
+    expect(mapped?.message).toBe("The watch was cancelled before etcd answered. (etcd: watch canceled)");
   });
 });
 

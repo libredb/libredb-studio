@@ -316,7 +316,8 @@ export type EtcdErrorCategory =
   | "invalid-argument"
   | "failed-precondition"
   | "deadline-exceeded"
-  | "cancelled"
+  | "cancelled" // the call's own signal aborted it (cancelQuery), decided by toEtcdError alone
+  | "cancelled-elsewhere" // a CANCELLED the call's own signal did not cause: etcd's, or the runtime's
   | "closed"
   | "unknown";
 
