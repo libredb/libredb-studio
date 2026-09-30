@@ -370,6 +370,32 @@ describe("a user who is not root (spec 4.7)", () => {
     expect(decodeScanCursor(first.cursor)).toMatchObject({ nextKey: enc("/app/x/") });
   });
 
+  test("a key that is not UTF-8 takes its room on a page, so the page reads no more of the next piece than the room left", async () => {
+    const grants = [grantPrefix("/app/a/"), grantPrefix("/app/x/")];
+    const keys = [
+      "/app/a/1",
+      new Uint8Array([...enc("/app/a/"), 0xfe]),
+      new Uint8Array([...enc("/app/a/"), 0xff]),
+      "/app/x/a",
+      "/app/x/b",
+      "/app/x/c",
+    ];
+    // A page of 3 reads the first piece whole, 1 key listed and 2 skipped: no room is left for the second.
+    const full = spaceClient(keys, { readable: grants });
+    const page = await scanEtcdKeysPage(full.client, reader(grants), start(3));
+    expect(page).toMatchObject({ keys: ["/app/a/1"], skipped: { count: 2 }, total: 6 });
+    expect(rangeRequests(full.client).filter((request) => request.countOnly !== true)).toHaveLength(1);
+    expect(decodeScanCursor(page.cursor)).toMatchObject({ nextKey: enc("/app/x/") });
+    // A page of 4 has room for 1 key of the second piece, and reads no more than that one.
+    const roomy = spaceClient(keys, { readable: grants });
+    expect(await scanEtcdKeysPage(roomy.client, reader(grants), start(4))).toMatchObject({
+      keys: ["/app/a/1", "/app/x/a"],
+      skipped: { count: 2 },
+    });
+    const fills = rangeRequests(roomy.client).filter((request) => request.countOnly !== true);
+    expect(fills.map((request) => request.limit)).toEqual([4, 1]);
+  });
+
   test("overlapping grants of two roles count each key once", async () => {
     const grants = [grantPrefix("/app/"), grantPrefix("/app/x/")];
     const { client } = spaceClient(KEYS, { readable: grants });
