@@ -93,6 +93,16 @@ const PRE_SEND_DEADLINE_MARKERS: readonly string[] = [
   "Waiting for LB pick",
 ];
 
+/**
+ * grpc-js 1.14.5's UNAVAILABLE texts for a call that never started, by how they begin: its DNS resolver's
+ * failure (`resolver-dns.ts` defaultResolutionError), and a call that `close()` found still waiting for its
+ * pick (`internal-channel.ts` close), which only the client's own close makes.
+ */
+const UNSTARTED_ANSWERS: ReadonlyArray<readonly [string, EtcdErrorCategory]> = [
+  ["Name resolution failed for target ", "not-connected"],
+  ["Channel closed before call started", "closed"],
+];
+
 /** Answers named by how they begin, because they carry sizes: [code, prefix, category]. */
 const PREFIXED_ANSWERS: ReadonlyArray<readonly [number, string, EtcdErrorCategory]> = [
   // The server's receive cap refused the request before any handler ran (R06 section 8, item 15).
@@ -160,6 +170,8 @@ function classifyStatus(code: number, details: string): EtcdError {
       return new EtcdError(preSend ? "not-connected" : "deadline-exceeded", details, code);
     }
     case UNAVAILABLE: {
+      const unstarted = UNSTARTED_ANSWERS.find(([prefix]) => details.startsWith(prefix));
+      if (unstarted) return new EtcdError(unstarted[1], details, code);
       if (!details.includes("No connection established")) return new EtcdError("unavailable", details, code);
       const cause = TLS_CAUSES.find(([pattern]) => pattern.test(details));
       return cause ? new EtcdError("tls", details, code, cause[1]) : new EtcdError("not-connected", details, code);
