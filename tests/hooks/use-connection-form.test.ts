@@ -2066,7 +2066,7 @@ describe("useConnectionForm", () => {
   test("the read-only mode starts off and is never written for an engine that does not enforce it", async () => {
     // The factory refuses `readOnly: true` on such an engine, so a tick carried over from an engine that
     // does enforce it would save a connection nothing can open, while its box is hidden.
-    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
     const { result } = renderHook(() =>
       useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
     );
@@ -2093,7 +2093,7 @@ describe("useConnectionForm", () => {
       readOnly: true,
       createdAt: new Date(),
     };
-    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
     const { result } = renderHook(() =>
       useConnectionForm({
         ...defaultProps,
