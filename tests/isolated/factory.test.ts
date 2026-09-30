@@ -36,7 +36,7 @@
  * the runner is what enforces it: one bun process per test file, no directory and no
  * registration, and `bun test tests/unit` is clean again.
  */
-import { describe, test, expect, mock, beforeEach, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -52,8 +52,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
 import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ExecutionProfileError } from "@/lib/db/errors";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
+import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import type { SSHTunnelConfig } from "@/lib/types";
 
@@ -359,6 +359,7 @@ const {
   findOpenSingleWriterProvider,
   getExecutionProfileCacheStats,
   withOneShotTunnel,
+  assertReadOnlyHonoured,
 } = await import("@/lib/db/factory");
 if (nodeEnvBefore === undefined) {
   delete (process.env as Record<string, string>).NODE_ENV;
@@ -2027,6 +2028,213 @@ describe("withOneShotTunnel", () => {
     await withOneShotTunnel(stringOnly, async () => undefined);
 
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+// ─── A readOnly the engine cannot keep is refused before anything is built or dialled (#1089) ──
+
+describe("assertReadOnlyHonoured", () => {
+  // `mockHasTunnel` is not reset by the file-level beforeEach, and two assertions below are that no
+  // pool is consulted: negatives that only mean anything against a counter this describe owns.
+  beforeEach(() => {
+    mockHasTunnel.mockClear();
+  });
+
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: "pw",
+  };
+
+  /** The factory's refusal of `readOnly: true` on an engine whose provider does not enforce it. */
+  const unenforced = (type: string) =>
+    `readOnly: true is refused for ${type}: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`;
+
+  const thrownBy = (run: () => void): unknown => {
+    try {
+      run();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  /** The lines `createDatabaseProvider` logs, one for every provider it builds. */
+  const buildLines = (log: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }) =>
+    log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+
+  /** A mode that is not a boolean: the fourth part of the cache key reads it as `read-write`. */
+  const notABoolean = "true" as unknown as boolean;
+
+  test("an absent or false readOnly passes on every shipped engine", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect({ type, error: thrownBy(() => assertReadOnlyHonoured(makeConnection(type))) }).toEqual({
+        type,
+        error: undefined,
+      });
+      expect({
+        type,
+        error: thrownBy(() => assertReadOnlyHonoured(makeConnection(type, { readOnly: false }))),
+      }).toEqual({ type, error: undefined });
+    }
+  });
+
+  test("readOnly: true is refused on every engine that does not enforce it, naming the type and the field", () => {
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+    // Vacuity, by name: an empty population would refuse nothing and pass.
+    expect(refusing).toContain("postgres");
+    for (const type of refusing) {
+      const error = thrownBy(() => assertReadOnlyHonoured(makeConnection(type, { readOnly: true })));
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect({ type, message: (error as Error).message }).toEqual({ type, message: unenforced(type) });
+    }
+  });
+
+  test.each([
+    ["a string", "read-only-please"],
+    ["a number", 1],
+    ["null", null],
+  ])("a readOnly that is %s is refused on any engine, naming the field and never the value", (_label, value) => {
+    const error = thrownBy(() =>
+      assertReadOnlyHonoured(makeConnection("postgres", { readOnly: value as unknown as boolean })),
+    );
+
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe("readOnly must be true or false.");
+  });
+
+  test("the refusal names a type it does not know with its line breaks taken out", () => {
+    // The type arrives in the request body, and the factory strips a line break from every
+    // caller-supplied value it interpolates into a message, so a type cannot write a line of its own.
+    const error = thrownBy(() => assertReadOnlyHonoured(makeConnection("postgres\r\ninjected", { readOnly: true })));
+
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(unenforced("postgres  injected"));
+  });
+
+  test("createDatabaseProvider refuses before it builds a provider", async () => {
+    // The first thing the factory does after the check is log the provider it is creating, so a log
+    // line here would mean a provider was built for a connection it must refuse.
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(createDatabaseProvider(makeConnection("postgres", { readOnly: true }))).rejects.toThrow(
+        unenforced("postgres"),
+      );
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("getOrCreateProvider refuses before the cache and before the tunnel, and builds and opens nothing", async () => {
+    const connection = makeConnection("postgres", {
+      id: "read-only-tunnelled",
+      host: "db.internal",
+      port: 5432,
+      readOnly: true,
+      sshTunnel: bastion,
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(getOrCreateProvider(connection)).rejects.toThrow(unenforced("postgres"));
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("the same connection without the field opens its tunnel and is cached, as before", async () => {
+    // The control: the refusal above is the field's, not a tunnelled PostgreSQL record's.
+    const connection = makeConnection("postgres", {
+      id: "read-write-tunnelled",
+      host: "db.internal",
+      port: 5432,
+      sshTunnel: bastion,
+    });
+
+    const provider = await getOrCreateProvider(connection);
+
+    expect(provider.isConnected()).toBe(true);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    expect(getProviderCacheStats().connections).toEqual(["read-write-tunnelled"]);
+  });
+
+  test("getOrCreateProvider refuses a mode that is not a boolean although a read-write provider is cached under its key", async () => {
+    // A mode that is not `true` keys as `read-write`, so it answers the key the connection's cached
+    // provider sits under: only a check ahead of the lookup refuses it rather than handing that
+    // provider out.
+    const connection = makeConnection("postgres", { id: "cached-read-write", host: "db.internal", port: 5432 });
+    const cached = await getOrCreateProvider(connection);
+    expect(cached.isConnected()).toBe(true);
+
+    await expect(getOrCreateProvider({ ...connection, readOnly: notABoolean })).rejects.toThrow(
+      "readOnly must be true or false.",
+    );
+  });
+
+  test("acquireExecutionProfileProvider refuses before the profiled cache and before the tunnel", async () => {
+    const connection = makeConnection("postgres", {
+      id: "read-only-profiled",
+      host: "db.internal",
+      port: 5432,
+      readOnly: true,
+      sshTunnel: bastion,
+    });
+
+    await expect(acquireExecutionProfileProvider(connection, "agent-operations")).rejects.toThrow(
+      unenforced("postgres"),
+    );
+
+    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("acquireExecutionProfileProvider refuses a mode that is not a boolean although a profiled provider is cached under its key", async () => {
+    // The profiled key embeds the provider cache key, so the same reading holds there: the check has
+    // to come before the profiled cache is consulted.
+    const connection = makeConnection("postgres", { id: "cached-profiled", host: "db.internal", port: 5432 });
+    const cached = await acquireExecutionProfileProvider(connection, "agent-operations");
+    expect(cached.isConnected()).toBe(true);
+
+    await expect(
+      acquireExecutionProfileProvider({ ...connection, readOnly: notABoolean }, "agent-operations"),
+    ).rejects.toThrow("readOnly must be true or false.");
+  });
+
+  test("withOneShotTunnel refuses before it dials, and never runs its callback", async () => {
+    const run = mock(async () => "ran");
+    const connection = makeConnection("postgres", {
+      id: "read-only-one-shot",
+      host: "db.internal",
+      port: 5432,
+      readOnly: true,
+      sshTunnel: bastion,
+    });
+
+    await expect(withOneShotTunnel(connection, run)).rejects.toThrow(unenforced("postgres"));
+
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("withOneShotTunnel refuses a connection with no tunnel too, and never runs its callback", async () => {
+    // The pass-through branch hands the callback the connection as it is, so a check placed only on
+    // the tunnelled path would let the callback build and connect a provider for it.
+    const run = mock(async () => "ran");
+
+    await expect(withOneShotTunnel(makeConnection("postgres", { readOnly: true }), run)).rejects.toThrow(
+      unenforced("postgres"),
+    );
+
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

@@ -15,6 +15,7 @@ import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey } from "./provider-cache-key";
+import { READ_ONLY_ENFORCED } from "./compatibility";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import * as path from "path";
@@ -34,7 +35,8 @@ import * as path from "path";
  *   it. Providers whose read-only boundary is established at OPEN time read it
  *   (SQLite); the rest establish theirs per statement and ignore it.
  * @returns Promise<DatabaseProvider> instance
- * @throws DatabaseConfigError if connection type is not supported
+ * @throws DatabaseConfigError if connection type is not supported, or if its `readOnly` cannot be
+ *   honoured (see assertReadOnlyHonoured)
  *
  * @example
  * // SQL Database
@@ -75,11 +77,48 @@ import * as path from "path";
  */
 const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 
+/**
+ * Refuse a `readOnly` this connection's engine cannot keep, before anything is built or dialled (#1089).
+ *
+ * A read-only connection is a promise its provider keeps by refusing every write before any request,
+ * so it is accepted only on an engine `READ_ONLY_ENFORCED` names. Anywhere else the connection would
+ * open able to write under a mode that says it cannot, which is refused rather than ignored. A value
+ * that is not a boolean is refused on every engine, because a string read as true on one path and as
+ * absent on another is two modes. The message names the field and never echoes the value.
+ *
+ * It reads the static map rather than `getCapabilities()` because it runs before a provider exists,
+ * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to every provider's
+ * `enforcesReadOnly`.
+ *
+ * WHERE IT RUNS. The first statement of `createDatabaseProvider` and `withOneShotTunnel`, and of
+ * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
+ * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, outside the
+ * try that closes a fresh one, so a refusal raised only inside the factory would dial the bastion and
+ * leave the pooled tunnel open. Ahead of the lookup too, because a mode that is not a boolean keys as
+ * `read-write` (`providerCacheKey`), so the lookup would hand it the connection's cached read-write
+ * provider without refusing it. Exported for the tests; the published factory's three entry points
+ * raise it (`src/exports/providers.ts`).
+ */
+export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
+  const readOnly: unknown = connection.readOnly;
+  if (readOnly === undefined) return;
+  if (typeof readOnly !== "boolean") {
+    throw new DatabaseConfigError("readOnly must be true or false.", connection.type);
+  }
+  if (readOnly && READ_ONLY_ENFORCED[connection.type] !== true) {
+    throw new DatabaseConfigError(
+      `readOnly: true is refused for ${sanitize(connection.type)}: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`,
+      connection.type,
+    );
+  }
+}
+
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  assertReadOnlyHonoured(connection);
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
@@ -305,6 +344,7 @@ export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
+  assertReadOnlyHonoured(connection);
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
     return await run(connection);
   }
@@ -555,6 +595,8 @@ export async function getOrCreateProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
 ): Promise<DatabaseProvider> {
+  // First, ahead of the cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
+  assertReadOnlyHonoured(connection);
   const cacheKey = await providerCacheKey(connection);
 
   // Check cache
@@ -726,6 +768,8 @@ export async function acquireExecutionProfileProvider(
   profile: ExecutionProfile,
   options: ProviderOptions = {},
 ): Promise<DatabaseProvider> {
+  // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
+  assertReadOnlyHonoured(connection);
   if (!EXECUTION_PROFILES.has(profile)) {
     throw new ExecutionProfileError(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
   }

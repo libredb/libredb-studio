@@ -23,6 +23,7 @@ import {
   isRetryableError,
   mapDatabaseError,
 } from "@/lib/db/errors";
+import type { DatabaseConnection } from "@/lib/types";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -105,6 +106,9 @@ mock.module("@/lib/db", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/query/route");
+// The real check the factory runs first (#1089). This file replaces `@/lib/db`, the route's own import,
+// and not `@/lib/db/factory`, so the test below can run the real refusal inside the replaced factory.
+const { assertReadOnlyHonoured } = await import("@/lib/db/factory");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -313,6 +317,34 @@ describe("POST /api/db/query", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("required");
+  });
+
+  // #1089. The factory refuses a readOnly the engine cannot keep before it builds anything, and this
+  // route answers that refusal as the configuration error it is. The replaced factory runs the real
+  // check on the connection the route resolved, so a route that dropped or rewrote the field on the way
+  // would fail here too.
+  test("an inline read-only connection on an engine that does not enforce the mode answers 400 and runs nothing", async () => {
+    mockCreateDatabaseProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
+      assertReadOnlyHonoured(args[0] as DatabaseConnection);
+      return mockProvider;
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: { ...validConnection, readOnly: true }, sql: "SELECT * FROM users" },
+    });
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toBe(
+      "readOnly: true is refused for postgres: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.",
+    );
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
   });
 
   test("returns 400 for QueryError", async () => {
