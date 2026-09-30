@@ -213,11 +213,11 @@ export interface EtcdCallOptions {
 }
 
 /**
- * The allowlist of spec E11, plus `close()` for E16, and nothing else.
+ * The allowlist of spec E11, plus `close()` for E16, and nothing else. No bare put is on it: a top-level
+ * put is E8's guarded `txn`, the value edit is a `txn`, and a put in a `txn` body is a request inside it.
  */
 export interface EtcdClient {
   range(request: EtcdRangeRequest, options: EtcdCallOptions): Promise<EtcdRangeResponse>;
-  put(request: EtcdPutRequest, options: EtcdCallOptions): Promise<EtcdPutResponse>;
   deleteRange(request: EtcdDeleteRangeRequest, options: EtcdCallOptions): Promise<EtcdDeleteRangeResponse>;
   txn(request: EtcdTxnRequest, options: EtcdCallOptions): Promise<EtcdTxnResponse>;
   /**
@@ -267,7 +267,6 @@ export interface EtcdClient {
 /** Every method of `EtcdClient`, in the order spec E11 lists them; the compiler holds it complete. */
 export const ETCD_CLIENT_METHODS = [
   "range",
-  "put",
   "deleteRange",
   "txn",
   "watch",
@@ -351,9 +350,19 @@ export class EtcdError extends Error {
   }
 }
 
+/** What the provider asks the adapter to tell it (R13 D10). */
+export interface EtcdClientHooks {
+  /**
+   * Called once after a renewal that met "etcdserver: revision of auth store is old" (spec E4, 4.7):
+   * the grants may have changed with the auth store, so the provider reads them again before its next
+   * permission-aware walk.
+   */
+  readonly onAuthStoreChanged?: () => void;
+}
+
 /**
  * Builds the one client of a provider instance; injected, so tests pass a fake (spec 3.5). The
  * provider instantiates it with `EtcdConnectionOptions` from `connection-options.ts` (plan C4),
  * which this file does not import, so the seam stays the bottom of the provider's module graph.
  */
-export type EtcdClientFactory<TOptions> = (options: TOptions) => Promise<EtcdClient>;
+export type EtcdClientFactory<TOptions> = (options: TOptions, hooks?: EtcdClientHooks) => Promise<EtcdClient>;

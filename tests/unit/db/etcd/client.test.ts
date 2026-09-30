@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { ETCD_CLIENT_METHODS, type EtcdClient, EtcdError } from "@/lib/db/providers/keyvalue/etcd/client";
+import {
+  ETCD_CLIENT_METHODS,
+  type EtcdClient,
+  type EtcdClientFactory,
+  EtcdError,
+} from "@/lib/db/providers/keyvalue/etcd/client";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
 
 const signal = new AbortController().signal;
 
-/** Spec E11, in its own order, plus close() for E16. */
+/** Spec E11, in its own order, plus close() for E16: no bare put, since every put travels inside a txn. */
 const E11_ALLOWLIST = [
   "range",
-  "put",
   "deleteRange",
   "txn",
   "watch",
@@ -38,6 +42,28 @@ describe("ETCD_CLIENT_METHODS", () => {
 
   test("names no method twice", () => {
     expect(new Set(ETCD_CLIENT_METHODS).size).toBe(ETCD_CLIENT_METHODS.length);
+  });
+
+  test("leaves put off the seam, so the fake client has none either (spec E11)", () => {
+    const listed: readonly string[] = ETCD_CLIENT_METHODS;
+    expect(listed).not.toContain("put");
+    expect("put" in createFakeEtcdClient()).toBe(false);
+  });
+});
+
+describe("EtcdClientFactory (R13 D10)", () => {
+  test("hands the factory the options and the hooks, whose onAuthStoreChanged the adapter calls", async () => {
+    const seen: string[] = [];
+    let changed = 0;
+    const factory: EtcdClientFactory<{ readonly target: string }> = async (options, hooks) => {
+      seen.push(options.target);
+      hooks?.onAuthStoreChanged?.();
+      return createFakeEtcdClient();
+    };
+    await factory({ target: "dns:etcd.test:2379" }, { onAuthStoreChanged: () => changed++ });
+    await factory({ target: "dns:etcd.test:2380" });
+    expect(seen).toEqual(["dns:etcd.test:2379", "dns:etcd.test:2380"]);
+    expect(changed).toBe(1);
   });
 });
 
@@ -116,13 +142,13 @@ describe("createFakeEtcdClient (plan Contract C12)", () => {
   test("records a call before its override runs, so a call that throws is still recorded", async () => {
     let seen = -1;
     const fake = createFakeEtcdClient({
-      put: async () => {
+      txn: async () => {
         seen = fake.calls.length;
         throw new EtcdError("permission-denied", "etcdserver: permission denied", 7);
       },
     });
-    const put = fake.put({ key: new Uint8Array(), value: new Uint8Array() }, { signal });
-    await expect(put).rejects.toBeInstanceOf(EtcdError);
+    const txn = fake.txn({ compare: [], success: [], failure: [] }, { signal });
+    await expect(txn).rejects.toBeInstanceOf(EtcdError);
     expect(seen).toBe(1);
     expect(fake.calls).toHaveLength(1);
   });
