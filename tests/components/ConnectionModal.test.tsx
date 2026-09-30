@@ -132,6 +132,7 @@ const mockSetAuthSource = mock(() => {});
 const mockSetApiKeyId = mock(() => {});
 const mockSetApiKeySecret = mock(() => {});
 const mockSetSkipObjectScan = mock(() => {});
+const mockSetReadOnly = mock(() => {});
 const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
@@ -146,6 +147,9 @@ function getDefaultForm() {
     setQueryTimeout: mockSetQueryTimeout,
     skipObjectScan: false,
     setSkipObjectScan: mockSetSkipObjectScan,
+    readOnly: false,
+    setReadOnly: mockSetReadOnly,
+    readOnlyOffered: false,
     host: "localhost",
     setHost: mockSetHost,
     port: "5432",
@@ -384,6 +388,7 @@ describe("ConnectionModal", () => {
     mockSetShowPasteInput.mockClear();
     mockSetShowSSL.mockClear();
     mockSetSaslMechanism.mockClear();
+    mockSetReadOnly.mockClear();
     mockHandleTestConnection.mockClear();
     mockHandleConnect.mockClear();
   });
@@ -424,6 +429,35 @@ describe("ConnectionModal", () => {
     mockFormOverrides = { isEditMode: true, skipObjectScan: true };
     const { getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
     expect((getByLabelText("Do not read the object list on connect") as HTMLInputElement).checked).toBe(true);
+  });
+
+  // #1089: the read-only mode is offered only where the form says so, which is an engine whose
+  // provider enforces it and never a copy of a seed. tests/hooks/use-connection-form.test.ts pins where
+  // that is, so the dialog is exercised here through the form's answer alone.
+  test("draws no Read-only toggle where the form does not offer one", () => {
+    const { queryByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Read-only")).toBeNull();
+  });
+
+  test("offers the Read-only toggle where the form does, says what it refuses, and forwards it", () => {
+    mockFormOverrides = { readOnlyOffered: true };
+    const { getByLabelText, getByText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const box = getByLabelText("Read-only") as HTMLInputElement;
+
+    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-describedby")).toBe("readOnly-hint");
+    expect(
+      getByText(
+        "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+      ).id,
+    ).toBe("readOnly-hint");
+
+    fireEvent.click(box);
+    expect(mockSetReadOnly).toHaveBeenCalledWith(true);
+
+    mockFormOverrides = { readOnlyOffered: true, readOnly: true };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Read-only") as HTMLInputElement).checked).toBe(true);
   });
 
   test("shows the saved query timeout when editing", () => {

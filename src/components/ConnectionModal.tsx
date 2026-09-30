@@ -180,6 +180,8 @@ export function ConnectionModal({
     setQueryTimeout,
     skipObjectScan,
     setSkipObjectScan,
+    readOnly,
+    setReadOnly,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -254,6 +256,7 @@ export function ConnectionModal({
 
     // Derived data
     dbTypes,
+    readOnlyOffered,
   } = useConnectionForm({ isOpen, onClose, onConnect, editConnection, onTestConnection });
 
   // Couchbase pins one bucket per connection (issue #262, decision 4), so the shared
@@ -432,6 +435,32 @@ export function ConnectionModal({
               The editor still works. The object panel offers a load action instead.
             </p>
           </div>
+
+          {/*
+            The read-only mode (#1089), drawn only where the form offers it: an engine whose provider
+            enforces the mode, and never a copy of a seed, whose mode the server re-resolves from the
+            operator's file. Beside the no-scan choice, because it too is about what this connection
+            does rather than how it is reached.
+          */}
+          {readOnlyOffered && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  id="readOnly"
+                  type="checkbox"
+                  checked={readOnly}
+                  onChange={(e) => setReadOnly(e.target.checked)}
+                  aria-describedby="readOnly-hint"
+                  className="rounded border-edge bg-panel"
+                />
+                <span className="text-xs font-medium text-fg-muted">Read-only</span>
+              </label>
+              <p id="readOnly-hint" className="text-xs text-fg-muted">
+                Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on
+                your own connection it is a safety rail, not a permission.
+              </p>
+            </div>
+          )}
 
           {/* Environment Selector */}
           <div className="space-y-2">

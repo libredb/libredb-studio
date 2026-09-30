@@ -64,9 +64,10 @@ mock.module("@/lib/db-ui-config", () => ({
   offersSshTunnel: (type: string) => type !== "kafka",
 }));
 
-import { CONNECTION_FORM_DEFAULTS, useConnectionForm } from "@/hooks/use-connection-form";
+import { CONNECTION_FORM_DEFAULTS, offersReadOnlyToggle, useConnectionForm } from "@/hooks/use-connection-form";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 // =============================================================================
 // useConnectionForm Tests
@@ -2057,6 +2058,92 @@ describe("useConnectionForm", () => {
     expect(result.current.skipObjectScan).toBe(false);
   });
 
+  // ── The read-only mode (#1089) ─────────────────────────────────────────
+  //
+  // The reset to `CONNECTION_FORM_DEFAULTS` on close is held for this field too by the test above that
+  // walks every default: it finds `setReadOnly` by name.
+
+  test("the read-only mode starts off and is never written for an engine that does not enforce it", async () => {
+    // The factory refuses `readOnly: true` on such an engine, so a tick carried over from an engine that
+    // does enforce it would save a connection nothing can open, while its box is hidden.
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+
+    expect(result.current.readOnly).toBe(false);
+    act(() => result.current.setReadOnly(true));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("readOnly" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("editing a connection shows its saved mode, and saving it on an engine that ignores the mode writes none", async () => {
+    // Loaded as it was saved, so the box says what the record says; written only where the engine
+    // enforces it, so a stale field is cleared on save rather than refused at every open.
+    const conn: DatabaseConnection = {
+      id: "c1",
+      name: "Carried",
+      type: "postgres",
+      host: "db.internal",
+      port: 5432,
+      readOnly: true,
+      createdAt: new Date(),
+    };
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: conn,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    expect(result.current.readOnly).toBe(true);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("readOnly" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("editing a connection that is not read-only does not inherit the last one's mode", () => {
+    // The edit block OVERWRITES, like the no-scan choice: otherwise the previously edited connection's
+    // mode is saved onto this one.
+    const guarded: DatabaseConnection = {
+      id: "c1",
+      name: "Guarded",
+      type: "postgres",
+      readOnly: true,
+      createdAt: new Date(),
+    };
+    const plain: DatabaseConnection = { id: "c2", name: "Plain", type: "postgres", createdAt: new Date() };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: guarded },
+    });
+    expect(result.current.readOnly).toBe(true);
+
+    rerender({ ...defaultProps, editConnection: plain });
+    expect(result.current.readOnly).toBe(false);
+  });
+
+  test("offers no Read-only toggle on an engine whose provider does not enforce the mode", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+    // Vacuity, by name: an empty population would offer nothing and pass.
+    expect(refusing).toContain("postgres");
+    for (const type of refusing) {
+      act(() => result.current.setType(type));
+      expect({ type, offered: result.current.readOnlyOffered }).toEqual({ type, offered: false });
+    }
+  });
+
   test("populates the Cassandra localDataCenter in edit mode", () => {
     const conn: DatabaseConnection = {
       id: "c1",
@@ -2965,5 +3052,32 @@ describe("useConnectionForm", () => {
     // Non-vacuous: the connection WAS built, and the fields libSQL does take survived.
     expect(saved.host).toBe("db.turso.io");
     expect(saved.type).toBe("libsql");
+  });
+});
+
+describe("offersReadOnlyToggle (#1089)", () => {
+  const own: DatabaseConnection = { id: "own", name: "Own", type: "postgres", createdAt: new Date(0) };
+  const seedCopy: DatabaseConnection = {
+    id: "seed:prod",
+    seedId: "prod",
+    name: "Prod",
+    type: "postgres",
+    createdAt: new Date(0),
+  };
+
+  test("offers the toggle on a new connection and on one of the user's own, where the engine enforces the mode", () => {
+    expect(offersReadOnlyToggle(true, null)).toBe(true);
+    expect(offersReadOnlyToggle(true, undefined)).toBe(true);
+    expect(offersReadOnlyToggle(true, own)).toBe(true);
+  });
+
+  test("never on a copy of a seed, whose id the server re-resolves from the operator's file", () => {
+    // The server discards the copy's fields, so a toggle there would change nothing it claims to.
+    expect(offersReadOnlyToggle(true, seedCopy)).toBe(false);
+  });
+
+  test("never where the engine does not enforce the mode", () => {
+    expect(offersReadOnlyToggle(false, null)).toBe(false);
+    expect(offersReadOnlyToggle(false, own)).toBe(false);
   });
 });
