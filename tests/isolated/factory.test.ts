@@ -907,6 +907,19 @@ describe("getOrCreateProvider cache isolation", () => {
     expect(await getOrCreateProvider(record("SCRAM-SHA-512"))).toBe(sha512);
     expect(await getOrCreateProvider(record(undefined))).toBe(none);
   });
+
+  test("readOnly: false and an absent readOnly are one mode, so they are handed one provider (#1089)", async () => {
+    // The fourth part of the cache key is spelled `read-only` for `true` alone, so a record saved before
+    // the mode existed and one that says `false` share a pool. The other half, `true` sharing none, is
+    // held at the key in tests/unit/lib/db/provider-cache-key.test.ts, because on this engine the factory
+    // refuses `readOnly: true` before the cache is consulted at all.
+    const database = join(dir, "read-write-mode.db");
+    const record = (overrides: Partial<DatabaseConnection> = {}) =>
+      makeConnection("sqlite", { id: "seed:mode", database, ...overrides });
+
+    const absent = await getOrCreateProvider(record());
+    expect(await getOrCreateProvider(record({ readOnly: false }))).toBe(absent);
+  });
 });
 
 // ─── removeProvider ────────────────────────────────────────────────────────

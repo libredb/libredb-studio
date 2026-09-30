@@ -1821,8 +1821,8 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `queryTimeout`, `agentUser`, `agentPassword`, and `apiKeyId`/`apiKeySecret`
-(Elasticsearch, #708). `color`, `environment`, `group`,
+`authSource` (MongoDB), `saslMechanism` (Kafka), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+(Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
 ```typescript
@@ -1850,6 +1850,7 @@ interface DatabaseConnection {
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
   saslMechanism?: 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'; // Kafka only: the SASL mechanism that checks user and password, absent meaning none. A user or password with no mechanism is refused, and every mechanism requires TLS
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
+  readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
   managed?: boolean;       // true = admin-controlled, read-only in UI
   seedId?: string;         // stable reference to seed config ID
   agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)

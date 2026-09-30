@@ -117,6 +117,9 @@ describe("the classification is exhaustive by construction", () => {
         "password",
         "port",
         "queryTimeout",
+        // Whether the provider refuses writes on this connection (#1089). A mode, not a credential:
+        // it grants nothing, and the browser reads it to draw the Read-only marker.
+        "readOnly",
         // Kafka's SASL mechanism (#1088). A mechanism NAME (`SCRAM-SHA-512`), which the
         // broker's own configuration lists in the clear, so `public`; the password it checks
         // is the secret and is classified above.
@@ -167,6 +170,12 @@ describe("the classification is exhaustive by construction", () => {
 
   test("a SASL mechanism names how the password is checked, and is no secret itself", () => {
     expect(CONNECTION_FIELDS.saslMechanism).toBe("public");
+  });
+
+  test("the read-only mode is public, because the browser reads it to draw the marker (#1089)", () => {
+    // Classified secret, it would be stripped from every managed seed the browser is sent
+    // (`withoutSecretFields`), and a read-only seed would lose its marker and its Operations line.
+    expect(CONNECTION_FIELDS.readOnly).toBe("public");
   });
 });
 

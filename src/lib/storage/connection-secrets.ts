@@ -50,6 +50,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // A display preference: whether this browser reads the catalog when the connection
   // opens. It grants nothing and unlocks nothing.
   skipObjectScan: "public",
+  // Whether the provider refuses writes on this connection (#1089). A mode, not a credential: it
+  // grants nothing, and the browser reads it to draw the Read-only marker.
+  readOnly: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

@@ -67,6 +67,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it. `preserved` would make the
   // box unticked on screen while the saved connection still skipped its scan.
   skipObjectScan: "edited",
+  // The checkbox owns it, so unticking it has to CLEAR it (#1089): `preserved` would leave the box
+  // unticked on screen while the saved connection went on refusing writes.
+  readOnly: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",

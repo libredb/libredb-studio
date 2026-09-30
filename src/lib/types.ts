@@ -296,6 +296,29 @@ export interface DatabaseConnection {
    * Oracle owner, and the flag follows the one that hurts.
    */
   skipObjectScan?: boolean;
+  /**
+   * Refuse every write on this connection, before any request (#1089): the provider answers a write
+   * command, an object edit and a maintenance operation with a refusal that names the read-only mode
+   * and where it was set, and sends nothing.
+   *
+   * Accepted only on an engine whose provider enforces it, which `READ_ONLY_ENFORCED` in
+   * `src/lib/db/compatibility.ts` records and a census holds equal to
+   * `ProviderCapabilities.enforcesReadOnly`. On any other engine `true` is refused, by the seed schema
+   * at load and by `assertReadOnlyHonoured` in `src/lib/db/factory.ts` before anything is built or
+   * dialled, because a mode the provider ignores would list the connection as read-only and send its
+   * writes. A value that is not a boolean is refused on every engine.
+   *
+   * What it binds depends on who holds the credentials. On a managed seed it is the operator's rule:
+   * the server re-resolves a `seed:` id from the operator's file and discards what the caller sent,
+   * and the seed schema refuses the field on a seed that is not managed. On a connection of the user's
+   * own it is a safety rail the user can turn off.
+   *
+   * `false` and absent are one mode, and the form writes nothing for `false`. It is the fourth part of
+   * `providerCacheKey`, so a read-only and a read-write connection never share a cached provider, and
+   * part of no identity digest (`connectionFingerprint`, `credentialDigest`, `connectionIdentity`),
+   * because it changes neither the server a connection reaches, nor as whom, nor which database.
+   */
+  readOnly?: boolean;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)
