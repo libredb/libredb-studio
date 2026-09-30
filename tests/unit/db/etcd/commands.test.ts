@@ -792,6 +792,19 @@ const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] =
   ["get /a --prefix --prefix=false", "conflicting-flags", "--prefix is given twice: give it once."],
   ["get", "bad-argument", "get needs a key and takes at most a range end: get <key> [<range_end>]."],
   ["get /a /b /c", "bad-argument", "get needs a key and takes at most a range end: get <key> [<range_end>]."],
+  // The arity is read before the --prefix and --from-key pair. Measured with etcdctl v3.7.2: del does the same;
+  // get checks no upper arity (it ignores a third argument) and names the pair, while the subset refuses a
+  // third argument with or without the flags.
+  [
+    "get /a /b /c --prefix --from-key",
+    "bad-argument",
+    "get needs a key and takes at most a range end: get <key> [<range_end>].",
+  ],
+  [
+    "get --prefix --from-key",
+    "bad-argument",
+    "get needs a key and takes at most a range end: get <key> [<range_end>].",
+  ],
   [
     "get ''",
     "bad-argument",
@@ -857,6 +870,16 @@ const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] =
   ["put /a v --lease=8000000000000000", "bad-argument", "--lease is past the largest lease id, 7fffffffffffffff."],
   ["del", "bad-argument", "del needs a key and takes at most a range end: del <key> [<range_end>]."],
   ["del /a /b /c", "bad-argument", "del needs a key and takes at most a range end: del <key> [<range_end>]."],
+  [
+    "del /a /b /c --prefix --from-key",
+    "bad-argument",
+    "del needs a key and takes at most a range end: del <key> [<range_end>].",
+  ],
+  [
+    "del --prefix --from-key",
+    "bad-argument",
+    "del needs a key and takes at most a range end: del <key> [<range_end>].",
+  ],
   [
     "del /a --prefix --prev-kv",
     "conflicting-flags",
