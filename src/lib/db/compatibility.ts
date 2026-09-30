@@ -145,6 +145,43 @@ export function isExternalDatabaseType(type: DatabaseType): boolean {
 }
 
 /**
+ * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
+ * object edit and maintenance operation before any request while the connection's `readOnly` is true
+ * (#1089). The static answer `ProviderCapabilities.enforcesReadOnly` gives once a provider is built.
+ *
+ * Static because every reader decides before a provider exists: the seed schema refuses
+ * `readOnly: true` at load where this answers false, `assertReadOnlyHonoured` in
+ * `src/lib/db/factory.ts` refuses it before anything is built or dialled, and the connection form
+ * draws its toggle, and writes the field, only where this answers true. Refused rather than ignored,
+ * because a mode an engine ignores lists a connection as read-only and sends its writes.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to
+ * what that engine's provider declares, so the two cannot drift. Frozen like the records above it.
+ */
+export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
+  postgres: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  libredb: false,
+});
+
+/**
  * How much of the product works against a wire-compatible engine.
  *
  * - `full` - every introspection surface answered. Caveats may still record data

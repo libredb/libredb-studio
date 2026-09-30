@@ -559,6 +559,26 @@ export interface ProviderCapabilities {
    * `CLAUDE.md`.
    */
   singleWriterFile?: boolean;
+  /**
+   * True when this engine's provider refuses every write before any request while the connection's
+   * `readOnly` is true, or while it was opened with `ProviderExecutionContext.readOnly`, naming the
+   * read-only mode in the refusal (#1089).
+   *
+   * A mode a provider ignores would be a promise nobody keeps: the connection would be listed as
+   * read-only and send its writes. So `readOnly: true` is accepted only where this holds, and refused
+   * everywhere else: by the seed schema at load, by `assertReadOnlyHonoured` in
+   * `src/lib/db/factory.ts` before anything is built or dialled, and by the connection form, which
+   * draws its toggle only here. All three read `READ_ONLY_ENFORCED` in `src/lib/db/compatibility.ts`
+   * rather than this field, because each decides before a provider exists, and
+   * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration
+   * for every shipped type-id.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every external implementer
+   * compiling. Only the literal `true` is declared, so an absent flag reads as "a read-only connection
+   * is refused here", the answer for every engine whose provider does not refuse writes itself.
+   */
+  readonly enforcesReadOnly?: true;
   supportsMaintenance: boolean;
   maintenanceOperations: MaintenanceType[];
   /**
