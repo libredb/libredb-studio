@@ -1100,7 +1100,7 @@ function keyValue(wire: WireKeyValue): EtcdKeyValue {
 
 function rangeRequest(request: EtcdRangeRequest): WireRangeRequest {
   if (!Number.isSafeInteger(request.limit) || request.limit <= 0) {
-    throw new RangeError(`Every Range carries a positive whole limit (spec E14), not ${request.limit}`);
+    throw new RangeError("Every Range carries a positive whole limit (spec E14); nothing was sent");
   }
   return {
     key: request.key,

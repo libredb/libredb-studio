@@ -2172,18 +2172,22 @@ describe("requests and answers the adapter maps (plan C1, spec E14)", () => {
   });
 
   test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
-    "a Range limit of %p is refused before anything is sent (spec E14)",
+    "a Range limit of %p is refused before anything is sent, in words that never repeat it (spec E14)",
     async (limit) => {
       const { wire, client } = await recorded();
-      expect(await failure(client.range({ key: bytes("/a"), limit }, options))).toBeInstanceOf(RangeError);
-      expect(
-        await failure(
-          client.txn(
-            { compare: [], success: [{ op: "range", request: { key: bytes("/a"), limit } }], failure: [] },
-            options,
-          ),
+      // A validation refusal never echoes the value it refuses (plan Global Constraints).
+      const refusal = new RangeError("Every Range carries a positive whole limit (spec E14); nothing was sent");
+      const read = await failure(client.range({ key: bytes("/a"), limit }, options));
+      expect(read).toBeInstanceOf(RangeError);
+      expect((read as Error).message).toBe(refusal.message);
+      const txn = await failure(
+        client.txn(
+          { compare: [], success: [{ op: "range", request: { key: bytes("/a"), limit } }], failure: [] },
+          options,
         ),
-      ).toBeInstanceOf(RangeError);
+      );
+      expect(txn).toBeInstanceOf(RangeError);
+      expect((txn as Error).message).toBe(refusal.message);
       expect(wire.calls).toEqual([]);
     },
   );
