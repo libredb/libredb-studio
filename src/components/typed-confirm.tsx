@@ -24,7 +24,8 @@ import { useReturnFocus } from "@/hooks/use-return-focus";
  * the field alone inside a dialog of its own, for a key prefix, a start key, a lease id or the connection's name
  * (#1089, section 5.5). It began under `admin/accounts/` and lives here, beside `QuerySafetyDialog.tsx`, because the
  * published package ships that gate and a shared component imports nothing from a feature folder; and not under
- * `ui/`, which is vendored shadcn code that the coverage gate, Sonar and the accessibility lint all leave out.
+ * `ui/`, which is vendored shadcn code that the coverage gate and Sonar leave out and for which `.oxlintrc.json`
+ * turns accessibility rules off.
  */
 
 /**
