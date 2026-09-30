@@ -1,11 +1,16 @@
-import { describe, test, expect } from "bun:test";
+import { afterEach, describe, test, expect } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   isDestructiveNonSqlQuery,
   vocabularyDecidesAlone,
+  vocabularySendsToModel,
+  vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
+import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText } from "@/lib/sql/grammar";
+import type { DatabaseType } from "@/lib/types";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 
 // The facts behind the confirmation gate for the engines whose query text is not
 // SQL. The gate itself (`isDangerousQuery`) is tested in
@@ -325,5 +330,86 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
     for (const absent of ["drop", "dropCollection", "dropDatabase", "createIndex", "renameCollection"]) {
       expect(operations?.has(absent)).toBe(false);
     }
+  });
+});
+
+// The two fields a row declares for the dialog rather than for the gate's yes or no (#1089, section 5.5 and E10).
+// No shipped engine's row declares either before etcd's lands with its registration, so these tests install a row
+// of their own under a key no DatabaseType spells, and remove it after each test.
+
+describe("vocabularyTypedConfirmation", () => {
+  let remove: () => void = () => {};
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  test.each<[DatabaseType, string]>([
+    ["postgres", "DROP TABLE users"],
+    ["redis", "FLUSHALL"],
+    ["mongodb", '{"collection":"users","operation":"deleteMany","filter":{}}'],
+    ["prometheus", "up"],
+    ["kafka", '{"topic": "orders"}'],
+  ])(
+    "asks for nothing to be typed on %s, whose row declares no typed confirmation or which has no row",
+    (type, text) => {
+      expect(vocabularyTypedConfirmation(type, text)).toBeUndefined();
+    },
+  );
+
+  test("asks for nothing to be typed with no type at all", () => {
+    expect(vocabularyTypedConfirmation(undefined, "FLUSHALL")).toBeUndefined();
+  });
+
+  test("hands a row's answer through as the row gave it, either shape, and nothing where the row asks nothing", () => {
+    const seen: string[] = [];
+    remove = installStandInVocabulary({
+      typedConfirmation: (text): TypedConfirmationAsk | undefined => {
+        seen.push(text);
+        if (text === "wipe-prefix /App/") return { type: "text", text: "/App/" };
+        if (text === "wipe-all") return { type: "connection-name", targets: ["every key"] };
+        return undefined;
+      },
+    });
+
+    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "wipe-prefix /App/")).toEqual({ type: "text", text: "/App/" });
+    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "wipe-all")).toEqual({
+      type: "connection-name",
+      targets: ["every key"],
+    });
+    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "get /App/")).toBeUndefined();
+    // Whitespace around the text is the row's to read: trimmed, this would be the wipe-all ask above.
+    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, " wipe-all\n")).toBeUndefined();
+    // The text reaches the row as written: no trim, no case folding.
+    expect(seen).toEqual(["wipe-prefix /App/", "wipe-all", "get /App/", " wipe-all\n"]);
+  });
+});
+
+describe("vocabularySendsToModel", () => {
+  let remove: () => void = () => {};
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  // What the dialog did for every engine before the field existed. etcd's row, which lands with its registration,
+  // is the first to answer false, and this pin then names it.
+  test("keeps no shipped type's statements from the AI analysis", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([]);
+  });
+
+  test("sends with no type at all", () => {
+    expect(vocabularySendsToModel()).toBe(true);
+  });
+
+  test("keeps a row's statements on this device where it declares safetyAnalysis: false, and only there", () => {
+    remove = installStandInVocabulary({ safetyAnalysis: false });
+    expect(vocabularySendsToModel(STAND_IN_TYPE)).toBe(false);
+    remove();
+
+    remove = installStandInVocabulary({});
+    expect(vocabularySendsToModel(STAND_IN_TYPE)).toBe(true);
   });
 });

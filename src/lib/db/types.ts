@@ -170,6 +170,17 @@ export function maintenanceControl(
 }
 
 /**
+ * What a typed confirmation asks the person to type (#1089, section 5.5): a text, such as the key prefix a range
+ * delete names, or the connection's name, with every target the statement reaches listed beside the field.
+ *
+ * Answered by a confirmation-gate vocabulary's `typedConfirmation` (`src/lib/db/destructive-commands.ts`) and drawn
+ * by `QuerySafetyDialog`. Not published: `src/exports/types.ts` does not name it.
+ */
+export type TypedConfirmationAsk =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "connection-name"; readonly targets: readonly string[] };
+
+/**
  * Whether column profiling may be offered for this engine: the one gate both row menus
  * (`src/components/object-tree/row-actions.ts` and the mobile
  * `src/components/schema-explorer/TableItem.tsx`) and `POST /api/db/profile` ask, so that no
