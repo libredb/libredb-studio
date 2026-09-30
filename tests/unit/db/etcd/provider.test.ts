@@ -1,0 +1,1446 @@
+/**
+ * EtcdProvider at its own seam (#1089, spec 3.1, 3.5): the declarations with no client; the connect sequence
+ * of spec 6.1 step by step, with the calls each step makes; the grants of 4.7 and their re-read after an
+ * auth-store change (R13 D10); the query path's refusals and bounds (5.4); cancelQuery (5.5); and that every
+ * surface answers exactly what the module that owns it answers over the same client and the same context,
+ * with the same calls, so the provider composes and never reshapes.
+ *
+ * Every client is the shared fake of `tests/helpers/etcd-fake-client.ts` over the key space of
+ * `tests/helpers/etcd-key-space.ts`; the real adapter over etcd's recorded answers runs in
+ * `tests/integration/db/etcd-provider.test.ts`. The client certificates of certificate mode are generated with
+ * openssl when the file starts and never written into the repository.
+ */
+import { beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  QueryCancelledError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import {
+  type EtcdClient,
+  type EtcdClientHooks,
+  EtcdError,
+  type EtcdMember,
+  type EtcdPermission,
+  type EtcdStatus,
+} from "@/lib/db/providers/keyvalue/etcd/client";
+import { parseEtcdCommand } from "@/lib/db/providers/keyvalue/etcd/commands";
+import {
+  buildEtcdConnectionOptions,
+  ETCD_DEFAULT_PORT,
+  etcdErrorConnection,
+} from "@/lib/db/providers/keyvalue/etcd/connection-options";
+import { applyEtcdValueEdit, buildEtcdValueEdit, type EtcdEditPlanStamp } from "@/lib/db/providers/keyvalue/etcd/edit";
+import { toEtcdError } from "@/lib/db/providers/keyvalue/etcd/errors";
+import { ETCD_READ_BOUNDS, executeCommand } from "@/lib/db/providers/keyvalue/etcd/execute";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { ETCD_KEY_SCAN, scanEtcdKeysPage } from "@/lib/db/providers/keyvalue/etcd/key-scan";
+import { groupLabel, memberHexId, prefixGroups } from "@/lib/db/providers/keyvalue/etcd/keys";
+import { ETCD_LABELS } from "@/lib/db/providers/keyvalue/etcd/labels";
+import {
+  ETCD_MAINTENANCE_OPERATIONS,
+  ETCD_MAINTENANCE_SPECS,
+  runEtcdMaintenance,
+} from "@/lib/db/providers/keyvalue/etcd/maintenance";
+import {
+  readEtcdHealth,
+  readEtcdOverview,
+  readEtcdStorageStats,
+  readEtcdTableStats,
+} from "@/lib/db/providers/keyvalue/etcd/monitoring-reads";
+import {
+  countEtcdObjects,
+  describeEtcdObject,
+  describeEtcdObjects,
+  ETCD_OBJECT_KINDS,
+  type EtcdSurfaceContext,
+  listEtcdObjects,
+  readEtcdObjectSource,
+} from "@/lib/db/providers/keyvalue/etcd/objects";
+import { describeScope, readableScope, writableScope } from "@/lib/db/providers/keyvalue/etcd/permissions";
+import { commandResult } from "@/lib/db/providers/keyvalue/etcd/results";
+import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import type {
+  DatabaseConnection,
+  DatabaseProvider,
+  ObjectEditBuild,
+  ObjectEditPlan,
+  ProviderCapabilities,
+  ProviderExecutionContext,
+} from "@/lib/db/types";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
+import { KEY_SPACE_HEADER, type KeySpaceEntry, keySpaceRange, permissionDenied } from "../../../helpers/etcd-key-space";
+
+const QUERY_TIMEOUT = 5_000;
+const PASSWORD = "unit-reader-password";
+const encode = (text: string) => new TextEncoder().encode(text);
+
+const CONNECTION: DatabaseConnection = {
+  id: "etcd-unit",
+  name: "etcd unit",
+  type: "etcd",
+  host: "etcd.test",
+  port: 2379,
+  createdAt: new Date(0),
+};
+/** Password sign-in, which needs TLS (spec E2); `require` verifies nothing, which no fake minds. */
+const PASSWORD_CONNECTION: DatabaseConnection = {
+  ...CONNECTION,
+  user: "reader",
+  password: PASSWORD,
+  ssl: { mode: "require" },
+};
+
+const STATUS: EtcdStatus = {
+  header: KEY_SPACE_HEADER,
+  version: "3.7.2",
+  dbSize: "20480",
+  dbSizeInUse: "16384",
+  dbSizeQuota: "0",
+  leader: "10276657743932975437",
+  raftIndex: "40",
+  raftTerm: "2",
+  raftAppliedIndex: "40",
+  errors: [],
+  isLearner: false,
+  storageVersion: "3.7.0",
+};
+const MEMBER: EtcdMember = {
+  id: "10276657743932975437",
+  name: "etcd-1",
+  peerUrls: ["http://127.0.0.1:2380"],
+  clientUrls: ["http://127.0.0.1:2379"],
+  isLearner: false,
+};
+
+/** The shapes of the prefix-group rule (spec 4.1): a deep and a flat first segment, and a key in no group. */
+const KEYS: readonly KeySpaceEntry[] = [
+  { key: "/app/a/b", value: "nested" },
+  { key: "/app/cfg", value: '{"mode":"blue"}' },
+  { key: "/app/x/y", value: "deeper" },
+  { key: "/config/a", value: "alpha" },
+  { key: "/config/b", value: "beta" },
+  { key: "/feature-flag", value: "enabled" },
+];
+
+/** The reader of spec 9: READ on the prefix /app/ and on the single key /config/a. */
+const READER_PERMISSIONS: readonly EtcdPermission[] = [
+  { type: "read", key: encode("/app/"), rangeEnd: encode("/app0") },
+  { type: "read", key: encode("/config/a") },
+];
+
+const denied = () => permissionDenied();
+const notEnabled = () => new EtcdError("failed-precondition", "etcdserver: authentication is not enabled", 9);
+const nameEmpty = () => new EtcdError("unauthenticated", "etcdserver: user name is empty", 3);
+const userNotFound = () => new EtcdError("failed-precondition", "etcdserver: user name not found", 9);
+const unavailable = () => new EtcdError("unavailable", "etcdserver: request timed out", 14);
+
+/** A cluster with authentication off, over KEYS. */
+function etcdClient(overrides: Partial<EtcdClient> = {}): FakeEtcdClient {
+  return createFakeEtcdClient({
+    authStatus: async () => ({ enabled: false, authRevision: "1" }),
+    status: async () => STATUS,
+    range: keySpaceRange(KEYS),
+    memberList: async () => ({ header: KEY_SPACE_HEADER, members: [MEMBER] }),
+    alarmList: async () => [],
+    leaseLeases: async () => ({ header: KEY_SPACE_HEADER, ids: [] }),
+    userList: async () => [],
+    roleList: async () => [],
+    close: async () => {},
+    ...overrides,
+  });
+}
+
+/** The same cluster with authentication on, signed in as the reader, whose listings of users, roles and leases etcd refuses. */
+function readerClient(overrides: Partial<EtcdClient> = {}): FakeEtcdClient {
+  return etcdClient({
+    authenticate: async () => {},
+    authStatus: async () => ({ enabled: true, authRevision: "5" }),
+    userGet: async () => ["reader"],
+    roleGet: async () => READER_PERMISSIONS,
+    range: keySpaceRange(KEYS, READER_PERMISSIONS),
+    userList: async () => {
+      throw denied();
+    },
+    roleList: async () => {
+      throw denied();
+    },
+    leaseLeases: async () => {
+      throw denied();
+    },
+    ...overrides,
+  });
+}
+
+/** A self-signed certificate and its key for `subject`, made with openssl and never written into the repository. */
+function selfSigned(subject: string): { readonly cert: string; readonly key: string } {
+  const dir = mkdtempSync(join(tmpdir(), "etcd-provider-cert-"));
+  try {
+    const made = Bun.spawnSync(
+      [
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-nodes",
+        "-keyout",
+        join(dir, "key.pem"),
+        "-out",
+        join(dir, "cert.pem"),
+        "-subj",
+        subject,
+        "-days",
+        "1",
+      ],
+      { stderr: "pipe" },
+    );
+    if (made.exitCode !== 0) throw new Error(`openssl made no test certificate: ${made.stderr.toString()}`);
+    return { cert: readFileSync(join(dir, "cert.pem"), "utf8"), key: readFileSync(join(dir, "key.pem"), "utf8") };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+let CERTIFICATE_CONNECTION: DatabaseConnection = CONNECTION;
+let NAMELESS_CERTIFICATE_CONNECTION: DatabaseConnection = CONNECTION;
+beforeAll(() => {
+  const named = selfSigned("/CN=cert-only");
+  const nameless = selfSigned("/O=libredb-test");
+  CERTIFICATE_CONNECTION = { ...CONNECTION, ssl: { mode: "require", clientCert: named.cert, clientKey: named.key } };
+  NAMELESS_CERTIFICATE_CONNECTION = {
+    ...CONNECTION,
+    ssl: { mode: "require", clientCert: nameless.cert, clientKey: nameless.key },
+  };
+});
+
+interface Built {
+  readonly provider: EtcdProvider;
+  readonly hooks: EtcdClientHooks[];
+  readonly factoryCalls: () => number;
+}
+
+/** A provider whose factory hands out `client` and records the hooks it was given. */
+function build(
+  connection: DatabaseConnection,
+  client: FakeEtcdClient,
+  execution: ProviderExecutionContext = {},
+): Built {
+  const hooks: EtcdClientHooks[] = [];
+  let calls = 0;
+  const provider = new EtcdProvider(connection, { queryTimeout: QUERY_TIMEOUT }, execution, async (_options, hook) => {
+    calls += 1;
+    if (hook !== undefined) hooks.push(hook);
+    return client;
+  });
+  return { provider, hooks, factoryCalls: () => calls };
+}
+
+async function connected(
+  connection: DatabaseConnection,
+  client: FakeEtcdClient,
+  execution: ProviderExecutionContext = {},
+): Promise<Built> {
+  const built = build(connection, client, execution);
+  await built.provider.connect();
+  return built;
+}
+
+const methods = (client: FakeEtcdClient, from = 0) => client.calls.slice(from).map((call) => call.method);
+
+/** The calls from `from` on, each without its call options, since every call carries a signal of its own. */
+function callsOf(client: FakeEtcdClient, from = 0): Array<{ readonly method: string; readonly args: unknown[] }> {
+  return client.calls.slice(from).map((call) => ({
+    method: String(call.method),
+    args: call.args.filter((arg) => !(typeof arg === "object" && arg !== null && "signal" in arg)),
+  }));
+}
+
+/** The context the provider builds for a surface call, built here from the same inputs. */
+function contextFor(connection: DatabaseConnection, permissions?: readonly EtcdPermission[]): EtcdSurfaceContext {
+  const options = buildEtcdConnectionOptions(connection, { executionReadOnly: false, queryTimeout: QUERY_TIMEOUT });
+  return {
+    readable: permissions === undefined ? { kind: "all" } : readableScope(permissions),
+    writable: permissions === undefined ? { kind: "all" } : writableScope(permissions),
+    ...(options.principal === undefined ? {} : { principal: options.principal }),
+    ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+    signal: AbortSignal.timeout(QUERY_TIMEOUT),
+    now: () => Date.now(),
+    errors: etcdErrorConnection(options),
+  };
+}
+
+const LIMITS = {
+  maxLimit: DEFAULT_QUERY_LIMIT,
+  txnRangeLimit: ETCD_READ_BOUNDS.firstPageSize,
+  maxCommandTimeoutMs: QUERY_TIMEOUT,
+  maxWatchWindowMs: Math.max(0, QUERY_TIMEOUT - ETCD_READ_BOUNDS.watchMarginMs),
+};
+
+/** Waits for `condition`, polling every 2 ms, at most `tries` times; recursive, so no await sits in a loop. */
+async function until(condition: () => boolean, tries = 500): Promise<void> {
+  if (condition()) return;
+  if (tries === 0) throw new Error("the condition never held");
+  await Bun.sleep(2);
+  return until(condition, tries - 1);
+}
+
+/** The parser's refusal of `text` under the provider's own caps; a text that parses is a mistake in the test. */
+function refusalOf(text: string): string {
+  const parsed = parseEtcdCommand(text, LIMITS);
+  if (parsed.ok) throw new Error(`${JSON.stringify(text)} parsed`);
+  return parsed.refusal.message;
+}
+
+// ============================================================================
+// Declarations
+// ============================================================================
+
+describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
+  test("the constructor validates and opens nothing: a refused host still declares, and connect refuses before the factory", async () => {
+    const client = etcdClient();
+    const { provider, factoryCalls } = build({ ...CONNECTION, host: "etcd:2379" }, client);
+    const dialect: ProviderCapabilities["queryDialect"] = "etcd";
+    expect(provider.getCapabilities().queryDialect).toBe(dialect);
+    expect(provider.getLabels()).toEqual(ETCD_LABELS);
+    expect(provider.isConnected()).toBe(false);
+    await expect(provider.connect()).rejects.toThrow(
+      new DatabaseConfigError(
+        "Host takes a name or address only; put the port in Port and choose TLS under SSL / TLS.",
+        "etcd",
+      ),
+    );
+    expect(factoryCalls()).toBe(0);
+    expect(client.calls).toEqual([]);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("the capabilities of spec 6.2, every member written out", () => {
+    const { provider } = build(CONNECTION, etcdClient());
+    const declared: ProviderCapabilities = {
+      queryLanguage: "json",
+      queryDialect: "etcd",
+      supportsExplain: false,
+      supportsCreateTable: false,
+      supportsTransactions: false,
+      supportsInlineRowEdit: false,
+      supportsResultPagination: false,
+      supportsExternalQueryLimiting: false,
+      supportsConnectionString: false,
+      declaresForeignKeys: false,
+      supportsMaintenance: true,
+      maintenanceOperations: [...ETCD_MAINTENANCE_OPERATIONS],
+      maintenanceOperationSpecs: ETCD_MAINTENANCE_SPECS,
+      tablesAreDerivedGroupings: true,
+      statementTerminator: "none",
+      defaultPort: ETCD_DEFAULT_PORT,
+      containerLevels: [],
+      objectKinds: ETCD_OBJECT_KINDS,
+      keyScan: ETCD_KEY_SCAN,
+      enforcesReadOnly: true,
+      schemaRefreshPattern: provider.getCapabilities().schemaRefreshPattern,
+    };
+    expect(provider.getCapabilities()).toEqual(declared);
+    expect(ETCD_DEFAULT_PORT).toBe(2379);
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["compact", "defragment", "disarm"]);
+  });
+
+  test("the refresh pattern is spec 6.2's, each backslash written once in the pattern", () => {
+    const { provider } = build(CONNECTION, etcdClient());
+    expect(provider.getCapabilities().schemaRefreshPattern).toBe(
+      String.raw`^(?:\s*#[^\n]*\n)*\s*(?:[$%]\s+)?(?:env\s+)?(?:ETCDCTL_API=3\s+)*(?:(?:\S*/)?etcdctl\s+)?(?:--command-timeout(?:=|\s+)\S+\s+)*(?:put|del|txn|lease\s+(?:--command-timeout(?:=|\s+)\S+\s+)*(?:grant|revoke))\b`,
+    );
+  });
+
+  test("the labels are ETCD_LABELS, a copy on every call", () => {
+    const { provider } = build(CONNECTION, etcdClient());
+    expect(provider.getLabels()).toEqual(ETCD_LABELS);
+    expect(provider.getLabels()).not.toBe(provider.getLabels());
+  });
+
+  test("prepareQuery pins the command: no limit is added and no page two exists (spec 5.4)", () => {
+    // Typed as the routes hold it, whose options this provider takes none of (the Prometheus shape).
+    const provider: DatabaseProvider = build(CONNECTION, etcdClient()).provider;
+    expect(provider.prepareQuery("get /app/ --prefix", { limit: 50, offset: 50 })).toEqual({
+      query: "get /app/ --prefix",
+      wasLimited: false,
+      limit: DEFAULT_QUERY_LIMIT,
+      offset: 0,
+    });
+  });
+
+  test("no presence-detected method that would do nothing (spec 5.5, 7.1, E12)", () => {
+    const { provider } = build(CONNECTION, etcdClient());
+    for (const method of [
+      "getPoolStats",
+      "queryReadOnly",
+      "endOpenQueryTransaction",
+      "beginTransaction",
+      "commitTransaction",
+      "rollbackTransaction",
+    ]) {
+      expect({ method, present: method in provider }).toEqual({ method, present: false });
+    }
+    // The controls: the methods this provider does implement are found the same way.
+    for (const method of ["cancelQuery", "scanKeysPage", "readObjectSource", "buildObjectEdit", "applyObjectEdit"]) {
+      expect({ method, present: method in provider }).toEqual({ method, present: true });
+    }
+  });
+
+  test("every surface refuses before connect, naming the missing connect", async () => {
+    const client = etcdClient();
+    const { provider } = build(CONNECTION, client);
+    const refusal = new DatabaseConfigError("Provider is not connected. Call connect() first.", "etcd");
+    const surfaces: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+      ["query", () => provider.query("get /a")],
+      ["listContainers", () => provider.listContainers()],
+      ["countObjects", () => provider.countObjects([])],
+      ["listObjects", () => provider.listObjects([], "prefix")],
+      ["describeObject", () => provider.describeObject(["/app/a/*"], "prefix")],
+      ["describeObjects of the groups", () => provider.describeObjects([], "prefix")],
+      ["describeObjects of a kind with no columns", () => provider.describeObjects([], "member")],
+      ["readObjectSource", () => provider.readObjectSource(["/app/cfg"], "key")],
+      ["scanKeysPage", () => provider.scanKeysPage({ cursor: "0", count: 10 })],
+      [
+        "buildObjectEdit",
+        () => provider.buildObjectEdit({ path: ["/app/cfg"], kind: "key", partId: "value", text: "x" }),
+      ],
+      // Refused before the plan is read, so any plan stands in.
+      ["applyObjectEdit", () => provider.applyObjectEdit({} as ObjectEditPlan)],
+      ["getHealth", () => provider.getHealth()],
+      ["getOverview", () => provider.getOverview()],
+      ["getStorageStats", () => provider.getStorageStats()],
+      ["getTableStats", () => provider.getTableStats()],
+      ["getPerformanceMetrics", () => provider.getPerformanceMetrics()],
+      ["getSlowQueries", () => provider.getSlowQueries()],
+      ["getActiveSessions", () => provider.getActiveSessions()],
+      ["getIndexStats", () => provider.getIndexStats()],
+      ["runMaintenance", () => provider.runMaintenance("compact")],
+    ];
+    const answers = await Promise.all(
+      surfaces.map(async ([name, surface]) => ({
+        name,
+        refusal: await surface().then(
+          () => "answered",
+          (error: unknown) => (error instanceof DatabaseConfigError ? error.message : String(error)),
+        ),
+      })),
+    );
+    expect(answers).toEqual(surfaces.map(([name]) => ({ name, refusal: refusal.message })));
+    expect(client.calls).toEqual([]);
+  });
+});
+
+// ============================================================================
+// The connect sequence (spec 6.1) and the grants (spec 4.7)
+// ============================================================================
+
+describe("the connect sequence (spec 6.1)", () => {
+  test("no credential on an etcd whose authentication is off: AuthStatus, then Status", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    expect(methods(client)).toEqual(["authStatus", "status"]);
+    expect(provider.isConnected()).toBe(true);
+  });
+
+  test("a password signs in first, then Status, AuthStatus and the reader's grants", async () => {
+    const client = readerClient();
+    await connected(PASSWORD_CONNECTION, client);
+    expect(callsOf(client)).toEqual([
+      { method: "authenticate", args: [] },
+      { method: "status", args: [] },
+      { method: "authStatus", args: [] },
+      { method: "userGet", args: ["reader"] },
+      { method: "roleGet", args: ["reader"] },
+    ]);
+  });
+
+  test("a root user's grants are every key, and no role is read", async () => {
+    // A key space that checks no grant, as etcd checks none for root: the walk covers every key.
+    const client = readerClient({ userGet: async () => ["root", "reader"], range: keySpaceRange(KEYS) });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect(methods(client)).toEqual(["authenticate", "status", "authStatus", "userGet"]);
+    const groups = (await provider.listObjects([], "prefix")).map((group) => group.name).sort();
+    expect(groups).toEqual(
+      prefixGroups(KEYS.map((entry) => encode(entry.key)))
+        .groups.map(groupLabel)
+        .sort(),
+    );
+    expect(methods(client, 4).every((method) => method === "range")).toBe(true);
+  });
+
+  test("each role's permissions are read, in the order UserGet names the roles", async () => {
+    const client = readerClient({ userGet: async () => ["reader", "auditor"] });
+    await connected(PASSWORD_CONNECTION, client);
+    expect(callsOf(client).filter((call) => call.method === "roleGet")).toEqual([
+      { method: "roleGet", args: ["reader"] },
+      { method: "roleGet", args: ["auditor"] },
+    ]);
+  });
+
+  test("a password on an etcd whose AuthStatus then answers off reads no grant", async () => {
+    const client = readerClient({ authStatus: async () => ({ enabled: false, authRevision: "1" }) });
+    await connected(PASSWORD_CONNECTION, client);
+    expect(methods(client)).toEqual(["authenticate", "status", "authStatus"]);
+  });
+
+  test("step 1: a password on an etcd whose authentication is off is refused, and the channel is closed", async () => {
+    const client = readerClient({
+      authenticate: async () => {
+        throw notEnabled();
+      },
+    });
+    const { provider } = build(PASSWORD_CONNECTION, client);
+    const failure = await provider.connect().then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect(failure?.message).toBe(
+      "Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect. (etcd: authentication is not enabled)",
+    );
+    expect(failure?.message).not.toContain(PASSWORD);
+    expect(methods(client)).toEqual(["authenticate", "close"]);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("step 1: a wrong password is etcd's refusal of the sign-in", async () => {
+    const client = readerClient({
+      authenticate: async () => {
+        throw new EtcdError("auth-failed", "etcdserver: authentication failed, invalid user ID or password", 3);
+      },
+    });
+    const { provider } = build(PASSWORD_CONNECTION, client);
+    await expect(provider.connect()).rejects.toThrow(
+      new AuthenticationError(
+        "etcd refused the sign-in: the user is unknown or the password is wrong. (etcd: authentication failed, invalid user ID or password)",
+        "etcd",
+      ),
+    );
+    expect(methods(client)).toEqual(["authenticate", "close"]);
+  });
+
+  test("step 1: a defect's own error surfaces as itself", async () => {
+    const defect = new TypeError("a defect in the adapter");
+    const client = readerClient({
+      authenticate: async () => {
+        throw defect;
+      },
+    });
+    const { provider } = build(PASSWORD_CONNECTION, client);
+    await expect(provider.connect()).rejects.toBe(defect);
+    // A rejection that carries nothing is a defect too, never a step's refusal handed no answer.
+    const empty = build(PASSWORD_CONNECTION, readerClient({ authenticate: () => Promise.reject(undefined) }));
+    await expect(empty.provider.connect()).rejects.toThrow(
+      new Error("The etcd provider received a thrown value that is not an Error: undefined"),
+    );
+  });
+
+  test("step 3: authentication on and no credential is refused before any other call", async () => {
+    const client = etcdClient({ authStatus: async () => ({ enabled: true, authRevision: "5" }) });
+    const { provider } = build(CONNECTION, client);
+    await expect(provider.connect()).rejects.toThrow(
+      new AuthenticationError(
+        "This etcd has authentication enabled. Enter a User and Password, or add a client certificate under SSL / TLS whose Common Name is an etcd user.",
+        "etcd",
+      ),
+    );
+    expect(methods(client)).toEqual(["authStatus", "close"]);
+  });
+
+  test("step 2: below 3.7, 'user name is empty' means authentication is on", async () => {
+    const client = etcdClient({
+      authStatus: async () => {
+        throw nameEmpty();
+      },
+    });
+    const { provider } = build(CONNECTION, client);
+    await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
+    expect(methods(client)).toEqual(["authStatus", "close"]);
+  });
+
+  test("step 2: any other AuthStatus failure is the error table's, a lost quorum refused at once", async () => {
+    const client = etcdClient({
+      authStatus: async () => {
+        throw new EtcdError("no-leader", "etcdserver: no leader", 14);
+      },
+    });
+    const { provider } = build(CONNECTION, client);
+    const failure = await provider.connect().then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect(failure?.message).toContain("the cluster has lost quorum, so nothing was applied");
+    expect(methods(client)).toEqual(["authStatus", "close"]);
+  });
+
+  test("step 4: a client certificate on an etcd with authentication on reads its Common Name's user, then its grants", async () => {
+    const client = readerClient({ userGet: async () => ["reader"] });
+    await connected(CERTIFICATE_CONNECTION, client);
+    expect(callsOf(client)).toEqual([
+      { method: "authStatus", args: [] },
+      { method: "userGet", args: ["cert-only"] },
+      { method: "status", args: [] },
+      { method: "roleGet", args: ["reader"] },
+    ]);
+  });
+
+  test("step 4 below 3.7: 'user name is empty' at step 2 is authentication on, so the Common Name is read", async () => {
+    const client = readerClient({
+      authStatus: async () => {
+        throw nameEmpty();
+      },
+    });
+    await connected(CERTIFICATE_CONNECTION, client);
+    expect(methods(client)).toEqual(["authStatus", "userGet", "status", "roleGet"]);
+  });
+
+  test("step 4: a Common Name that holds root reads no role", async () => {
+    const client = readerClient({ userGet: async () => ["root"] });
+    await connected(CERTIFICATE_CONNECTION, client);
+    expect(methods(client)).toEqual(["authStatus", "userGet", "status"]);
+  });
+
+  test("a client certificate on an etcd whose authentication is off reads no user", async () => {
+    const client = etcdClient();
+    await connected(CERTIFICATE_CONNECTION, client);
+    expect(methods(client)).toEqual(["authStatus", "status"]);
+  });
+
+  test("step 4: a Common Name etcd does not know is named", async () => {
+    const client = readerClient({
+      userGet: async () => {
+        throw userNotFound();
+      },
+    });
+    const { provider } = build(CERTIFICATE_CONNECTION, client);
+    await expect(provider.connect()).rejects.toThrow(
+      new AuthenticationError(
+        'The client certificate\'s Common Name "cert-only" is not an etcd user. (etcd: user name not found)',
+        "etcd",
+      ),
+    );
+    expect(methods(client)).toEqual(["authStatus", "userGet", "close"]);
+  });
+
+  test("step 4: an etcd that did not read the certificate is told to run with --client-cert-auth", async () => {
+    const client = readerClient({
+      userGet: async () => {
+        throw nameEmpty();
+      },
+    });
+    const { provider } = build(CERTIFICATE_CONNECTION, client);
+    await expect(provider.connect()).rejects.toThrow(
+      new AuthenticationError(
+        "etcd did not read the client certificate: the server must run with --client-cert-auth. (etcd: user name is empty)",
+        "etcd",
+      ),
+    );
+  });
+
+  test("a client certificate that names no Common Name is step 3's refusal, never a UserGet of no name", async () => {
+    const client = readerClient();
+    const { provider } = build(NAMELESS_CERTIFICATE_CONNECTION, client);
+    await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
+    expect(methods(client)).toEqual(["authStatus", "close"]);
+  });
+
+  test("step 5: a Status failure is the error table's, after the sign-in", async () => {
+    const client = etcdClient({
+      status: async () => {
+        throw unavailable();
+      },
+    });
+    const { provider } = build(CONNECTION, client);
+    await expect(provider.connect()).rejects.toThrow(
+      new ConnectionError(
+        "etcd did not answer the endpoint status. (etcd: request timed out)",
+        "etcd",
+        "etcd.test",
+        2379,
+      ),
+    );
+    expect(methods(client)).toEqual(["authStatus", "status", "close"]);
+  });
+
+  test("step 5: a member whose Status names no leader refuses the connection at once (spec 4.7)", async () => {
+    const client = etcdClient({ status: async () => ({ ...STATUS, leader: "0" }) });
+    const { provider } = build(CONNECTION, client);
+    const failure = await provider.connect().then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect(failure?.message).toBe(
+      "The etcd member this connection reaches has no leader: the cluster has lost quorum, so nothing was applied. Bring the stopped members back, then run the command again. (the answering member's Status names no leader)",
+    );
+    expect(methods(client)).toEqual(["authStatus", "status", "close"]);
+  });
+
+  test("password mode: step 5's AuthStatus failure is the error table's", async () => {
+    const client = readerClient({
+      authStatus: async () => {
+        throw unavailable();
+      },
+    });
+    const { provider } = build(PASSWORD_CONNECTION, client);
+    await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
+    expect(methods(client)).toEqual(["authenticate", "status", "authStatus", "close"]);
+  });
+
+  test("a grants read that fails is raised, and the channel is closed", async () => {
+    const client = readerClient({
+      userGet: async () => {
+        throw unavailable();
+      },
+    });
+    const { provider } = build(PASSWORD_CONNECTION, client);
+    await expect(provider.connect()).rejects.toThrow(
+      "etcd did not answer the read of etcd user reader's grants. (etcd: request timed out)",
+    );
+    expect(methods(client)).toEqual(["authenticate", "status", "authStatus", "userGet", "close"]);
+  });
+
+  test("a grants read etcd refuses connects, and every surface that reads keys says so (spec 4.7)", async () => {
+    const client = readerClient({
+      roleGet: async () => {
+        throw denied();
+      },
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    const refusal =
+      "etcd refused the read of etcd user reader's grants: this connection's etcd user is not granted all of it. (etcd: permission denied)";
+    const counted = client.calls.length;
+    expect((await provider.countObjects([])).prefix).toEqual({ unavailable: refusal });
+    // The count walks no range: with its grants unread, the reader is sent over none (spec 4.7).
+    expect(methods(client, counted)).not.toContain("range");
+    await expect(provider.listObjects([], "prefix")).rejects.toThrow(refusal);
+    await expect(provider.readObjectSource(["/app/cfg"], "key")).rejects.toThrow(refusal);
+    await expect(provider.scanKeysPage({ cursor: "0", count: 10 })).rejects.toThrow(refusal);
+    await expect(
+      provider.buildObjectEdit({ path: ["/app/cfg"], kind: "key", partId: "value", text: '{"mode":"green"}' }),
+    ).rejects.toThrow(refusal);
+    await expect(provider.getOverview()).rejects.toThrow(refusal);
+    await expect(provider.getTableStats()).rejects.toThrow(refusal);
+    await expect(provider.describeObjects([], "prefix")).rejects.toThrow(refusal);
+    // A surface that reads no key still answers.
+    expect((await provider.listObjects([], "member")).length).toBe(1);
+    expect(await provider.getHealth()).toBeDefined();
+  });
+
+  test("the factory's own failure is the error table's, and nothing was opened to close", async () => {
+    const provider = new EtcdProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT }, {}, async () => {
+      throw new EtcdError("closed", "the channel could not be built");
+    });
+    await expect(provider.connect()).rejects.toThrow(
+      new ConnectionError(
+        "This connection to etcd is closed: connect again. (the channel could not be built)",
+        "etcd",
+        "etcd.test",
+        2379,
+      ),
+    );
+    const thrownValue = new EtcdProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT }, {}, async () => {
+      throw "boom";
+    });
+    await expect(thrownValue.connect()).rejects.toThrow(
+      "The etcd provider received a thrown value that is not an Error: boom",
+    );
+  });
+
+  test("a close that fails after a failed connect is logged, never thrown over the failure", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const client = etcdClient({
+        status: async () => {
+          throw unavailable();
+        },
+        close: async () => {
+          throw new Error("the socket was already gone");
+        },
+      });
+      const { provider } = build(CONNECTION, client);
+      await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
+      expect(logged).toHaveBeenCalledWith("[DB:etcd] connect cleanup failed: the socket was already gone");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  test("one connect builds one client with the hooks, and disconnect closes it once (E16)", async () => {
+    const client = etcdClient();
+    const { provider, factoryCalls, hooks } = await connected(CONNECTION, client);
+    expect(factoryCalls()).toBe(1);
+    expect(hooks).toHaveLength(1);
+    expect(typeof hooks[0].onAuthStoreChanged).toBe("function");
+    await provider.disconnect();
+    expect(methods(client).filter((method) => method === "close")).toHaveLength(1);
+    expect(provider.isConnected()).toBe(false);
+    await provider.disconnect();
+    expect(methods(client).filter((method) => method === "close")).toHaveLength(1);
+    await provider.connect();
+    expect(factoryCalls()).toBe(2);
+  });
+});
+
+describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
+  /** The groups spec 4.1's rule makes of the keys a reader may read: the walk's oracle, in sorted order. */
+  const visibleGroups = (keys: readonly string[]) => prefixGroups(keys.map(encode)).groups.map(groupLabel).sort();
+  const listed = async (provider: EtcdProvider) =>
+    (await provider.listObjects([], "prefix")).map((group) => group.name).sort();
+
+  test("a renewal that met the stale auth revision narrows the next walk to the grants read again", async () => {
+    let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
+    const client = readerClient({ roleGet: async () => permissions, range: keySpaceRange(KEYS, READER_PERMISSIONS) });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    expect(await listed(provider)).toEqual(visibleGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"]));
+
+    // An admin took the prefix away; the adapter's renewal met "revision of auth store is old" and said so.
+    permissions = [{ type: "read", key: encode("/config/a") }];
+    hooks[0].onAuthStoreChanged?.();
+    const before = client.calls.length;
+    expect(await listed(provider)).toEqual(visibleGroups(["/config/a"]));
+    expect(methods(client, before).slice(0, 2)).toEqual(["userGet", "roleGet"]);
+    for (const call of callsOf(client, before + 2)) {
+      expect(call.method).toBe("range");
+      expect(Buffer.from((call.args[0] as { key: Uint8Array }).key).toString()).toStartWith("/config/a");
+    }
+    // The grants read again are the ones kept: the walk after it reads them and reads no grant again.
+    const again = client.calls.length;
+    expect(await listed(provider)).toEqual(visibleGroups(["/config/a"]));
+    expect(methods(client, again).filter((method) => method !== "range")).toEqual([]);
+  });
+
+  test("without the hook, no grant is read again", async () => {
+    const client = readerClient();
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    await provider.countObjects([]);
+    await provider.listObjects([], "prefix");
+    expect(methods(client).filter((method) => method === "userGet")).toHaveLength(1);
+  });
+
+  test("surfaces that start together share one read of the grants, and each walks the grants it read", async () => {
+    let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
+    const client = readerClient({ roleGet: async () => permissions, range: keySpaceRange(KEYS, READER_PERMISSIONS) });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    permissions = [{ type: "read", key: encode("/config/a") }];
+    hooks[0].onAuthStoreChanged?.();
+    const [counts, groups, overview] = await Promise.all([
+      provider.countObjects([]),
+      listed(provider),
+      provider.getOverview(),
+    ]);
+    expect(methods(client).filter((method) => method === "userGet")).toHaveLength(2);
+    expect(methods(client).filter((method) => method === "roleGet")).toHaveLength(2);
+    // None of them walks the grants the change replaced while the new ones are being read.
+    expect(counts.prefix).toEqual({ count: 1, sampledFrom: "the 1 range etcd user reader may read" });
+    expect(groups).toEqual(visibleGroups(["/config/a"]));
+    expect(overview).toMatchObject({
+      tableCount: 1,
+      tableCountSampledFrom: "the ranges etcd user reader may read: /config/a",
+    });
+  });
+
+  test("a read of the grants etcd refuses is kept, for the surfaces that read keys to name", async () => {
+    let refuse = false;
+    const client = readerClient({
+      roleGet: async () => {
+        if (refuse) throw denied();
+        return READER_PERMISSIONS;
+      },
+    });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    refuse = true;
+    hooks[0].onAuthStoreChanged?.();
+    const counts = await provider.countObjects([]);
+    expect(counts.prefix).toEqual({
+      unavailable:
+        "etcd refused the read of etcd user reader's grants: this connection's etcd user is not granted all of it. (etcd: permission denied)",
+    });
+    expect(counts.member).toEqual({ count: 1 });
+  });
+
+  test("a read of the grants that fails is raised, and the next surface reads them again", async () => {
+    let fail = false;
+    const client = readerClient({
+      userGet: async () => {
+        if (fail) throw unavailable();
+        return ["reader"];
+      },
+    });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    fail = true;
+    hooks[0].onAuthStoreChanged?.();
+    await expect(provider.countObjects([])).rejects.toBeInstanceOf(ConnectionError);
+    fail = false;
+    await provider.countObjects([]);
+    expect(methods(client).filter((method) => method === "userGet")).toHaveLength(3);
+  });
+
+  test("on an etcd whose authentication is off the hook has no grant to read", async () => {
+    const client = etcdClient();
+    const { provider, hooks } = await connected(CONNECTION, client);
+    hooks[0].onAuthStoreChanged?.();
+    await provider.countObjects([]);
+    expect(methods(client)).not.toContain("userGet");
+  });
+});
+
+/**
+ * The user a surface names (spec 4.7): whenever authentication is on and the user does not hold root,
+ * whatever its grants read, and never otherwise. The prefix count names the user whose grants scope it,
+ * so it shows which context a surface was given.
+ */
+describe("who a surface names (spec 4.7)", () => {
+  const everyGroup = prefixGroups(KEYS.map((entry) => encode(entry.key))).groups.length;
+  /** The key space unchecked and the three listings answered, as etcd answers root, and anyone with authentication off. */
+  const UNREFUSED: Partial<EtcdClient> = {
+    range: keySpaceRange(KEYS),
+    userList: async () => ["reader", "root"],
+    roleList: async () => ["reader", "root"],
+    leaseLeases: async () => ({ header: KEY_SPACE_HEADER, ids: [] }),
+  };
+
+  test("as root, the count names no user and no range", async () => {
+    const client = readerClient({ ...UNREFUSED, userGet: async () => ["root"] });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
+  });
+
+  test("a password on an etcd whose AuthStatus then answers off names no user", async () => {
+    const client = readerClient({ ...UNREFUSED, authStatus: async () => ({ enabled: false, authRevision: "1" }) });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
+  });
+
+  test("a client certificate's Common Name on an etcd whose authentication is off names no user", async () => {
+    const { provider } = await connected(CERTIFICATE_CONNECTION, etcdClient());
+    expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
+  });
+
+  test("a user who is not root is named even when its grants read every key", async () => {
+    const everyKey: readonly EtcdPermission[] = [
+      { type: "readwrite", key: Uint8Array.of(0), rangeEnd: Uint8Array.of(0) },
+    ];
+    const client = readerClient({ roleGet: async () => everyKey, range: keySpaceRange(KEYS) });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect((await provider.countObjects([])).prefix).toEqual({
+      count: everyGroup,
+      sampledFrom: "the 1 range etcd user reader may read",
+    });
+  });
+
+  test("a user whose grants etcd refused to read is still named where a refusal names it", async () => {
+    const client = readerClient({
+      roleGet: async () => {
+        throw denied();
+      },
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect((await provider.countObjects([])).user).toEqual({
+      unavailable: "Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)",
+    });
+  });
+
+  test("a user granted root since the connect is no longer named once the grants are read again", async () => {
+    let roles: readonly string[] = ["reader"];
+    const client = readerClient({ ...UNREFUSED, userGet: async () => roles });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    expect((await provider.countObjects([])).prefix).toMatchObject({ sampledFrom: expect.any(String) });
+    roles = ["root"];
+    hooks[0].onAuthStoreChanged?.();
+    expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
+  });
+});
+
+/**
+ * Every call's deadline is the connection's query timeout (spec 5.3): the connect sequence's, each surface's,
+ * each command's, and the read of the grants after an auth-store change, each a call etcd never answers here.
+ */
+describe("each call's deadline, the connection's query timeout (spec 5.3)", () => {
+  const TIMEOUT = 40;
+
+  /** A call that answers only when its signal aborts, as grpc-js answers a call whose signal ended it. */
+  function unanswered(...args: unknown[]): Promise<never> {
+    const { signal } = args[args.length - 1] as { readonly signal: AbortSignal };
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(toEtcdError(signal.reason, signal)), { once: true });
+    });
+  }
+
+  function timed(connection: DatabaseConnection, client: FakeEtcdClient) {
+    const hooks: EtcdClientHooks[] = [];
+    const provider = new EtcdProvider(connection, { queryTimeout: TIMEOUT }, {}, async (_options, hook) => {
+      if (hook !== undefined) hooks.push(hook);
+      return client;
+    });
+    return { provider, hooks };
+  }
+
+  async function reached(pending: Promise<unknown>, command: string): Promise<void> {
+    const failure = await pending.then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(TimeoutError);
+    expect(failure?.message).toStartWith(`The ${command} reached its deadline of ${TIMEOUT} ms.`);
+  }
+
+  test("a step of the connect sequence", async () => {
+    const { provider } = timed(CONNECTION, etcdClient({ authStatus: unanswered }));
+    await reached(provider.connect(), "auth status");
+  });
+
+  test("a surface's read", async () => {
+    const { provider } = timed(CONNECTION, etcdClient({ memberList: unanswered }));
+    await provider.connect();
+    await reached(provider.listObjects([], "member"), "Members listing");
+  });
+
+  test("a command", async () => {
+    const { provider } = timed(CONNECTION, etcdClient({ range: unanswered }));
+    await provider.connect();
+    await reached(provider.query("get /app/cfg"), "get");
+  });
+
+  test("the read of the grants after an auth-store change", async () => {
+    let answer = true;
+    const client = readerClient({
+      userGet: (...args: unknown[]) => (answer ? Promise.resolve(["reader"]) : unanswered(...args)),
+    });
+    const { provider, hooks } = timed(PASSWORD_CONNECTION, client);
+    await provider.connect();
+    answer = false;
+    hooks[0].onAuthStoreChanged?.();
+    await reached(provider.countObjects([]), "read of etcd user reader's grants");
+  });
+});
+
+// ============================================================================
+// The surfaces, delegated (spec 3.5)
+// ============================================================================
+
+describe("every surface answers what its module answers, with the same calls (spec 3.5)", () => {
+  const REQUEST = { path: ["/app/cfg"], kind: "key", partId: "value", text: '{"mode":"green"}' } as const;
+  const member = memberHexId(MEMBER.id);
+
+  /**
+   * The stamp the provider put on a built plan (its fingerprint, a fresh id and the time), so the edit
+   * module is called with the same one and every other field is compared exactly; a refusal carries no
+   * plan and reads no stamp. The stamp itself is held by the test after this table.
+   */
+  const stampOf = (answered: unknown): EtcdEditPlanStamp => {
+    const build = answered as ObjectEditBuild;
+    if (!build.built) return { type: CONNECTION.type, connectionFingerprint: "", planId: "", issuedAt: "" };
+    const { type, connectionFingerprint: fingerprint, planId, issuedAt } = build.plan;
+    return { type, connectionFingerprint: fingerprint, planId, issuedAt };
+  };
+
+  const SURFACES: ReadonlyArray<
+    readonly [
+      string,
+      (provider: EtcdProvider) => Promise<unknown>,
+      (client: FakeEtcdClient, context: EtcdSurfaceContext, answered: unknown) => Promise<unknown>,
+    ]
+  > = [
+    ["countObjects", (p) => p.countObjects([]), (c, x) => countEtcdObjects(c, x)],
+    ["listObjects of the groups", (p) => p.listObjects([], "prefix"), (c, x) => listEtcdObjects(c, x, "prefix")],
+    ["listObjects of the members", (p) => p.listObjects([], "member"), (c, x) => listEtcdObjects(c, x, "member")],
+    [
+      "describeObjects of the groups",
+      (p) => p.describeObjects([], "prefix", 10),
+      async (c, x) => describeEtcdObjects("prefix", await listEtcdObjects(c, x, "prefix"), 10),
+    ],
+    [
+      "describeObjects of a kind with no columns",
+      (p) => p.describeObjects([], "member"),
+      async () => describeEtcdObjects("member", []),
+    ],
+    [
+      "a member's source",
+      (p) => p.readObjectSource([member], "member"),
+      (c, x) => readEtcdObjectSource(c, x, [member], "member"),
+    ],
+    [
+      "a key's source",
+      (p) => p.readObjectSource(["/app/cfg"], "key", 64),
+      (c, x) => readEtcdObjectSource(c, x, ["/app/cfg"], "key", 64),
+    ],
+    [
+      "a Keys panel page",
+      (p) => p.scanKeysPage({ cursor: "0", count: 10, pattern: "/app/" }),
+      (c, x) => scanEtcdKeysPage(c, x, { cursor: "0", count: 10, pattern: "/app/" }),
+    ],
+    [
+      "a value edit's build",
+      (p) => p.buildObjectEdit(REQUEST),
+      (c, x, answered) => buildEtcdValueEdit(c, x, REQUEST, stampOf(answered)),
+    ],
+    ["getHealth", (p) => p.getHealth(), (c, x) => readEtcdHealth(c, x)],
+    ["getOverview", (p) => p.getOverview(), (c, x) => readEtcdOverview(c, x)],
+    ["getStorageStats", (p) => p.getStorageStats(), (c, x) => readEtcdStorageStats(c, x)],
+    [
+      "getTableStats",
+      (p) => p.getTableStats(),
+      async (c, x) =>
+        readEtcdTableStats(
+          c,
+          x,
+          (await listEtcdObjects(c, x, "prefix")).map((group) => group.name.slice(0, -1)),
+        ),
+    ],
+  ];
+
+  test.each(SURFACES)("%s, as the reader", async (_name, surface, module) => {
+    const client = readerClient();
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    const twin = readerClient();
+    const mark = client.calls.length;
+    const answered = await surface(provider);
+    expect(answered).toEqual(await module(twin, contextFor(PASSWORD_CONNECTION, READER_PERMISSIONS), answered));
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+  });
+
+  test.each(SURFACES)("%s, with authentication off", async (_name, surface, module) => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const twin = etcdClient();
+    const mark = client.calls.length;
+    const answered = await surface(provider);
+    expect(answered).toEqual(await module(twin, contextFor(CONNECTION), answered));
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+  });
+
+  test("a value edit's plan carries this connection's fingerprint, a fresh id and the time it was built", async () => {
+    const { provider } = await connected(CONNECTION, etcdClient());
+    const before = Date.now();
+    const first = await provider.buildObjectEdit(REQUEST);
+    const second = await provider.buildObjectEdit(REQUEST);
+    const after = Date.now();
+    if (!first.built || !second.built) throw new Error("the build refused the edit");
+    expect(first.plan.type).toBe(CONNECTION.type);
+    expect(first.plan.connectionFingerprint).toBe(await connectionFingerprint(CONNECTION));
+    expect(first.plan.planId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // Two plans for one edit are two edits: the apply's audit files each under its own id.
+    expect(second.plan.planId).not.toBe(first.plan.planId);
+    const issued = Date.parse(first.plan.issuedAt);
+    expect(new Date(issued).toISOString()).toBe(first.plan.issuedAt);
+    expect(issued).toBeGreaterThanOrEqual(before);
+    expect(issued).toBeLessThanOrEqual(after);
+  });
+
+  test("describeObject reads nothing: a group's columns are fixed (spec 4.2)", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const mark = client.calls.length;
+    expect(await provider.describeObject(["/app/a/*"], "prefix")).toEqual(describeEtcdObject(["/app/a/*"], "prefix"));
+    expect(client.calls.length).toBe(mark);
+  });
+
+  test("a value edit's apply sends the plan its build made, as the edit module sends it", async () => {
+    const txn = async () => ({
+      header: KEY_SPACE_HEADER,
+      succeeded: true,
+      responses: [{ op: "put" as const, response: { header: KEY_SPACE_HEADER } }],
+    });
+    const client = etcdClient({ txn });
+    const { provider } = await connected(CONNECTION, client);
+    const built = await provider.buildObjectEdit(REQUEST);
+    if (!built.built) throw new Error(`the build refused the edit: ${JSON.stringify(built.refusal)}`);
+    const plan: ObjectEditPlan = built.plan;
+    const twin = etcdClient({ txn });
+    const mark = client.calls.length;
+    const outcome = await provider.applyObjectEdit(plan);
+    const expected = await applyEtcdValueEdit(twin, contextFor(CONNECTION), plan);
+    expect({ ...outcome, duration: 0 }).toEqual({ ...expected, duration: 0 });
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+  });
+
+  test("maintenance is the maintenance module's, with the same calls", async () => {
+    const extra = { defragment: async () => {}, compact: async () => {}, alarmDisarm: async () => [] };
+    const client = etcdClient(extra);
+    const { provider } = await connected(CONNECTION, client);
+    const twin = etcdClient(extra);
+    const mark = client.calls.length;
+    const result = await provider.runMaintenance("defragment");
+    const expected = await runEtcdMaintenance(twin, contextFor(CONNECTION), "defragment");
+    expect({ ...result, executionTime: 0 }).toEqual({ ...expected, executionTime: 0 });
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+  });
+
+  test("the surfaces etcd has nothing honest for answer empty and read nothing (spec 7.1)", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const mark = client.calls.length;
+    expect(await provider.listContainers()).toEqual([]);
+    expect(await provider.getPerformanceMetrics()).toEqual({});
+    expect(await provider.getSlowQueries()).toEqual([]);
+    expect(await provider.getActiveSessions()).toEqual([]);
+    expect(await provider.getIndexStats()).toEqual([]);
+    expect(client.calls.length).toBe(mark);
+  });
+
+  test("a container path is refused on every object surface, before any call (spec 4.1)", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const mark = client.calls.length;
+    const refusal = new QueryError('An etcd connection has no container level; received ["0"]', "etcd");
+    await expect(provider.countObjects(["0"])).rejects.toThrow(refusal);
+    await expect(provider.listObjects(["0"], "prefix")).rejects.toThrow(refusal);
+    await expect(provider.describeObjects(["0"], "prefix")).rejects.toThrow(refusal);
+    await expect(provider.describeObjects(["0"], "member")).rejects.toThrow(refusal);
+    expect(client.calls.length).toBe(mark);
+  });
+});
+
+// ============================================================================
+// The query path (spec 5)
+// ============================================================================
+
+describe("the query path (spec 5.1, 5.4, E6)", () => {
+  test("bound params are refused, and an empty list binds nothing (spec 5.4)", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const mark = client.calls.length;
+    await expect(provider.query("get /app/cfg", ["x"])).rejects.toThrow(
+      new DatabaseConfigError("Bound params are not supported: an etcdctl command has no placeholders", "etcd"),
+    );
+    expect(client.calls.length).toBe(mark);
+    expect((await provider.query("get /app/cfg", [])).rowCount).toBe(1);
+  });
+
+  test("a command the parser refuses is its sentence, and nothing is sent", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const mark = client.calls.length;
+    const refused = ["compaction 5", "get /app/cfg --sort-by=KEY", "", "get /a\nget /b"];
+    await Promise.all(
+      refused.map((text) => expect(provider.query(text)).rejects.toThrow(new QueryError(refusalOf(text), "etcd"))),
+    );
+    expect(client.calls.length).toBe(mark);
+  });
+
+  test("the connection's query timeout and the row limit are the parser's caps (spec 5.1.2, 5.3, 5.4)", async () => {
+    const { provider } = await connected(CONNECTION, etcdClient());
+    const overCaps = [
+      "get /app/ --prefix --command-timeout=10s",
+      `get /app/ --prefix --limit=${DEFAULT_QUERY_LIMIT + 1}`,
+      // Inside the query timeout and past the watch cap, the timeout less KE5's margin (spec 5.3).
+      `watch /app/ --prefix --command-timeout=${QUERY_TIMEOUT - Math.ceil(ETCD_READ_BOUNDS.watchMarginMs / 2)}ms`,
+      `txn\n\nget /app/ --prefix --limit=${ETCD_READ_BOUNDS.firstPageSize + 1}\n\n`,
+    ];
+    await Promise.all(overCaps.map((text) => expect(provider.query(text)).rejects.toThrow(refusalOf(text))));
+  });
+
+  test("a --command-timeout is the command's own deadline, which the provider's timer keeps (spec 5.1.2)", async () => {
+    // A read that answers only when its signal aborts, so only the command's deadline ends it.
+    const client = etcdClient({
+      range: (_request, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(toEtcdError(signal.reason, signal)), { once: true });
+        }),
+    });
+    const { provider } = await connected(CONNECTION, client);
+    const failure = await provider.query("get /app/cfg --command-timeout=40ms").then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(TimeoutError);
+    expect(failure?.message).toBe("The get reached its deadline of 40 ms. (--command-timeout reached)");
+  });
+
+  test("the deadline of a command that answers first is cleared with it", async () => {
+    const set = spyOn(globalThis, "setTimeout");
+    const cleared = spyOn(globalThis, "clearTimeout");
+    try {
+      const { provider } = await connected(CONNECTION, etcdClient());
+      expect((await provider.query("get /app/cfg --command-timeout=3s")).rowCount).toBe(1);
+      const deadline = set.mock.calls.findIndex((call) => call[1] === 3_000);
+      expect(deadline).toBeGreaterThanOrEqual(0);
+      const timer: unknown = set.mock.results[deadline]?.value;
+      expect(cleared.mock.calls.some((call) => call[0] === timer)).toBe(true);
+    } finally {
+      set.mockRestore();
+      cleared.mockRestore();
+    }
+  });
+
+  test("a read answers what the command modules answer, with the same calls", async () => {
+    const client = etcdClient();
+    const { provider } = await connected(CONNECTION, client);
+    const twin = etcdClient();
+    const mark = client.calls.length;
+    const result = await provider.query("get /app/ --prefix --limit=2");
+    const parsed = parseEtcdCommand("get /app/ --prefix --limit=2", LIMITS);
+    if (!parsed.ok) throw new Error(parsed.refusal.message);
+    const context = contextFor(CONNECTION);
+    const outcome = await executeCommand(twin, parsed.parsed, {
+      bounds: { ...ETCD_READ_BOUNDS, rowLimit: DEFAULT_QUERY_LIMIT, queryTimeoutMs: QUERY_TIMEOUT },
+      signal: context.signal,
+      endpoint: "etcd.test:2379",
+      now: () => Date.now(),
+      setTimer: (ms, fn) => {
+        const timer = setTimeout(fn, ms);
+        return () => clearTimeout(timer);
+      },
+      errors: context.errors,
+      onWriteSent: () => {},
+    });
+    const expected = commandResult(outcome, { executionTime: 0, cellLimit: ETCD_READ_BOUNDS.cellLimit });
+    expect({ ...result, executionTime: 0 }).toEqual({ ...expected, executionTime: 0 });
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+  });
+
+  test("the endpoint an endpoint status names is the configured one, an IPv6 literal in brackets", async () => {
+    const byName = await connected(CONNECTION, etcdClient());
+    expect((await byName.provider.query("endpoint status")).rows[0]?.endpoint).toBe("etcd.test:2379");
+    const byAddress = await connected({ ...CONNECTION, host: "::1", port: 12379 }, etcdClient());
+    expect((await byAddress.provider.query("endpoint status")).rows[0]?.endpoint).toBe("[::1]:12379");
+  });
+
+  test.each([
+    ["a seed", { ...CONNECTION, readOnly: true, seedId: "prod" }, {}, "seed"],
+    ["a connection of the user's own", { ...CONNECTION, readOnly: true }, {}, "connection"],
+    [
+      "an execution profile (spec E12's operations profile among them)",
+      CONNECTION,
+      { readOnly: true },
+      "execution-profile",
+    ],
+    [
+      "a connection and a profile both, which the connection's own sentence names",
+      { ...CONNECTION, readOnly: true },
+      { readOnly: true },
+      "connection",
+    ],
+  ] as const)(
+    "read-only through %s: every write is refused before any request (spec E6)",
+    async (_label, connection, execution, source) => {
+      const client = etcdClient({ txn: async () => ({ header: KEY_SPACE_HEADER, succeeded: true, responses: [] }) });
+      const { provider } = await connected(connection as DatabaseConnection, client, execution);
+      const mark = client.calls.length;
+      const writes = ["put /app/cfg value", "del /app/ --prefix", "lease grant 60", "lease revoke 694d8147df1dc4c8"];
+      await Promise.all(writes.map((text) => expect(provider.query(text)).rejects.toThrow(readOnlySentence(source))));
+      expect(client.calls.length).toBe(mark);
+      // A read still runs.
+      expect((await provider.query("get /app/cfg")).rowCount).toBe(1);
+    },
+  );
+
+  test("a read etcd refuses names what the reader may read (spec 5.6, 4.7)", async () => {
+    const { provider } = await connected(PASSWORD_CONNECTION, readerClient());
+    const failure = await provider.query("get /secret/x").then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(QueryError);
+    expect(failure?.message).toContain(
+      `etcd user reader may read: ${describeScope(readableScope(READER_PERMISSIONS))}.`,
+    );
+  });
+
+  test("with authentication off, or as root, a refusal carries no list of what may be read", async () => {
+    // etcd's refusal in the table's words, and nothing after it: no user's ranges to name.
+    const bare =
+      "etcd refused the get on /a: this connection's etcd user is not granted all of it. (etcd: permission denied)";
+    const off = await connected(CONNECTION, etcdClient({ range: async () => Promise.reject(denied()) }));
+    expect(await off.provider.query("get /a").catch((error: Error) => error.message)).toBe(bare);
+    const root = await connected(
+      PASSWORD_CONNECTION,
+      readerClient({ userGet: async () => ["root"], range: async () => Promise.reject(denied()) }),
+    );
+    expect(await root.provider.query("get /a").catch((error: Error) => error.message)).toBe(bare);
+    const refused = await connected(
+      PASSWORD_CONNECTION,
+      readerClient({
+        roleGet: async () => {
+          throw denied();
+        },
+        range: async () => Promise.reject(denied()),
+      }),
+    );
+    expect(await refused.provider.query("get /a").catch((error: Error) => error.message)).toBe(bare);
+  });
+});
+
+describe("cancelQuery (spec 5.5)", () => {
+  /** A read that answers only when its signal aborts, as grpc-js answers a cancelled call. */
+  const hangingRange =
+    (): EtcdClient["range"] =>
+    (_request, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(toEtcdError(signal.reason, signal)), { once: true });
+      });
+
+  test("answers false when nothing runs under the id", async () => {
+    const { provider } = await connected(CONNECTION, etcdClient());
+    expect(await provider.cancelQuery("nothing")).toBe(false);
+  });
+
+  test("stops a read in flight and answers true; the read is the cancel the editor reads as its own", async () => {
+    const client = etcdClient({ range: hangingRange() });
+    const { provider } = await connected(CONNECTION, client);
+    const running = provider.query("get /app/ --prefix", undefined, "q-read");
+    await until(() => client.calls.some((call) => call.method === "range"));
+    expect(await provider.cancelQuery("q-read")).toBe(true);
+    await expect(running).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(await provider.cancelQuery("q-read")).toBe(false);
+  });
+
+  test("answers false for a write already sent, which then finishes", async () => {
+    let release: (() => void) | undefined;
+    const client = etcdClient({
+      txn: () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              header: KEY_SPACE_HEADER,
+              succeeded: true,
+              responses: [{ op: "put", response: { header: KEY_SPACE_HEADER } }],
+            });
+        }),
+    });
+    const { provider } = await connected(CONNECTION, client);
+    const running = provider.query("put /app/new value", undefined, "q-put");
+    await until(() => release !== undefined);
+    expect(await provider.cancelQuery("q-put")).toBe(false);
+    release?.();
+    expect((await running).rowCount).toBeGreaterThan(0);
+  });
+
+  test("a query with no id cannot be cancelled, and an id a later query reuses stays that query's", async () => {
+    // Each read waits until the test answers it, or until its signal aborts.
+    const answer: Array<() => void> = [];
+    const client = etcdClient({
+      range: (_request, { signal }) =>
+        new Promise((resolve, reject) => {
+          answer.push(() => resolve({ header: KEY_SPACE_HEADER, kvs: [], more: false, count: "0" }));
+          signal.addEventListener("abort", () => reject(toEtcdError(signal.reason, signal)), { once: true });
+        }),
+    });
+    const { provider } = await connected(CONNECTION, client);
+    const unnamed = provider.query("get /app/ --prefix");
+    const first = provider.query("get /app/ --prefix", undefined, "q");
+    const second = provider.query("get /config/ --prefix", undefined, "q");
+    await until(() => answer.length === 3);
+    // The first query under the id ends while the second, which took the id over, still runs.
+    answer[1]();
+    expect((await first).rowCount).toBe(0);
+    expect(await provider.cancelQuery("q")).toBe(true);
+    await expect(second).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(await provider.cancelQuery("q")).toBe(false);
+    answer[0]();
+    expect((await unnamed).rowCount).toBe(0);
+  });
+});
