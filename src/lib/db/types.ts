@@ -1770,6 +1770,18 @@ export interface ObjectKindSpec {
    * such kind, one without `hasSource` and one on capabilities without `keyScan`.
    */
   readonly enumeratedBy?: "key-browser";
+  /**
+   * Whether the count and the listing of THIS KIND are one read, so a refused count is a refused
+   * listing (#1089 3.4, 4.7).
+   *
+   * Absent reads as false; read through `kindCountIsListing()`. The agent's grounding walk is its
+   * reader: for such a kind whose count answered `{ unavailable }` it sends no listing, which would
+   * meet the same refusal and lose the whole capture, and carries the sentence as
+   * `AgentInventoryKind.unavailable` instead. etcd's `lease`, `user` and `role` declare it, because a
+   * user who is not root may list none of them. A kind that declares nothing is walked exactly as
+   * before, a refused count and all.
+   */
+  readonly countIsListing?: true;
 }
 
 /** One container level. Zero, one or two of these; the engine says which. */

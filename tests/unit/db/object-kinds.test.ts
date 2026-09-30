@@ -11,6 +11,7 @@ import {
   findKind,
   keyBrowserKind,
   kindAcceptsRowWrites,
+  kindCountIsListing,
   relationKindIds,
   isCountSampled,
   isCountUnavailable,
@@ -215,6 +216,30 @@ describe("isCountSampled", () => {
     // Narrowing is the point: a caller holding the union cannot reach `sampledFrom` at all
     // until the predicate has answered, which is what keeps the renderer honest.
     expect(isCountSampled(count) ? count.sampledFrom : "").toBe("the first 1,000 keys of one SCAN walk");
+  });
+});
+
+/**
+ * A kind whose count and listing are one read (#1089 3.4, 4.7), which etcd's leases, users and roles
+ * are: the count IS the listing's length, so a refused count is a refused listing.
+ */
+describe("kindCountIsListing", () => {
+  const withListingCounts = {
+    ...base,
+    objectKinds: [
+      { id: "member", role: "config", label: "Member", labelPlural: "Members" },
+      { id: "user", role: "config", label: "User", labelPlural: "Users", countIsListing: true },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("only an explicit true says the count and the listing are one read", () => {
+    expect(kindCountIsListing(withListingCounts, "user")).toBe(true);
+    expect(kindCountIsListing(withListingCounts, "member")).toBe(false);
+  });
+
+  test("a kind this engine does not declare is not assumed to be one", () => {
+    expect(kindCountIsListing(withListingCounts, "role")).toBe(false);
+    expect(kindCountIsListing(base, "user")).toBe(false);
   });
 });
 

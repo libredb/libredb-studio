@@ -544,8 +544,8 @@ export interface AgentInventoryObject {
 /**
  * A kind the engine declared, as the run's prose needs it.
  *
- * The `ObjectKindSpec` fields a renderer needs, plus the two facts that decide whether
- * what the model is told about this kind is TRUE, neither of which lives on the spec:
+ * The `ObjectKindSpec` fields a renderer needs, plus the three facts that decide whether
+ * what the model is told about this kind is TRUE, none of which lives on the spec:
  *
  *  - `sampledFrom` is the provider's own sentence from `KindCount`'s fourth state, and its
  *    presence means every count and every listing of this kind is a FLOOR. Redis counts
@@ -557,6 +557,11 @@ export interface AgentInventoryObject {
  *    `ProviderCapabilities.tablesAreDerivedGroupings`, which is still the flag that
  *    carries the refusal (`src/components/object-tree/row-actions.ts` reads the same one),
  *    resolved to a boolean at the edge and attached to the relation kinds it is about.
+ *  - `unavailable` is the provider's own sentence for a kind the walk could not read at all: a
+ *    kind that declares `countIsListing` and whose count was refused, so its listing was never
+ *    sent (#1089 4.7). Its presence means none of the kind is among the objects, and that
+ *    absence is no absence in the database; it is what lets plan mode ground an etcd user who
+ *    is not root, where listing that kind would have lost the whole capture.
  */
 export interface AgentInventoryKind {
   readonly id: string;
@@ -568,6 +573,8 @@ export interface AgentInventoryKind {
   readonly sampledFrom?: string;
   /** These rows are groupings this server derived; nothing can be addressed by such a name. */
   readonly derivedGroupings?: boolean;
+  /** The provider's sentence for a kind that could not be read. Present means none of it is listed. */
+  readonly unavailable?: string;
 }
 
 /**

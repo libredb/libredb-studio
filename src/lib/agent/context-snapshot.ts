@@ -1269,7 +1269,7 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
 /**
  * What the run is told ABOUT the inventory, as opposed to what is in it.
  *
- * Three sentences, none of them decoration, each closing one way a model reads a true
+ * Four sentences, none of them decoration, each closing one way a model reads a true
  * list as a true statement about the database:
  *
  *  - **Incompleteness.** The bulk read bounds both the listings it issues and the objects
@@ -1294,6 +1294,12 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  *    model actually reads. Without it, a kinded inventory would hand a run "user:* (Key
  *    Pattern)" and read as a licence to address it, which is exactly the run #414
  *    measured drafting `KEYS user:*`.
+ *  - **A kind that could not be read.** A kind whose count and listing are one read
+ *    (`countIsListing`) and whose count was refused reaches here with the provider's sentence
+ *    and no object (#1089 4.7): an etcd user who is not root may not list users, roles or
+ *    leases. It is the one note not gated on what was rendered, because nothing of that kind
+ *    is ever below it, and an absence the model is not told about is read as an absence in the
+ *    database, which is the incompleteness sentence one kind narrower.
  *
  * Inside the fence with the inventory rather than in the preface, the same as the omission
  * notice already is: each one is about the lines beside it, and the bound belongs to the
@@ -1313,6 +1319,13 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
   // kind named there would tell a run to discount numbers it was never shown.
   const rendered = new Set(shown.map((object) => object.kind));
   for (const kind of inventory.kinds ?? []) {
+    // The one kind note NOT gated on what was rendered: a kind the walk could not read has nothing
+    // below it by construction, and that absence is exactly what the note is about (#1089 4.7).
+    if (kind.unavailable !== undefined) {
+      notes.push(
+        `The ${kind.labelPlural} could not be read: ${kind.unavailable}. Do not read their absence below as an absence in the database.`,
+      );
+    }
     if (!rendered.has(kind.id)) continue;
     if (kind.sampledFrom !== undefined) {
       notes.push(

@@ -340,6 +340,20 @@ export function isCountSampled(count: KindCount): count is { readonly count: num
 }
 
 /**
+ * Whether THIS KIND's count and listing are one read, so a refused count is a refused listing
+ * (#1089 3.4, 4.7).
+ *
+ * Absent and undeclared both read as false, and the name says the scope, for the reason
+ * `kindAcceptsRowWrites` gives. The agent's grounding walk is the one reader: for such a kind whose
+ * count answered `{ unavailable }` it sends no listing, which would only meet the same refusal and
+ * end the whole capture, and carries the sentence as `AgentInventoryKind.unavailable` instead. A kind
+ * that declares nothing is walked exactly as before, a refused count and all.
+ */
+export function kindCountIsListing(capabilities: ProviderCapabilities, id: string): boolean {
+  return findKind(capabilities, id)?.countIsListing === true;
+}
+
+/**
  * The one sentence every provider reports a CALLER's bulk-read bound with (#789).
  *
  * `ObjectDetailBatch.truncated.reason` is a sentence a person reads beside a partial

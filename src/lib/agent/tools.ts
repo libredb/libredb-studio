@@ -86,7 +86,13 @@ import type {
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
 import { sessionDefaultContainer } from "@/lib/db/container-walk";
-import { containerDepth, enumerableKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
+import {
+  containerDepth,
+  enumerableKinds,
+  isCountSampled,
+  isCountUnavailable,
+  kindCountIsListing,
+} from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 // The inventory route's bounds, and now nobody's second copy of them: one owner, so the
 // agent's grounding walk and `POST /api/db/objects/inventory` cannot come to disagree about
@@ -2755,10 +2761,12 @@ class AgentSchemaReadTimeout extends Error {
  * The inventory an object-surface read produced: what was listed, what the kinds MEAN,
  * and whether it is all of it.
  *
- * `kinds` carries more than the provider's `ObjectKindSpec` because two facts that decide
+ * `kinds` carries more than the provider's `ObjectKindSpec` because three facts that decide
  * whether the model is being told the truth are not on the spec: `sampledFrom`, which
- * makes every count and listing of that kind a FLOOR, and `derivedGroupings`, which says
- * the rows are groupings this server derived rather than objects anybody named.
+ * makes every count and listing of that kind a FLOOR, `derivedGroupings`, which says
+ * the rows are groupings this server derived rather than objects anybody named, and
+ * `unavailable`, which says the kind could not be read at all, so none of it is listed
+ * (#1089 4.7).
  */
 export type AgentObjectInventoryRead =
   | {
@@ -2921,6 +2929,14 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * absence this epic exists to prevent. A kind the engine counted as zero is skipped,
  * because that IS the engine's answer and listing it would cost a round trip to be told
  * the same thing.
+ *
+ * THE ONE EXCEPTION is a kind that declares `countIsListing` (`kindCountIsListing()`, #1089 4.7):
+ * its count and its listing are one read, so a refused count IS a refused listing, and listing it
+ * anyway would meet the same refusal and lose the whole capture, which is how every plan run on an
+ * etcd connection that is not root would start with no inventory at all. For such a kind the walk
+ * sends no listing and carries the provider's sentence as the kind's `unavailable`, which
+ * `inventoryNotes` in `context-snapshot.ts` tells the run; a kind that declares nothing is listed
+ * exactly as before.
  */
 async function walkObjectInventory(
   provider: DatabaseProvider,
@@ -2932,6 +2948,8 @@ async function walkObjectInventory(
 
   const { containers, defaultContainer } = await enumerateGroundingContainers(provider, capabilities);
   const sampledFrom = new Map<string, string>();
+  /** The provider's sentence for each `countIsListing` kind whose count was refused, never listed. */
+  const unavailable = new Map<string, string>();
   const objects: AgentInventoryObject[] = [];
   let truncated: AgentInventory["truncated"];
 
@@ -2941,6 +2959,12 @@ async function walkObjectInventory(
     for (const spec of declared) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
+      // The exception the docblock names: the refusal this count met is the refusal the listing
+      // would meet, so no listing is sent and the sentence travels on the kind (#1089 4.7).
+      if (count !== undefined && isCountUnavailable(count) && kindCountIsListing(capabilities, spec.id)) {
+        unavailable.set(spec.id, count.unavailable);
+        continue;
+      }
       if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
       if (pairs >= INVENTORY_PAIR_LIMIT) {
         truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
@@ -3003,6 +3027,7 @@ async function walkObjectInventory(
     label: spec.label,
     labelPlural: spec.labelPlural,
     ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
+    ...(unavailable.has(spec.id) ? { unavailable: unavailable.get(spec.id) } : {}),
     // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
     // which are the relation kinds: a Redis Function Library is a named object and a Redis
     // key pattern is not, and both are declared by the one provider that sets the flag.

@@ -1881,6 +1881,58 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * A kind whose count and listing are ONE read (#1089 4.7, R13 A5), which etcd's leases, users and
+   * roles are, and which a user who is not root cannot list at all. Its refused count IS a refused
+   * listing, so the walk sends no listing for it, which would only meet the same refusal and lose the
+   * whole capture, and carries the provider's sentence on the kind instead.
+   */
+  test("a kind whose count is its listing and whose count was refused is not listed, and carries the sentence", async () => {
+    const refusal = "Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)";
+    const harness = objectHarness({
+      containerLevels: [],
+      kinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        { id: "user", role: "config", label: "User", labelPlural: "Users", countIsListing: true },
+      ],
+      counts: () => ({ prefix: { count: 1 }, user: { unavailable: refusal } }),
+      objects: (container, kind) => {
+        if (kind === "user") throw new QueryError("etcdserver: permission denied", "redis");
+        return [{ path: [...container, "/app/*"], name: "/app/*", kind }];
+      },
+      describeObjects: async () => ({ details: [] }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["/app/*"]);
+    expect(snapshot.kinds).toEqual([
+      { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+      { id: "user", role: "config", label: "User", labelPlural: "Users", unavailable: refusal },
+    ]);
+  });
+
+  /**
+   * The exception is the refused count only: a kind that declares `countIsListing` and was counted is
+   * listed exactly as any other kind is.
+   */
+  test("a kind whose count is its listing and was counted is listed like any other", async () => {
+    const harness = objectHarness({
+      containerLevels: [],
+      kinds: [{ id: "user", role: "config", label: "User", labelPlural: "Users", countIsListing: true }],
+      counts: () => ({ user: { count: 1 } }),
+      objects: (container, kind) => [{ path: [...container, "root"], name: "root", kind }],
+      describeObjects: async () => ({ details: [] }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["user"]);
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["root"]);
+    expect(snapshot.kinds?.[0]?.unavailable).toBeUndefined();
+  });
+
+  /**
    * Ruling 5g, in this module: the walk down to the containers is derived from
    * `containerDepth()` and never from a hardcoded level count. A two-level engine has to
    * reach the BIND — the second `listContainers` call, with the parent path — or the test
@@ -2751,6 +2803,28 @@ describe("an inventory that knows what its objects ARE", () => {
     expect(bounded).toContain("app.orders");
     expect(bounded).not.toContain("0.user:*");
     expect(bounded).not.toContain("the first 1,000 keys of one SCAN walk");
+  });
+
+  /**
+   * A kind the walk could not read at all (#1089 4.7, R13 A5). Its note is the one note NOT gated on
+   * what was rendered, because a kind whose listing was refused has nothing below it by construction,
+   * and an absence the model is not told about is read as an absence in the database.
+   */
+  test("a kind that could not be read is named with its sentence, whether or not anything is shown", () => {
+    const refusal = "Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)";
+    const refused = kinded({
+      kinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "user", role: "config", label: "User", labelPlural: "Users", unavailable: refusal },
+      ],
+    });
+    const note = `The Users could not be read: ${refusal}. Do not read their absence below as an absence in the database.`;
+
+    expect(packContextForTask(refused, "summarise the orders")).toContain(note);
+    expect(packContextForTask({ ...refused, objects: [] }, "summarise the orders")).toContain(note);
+    expect(packOperationsInventory(refused)).toContain(note);
+    expect(packContextForTask(kinded(), "summarise the orders")).not.toContain("could not be read");
   });
 
   test("the operations packing names the kinds and the incompleteness too", () => {
