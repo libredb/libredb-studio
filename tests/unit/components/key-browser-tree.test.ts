@@ -641,6 +641,18 @@ describe("the tree in a declared shape", () => {
     expect(keyRowNames(at(root, "", "app", ""), false, ETCD)).toMatchObject({ label: "/app/", title: "/app/" });
   });
 
+  test("says both names of a row that is a key and a prefix, in the declared separator", () => {
+    // `/app` is a key, and `/app/cfg` makes it a folder too. The label is the key's full name, and the
+    // title says the prefix beside it with the declared folder mark, `/*`, never Redis's `:*`.
+    const root = buildKeyTree(["/app", "/app/cfg"], ETCD);
+
+    expect(keyRowNames(at(root, "", "app"), true, ETCD)).toEqual({
+      label: "/app",
+      title: "/app is a key of this database and a prefix: /app/*",
+      toggle: "/app",
+    });
+  });
+
   test("keeps Redis's names, apart from the root row's twisty", () => {
     const root = buildKeyTree(["app", "app:env", ":foo"]);
 

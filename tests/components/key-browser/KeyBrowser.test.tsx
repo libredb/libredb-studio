@@ -1682,6 +1682,21 @@ describe("a panel in a declared shape", () => {
     expect(typesByRow()).toEqual({ "/*": "", "app/*": "", "x/*": "", "/app/x/y": "json", "/app/cfg": "text" });
   });
 
+  test("titles a row that is both a key and a prefix in the declared separator", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app", "/app/cfg"]).handler });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    fireEvent.click(screen.getByText("/*"));
+
+    // `/app` is a key and the prefix of `/app/cfg`. The row is labelled with the key's full name, and
+    // its title says the prefix beside it with the declared folder mark, `/*`, never Redis's `:*`.
+    expect(rows()).toEqual(["/*@0", "/app@1"]);
+    expect(rowLabelled("/app")?.getAttribute("title")).toBe("/app is a key of this database and a prefix: /app/*");
+  });
+
   test("draws no skipped line for a walk whose pages left nothing out", async () => {
     mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a"]).handler });
     renderBrowser(ETCD_SCAN);
