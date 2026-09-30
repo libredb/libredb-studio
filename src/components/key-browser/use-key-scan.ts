@@ -455,9 +455,11 @@ export function useKeyScan(options: {
    * WHY THIS EXISTS AT ALL. The global walk is a SAMPLE of the keyspace, so a prefix's contents in the
    * tree are whatever that sample happened to include — and a deep prefix can be entirely absent from
    * a thousand keys of a million. A scoped walk asks the server about that prefix directly, which is
-   * the only way to answer "is there more under here" truthfully. It is also why the answer is not free:
-   * `MATCH` is applied per batch server-side and is not indexed, so this costs the server a full pass
-   * over the keyspace, exactly as the global walk's every page does.
+   * the only way to answer "is there more under here" truthfully. It is also why, under a `glob`
+   * declaration, the answer is not free: `MATCH` is applied per batch server-side and is not indexed,
+   * so this costs the server a full pass over the keyspace, exactly as the global walk's every page
+   * does. Under a `prefix` declaration the server reads the prefix's own byte range, a page at a time
+   * (spec 4.6).
    *
    * IT RUNS ONE WALK PER PREFIX AND KEEPS ITS CURSOR, so pressing Load more twice continues that
    * prefix rather than restarting it. `nodeCursor` is the authority and the state below is its mirror
@@ -470,7 +472,8 @@ export function useKeyScan(options: {
    * that refuses is not a reason to end the walk somebody started at the database level.
    *
    * THE ANSWER IS FILTERED, because `MATCH` is a glob with no escape and a real key segment can
-   * contain `*` or `[`. See `isUnderPrefix`.
+   * contain `*` or `[`, and a prefix walk's answer is held to the prefix's segments the same way. See
+   * `isUnderPrefix`.
    */
   const loadMoreUnder = useCallback(
     async (path: readonly string[]): Promise<void> => {

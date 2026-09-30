@@ -111,7 +111,10 @@ export interface KeyBrowserProps {
  * so a caller could never ask again, and the panel could never tell an ask from its own state.
  */
 export interface KeyPatternRequest {
-  /** The `MATCH` pattern the row named, ready to send. */
+  /**
+   * The pattern the row named, in the walk's declared shape and ready to send: a `MATCH` glob under
+   * `glob`, and the literal prefix every walked key begins with under `prefix` (spec 4.6).
+   */
   readonly pattern: string;
   /**
    * The container the row lives in, when the row names one.
@@ -790,10 +793,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   disabled={loading}
                   onClick={() => void loadMoreUnder(row.path)}
                   /*
-                   * THE ROW SAYS WHAT A PRESS IS WORTH BEFORE IT IS PRESSED. `MATCH` is applied per
-                   * batch and is not indexed, and the keys that come back are then deduplicated, so
-                   * one press can legitimately add nothing at all — a fact that has to be on the row
-                   * rather than discovered by pressing it repeatedly.
+                   * THE ROW SAYS WHAT A PRESS IS WORTH BEFORE IT IS PRESSED, in the declared shape.
+                   * Under `glob`, `MATCH` is applied per batch and is not indexed; under `prefix`, a
+                   * page reads the range the walk above already reads. Either way the keys that come
+                   * back are then deduplicated, so one press can legitimately add nothing at all, a
+                   * fact that has to be on the row rather than discovered by pressing it repeatedly.
                    */
                   title={
                     prefixed
