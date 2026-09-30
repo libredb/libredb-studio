@@ -16,7 +16,8 @@
  *   descriptor's services, that the allowlist is exactly the read and write classes, and that the seam's methods
  *   send only those;
  * - that every write the adapter can send is one E6 knows and one surface gates: an editor command classified by
- *   guard.ts with its Gate of spec 5.1.3, or a maintenance operation on its declared card of spec 7.2.
+ *   guard.ts with its Gate of spec 5.1.3, or a maintenance operation whose words the editor's table and its parser
+ *   refuse by name, pointing at the card of spec 7.2 by that card's label (E7), and which E6 refuses when read-only.
  *
  * It reads the repository's files through git's own lists (tracked, and untracked but not ignored), so a new
  * directory is read too, and resolves module names as TypeScript does, with the repository's tsconfig, so a path or
@@ -799,25 +800,25 @@ function editorWriteFindings(
   return findings;
 }
 
-/** Each maintenance RPC and its declared card of spec 7.2, and the words the editor refuses for it (spec E7). */
+/** Each maintenance RPC, the label spec 7.2 gives its card, and the words the editor refuses for it (spec E7). */
 interface MaintenanceCard {
   readonly rpc: string;
-  /** Its MaintenanceType, as maintenance.ts declares the card (spec 7.2). */
-  readonly operation: "compact" | "defragment" | "disarm";
+  /** The card's label in spec 7.2's table, which the editor's refusal of the words points at by name. */
   readonly card: string;
   readonly words: readonly string[];
 }
 
 const MAINTENANCE_CARDS: readonly MaintenanceCard[] = [
-  { rpc: "KV/Compact", operation: "compact", card: "Compact history", words: ["compaction"] },
-  { rpc: "Maintenance/Defragment", operation: "defragment", card: "Defragment", words: ["defrag"] },
-  { rpc: "Maintenance/Alarm", operation: "disarm", card: "Disarm alarms", words: ["alarm", "disarm"] },
+  { rpc: "KV/Compact", card: "Compact history", words: ["compaction"] },
+  { rpc: "Maintenance/Defragment", card: "Defragment", words: ["defrag"] },
+  { rpc: "Maintenance/Alarm", card: "Disarm alarms", words: ["alarm", "disarm"] },
 ];
 
 function maintenanceFindings(
   cards: readonly MaintenanceCard[],
   refused: typeof ETCD_REFUSED_COMMANDS,
   refuse: typeof refuseReadOnly,
+  parse: typeof parseEtcdCommand,
 ): string[] {
   const findings: string[] = [];
   for (const { rpc, card, words } of cards) {
@@ -828,7 +829,7 @@ function maintenanceFindings(
     } else if (entry.code !== "maintenance-command" || !entry.message.includes(`the ${card} card`)) {
       findings.push(`${named} is refused without pointing at the ${card} card of spec 7.2: ${entry.message}`);
     }
-    const parsed = parseEtcdCommand(words.join(" "), NO_CAPS);
+    const parsed = parse(words.join(" "), NO_CAPS);
     if (parsed.ok || parsed.refusal.code !== "maintenance-command") {
       findings.push(`${named} is not refused as a maintenance command by the parser`);
     }
@@ -964,8 +965,8 @@ describe("spec E11: every write the adapter can send is one E6 knows and one sur
     expect(editorWriteFindings(EDITOR_WRITES, assessText, refuseBeforeSend)).toEqual([]);
   });
 
-  test("each maintenance RPC is tied to its card of 7.2: refused by name in the editor, and by E6 when read-only", () => {
-    expect(maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly)).toEqual([]);
+  test("each maintenance RPC is tied to its card of 7.2: refused by name in the editor and its parser, and by E6 when read-only", () => {
+    expect(maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parseEtcdCommand)).toEqual([]);
   });
 
   test("every write RPC is gated by an editor command or a maintenance card, and nothing else is", () => {
@@ -1079,6 +1080,35 @@ describe("planted violations: spec E11's import lists fail by name", () => {
     ],
     [
       "@grpc/grpc-js importers",
+      { [STRAY]: `export * from "${GRPC_JS}";\n` },
+      `@grpc/grpc-js importers: ${STRAY} imports @grpc/grpc-js, and spec E11 does not name it`,
+    ],
+    [
+      "@grpc/grpc-js importers",
+      { [STRAY]: `import grpc = require("${GRPC_JS}");\n` },
+      `@grpc/grpc-js importers: ${STRAY} imports @grpc/grpc-js, and spec E11 does not name it`,
+    ],
+    [
+      "@grpc/grpc-js importers",
+      { [STRAY]: `const g = module.require("${GRPC_JS}");\n` },
+      `@grpc/grpc-js importers: ${STRAY} imports @grpc/grpc-js, and spec E11 does not name it`,
+    ],
+    [
+      "@grpc/grpc-js importers",
+      { [STRAY]: `const g = createRequire(import.meta.url)("${GRPC_JS}");\n` },
+      `@grpc/grpc-js importers: ${STRAY} imports @grpc/grpc-js, and spec E11 does not name it`,
+    ],
+    [
+      "@grpc/grpc-js importers",
+      // A path into the package's directory loads it as surely as the package's name does.
+      {
+        [`node_modules/${GRPC_JS}/index.js`]: "module.exports = {};\n",
+        [STRAY]: `import * as grpc from "../../../../node_modules/${GRPC_JS}/index.js";\n`,
+      },
+      `@grpc/grpc-js importers: ${STRAY} imports @grpc/grpc-js, and spec E11 does not name it`,
+    ],
+    [
+      "@grpc/grpc-js importers",
       { [TLS_TEST]: "export {};\n" },
       `@grpc/grpc-js importers: ${TLS_TEST} is named, and no longer imports @grpc/grpc-js`,
     ],
@@ -1152,6 +1182,17 @@ describe("planted violations: the text rules fail by name", () => {
       'import { viewValue } from "./values";\n',
       "pure set: guard.ts is shipped to the browser and imports ./values, a server-side member of the pure set",
     ],
+    // Spec 3.1 says none of the four imports a server-side member, so a type counts as well as a value.
+    [
+      "guard.ts",
+      'import type { ValueView } from "./values";\n',
+      "pure set: guard.ts is shipped to the browser and imports ./values, a server-side member of the pure set",
+    ],
+    [
+      "keys.ts",
+      'import C = require("./client");\n',
+      "pure set: keys.ts imports a value from ./client; a pure module takes types, and only types, from client.ts",
+    ],
     [
       "values.ts",
       'import { readFileSync } from "node:fs";\n',
@@ -1169,6 +1210,14 @@ describe("planted violations: the text rules fail by name", () => {
     ],
   ])("pure set: %s with %p fails", (member, planted, finding) => {
     expect(pureSetFindings(member, planted + read(`${ETCD_PATH}/${member}`), ROOT)).toEqual([finding]);
+  });
+
+  // Types, and only types, pass from client.ts in the two other forms a type-only load takes.
+  test.each([
+    ["keys.ts", 'export type { EtcdBytes } from "./client";\n'],
+    ["keys.ts", 'import type C = require("./client");\n'],
+  ])("pure set: %s with %p passes", (member, planted) => {
+    expect(pureSetFindings(member, planted + read(`${ETCD_PATH}/${member}`), ROOT)).toEqual([]);
   });
 
   test("module names: a computed import() and a require in the provider directory each fail", () => {
@@ -1192,13 +1241,14 @@ describe("planted violations: the text rules fail by name", () => {
     expect(alarmActionFindings(numbered)).toEqual([
       `alarm actions: grpc-client.ts:${lineOf(numbered, "{ action: 1 }")} sets action to 1, which is neither GET nor DEACTIVATE (spec E11)`,
     ]);
-    // The same property under a computed name, a quoted name, a shorthand and an assignment.
-    const spelled = `${adapter}\nconst a = { ["action"]: 1 };\nconst b = { "action": 1 };\nconst c = { action };\nrequest.action = 1;\n`;
+    // The same property under a computed name, a quoted name, a shorthand, an assignment and an indexed assignment.
+    const spelled = `${adapter}\nconst a = { ["action"]: 1 };\nconst b = { "action": 1 };\nconst c = { action };\nrequest.action = 1;\nrequest["action"] = 1;\n`;
     const lines = spelled.split("\n").length;
     expect(alarmActionFindings(spelled)).toEqual([
+      `alarm actions: grpc-client.ts:${lines - 5} sets action to 1, which is neither GET nor DEACTIVATE (spec E11)`,
       `alarm actions: grpc-client.ts:${lines - 4} sets action to 1, which is neither GET nor DEACTIVATE (spec E11)`,
-      `alarm actions: grpc-client.ts:${lines - 3} sets action to 1, which is neither GET nor DEACTIVATE (spec E11)`,
-      `alarm actions: grpc-client.ts:${lines - 2} sets action to a shorthand, which is neither GET nor DEACTIVATE (spec E11)`,
+      `alarm actions: grpc-client.ts:${lines - 3} sets action to a shorthand, which is neither GET nor DEACTIVATE (spec E11)`,
+      `alarm actions: grpc-client.ts:${lines - 2} sets action to 1, which is neither GET nor DEACTIVATE (spec E11)`,
       `alarm actions: grpc-client.ts:${lines - 1} sets action to 1, which is neither GET nor DEACTIVATE (spec E11)`,
     ]);
   });
@@ -1257,7 +1307,7 @@ describe("planted violations: the text rules fail by name", () => {
     ]);
   });
 
-  test("editor writes: a Gate that no longer matches, and a write E6 does not refuse, each fail", () => {
+  test("editor writes: a Gate that no longer matches, a write E6 does not refuse read-only or refuses read-write, and one that does not parse, each fail", () => {
     const [row] = EDITOR_WRITES;
     const oneClick = (text: string) => {
       const assessment = assessText(text);
@@ -1269,21 +1319,50 @@ describe("planted violations: the text rules fail by name", () => {
     expect(editorWriteFindings([row], assessText, () => undefined)).toEqual([
       'editor writes: "del /app/ --prefix" (KV/DeleteRange) is not refused by E6 on a read-only connection',
     ]);
+    const alwaysReadOnly: typeof refuseBeforeSend = (assessment) =>
+      refuseBeforeSend(assessment, { readOnly: "connection" });
+    expect(editorWriteFindings([row], assessText, alwaysReadOnly)).toEqual([
+      'editor writes: "del /app/ --prefix" (KV/DeleteRange) is refused on a read-write connection',
+    ]);
+    // The parser's own refusal, of a flag the command does not take, stands in for a write that stopped parsing.
+    const unparsed = (text: string) => assessText(`${text} --no-such-flag`);
+    const refusal = unparsed(row.text);
+    if (typeof refusal !== "string") throw new Error(`${row.text} --no-such-flag parses`);
+    expect(editorWriteFindings([row], unparsed, refuseBeforeSend)).toEqual([
+      `editor writes: "del /app/ --prefix" (KV/DeleteRange) does not parse: ${refusal}`,
+    ]);
   });
 
-  test("maintenance cards: a refusal pointing at another card, and E6 letting maintenance through, each fail", () => {
+  test("maintenance cards: a refusal pointing at another card, a word the table no longer refuses, one the parser reads as another command, and E6 letting maintenance through, each fail", () => {
     const moved = ETCD_REFUSED_COMMANDS.map((entry) =>
       entry.words.join(" ") === "compaction"
         ? { ...entry, message: entry.message.replace("the Compact history card", "the Defragment card") }
         : entry,
     );
-    const findings = maintenanceFindings(MAINTENANCE_CARDS, moved, refuseReadOnly);
+    const findings = maintenanceFindings(MAINTENANCE_CARDS, moved, refuseReadOnly, parseEtcdCommand);
     expect(findings).toHaveLength(1);
     expect(findings[0]).toStartWith(
       "maintenance cards: compaction (KV/Compact) is refused without pointing at the Compact history card of spec 7.2: ",
     );
-    expect(maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, () => undefined)).toEqual([
+    expect(maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, () => undefined, parseEtcdCommand)).toEqual([
       "maintenance cards: a maintenance operation is not refused by E6 on a read-only connection",
+    ]);
+    const unrefused = ETCD_REFUSED_COMMANDS.filter((entry) => entry.words.join(" ") !== "compaction");
+    expect(maintenanceFindings(MAINTENANCE_CARDS, unrefused, refuseReadOnly, parseEtcdCommand)).toEqual([
+      "maintenance cards: compaction (KV/Compact) is not refused by name in the editor (spec E7)",
+    ]);
+    // A parser that reads the words as another command: one it accepts, and one it refuses as not offered.
+    const parsedAs =
+      (words: string, instead: string): typeof parseEtcdCommand =>
+      (text, limits) =>
+        parseEtcdCommand(text === words ? instead : text, limits);
+    expect(
+      maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parsedAs("compaction", "get /a")),
+    ).toEqual(["maintenance cards: compaction (KV/Compact) is not refused as a maintenance command by the parser"]);
+    expect(
+      maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parsedAs("defrag", "move-leader")),
+    ).toEqual([
+      "maintenance cards: defrag (Maintenance/Defragment) is not refused as a maintenance command by the parser",
     ]);
   });
 
