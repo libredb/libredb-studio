@@ -59,7 +59,9 @@ function filesOnDisk(): string[] {
 function entries(value: unknown): Array<[string, unknown]> {
   if (Array.isArray(value)) return value.flatMap(entries);
   if (value === null || typeof value !== "object") return [];
-  return Object.entries(value).flatMap(([key, item]) => [[key, item] as [string, unknown], ...entries(item)]);
+  const pairs: Array<[string, unknown]> = [];
+  for (const [key, item] of Object.entries(value)) pairs.push([key, item], ...entries(item));
+  return pairs;
 }
 
 const liveCall = (signal: AbortSignal = new AbortController().signal) => ({
@@ -559,6 +561,7 @@ describe("recordedEtcdWire", () => {
     stream.write({ create_request: { key: Buffer.from("/app/"), range_end: Buffer.from("/app0"), fragment: true } });
     stream.write({ progress_request: {} });
     const expected = etcdFixture<{ messages: object[] }>("etcd/watch-quiet").messages;
+    // oxlint-disable-next-line no-await-in-loop -- a stream answers in order, so each read follows the one before it.
     for (const message of expected) expect(await stream.read()).toEqual(message);
     const waiting = stream.read();
     // The read is waiting on the open stream by now, so it is the cancel that ends it.
@@ -628,6 +631,7 @@ describe("recordedEtcdWire", () => {
     const wire = recordedEtcdWire({ answers: { "Watch/Watch": [{ fixture: "etcd/watch-history" }] } });
     const stream = wire.transport({}).stream("Watch/Watch", liveCall());
     stream.write({ create_request: {} });
+    // oxlint-disable-next-line no-await-in-loop -- a stream answers in order, so each read follows the one before it.
     for (const message of expected) expect(await stream.read()).toEqual(message);
     stream.cancel();
   });

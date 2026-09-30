@@ -1416,6 +1416,7 @@ function clusterPhases(): Phase[] {
         restores.push(async () => {
           const answer = await must(first, "Maintenance/Alarm", { action: "GET" }, { hasleader: true });
           for (const alarm of answer.alarms as Fields[]) {
+            // oxlint-disable-next-line no-await-in-loop -- each raised alarm is disarmed and answered before the next is sent.
             await must(
               first,
               "Maintenance/Alarm",
@@ -1571,9 +1572,11 @@ function clusterPhases(): Phase[] {
       setup: async () => {
         docker("stop", "libredb-etcd-cluster-2", "libredb-etcd-cluster-3");
         moved.push("etcd-cluster: members 2 and 3 stopped for the quorum-loss rows, then started again");
+        // oxlint-disable-next-line no-await-in-loop -- a poll: each leader probe settles before the next wait.
         for (let waited = 0; (await leaderOf()) !== "0"; waited += 500) {
           if (waited > 30000)
             throw new Error("etcd-cluster member 1 still names a leader 30 s after two members stopped");
+          // oxlint-disable-next-line no-await-in-loop -- a poll: each wait ends before the next leader probe.
           await sleep(500);
         }
       },
@@ -1628,11 +1631,13 @@ function clusterPhases(): Phase[] {
       teardown: async () => {
         docker("start", "libredb-etcd-cluster-2", "libredb-etcd-cluster-3");
         for (let waited = 0; ; waited += 500) {
+          // oxlint-disable-next-line no-await-in-loop -- a poll: each round of leader probes settles before the next wait.
           const answers = await Promise.all(
             [1, 2, 3].map((n) => unaryCall(member(n as 1 | 2 | 3), "Maintenance/Status", {})),
           );
           if (answers.every((answer) => answer.ok && String(answer.value.leader) !== "0")) break;
           if (waited > 60000) throw new Error("etcd-cluster has no leader 60 s after its members started again");
+          // oxlint-disable-next-line no-await-in-loop -- a poll: each wait ends before the next round of probes.
           await sleep(500);
         }
       },
@@ -2003,13 +2008,17 @@ function passwordPhases(): Phase[] {
             const perm = await grantOnConfigA();
             let last: Measured | undefined;
             for (let attempt = 0; attempt < AUTH_RACE_ATTEMPTS; attempt += 1) {
+              // oxlint-disable-next-line no-await-in-loop -- each attempt races its own grant against its own reads, so the attempts run one at a time.
               const token = await signIn("reader");
+              // oxlint-disable-next-line no-await-in-loop -- each attempt races its own grant against its own reads, so the attempts run one at a time.
               const rootToken = await signIn("root");
               // The grant and the reads leave together, so some reads are in flight when the grant is applied.
               const grant = grantAgain(perm, rootToken);
+              // oxlint-disable-next-line no-await-in-loop -- each attempt races its own grant against its own reads, so the attempts run one at a time.
               const reads = await Promise.all(
                 Array.from({ length: AUTH_RACE_READS }, () => readKey(server, "/app/cfg", { hasleader: true, token })),
               );
+              // oxlint-disable-next-line no-await-in-loop -- each attempt races its own grant against its own reads, so the attempts run one at a time.
               await grant;
               last = reads.find((read) => read.outcome === "fail") ?? reads[0];
               if (last.outcome === "fail") break;
@@ -2094,7 +2103,7 @@ const PHASES: Readonly<Record<Service, () => Phase[]>> = {
 };
 
 function allCaptures(): Capture[] {
-  return SERVICES.flatMap((service) => PHASES[service]().flatMap((phase) => [...phase.captures]));
+  return SERVICES.flatMap((service) => PHASES[service]().flatMap((phase) => phase.captures));
 }
 
 // -- E15: the snapshot --------------------------------------------------------------------------------------
@@ -2235,6 +2244,7 @@ async function readMembers(): Promise<Record<string, { clusterId: string; member
     [passwordServer(), "etcd-auth-password"],
   ];
   for (const [conn, service] of conns) {
+    // oxlint-disable-next-line no-await-in-loop -- the servers are read one at a time, in the catalog order the context records.
     const status = header(await must(conn, "Maintenance/Status", {}, { token: await rootToken(service) }));
     members[endpointOf(conn)] = {
       clusterId: String(status.cluster_id),
@@ -2326,6 +2336,7 @@ async function runPhase(phase: Phase, directory: string, contextFile: string, lo
   try {
     const bun = new Map<string, Measured>();
     for (const capture of phase.captures) {
+      // oxlint-disable-next-line no-await-in-loop -- captures run one at a time: a capture may change the server state the next one reads.
       bun.set(capture.name, await capture.run());
       console.error(`   ${capture.name}: ${bun.get(capture.name)?.outcome}`);
     }
@@ -2389,6 +2400,7 @@ async function captureRun(): Promise<number> {
     await runPhase(
       {
         name: "only",
+        // oxlint-disable-next-line no-map-spread -- a capture is readonly and shared by its phase, so the one-row run takes a changed copy.
         captures: only.map((name) => {
           const capture = byName.get(name);
           if (capture === undefined) throw new Error(`No capture is named ${name}`);
@@ -2407,20 +2419,26 @@ async function captureRun(): Promise<number> {
   const servers = Object.keys(CONTAINERS) as Server[];
   const before: Record<string, Snapshot> = {};
   for (const service of servers) {
+    // oxlint-disable-next-line no-await-in-loop -- each server is cleaned and then snapshotted before any capture runs.
     await clean(service);
+    // oxlint-disable-next-line no-await-in-loop -- each server is cleaned and then snapshotted before any capture runs.
     before[service] = await snapshot(SNAPSHOT_CONNS[service], await rootToken(service));
   }
   try {
     for (const service of SERVICES) {
+      // oxlint-disable-next-line no-await-in-loop -- phases run in order: a phase reads the server state the phases before it left.
       for (const phase of PHASES[service]()) await runPhase(phase, directory, contextFile, log);
     }
   } finally {
+    // oxlint-disable-next-line no-await-in-loop -- each restore finishes before the next one starts.
     for (const restore of restores) await restore();
   }
   const snapshots: RunReport["snapshots"] = {};
   const differences: string[] = [];
   for (const service of servers) {
+    // oxlint-disable-next-line no-await-in-loop -- each server is cleaned and then compared with its snapshot, one at a time.
     await clean(service);
+    // oxlint-disable-next-line no-await-in-loop -- each server is cleaned and then compared with its snapshot, one at a time.
     const after = await snapshot(SNAPSHOT_CONNS[service], await rootToken(service));
     const identical = JSON.stringify(before[service].lines) === JSON.stringify(after.lines);
     if (!identical) {
@@ -2472,6 +2490,7 @@ async function childRun(): Promise<number> {
     const capture = byName.get(name);
     if (capture === undefined || capture.runtimes !== "both")
       throw new Error(`${name} is not a row the Node child runs`);
+    // oxlint-disable-next-line no-await-in-loop -- the Node child runs its rows one at a time, as the Bun run does.
     results[name] = await capture.run();
   }
   closeClients();
