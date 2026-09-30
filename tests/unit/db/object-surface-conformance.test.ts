@@ -2189,6 +2189,30 @@ describe("assertObjectSurface and a kind the Keys panel enumerates", () => {
     ).rejects.toThrow(/names a keyBrowserSample under "key" and redis declares no kind enumeratedBy "key-browser"/);
   });
 
+  // The same refusal on a provider that reads no source at all, which the source walk leaves by its
+  // early return: the sample is resolved BEFORE that return, as a stale `emptyKinds` reason is, so a
+  // sample left behind when a key kind's declaration and its source read are dropped together is
+  // refused rather than skipped. The control is the same provider without the sample, which passes.
+  test("refuses a keyBrowserSample on a provider that declares no such kind and reads no source at all", async () => {
+    const provider = keyValueProvider({
+      getCapabilities: () => ({
+        ...keyValueCapabilities(),
+        objectKinds: keyValueCapabilities()
+          .objectKinds.filter((kind) => kind.id !== "key")
+          .map((kind) => (kind.id === "member" ? { ...kind, hasSource: undefined, sourceLanguage: undefined } : kind)),
+      }),
+      readObjectSource: undefined,
+      buildObjectEdit: undefined,
+      applyObjectEdit: undefined,
+    });
+    const { absentSource: _absentSource, keyBrowserSample, ...control } = expectation;
+
+    await expect(assertObjectSurface(provider as never, control)).resolves.toBeUndefined();
+    await expect(assertObjectSurface(provider as never, { ...control, keyBrowserSample })).rejects.toThrow(
+      /names a keyBrowserSample under "key" and redis declares no kind enumeratedBy "key-browser"/,
+    );
+  });
+
   test("refuses a keyBrowserSample that names another kind than the one the Keys panel enumerates", async () => {
     await expect(
       assertObjectSurface(keyValueProvider() as never, {
