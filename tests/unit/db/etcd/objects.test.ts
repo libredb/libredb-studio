@@ -832,12 +832,15 @@ describe("leases, users and roles (spec 4.3, 4.7)", () => {
   });
 
   test("any other failure of the three listings is the error table's sentence", async () => {
-    const { client } = surfaceClient([], {
-      userList: async () => Promise.reject(new EtcdError("unavailable", "etcdserver: leader changed", 14)),
-    });
-    expect((await countEtcdObjects(client, surface())).user).toEqual({
-      unavailable: "etcd did not answer the Users listing. (etcd: leader changed)",
-    });
+    const failed = async () => Promise.reject(new EtcdError("unavailable", "etcdserver: leader changed", 14));
+    const { client } = surfaceClient([], { leaseLeases: failed, userList: failed, roleList: failed });
+    const counts = await countEtcdObjects(client, surface());
+    // Each in its own listing's words.
+    expect([counts.lease, counts.user, counts.role]).toEqual([
+      { unavailable: "etcd did not answer the Leases listing. (etcd: leader changed)" },
+      { unavailable: "etcd did not answer the Users listing. (etcd: leader changed)" },
+      { unavailable: "etcd did not answer the Roles listing. (etcd: leader changed)" },
+    ]);
   });
 });
 
@@ -1085,6 +1088,64 @@ describe("the key's source (spec 4.4, 4.5, E6, E8, E9)", () => {
     );
     expect(refusal).toBeDefined();
     expect(document.parts[0]).toMatchObject({ language: "json", edit: { offered: false, reason: refusal?.message } });
+  });
+
+  /** E8's message for the put the value edit of `key` would send, which a protected key meets. */
+  const protectedKeyRefusal = (key: string) => {
+    const refusal = refuseBeforeSend(
+      assessCommand({
+        kind: "put",
+        key: enc(key),
+        value: new Uint8Array(0),
+        prevKv: false,
+        ignoreValue: false,
+        ignoreLease: true,
+      }),
+      {},
+    );
+    expect(refusal).toBeDefined();
+    return refusal?.message;
+  };
+
+  test("a CBOR object under a protected prefix is base64 in plaintext, rendered, and offered no edit, in E8's sentence (spec 4.4, E8, E9)", async () => {
+    const key = "/registry/pods/default/nginx";
+    // CBOR's self-described tag 0xd9 0xd9 0xf7, which kube-apiserver writes before every CBOR object, then {"a": 1}.
+    const value = new Uint8Array([0xd9, 0xd9, 0xf7, 0xa1, 0x61, 0x61, 0x01]);
+    const document = await readKey(keyClient({ [key]: { value } }), key);
+    expect(document.parts[0]).toMatchObject({
+      text: "2dn3oWFhAQ==",
+      language: "plaintext",
+      origin: "rendered",
+      edit: { offered: false, reason: protectedKeyRefusal(key) },
+    });
+    expect(JSON.parse(textOf(document, 1)).value_encoding).toBe("kubernetes-cbor");
+  });
+
+  test("the edit's reasons come in 4.5's order: read-only mode before a key outside the writable union (spec E6, 4.7)", async () => {
+    const context = reader([grantPrefix("read", "/app/")], { readOnly: "connection" });
+    const document = await readKey(keyClient({ "/app/cfg": { value: '{"a":1}' } }), "/app/cfg", context);
+    expect(document.parts[0]).toMatchObject({ edit: { offered: false, reason: readOnlySentence("connection") } });
+  });
+
+  test("the edit's reasons come in 4.5's order: a protected key before a value that is not UTF-8 (spec E8)", async () => {
+    const key = "/registry/x";
+    const document = await readKey(keyClient({ [key]: { value: new Uint8Array([0xff, 0xfe]) } }), key);
+    expect(document.parts[0]).toMatchObject({
+      text: "//4=",
+      edit: { offered: false, reason: protectedKeyRefusal(key) },
+    });
+  });
+
+  test("the edit's reasons come in 4.5's order: a value that is not UTF-8 before a key outside the writable union (spec 4.7)", async () => {
+    const client = keyClient({ "/app/bin": { value: new Uint8Array([0xff, 0xfe]) } });
+    const document = await readKey(client, "/app/bin", reader([grantPrefix("read", "/app/")]));
+    expect(document.parts[0]).toMatchObject({
+      text: "//4=",
+      edit: {
+        offered: false,
+        reason: "The value is not UTF-8 text, so it is shown as base64 and is not edited here.",
+      },
+    });
   });
 
   test("edit.offered follows the writable union: a key read but not written says 4.4's sentence (spec 4.7, plan Review Focus 5)", async () => {
