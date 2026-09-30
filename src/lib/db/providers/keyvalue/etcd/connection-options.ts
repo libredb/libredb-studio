@@ -129,8 +129,15 @@ const TLS_MODES: Readonly<Record<SSLMode, { readonly mode: EtcdTlsOptions["mode"
 /** CR, LF and NUL: a pasted credential carries one by mistake, and trimming it would send a different secret (spec E2). */
 const FORBIDDEN_IN_CREDENTIAL = /[\r\n\0]/;
 
-/** One PEM certificate block; the text around the blocks is skipped, as both runtimes skip it (checkCa). */
-const PEM_CERTIFICATE_BLOCK = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+/** A PEM BEGIN marker with anything before it on its line, where no PEM reader opens a block (checkCa). */
+const PEM_BEGIN_INSIDE_A_LINE = /[^\n]-----BEGIN/;
+/** OpenSSL's trust form of a certificate, which Node reads with its trust settings and Bun reads nothing from (checkCa). */
+const PEM_TRUSTED_CERTIFICATE = /-----BEGIN TRUSTED CERTIFICATE-----/;
+/**
+ * One certificate block under a label both runtimes read, as whole lines: its BEGIN line through the
+ * first line that starts with an END marker, or through the end of the text when no line does (checkCa).
+ */
+const PEM_CERTIFICATE_BLOCK = /-----BEGIN (?:X509 )?CERTIFICATE-----[\s\S]*?(?:\n-----END [^\n]*|$)/g;
 
 /** The two encrypted PEM key forms: PKCS#8's own label, and the header of a legacy encrypted key. */
 const ENCRYPTED_PEM_KEY = /-----BEGIN ENCRYPTED PRIVATE KEY-----|^Proc-Type: 4,ENCRYPTED/m;
@@ -151,6 +158,10 @@ const CLIENT_CERTIFICATE_NOT_PEM =
   "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
 const CA_NOT_PEM =
   "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued etcd's server certificate there.";
+const CA_BEGIN_INSIDE_A_LINE =
+  "The CA Certificate under SSL / TLS has a -----BEGIN marker that does not start its line: put each -----BEGIN marker at the start of a line there, with nothing before it, not even a space or a byte order mark.";
+const CA_TRUSTED_FORM =
+  "The CA Certificate under SSL / TLS holds a TRUSTED CERTIFICATE block, OpenSSL's form with trust settings, which not every runtime reads: paste the certificate in its plain PEM form there, as openssl x509 -in <file> prints it.";
 const CLIENT_KEY_NOT_PEM =
   "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
 const CLIENT_KEY_ENCRYPTED =
@@ -292,11 +303,20 @@ function tlsOptions(config: DatabaseConnection, identity: string): EtcdTlsOption
  * certificate's (ERR_OSSL_X509_KEY_TYPE_MISMATCH); Node reads no certificate from such a CA, so every
  * chain fails, and drops a key of another type, so the handshake goes on without the certificate.
  *
- * A CA is every PEM certificate block it holds, each read with X509Certificate: the runtimes read the
- * blocks and skip the text around them, so a bundle's comments are kept, while a field with no block,
- * or a block that does not read, is refused.
+ * A CA is read as both runtimes' PEM readers read it, line by line, a line being what a LF ends: a
+ * block opens only at a line that starts with its BEGIN marker, and every other line is skipped, so a
+ * bundle's comment lines are kept. A BEGIN marker with anything before it on its line is refused in
+ * its own words, since the runtimes skip its certificate, or Bun throws "Invalid CA" when two
+ * certificates are joined with no line break; Node alone skips a leading byte order mark, which is
+ * refused as well, so one rule holds under both. Each block under the two labels both runtimes read,
+ * CERTIFICATE and the older X509 CERTIFICATE, is read whole with X509Certificate, from its BEGIN line
+ * through its END line, so a block that does not read, text after its END marker included, is refused,
+ * as is a field with no block. A TRUSTED CERTIFICATE block, OpenSSL's trust form, is refused in its
+ * own words, because Node reads it with its trust settings and Bun reads no certificate from it.
  */
 function checkCa(pem: string): void {
+  if (PEM_BEGIN_INSIDE_A_LINE.test(pem)) throw configError(CA_BEGIN_INSIDE_A_LINE);
+  if (PEM_TRUSTED_CERTIFICATE.test(pem)) throw configError(CA_TRUSTED_FORM);
   const blocks = pem.match(PEM_CERTIFICATE_BLOCK) ?? [];
   if (blocks.length === 0) throw configError(CA_NOT_PEM);
   for (const block of blocks) certificate(block, CA_NOT_PEM);

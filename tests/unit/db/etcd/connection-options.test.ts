@@ -9,9 +9,10 @@
  * the same way, the shape etcd's --client-cert-auth accepts, so its issuer's Common Name is not its
  * own. The other key forms a client pair may take, PKCS#1 RSA, SEC1 EC and the two encrypted forms,
  * are written by node:crypto, which writes each the same way on every platform, while the runners'
- * openssl builds do not share one flag for them; openssl only certifies the EC key. The last block
- * runs the mapping under Node, the production runtime, through a bundle, because the error facts say
- * which runtime answered (spec E5, 5.6).
+ * openssl builds do not share one flag for them; openssl only certifies the EC key. A server
+ * certificate the same authority signs lets a handshake on the loopback show what the runtime reads
+ * from a pasted CA. The last block runs the mapping under Node, the production runtime, through a
+ * bundle, because the error facts say which runtime answered (spec E5, 5.6).
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import {
@@ -23,9 +24,10 @@ import {
   X509Certificate,
 } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSecureContext } from "node:tls";
+import { connect, createSecureContext, createServer, type Server } from "node:tls";
 import { pathToFileURL } from "node:url";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { EtcdError } from "@/lib/db/providers/keyvalue/etcd/client";
@@ -99,6 +101,10 @@ const CLIENT_CERTIFICATE_NOT_PEM =
   "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
 const CA_NOT_PEM =
   "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued etcd's server certificate there.";
+const CA_BEGIN_INSIDE_A_LINE =
+  "The CA Certificate under SSL / TLS has a -----BEGIN marker that does not start its line: put each -----BEGIN marker at the start of a line there, with nothing before it, not even a space or a byte order mark.";
+const CA_TRUSTED_FORM =
+  "The CA Certificate under SSL / TLS holds a TRUSTED CERTIFICATE block, OpenSSL's form with trust settings, which not every runtime reads: paste the certificate in its plain PEM form there, as openssl x509 -in <file> prints it.";
 const CLIENT_KEY_NOT_PEM =
   "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
 const CLIENT_KEY_ENCRYPTED =
@@ -234,6 +240,51 @@ function signedClientCertificate(name: string, subject: readonly string[], autho
   );
 }
 
+/** A server certificate for `host` and its key, signed by the named authority: what a pasted CA must verify. */
+function signedServerCertificate(name: string, host: string, authority: string): void {
+  writeFileSync(
+    at(`${name}.cnf`),
+    ["[req]", "prompt = no", "distinguished_name = dn", "[dn]", `CN = ${host}`, ""].join("\n"),
+  );
+  writeFileSync(
+    at(`${name}.ext`),
+    `basicConstraints = critical, CA:FALSE\nextendedKeyUsage = serverAuth\nsubjectAltName = DNS:${host}\n`,
+  );
+  openssl(
+    "req",
+    "-config",
+    `${name}.cnf`,
+    "-utf8",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-sha256",
+    "-keyout",
+    `${name}.key`,
+    "-out",
+    `${name}.csr`,
+  );
+  openssl(
+    "x509",
+    "-req",
+    "-in",
+    `${name}.csr`,
+    "-CA",
+    `${authority}.crt`,
+    "-CAkey",
+    `${authority}.key`,
+    "-set_serial",
+    "3",
+    "-sha256",
+    "-days",
+    "1",
+    "-extfile",
+    `${name}.ext`,
+    "-out",
+    `${name}.crt`,
+  );
+}
+
 /** A self-signed client certificate for the key already written as `<name>.key`, whatever its algorithm. */
 function certifiedKey(name: string, subject: readonly string[]): void {
   writeFileSync(
@@ -283,6 +334,9 @@ beforeAll(() => {
   // kubeadm's names: the etcd CA, and the client certificate it issues the API server.
   certificateAuthority("etcd-ca", ["CN = etcd-ca"]);
   signedClientCertificate("apiserver", ["CN = kube-apiserver-etcd-client"], "etcd-ca");
+  // The certificate a server etcd-ca issued shows, and the CA in OpenSSL's trust form.
+  signedServerCertificate("etcd-server", "etcd.test", "etcd-ca");
+  openssl("x509", "-in", "etcd-ca.crt", "-trustout", "-out", "etcd-ca-trusted.crt");
   // The reader's own key in each form node:crypto writes, so every form pairs with reader.crt.
   const reader = createPrivateKey(read("reader.key"));
   writeKey("reader-pkcs8.key", reader, { type: "pkcs8", format: "pem" });
@@ -768,6 +822,50 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
   const pemBlock = (label: string, body: string) => `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----\n`;
   /** PEM framing around a body that is no certificate: the runtimes read no certificate from it. */
   const CORRUPT_CERTIFICATE = pemBlock("CERTIFICATE", "AAAA");
+  /** A PEM text with its certificate markers written under another label. */
+  const relabelled = (pem: string, label: string) =>
+    pem
+      .replaceAll("-----BEGIN CERTIFICATE-----", `-----BEGIN ${label}-----`)
+      .replaceAll("-----END CERTIFICATE-----", `-----END ${label}-----`);
+
+  /** A TLS server on the loopback, showing the certificate etcd-ca issued for etcd.test. */
+  let server: Server | undefined;
+  let port = 0;
+  beforeAll(async () => {
+    const listening = createServer({ key: read("etcd-server.key"), cert: read("etcd-server.crt") }, (socket) =>
+      socket.end(),
+    );
+    await new Promise<void>((resolve) => listening.listen(0, "127.0.0.1", resolve));
+    server = listening;
+    port = (listening.address() as AddressInfo).port;
+  });
+  afterAll(() => {
+    server?.close();
+  });
+
+  /**
+   * Whether the runtime running this file verifies that server's certificate with this CA text, over a
+   * handshake: the premise of a CA refusal, since createSecureContext throws for some texts the runtime
+   * cannot read and takes others in silence, reading no certificate from them. A text it throws for
+   * verifies nothing.
+   */
+  function verifies(ca: string): Promise<boolean> {
+    try {
+      createSecureContext({ ca });
+    } catch {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve, reject) => {
+      const socket = connect(
+        { host: "127.0.0.1", port, servername: "etcd.test", ca, rejectUnauthorized: false },
+        () => {
+          resolve(socket.authorized);
+          socket.destroy();
+        },
+      );
+      socket.on("error", reject);
+    });
+  }
 
   test("a CA of one or more PEM certificates is carried as configured in every TLS mode, the text around its blocks included", () => {
     const cas = [
@@ -793,12 +891,12 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
       () => read("etcd-ca.crt") + CORRUPT_CERTIFICATE,
     ],
     [
-      "an indented certificate, which no PEM reader reads",
-      () =>
-        read("etcd-ca.crt")
-          .split("\n")
-          .map((line) => `  ${line}`)
-          .join("\n"),
+      "a certificate and then a block under the older X509 CERTIFICATE label that is none, read like the first",
+      () => read("etcd-ca.crt") + pemBlock("X509 CERTIFICATE", "AAAA"),
+    ],
+    [
+      "a certificate and then one cut off before its END line, which the runtimes cut short in silence",
+      () => read("etcd-ca.crt") + read("reader.crt").split("\n").slice(0, 3).join("\n"),
     ],
   ])("a CA that is %s is refused in words in every TLS mode, and never repeated", (_label, value) => {
     const caCert = value();
@@ -807,6 +905,100 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
       expect(message).toBe(CA_NOT_PEM);
       expect(message).not.toContain(caCert.trim().split("\n")[1] ?? caCert);
     }
+  });
+
+  test.each([
+    [
+      "another certificate joined to it with no line break, as cat joins a file that lacks its last one",
+      () => read("reader.crt").trimEnd() + read("etcd-ca.crt"),
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    ["its BEGIN line indented by a space", () => ` ${read("etcd-ca.crt")}`, CA_BEGIN_INSIDE_A_LINE],
+    [
+      "every line indented",
+      () =>
+        read("etcd-ca.crt")
+          .split("\n")
+          .map((line) => `  ${line}`)
+          .join("\n"),
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    [
+      "text before its BEGIN marker on that line",
+      () => `subject=CN = etcd-ca ${read("etcd-ca.crt")}`,
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    ["one dash too many before its BEGIN marker", () => `-${read("etcd-ca.crt")}`, CA_BEGIN_INSIDE_A_LINE],
+    [
+      "a comment ended by a lone CR, which ends no line for a PEM reader",
+      () => `# etcd CA\r${read("etcd-ca.crt")}`,
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    [
+      "a comment ended by U+2028, which JavaScript reads as a line end and a PEM reader does not",
+      () => `# etcd CA\u2028${read("etcd-ca.crt")}`,
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    [
+      "a byte order mark before its BEGIN marker, which Node's reader skips and Bun's does not",
+      () => `\uFEFF${read("etcd-ca.crt")}`,
+      CA_BEGIN_INSIDE_A_LINE,
+    ],
+    [
+      "text after its END marker on that line",
+      () => read("etcd-ca.crt").replace("-----END CERTIFICATE-----", "-----END CERTIFICATE----- etcd-ca"),
+      CA_NOT_PEM,
+    ],
+  ])(
+    "a CA with %s is refused in words in every TLS mode, since the runtime verifies nothing with it",
+    async (_label, value, refusal) => {
+      const caCert = value();
+      // The premise, under Bun: it reads no certificate from the text, or throws "Invalid CA" for it.
+      expect(await verifies(caCert)).toBe(false);
+      for (const mode of TLS_ON_MODES) {
+        const message = refusalOf({ ...base, ssl: { mode, caCert } });
+        expect(message).toBe(refusal);
+        expect(message).not.toContain(caCert.trim().split("\n")[1] ?? caCert);
+      }
+    },
+  );
+
+  test("a CA holding a block in OpenSSL's TRUSTED CERTIFICATE form is refused in its own words, since Bun reads no certificate from one", async () => {
+    const trusted = read("etcd-ca-trusted.crt");
+    // The premises: the block is etcd-ca's certificate in the trust form, which X509Certificate reads,
+    // and Bun verifies nothing with it, while Node reads it with its trust settings.
+    expect(trusted.startsWith("-----BEGIN TRUSTED CERTIFICATE-----\n")).toBe(true);
+    expect(new X509Certificate(trusted).subject).toBe("CN=etcd-ca");
+    expect(await verifies(trusted)).toBe(false);
+    // Beside a plain certificate too, since Bun would read the plain one alone.
+    for (const caCert of [trusted, trusted + read("etcd-ca.crt")]) {
+      for (const mode of TLS_ON_MODES) expect(refusalOf({ ...base, ssl: { mode, caCert } })).toBe(CA_TRUSTED_FORM);
+    }
+  });
+
+  test.each([
+    ["the plain certificate, the control", () => read("etcd-ca.crt")],
+    [
+      "the older X509 CERTIFICATE label, which both runtimes read",
+      () => relabelled(read("etcd-ca.crt"), "X509 CERTIFICATE"),
+    ],
+    [
+      "an X509 CERTIFICATE block and a CERTIFICATE one together",
+      () => relabelled(read("reader.crt"), "X509 CERTIFICATE") + read("etcd-ca.crt"),
+    ],
+    [
+      "spaces after its markers, which both runtimes' readers drop",
+      () =>
+        read("etcd-ca.crt")
+          .replace("-----BEGIN CERTIFICATE-----", "-----BEGIN CERTIFICATE-----  ")
+          .replace("-----END CERTIFICATE-----", "-----END CERTIFICATE-----\t"),
+    ],
+    ["a byte order mark that starts a comment line before it", () => `\uFEFF# etcd CA\n${read("etcd-ca.crt")}`],
+  ])("a CA in %s is carried as configured in every TLS mode", async (_label, value) => {
+    const caCert = value();
+    // The premise: the runtime verifies the certificate etcd-ca issued with it.
+    expect(await verifies(caCert)).toBe(true);
+    for (const mode of TLS_ON_MODES) expect(mapped({ ...base, ssl: { mode, caCert } }).tls?.ca).toBe(caCert);
   });
 
   test("plaintext reads none of the TLS material, so no PEM rule refuses it", () => {
