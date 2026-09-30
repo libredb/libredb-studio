@@ -142,7 +142,8 @@ export function describeRange(range: EtcdByteRange): string {
     return shape.prefix.length === 0 ? "every key" : `${typedKey(shape.prefix, "command-line")} (prefix)`;
   }
   const start = typedKey(shape.start, "command-line");
-  if (shape.end.length === 1 && shape.end[0] === 0) return `${start} (from key)`;
+  // The open end as keySpan reads it, so this file holds no second copy of etcd's rule.
+  if (keySpan(range).end === undefined) return `${start} (from key)`;
   return `${start} to ${typedKey(shape.end, "command-line")} (range)`;
 }
 

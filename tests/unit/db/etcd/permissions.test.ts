@@ -317,6 +317,8 @@ describe("describeRange and describeScope (spec 5.6's may-read list)", () => {
     [point("/cfg/x"), "/cfg/x"],
     [range("/a", "/c"), "/a to /c (range)"],
     [{ key: utf8("/m"), rangeEnd: Uint8Array.of(0) }, "/m (from key)"],
+    // Only the single byte 0x00 is the open end: a longer end that begins with it is an ordinary end.
+    [{ key: Uint8Array.of(0), rangeEnd: Uint8Array.of(0, 1) }, '"\\x00" to "\\x00\\x01" (range)'],
     [ALL_KEYS, "every key"],
     [point("/a b"), "'/a b'"],
     [prefixOf(utf8("/it's/")), "'/it'\\''s/' (prefix)"],
