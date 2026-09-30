@@ -242,7 +242,17 @@ const isArgifySpace = (char: string): boolean =>
 
 const SHELL_OPERATORS: ReadonlySet<string> = new Set([";", "&", "|", "<", ">", "(", ")"]);
 const DOUBLE_QUOTE_ESCAPES: ReadonlySet<string> = new Set(['"', "\\", "$", "`"]);
-const NAME_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * A shell name, as POSIX writes one: a letter or _, then letters, digits and _. It is declared once, for
+ * the two readers of a NAME= word: the ~ rule reads the word whole, and the leading tokens read an
+ * assignment one unit at a time, since a word they read may run over many lines (spec 5.1.1, 5.1.2).
+ */
+const NAME_FIRST_CLASS = "[A-Za-z_]";
+const NAME_REST_CLASS = "[A-Za-z0-9_]";
+const NAME_ASSIGNMENT = new RegExp(`^${NAME_FIRST_CLASS}${NAME_REST_CLASS}*=`);
+const NAME_FIRST = new RegExp(`^${NAME_FIRST_CLASS}$`);
+const NAME_REST = new RegExp(`^${NAME_REST_CLASS}$`);
 
 /** The first unpaired UTF-16 surrogate's offset, or -1. */
 function loneSurrogateAt(text: string): number {
@@ -612,8 +622,6 @@ const TIMEOUT_WORD = "--command-timeout";
 const ETCDCTL_PATH = "/etcdctl";
 /** One more unit than the longest word the leading tokens compare whole, so a head this long is none of them. */
 const LEAD_HEAD = TIMEOUT_WORD.length + 1;
-const NAME_FIRST = /^[A-Za-z_]$/;
-const NAME_REST = /^[A-Za-z0-9_]$/;
 
 const START_LEAD_WORD: LexLeadWord = { head: "", quoting: "", tail: "", assignment: "start" };
 
