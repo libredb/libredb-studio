@@ -999,6 +999,79 @@ describe("activation splits by what the row IS", () => {
 });
 
 /**
+ * Keys-panel activation on an engine that declares a key kind (spec 4.6).
+ *
+ * What is real here is what `tests/components/Studio.test.tsx` stubs: the tab manager, the pane and the
+ * source route. The key's tab is the declared kind's Source tab, addressed by the key alone, and
+ * nothing runs; and it is refused while an apply is in flight, as every gesture that opens a tab is
+ * (D82, the last describe of this file).
+ */
+const KEY_KIND = {
+  id: "key",
+  role: "config",
+  label: "Key",
+  labelPlural: "Keys",
+  enumeratedBy: "key-browser",
+  hasSource: true,
+  sourceLanguage: "json",
+};
+const ETCD_SCAN = {
+  defaultCount: 500,
+  maxCount: 1000,
+  separator: "/",
+  cursor: "opaque",
+  pattern: "prefix",
+  totalScope: "walk",
+};
+const KEY_DOCUMENT = {
+  path: ["/app/cfg"],
+  kind: "key",
+  parts: [
+    { id: "value", label: "Value", text: '{"mode":"on"}', language: "json", form: "complete", origin: "rendered" },
+  ],
+};
+
+/** A key activated in the key browser, as the sidebar hands it to this shell. */
+function openKey(key: string): void {
+  (capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void)(
+    key,
+    null,
+    null,
+  );
+}
+
+describe("a key activated in the key browser opens its Source tab", () => {
+  beforeEach(() => {
+    capabilitiesOverride = { objectKinds: [...KINDS, KEY_KIND], keyScan: ETCD_SCAN };
+    buildMetadata();
+    sourceAnswer = { status: 200, body: KEY_DOCUMENT };
+  });
+
+  test("the key's value is read into a Source tab named after it, and nothing runs", async () => {
+    render(<Studio />);
+    act(() => openKey("/app/cfg"));
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]));
+    await waitFor(() => expect(sourceReads).toEqual([{ path: ["/app/cfg"], kind: "key" }]));
+    await waitFor(() =>
+      expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe('{"mode":"on"}'),
+    );
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("a second activation of the same key focuses its tab instead of reading again", async () => {
+    render(<Studio />);
+    act(() => openKey("/app/cfg"));
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]));
+
+    act(() => openKey("/app/cfg"));
+
+    expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]);
+    await waitFor(() => expect(sourceReads).toHaveLength(1));
+  });
+});
+
+/**
  * The tab bar's icon ladder.
  *
  * Nothing errors if the Source arm is missing: a Source tab silently takes `FileBraces` and
@@ -1583,5 +1656,39 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     openTableFromPalette();
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
+  });
+
+  test("a key activated in the key browser is refused in the same window, and opens once the answer is on screen", async () => {
+    /*
+     * The third door into this window (spec 4.6). On an engine that declares a key kind, a key's
+     * activation opens that kind's Source tab, which ends in `setActiveTabId` exactly as a table's
+     * activation does, and so would unmount the pane the dialog lives in with the statement sent.
+     */
+    capabilitiesOverride = { objectKinds: [...KINDS, KEY_KIND], keyScan: ETCD_SCAN };
+    buildMetadata();
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    act(() => openKey("/app/cfg"));
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    // The control: the refusal is the apply window, not "a key cannot be opened from a Source tab".
+    act(() => openKey("/app/cfg"));
+    await waitFor(() =>
+      expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: /app/cfg"]),
+    );
   });
 });

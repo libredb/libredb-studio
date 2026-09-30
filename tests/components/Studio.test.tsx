@@ -1048,6 +1048,99 @@ describe("Studio", () => {
     expect(mockHandleTableClick).toHaveBeenCalledWith(["videobackend:login:refreshToken:1"], mockExecuteQuery, []);
   });
 
+  /**
+   * A key activated where the engine declares a key kind (spec 4.6).
+   *
+   * etcd's `key` kind is `enumeratedBy: "key-browser"`: its value and metadata are read through the
+   * object surface, so activating a key opens that kind's Source tab, addressed by the key alone, and
+   * generates and runs nothing. Review Focus 1: every key a path strains reaches the tab as its string.
+   */
+  test("a key activated where the engine declares a key kind opens its Source tab and runs nothing", () => {
+    const mockOpenSourceTab = mock((_object: DatabaseObject) => {});
+    tabMgrOverride = { openSourceTab: mockOpenSourceTab };
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        {
+          id: "key",
+          role: "config",
+          label: "Key",
+          labelPlural: "Keys",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+    const keys = [
+      "/app/cfg",
+      "/a//b",
+      "/app/",
+      "/",
+      "/sp ace/k",
+      "/q'uo\"te/k",
+      "/nl\nx/k",
+      "/#h/k",
+      "/$d/k",
+      "/-lead/k",
+      "-top",
+      "plain",
+      // A space at either end is a byte of the key, and a trimmed address would open a different key.
+      " /lead-space",
+      "/trail-space ",
+    ];
+
+    for (const key of keys) act(() => fn(key, null, null));
+
+    expect(mockOpenSourceTab.mock.calls.map((call) => call[0])).toEqual(
+      keys.map((key) => ({ path: [key], kind: "key", name: key })),
+    );
+    expect(mockHandleTableClick).not.toHaveBeenCalled();
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("the Source tab a key opens is addressed by the declared kind's own id", () => {
+    // The id is the declaration's, read through `keyBrowserKind`: an engine whose key-browser kind is
+    // called something else has its keys opened under that name, never under a literal "key".
+    const mockOpenSourceTab = mock((_object: DatabaseObject) => {});
+    tabMgrOverride = { openSourceTab: mockOpenSourceTab };
+    capabilitiesOverride = {
+      objectKinds: [
+        {
+          id: "entry",
+          role: "config",
+          label: "Entry",
+          labelPlural: "Entries",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+
+    act(() => fn("/app/cfg", null, null));
+
+    expect(mockOpenSourceTab.mock.calls.map((call) => call[0])).toEqual([
+      { path: ["/app/cfg"], kind: "entry", name: "/app/cfg" },
+    ]);
+  });
+
+  test("before the metadata read answers, a key activation keeps the read it has always opened", () => {
+    metadataOverride = { metadata: null };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+
+    act(() => fn("report:daily", "string", null));
+
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["report:daily"], mockExecuteQuery, [
+      { name: "type", type: "string", nullable: false, isPrimary: false },
+    ]);
+  });
+
   // --- objectActions: the row menu's six, restored (U22, #789) ---
   //
   // WHICH of them a row is offered is the provider's declaration and is asserted against
