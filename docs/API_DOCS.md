@@ -1248,16 +1248,18 @@ be OPENED and nothing about what may be read through it.
 
 | Field | Description |
 |-------|-------------|
-| `keys` | The batch. **Not deduplicated and not ordered** — `SCAN` promises neither, so a key present for the whole walk may be returned twice while the table rehashes, and the order is the hash table's rather than the caller's |
+| `keys` | The batch. Under `"glob"` (Redis) it is **not deduplicated and not ordered**: `SCAN` promises neither, so a key present for the whole walk may be returned twice while the table rehashes, and the order is the hash table's rather than the caller's. Under `"prefix"` (etcd) the pages of one walk read an ordered key range at one pinned revision, so they are one consistent view |
 | `cursor` | The cursor for the next page. `"0"` means the walk reached the end, and it is the only end-of-walk signal the engine publishes |
 | `types` | Each key's value type, **by key name**. It travels with the page rather than being asked for separately: `TYPE` takes one key and Redis publishes no batch form, so the provider pipelines one call per key and the cost is ONE extra round trip per page whatever the page holds. A key **absent** from the map is one whose type could not be read and a caller should draw nothing for it; a key that vanished between the walk and this read is present with the server's own `"none"`. What it describes is the moment it was read, like everything else in a sampled walk |
 | `total` | What a progress indicator divides by, in the scope the declaration's `totalScope` names. Under `"database"` (Redis) it is `DBSIZE` for the database walked: the engine's own key count, and the only denominator a progress indicator can divide by, since a cursor says nothing about how much is left. On a clustered deployment it is the LOCAL node's count: `SCAN` walks one node's slots and `DBSIZE` has no cluster-wide form. Under `"walk"` (etcd) it is the exact count of the keys the walk covers, the pattern's prefix range or the whole key space, at the revision the walk's pages are pinned to; for a user whose grants are narrower, it counts the keys of the ranges that user may read |
 | `clustered` | Present and `true` only when the server's own `INFO cluster` reply says this deployment is clustered. `SCAN` and `DBSIZE` are per node and neither has a cluster-wide form, so on a cluster `keys` and `total` describe the node that answered and nothing else. **Absent** means the deployment does not say it is clustered, which is the ordinary server; a reply the provider could not read is absent rather than a guess. The fact is read in the same round trip as `total` |
 | `skipped` | Present only when the page left keys out: `{ "count", "reason" }`, how many keys this page read and could not name, and why. On etcd a key that is not UTF-8 text is counted here rather than listed, because a name decoded with replacement characters would address a different key. Redis never sends it |
 
-The cursor belongs to the CALLER. Nothing is retained between two pages, so a page costs a round trip
-rather than a session, and a cursor arriving after a reconnect is still valid: it is a position in a
-hash table, not a handle.
+The cursor belongs to the CALLER.
+Nothing is retained between two pages, so a page costs a round trip rather than a session, and a cursor arriving after a reconnect is still valid: it is a position, not a handle, spelled as the declaration's `cursor` says.
+Under `"decimal"` (Redis) it is a position in a hash table.
+Under `"opaque"` (etcd) it is a string only the provider that wrote it can read, and the engine can overtake it between two pages: etcd's cursor carries the revision its walk is pinned to, and once a compaction passes that revision the next page answers etcd's compacted error in place of keys.
+The caller then starts the walk again at `"0"`.
 
 **Statuses:**
 
