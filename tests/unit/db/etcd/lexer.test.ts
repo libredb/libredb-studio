@@ -168,7 +168,7 @@ const tilde = (line: number, column: number) =>
 const assignmentTilde = (line: number, column: number) =>
   `Studio runs no shell, so it refuses the ~ after the = or a : of the word at line ${line}, column ${column}, which bash expands to a home directory: write the word between single quotes to keep it as written.`;
 const braces = (line: number, column: number) =>
-  `Studio runs no shell, so it refuses the braces in the word at line ${line}, column ${column}, which bash and zsh expand into several words: write the word between single quotes to keep it as written.`;
+  `Studio runs no shell, so it refuses the braces in the word at line ${line}, column ${column}, which a shell may expand into several words: write the word between single quotes to keep it as written.`;
 const operator = (char: string, line: number, column: number) =>
   `Studio runs one etcdctl command and no shell, so it refuses the ${char} at line ${line}, column ${column}: write the text between single quotes to keep it as written.`;
 
@@ -210,6 +210,13 @@ const SHELL_REFUSALS: readonly [form: string, text: string, code: string, column
   ["nested braces whose inner pair holds the comma", "put k {a{b,c}}", "shell-expansion", 6, braces(1, 7)],
   ["an empty alternative", "put k {a,}", "shell-expansion", 6, braces(1, 7)],
   ["unquoted JSON with a comma, which bash splits in two", 'put k {"a":1,"b":2}', "shell-expansion", 6, braces(1, 7)],
+  // Measured: zsh 5.9 expands a sequence whatever the quoting of its dots ({1.'.'3}, {1'..'3} and {1\..3}
+  // each gave 1, 2 and 3), where bash 5.2.21 and dash pass the text as written.
+  ["a sequence with a quoted dot, which zsh expands", "put k {1.'.'3}", "shell-expansion", 6, braces(1, 7)],
+  ["a sequence with both dots quoted, which zsh expands", "put k {1'..'3}", "shell-expansion", 6, braces(1, 7)],
+  ["a sequence with an escaped dot, which zsh expands", "put k {1\\..3}", "shell-expansion", 6, braces(1, 7)],
+  ["a sequence of letters with a quoted dot, which zsh expands", "put k {a.'.'c}", "shell-expansion", 6, braces(1, 7)],
+  ["a sequence inside a word, which zsh expands", "put k x{1'..'3}y", "shell-expansion", 6, braces(1, 7)],
   [";", "get a; get b", "shell-operator", 5, operator(";", 1, 6)],
   ["&", "get a &", "shell-operator", 6, operator("&", 1, 7)],
   ["|", "get a | tee x", "shell-operator", 6, operator("|", 1, 7)],
@@ -316,6 +323,8 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
   test("the prompt is only the first word, and env only before the assignments", () => {
     expect(split("get $ a").lead.commandIndex).toBe(0);
     expect(split("A=1 env get").lead).toEqual({ roles: ["assignment"], commandIndex: 1 });
+    // One prompt: a second $ is the command word.
+    expect(split("$ $ get").lead).toEqual({ roles: ["prompt"], commandIndex: 1 });
   });
 
   test.each([
@@ -456,6 +465,8 @@ const GO_BAD_ESCAPES: readonly [rule: string, quoted: string, escape: string][] 
   ["\\x takes only hex digits", '"\\xg0"', "\\xg0"],
   ["\\u needs four hex digits", '"\\u12"', "\\u12"],
   ["\\u may not name a surrogate", '"\\ud800"', "\\ud800"],
+  // Measured with Go 1.27: strconv.Unquote refuses \udfff, the last surrogate, as it refuses \ud800.
+  ["\\u may not name the last surrogate either", '"\\udfff"', "\\udfff"],
   ["\\U may not pass U+10FFFF", '"\\U00110000"', "\\U00110000"],
   ["an octal escape may not pass 255", '"\\400"', "\\400"],
   ["an octal escape takes only octal digits", '"\\08"', "\\08"],
@@ -598,6 +609,41 @@ describe("a txn compare is read the way etcdctl's ParseCompare reads it (spec 5.
   });
 });
 
+/**
+ * Go's unicode.IsSpace, the set strings.TrimSpace trims and fmt's scanner splits on, but for LF and CR,
+ * which end the line before either reads it. Measured with Go 1.27 for each: TrimSpace("x"+c) is "x", and
+ * fmt.Sscanf of `"k") >` + c + `"0"` with "%q) %s %q" reads the operator > and the value 0.
+ */
+const GO_SPACES: readonly number[] = [
+  0x09, 0x0b, 0x0c, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008,
+  0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+];
+
+describe("Go's space set, where a txn line is trimmed and a compare is split (spec 5.1.4)", () => {
+  test.each(GO_SPACES.map((code) => [code.toString(16).padStart(4, "0"), String.fromCharCode(code)] as const))(
+    "U+%s",
+    (_code, space) => {
+      // Trimmed from the end of a request line, where Argify alone would keep it in the last word.
+      expect(requestBytes(`put k x${space}`)[2]).toBe("78");
+      // It separates a compare's operator from its value, and the ) from the operator.
+      expect(compareOf(`mod("k") >${space}"0"`)).toMatchObject({ operator: ">", value: "30" });
+      expect(compareOf(`mod("k")${space}> "0"`)).toMatchObject({ operator: ">", value: "30" });
+      // So a word ending in it is quoted, and reads back whole as the last word of a request line.
+      const quoted = quoteTxnWord(utf8(`x${space}`));
+      expect(quoted).not.toBe(`x${space}`);
+      expect(requestBytes(`put k ${quoted}`)[2]).toBe(hex(utf8(`x${space}`)));
+    },
+  );
+
+  test("U+200B, which Go does not count as a space, is kept at a line's end and splits nothing", () => {
+    expect(requestBytes("put k x\u200b")[2]).toBe(hex(utf8("x\u200b")));
+    expect(bodyLine('txn\nmod("k") >\u200b"0"', 2).refusal?.message).toBe(
+      compareShape(2, "no value follows the operator"),
+    );
+    expect(bodyLine('txn\nmod("k")\u200b> "0"', 2).refusal?.message).toBe(compareShape(2, "no space follows the )"));
+  });
+});
+
 // ============================================================================
 // 3.3: tokenizeLine and its state, as the tokens provider calls it
 // ============================================================================
@@ -631,6 +677,25 @@ describe("tokenizeLine (spec 3.3)", () => {
       { kind: "invalid", start: 16, end: 17 },
       { kind: "word", start: 17, end: 18 },
       { kind: "invalid", start: 18, end: 19 },
+    ]);
+  });
+
+  test("a refused $ inside double quotes is invalid, not a string", () => {
+    expect(tokenizeLine('put k "a$x"', INITIAL_LEX_STATE).tokens).toEqual([
+      { kind: "word", start: 0, end: 3 },
+      { kind: "whitespace", start: 3, end: 4 },
+      { kind: "word", start: 4, end: 5 },
+      { kind: "whitespace", start: 5, end: 6 },
+      { kind: "string", start: 6, end: 8 },
+      { kind: "invalid", start: 8, end: 9 },
+      { kind: "string", start: 9, end: 11 },
+    ]);
+  });
+
+  test("a backslash-newline between words is whitespace", () => {
+    expect(tokenizeLine("get \\", INITIAL_LEX_STATE).tokens).toEqual([
+      { kind: "word", start: 0, end: 3 },
+      { kind: "whitespace", start: 3, end: 5 },
     ]);
   });
 
@@ -938,6 +1003,39 @@ describe("lexLogicalLine", () => {
 // The quoting functions (spec 5.5, 6.4)
 // ============================================================================
 
+/**
+ * Runes Go's strconv.IsPrint does not print, each with strconv.Quote("a" + rune + "b") as Go 1.27
+ * (Unicode 17.0.0) printed it: format characters (a bidi override, a zero-width space, a soft hyphen, an
+ * isolate, a tag, the Arabic letter mark, the Mongolian vowel separator, an interlinear annotation), a
+ * C1 control, private use, unassigned code points and spaces. Bun 1.4.2 and Node 24.14.0 classify every
+ * scalar value as Go 1.27 does (measured over all of them).
+ */
+const NOT_PRINTED: readonly [name: string, char: string, goQuoted: string][] = [
+  ["U+202E, a right-to-left override", "\u202e", '"a\\u202eb"'],
+  ["U+200B, a zero-width space", "\u200b", '"a\\u200bb"'],
+  ["U+00AD, a soft hyphen", "\u00ad", '"a\\u00adb"'],
+  ["U+2066, a left-to-right isolate", "\u2066", '"a\\u2066b"'],
+  ["U+E0001, a language tag", "\u{e0001}", '"a\\U000e0001b"'],
+  ["U+061C, the Arabic letter mark", "\u061c", '"a\\u061cb"'],
+  ["U+180E, the Mongolian vowel separator", "\u180e", '"a\\u180eb"'],
+  ["U+FFF9, an interlinear annotation anchor", "\ufff9", '"a\\ufff9b"'],
+  ["U+FEFF, a byte order mark", "\ufeff", '"a\\ufeffb"'],
+  ["U+0090, a C1 control", "\u0090", '"a\\u0090b"'],
+  ["U+E000, private use", "\ue000", '"a\\ue000b"'],
+  ["U+0378, unassigned", "\u0378", '"a\\u0378b"'],
+  ["U+10FFFF, unassigned in the last plane", "\u{10ffff}", '"a\\U0010ffffb"'],
+  ["U+3000, an ideographic space", "\u3000", '"a\\u3000b"'],
+  ["U+2029, a paragraph separator", "\u2029", '"a\\u2029b"'],
+];
+
+/** Runes Go prints as themselves: letters, marks, numbers, punctuation and symbols past ASCII. */
+const PRINTED: readonly [name: string, char: string, goQuoted: string][] = [
+  ["U+00E9, a letter", "é", '"aéb"'],
+  ["U+1D11E, a symbol past the first plane", "𝄞", '"a𝄞b"'],
+  ["U+0301, a combining mark", "\u0301", '"a\u0301b"'],
+  ["U+00BF, a punctuation mark", "\u00bf", '"a\u00bfb"'],
+];
+
 /** Texts a key or a value holds, chosen to break a quoting function. */
 const HARD_TEXTS: readonly string[] = [
   "",
@@ -987,6 +1085,8 @@ const HARD_TEXTS: readonly string[] = [
   "a\\",
   "/app/config/",
   "/registry/pods/default/nginx",
+  ...NOT_PRINTED.map(([, char]) => `/app/${char}x`),
+  ...PRINTED.map(([, char]) => `/app/${char}x`),
 ];
 
 describe("quoteWord, the command line's quoting (spec 5.5, 6.4)", () => {
@@ -1012,6 +1112,14 @@ describe("quoteWord, the command line's quoting (spec 5.5, 6.4)", () => {
     ["*", "'*'"],
   ])("%j is single-quoted as %j", (text, quoted) => {
     expect(quoteWord(text)).toBe(quoted);
+  });
+
+  test.each(NOT_PRINTED)("a word holding %s is single-quoted, never left bare", (_name, char) => {
+    expect(quoteWord(`/app/${char}x`)).toBe(`'/app/${char}x'`);
+  });
+
+  test.each(PRINTED)("a word holding %s may stay bare", (_name, char) => {
+    expect(quoteWord(`/app/${char}x`)).toBe(`/app/${char}x`);
   });
 
   test.each([...HARD_TEXTS])("%j reads back as itself", (text) => {
@@ -1051,6 +1159,19 @@ describe("quoteTxnWord and quoteGoString, the txn body's quoting (spec 4.5, 6.4)
 
   test("bytes that are not UTF-8 are written byte by byte", () => {
     expect(quoteGoString(new Uint8Array([0x61, 0xff, 0xc3, 0xa9, 0x0a]))).toBe('"a\\xff\\xc3\\xa9\\n"');
+  });
+
+  test.each(NOT_PRINTED)(
+    "%s is escaped as Go's %%q escapes it, so the text shown is the text typed",
+    (_name, char, goQuoted) => {
+      expect(quoteGoString(utf8(`a${char}b`))).toBe(goQuoted);
+      expect(quoteTxnWord(utf8(`a${char}b`))).toBe(goQuoted);
+    },
+  );
+
+  test.each(PRINTED)("%s is printed as itself, as Go's %%q prints it", (_name, char, goQuoted) => {
+    expect(quoteGoString(utf8(`a${char}b`))).toBe(goQuoted);
+    expect(quoteTxnWord(utf8(`a${char}b`))).toBe(`a${char}b`);
   });
 
   const HARD_BYTES: readonly Uint8Array[] = [

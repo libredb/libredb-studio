@@ -14,10 +14,10 @@
  *   zsh 5.9 before it was written down: a `$` before anything but a blank, the end of the word or
  *   a closing double quote (bash reads `$'..'`, `$".."` and `$[..]`, zsh `$=x` and `$~x`), a
  *   backquote, a `~` that begins a word or follows the `=` or a `:` of an unquoted `NAME=` word
- *   (bash outside POSIX mode), braces holding a comma or `..` (bash and zsh expand them into
- *   several words), a backslash that ends the text (bash keeps it and zsh drops it), and `;`,
- *   `&`, `|`, `<`, `>`, `(` and `)`. Glob characters stay data, as a shell passes them when
- *   nothing matches.
+ *   (bash outside POSIX mode), braces holding an unquoted comma or a `..` quoted or not (bash
+ *   and zsh expand them into several words, zsh even `{1.'.'3}`), a backslash that ends the text
+ *   (bash keeps it and zsh drops it), and `;`, `&`, `|`, `<`, `>`, `(` and `)`. Glob characters
+ *   stay data, as a shell passes them when nothing matches.
  * - A txn body is read as etcdctl v3.7.2 reads its standard input (txn_command.go): each line
  *   trimmed as Go's strings.TrimSpace trims it, a compare split as ParseCompare's
  *   fmt.Sscanf("%q) %s %q") reads it, a request split by Argify's regular expression (util.go),
@@ -306,7 +306,7 @@ const ASSIGNMENT_TILDE = shellSentence(
   "which bash expands to a home directory",
   KEEP_WORD,
 );
-const BRACES = shellSentence("the braces in the word", "which bash and zsh expand into several words", KEEP_WORD);
+const BRACES = shellSentence("the braces in the word", "which a shell may expand into several words", KEEP_WORD);
 const operatorSentence =
   (char: string) =>
   (line: number, column: number): string =>
@@ -384,19 +384,20 @@ class TokenSink {
 
 const isUnquoted = (quoting: string, from: number, to: number): boolean => !quoting.slice(from, to).includes("q");
 
-/** Braces a shell expands: an unquoted pair holding an unquoted comma or `..` at its own level. */
+/**
+ * Braces a shell may expand: an unquoted pair holding, at its own level, an unquoted comma or a `..`
+ * quoted or not, because zsh expands a sequence whatever the quoting of its dots (measured: zsh 5.9
+ * read {1.'.'3}, {1'..'3} and {1\..3} as 1, 2 and 3, where bash 5.2.21 kept them as written).
+ */
 function hasBraceExpansion(text: string, quoting: string): boolean {
   const open: boolean[] = [];
   for (let index = 0; index < text.length; index++) {
-    if (quoting[index] !== "u") continue;
     const char = text[index];
-    if (char === "{") open.push(false);
-    else if (char === "}") {
+    const unquoted = quoting[index] === "u";
+    if (char === "{" && unquoted) open.push(false);
+    else if (char === "}" && unquoted) {
       if (open.pop() === true) return true;
-    } else if (
-      open.length > 0 &&
-      (char === "," || (char === "." && text[index + 1] === "." && quoting[index + 1] === "u"))
-    )
+    } else if (open.length > 0 && ((char === "," && unquoted) || (char === "." && text[index + 1] === ".")))
       open[open.length - 1] = true;
   }
   return false;
@@ -1131,17 +1132,29 @@ const BARE_ASCII: ReadonlySet<string> = new Set(
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./:@%+=,^",
 );
 
+const GO_PRINTED = /^[\p{L}\p{M}\p{N}\p{P}\p{S}]$/u;
+
+/**
+ * Go's strconv.IsPrint for a character past ASCII, which decides whether %q writes it as itself: the
+ * letters, marks, numbers, punctuation and symbols. Every other rune (a control, a format character
+ * such as a bidi override or a zero-width space, a space, a separator, private use, unassigned) Go
+ * escapes. The categories are the runtime's: Bun 1.4.2 and Node 24.14.0 place every scalar value as
+ * Go 1.27 (Unicode 17.0.0) does, measured over all of them, and a runtime with older tables escapes
+ * more, which reads back the same.
+ */
+const isGoPrint = (char: string): boolean => GO_PRINTED.test(char);
+
 /**
  * A word that reads back as itself in both word rules and in a shell, so it needs no quotes:
- * letters, digits and `_-./:@%+=,^`, and characters past ASCII other than C1 controls, Go's
- * spaces and U+FEFF. It is conservative on purpose: glob characters, which the lexer reads as
- * data, are quoted too, so a generated command also pastes into a shell as written.
+ * letters, digits and `_-./:@%+=,^`, and the characters past ASCII that Go's %q prints as
+ * themselves. It is conservative on purpose: glob characters, which the lexer reads as data, are
+ * quoted too, so a generated command also pastes into a shell as written, and so is every character
+ * Go would escape, so no invisible or reordering character is shown bare (spec 5.5).
  */
 function isBare(text: string): boolean {
   if (text === "") return false;
   for (const char of text) {
-    const code = char.codePointAt(0) as number;
-    if (code < 0x80 ? !BARE_ASCII.has(char) : code <= 0x9f || code === 0xfeff || isGoSpace(char)) return false;
+    if (char.charCodeAt(0) < 0x80 ? !BARE_ASCII.has(char) : !isGoPrint(char)) return false;
   }
   return true;
 }
@@ -1184,11 +1197,11 @@ function goEscapeByte(byte: number): string {
 }
 
 /**
- * Go's quoting, for a compare's key and value and a txn request word that is not bare (spec
- * 5.1.4, 6.4): the named escapes, `\xNN` for another control byte, `\u` for a C1 control, a
- * Unicode space and U+FEFF, and every other character as itself. Bytes that are not UTF-8 are
- * written byte by byte, each byte past ASCII as `\xNN`, which strconv.Unquote reads back as that
- * byte.
+ * Go's %q, as strconv.Quote writes it, for a compare's key and value and a txn request word that is
+ * not bare (spec 5.1.4, 5.5, 6.4): the named escapes, `\xNN` for another ASCII control, `\u` or `\U`
+ * for every other rune Go does not print, and every other character as itself. Bytes that are not
+ * UTF-8 are written byte by byte, each byte past ASCII as `\xNN`, which strconv.Unquote reads back as
+ * that byte.
  */
 export function quoteGoString(bytes: Uint8Array): string {
   const text = decodeStrict(bytes);
@@ -1197,8 +1210,8 @@ export function quoteGoString(bytes: Uint8Array): string {
   for (const char of text) {
     const code = char.codePointAt(0) as number;
     if (code < 0x80) out += goEscapeByte(code);
-    else if (code <= 0x9f || code === 0xfeff || isGoSpace(char)) out += `\\u${code.toString(16).padStart(4, "0")}`;
-    else out += char;
+    else if (isGoPrint(char)) out += char;
+    else out += code > 0xffff ? `\\U${code.toString(16).padStart(8, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
   }
   return `${out}"`;
 }

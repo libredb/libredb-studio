@@ -166,6 +166,17 @@ export const GRAMMAR_CORPUS: readonly GrammarCorpusCase[] = [
     parse: { ok: true, kind: "get", line: 3 },
   },
   {
+    // Monaco's model ends a line at a lone CR too, so the parser and the tokens provider both do.
+    name: "a lone CR ends a line, so a second command after it is refused on line 2",
+    text: "get /a\rput /b c",
+    sections: ["command", "after-command"],
+    words: [
+      { line: 1, column: 0, endLine: 1, endColumn: 3, text: "get" },
+      { line: 1, column: 4, endLine: 1, endColumn: 6, text: "/a" },
+    ],
+    parse: { ok: false, code: "second-command", line: 2 },
+  },
+  {
     name: "a single-quoted value that spans two lines",
     text: "put /app/cfg 'line one\nline two'",
     sections: ["command", "command"],
@@ -197,6 +208,19 @@ export const GRAMMAR_CORPUS: readonly GrammarCorpusCase[] = [
       { line: 1, column: 7, endLine: 2, endColumn: 2, text: "value" },
     ],
     parse: { ok: true, kind: "put", line: 1 },
+  },
+  {
+    // The word ab ends with its backslash on line 1, and the third positional is refused on line 2.
+    name: "a backslash-newline before a blank ends the word on the line before",
+    text: "put k ab\\\n cd",
+    sections: ["command", "command"],
+    words: [
+      { line: 1, column: 0, endLine: 1, endColumn: 3, text: "put" },
+      { line: 1, column: 4, endLine: 1, endColumn: 5, text: "k" },
+      { line: 1, column: 6, endLine: 1, endColumn: 9, text: "ab" },
+      { line: 2, column: 1, endLine: 2, endColumn: 3, text: "cd" },
+    ],
+    parse: { ok: false, code: "bad-argument", line: 2 },
   },
   {
     name: "the empty word",
