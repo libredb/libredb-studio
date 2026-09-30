@@ -219,7 +219,12 @@ export type AuditReason =
   | "object_edit_refused"
   | "object_edit_guard_refused"
   | "object_edit_interrupted"
-  | "object_edit_plan_invalid";
+  | "object_edit_plan_invalid"
+  // `POST /api/db/maintenance` when the provider's `runMaintenance` THREW (#1091 review, R04 G8).
+  // Kept apart from the reasonless failure row an engine's own `success: false` writes: a thrown
+  // run may have reached the engine before it failed, so its disposition is not the engine's
+  // answer, and an operator reading the log needs to tell the two apart.
+  | "maintenance_execution_failed";
 
 export interface AuditEvent {
   id: string;

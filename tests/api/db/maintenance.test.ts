@@ -607,4 +607,160 @@ describe("POST /api/db/maintenance", () => {
     expect(res.status).toBe(500);
     expect(data.error).toContain("Internal maintenance failure");
   });
+
+  // #1091 review (R04 G8): a runMaintenance that threw left no audit event at all, so the log an
+  // operator reconstructs a database's history from had no line for an operation that may have
+  // reached the engine before it failed. The row is the success row's shape with a closed reason
+  // and the time the call took, and it never carries the thrown message.
+  test("a maintenance run that throws is audited as a failure with a closed reason", async () => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new DatabaseError("Internal maintenance failure", "postgres", "DATABASE_ERROR");
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "orders", container: "app", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    const event = mockAuditPush.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event.type).toBe("maintenance");
+    expect(event.action).toBe("VACUUM");
+    expect(event.target).toBe("orders");
+    expect(event.container).toBe("app");
+    expect(event.connectionName).toBe("Test DB");
+    expect(event.user).toBe("admin");
+    expect(event.result).toBe("failure");
+    expect(event.reason).toBe("maintenance_execution_failed");
+    expect(typeof event.duration).toBe("number");
+    expect(JSON.stringify(event)).not.toContain("Internal maintenance failure");
+  });
+
+  test("a thrown whole-database run is audited with the `all` target and no container", async () => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new DatabaseError("Internal maintenance failure", "postgres", "DATABASE_ERROR");
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", connection: { ...validConnection, name: "" } },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    const event = mockAuditPush.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event.target).toBe("all");
+    expect(event.container).toBeUndefined();
+    expect(event.connectionName).toBe("testdb");
+  });
+
+  test("a thrown kill is audited as a kill_session failure", async () => {
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
+      supportsMaintenance: true,
+      maintenanceOperations: ["kill"],
+    }));
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new DatabaseError("backend already gone", "postgres", "DATABASE_ERROR");
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "kill", target: "4711", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    const event = mockAuditPush.mock.calls[0]![0] as Record<string, unknown>;
+    expect(event.type).toBe("kill_session");
+    expect(event.action).toBe("KILL");
+    expect(event.target).toBe("4711");
+    expect(event.result).toBe("failure");
+  });
+
+  // The HTTP answer for a thrown run is the one the thrown error maps to, before and after the
+  // audit row existed: the row records the failure and changes nothing the caller reads.
+  test.each<[string, Error, number]>([
+    ["a DatabaseError", new DatabaseError("Internal maintenance failure", "postgres", "DATABASE_ERROR"), 500],
+    ["a QueryError", new QueryError("relation does not exist", "postgres"), 400],
+  ])("a thrown run answers what %s maps to", async (_label, thrown, status) => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw thrown;
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(status);
+    expect(data.error).toContain(thrown.message);
+  });
+
+  // A broken sink must not replace the operation's own failure with its own: the caller still
+  // reads what the thrown error maps to, not a 500 about the audit log.
+  test("a broken audit sink does not change the answer for a thrown run", async () => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError("relation does not exist", "postgres");
+    });
+    mockAuditPush.mockImplementationOnce(() => {
+      throw new Error("audit sink unavailable");
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain("relation does not exist");
+    expect(data.error).not.toContain("audit sink");
+  });
+
+  // The closed reason names a thrown run and nothing else: a completed run, and one the engine
+  // refused in its own answer, carry no reason, so the three stay apart in the log.
+  test.each<[string, boolean]>([
+    ["a completed run", true],
+    ["a run the engine refused", false],
+  ])("%s carries no reason", async (_label, success) => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => ({
+      success,
+      executionTime: 1,
+      message: "done",
+    }));
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    expect((mockAuditPush.mock.calls[0]![0] as Record<string, unknown>).reason).toBeUndefined();
+  });
+
+  // Refusals the route decides before calling the provider are not maintenance runs and write no
+  // maintenance row, thrown or otherwise.
+  test("a request refused before the provider is called writes no maintenance row", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "optimize", target: "users", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(400);
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    expect(mockAuditPush).not.toHaveBeenCalled();
+  });
 });

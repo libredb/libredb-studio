@@ -881,6 +881,11 @@ provider qualifies with it rather than splitting the name. Engines with one atta
 (SQLite, libSQL, Trino's query-id `kill`) ignore it; each provider's own meaning is in
 `docs/providers/<engine>.md`. The maintenance audit event records it beside `target`.
 
+Every request that reaches the provider's `runMaintenance` writes one audit event, of type `kill_session` for `kill` and `maintenance` otherwise.
+A run the engine completed records `result: "success"`, and a run the engine answered with `success: false` records `result: "failure"` with no reason.
+A run that throws records `result: "failure"` with the reason `maintenance_execution_failed` and the time the call took, never the thrown message, and the response is the one the thrown error maps to, as it was before the event existed.
+A request refused before the provider is called writes no maintenance event.
+
 **Maintenance Types:**
 
 | Type | PostgreSQL | MySQL | SQLite | Description |
