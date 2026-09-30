@@ -97,6 +97,21 @@ describe("planExecutableLength", () => {
       }),
     ).toBe(8 + 4 + 7 + 5);
   });
+
+  test("counts the tokens after the payload too, and never the payload's label, which is not sent", () => {
+    // etcd's value edit (etcd spec 4.5): the failure branch's `get <key>` is sent text like any
+    // argument, while `payloadLabel` only names the payload in the preview's summary.
+    expect(
+      planExecutableLength({
+        medium: "command",
+        name: "txn",
+        arguments: ['mod("/a") = "7"', "put", "--ignore-lease", "/a"],
+        payload: { text: "v1", language: "plaintext", segments: [{ from: "user", start: 0, end: 2 }] },
+        trailing: ["get", "/a"],
+        payloadLabel: "value",
+      }),
+    ).toBe(3 + (15 + 3 + 14 + 2) + 2 + (3 + 2));
+  });
 });
 
 describe("describeConsequence", () => {

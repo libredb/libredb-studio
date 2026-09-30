@@ -272,10 +272,10 @@ function isStep(value: unknown): boolean {
  * (D80).
  *
  * `planExecutableLength` rather than a sum written out here, so the two cannot drift: the command
- * arm counts the name and the argument tokens as well as the payload, and a second copy of that
- * arithmetic would be a second answer to one question. The cast is safe at this call site and
- * nowhere else: every field the function reads has just been proved a string or an array of them
- * by the arm above it.
+ * arm counts the name, the argument tokens and the trailing tokens as well as the payload, and a
+ * second copy of that arithmetic would be a second answer to one question. The cast is safe at this
+ * call site and nowhere else: every field the function reads has just been proved a string or an
+ * array of them by the arm above it.
  *
  * WHY `EDIT_BODY_BYTE_LIMIT` AND NOT `EDIT_PLAN_EXECUTABLE_LIMIT`, which is the constant whose own
  * docblock names this exact quantity. Both edit routes call this predicate FIRST and measure the
@@ -333,10 +333,16 @@ export function isObjectEditUnitShape(value: unknown): boolean {
     return isWithinTheExecutableBound(value);
   }
   if (value.medium === "command") {
-    if (!hasExactKeys(value, ["medium", "name", "arguments", "payload"])) return false;
+    if (!hasExactKeys(value, ["medium", "name", "arguments", "payload"], ["trailing", "payloadLabel"])) return false;
     if (!isBoundedString(value.name)) return false;
     if (!isStringArray(value.arguments)) return false;
     if (!isStep(value.payload)) return false;
+    // The two optional fields etcd's value edit sets (etcd spec 3.4, 4.5), each held to the rule of
+    // the field it sits beside: the tokens after the payload to the tokens before it, and the label
+    // that names the payload in the preview to the verb. A key present with no value is refused,
+    // as every optional field in this module is, because the key is the claim.
+    if (Object.hasOwn(value, "trailing") && !isStringArray(value.trailing)) return false;
+    if (Object.hasOwn(value, "payloadLabel") && !isBoundedString(value.payloadLabel)) return false;
     return isWithinTheExecutableBound(value);
   }
   return false;

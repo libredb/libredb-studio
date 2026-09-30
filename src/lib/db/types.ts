@@ -2145,6 +2145,11 @@ export interface ObjectEditStep {
  * statement, whose reply is the library name the server read out of the shebang. Rendering that
  * as pseudo-SQL would be a lie about what runs, and `medium` is what stops the preview pane
  * having to guess.
+ *
+ * The command arm's last two fields are OPTIONAL and additive, so a unit that sets neither, which
+ * Redis's is, keeps its wire shape and its preview byte for byte. etcd's value edit is the case
+ * that needs them (etcd spec 3.4, 4.5): one `Txn` whose failure branch reads the key back, so a
+ * literal read follows the payload, and whose payload is a key's value and not library code.
  */
 export type ObjectEditUnit =
   | { readonly medium: "statement"; readonly steps: readonly [ObjectEditStep, ...ObjectEditStep[]] }
@@ -2156,6 +2161,16 @@ export type ObjectEditUnit =
       readonly arguments: readonly string[];
       /** The one argument carrying the user's text. */
       readonly payload: ObjectEditStep;
+      /**
+       * The literal tokens after the payload, sent with the rest: etcd's ["get", "/app/cfg"].
+       * Absent, or empty, means none.
+       */
+      readonly trailing?: readonly string[];
+      /**
+       * What the payload is, for the preview's summary line: etcd's "value". It is never sent.
+       * Absent reads "library code", the words the summary used before the field existed.
+       */
+      readonly payloadLabel?: string;
     };
 
 /**
