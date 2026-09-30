@@ -18,6 +18,7 @@
  * address a negative one a client chose). Each refusal is a whole sentence that names what it refused,
  * and never quotes a flag's value, a value or a line.
  */
+import { INT64_MAX, INT64_MIN } from "./keys";
 import { isFlagText, type LexRefusalCode, type SplitLine, splitWords, type Word } from "./lexer";
 
 // ============================================================================
@@ -199,18 +200,15 @@ const isRefusal = (value: object): value is CommandRefusal => "code" in value &&
 const PLAIN_DECIMAL = /^(?:0|[1-9][0-9]*)$/;
 const SIGNED_DECIMAL = /^[+-]?[0-9]+$/;
 const HEX_ID = /^[0-9a-fA-F]+$/;
-/** An INT64's bounds, derived rather than spelled: the digits belong to sql/sqlite-int64.ts. */
-const MAX_INT64 = (BigInt(1) << BigInt(63)) - BigInt(1);
-const MIN_INT64 = -(BigInt(1) << BigInt(63));
 /** etcd's ceiling on a lease's TTL, in seconds (MaxLeaseTTL, server/lease/lessor.go). */
 const MAX_LEASE_TTL = 9_000_000_000;
-const LARGEST_LEASE_ID = "7fffffffffffffff";
+const LARGEST_LEASE_ID = INT64_MAX.toString(16);
 
 /** A decimal integer in an INT64, as strconv.ParseInt(text, 10, 64) reads it, written plainly. */
 function signedInt64(text: string): string | undefined {
   if (!SIGNED_DECIMAL.test(text)) return undefined;
   const value = BigInt(text);
-  return value > MAX_INT64 || value < MIN_INT64 ? undefined : value.toString();
+  return value > INT64_MAX || value < INT64_MIN ? undefined : value.toString();
 }
 
 type LeaseId =
@@ -267,7 +265,7 @@ const DURATION_PART = /^([0-9]*)(?:\.([0-9]*))?([^0-9.]*)/;
 const ZERO = BigInt(0);
 const TEN = BigInt(10);
 /** 2^63: what time.ParseDuration lets one part and the sum reach before it applies the sign. */
-const DURATION_CEILING = MAX_INT64 + BigInt(1);
+const DURATION_CEILING = INT64_MAX + BigInt(1);
 const NANOS_PER_MS = BigInt(1_000_000);
 
 /**
@@ -295,7 +293,7 @@ function goDurationNanos(text: string): bigint | undefined {
     let full = false;
     for (const digit of fraction) {
       const next = kept * TEN + BigInt(digit);
-      if (full || kept > MAX_INT64 / TEN || next > DURATION_CEILING) {
+      if (full || kept > INT64_MAX / TEN || next > DURATION_CEILING) {
         full = true;
         continue;
       }
@@ -307,7 +305,7 @@ function goDurationNanos(text: string): bigint | undefined {
   }
   // Every part adds, so the overflow checks Go makes as it goes come to one bound on the sum: 2^63 ns
   // before a minus sign is applied, and 2^63 - 1 without one.
-  return total > (negative ? DURATION_CEILING : MAX_INT64) ? undefined : negative ? -total : total;
+  return total > (negative ? DURATION_CEILING : INT64_MAX) ? undefined : negative ? -total : total;
 }
 
 const formatMs = (ms: number): string => (ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`);
@@ -388,8 +386,8 @@ const LIMIT_FLAG = valued("limit", "<n>", "50", (text) =>
 
 const REV_FLAG = valued("rev", "<n>", "42", (text) => {
   if (!PLAIN_DECIMAL.test(text) || text === "0") return { message: PLAIN_REV };
-  return BigInt(text) > MAX_INT64
-    ? { message: `--rev is past the largest revision etcd holds, ${MAX_INT64}.` }
+  return BigInt(text) > INT64_MAX
+    ? { message: `--rev is past the largest revision etcd holds, ${INT64_MAX}.` }
     : { value: text };
 });
 
