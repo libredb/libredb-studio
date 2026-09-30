@@ -369,6 +369,7 @@ mock.module("@/components/ui/resizable", () => ({
 }));
 
 const { default: Studio } = await import("@/components/Studio");
+const { PREVIEW_PAGE_SIZE } = await import("@/hooks/use-tab-manager");
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -510,6 +511,20 @@ function iconOf(element: HTMLElement): string {
 
 function tabNames(): string[] {
   return screen.getAllByRole("tab").map((tab) => tab.textContent ?? "");
+}
+
+/**
+ * Resolves once the data preview that opening a relation's tab schedules has run.
+ *
+ * `handleTableClick` runs the new tab's statement on a 100 ms timer that nothing clears, and
+ * `mockExecuteQuery` is one mock for the whole file, so a test that ends first hands its run to
+ * whichever test is on when the timer fires. A test that opens a data tab waits here for its own.
+ * The wait is ORDERED rather than timed: this timer is set after that one with a longer delay, so
+ * it fires after it however starved the process is, and a count read after it is final. The hook's
+ * own suite waits for the same run the same way (`settle` in `tests/hooks/use-tab-manager.test.ts`).
+ */
+function afterPreviewRuns(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
 beforeEach(() => {
@@ -981,6 +996,24 @@ describe("activation splits by what the row IS", () => {
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "orders", "order_summary"]));
     // Neither opened a Source tab, and neither read the source route.
     expect(sourceReads).toEqual([]);
+
+    /*
+     * And both RAN, each on the tab it opened: the half of this test's name nothing asserted.
+     *
+     * MEASURED before the wait existed: these two runs were still pending when this test ended,
+     * and with this file pinned to one core beside three, six or ten busy loops they fired inside
+     * the key browser's "nothing runs" below, which failed 39 runs in 40. The wait is what keeps
+     * them this test's.
+     */
+    await afterPreviewRuns();
+    const [, ordersTab, viewTab] = screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-tab-id"));
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+    expect(mockExecuteQuery).toHaveBeenNthCalledWith(1, "SELECT * FROM app.orders;", ordersTab, false, {
+      limit: PREVIEW_PAGE_SIZE,
+    });
+    expect(mockExecuteQuery).toHaveBeenNthCalledWith(2, "SELECT * FROM app.order_summary;", viewTab, false, {
+      limit: PREVIEW_PAGE_SIZE,
+    });
   });
 
   test("a kind with neither a data preview nor a source still does nothing", async () => {
@@ -1656,6 +1689,9 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     openTableFromPalette();
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
+    // The table's preview ran too, and waiting for it keeps that run this test's (`afterPreviewRuns`).
+    await afterPreviewRuns();
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
   });
 
   test("a key activated in the key browser is refused in the same window, and opens once the answer is on screen", async () => {
