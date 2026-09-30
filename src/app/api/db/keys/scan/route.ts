@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, ObjectRouteError, optionalDatabase, requireString } from "@/lib/api/object-route";
-import type { KeyScanCapability } from "@/lib/db/types";
+import { containerDepth } from "@/lib/db/object-kinds";
+import { keyScanShape, type KeyScanCapability, type KeyScanShape } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -37,11 +38,20 @@ export const dynamic = "force-dynamic";
  * own declaration rather than from a number written here — two defaults for one engine is how
  * a panel and its provider come to disagree about what a batch is.
  *
- * THE CURSOR IS SHAPE-CHECKED AND NOT PARSED. Redis cursors are opaque, and their decimal
- * spelling is an implementation detail (`SCAN` also accepts `MATCH`-independent reverse-binary
- * forms on a rehashing table). The check is only that it is a run of digits, because that
- * refuses an obviously malformed one in this route's own words while leaving the value itself
- * untouched on the way through.
+ * THE CURSOR AND THE PATTERN ARE READ IN THE DECLARED SHAPE (spec 3.4, 4.6), and neither is parsed. A
+ * `decimal` cursor, Redis's, is shape-checked as a run of digits: Redis cursors are opaque, and their
+ * decimal spelling is an implementation detail (`SCAN` also accepts `MATCH`-independent reverse-binary
+ * forms on a rehashing table), so the check refuses an obviously malformed one in this route's own
+ * words while leaving the value itself untouched on the way through. An `opaque` cursor, etcd's, is
+ * any non-empty string, passed through as it came, because only the provider that wrote it can read
+ * it and that provider refuses one it did not write. A `glob` pattern is trimmed and forwarded; a
+ * `prefix` pattern is forwarded as typed, because it is bytes and ` a/` is a different range from
+ * `a/`.
+ *
+ * `database` IS TAKEN ONLY WHERE THERE IS ONE TO NAME. It names the numbered database a walk reads,
+ * so an engine that declares a walk and no container level (etcd, whose connection is one key space)
+ * is refused it in this route's own words rather than handed a number it has no use for (spec 3.4).
+ * `containerDepth` is the rule the Keys panel applies before it sends one at all.
  *
  * Budget: shared, through `handleObjectRequest`, with the object routes and `POST /api/db/query`
  * (`src/lib/api/object-route.ts`). A walk a person drives with a progress bar spends the same
@@ -50,7 +60,8 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/keys/scan", async (provider, body) => {
-    const capability = provider.getCapabilities().keyScan;
+    const capabilities = provider.getCapabilities();
+    const capability = capabilities.keyScan;
     if (capability === undefined) {
       throw new ObjectRouteError(
         `${provider.type} declares no key-space walk: its objects are enumerated from a catalog, so there is nothing to page`,
@@ -63,14 +74,23 @@ export async function POST(req: NextRequest) {
       throw new ObjectRouteError(`${provider.type} declares keyScan but implements no scanKeysPage`, 500);
     }
 
-    return walk.call(provider, {
-      cursor: readCursor(body),
-      pattern: readPattern(body),
+    const shape = keyScanShape(capability);
+    const options = {
+      cursor: readCursor(body, shape),
+      pattern: readPattern(body, shape),
       count: readCount(body, capability),
       // Absent means the provider's own session database, which is the provider's answer to give:
       // `SELECT` state lives on the connection and not in this route.
       database: optionalDatabase(body, "database"),
-    });
+    };
+    if (options.database !== undefined && containerDepth(capabilities) === 0) {
+      throw new ObjectRouteError(
+        `${provider.type} walks one key space and declares no database level: "database" names the numbered ` +
+          `database to walk, and this engine has none to name`,
+        400,
+      );
+    }
+    return walk.call(provider, options);
   });
 }
 
@@ -78,12 +98,20 @@ export async function POST(req: NextRequest) {
  * The cursor the previous page answered with; `"0"` starts a walk.
  *
  * Absent means start, because that is what a caller with no cursor has: a `Scan` button and a
- * `Scan more` button differ in whether they pass one, and requiring the caller to spell `"0"`
- * would make the first press of the first button an error to be fixed rather than a walk to be
- * started.
+ * `Scan more` button differ in whether they pass one, and requiring the caller to spell `"0"` would
+ * make the first press of the first button an error to be fixed rather than a walk to be started.
+ *
+ * Read in the declared shape: a `decimal` cursor must be a run of digits, and an `opaque` one any
+ * non-empty string, handed over exactly as it came.
  */
-function readCursor(body: Record<string, unknown>): string {
+function readCursor(body: Record<string, unknown>, shape: KeyScanShape): string {
   if (body.cursor === undefined) return "0";
+  if (shape.cursor === "opaque") {
+    if (typeof body.cursor !== "string" || body.cursor === "") {
+      throw new ObjectRouteError('"cursor" must be the cursor the previous page answered with', 400);
+    }
+    return body.cursor;
+  }
   const cursor = requireString(body, "cursor");
   if (!/^\d+$/.test(cursor)) {
     throw new ObjectRouteError('"cursor" must be a decimal cursor the previous page answered with', 400);
@@ -91,9 +119,19 @@ function readCursor(body: Record<string, unknown>): string {
   return cursor;
 }
 
-/** A `MATCH` pattern, or absent for every key. An empty string is refused rather than passed. */
-function readPattern(body: Record<string, unknown>): string | undefined {
-  return body.pattern === undefined ? undefined : requireString(body, "pattern");
+/**
+ * The walk's pattern, or absent for every key. An empty string is refused rather than passed.
+ *
+ * A `glob` pattern is trimmed, as every string this route family reads is; a `prefix` pattern is not,
+ * because a prefix is bytes and a space at either end is part of the range it names (spec 4.6).
+ */
+function readPattern(body: Record<string, unknown>, shape: KeyScanShape): string | undefined {
+  if (body.pattern === undefined) return undefined;
+  if (shape.pattern === "glob") return requireString(body, "pattern");
+  if (typeof body.pattern !== "string" || body.pattern === "") {
+    throw new ObjectRouteError('"pattern" must be a non-empty string', 400);
+  }
+  return body.pattern;
 }
 
 /**

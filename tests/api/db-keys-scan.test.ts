@@ -111,7 +111,15 @@ const PAGE: KeyScanPage = {
  * names rather than letting a TypeError stand in for it.
  */
 function declaringProvider(walk?: (options: KeyScanOptions) => Promise<KeyScanPage>): DatabaseProvider {
-  const provider = createMockProvider({ type: "redis", capabilities: { keyScan: DECLARED } });
+  // Redis's own container level beside its walk (`redis.ts`'s `REDIS_CONTAINER_LEVELS`): the route takes
+  // `database` only from an engine that declares a level to name (spec 3.4).
+  const provider = createMockProvider({
+    type: "redis",
+    capabilities: {
+      keyScan: DECLARED,
+      containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+    },
+  });
   if (walk !== undefined) provider.scanKeysPage = mock(walk);
   return provider;
 }
@@ -302,5 +310,105 @@ describe("POST /api/db/keys/scan", () => {
       expect({ database, status }).toEqual({ database, status: 400 });
       expect(body.error).toContain('"database" must be a non-negative integer');
     }
+  });
+});
+
+/**
+ * The route in a declared shape (spec 3.4, 4.6): an etcd-shaped provider walks a byte-ordered key
+ * space with an opaque cursor and a literal prefix, and names no database in it.
+ */
+describe("POST /api/db/keys/scan in a declared shape", () => {
+  const ETCD_SCAN = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  } as const;
+  const ETCD_PAGE: KeyScanPage = {
+    keys: ["/app/a"],
+    cursor: "k:L2FwcC9i:12:9",
+    total: 9,
+    types: {},
+    skipped: { count: 1, reason: "a key that is not UTF-8 text has no name a row could carry." },
+  };
+
+  /** An etcd-shaped provider: the walk declared in its shape, and no container level (spec 4.1). */
+  function prefixProvider(walk: (options: KeyScanOptions) => Promise<KeyScanPage>): DatabaseProvider {
+    const provider = createMockProvider({ type: "etcd", capabilities: { keyScan: ETCD_SCAN, containerLevels: [] } });
+    provider.scanKeysPage = mock(walk);
+    return provider;
+  }
+
+  test("forwards an opaque cursor exactly as the previous page wrote it", async () => {
+    const walk = mock(async () => ETCD_PAGE);
+    activeProvider = prefixProvider(walk);
+
+    const { status, body } = await post<KeyScanPage>({ cursor: "k:L2FwcC9i:12:9" });
+
+    expect(status).toBe(200);
+    // The page travels as the provider answered it, `skipped` included.
+    expect(body).toEqual(ETCD_PAGE);
+    expect(walk).toHaveBeenLastCalledWith({
+      cursor: "k:L2FwcC9i:12:9",
+      pattern: undefined,
+      count: 500,
+      database: undefined,
+    });
+
+    // Nothing is trimmed or read: a cursor only its provider can read is handed over as it came, spaces
+    // included, and that provider refuses one it did not write.
+    for (const cursor of [" k:L2FwcC9i:12:9 ", "  "]) {
+      await post({ cursor });
+      expect(walk).toHaveBeenLastCalledWith({ cursor, pattern: undefined, count: 500, database: undefined });
+    }
+  });
+
+  test("refuses an opaque cursor that is not a non-empty string", async () => {
+    activeProvider = prefixProvider(async () => ETCD_PAGE);
+
+    for (const cursor of ["", 17, null, true]) {
+      const { status, body } = await post({ cursor });
+      expect({ cursor, status }).toEqual({ cursor, status: 400 });
+      expect(body.error).toBe('"cursor" must be the cursor the previous page answered with');
+    }
+  });
+
+  test("forwards a prefix as typed, untrimmed and unescaped", async () => {
+    const walk = mock(async () => ETCD_PAGE);
+    activeProvider = prefixProvider(walk);
+
+    // Review Focus 1: a space at either end, both quotes, a newline, `#`, `$`, a glob metacharacter and
+    // a leading `-` are bytes of the prefix, and a trimmed one would walk a different range.
+    for (const pattern of [" a/", "/-a b'\"\n#$[x]/", "  "]) {
+      await post({ pattern });
+      expect(walk).toHaveBeenLastCalledWith({ cursor: "0", pattern, count: 500, database: undefined });
+    }
+  });
+
+  test("refuses an empty prefix or one that is not a string", async () => {
+    activeProvider = prefixProvider(async () => ETCD_PAGE);
+
+    for (const pattern of ["", 5, null]) {
+      const { status, body } = await post({ pattern });
+      expect({ pattern, status }).toEqual({ pattern, status: 400 });
+      expect(body.error).toBe('"pattern" must be a non-empty string');
+    }
+  });
+
+  test("refuses a database on an engine that walks one key space, in this route's own words", async () => {
+    const walk = mock(async () => ETCD_PAGE);
+    activeProvider = prefixProvider(walk);
+
+    for (const database of [0, 3]) {
+      const { status, body } = await post({ database });
+      expect({ database, status }).toEqual({ database, status: 400 });
+      expect(body.error).toBe(
+        'etcd walks one key space and declares no database level: "database" names the numbered database to walk, and this engine has none to name',
+      );
+    }
+    // Refused before the walk: no page is read for a question the engine cannot answer.
+    expect(walk).not.toHaveBeenCalled();
   });
 });

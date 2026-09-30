@@ -445,16 +445,16 @@ The value it carries is the walk's own number: a key lives in exactly one number
 runs where the key is. The connection's own `database` field is not rewritten by it. **Absent** is the
 ordinary case and the one every statement other than a key read sends.
 
-The field is accepted only where the provider declares `keyScan`, because that is the engine for which
-a run cannot name a database in its statement; on any other engine it would be a per-run override of an
-operator-pinned `database` with no walk to justify it, so it is refused rather than quietly honoured.
-The declaration is read without connecting, so the refusal costs no socket and an unreachable host of
-another engine still answers 400:
+The field is accepted only where the provider declares `keyScan` and a container level to name, which is Redis: a Redis key space belongs to one numbered database, and a run cannot name that database in its statement.
+On an engine that declares no walk it would be a per-run override of an operator-pinned `database` with no walk to justify it, so it is refused rather than quietly honoured.
+etcd declares the walk and no container level, because one connection is one cluster with one key space, so it refuses the field as well.
+The declaration is read without connecting, so each refusal costs no socket, and an unreachable host still answers 400:
 
 | Condition | Status | Body |
 |-----------|--------|------|
 | `database` present and not a non-negative integer | `400` | `{ "error": "\"database\" must be a non-negative integer" }` — the same sentence `POST /api/db/keys/scan` refuses with, shared in `optionalDatabase` |
 | The provider declares no `keyScan` | `400` | `{ "error": "<type> declares no key-space walk: \"database\" names the database a key was walked in, and only an engine that needs such a name accepts it" }` |
+| The provider declares `keyScan` and no container level (etcd) | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database a key was walked in, and this engine has none to name" }` |
 | The server has no such database | `400` | `{ "error": "Redis refused database <n>: ERR DB index is out of range", "code": "QUERY_ERROR", "statusCode": 400 }`, never a read of database 0 |
 
 **Bound parameters (optional):**
@@ -1209,6 +1209,9 @@ answers `400`, in this route's own words. A provider that declares the capabilit
 walk is a distinct `500` rather than a crash: `ProviderCapabilities` is published, so that is a state
 an external implementer can genuinely be in.
 
+The declaration also states the walk's shape, in four optional fields that each read as Redis's walk when absent: `separator` (`":"`) splits a key into the panel's folders, `cursor` (`"decimal"`) says how a cursor is spelled, `pattern` (`"glob"`) says what `pattern` is, and `totalScope` (`"database"`) says what `total` counts.
+etcd declares `"/"`, `"opaque"`, `"prefix"` and `"walk"`: a cursor only it can read, a literal prefix instead of a glob, and a total that counts the keys the walk covers.
+
 **Authentication:** Required.
 No admin gate, for the same reason the object routes have none: the role decides which connection may
 be OPENED and nothing about what may be read through it.
@@ -1227,10 +1230,10 @@ be OPENED and nothing about what may be read through it.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `connection` or `connectionId` | object or string | Yes | The same connection selector every database route takes |
-| `cursor` | string | No | The cursor the previous page answered with. Absent means `"0"`, which starts a walk. Refused unless it is a run of digits — Redis cursors are opaque, and only the obviously malformed one is refused here rather than passed through |
-| `pattern` | string | No | A `MATCH` pattern, forwarded verbatim. Absent means every key, which is NOT the same as an empty string: `MATCH ""` is a pattern no key satisfies. Two things a caller scoping a walk has to know. `MATCH` is applied per batch server-side and is **not indexed**, so a scoped walk costs the server a full pass over the keyspace rather than a lookup. And it is a glob with **no escape**, so a key segment that contains `*`, `?` or `[` matches more than the prefix asked about — the answer must be filtered by the caller, compared segment by segment (`app:envelope` is not under `app:env`) |
+| `cursor` | string | No | The cursor the previous page answered with. Absent means `"0"`, which starts a walk. Under a `"decimal"` declaration (Redis) it is refused unless it is a run of digits: Redis cursors are opaque, and only the obviously malformed one is refused here rather than passed through. Under an `"opaque"` declaration (etcd) it is any non-empty string, passed through exactly as the previous page wrote it, because only the provider that wrote it can read it |
+| `pattern` | string | No | The walk's pattern, in the shape the declaration names. Absent means every key, which is NOT the same as an empty string, which is refused: `MATCH ""` is a pattern no key satisfies. Under `"glob"` (Redis) it is a `MATCH` pattern, trimmed and then forwarded, and a caller scoping a walk has two things to know. `MATCH` is applied per batch server-side and is **not indexed**, so a scoped walk costs the server a full pass over the keyspace rather than a lookup. And it is a glob with **no escape**, so a key segment that contains `*`, `?` or `[` matches more than the prefix asked about: the answer must be filtered by the caller, compared segment by segment (`app:envelope` is not under `app:env`). Under `"prefix"` (etcd) it is the literal prefix every walked key begins with, forwarded exactly as sent, with nothing trimmed and nothing escaped, because a prefix is bytes and a space at either end is part of the range it names |
 | `count` | number | No | The batch size. Absent takes the provider's declared `defaultCount`. A value above the declared `maxCount` is **refused rather than clamped**, because a silent clamp answers a request for 10,000 with 1,000 and says nothing |
-| `database` | number | No | Which numbered database to walk. Absent means the one the session is in, since `SELECT` state lives on the connection and not in this route. A caller offering the choice reads the engine's own list from `POST /api/db/objects/containers` — the same container level the object tree's top level comes from — rather than assuming a count: the same server answers 16 outside cluster mode and 1 inside it |
+| `database` | number | No | Which numbered database to walk, taken only from an engine that declares a container level to name (Redis). Absent means the one the session is in, since `SELECT` state lives on the connection and not in this route. A caller offering the choice reads the engine's own list from `POST /api/db/objects/containers`, the same container level the object tree's top level comes from, rather than assuming a count: the same server answers 16 outside cluster mode and 1 inside it. An engine that walks one key space and declares no level (etcd) refuses the field |
 
 **Response (200 OK):**
 
@@ -1248,8 +1251,9 @@ be OPENED and nothing about what may be read through it.
 | `keys` | The batch. **Not deduplicated and not ordered** — `SCAN` promises neither, so a key present for the whole walk may be returned twice while the table rehashes, and the order is the hash table's rather than the caller's |
 | `cursor` | The cursor for the next page. `"0"` means the walk reached the end, and it is the only end-of-walk signal the engine publishes |
 | `types` | Each key's value type, **by key name**. It travels with the page rather than being asked for separately: `TYPE` takes one key and Redis publishes no batch form, so the provider pipelines one call per key and the cost is ONE extra round trip per page whatever the page holds. A key **absent** from the map is one whose type could not be read and a caller should draw nothing for it; a key that vanished between the walk and this read is present with the server's own `"none"`. What it describes is the moment it was read, like everything else in a sampled walk |
-| `total` | `DBSIZE` for the database walked: the engine's own key count, and the only denominator a progress indicator can divide by, since a cursor says nothing about how much is left. On a clustered deployment it is the LOCAL node's count — `SCAN` walks one node's slots and `DBSIZE` has no cluster-wide form |
+| `total` | What a progress indicator divides by, in the scope the declaration's `totalScope` names. Under `"database"` (Redis) it is `DBSIZE` for the database walked: the engine's own key count, and the only denominator a progress indicator can divide by, since a cursor says nothing about how much is left. On a clustered deployment it is the LOCAL node's count: `SCAN` walks one node's slots and `DBSIZE` has no cluster-wide form. Under `"walk"` (etcd) it is the exact count of the keys the walk covers, the pattern's prefix range or the whole key space, at the revision the walk's pages are pinned to; for a user whose grants are narrower, it counts the keys of the ranges that user may read |
 | `clustered` | Present and `true` only when the server's own `INFO cluster` reply says this deployment is clustered. `SCAN` and `DBSIZE` are per node and neither has a cluster-wide form, so on a cluster `keys` and `total` describe the node that answered and nothing else. **Absent** means the deployment does not say it is clustered, which is the ordinary server; a reply the provider could not read is absent rather than a guess. The fact is read in the same round trip as `total` |
+| `skipped` | Present only when the page left keys out: `{ "count", "reason" }`, how many keys this page read and could not name, and why. On etcd a key that is not UTF-8 text is counted here rather than listed, because a name decoded with replacement characters would address a different key. Redis never sends it |
 
 The cursor belongs to the CALLER. Nothing is retained between two pages, so a page costs a round trip
 rather than a session, and a cursor arriving after a reconnect is still valid: it is a position in a
@@ -1261,12 +1265,14 @@ hash table, not a handle.
 |-----------|--------|------|
 | The page was read | `200` | the body above |
 | The connection's engine declares no `keyScan` | `400` | `{ "error": "<type> declares no key-space walk: its objects are enumerated from a catalog, so there is nothing to page" }` |
-| `cursor` is present and not a run of digits | `400` | `{ "error": "\"cursor\" must be a decimal cursor the previous page answered with" }` |
-| `pattern` is present but blank | `400` | `{ "error": "\"pattern\" must be a non-empty string" }` |
+| `cursor` is present and not a run of digits, under a `"decimal"` declaration | `400` | `{ "error": "\"cursor\" must be a decimal cursor the previous page answered with" }` |
+| `cursor` is present and not a non-empty string, under an `"opaque"` declaration | `400` | `{ "error": "\"cursor\" must be the cursor the previous page answered with" }` |
+| `pattern` is present but blank under `"glob"`, or empty or not a string under `"prefix"` | `400` | `{ "error": "\"pattern\" must be a non-empty string" }` |
 | `count` is present and not a positive integer | `400` | `{ "error": "\"count\" must be a positive integer" }` |
 | `count` exceeds the declared `maxCount` | `400` | `{ "error": "\"count\" must be at most <maxCount>, which is the batch size this engine declares" }` |
 | The server has no such database | `400` | `{ "error": "Redis refused database <n>: ERR DB index is out of range", "code": "QUERY_ERROR", "statusCode": 400 }`, never a read of database 0 |
 | `database` is negative or not an integer | `400` | `{ "error": "\"database\" must be a non-negative integer" }` |
+| `database` is present and the engine declares no container level | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database to walk, and this engine has none to name" }` |
 | The engine declares `keyScan` and implements no walk | `500` | `{ "error": "<type> declares keyScan but implements no scanKeysPage" }` |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 
