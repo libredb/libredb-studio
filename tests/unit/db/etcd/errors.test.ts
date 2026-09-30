@@ -12,7 +12,8 @@
  * refused does too, so it names no TLS cause; "wrong version number" is a server that answered
  * with bytes that are not TLS, which R07 did not measure), the pre-send and post-send deadlines,
  * "Connection dropped", the client's receive cap, "no leader" under `hasleader`, and the watch
- * `cancel_reason` forms.
+ * `cancel_reason` forms. The KE6 captures whose details carry an address are read as captured, and
+ * each message they give names no address or port but the configured endpoint's (D-T11-12).
  */
 import { describe, expect, test } from "bun:test";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -36,6 +37,7 @@ import {
   watchEndError,
   writeNotApplied,
 } from "@/lib/db/providers/keyvalue/etcd/errors";
+import { etcdFixture } from "../../../helpers/etcd-fixtures";
 
 const UNKNOWN_OUTCOME = "The write may have been applied: read the key again before you run the command again.";
 
@@ -73,6 +75,27 @@ function grpc(code: number, details: string): Error {
 /** A Node system error, as a socket or TLS failure raises it. */
 function systemError(code: string): Error {
   return Object.assign(new Error(`${code} happened at 10.9.8.7:2379`), { code });
+}
+
+/** An IPv4 literal, an IPv6 literal, a port, and grpc-js's peer field. */
+const ADDRESS_LIKE = [
+  /\b\d{1,3}(?:\.\d{1,3}){3}\b/g,
+  /(?:[0-9a-f]{0,4}:){2,}[0-9a-f]{1,4}/gi,
+  /:\d+\b/g,
+  /remote_addr/g,
+];
+
+/**
+ * What a message holds that reads as an address, a port or one of `names`, once the configured endpoint
+ * and TLS identity, which 5.6's sentences may name (D-T11-12), are taken out of it.
+ */
+function strayAddresses(message: string, connection: EtcdErrorConnection, names: readonly string[] = []): string[] {
+  const configured = [`${connection.host}:${connection.port}`, connection.tls?.serverName ?? connection.host];
+  const rest = configured.reduce((text, allowed) => text.split(allowed).join(" "), message);
+  return [
+    ...ADDRESS_LIKE.flatMap((pattern) => rest.match(pattern) ?? []),
+    ...names.filter((name) => rest.includes(name)),
+  ];
 }
 
 async function respond(error: Error): Promise<{ status: number; body: { error: string; retryable?: boolean } }> {
@@ -503,7 +526,8 @@ describe("toProviderError: a write whose outcome is unknown (QueryError, 400, no
     [
       "a post-send deadline",
       toEtcdError(grpc(4, "Deadline exceeded after 3.000s,remote_addr=127.0.0.1:23794")),
-      "The put reached its deadline before etcd answered. (Deadline exceeded after 3.000s,remote_addr=127.0.0.1:23794)",
+      // The peer is dropped: through a tunnel it is the local forward (D-T11-12).
+      "The put reached its deadline before etcd answered. (Deadline exceeded after 3.000s)",
     ],
     [
       "grpc-go's context deadline",
@@ -594,6 +618,161 @@ describe("toProviderError: a write whose outcome is unknown (QueryError, 400, no
     const tooLarge = toProviderError(toEtcdError(grpc(3, "etcdserver: request is too large")), write("put"));
     expect(tooLarge.message).toBe(
       "etcd refused the put: the request is larger than etcd accepts. (etcd: request is too large)",
+    );
+  });
+});
+
+describe("toProviderError: no address from a runtime or grpc-js text, directly or through a tunnel (D-T11-12)", () => {
+  /**
+   * The KE6 captures whose details carry an address, found by 127.0.0.1 and ::1 in tests/fixtures/etcd: each
+   * channel dialled 127.0.0.1, which a tunnel's local forward always is, at the port given here. The last
+   * column is what the detail tells the user once its address is gone.
+   */
+  const captures: ReadonlyArray<readonly [string, number, "plaintext" | "tls", string, readonly string[]]> = [
+    ["transport/error-refused.bun", 39011, "plaintext", "ECONNREFUSED", []],
+    ["transport/error-refused.node", 39011, "plaintext", "ECONNREFUSED", []],
+    ["etcd/error-deadline-after-send.bun", 2379, "plaintext", "Deadline exceeded after 1.000s", []],
+    ["etcd/error-deadline-after-send.node", 2379, "plaintext", "Deadline exceeded after 1.001s", []],
+    // The altname check names the certificate's DNS names and IPs, and the name it was asked for.
+    [
+      "etcd-auth/error-tls-name.bun",
+      2379,
+      "tls",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+      ["localhost", "etcd-auth", "etcd-wrong-name"],
+    ],
+    [
+      "etcd-auth/error-tls-name.node",
+      2379,
+      "tls",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+      ["localhost", "etcd-auth", "etcd-wrong-name"],
+    ],
+  ];
+  /** A direct connection names the host it dialled; through a tunnel the configured far end is another host and port. */
+  const shapes = (port: number, channel: "plaintext" | "tls"): ReadonlyArray<readonly [string, EtcdErrorConnection]> =>
+    [
+      ["directly", { ...PLAINTEXT, host: "etcd.test", port }],
+      ["through a tunnel", { ...PLAINTEXT, host: "etcd.internal", port: 12379 }],
+    ].map(([shape, connection]) => {
+      const facts = connection as EtcdErrorConnection;
+      return [
+        shape as string,
+        channel === "tls" ? { ...facts, tls: { serverName: facts.host, clientCertificate: false } } : facts,
+      ] as const;
+    });
+
+  for (const [name, port, channel, reduced, names] of captures) {
+    for (const [shape, connection] of shapes(port, channel)) {
+      for (const context of [read("get", connection), write("put", connection)]) {
+        test(`${name}, ${shape}, for a ${context.write ? "write" : "read"}: the configured endpoint only, and the detail's words`, () => {
+          const detail = (etcdFixture<Error>(name) as Error & { details: string }).details;
+          // The premise: the capture carries the address this rule keeps out.
+          expect(detail).toContain("127.0.0.1");
+          const mapped = toProviderError(toEtcdError(etcdFixture(name)), context);
+          expect(mapped.message).toContain(` (${reduced})`);
+          expect(strayAddresses(mapped.message, connection, names)).toEqual([]);
+        });
+      }
+    }
+  }
+
+  test("a refused connection still names the configured endpoint, directly and through a tunnel", () => {
+    const refused = toEtcdError(etcdFixture("transport/error-refused.node"));
+    expect(toProviderError(refused, read("get", { ...PLAINTEXT, port: 39011 })).message).toStartWith(
+      "No etcd answered a plaintext connection at etcd.test:39011.",
+    );
+    expect(toProviderError(refused, read("get", { ...PLAINTEXT, host: "10.0.0.5" })).message).toStartWith(
+      "No etcd answered a plaintext connection at 10.0.0.5:2379.",
+    );
+  });
+
+  test.each([
+    ["an Error's text", "Error: connect ECONNREFUSED 10.0.0.5:2379", "ECONNREFUSED"],
+    // A socket error on the HTTP/2 session: its message and a timestamp (grpc-js transport.ts), as Task 13 met it.
+    ["a session error's message", "connect ECONNRESET 127.0.0.1:42919 (2026-09-30T16:31:03.606Z)", "ECONNRESET"],
+    ["a name lookup", "Error: getaddrinfo ENOTFOUND etcd.internal", "ENOTFOUND"],
+    ["a lookup that may succeed later", "Error: getaddrinfo EAI_AGAIN etcd.internal", "EAI_AGAIN"],
+    [
+      "a Node error naming its code in brackets",
+      "Error [ERR_TLS_CERT_ALTNAME_INVALID]: Hostname/IP does not match certificate's altnames: IP: 10.0.0.6 is not in the cert's list: 10.0.0.5",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    ],
+    [
+      "a TypeError naming its code in brackets",
+      "TypeError [ERR_INVALID_ARG_VALUE]: The property 'options.servername' Setting the TLS ServerName to an IP address is not permitted.. Received '127.0.0.1'",
+      "ERR_INVALID_ARG_VALUE",
+    ],
+  ])("a runtime error grpc-js carries as its last error, %s, is its system code alone", (_label, lastError, code) => {
+    const pickFirst = `No connection established. Last error: ${lastError}. Resolution note: `;
+    const roundRobin = `round_robin: No connection established. Last error: ${lastError}`;
+    for (const details of [pickFirst, roundRobin]) {
+      for (const context of [read("get", TLS_NO_CERT), write("put", TLS_NO_CERT)]) {
+        const mapped = toProviderError(toEtcdError(grpc(14, details)), context);
+        expect(mapped).toBeInstanceOf(ConnectionError);
+        expect(mapped.message).toEndWith(` (${code})`);
+      }
+    }
+  });
+
+  test("a last error that names no code is kept as grpc-js wrote it, since it holds no address", () => {
+    const details =
+      "No connection established. Last error: Error: unable to verify the first certificate. Resolution note: ";
+    const mapped = toProviderError(toEtcdError(grpc(14, details)), read("get", TLS_NO_CERT));
+    expect(mapped.message).toBe(
+      `The server's certificate is not signed by the CA under SSL / TLS: paste the etcd CA. (${details})`,
+    );
+  });
+
+  test.each([
+    ["the peer alone", "Deadline exceeded after 3.000s,remote_addr=127.0.0.1:23794", "Deadline exceeded after 3.000s"],
+    [
+      "the peer after an LB pick, an IPv6 one",
+      "Deadline exceeded after 3.002s,LB pick: 0.001s,remote_addr=[::1]:23794",
+      "Deadline exceeded after 3.002s,LB pick: 0.001s",
+    ],
+    [
+      "the peer after a pre-send marker",
+      "Deadline exceeded after 3.000s,waiting for name resolution,remote_addr=127.0.0.1:23794",
+      "Deadline exceeded after 3.000s,waiting for name resolution",
+    ],
+  ])("a deadline's remote_addr is dropped and the rest of grpc-js's text kept: %s", (_label, details, kept) => {
+    const timeout = toProviderError(toEtcdError(grpc(4, details)), read("get"));
+    expect(timeout).toBeInstanceOf(TimeoutError);
+    expect(timeout.message).toBe(`The get reached its deadline of 60,000 ms. (${kept})`);
+    const unknown = toProviderError(toEtcdError(grpc(4, details)), write("put"));
+    expect(unknown.message).toBe(`The put reached its deadline before etcd answered. (${kept}) ${UNKNOWN_OUTCOME}`);
+  });
+
+  test("a name that did not resolve is said without the target grpc-js dialled", () => {
+    const mapped = toProviderError(
+      toEtcdError(grpc(14, "Name resolution failed for target dns:etcd.invalid:2379")),
+      read(),
+    );
+    expect(mapped).toBeInstanceOf(ConnectionError);
+    expect(mapped.message).toBe(
+      "No etcd answered a plaintext connection at etcd.test:2379. If this etcd serves TLS (kubeadm and k3s always do), choose an SSL mode under SSL / TLS; otherwise check the host, the port and the tunnel. (Name resolution failed)",
+    );
+  });
+
+  test("a system error of a code the table does not name keeps no address its message names, even on a write", () => {
+    const socket = Object.assign(new Error("connect EADDRNOTAVAIL 127.0.0.1:40001 - Local (0.0.0.0:0)"), {
+      code: "EADDRNOTAVAIL",
+    });
+    const mapped = toEtcdError(socket);
+    expect(mapped).toMatchObject({ category: "unknown", detail: "EADDRNOTAVAIL" });
+    const message = toProviderError(mapped, write("put")).message;
+    expect(message).toBe(`The put failed. (EADDRNOTAVAIL) ${UNKNOWN_OUTCOME}`);
+  });
+
+  test("the server's answers the tables name by their start keep their words, as etcd's own do (spec E16)", () => {
+    const tooLarge = toEtcdError(grpc(8, "grpc: received message larger than max (3145771 vs. 2097152)"));
+    expect(toProviderError(tooLarge, write("put")).message).toBe(
+      "etcd refused the put: the request is larger than etcd accepts. (grpc: received message larger than max (3145771 vs. 2097152))",
+    );
+    const noPassword = toEtcdError(grpc(2, "auth: authentication failed, password was given for no password user"));
+    expect(toProviderError(noPassword, read()).message).toBe(
+      "etcd refused the sign-in: the user is unknown or the password is wrong. (auth: authentication failed, password was given for no password user)",
     );
   });
 });

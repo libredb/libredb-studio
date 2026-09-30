@@ -16,7 +16,7 @@
  *
  * This file imports only the seam and the repository's error classes (plan Task 11): a token, a
  * password or a key's value never reaches it, and the texts it places in a message are etcd's
- * answer and the runtime's.
+ * answer and the runtime's, the runtime's without the address it names (`withoutAddress`).
  */
 import {
   AuthenticationError,
@@ -98,8 +98,9 @@ const PRE_SEND_DEADLINE_MARKERS: readonly string[] = [
  * failure (`resolver-dns.ts` defaultResolutionError), and a call that `close()` found still waiting for its
  * pick (`internal-channel.ts` close), which only the client's own close makes.
  */
+const NAME_RESOLUTION_FAILED = "Name resolution failed for target ";
 const UNSTARTED_ANSWERS: ReadonlyArray<readonly [string, EtcdErrorCategory]> = [
-  ["Name resolution failed for target ", "not-connected"],
+  [NAME_RESOLUTION_FAILED, "not-connected"],
   ["Channel closed before call started", "closed"],
 ];
 
@@ -152,6 +153,19 @@ const SYSTEM_ERRORS: ReadonlyMap<string, readonly [EtcdErrorCategory, EtcdTlsFai
   ["CERT_HAS_EXPIRED", ["tls"]],
   ["ERR_SSL_WRONG_VERSION_NUMBER", ["tls", "not-tls"]],
 ]);
+
+/**
+ * A runtime error's system code, in the two forms Node writes one, either after "Error: ": a socket
+ * error's `<syscall> <code>`, followed by the address it dialled ("connect ECONNREFUSED 127.0.0.1:2379",
+ * "getaddrinfo ENOTFOUND etcd.test"), and a Node error's `<name> [<code>]` ("Error
+ * [ERR_TLS_CERT_ALTNAME_INVALID]: ...", followed by the certificate's names).
+ */
+const RUNTIME_ERROR_CODE = /^(?:\w*Error \[([A-Z][A-Z0-9_]*)\]|(?:Error: )?[a-z]+ (E[A-Z0-9_]+)\b)/;
+
+function runtimeCode(text: string): string | undefined {
+  const match = RUNTIME_ERROR_CODE.exec(text);
+  return match === null ? undefined : (match[1] ?? match[2]);
+}
 
 function classifyStatus(code: number, details: string): EtcdError {
   const answer = ETCD_ANSWERS.find(([answerCode, text]) => answerCode === code && text === details);
@@ -214,7 +228,8 @@ export function toEtcdError(error: unknown, signal?: AbortSignal): EtcdError {
     const known = SYSTEM_ERRORS.get(code);
     // The runtime's code alone: its message names the dialled address, which is the tunnel's forward.
     if (known) return new EtcdError(known[0], code, undefined, known[1]);
-    return new EtcdError("unknown", `${code}: ${error.message}`);
+    // Another code keeps its message, unless the message is a socket error's, whose words after the code are the address.
+    return new EtcdError("unknown", runtimeCode(error.message) === code ? code : `${code}: ${error.message}`);
   }
   return new EtcdError("unknown", error instanceof Error ? error.message : String(error));
 }
@@ -286,9 +301,33 @@ const UNKNOWN_OUTCOME = "The write may have been applied: read the key again bef
 const NO_SPACE_RECOVERY =
   "An admin compacts history, defragments every member that alarm list names, one at a time through a connection to each member, and then disarms the alarm, from the Global Operations cards of Admin > Operations.";
 
-/** etcd's words after the provider's (spec E16), without etcd's own "etcdserver: " prefix. */
+/** Where grpc-js 1.14.5 places the runtime's error in its text for a channel that never connected (pick_first, round_robin). */
+const LAST_ERROR = "No connection established. Last error: ";
+
+/** A deadline's subchannel peer, the address the call went out on (grpc-js 1.14.5 `subchannel-call.ts` getDeadlineInfo). */
+const DEADLINE_PEER = /,remote_addr=[^,]*/g;
+
+/**
+ * A runtime's or grpc-js's text without the address it carries (D-T11-12): through an SSH tunnel the
+ * dialled address is the tunnel's local forward, so the provider's sentence names the configured
+ * endpoint and the text after it names none. grpc-js 1.14.5 carries one in three places: the runtime's
+ * error after LAST_ERROR, reduced to its system code as toEtcdError writes a system error, a deadline's
+ * peer, dropped, and the target a name lookup failed for, dropped. Any other text is kept as it is, and
+ * a last error that names no code names no address either (the TLS causes, Bun's "Failed to connect").
+ */
+function withoutAddress(detail: string): string {
+  const lastError = detail.indexOf(LAST_ERROR);
+  const code = lastError < 0 ? undefined : runtimeCode(detail.slice(lastError + LAST_ERROR.length));
+  if (code !== undefined) return code;
+  if (detail.startsWith(NAME_RESOLUTION_FAILED)) return "Name resolution failed";
+  return detail.replace(DEADLINE_PEER, "");
+}
+
+/** etcd's words after the provider's (spec E16), without etcd's own "etcdserver: " prefix; any other text without its address. */
 function answered(detail: string): string {
-  return detail.startsWith("etcdserver: ") ? ` (etcd: ${detail.slice("etcdserver: ".length)})` : ` (${detail})`;
+  return detail.startsWith("etcdserver: ")
+    ? ` (etcd: ${detail.slice("etcdserver: ".length)})`
+    : ` (${withoutAddress(detail)})`;
 }
 
 /**
