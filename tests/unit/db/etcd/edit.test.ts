@@ -768,11 +768,20 @@ describe("applyEtcdValueEdit: a plan this provider did not build is raised befor
     ["another part", (plan) => ({ ...plan, partId: "metadata" })],
     ["a path of two segments", (plan) => ({ ...plan, path: ["/app", "cfg"] })],
     ["a path naming another key", (plan) => ({ ...plan, path: ["/app/other"] })],
+    // "/app/cfh" is as long as "/app/cfg" and differs only in its last byte: a byte-for-byte comparison refuses it.
+    ["a path naming a key of the same length", (plan) => ({ ...plan, path: ["/app/cfh"] })],
     [
       "a compare of another key",
       (plan, unit) => ({
         ...plan,
         unit: { ...unit, arguments: ['mod("/app/other") = "7"', ...unit.arguments.slice(1)] },
+      }),
+    ],
+    [
+      "a compare of a key of the same length",
+      (plan, unit) => ({
+        ...plan,
+        unit: { ...unit, arguments: ['mod("/app/cfh") = "7"', ...unit.arguments.slice(1)] },
       }),
     ],
     [
@@ -783,7 +792,15 @@ describe("applyEtcdValueEdit: a plan this provider did not build is raised befor
       "a put of a key the addressed key begins with",
       (plan, unit) => ({ ...plan, unit: { ...unit, arguments: [...unit.arguments.slice(0, 3), "/app/cf"] } }),
     ],
+    [
+      "a put of a key of the same length",
+      (plan, unit) => ({ ...plan, unit: { ...unit, arguments: [...unit.arguments.slice(0, 3), "/app/cfh"] } }),
+    ],
     ["a read of another key", (plan, unit) => ({ ...plan, unit: { ...unit, trailing: ["get", "/app/other"] } })],
+    [
+      "a read of a key of the same length",
+      (plan, unit) => ({ ...plan, unit: { ...unit, trailing: ["get", "/app/cfh"] } }),
+    ],
     [
       "a compare revision other than the token",
       (plan, unit) => ({
