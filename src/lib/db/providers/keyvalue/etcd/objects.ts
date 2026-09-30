@@ -69,7 +69,16 @@ import {
   stepPrefixWalk,
   typedKey,
 } from "./keys";
-import { type AccessScope, clipToScope, describeRange, describeScope, rangeCovered, rangeShape } from "./permissions";
+import {
+  type AccessScope,
+  clipToScope,
+  describeRange,
+  describeScope,
+  ROOT_ROLE,
+  ROOT_ROLE_HOLDS_EVERY_KEY,
+  rangeCovered,
+  rangeShape,
+} from "./permissions";
 import { type ValueView, viewKey, viewValue } from "./values";
 import { type ReadOnlySource, refuseBeforeSend } from "./write-policy";
 
@@ -1009,7 +1018,15 @@ async function roleSource(
   return {
     path: [...path],
     kind: "role",
-    parts: [jsonPart("role", "Permissions", { name, permissions: permissions.map(permissionEntry) }, limit)],
+    parts: [
+      jsonPart(
+        "role",
+        // etcd lists no permission for root, which its auth store permits every key (permissions.ts ROOT_ROLE).
+        name === ROOT_ROLE ? `Permissions (${ROOT_ROLE_HOLDS_EVERY_KEY})` : "Permissions",
+        { name, permissions: permissions.map(permissionEntry) },
+        limit,
+      ),
+    ],
   };
 }
 

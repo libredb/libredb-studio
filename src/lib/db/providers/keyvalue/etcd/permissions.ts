@@ -16,6 +16,16 @@ export type AccessScope =
   | { readonly kind: "all" }
   | { readonly kind: "ranges"; readonly ranges: readonly EtcdByteRange[] };
 
+/**
+ * The role etcd's auth store permits every key without a grant (IsAdminPermitted), so RoleGet lists no
+ * permission for it; etcdctl prints it as "KV Read: [, <open ended>" (printer_simple.go RoleGet).
+ */
+export const ROOT_ROLE = "root";
+
+/** What a surface says beside the root role's permissions, whatever etcd lists for it. */
+export const ROOT_ROLE_HOLDS_EVERY_KEY =
+  "the root role may read and write every key, whatever permissions etcd lists for it";
+
 const READ_TYPES: ReadonlySet<EtcdPermissionType> = new Set(["read", "readwrite"]);
 const WRITE_TYPES: ReadonlySet<EtcdPermissionType> = new Set(["write", "readwrite"]);
 

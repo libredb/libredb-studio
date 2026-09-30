@@ -28,6 +28,7 @@ import type {
   EtcdWatchEvent,
 } from "./client";
 import { compareBytes, leaseHexId, memberHexId, prefixRangeEnd, typedKey } from "./keys";
+import { ROOT_ROLE, ROOT_ROLE_HOLDS_EVERY_KEY } from "./permissions";
 import { viewKey, viewValue } from "./values";
 
 /** Where a paged read stopped before the end of its range, and on which bound (spec 5.4). */
@@ -311,6 +312,11 @@ function watchShape(outcome: WatchOutcome, shaping: Shaping): Shape {
   };
 }
 
+/** The warning a result carries when it shows the root role's permissions: the rows stay etcd's. */
+const ROOT_ROLE_WARNINGS: readonly QueryWarning[] = [
+  { message: `${ROOT_ROLE_HOLDS_EVERY_KEY.charAt(0).toUpperCase()}${ROOT_ROLE_HOLDS_EVERY_KEY.slice(1)}.` },
+];
+
 const PERMISSION_FIELDS = ["type", "key", "key_encoding", "range_end", "range_end_encoding", "prefix"];
 
 /**
@@ -454,14 +460,22 @@ function shapeOf(outcome: CommandOutcome, shaping: Shaping): Shape {
         outcome.permissions.length === 0
           ? [user]
           : outcome.permissions.map(({ role, permission }) => joined({ ...user, role }, permissionCells(permission)));
-      return { fields: ["name", "roles", "role", ...PERMISSION_FIELDS], rows };
+      return {
+        fields: ["name", "roles", "role", ...PERMISSION_FIELDS],
+        rows,
+        ...(outcome.roles.includes(ROOT_ROLE) ? { warnings: ROOT_ROLE_WARNINGS } : {}),
+      };
     }
     case "role-get": {
       const rows =
         outcome.permissions.length === 0
           ? [{ role: outcome.name }]
           : outcome.permissions.map((permission) => joined({ role: outcome.name }, permissionCells(permission)));
-      return { fields: ["role", ...PERMISSION_FIELDS], rows };
+      return {
+        fields: ["role", ...PERMISSION_FIELDS],
+        rows,
+        ...(outcome.name === ROOT_ROLE ? { warnings: ROOT_ROLE_WARNINGS } : {}),
+      };
     }
   }
 }

@@ -927,6 +927,59 @@ describe("the cluster and access rows (spec 5.2)", () => {
   });
 });
 
+describe("the root role (etcdctl printer_simple.go RoleGet)", () => {
+  // etcd lists no permission for root, which the auth store permits every key (IsAdminPermitted), so a
+  // result that shows root's permissions says so, as etcdctl prints "KV Read: [, <open ended>".
+  const ROOT_WARNING = [
+    { message: "The root role may read and write every key, whatever permissions etcd lists for it." },
+  ];
+  const grant: EtcdPermission = { type: "read", key: utf8("/app/"), rangeEnd: utf8("/app0") };
+
+  test("role get root with no permission answers etcd's one row and the warning", () => {
+    const answer = result({ kind: "role-get", name: "root", permissions: [] });
+    expect(answer.rows).toEqual([{ role: "root", type: null, key: null, range_end: null, prefix: null }]);
+    expect(answer.warnings).toEqual(ROOT_WARNING);
+  });
+
+  test("role get root with a permission answers that row and the same warning", () => {
+    const answer = result({ kind: "role-get", name: "root", permissions: [grant] });
+    expect(answer.rows).toEqual([{ role: "root", type: "READ", key: "/app/", range_end: "/app0", prefix: true }]);
+    expect(answer.warnings).toEqual(ROOT_WARNING);
+  });
+
+  test("a role that is not root, with no permission, carries no warning", () => {
+    expect(result({ kind: "role-get", name: "app", permissions: [] }).warnings).toBeUndefined();
+    expect(result({ kind: "role-get", name: "rootless", permissions: [] }).warnings).toBeUndefined();
+  });
+
+  test("user get --detail of a user holding root carries the warning, and its rows stay etcd's", () => {
+    const answer = result({
+      kind: "user-get",
+      name: "alice",
+      roles: ["app", "root"],
+      permissions: [{ role: "app", permission: grant }],
+    });
+    expect(answer.rows).toEqual([
+      { name: "alice", roles: "app, root", role: "app", type: "READ", key: "/app/", range_end: "/app0", prefix: true },
+    ]);
+    expect(answer.warnings).toEqual(ROOT_WARNING);
+    expect(result({ kind: "user-get", name: "admin", roles: ["root"], permissions: [] }).warnings).toEqual(
+      ROOT_WARNING,
+    );
+  });
+
+  test("user get --detail of a user without root, and user get without --detail, carry no warning", () => {
+    const app: CommandOutcome = {
+      kind: "user-get",
+      name: "bob",
+      roles: ["app"],
+      permissions: [{ role: "app", permission: grant }],
+    };
+    expect(result(app).warnings).toBeUndefined();
+    expect(result({ kind: "user-get", name: "admin", roles: ["root"] }).warnings).toBeUndefined();
+  });
+});
+
 describe("the rules every result keeps (spec 5.2)", () => {
   test("every write answers at least one row", () => {
     const writes: CommandOutcome[] = [

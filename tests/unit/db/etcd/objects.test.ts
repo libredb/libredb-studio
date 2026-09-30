@@ -1459,6 +1459,16 @@ describe("the member, lease, user and role sources (spec 4.4)", () => {
     );
   });
 
+  test("the root role's part says root may read and write every key, whatever etcd lists; another role's does not", async () => {
+    const fake = client({ roleGet: async (name) => (name === "root" ? [] : [grantPrefix("read", "/app/")]) });
+    const root = await readEtcdObjectSource(fake, surface(), ["root"], "role");
+    expect(root.parts[0].label).toBe(
+      "Permissions (the root role may read and write every key, whatever permissions etcd lists for it)",
+    );
+    expect(JSON.parse(textOf(root, 0))).toEqual({ name: "root", permissions: [] });
+    expect((await readEtcdObjectSource(fake, surface(), ["app"], "role")).parts[0].label).toBe("Permissions");
+  });
+
   test("the prefix kind has no source", async () => {
     await expect(readEtcdObjectSource(client(), surface(), ["/app/*"], "prefix")).rejects.toThrow(
       'etcd publishes no definition text for the kind "prefix"',
