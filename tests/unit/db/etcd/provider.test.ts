@@ -24,6 +24,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import {
+  type EtcdAlarm,
   type EtcdClient,
   type EtcdClientHooks,
   EtcdError,
@@ -72,6 +73,7 @@ import type {
   DatabaseProvider,
   ObjectEditBuild,
   ObjectEditPlan,
+  ObjectEditRefusal,
   ProviderCapabilities,
   ProviderExecutionContext,
 } from "@/lib/db/types";
@@ -120,6 +122,14 @@ const MEMBER: EtcdMember = {
   clientUrls: ["http://127.0.0.1:2379"],
   isLearner: false,
 };
+/** A raised NOSPACE alarm, and an answer for each maintenance call, so every operation has a request to send. */
+const ALARM: EtcdAlarm = { memberId: MEMBER.id, alarm: "nospace" };
+const MAINTENANCE: Partial<EtcdClient> = {
+  compact: async () => {},
+  defragment: async () => {},
+  alarmList: async () => [ALARM],
+  alarmDisarm: async (alarm) => [alarm],
+};
 
 /** The shapes of the prefix-group rule (spec 4.1): a deep and a flat first segment, and a key in no group. */
 const KEYS: readonly KeySpaceEntry[] = [
@@ -136,6 +146,9 @@ const READER_PERMISSIONS: readonly EtcdPermission[] = [
   { type: "read", key: encode("/app/"), rangeEnd: encode("/app0") },
   { type: "read", key: encode("/config/a") },
 ];
+
+/** A value edit of a key KEYS holds. */
+const REQUEST = { path: ["/app/cfg"], kind: "key", partId: "value", text: '{"mode":"green"}' } as const;
 
 const denied = () => permissionDenied();
 const notEnabled = () => new EtcdError("failed-precondition", "etcdserver: authentication is not enabled", 9);
@@ -258,11 +271,16 @@ async function connected(
 
 const methods = (client: FakeEtcdClient, from = 0) => client.calls.slice(from).map((call) => call.method);
 
-/** The calls from `from` on, each without its call options, since every call carries a signal of its own. */
+/**
+ * The calls from `from` on, each without its call options, since every call carries a signal of its own, and
+ * without a watch's batch callback, which every caller makes its own.
+ */
 function callsOf(client: FakeEtcdClient, from = 0): Array<{ readonly method: string; readonly args: unknown[] }> {
   return client.calls.slice(from).map((call) => ({
     method: String(call.method),
-    args: call.args.filter((arg) => !(typeof arg === "object" && arg !== null && "signal" in arg)),
+    args: call.args.filter(
+      (arg) => typeof arg !== "function" && !(typeof arg === "object" && arg !== null && "signal" in arg),
+    ),
   }));
 }
 
@@ -295,9 +313,12 @@ async function until(condition: () => boolean, tries = 500): Promise<void> {
   return until(condition, tries - 1);
 }
 
-/** The parser's refusal of `text` under the provider's own caps; a text that parses is a mistake in the test. */
-function refusalOf(text: string): string {
-  const parsed = parseEtcdCommand(text, LIMITS);
+/**
+ * The parser's refusal of `text` under `limits`, the provider's own caps by default; a text that parses is a
+ * mistake in the test.
+ */
+function refusalOf(text: string, limits = LIMITS): string {
+  const parsed = parseEtcdCommand(text, limits);
   if (parsed.ok) throw new Error(`${JSON.stringify(text)} parsed`);
   return parsed.refusal.message;
 }
@@ -479,13 +500,33 @@ describe("the connect sequence (spec 6.1)", () => {
     expect(methods(client, 4).every((method) => method === "range")).toBe(true);
   });
 
-  test("each role's permissions are read, in the order UserGet names the roles", async () => {
-    const client = readerClient({ userGet: async () => ["reader", "auditor"] });
-    await connected(PASSWORD_CONNECTION, client);
+  test("each role's permissions are read, in the order UserGet names the roles, and the grants are their union", async () => {
+    // Two roles with disjoint grants: the prefix /app/ and the one key /config/a (spec 4.7).
+    const byRole = new Map<string, readonly EtcdPermission[]>([
+      ["reader", [{ type: "read", key: encode("/app/"), rangeEnd: encode("/app0") }]],
+      ["auditor", [{ type: "read", key: encode("/config/a") }]],
+    ]);
+    const client = readerClient({
+      userGet: async () => ["reader", "auditor"],
+      roleGet: async (role) => {
+        const permissions = byRole.get(role);
+        if (permissions === undefined) throw new Error(`the test gives no role ${role}`);
+        return permissions;
+      },
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
     expect(callsOf(client).filter((call) => call.method === "roleGet")).toEqual([
       { method: "roleGet", args: ["reader"] },
       { method: "roleGet", args: ["auditor"] },
     ]);
+    const both = prefixGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"].map(encode))
+      .groups.map(groupLabel)
+      .sort();
+    expect((await provider.countObjects([])).prefix).toEqual({
+      count: both.length,
+      sampledFrom: "the 2 ranges etcd user reader may read",
+    });
+    expect((await provider.listObjects([], "prefix")).map((group) => group.name).sort()).toEqual(both);
   });
 
   test("a password on an etcd whose AuthStatus then answers off reads no grant", async () => {
@@ -527,6 +568,22 @@ describe("the connect sequence (spec 6.1)", () => {
         "etcd",
       ),
     );
+    expect(methods(client)).toEqual(["authenticate", "close"]);
+  });
+
+  test("step 1: a sign-in etcd does not answer is named as the sign-in", async () => {
+    const client = readerClient({
+      authenticate: async () => {
+        throw unavailable();
+      },
+    });
+    const { provider } = build(PASSWORD_CONNECTION, client);
+    const failure = await provider.connect().then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect(failure?.message).toBe("etcd did not answer the sign-in. (etcd: request timed out)");
     expect(methods(client)).toEqual(["authenticate", "close"]);
   });
 
@@ -647,6 +704,22 @@ describe("the connect sequence (spec 6.1)", () => {
         "etcd",
       ),
     );
+  });
+
+  test("step 4: a UserGet etcd does not answer is named as the user get", async () => {
+    const client = readerClient({
+      userGet: async () => {
+        throw unavailable();
+      },
+    });
+    const { provider } = build(CERTIFICATE_CONNECTION, client);
+    const failure = await provider.connect().then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect(failure?.message).toBe("etcd did not answer the user get. (etcd: request timed out)");
+    expect(methods(client)).toEqual(["authStatus", "userGet", "close"]);
   });
 
   test("a client certificate that names no Common Name is step 3's refusal, never a UserGet of no name", async () => {
@@ -988,30 +1061,42 @@ describe("each call's deadline, the connection's query timeout (spec 5.3)", () =
     return { provider, hooks };
   }
 
-  async function reached(pending: Promise<unknown>, command: string): Promise<void> {
-    const failure = await pending.then(
-      () => undefined,
-      (error: unknown) => error as Error,
-    );
-    expect(failure).toBeInstanceOf(TimeoutError);
-    expect(failure?.message).toStartWith(`The ${command} reached its deadline of ${TIMEOUT} ms.`);
+  /**
+   * Runs `call` and holds its refusal: a TimeoutError naming the query timeout, and every deadline set on the
+   * way is the query timeout itself. The message's number is the configuration's, so only the deadlines
+   * show the signal's.
+   */
+  async function reached(call: () => Promise<unknown>, command: string): Promise<void> {
+    const deadlines = spyOn(AbortSignal, "timeout");
+    try {
+      const failure = await call().then(
+        () => undefined,
+        (error: unknown) => error as Error,
+      );
+      expect(failure).toBeInstanceOf(TimeoutError);
+      expect(failure?.message).toStartWith(`The ${command} reached its deadline of ${TIMEOUT} ms.`);
+      expect(deadlines).toHaveBeenCalled();
+      expect(deadlines.mock.calls).toEqual(deadlines.mock.calls.map(() => [TIMEOUT]));
+    } finally {
+      deadlines.mockRestore();
+    }
   }
 
   test("a step of the connect sequence", async () => {
     const { provider } = timed(CONNECTION, etcdClient({ authStatus: unanswered }));
-    await reached(provider.connect(), "auth status");
+    await reached(() => provider.connect(), "auth status");
   });
 
   test("a surface's read", async () => {
     const { provider } = timed(CONNECTION, etcdClient({ memberList: unanswered }));
     await provider.connect();
-    await reached(provider.listObjects([], "member"), "Members listing");
+    await reached(() => provider.listObjects([], "member"), "Members listing");
   });
 
   test("a command", async () => {
     const { provider } = timed(CONNECTION, etcdClient({ range: unanswered }));
     await provider.connect();
-    await reached(provider.query("get /app/cfg"), "get");
+    await reached(() => provider.query("get /app/cfg"), "get");
   });
 
   test("the read of the grants after an auth-store change", async () => {
@@ -1023,7 +1108,7 @@ describe("each call's deadline, the connection's query timeout (spec 5.3)", () =
     await provider.connect();
     answer = false;
     hooks[0].onAuthStoreChanged?.();
-    await reached(provider.countObjects([]), "read of etcd user reader's grants");
+    await reached(() => provider.countObjects([]), "read of etcd user reader's grants");
   });
 });
 
@@ -1032,7 +1117,6 @@ describe("each call's deadline, the connection's query timeout (spec 5.3)", () =
 // ============================================================================
 
 describe("every surface answers what its module answers, with the same calls (spec 3.5)", () => {
-  const REQUEST = { path: ["/app/cfg"], kind: "key", partId: "value", text: '{"mode":"green"}' } as const;
   const member = memberHexId(MEMBER.id);
 
   /**
@@ -1167,17 +1251,19 @@ describe("every surface answers what its module answers, with the same calls (sp
     expect(callsOf(client, mark)).toEqual(callsOf(twin));
   });
 
-  test("maintenance is the maintenance module's, with the same calls", async () => {
-    const extra = { defragment: async () => {}, compact: async () => {}, alarmDisarm: async () => [] };
-    const client = etcdClient(extra);
-    const { provider } = await connected(CONNECTION, client);
-    const twin = etcdClient(extra);
-    const mark = client.calls.length;
-    const result = await provider.runMaintenance("defragment");
-    const expected = await runEtcdMaintenance(twin, contextFor(CONNECTION), "defragment");
-    expect({ ...result, executionTime: 0 }).toEqual({ ...expected, executionTime: 0 });
-    expect(callsOf(client, mark)).toEqual(callsOf(twin));
-  });
+  test.each([...ETCD_MAINTENANCE_OPERATIONS])(
+    "maintenance is the maintenance module's, with the same calls: %s",
+    async (type) => {
+      const client = etcdClient(MAINTENANCE);
+      const { provider } = await connected(CONNECTION, client);
+      const twin = etcdClient(MAINTENANCE);
+      const mark = client.calls.length;
+      const result = await provider.runMaintenance(type);
+      const expected = await runEtcdMaintenance(twin, contextFor(CONNECTION), type);
+      expect({ ...result, executionTime: 0 }).toEqual({ ...expected, executionTime: 0 });
+      expect(callsOf(client, mark)).toEqual(callsOf(twin));
+    },
+  );
 
   test("the surfaces etcd has nothing honest for answer empty and read nothing (spec 7.1)", async () => {
     const client = etcdClient();
@@ -1241,6 +1327,59 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
       `txn\n\nget /app/ --prefix --limit=${ETCD_READ_BOUNDS.firstPageSize + 1}\n\n`,
     ];
     await Promise.all(overCaps.map((text) => expect(provider.query(text)).rejects.toThrow(refusalOf(text))));
+  });
+
+  test("a query timeout inside the watch margin caps a typed watch window at 0 s, never below it (spec 5.3)", async () => {
+    // 200 ms inside the margin: the cap is 0 s, never the -200 ms the subtraction leaves.
+    const queryTimeout = ETCD_READ_BOUNDS.watchMarginMs - 200;
+    const client = etcdClient();
+    const provider = new EtcdProvider(CONNECTION, { queryTimeout }, {}, async () => client);
+    await provider.connect();
+    const mark = client.calls.length;
+    const text = "watch /a --command-timeout=100ms";
+    const refusal = refusalOf(text, { ...LIMITS, maxCommandTimeoutMs: queryTimeout, maxWatchWindowMs: 0 });
+    await expect(provider.query(text)).rejects.toThrow(new QueryError(refusal, "etcd"));
+    expect(client.calls.length).toBe(mark);
+  });
+
+  test("a watch's default window is capped by the query timeout less the margin, as the command module caps it (spec 5.3)", async () => {
+    // Below etcdctl's 5 s window plus the margin, so the default window is capped, here at 100 ms.
+    const queryTimeout = ETCD_READ_BOUNDS.watchMarginMs + 100;
+    // A watch that sees no event and settles when its window aborts its signal.
+    const watch: EtcdClient["watch"] = (_request, _onBatch, { signal }) =>
+      new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({ reason: "aborted" }), { once: true });
+      });
+    const client = etcdClient({ watch });
+    const provider = new EtcdProvider(CONNECTION, { queryTimeout }, {}, async () => client);
+    await provider.connect();
+    const twin = etcdClient({ watch });
+    const mark = client.calls.length;
+    const text = "watch /app/ --prefix";
+    const parsed = parseEtcdCommand(text, LIMITS);
+    if (!parsed.ok) throw new Error(parsed.refusal.message);
+    const options = buildEtcdConnectionOptions(CONNECTION, { executionReadOnly: false, queryTimeout });
+    const [result, outcome] = await Promise.all([
+      provider.query(text),
+      executeCommand(twin, parsed.parsed, {
+        bounds: { ...ETCD_READ_BOUNDS, rowLimit: DEFAULT_QUERY_LIMIT, queryTimeoutMs: queryTimeout },
+        signal: AbortSignal.timeout(queryTimeout),
+        endpoint: "etcd.test:2379",
+        now: () => Date.now(),
+        setTimer: (ms, fn) => {
+          const timer = setTimeout(fn, ms);
+          return () => clearTimeout(timer);
+        },
+        errors: etcdErrorConnection(options),
+        onWriteSent: () => {},
+      }),
+    ]);
+    const expected = commandResult(outcome, { executionTime: 0, cellLimit: ETCD_READ_BOUNDS.cellLimit });
+    expect({ ...result, executionTime: 0 }).toEqual({ ...expected, executionTime: 0 });
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+    expect(result.warnings?.[0]?.message).toContain(
+      "The window was capped at 100 ms by this connection's query timeout",
+    );
   });
 
   test("a --command-timeout is the command's own deadline, which the provider's timer keeps (spec 5.1.2)", async () => {
@@ -1327,11 +1466,27 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
   ] as const)(
     "read-only through %s: every write is refused before any request (spec E6)",
     async (_label, connection, execution, source) => {
-      const client = etcdClient({ txn: async () => ({ header: KEY_SPACE_HEADER, succeeded: true, responses: [] }) });
+      const txn = async () => ({ header: KEY_SPACE_HEADER, succeeded: true, responses: [] });
+      const client = etcdClient({ ...MAINTENANCE, txn });
       const { provider } = await connected(connection as DatabaseConnection, client, execution);
+      // A plan a read-write provider built, which the read-only one is then handed.
+      const writer = await connected(CONNECTION, etcdClient({ txn }));
+      const built = await writer.provider.buildObjectEdit(REQUEST);
+      if (!built.built) throw new Error(`the read-write build refused the edit: ${JSON.stringify(built.refusal)}`);
       const mark = client.calls.length;
+      const sentence = readOnlySentence(source);
       const writes = ["put /app/cfg value", "del /app/ --prefix", "lease grant 60", "lease revoke 694d8147df1dc4c8"];
-      await Promise.all(writes.map((text) => expect(provider.query(text)).rejects.toThrow(readOnlySentence(source))));
+      await Promise.all(writes.map((text) => expect(provider.query(text)).rejects.toThrow(sentence)));
+      // An edit and each maintenance operation are refused the same way, through the surface's context.
+      await Promise.all(
+        ETCD_MAINTENANCE_OPERATIONS.map((type) =>
+          expect(provider.runMaintenance(type)).rejects.toThrow(new QueryError(sentence, "etcd")),
+        ),
+      );
+      const refusal: ObjectEditRefusal = { refusal: "privilege", sentence, at: { within: "none" } };
+      expect(await provider.buildObjectEdit(REQUEST)).toEqual({ built: false, refusal });
+      const applied = await provider.applyObjectEdit(built.plan);
+      expect({ ...applied, duration: 0 }).toEqual({ outcome: "refused", refusal, duration: 0 });
       expect(client.calls.length).toBe(mark);
       // A read still runs.
       expect((await provider.query("get /app/cfg")).rowCount).toBe(1);
@@ -1348,6 +1503,23 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
     expect(failure?.message).toContain(
       `etcd user reader may read: ${describeScope(readableScope(READER_PERMISSIONS))}.`,
     );
+  });
+
+  test("after an auth-store change, a read etcd refuses names the grants read again (R13 D10)", async () => {
+    let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
+    const client = readerClient({ roleGet: async () => permissions });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    const narrowed: readonly EtcdPermission[] = [{ type: "read", key: encode("/config/a") }];
+    permissions = narrowed;
+    hooks[0].onAuthStoreChanged?.();
+    const mark = client.calls.length;
+    const failure = await provider.query("get /secret/x").then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(QueryError);
+    expect(failure?.message).toContain(`etcd user reader may read: ${describeScope(readableScope(narrowed))}.`);
+    expect(methods(client, mark)).toEqual(["userGet", "roleGet", "range"]);
   });
 
   test("with authentication off, or as root, a refusal carries no list of what may be read", async () => {

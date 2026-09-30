@@ -911,14 +911,18 @@ describe("E1 and E2 refuse before the factory and before any socket (spec 3.1, E
 
   test("the control: an accepted connection dials the listener, which is what the two above would have recorded", async () => {
     const local = await listener();
+    const noFactory = await listener();
     try {
       const { provider, factoryCalls } = real({ ...ETCD, host: "127.0.0.1", port: local.port });
+      // Built as the registration builds it, with no factory: the default is the real adapter.
+      const byDefault = new EtcdProvider({ ...ETCD, host: "127.0.0.1", port: noFactory.port }, { queryTimeout: 500 });
       // The listener speaks no HTTP/2, so the first call reaches its deadline; the accept is what is measured.
-      await failure(provider.connect());
+      await Promise.all([failure(provider.connect()), failure(byDefault.connect())]);
       expect(factoryCalls()).toBe(1);
       expect(local.accepts()).toBeGreaterThan(0);
+      expect(noFactory.accepts()).toBeGreaterThan(0);
     } finally {
-      await local.close();
+      await Promise.all([local.close(), noFactory.close()]);
     }
   });
 });
