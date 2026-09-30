@@ -1178,6 +1178,9 @@ describe("the monitoring panels", () => {
         databaseSize: "2 KB on disk",
         databaseSizeBytes: 2048,
         tableCount: 3,
+        // Filled because `Whole` asks for every part the type declares; Kafka's own `overviewFrom`
+        // never sets it, and this answer is only a stand-in the provider must hand back whole.
+        tableCountSampledFrom: "a stand-in sentence",
         indexCount: 0,
       }) satisfies Whole<DatabaseOverview>;
     const makeStorage = (): StorageStats[] =>

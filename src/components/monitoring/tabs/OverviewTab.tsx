@@ -92,6 +92,15 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
     return value === undefined ? [] : [{ timestamp: h.timestamp, value }];
   });
 
+  // A floor, and not the whole count, when the provider names what it counted from: etcd counts
+  // only the ranges a user who is not root may read. The mark is `+` in the number's own text and
+  // the sentence is the tree's floor-badge wording (`formatCount` in object-tree/flatten.ts), so
+  // one floor reads one way on both surfaces. PRESENCE decides, as `isCountSampled` does: a
+  // provider that set the field has said the number is not the whole count. Without it the card
+  // renders exactly as it always has.
+  const tableCount = overview?.tableCount ?? 0;
+  const tableCountSampledFrom = overview?.tableCountSampledFrom;
+
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
       {/* Version & Status */}
@@ -186,7 +195,17 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-purple" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{overview?.tableCount ?? 0}</div>
+            <div className="text-lg sm:text-2xl font-medium">
+              {tableCountSampledFrom === undefined ? tableCount : `${tableCount}+`}
+            </div>
+            {tableCountSampledFrom !== undefined && (
+              <p
+                className="text-xs sm:text-xs text-muted-foreground mt-1 break-words"
+                data-testid="overview-table-count-scope"
+              >
+                {`At least ${tableCount}: counted from ${tableCountSampledFrom}`}
+              </p>
+            )}
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">{overview?.indexCount ?? 0} indexes</p>
           </CardContent>
         </Card>

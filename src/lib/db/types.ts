@@ -1395,6 +1395,27 @@ export interface DatabaseOverview {
    */
   databaseSizeBytes?: number;
   tableCount: number;
+  /**
+   * Present only when `tableCount` is a FLOOR: the provider's own sentence for what it counted,
+   * phrased to follow "counted from", the discipline `KindCount.sampledFrom` carries (etcd spec
+   * 7.1).
+   *
+   * `tableCount` is required, so it has no way to spell "at least" on its own, and omitting it
+   * would render as 0. etcd is the case: a user who is not root counts only the ranges it may
+   * read, so the number is real and bounded, and this names the ranges. The Overview's Tables
+   * card then draws `N+` with "At least N: counted from <sentence>", the words the object tree's
+   * floor badge uses. Absent means `tableCount` is the whole count, which every other engine
+   * answers, so its card renders as it always has.
+   *
+   * The sentence may name those ranges, and so a key, because no model is handed an overview: its
+   * readers are the monitoring dashboard and the fleet-health route, which takes only
+   * `databaseSizeBytes` (etcd spec E13).
+   *
+   * ADDITIVE ON PURPOSE, for the reason `KindCount`'s fourth state is: this type reaches package
+   * users through `DatabaseProvider.getOverview`, and a consumer that has not heard of the field
+   * still reads a true, only imprecise, number.
+   */
+  tableCountSampledFrom?: string;
   indexCount: number;
 }
 

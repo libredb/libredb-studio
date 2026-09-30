@@ -470,3 +470,48 @@ describe("Quick Stats publishes no cap-bounded figure as a count", () => {
     expect(total).toBe(50);
   });
 });
+
+// etcd spec 7.1 and 4.7: `tableCount` is a required number, so a provider whose count covers
+// only part of the engine, as etcd's does for a user who is not root, says so in
+// `tableCountSampledFrom`. The card then draws the floor the object tree draws for a sampled
+// folder, in the same words: `N+`, and "At least N: counted from <sentence>".
+describe("the Tables card of a count that is a floor", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const SCOPE = "the ranges etcd user reader may read: /app/ (prefix), /config/a";
+
+  const floorOf = (tableCount: number, tableCountSampledFrom: string): MonitoringData => {
+    const base = makeData();
+    return { ...base, overview: { ...base.overview, tableCount, tableCountSampledFrom } } as MonitoringData;
+  };
+
+  const tablesCard = (getByText: (text: string) => HTMLElement) =>
+    getByText("Tables").closest('[data-slot="card"]') as HTMLElement;
+
+  test("renders N+ and says what the count was taken from", () => {
+    const { getByText, getByTestId, queryByText } = render(<OverviewTab data={floorOf(7, SCOPE)} loading={false} />);
+
+    expect(queryByText("7+")).not.toBeNull();
+    expect(queryByText("7")).toBeNull();
+    expect(getByTestId("overview-table-count-scope").textContent).toBe(`At least 7: counted from ${SCOPE}`);
+    expect(tablesCard(getByText).textContent).toBe(`Tables7+At least 7: counted from ${SCOPE}61 indexes`);
+  });
+
+  test("marks the floor on the field's presence, as the tree does, so an empty sentence is still a floor", () => {
+    // `isCountSampled` asks for the FIELD and not for a filled one, and so does this card: a
+    // provider that sets the field is saying the number is not the whole count, and drawing it
+    // as exact would repeat the claim the field exists to withdraw.
+    const { queryByText } = render(<OverviewTab data={floorOf(7, "")} loading={false} />);
+
+    expect(queryByText("7+")).not.toBeNull();
+  });
+
+  test("an overview without the field renders the card exactly as it always has", () => {
+    const { getByText, queryByTestId } = render(<OverviewTab data={makeData()} loading={false} />);
+
+    expect(tablesCard(getByText).textContent).toBe("Tables2461 indexes");
+    expect(queryByTestId("overview-table-count-scope")).toBeNull();
+  });
+});
