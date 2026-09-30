@@ -30,7 +30,7 @@
  * to grpc-js from outside the adapter, or text run as code. E15, the live harness's snapshot of the key space before
  * and after every run, is the behavioural check.
  */
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -92,6 +92,14 @@ function filesOf(root: string, env?: NodeJS.ProcessEnv): RepositoryFile[] {
   }
   return files;
 }
+
+// Reading and parsing every file of the repository is this file's one costly step, and filesOf keeps
+// the result: pay it once here, under its own budget, so the first test that reads the repository
+// does not spend bun's per-test budget on it. Measured under load (eight busy loops on two cores):
+// the first importer test took over 5,000 ms and timed out in 3 runs of 3 before this hook.
+beforeAll(() => {
+  filesOf(ROOT);
+}, 60_000);
 
 /** How TypeScript resolves a module name in the repository at `root`, with that repository's tsconfig.json. */
 const resolvers = new Map<string, { readonly options: ts.CompilerOptions; readonly cache: ts.ModuleResolutionCache }>();
