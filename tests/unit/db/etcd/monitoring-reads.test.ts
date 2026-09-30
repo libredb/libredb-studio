@@ -304,6 +304,17 @@ describe("readEtcdTableStats (spec 7.1, 4.7)", () => {
     expect(rows).toEqual([{ schemaName: "", tableName: "/app/*", rowCount: 4, totalSize: "N/A", totalSizeBytes: 0 }]);
   });
 
+  test("as the reader, a refused count names every range that user may read (spec 5.6)", async () => {
+    const client = createFakeEtcdClient({
+      range: async () => {
+        throw toEtcdError(grpc(7, "etcdserver: permission denied"));
+      },
+    });
+    await expect(
+      readEtcdTableStats(client, surface({ principal: READER, readable: READABLE, writable: READABLE }), ["/app/"]),
+    ).rejects.toThrow(`etcd user reader may read: ${describeScope(READABLE)}.`);
+  });
+
   test("a prefix that does not end in / names no group the walk listed: raised before any read", async () => {
     const client = createFakeEtcdClient();
     await expect(readEtcdTableStats(client, surface(), ["/apisix/routes/", "/apisix/routes"])).rejects.toThrow(
