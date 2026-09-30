@@ -5,9 +5,10 @@
  * temporary directory, and never committed: a subject written into a config file reaches openssl as
  * bytes on every platform, where a non-ASCII `-subj` argument would pass through the Windows command
  * line. The keys are RSA, made by `req -newkey rsa:2048` as the Kafka TLS test makes its own, the form
- * the Windows and macOS runners' openssl already run. The last block runs the mapping under Node, the
- * production runtime, through a bundle, because the error facts say which runtime answered (spec E5,
- * 5.6).
+ * the Windows and macOS runners' openssl already run. One certificate is signed by an authority made
+ * the same way, the shape etcd's --client-cert-auth accepts, so its issuer's Common Name is not its
+ * own. The last block runs the mapping under Node, the production runtime, through a bundle, because
+ * the error facts say which runtime answered (spec E5, 5.6).
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { X509Certificate } from "node:crypto";
@@ -131,6 +132,89 @@ function clientCertificate(name: string, subject: readonly string[]): void {
   );
 }
 
+/** A certificate authority and its key, self-signed and marked as an authority, as the Kafka TLS test makes its own. */
+function certificateAuthority(name: string, subject: readonly string[]): void {
+  writeFileSync(
+    at(`${name}.cnf`),
+    [
+      "[req]",
+      "prompt = no",
+      "distinguished_name = dn",
+      "[dn]",
+      ...subject,
+      "[authority]",
+      "basicConstraints = critical, CA:TRUE",
+      "keyUsage = critical, keyCertSign, cRLSign",
+      "",
+    ].join("\n"),
+  );
+  openssl(
+    "req",
+    "-config",
+    `${name}.cnf`,
+    "-utf8",
+    "-x509",
+    "-extensions",
+    "authority",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-sha256",
+    "-days",
+    "1",
+    "-keyout",
+    `${name}.key`,
+    "-out",
+    `${name}.crt`,
+  );
+}
+
+/**
+ * A client certificate and its key, signed by the named authority as the Kafka TLS test signs its
+ * leaves: the shape etcd's --client-cert-auth accepts, since it checks a client certificate against its
+ * --trusted-ca-file, so the issuer's Common Name is the authority's and not the client's own.
+ */
+function signedClientCertificate(name: string, subject: readonly string[], authority: string): void {
+  writeFileSync(
+    at(`${name}.cnf`),
+    ["[req]", "prompt = no", "distinguished_name = dn", "[dn]", ...subject, ""].join("\n"),
+  );
+  writeFileSync(at(`${name}.ext`), "basicConstraints = critical, CA:FALSE\nextendedKeyUsage = clientAuth\n");
+  openssl(
+    "req",
+    "-config",
+    `${name}.cnf`,
+    "-utf8",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-sha256",
+    "-keyout",
+    `${name}.key`,
+    "-out",
+    `${name}.csr`,
+  );
+  openssl(
+    "x509",
+    "-req",
+    "-in",
+    `${name}.csr`,
+    "-CA",
+    `${authority}.crt`,
+    "-CAkey",
+    `${authority}.key`,
+    "-set_serial",
+    "2",
+    "-sha256",
+    "-days",
+    "1",
+    "-extfile",
+    `${name}.ext`,
+    "-out",
+    `${name}.crt`,
+  );
+}
+
 /** A TLS panel carrying the named certificate and its key. */
 function withCertificate(name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { mode: "verify-full", clientCert: read(`${name}.crt`), clientKey: read(`${name}.key`), ...extra };
@@ -149,6 +233,9 @@ beforeAll(() => {
   // openssl's config syntax: `\\` is one backslash and `\#` a hash that starts no comment.
   clientCertificate("escaped", [String.raw`CN = a,b+c=d\\e<f>g;h\#i`]);
   clientCertificate("turkish", ["CN = kullanıcı-é"]);
+  // kubeadm's names: the etcd CA, and the client certificate it issues the API server.
+  certificateAuthority("etcd-ca", ["CN = etcd-ca"]);
+  signedClientCertificate("apiserver", ["CN = kube-apiserver-etcd-client"], "etcd-ca");
 });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -552,6 +639,15 @@ describe("6.1 and 4.7: the client certificate, and the Common Name etcd reads as
     expect(options.tls?.clientCertificate).toEqual({ cert: read("reader.crt"), key: read("reader.key") });
   });
 
+  test("a certificate an authority signed is read by its subject's Common Name, never its issuer's", () => {
+    // The fixture's premise, checked so this test cannot pass on a self-signed certificate: the CA issued it.
+    expect(new X509Certificate(read("apiserver.crt")).issuer).toBe("CN=etcd-ca");
+    expect(mapped({ ...base, ssl: withCertificate("apiserver") }).principal).toEqual({
+      name: "kube-apiserver-etcd-client",
+      via: "certificate",
+    });
+  });
+
   test("with a user and a password as well, etcd authenticates the password, so the user is the principal", () => {
     const options = mapped({ ...base, ssl: withCertificate("reader"), user: "root", password: TEST_PASSWORD });
     expect(options.auth).toEqual({ kind: "password", user: "root", password: TEST_PASSWORD });
@@ -697,6 +793,17 @@ describe("etcdErrorConnection: the facts errors.ts words its sentences with (C9)
     });
     expect(error.message).toContain("at etcd.test:2379");
     expect(error.message).not.toContain("127.0.0.1");
+  });
+
+  test("a port other than 2379 is the one the endpoint and the facts name, directly and through a tunnel", () => {
+    const direct = mapped({ ...base, port: 12379 });
+    expect(direct.target).toBe("dns:etcd.test:12379");
+    expect(direct.endpoint).toEqual({ host: "etcd.test", port: 12379 });
+    expect(etcdErrorConnection(direct)).toMatchObject({ host: "etcd.test", port: 12379 });
+    const tunnel = mapped(tunnelled({ host: "etcd.test", port: 12379 }));
+    expect(tunnel.target).toBe("dns:127.0.0.1:40001");
+    expect(tunnel.endpoint).toEqual({ host: "etcd.test", port: 12379 });
+    expect(etcdErrorConnection(tunnel)).toMatchObject({ host: "etcd.test", port: 12379 });
   });
 
   test("an IPv6 endpoint is bare here, and errors.ts writes it in brackets", () => {
