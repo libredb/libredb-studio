@@ -534,6 +534,19 @@ describe("E8: the content rule under a prefix the list does not name", () => {
     expect(h.sent.writes).toBe(0);
   });
 
+  test("a read-only Txn answered with responses of another op is refused the same way, and nothing is written", async () => {
+    const put = { op: "put" as const, response: { header: header("58") } };
+    const fake = createFakeEtcdClient({ txn: async () => txnAnswer(true, [put, put]) });
+    const h = harness();
+    const error = await failure(run(fake, "txn\n\nput /app/a v\nput /app/b v\n", h));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      "The read before the txn failed. (etcd's txn answer holds no range response at position 1)",
+    );
+    expect(sent(fake).map(([method]) => method)).toEqual(["txn"]);
+    expect(h.sent.writes).toBe(0);
+  });
+
   test("a range del under the unprotected prefix is sent unchanged, not read first: the documented limit", async () => {
     const fake = createFakeEtcdClient({
       deleteRange: async () => ({ header: header("58"), deleted: "2", prevKvs: [] }),
@@ -736,6 +749,17 @@ describe("E8: a top-level single-key put or del is sent as the guarded Txn", () 
     const fake = createFakeEtcdClient({
       range: async () => rangeAnswer([]),
       txn: async () => txnAnswer(true, []),
+    });
+    const error = await failure(run(fake, "put /app/cfg v"));
+    expect(error.message).toBe(
+      `The put failed. (etcd's txn answer holds no put response at position 1) ${UNKNOWN_OUTCOME}`,
+    );
+  });
+
+  test("a Txn answered with another op's response where its op's belongs is raised the same way, never read as the put's answer", async () => {
+    const fake = createFakeEtcdClient({
+      range: async () => rangeAnswer([]),
+      txn: async () => txnAnswer(true, [{ op: "range", response: rangeAnswer([]) }]),
     });
     const error = await failure(run(fake, "put /app/cfg v"));
     expect(error.message).toBe(
@@ -1851,6 +1875,59 @@ describe("watch, through execute (spec 5.3, KE5)", () => {
     cancelled.controller.abort();
     expect(await failure(stopped)).toBeInstanceOf(QueryCancelledError);
   });
+});
+
+describe("a read never counts as a sent write, so cancelQuery still answers true while it runs (spec 5.5)", () => {
+  /** An adapter watch that stays open until its signal aborts, as the end of the window aborts it. */
+  const untilAborted: EtcdClient["watch"] = (_request, _onBatch, options) =>
+    new Promise<EtcdWatchEnd>((resolve) => {
+      options.signal.addEventListener("abort", () => resolve({ reason: "aborted" }), { once: true });
+    });
+  const lease = { header: header("57"), id: LEASE_ID, ttl: "600", grantedTtl: "3600", keys: [] };
+  const status = {
+    header: header("57"),
+    version: "3.7.2",
+    dbSize: "20480",
+    dbSizeInUse: "16384",
+    dbSizeQuota: "2147483648",
+    leader: "10276657743932975437",
+    raftIndex: "90",
+    raftTerm: "2",
+    raftAppliedIndex: "90",
+    errors: [],
+    isLearner: false,
+    storageVersion: "3.7.0",
+  };
+  /** Each read, the stubs it needs and the calls it makes, run under SMALL, so the get reads more than one page. */
+  const reads: ReadonlyArray<readonly [string, Partial<EtcdClient>, string[]]> = [
+    ["get /app/ --prefix", { range: store(keys(12)) }, ["range", "range"]],
+    ["get /app/ --prefix --count-only", { range: store(keys(12)) }, ["range"]],
+    ["endpoint health", { range: async () => rangeAnswer([]), alarmList: async () => [] }, ["range", "alarmList"]],
+    ["watch /app/ --prefix", { watch: untilAborted }, ["watch"]],
+    [`lease timetolive ${LEASE_HEX}`, { leaseTimeToLive: async () => lease }, ["leaseTimeToLive"]],
+    ["lease list", { leaseLeases: async () => ({ header: header("57"), ids: [LEASE_ID] }) }, ["leaseLeases"]],
+    ["member list", { memberList: async () => ({ header: header("57"), members: [] }) }, ["memberList"]],
+    ["endpoint status", { status: async () => status }, ["status"]],
+    ["alarm list", { alarmList: async () => [] }, ["alarmList"]],
+    ["auth status", { authStatus: async () => ({ enabled: true, authRevision: "9" }) }, ["authStatus"]],
+    ["user list", { userList: async () => ["reader"] }, ["userList"]],
+    ["user get reader --detail", { userGet: async () => ["reader"], roleGet: async () => [] }, ["userGet", "roleGet"]],
+    ["role list", { roleList: async () => ["reader"] }, ["roleList"]],
+    ["role get reader", { roleGet: async () => [] }, ["roleGet"]],
+  ];
+  for (const [text, stubs, methods] of reads) {
+    test(`${JSON.stringify(text)} answers with no write counted`, async () => {
+      const h = harness({ bounds: SMALL });
+      const fake = createFakeEtcdClient(stubs);
+      const pending = run(fake, text, h);
+      await Promise.resolve();
+      // The watch's window closes when its timer fires; no other read here sets a timer.
+      for (const timer of h.timers) timer.fn();
+      await pending;
+      expect(sent(fake).map(([method]) => method)).toEqual(methods);
+      expect(h.sent.writes).toBe(0);
+    });
+  }
 });
 
 describe("every error this module words is a QueryError tagged etcd (src/lib/db/errors.ts)", () => {
