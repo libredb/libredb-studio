@@ -1145,7 +1145,7 @@ describe("planted violations: spec E11's import lists fail by name", () => {
       { [STRAY]: 'import { loadEtcdDescriptor } from "../../../../scripts/generate-etcd-descriptor.mjs";\n' },
       `generator importers: ${STRAY} imports ${GENERATOR}, and spec E11 does not name it`,
     ],
-  ] as const)("%s: a planted violation fails by name", (name, planted, finding) => {
+  ] as const)("%s: %j planted fails by name", (name, planted, finding) => {
     expect(
       inPlantedRepository({ ...HOLDING[name], ...planted }, (root, env) =>
         importRuleFindings(ruleNamed(name), root, env),
