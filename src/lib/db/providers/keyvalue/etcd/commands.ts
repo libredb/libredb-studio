@@ -415,11 +415,13 @@ const TIMEOUT_FLAG = valued("command-timeout", "<duration>", "5s", (text) => {
   return { value: Number((nanos + NANOS_PER_MS - BigInt(1)) / NANOS_PER_MS) };
 });
 
-const WHOLE_RANGE = "the server loads the whole range into memory for it, whatever the limit (spec E14)";
+// Spec E14: a sort or a revision filter makes the server load the whole range, whatever the limit.
+const WHOLE_RANGE = "the server loads the whole range into memory for it, whatever the limit";
 const NO_TERMINAL = "Studio has no terminal to prompt in";
+// Spec E3: Studio dials only the configured endpoint.
 const CLUSTER_FLAG: RefusedFlagSpec = {
   name: "cluster",
-  reason: "Studio dials only the configured endpoint, never the addresses the members advertise (spec E3)",
+  reason: "Studio dials only the configured endpoint, never the addresses the members advertise",
 };
 
 const flag = (flags: ReadonlyMap<string, FlagOccurrence>, name: string): FlagValue => flags.get(name)?.value;
@@ -435,12 +437,12 @@ function later(flags: ReadonlyMap<string, FlagOccurrence>, a: string, b: string)
 
 const PREFIX_FROM_KEY = "`--prefix` and `--from-key` cannot be set at the same time, choose one.";
 
-/** A key and an optional range end, with the rules 5.1.3 states for both. */
+/** A key and an optional range end, with the rules 5.1.3 states for both; `emptyKey` says why a key must not be empty. */
 function keyAndRange(
   name: string,
   input: BuildInput,
   whole: { readonly prefix: boolean; readonly fromKey: boolean },
-  emptyKeyReads: string,
+  emptyKey: string,
 ): { readonly key: Uint8Array; readonly rangeEnd?: Uint8Array } | CommandRefusal {
   const { positionals, commandWord } = input;
   if (positionals.length === 0 || positionals.length > 2)
@@ -457,11 +459,7 @@ function keyAndRange(
       at(rangeEnd),
     );
   if (key.bytes.length === 0 && !whole.prefix && !whole.fromKey)
-    return refusal(
-      "bad-argument",
-      `${name} needs a key that is not empty, as etcd answers "key is not provided": ${emptyKeyReads}.`,
-      at(key),
-    );
+    return refusal("bad-argument", `${name} needs a key that is not empty, ${emptyKey}.`, at(key));
   if (rangeEnd !== undefined && rangeEnd.bytes.length === 0)
     return refusal(
       "bad-argument",
@@ -490,7 +488,7 @@ function buildGet(input: BuildInput): EtcdCommand | CommandRefusal {
     "get",
     input,
     { prefix, fromKey },
-    "an empty key with --prefix or --from-key reads every key",
+    'as etcd answers "key is not provided": an empty key with --prefix or --from-key reads every key',
   );
   if (isRefusal(range)) return range;
   const limit = flag(flags, "limit") as number | undefined;
@@ -499,13 +497,13 @@ function buildGet(input: BuildInput): EtcdCommand | CommandRefusal {
   if (limit !== undefined && limit > limits.maxLimit)
     return refusal(
       "limit-too-large",
-      `--limit=${limit} is above the most rows a result holds, ${limits.maxLimit}: ask for ${limits.maxLimit} or fewer.`,
+      `--limit is above the most rows a result holds, ${limits.maxLimit}: ask for ${limits.maxLimit} or fewer.`,
       at(limitWord),
     );
   if (input.inTxn && ranged && !countOnly && limit !== undefined && limit > limits.txnRangeLimit)
     return refusal(
       "limit-too-large",
-      `--limit=${limit} on line ${limitWord.line} is above ${limits.txnRangeLimit}, the most rows a ranged get inside a txn reads, because etcd builds a txn's whole answer at once: ask for ${limits.txnRangeLimit} or fewer.`,
+      `--limit on line ${limitWord.line} is above ${limits.txnRangeLimit}, the most rows a ranged get inside a txn reads, because etcd builds a txn's whole answer at once: ask for ${limits.txnRangeLimit} or fewer.`,
       at(limitWord),
     );
   const revision = flag(flags, "rev") as string | undefined;
@@ -590,13 +588,14 @@ function buildDel(input: BuildInput): EtcdCommand | CommandRefusal {
     "del",
     input,
     { prefix, fromKey },
-    "an empty key with --prefix or --from-key reads every key",
+    'as etcd answers "key is not provided": an empty key with --prefix or --from-key deletes every key',
   );
   if (isRefusal(range)) return range;
+  // Spec E14: DeleteRangeRequest has no limit, so no bound holds the pairs --prev-kv would return.
   if (prevKv && (range.rangeEnd !== undefined || prefix || fromKey))
     return refusal(
       "conflicting-flags",
-      "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer (spec E14). Delete without --prev-kv, or read the range with get first.",
+      "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer. Delete without --prev-kv, or read the range with get first.",
       at(flags.get("prev-kv")?.word as Word),
     );
   return { kind: "del", ...range, prefix, fromKey, prevKv };
@@ -607,7 +606,14 @@ function buildWatch(input: BuildInput): EtcdCommand | CommandRefusal {
   const prefix = isSet(flags, "prefix");
   if (positionals.length === 2 && prefix)
     return refusal("conflicting-flags", "`range_end` and `--prefix` are mutually exclusive.", at(positionals[1]));
-  const range = keyAndRange("watch", input, { prefix, fromKey: false }, "an empty key with --prefix watches every key");
+  // etcd sets an empty watch key to \x00 (v3rpc/watch.go), so a watch of '' would watch that one key
+  // (measured on v3.7.2: etcdctl watch '' printed the put of the key \x00 and not the put of the key a).
+  const range = keyAndRange(
+    "watch",
+    input,
+    { prefix, fromKey: false },
+    "since etcd would watch the key \\x00 alone: an empty key with --prefix watches every key",
+  );
   if (isRefusal(range)) return range;
   const revision = flag(flags, "rev") as string | undefined;
   return {
@@ -1041,7 +1047,7 @@ type FlagPlace =
 
 interface Found {
   readonly flags: Map<string, FlagOccurrence>;
-  timeout?: { readonly ms: number; readonly word: Word; readonly text: string };
+  timeout?: { readonly ms: number; readonly word: Word };
 }
 
 const labelOf = (spec: CommandSpec): string => spec.words.join(" ");
@@ -1184,7 +1190,7 @@ function readFlag(words: readonly Word[], index: number, place: FlagPlace, found
     if (isTimeout) {
       if (found.timeout !== undefined)
         return refusal("conflicting-flags", "--command-timeout is given twice: give it once.", at(word));
-      found.timeout = { ms: value as number, word, text: raw };
+      found.timeout = { ms: value as number, word };
       return next;
     }
   }
@@ -1520,10 +1526,9 @@ export function parseEtcdCommand(text: string, limits: EtcdParseLimits): ParseRe
     const isWatch = command.kind === "watch";
     const cap = isWatch ? limits.maxWatchWindowMs : limits.maxCommandTimeoutMs;
     if (timeout.ms > cap) {
-      const spelled = `--command-timeout=${timeout.text}`;
       const message = isWatch
-        ? `${spelled} sets the watch window, which is at most ${formatMs(cap)} on this connection, its query timeout less the time a watch needs to return its events: lower it, or raise Query Timeout in the connection's settings.`
-        : `${spelled} is above this connection's query timeout, ${formatMs(cap)}: lower it, or raise Query Timeout in the connection's settings.`;
+        ? `--command-timeout sets the watch window, which is at most ${formatMs(cap)} on this connection, its query timeout less the time a watch needs to return its events: lower it, or raise Query Timeout in the connection's settings.`
+        : `--command-timeout is above this connection's query timeout, ${formatMs(cap)}: lower it, or raise Query Timeout in the connection's settings.`;
       return fail(refusal("limit-too-large", message, at(timeout.word)));
     }
   }

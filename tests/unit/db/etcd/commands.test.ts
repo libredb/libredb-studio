@@ -140,7 +140,7 @@ describe("every command of 5.1.3, with every flag it takes", () => {
 // 5.1.3: the flags etcdctl has and the subset refuses, each with its reason
 // ============================================================================
 
-const WHOLE_RANGE = "the server loads the whole range into memory for it, whatever the limit (spec E14)";
+const WHOLE_RANGE = "the server loads the whole range into memory for it, whatever the limit";
 
 const REFUSED_FLAGS: readonly [text: string, sentence: string][] = [
   ["get /a --sort-by=KEY", `get does not take --sort-by: ${WHOLE_RANGE}.`],
@@ -172,11 +172,11 @@ const REFUSED_FLAGS: readonly [text: string, sentence: string][] = [
   ],
   [
     "endpoint status --cluster",
-    "endpoint status does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise (spec E3).",
+    "endpoint status does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise.",
   ],
   [
     "endpoint health --cluster",
-    "endpoint health does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise (spec E3).",
+    "endpoint health does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise.",
   ],
   [
     "get /a --help",
@@ -359,7 +359,7 @@ describe("--command-timeout, the one global flag (spec 5.1.2)", () => {
       line: 1,
       column: 7,
       message:
-        "--command-timeout=60001ms is above this connection's query timeout, 60 s: lower it, or raise Query Timeout in the connection's settings.",
+        "--command-timeout is above this connection's query timeout, 60 s: lower it, or raise Query Timeout in the connection's settings.",
     });
   });
 
@@ -402,11 +402,27 @@ describe("--command-timeout, the one global flag (spec 5.1.2)", () => {
       line: 1,
       column: 7,
       message:
-        "--command-timeout=61s is above this connection's query timeout, 60 s: lower it, or raise Query Timeout in the connection's settings.",
+        "--command-timeout is above this connection's query timeout, 60 s: lower it, or raise Query Timeout in the connection's settings.",
     });
     expect(refusal("get /a --command-timeout=1500ms", { ...LIMITS, maxCommandTimeoutMs: 1_200 }).message).toContain(
       "query timeout, 1200 ms:",
     );
+  });
+
+  test("a refusal above a cap names the flag and the cap, never the value typed", () => {
+    const typed: readonly [text: string, value: string][] = [
+      ["get /a --command-timeout=61s", "61s"],
+      ["get /a --command-timeout 61234ms", "61234"],
+      ["watch /a --command-timeout=56s", "56s"],
+      ["get /a --limit=501", "501"],
+      ["get /a --limit 777", "777"],
+      ["txn\n\nget a --prefix --limit=101", "101"],
+    ];
+    for (const [text, value] of typed) {
+      const { code, message } = refusal(text);
+      expect(code).toBe("limit-too-large");
+      expect(message).not.toContain(value);
+    }
   });
 
   test("on watch it is the window, capped by the watch's own bound", () => {
@@ -414,7 +430,7 @@ describe("--command-timeout, the one global flag (spec 5.1.2)", () => {
     expect(refusal("watch /a --command-timeout=56s")).toMatchObject({
       code: "limit-too-large",
       message:
-        "--command-timeout=56s sets the watch window, which is at most 55 s on this connection, its query timeout less the time a watch needs to return its events: lower it, or raise Query Timeout in the connection's settings.",
+        "--command-timeout sets the watch window, which is at most 55 s on this connection, its query timeout less the time a watch needs to return its events: lower it, or raise Query Timeout in the connection's settings.",
     });
   });
 
@@ -541,7 +557,7 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
   test("a group's own flag between it and its subcommand is refused by name, with the reason (spec 5.1, E3)", () => {
     // etcdctl v3.7.2 declares --cluster on the endpoint group (ep_command.go, NewEndpointCommand).
     const cluster =
-      "endpoint does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise (spec E3).";
+      "endpoint does not take --cluster: Studio dials only the configured endpoint, never the addresses the members advertise.";
     expect(refusal("endpoint --cluster status")).toEqual({
       code: "refused-flag",
       line: 1,
@@ -752,7 +768,7 @@ const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] =
   [
     "get /a --limit=501",
     "limit-too-large",
-    "--limit=501 is above the most rows a result holds, 500: ask for 500 or fewer.",
+    "--limit is above the most rows a result holds, 500: ask for 500 or fewer.",
   ],
   ["get /a --limit=010", "bad-argument", PLAIN_LIMIT],
   ["get /a --limit=0x10", "bad-argument", PLAIN_LIMIT],
@@ -789,12 +805,12 @@ const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] =
   [
     "del ''",
     "bad-argument",
-    'del needs a key that is not empty, as etcd answers "key is not provided": an empty key with --prefix or --from-key reads every key.',
+    'del needs a key that is not empty, as etcd answers "key is not provided": an empty key with --prefix or --from-key deletes every key.',
   ],
   [
     "watch ''",
     "bad-argument",
-    'watch needs a key that is not empty, as etcd answers "key is not provided": an empty key with --prefix watches every key.',
+    "watch needs a key that is not empty, since etcd would watch the key \\x00 alone: an empty key with --prefix watches every key.",
   ],
   ["put '' v", "bad-argument", 'put needs a key that is not empty, as etcd answers "key is not provided".'],
   [
@@ -844,17 +860,17 @@ const ARGUMENT_RULES: readonly [text: string, code: string, message: string][] =
   [
     "del /a --prefix --prev-kv",
     "conflicting-flags",
-    "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer (spec E14). Delete without --prev-kv, or read the range with get first.",
+    "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer. Delete without --prev-kv, or read the range with get first.",
   ],
   [
     "del /a --from-key --prev-kv",
     "conflicting-flags",
-    "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer (spec E14). Delete without --prev-kv, or read the range with get first.",
+    "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer. Delete without --prev-kv, or read the range with get first.",
   ],
   [
     "del /a /b --prev-kv",
     "conflicting-flags",
-    "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer (spec E14). Delete without --prev-kv, or read the range with get first.",
+    "del refuses --prev-kv beside a range end, --prefix or --from-key: etcd would read every deleted pair with no limit and return them all in one answer. Delete without --prev-kv, or read the range with get first.",
   ],
   ["txn x", "bad-argument", "txn takes nothing on its line: write its compares and requests on the lines below it."],
   ["watch", "bad-argument", "watch needs a key and takes at most a range end: watch <key> [<range_end>]."],
@@ -938,7 +954,7 @@ describe("etcdctl's argument rules, each with its sentence (spec 5.1.3)", () => 
   test("the limit bound is the caller's", () => {
     expect(parsed("get /a --limit=900", { ...LIMITS, maxLimit: 1_000 }).command).toMatchObject({ limit: 900 });
     expect(refusal("get /a --limit=2", { ...LIMITS, maxLimit: 1 }).message).toBe(
-      "--limit=2 is above the most rows a result holds, 1: ask for 1 or fewer.",
+      "--limit is above the most rows a result holds, 1: ask for 1 or fewer.",
     );
   });
 
@@ -1132,7 +1148,7 @@ describe("the txn body (spec 5.1.4)", () => {
       line: 3,
       column: 15,
       message:
-        "--limit=101 on line 3 is above 100, the most rows a ranged get inside a txn reads, because etcd builds a txn's whole answer at once: ask for 100 or fewer.",
+        "--limit on line 3 is above 100, the most rows a ranged get inside a txn reads, because etcd builds a txn's whole answer at once: ask for 100 or fewer.",
     });
     expect(txnRefusal("\nget a z --limit=101").code).toBe("limit-too-large");
     expect(txnRefusal("\nget a --from-key --limit=101").code).toBe("limit-too-large");
@@ -1305,6 +1321,23 @@ describe("the txn body (spec 5.1.4)", () => {
 // ============================================================================
 // The declared table (spec 5.1.3), for the provider doc and statementLanguage
 // ============================================================================
+
+describe("no sentence the user reads names an item of the design spec, which no user can open", () => {
+  test("the declared reasons and messages, and the refusals that quoted one", () => {
+    const sentences = [
+      ...ETCD_COMMAND_TABLE.flatMap((row) => row.refusedFlags.map((flag) => flag.reason)),
+      ...ETCD_REFUSED_COMMANDS.map((entry) => entry.message),
+      ...ETCD_REFUSED_GLOBAL_FLAGS.map((flag) => flag.reason),
+      ...[
+        "get /a --sort-by=KEY",
+        "endpoint status --cluster",
+        "endpoint --cluster status",
+        "del /a --prefix --prev-kv",
+      ].map((text) => refusal(text).message),
+    ];
+    expect(sentences.filter((sentence) => /\bspec\b/.test(sentence))).toEqual([]);
+  });
+});
 
 describe("ETCD_COMMAND_TABLE is 5.1.3's table", () => {
   test("every command, its arguments, its flags and its refused flags", () => {
