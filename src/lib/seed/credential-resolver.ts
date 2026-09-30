@@ -5,6 +5,7 @@ import { readVaultSecret, VaultError, type VaultDeps } from "./vault-client";
 const ENV_VAR_PATTERN = /^\$\{([A-Z_][A-Z0-9_]*)\}$/;
 const VAULT_PREFIX = "${vault:";
 const VAULT_REF_PATTERN = /^\$\{vault:([^#{}]+)#([^{}]+)\}$/;
+const SSL_PREFIX = "ssl.";
 const RESOLVABLE_FIELDS = [
   "password",
   "connectionString",
@@ -17,11 +18,27 @@ const RESOLVABLE_FIELDS = [
   // the transport will silently fall back from.
   "apiKeyId",
   "apiKeySecret",
-] as const;
+  // The TLS material (#1089), read and written under `ssl` and named by this dotted path in
+  // an error. On a Kubernetes control-plane etcd the node's client certificate and key are
+  // the only credential, and the chart mounts the seed file from a ConfigMap, so a reference
+  // is how they come from a Secret with no private key in the ConfigMap. A multi-line PEM
+  // passes through unchanged: the patterns match the reference, never the value. The key
+  // stays a secret field (`SSL_FIELDS` in connection-secrets.ts) for every consumer.
+  "ssl.caCert",
+  "ssl.clientCert",
+  "ssl.clientKey",
+] as const satisfies readonly (TopLevelField | `${typeof SSL_PREFIX}${keyof ResolvableSsl}`)[];
 
 type ResolvableField = (typeof RESOLVABLE_FIELDS)[number];
+type SslField = Extract<ResolvableField, `${typeof SSL_PREFIX}${string}`>;
 
-/** The shape `resolveVaultCredentials` needs. Kept structural so a `ManagedConnection` passes through intact. */
+interface ResolvableSsl {
+  caCert?: string;
+  clientCert?: string;
+  clientKey?: string;
+}
+
+/** The shape both loops need. Kept structural so a `ManagedConnection` passes through intact. */
 interface VaultResolvableConnection {
   id: string;
   password?: string;
@@ -31,6 +48,33 @@ interface VaultResolvableConnection {
   database?: string;
   apiKeyId?: string;
   apiKeySecret?: string;
+  ssl?: ResolvableSsl;
+}
+
+type TopLevelField = Exclude<keyof VaultResolvableConnection, "id" | "ssl">;
+
+function isSslField(field: ResolvableField): field is SslField {
+  return field.startsWith(SSL_PREFIX);
+}
+
+function sslKeyOf(field: SslField): keyof ResolvableSsl {
+  return field.slice(SSL_PREFIX.length) as keyof ResolvableSsl;
+}
+
+/** A resolvable field's value: at the connection's top level, or under `ssl` for the TLS material. */
+function fieldValue(conn: VaultResolvableConnection, field: ResolvableField): string | undefined {
+  return isSslField(field) ? conn.ssl?.[sslKeyOf(field)] : conn[field];
+}
+
+/**
+ * Writes a resolved value into `target`, a copy the caller made of the connection. Under `ssl` it
+ * writes into a new object and never the connection's own: a connection with no `ssl` of its own
+ * shares `defaults.ssl` with every other such connection (`mergeDefaults`), and the parsed seed file
+ * is cached, so writing into it would put a resolved key into the cached file.
+ */
+function setFieldValue(target: VaultResolvableConnection, field: ResolvableField, value: string | undefined): void {
+  if (isSslField(field)) target.ssl = { ...target.ssl, [sslKeyOf(field)]: value };
+  else target[field] = value;
 }
 
 const warnedPlaintext = new Set<string>();
@@ -78,9 +122,9 @@ function resolveField(value: string | undefined, fieldName: string, connId: stri
 export function resolveConnectionCredentials(conn: SeedConnection): SeedConnection {
   const resolved = { ...conn };
   for (const field of RESOLVABLE_FIELDS) {
-    const value = resolved[field];
+    const value = fieldValue(resolved, field);
     if (typeof value === "string") {
-      (resolved as Record<string, unknown>)[field] = resolveField(value, field, conn.id);
+      setFieldValue(resolved, field, resolveField(value, field, conn.id));
     }
   }
   return resolved;
@@ -126,15 +170,16 @@ export async function resolveVaultCredentials<T extends VaultResolvableConnectio
   deps?: VaultDeps,
 ): Promise<T> {
   const references = RESOLVABLE_FIELDS.flatMap((field) => {
-    const value = conn[field];
+    const value = fieldValue(conn, field);
     return typeof value === "string" && isVaultReference(value) ? [{ field, value }] : [];
   });
   if (references.length === 0) return conn;
 
-  const resolved = { ...conn } as Record<string, unknown>;
+  const resolved: VaultResolvableConnection = { ...conn };
   for (const { field, value } of references) {
     const { path, key } = parseVaultReference(value, conn.id, field);
-    resolved[field] = await readVaultSecret(path, key, deps);
+    // oxlint-disable-next-line no-await-in-loop -- fields that share a path read it once: each later read is answered from the cache the one before it fills.
+    setFieldValue(resolved, field, await readVaultSecret(path, key, deps));
   }
   return resolved as T;
 }

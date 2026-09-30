@@ -229,7 +229,7 @@ connections:
 3. If an env var is undefined, that connection is **skipped** (others continue working)
 4. Plaintext passwords trigger a warning log (but still work)
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Vault References
 
@@ -246,7 +246,8 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`). A reference with no `#key` fails when the connection is opened.
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:
 
