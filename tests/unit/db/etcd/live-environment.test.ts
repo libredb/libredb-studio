@@ -11,6 +11,11 @@
  * The auth fixtures differ in exactly one way, whether the server reads client certificates, so
  * a password over server-verified TLS is exercised live as well as certificate authentication.
  *
+ * The scripts of `docker/etcd` are held to the same section: the seed writes every key it names,
+ * each only while absent, so a rerun leaves the revision the captures record; the RBAC init grants
+ * role reader nothing but READ on `/app/` and `/config/a`, gives cert-only no password, and turns
+ * auth on last; and each user's certificate carries its name as its Common Name.
+ *
  * `docker/etcd/README.md` says how to bring each one up and what it holds.
  */
 import { describe, expect, test } from "bun:test";
@@ -219,5 +224,225 @@ describe("the live etcd fixtures in database-compose.yml", () => {
       expect(entry).not.toMatch(/\.(pem|crt|key|csr|password)$/);
       expect(readFileSync(path.join(ROOT, "docker/etcd", entry), "utf8")).not.toContain("-----BEGIN");
     }
+  });
+});
+
+function script(name: string): string {
+  return readFileSync(path.join(ROOT, "docker/etcd", name), "utf8");
+}
+
+/** The body of a shell function `<name>() { ... }` of a script, from its opening line to its closing brace. */
+function shellFunction(source: string, name: string): string {
+  const found = new RegExp(`^${name}\\(\\) \\{\\n([\\s\\S]*?)^\\}`, "m").exec(source);
+  if (found === null) throw new Error(`no shell function ${name}`);
+  return found[1];
+}
+
+/** One byte per character, so a key that is not UTF-8 compares as its exact bytes. */
+function bytes(hex: string): string {
+  return (hex.replace(/\s/g, "").match(/../g) ?? [])
+    .map((byte) => String.fromCharCode(Number.parseInt(byte, 16)))
+    .join("");
+}
+
+/** The written keys of seed.sh, by the helper that writes each: new, put_new or put_at_version. */
+function seededKeys(): string[] {
+  const keys: string[] = [];
+  for (const line of script("seed.sh").split("\n")) {
+    const plain = /^new (\S+) /.exec(line) ?? /^(?:.*; do )?put_(?:new|at_version) "\$\(text (\S+)\)"/.exec(line);
+    const escaped = /^put_new "\$\(printf '([^']*)' \| b64\)"/.exec(line);
+    if (plain !== null) keys.push(plain[1]);
+    else if (escaped !== null)
+      keys.push(
+        escaped[1].replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(Number.parseInt(octal, 8))),
+      );
+  }
+  return keys;
+}
+
+/** The keys of the README's seeded-keys table, from the first cell of each row. */
+function readmeKeys(): { readonly count: number; readonly keys: string[] } {
+  const readme = script("README.md");
+  const section = readme.slice(
+    readme.indexOf("## The seeded keys"),
+    readme.indexOf("## Users, roles and certificates"),
+  );
+  const count = Number(/The same (\d+) keys/.exec(section)?.[1]);
+  const keys: string[] = [];
+  for (const row of section.split("\n").filter((line) => line.startsWith("| `"))) {
+    const cell = row.split("|")[1];
+    const suffixed = /`([^`]+)` followed by the bytes `([0-9a-f ]+)`/.exec(cell);
+    if (suffixed !== null) keys.push(suffixed[1] + bytes(suffixed[2]));
+    else for (const [, key] of cell.matchAll(/`([^`]+)`/g)) keys.push(key);
+  }
+  return { count, keys };
+}
+
+/** The value argument seed.sh writes for a key, as the source text of the call. */
+function seedLine(key: string): string {
+  const lines = script("seed.sh")
+    .split("\n")
+    .filter((line) => line.startsWith(`new ${key} `) || line.startsWith(`put_new "$(text ${key})" `));
+  if (lines.length !== 1) throw new Error(`seed.sh writes ${key} ${lines.length} times`);
+  return lines[0];
+}
+
+/** Every `call <path> <json>` of a script, in order, as its path and its JSON text. */
+function calls(source: string): { readonly path: string; readonly body: string }[] {
+  return [...source.matchAll(/^call (\S+) (?:'([^']*)'|"((?:[^"\\]|\\.)*)")/gm)].map(
+    ([, callPath, single, double]) => ({
+      path: callPath,
+      body: single ?? double,
+    }),
+  );
+}
+
+// Every key section 9 of the design names, so dropping one from both seed.sh and the README
+// still fails. The layouts of R09, the prefix-group shapes, the values of 4.4, the history key,
+// the leases, the Kubernetes subtree, the root compaction key and the custom-prefix stand-ins.
+const SPEC_KEYS = [
+  "/apisix/routes/1",
+  "/apisix/plugins",
+  "/service/batman/leader",
+  "/skydns/local/example/www",
+  "/feature-flag",
+  "/config/a",
+  "/config/b",
+  "/app/cfg",
+  "/app/a/b",
+  "/app/x/y",
+  "/values/not-utf8",
+  "/values/large",
+  "/values/empty",
+  "/values/whitespace",
+  `/values/key-${bytes("fffe")}`,
+  "/history/counter",
+  "/leases/session-1",
+  "/leases/session-2",
+  "/registry/events/default/nginx.1",
+  "/registry/pods/default/nginx",
+  "/registry/secrets/default/db-creds",
+  "/registry/configmaps/default/encrypted",
+  "/registry/cbor.example.com/gadgets/default/g1",
+  "/registry/example.com/widgets/default/w1",
+  "registry/secrets/default/legacy",
+  "compact_rev_key",
+  "/tenant-a/configmaps/default/cm",
+  "/tenant-a/configmaps/default/cm-encrypted",
+];
+
+describe("the scripts of docker/etcd", () => {
+  test("seed.sh writes each key once, the README's table names the same keys, and the count matches", () => {
+    const seeded = seededKeys();
+    expect(new Set(seeded).size).toBe(seeded.length);
+    const readme = readmeKeys();
+    expect([...readme.keys].sort()).toEqual([...seeded].sort());
+    expect(readme.count).toBe(seeded.length);
+  });
+
+  test("seed.sh writes every key the design's section 9 names", () => {
+    const seeded = new Set(seededKeys());
+    for (const key of SPEC_KEYS) expect({ key, seeded: seeded.has(key) }).toEqual({ key, seeded: true });
+  });
+
+  test("the values of 4.4: not UTF-8, past 256 KiB, empty and whitespace only", () => {
+    const notUtf8 = /"\$\(hex ([0-9a-f]+)\)"$/.exec(seedLine("/values/not-utf8"))?.[1] ?? "";
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    expect(() => decoder.decode(Uint8Array.from(bytes(notUtf8), (char) => char.charCodeAt(0)))).toThrow();
+    const large = Number(/head -c (\d+) \/dev\/zero/.exec(seedLine("/values/large"))?.[1]);
+    expect(large).toBeGreaterThan(256 * 1024);
+    expect(seedLine("/values/empty")).toEndWith(' ""');
+    expect(seedLine("/values/whitespace")).toEndWith(` "$(printf '  \\n\\t ' | b64)"`);
+  });
+
+  test("/history/counter gets exactly three revisions, each guarded by the version before it", () => {
+    expect(script("seed.sh")).toContain(
+      'for version in 0 1 2; do put_at_version "$(text /history/counter)" "$(text $((version + 1)))" "$version"; done',
+    );
+  });
+
+  test("two long leases with fixed ids past 2^53, the second holding a protected key beside an ordinary one", () => {
+    const seed = script("seed.sh");
+    const [first, second] = ["7587863092875085000", "7587863092875085001"];
+    for (const id of [first, second]) {
+      expect(BigInt(id) > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
+      expect(Number(new RegExp(`^lease_new ${id} (\\d+)$`, "m").exec(seed)?.[1])).toBeGreaterThanOrEqual(86400);
+    }
+    expect(seedLine("/leases/session-1")).toEndWith(` ${first}`);
+    expect(seedLine("/leases/session-2")).toEndWith(` ${second}`);
+    expect(seedLine("/registry/events/default/nginx.1")).toEndWith(` ${second}`);
+  });
+
+  test("the Kubernetes values: envelopes, the encrypted prefix, CBOR, JSON, and the root compaction key", () => {
+    const envelope = /"\$\(hex (6b387300[0-9a-f]*)\)"$/;
+    for (const key of [
+      "/registry/pods/default/nginx",
+      "/registry/secrets/default/db-creds",
+      "/tenant-a/configmaps/default/cm",
+    ])
+      expect({ key, line: seedLine(key) }).toEqual({ key, line: expect.stringMatching(envelope) });
+    expect(bytes(envelope.exec(seedLine("/registry/secrets/default/db-creds"))?.[1] ?? "")).toContain(
+      "libredb-fixture-secret",
+    );
+    for (const key of ["/registry/configmaps/default/encrypted", "/tenant-a/configmaps/default/cm-encrypted"])
+      expect(seedLine(key)).toEndWith(' "$(encrypted)"');
+    expect(script("seed.sh")).toContain("encrypted() { { printf 'k8s:enc:aescbc:v1:key1:';");
+    expect(seedLine("/registry/cbor.example.com/gadgets/default/g1")).toContain('"$(hex d9d9f7');
+    expect(seedLine("registry/secrets/default/legacy")).toContain("$(text libredb-fixture-secret)");
+    expect(seedLine("compact_rev_key")).toMatch(/^new compact_rev_key '\d+'$/);
+  });
+
+  test("put_new writes only while the key does not exist, put_at_version only at the version it names", () => {
+    const lib = script("lib.sh");
+    expect(shellFunction(lib, "put_new")).toContain(
+      '\\"compare\\":[{\\"key\\":\\"$1\\",\\"target\\":\\"CREATE\\",\\"result\\":\\"EQUAL\\",\\"create_revision\\":\\"0\\"}]',
+    );
+    expect(shellFunction(lib, "put_at_version")).toContain(
+      '\\"compare\\":[{\\"key\\":\\"$1\\",\\"target\\":\\"VERSION\\",\\"result\\":\\"EQUAL\\",\\"version\\":\\"$3\\"}]',
+    );
+  });
+
+  test("rbac.sh grants role reader READ on /app/ and on /config/a alone, and nothing else", () => {
+    const grants = calls(script("rbac.sh")).filter((call) => call.path === "/v3/auth/role/grant");
+    expect(grants.map((grant) => grant.body)).toEqual([
+      '{\\"name\\":\\"reader\\",\\"perm\\":{\\"permType\\":\\"READ\\",\\"key\\":\\"$(text /app/)\\",\\"range_end\\":\\"$(text /app0)\\"}}',
+      '{\\"name\\":\\"reader\\",\\"perm\\":{\\"permType\\":\\"READ\\",\\"key\\":\\"$(text /config/a)\\"}}',
+    ]);
+  });
+
+  test("rbac.sh gives each user its role, and cert-only no password", () => {
+    const all = calls(script("rbac.sh"));
+    expect(all.filter((call) => call.path === "/v3/auth/user/grant").map((call) => call.body)).toEqual([
+      '{"user":"root","role":"root"}',
+      '{"user":"reader","role":"reader"}',
+      '{"user":"cert-only","role":"reader"}',
+    ]);
+    const added = all.filter((call) => call.path === "/v3/auth/user/add").map((call) => call.body);
+    expect(added).toContain('{"name":"cert-only","options":{"no_password":true}}');
+    expect(added.filter((body) => body.includes("cert-only"))).toHaveLength(1);
+  });
+
+  test("rbac.sh stops when auth is already on, and turns auth on last", () => {
+    const rbac = script("rbac.sh");
+    const guard = rbac.indexOf('if auth_enabled; then\n  echo "auth already enabled on $ETCD_URL"\n  exit 0\nfi');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(rbac.search(/^call /m));
+    const all = calls(rbac);
+    expect(all.at(-1)).toEqual({ path: "/v3/auth/enable", body: "{}" });
+    expect(all.filter((call) => call.path === "/v3/auth/enable")).toHaveLength(1);
+  });
+
+  test("certs.sh names each user's certificate by its Common Name, and the gateway's certificate by none", () => {
+    const certs = script("certs.sh");
+    const issue = shellFunction(certs, "issue");
+    expect(issue).toContain('subject="/CN=$2"');
+    expect(issue).toContain('[ -n "$2" ] || subject="/O=libredb-etcd-fixture"');
+    expect(issue).toContain('-subj "$subject"');
+    const loop = /^for user in ([^;]+); do issue "\$user" "\$user" ca "extendedKeyUsage=clientAuth"; done$/m.exec(
+      certs,
+    );
+    expect(loop?.[1].split(" ")).toEqual(["root", "reader", "cert-only", "unknown-user"]);
+    expect(certs).toMatch(/^issue gateway-client "" ca "extendedKeyUsage=clientAuth"$/m);
+    expect(certs).toMatch(/^issue other-ca-root root other-ca "extendedKeyUsage=clientAuth"$/m);
   });
 });
