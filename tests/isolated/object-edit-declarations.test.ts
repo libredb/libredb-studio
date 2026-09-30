@@ -114,7 +114,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const EDIT_SECTION_HEADING = /^#{1,6} .*Object edit \(#789\)/m;
 
 describe("the fleet census of object edit declarations", () => {
-  test("exactly four (type-id, kind) pairs declare acceptsSourceEdits", async () => {
+  test("exactly five (type-id, kind) pairs declare acceptsSourceEdits", async () => {
     const measured: string[] = [];
     for (const type of EDIT_CENSUS_TYPES) {
       const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);

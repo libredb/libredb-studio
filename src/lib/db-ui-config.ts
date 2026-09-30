@@ -19,6 +19,7 @@ import {
   DuckDBIcon,
   PrometheusIcon,
   KafkaIcon,
+  EtcdIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -378,6 +379,27 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
         { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
         { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
       ],
+    },
+  },
+  etcd: {
+    icon: EtcdIcon,
+    // etcd's own mark is a mid blue. `hue-blue` is PostgreSQL's identity, so this takes its `-alt` step,
+    // which no engine carries; tests/unit/lib/db-ui-config.test.ts asserts every engine colour differs.
+    color: "text-hue-blue-alt",
+    label: "etcd",
+    // The client port etcd listens on.
+    defaultPort: "2379",
+    // No URI convention to paste: etcdctl takes endpoints, which Host and Port hold (#1089 6.1).
+    showConnectionStringToggle: false,
+    // No database field: one connection is one cluster. User and Password are etcd's password sign-in; with
+    // both empty, a client certificate under SSL / TLS signs in as its Common Name. The hints below say which
+    // field decides which, since a refusal of E1 or E2 is otherwise the first the user hears of it.
+    connectionFields: ["host", "port", "user", "password"],
+    fieldHints: {
+      host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
+      user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
+      password:
+        "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
     },
   },
   libredb: {

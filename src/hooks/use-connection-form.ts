@@ -903,6 +903,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "duckdb",
     "prometheus",
     "kafka",
+    "etcd",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

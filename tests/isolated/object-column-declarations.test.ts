@@ -107,6 +107,9 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // One kind has columns: a topic, whose columns are the fixed shape of a read result (#1088
   // 4.2). Consumer groups and brokers describe none.
   kafka: ["topic"],
+  // One kind has columns: a key-prefix group, whose columns are the fixed shape of a `get` row (#1089 4.2).
+  // Keys, members, leases, users and roles describe none.
+  etcd: ["prefix"],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -190,7 +193,7 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(19);
+    expect(CENSUS_TYPES).toHaveLength(20);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, and the design's
     // table has no such row: every engine has at least one kind with columns.

@@ -358,10 +358,11 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
 
 /**
  * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
- * `MCP_EXPOSABLE` and never from a type-id. Every shipped engine answers true for now, so the refusal
- * itself is pinned through `refuseMcpWhereNotOffered` handed a copy of the record that answers false
- * for a shipped type, the way `offersReadOnlyToggle` is handed its engine's answer; the case of a
- * shipped engine that answers false lands with that engine's registration.
+ * `MCP_EXPOSABLE` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
+ * handed a copy of the record that answers false for another shipped type, the way `offersReadOnlyToggle`
+ * is handed its engine's answer, so no case depends on which engine the record refuses; etcd, the one
+ * shipped engine it refuses, is pinned through the wired `SeedConfigSchema` in the describe "SeedConfigSchema:
+ * MCP is not offered for etcd (#1089 E12)" below.
  */
 describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {
   const connection = { id: "cluster", name: "Cluster", host: "cluster.internal", roles: ["*"] };
@@ -593,5 +594,77 @@ describe("SeedConfigSchema: a read-only seed must be managed (#1089)", () => {
   it("asks nothing of a seed that is not read-only, managed or not", () => {
     expect(issuesOf({ version: "1", connections: [{ ...connection, managed: false }] })).toEqual([]);
     expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: false, managed: false }] })).toEqual([]);
+  });
+});
+
+/**
+ * The cases of the read-only rules that need an engine whose provider enforces the mode (#1089 E6), which no
+ * engine did until etcd: each seed is refused by the managed rule alone, as one issue, or loads.
+ */
+describe("SeedConfigSchema: a read-only etcd seed (#1089 E6)", () => {
+  const etcd = { id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"] };
+  const issuesOf = (config: unknown) => {
+    const result = SeedConfigSchema.safeParse(config);
+    return result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message]);
+  };
+  const why =
+    "an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.";
+
+  it("refuses readOnly: true beside managed: false, as the one managed issue", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...etcd, readOnly: true, managed: false }] })).toEqual([
+      ["connections.0.readOnly", `readOnly: true needs a managed connection, and this one has managed: false: ${why}`],
+    ]);
+  });
+
+  it("refuses it when managed: false comes from defaults.managed, naming defaults.managed", () => {
+    expect(
+      issuesOf({ version: "1", defaults: { managed: false }, connections: [{ ...etcd, readOnly: true }] }),
+    ).toEqual([
+      [
+        "connections.0.readOnly",
+        `readOnly: true needs a managed connection, and this one has managed: false from defaults.managed: ${why}`,
+      ],
+    ]);
+  });
+
+  it("loads readOnly: true with managed: true over defaults.managed: false, and with neither set", () => {
+    expect(
+      issuesOf({
+        version: "1",
+        defaults: { managed: false },
+        connections: [{ ...etcd, readOnly: true, managed: true }],
+      }),
+    ).toEqual([]);
+    expect(issuesOf({ version: "1", connections: [{ ...etcd, readOnly: true }] })).toEqual([]);
+  });
+
+  it("refuses a string readOnly on an etcd seed, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...etcd, readOnly: "true" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["readOnly"]);
+  });
+
+  it("carries readOnly: true on an etcd seed through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...etcd, readOnly: true });
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBe(true);
+  });
+});
+
+describe("SeedConfigSchema: MCP is not offered for etcd (#1089 E12)", () => {
+  const etcd = { id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"] };
+
+  it("refuses an etcd seed with mcp: true, with an issue on mcp that names etcd", () => {
+    const result = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: true }] });
+    expect(result.success).toBe(false);
+    const issues = result.error?.issues ?? [];
+    expect(issues.map((issue) => issue.path.join("."))).toEqual(["connections.0.mcp"]);
+    expect(issues[0]?.message).toContain("etcd");
+    expect(issues[0]?.message).toContain("MCP");
+  });
+
+  it("parses an etcd seed that says nothing of mcp, and one with mcp: false", () => {
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [etcd] }).success).toBe(true);
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: false }] }).success).toBe(true);
   });
 });

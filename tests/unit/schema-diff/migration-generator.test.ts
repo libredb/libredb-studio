@@ -1032,6 +1032,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     libredb: "engine-has-no-foreign-key",
     prometheus: "engine-has-no-foreign-key",
     kafka: "engine-has-no-foreign-key",
+    etcd: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1141,6 +1142,8 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   prometheus: { label: "Prometheus", reason: "written by scrapes and recording rules" },
   // Not a table store (#1088): a topic holds messages, and its columns are a read's fixed shape.
   kafka: { label: "Apache Kafka", reason: "not rows with declared columns" },
+  // Not a table store (#1089): a key-prefix group holds keys whose values are bytes.
+  etcd: { label: "etcd", reason: "not rows with declared columns" },
 };
 
 /**
@@ -1313,6 +1316,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "libredb",
           "prometheus",
           "kafka",
+          "etcd",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1365,6 +1369,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
   prometheus: false, // not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   kafka: false, // a JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  etcd: false, // an etcdctl command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1393,6 +1398,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "opensearch",
             "prometheus",
             "kafka",
+            "etcd",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

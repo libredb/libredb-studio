@@ -237,9 +237,10 @@ export type TypedConfirmationAsk =
  *
  * The route writes exactly two statement shapes: SQL aggregates, and a MongoDB `aggregate`
  * document with a `$sample` stage. So profiling is offered for `"sql"`, and for `"json"` only
- * when no `queryDialect` says the JSON is some other grammar. Redis, LibreDB and Kafka declare
+ * when no `queryDialect` says the JSON is some other grammar. Redis, LibreDB, Kafka and etcd declare
  * `"json"` with a dialect of their own, a Kafka read request being JSON of this product's own
- * schema (#1088), and `"promql"` is not JSON at all; before this gate the route sent Redis,
+ * schema (#1088) and an etcd command a line of etcdctl's (#1089), and `"promql"` is not JSON at all;
+ * before this gate the route sent Redis,
  * LibreDB and Prometheus the MongoDB document, which only MongoDB reads (#1085).
  *
  * Unknown capabilities are not a permission, for the reason `maintenanceControl` gives:
@@ -268,10 +269,14 @@ export function offersColumnProfiling(capabilities: ProviderCapabilities | undef
  * written over them reject the rows a read returns, a `Date` for a timestamp that arrives as an ISO
  * string and a record type for a value that arrives as text, base64 or a Confluent schema label.
  *
+ * The `"etcd"` dialect is refused by the same arm (#1089, section 3.3): a key-prefix group's columns are
+ * the fixed shape of a `get` row, and a model written over them is not a record an application stores in
+ * a key-value store.
+ *
  * Unknown capabilities are not a permission, as for `offersColumnProfiling`.
  */
 export function offersCodeGeneration(capabilities: ProviderCapabilities | undefined): boolean {
-  if (capabilities?.queryDialect === "kafka") return false;
+  if (capabilities?.queryDialect === "kafka" || capabilities?.queryDialect === "etcd") return false;
   return capabilities?.queryLanguage === "sql" || capabilities?.queryLanguage === "json";
 }
 
@@ -285,7 +290,8 @@ export function offersCodeGeneration(capabilities: ProviderCapabilities | undefi
  * `offersColumnProfiling` does, so that a dialect declared on a SQL engine later refuses the
  * action until somebody writes its count. Redis and LibreDB have no count
  * statement in their command grammars, Kafka's read request reads a topic's messages and counts
- * none (#1088), and `"promql"` is not offered it either: `count()` in
+ * none (#1088), etcd declares a dialect and derived groupings both, either of which withholds it
+ * (#1089), and `"promql"` is not offered it either: `count()` in
  * PromQL counts series at an instant, which is not the row count this action promises.
  *
  * A derived grouping is refused on top of the language, because a Redis `user:*` row is a
@@ -520,7 +526,9 @@ export interface ProviderCapabilities {
    */
   queryLanguage: "sql" | "json" | "promql";
   /**
-   * Optional client-side query dialect, and only ever a kind of JSON. `queryLanguage`
+   * Optional client-side query dialect, declared only beside `queryLanguage: "json"`, where it
+   * names the grammar the editor text really is: JSON of this product's own schema (Kafka) or a
+   * command line (Redis, LibreDB, etcd), for which `"json"` means only "not SQL". `queryLanguage`
    * says SQL, JSON or PromQL; for a `"json"` provider the query generators otherwise
    * assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
@@ -536,8 +544,12 @@ export interface ProviderCapabilities {
    * the member lands with an explicit arm in every reader of either field, or with a test pinning
    * that the branch it falls into is right for Kafka. Widening this published union breaks a
    * consumer's exhaustive switch over it, which ships with a release note, as `queryLanguage`'s did.
+   *
+   * `"etcd"` is the etcd provider's (#1089): its editor text is a subset of etcdctl's command line,
+   * read by the provider's own parser. It landed the way Kafka's did: an explicit arm in every reader
+   * of either field, or a test pinning that the branch it falls into is right for etcd.
    */
-  queryDialect?: "libredb" | "redis" | "kafka";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

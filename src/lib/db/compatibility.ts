@@ -71,6 +71,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
   // once a gate-4 probe has measured one, never because the protocol answers.
   kafka: true,
+  // etcd (#1089): its own provider, doc and integration test, and the second member of the `keyvalue/`
+  // family. kine and Xline speak etcd's API and are recorded below as relatives only once a gate-4
+  // probe has measured each, never because the API answers.
+  etcd: true,
   libredb: true,
 });
 
@@ -121,6 +125,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   prometheus: true,
   // A cluster the user already runs, reached over the Kafka protocol.
   kafka: true,
+  // A cluster the user already runs, reached over etcd's gRPC API.
+  etcd: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -132,7 +138,7 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
  *
  * Also the DENOMINATOR the outward-facing catalog copy is counted against:
  * `tests/unit/lib/catalog-copy-engine-count.test.ts` compares this length with every
- * numeral qualifying "engines" in nine storefront files, which until #D47 were only ever
+ * numeral qualifying "engines" in thirteen storefront files, which until #D47 were only ever
  * corrected by somebody noticing.
  */
 export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
@@ -178,6 +184,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   redis: false,
   prometheus: false,
   kafka: false,
+  // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
+  // and maintenance operation before any request while the mode holds.
+  etcd: true,
   libredb: false,
 });
 
@@ -211,6 +220,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
+  // The one engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and
+  // a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  etcd: false,
   libredb: true,
 });
 

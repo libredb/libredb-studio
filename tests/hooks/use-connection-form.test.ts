@@ -17,6 +17,7 @@ const DEFAULT_PORTS: Record<string, string> = {
   couchbase: "8091",
   kafka: "9092",
   mssql: "1433",
+  etcd: "2379",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -41,6 +42,8 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   // The mechanism is a field of its own and no database is taken: under the fallback below
   // `buildConnection` would write a `database` and never a `saslMechanism`.
   kafka: ["host", "port", "saslMechanism", "user", "password"],
+  // No database: one connection is one cluster (#1089 6.1).
+  etcd: ["host", "port", "user", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -1553,6 +1556,7 @@ describe("useConnectionForm", () => {
     duckdb: true,
     prometheus: true,
     kafka: true,
+    etcd: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -2142,6 +2146,52 @@ describe("useConnectionForm", () => {
       act(() => result.current.setType(type));
       expect({ type, offered: result.current.readOnlyOffered }).toEqual({ type, offered: false });
     }
+  });
+
+  test("offers the Read-only toggle on etcd, whose provider enforces the mode, and writes a tick as readOnly: true (#1089)", async () => {
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    act(() => result.current.setType("etcd"));
+    expect(result.current.readOnlyOffered).toBe(true);
+    act(() => result.current.setReadOnly(true));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0]).toMatchObject({ type: "etcd", readOnly: true });
+  });
+
+  test("a tick left on etcd is not written after a switch to an engine that ignores the mode (#1089)", async () => {
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setReadOnly(true));
+    act(() => result.current.setType("postgres"));
+    expect(result.current.readOnlyOffered).toBe(false);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("readOnly" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("a copy of an etcd seed offers no Read-only toggle, since the server re-resolves the seed (#1089)", () => {
+    const seedCopy: DatabaseConnection = {
+      id: "seed:prod-etcd",
+      seedId: "prod-etcd",
+      name: "Prod etcd",
+      type: "etcd",
+      host: "etcd.internal",
+      port: 2379,
+      createdAt: new Date(0),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: seedCopy }));
+    expect(result.current.type).toBe("etcd");
+    expect(result.current.readOnlyOffered).toBe(false);
   });
 
   test("populates the Cassandra localDataCenter in edit mode", () => {

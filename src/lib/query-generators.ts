@@ -1,4 +1,6 @@
 import { declaredLevels } from "@/lib/db/object-kinds";
+import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
+import { quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 import { offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
@@ -75,8 +77,8 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * Adding a branch would only duplicate it.
  */
 export function quoteIdentifier(name: string, capabilities: ProviderCapabilities): string {
-  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB and
-  // Kafka, which declare a JSON dialect of their own (#1088).
+  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB, Kafka
+  // and etcd, which declare a JSON dialect of their own (#1088, #1089).
   if (capabilities.queryLanguage === "json") return name;
 
   // An explicit declaration wins over the port heuristic below, because the port
@@ -232,6 +234,57 @@ function commentName(name: string): string {
 function prefixGroup(name: string): { isPrefixGroup: boolean; base: string } {
   if (name.endsWith(":*")) return { isPrefixGroup: true, base: name.slice(0, -1) };
   return { isPrefixGroup: false, base: name };
+}
+
+/**
+ * An etcd key-prefix group's prefix (#1089, section 6.4): the row name without its final `*` where the
+ * name ends in `/*`, the only name keys.ts `groupLabel` writes (`/app/config/*` reads `/app/config/`).
+ * Any other segment is the prefix as it stands, so a hand-built path still reads a bounded prefix, and
+ * never a key with a `*` in it.
+ */
+function etcdGroupPrefix(name: string): string {
+  return name.endsWith("/*") ? name.slice(0, -1) : name;
+}
+
+/** The rows a generated etcd read asks for: the preview page the other arms read (#1089 6.4). */
+const ETCD_READ_LIMIT_FLAG = "--limit=50";
+
+/**
+ * Whether a word holds a carriage return, which has no spelling on the etcd command line: the editor ends
+ * a line at it, and the lexer's `quoteWord` throws for one. A read that names one is written as a txn
+ * request instead, whose Go quoting escapes it (#1089 6.4).
+ */
+const holdsCarriageReturn = (word: string): boolean => word.includes("\r");
+
+/**
+ * One etcd request: the command, then the keys through `quote`, the word rule of the place the request
+ * lands, then the flags; or, where a key begins with `-`, the flags, `--` and the keys, because etcdctl
+ * reads a word that begins with `-` as a flag (#1089 6.4, R11 ETCD-6).
+ */
+function etcdRequest(
+  command: string,
+  keys: readonly string[],
+  flags: readonly string[],
+  quote: (key: string) => string,
+): string {
+  const words = keys.map(quote);
+  const dashed = keys.some((key) => key.startsWith("-"));
+  return [command, ...(dashed ? [...flags, "--", ...words] : [...words, ...flags])].join(" ");
+}
+
+/** A key as a txn request word: bare when it is safe text, else Go-quoted (lexer.ts `quoteTxnWord`). */
+const etcdTxnWord = (key: string): string => quoteTxnWord(encodeKey(key));
+
+/**
+ * A read of the keys under `prefix` (#1089 6.4): `get <prefix> --prefix --limit=50` on the command line,
+ * or, for a prefix holding a carriage return, a txn whose success list holds the Go-quoted get with no
+ * `--limit`, since the provider sends a txn's ranged get with its own page size (#1089 5.1.4).
+ */
+function etcdPrefixRead(prefix: string): string {
+  if (holdsCarriageReturn(prefix)) {
+    return ["txn", "", etcdRequest("get", [prefix], ["--prefix"], etcdTxnWord), "", ""].join("\n");
+  }
+  return etcdRequest("get", [prefix], ["--prefix", ETCD_READ_LIMIT_FLAG], quoteWord);
 }
 
 /** A concrete example JSON scalar for a catalog column type (LibreDB column
@@ -440,11 +493,11 @@ function libredbNewlineNote(base: string): string | null {
  * instead (`PREVIEW_PAGE_SIZE` in `use-tab-manager.ts`), which leaves a user-written
  * `LIMIT n` with exactly one meaning: a hard bound we do not page past.
  *
- * The three JSON-language branches keep their own bound, and that is not an exception to
- * the rule. None of MongoDB, Redis and Kafka can be asked for page two at all
+ * The four JSON-language branches keep their own bound, and that is not an exception to
+ * the rule. None of MongoDB, Redis, Kafka and etcd can be asked for page two at all
  * (`supportsResultPagination: false`, measured), so their bound is the only one there is
  * and no control is offered that a preview cap in the text could disengage. Kafka's is
- * the read request's own `limit` (#1088).
+ * the read request's own `limit` (#1088), and etcd's the command's own `--limit` (#1089).
  *
  * The PromQL branch writes the metric's selector and no bound at all (#1085): PromQL has no row
  * bound to write, and the provider caps the series it returns (#1085, section 5.4).
@@ -481,6 +534,12 @@ export function generateTableQuery(
   // The name goes through JSON.stringify with the rest, so no topic name leaves its string.
   if (capabilities.queryDialect === "kafka") {
     return JSON.stringify({ topic: tableName, from: "latest", limit: 50 }, null, 2);
+  }
+  // etcd reads a group through an etcdctl command, not a MongoDB document: without this arm a tree
+  // click would auto-execute a `find` the provider refuses (#1089, section 6.4). A row is one group,
+  // so the click reads its prefix, bounded by the command's own `--limit`.
+  if (capabilities.queryDialect === "etcd") {
+    return etcdPrefixRead(etcdGroupPrefix(tableName));
   }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify(

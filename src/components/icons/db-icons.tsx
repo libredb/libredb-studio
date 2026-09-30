@@ -475,3 +475,32 @@ export const KafkaIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="m10.9 13.35 3.86 2.17" />
   </svg>
 );
+
+/**
+ * etcd: the project's mark, reduced to its outline.
+ *
+ * The brand mark is a toothed ring around two eyes and a line. That is what this draws, as strokes at the
+ * house weight with no fill: the ring, four of its teeth, the eyes and the line, which is what stays
+ * identifiable at the 14px the connection list draws.
+ */
+export const EtcdIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="7.5" />
+    <path d="M12 2.5v2" />
+    <path d="M12 19.5v2" />
+    <path d="M2.5 12h2" />
+    <path d="M19.5 12h2" />
+    <circle cx="9.5" cy="10.5" r="1" />
+    <circle cx="14.5" cy="10.5" r="1" />
+    <path d="M9 14.5c2 1.25 4 1.25 6 0" />
+  </svg>
+);

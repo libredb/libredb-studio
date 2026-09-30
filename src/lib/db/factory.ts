@@ -227,6 +227,13 @@ export async function createDatabaseProvider(
       return new RedisProvider(connection, options);
     }
 
+    case "etcd": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The
+      // execution context rides along, so an execution profile opens it read-only (#1089 E6).
+      const { EtcdProvider } = await import("./providers/keyvalue/etcd/index");
+      return new EtcdProvider(connection, options, execution);
+    }
+
     // Time-series stores - dynamically imported
     case "prometheus": {
       // The explicit /index specifier keeps this dynamic import statically
@@ -256,7 +263,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, prometheus, kafka, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, libredb`,
         connection.type,
       );
   }

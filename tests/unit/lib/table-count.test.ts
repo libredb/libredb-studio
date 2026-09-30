@@ -73,6 +73,9 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   prometheus: null,
   // A read request is JSON of its own dialect (#1088), and its grammar has no count to write.
   kafka: null,
+  // An etcdctl command line (#1089): the dialect is declared and a key-prefix group is a derived grouping,
+  // either of which withholds the action (`offersCountQuery`).
+  etcd: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

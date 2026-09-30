@@ -19,6 +19,7 @@ import {
   CassandraIcon,
   PrometheusIcon,
   KafkaIcon,
+  EtcdIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -42,6 +43,7 @@ describe("db-icons", () => {
     { name: "CassandraIcon", Component: CassandraIcon },
     { name: "PrometheusIcon", Component: PrometheusIcon },
     { name: "KafkaIcon", Component: KafkaIcon },
+    { name: "EtcdIcon", Component: EtcdIcon },
   ];
 
   for (const { name, Component } of icons) {

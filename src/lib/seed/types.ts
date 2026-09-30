@@ -64,6 +64,7 @@ const SeedDatabaseType = z.enum([
   "duckdb",
   "prometheus",
   "kafka",
+  "etcd",
 ]);
 
 export const SeedDefaultsSchema = z.object({

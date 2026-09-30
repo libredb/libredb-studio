@@ -560,6 +560,36 @@ describe("createDatabaseProvider", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
+  test('creates provider for type "etcd"', async () => {
+    // No `database`: one connection is one cluster. The constructor validates nothing and opens nothing, the
+    // connection's rules running in connect() before any client exists (#1089 3.1), so the provider is built,
+    // and declares its language, its dialect and its read-only enforcement, with no etcd running.
+    const conn = makeConnection("etcd", { port: 2379, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("etcd");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("etcd");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an etcd connection with readOnly: true is built, since its provider keeps the mode (#1089 E6)", async () => {
+    const conn = { ...makeConnection("etcd", { port: 2379, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("etcd");
+  });
+
+  test('an etcd connection with readOnly: "true" is refused before anything is built (#1089 E6)', async () => {
+    const conn = {
+      ...makeConnection("etcd", { port: 2379, database: undefined }),
+      readOnly: "true" as unknown as boolean,
+    };
+    expect(() => assertReadOnlyHonoured(conn)).toThrow("readOnly must be true or false.");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow("readOnly must be true or false.");
+  });
+
   test('creates provider for type "libredb"', async () => {
     // A path the platform owns rather than a hardcoded "/tmp/...", which is not a directory
     // on Windows at all. Nothing opens this file: `createDatabaseProvider` constructs and

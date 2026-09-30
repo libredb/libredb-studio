@@ -509,8 +509,8 @@ describe("MCP_EXPOSABLE (#1089)", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
 
-  test("offers MCP for every shipped engine", () => {
+  test("offers MCP for every shipped engine but etcd (#1089 E12)", () => {
     // An engine MCP is not offered for answers false with its registration, and is named here then.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual(["etcd"]);
   });
 });

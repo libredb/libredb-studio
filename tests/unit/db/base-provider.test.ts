@@ -1140,6 +1140,8 @@ describe("offersColumnProfiling", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "libredb" }))).toBe(false);
     // A Kafka read request is JSON of this product's own schema (#1088), no MongoDB document either.
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe(false);
+    // An etcd command is a line of etcdctl's (#1089), no MongoDB document either.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "etcd" }))).toBe(false);
     // The control: the same language with the dialect removed.
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json" }))).toBe(true);
   });
@@ -1179,6 +1181,14 @@ describe("offersCodeGeneration", () => {
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe(false);
     // The controls: the same language with the dialect removed, and with another JSON dialect, which
     // keeps it, so the refusal is Kafka's own arm and not the dialect rule of the profiling gate.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
+  });
+
+  test("etcd is not offered it: a key-prefix group's columns are a get row's fixed shape, no stored record (#1089)", () => {
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "etcd" }))).toBe(false);
+    // The controls: the same language with the dialect removed, and with another JSON dialect, which
+    // keeps it, so the refusal is the etcd arm and not the dialect rule of the profiling gate.
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
   });

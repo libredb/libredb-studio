@@ -94,7 +94,13 @@ export type DatabaseType =
   // `queryLanguage: "json"` with a `queryDialect` of its own. The connection is one bootstrap
   // address plus TLS and an optional SASL credential, `saslMechanism` below naming how `user` and
   // `password` are checked; the client learns every other broker from the cluster's metadata.
-  | "kafka";
+  | "kafka"
+  // etcd (#1089). A key-value store read and written over its gRPC API, the second member of the
+  // `keyvalue/` family beside Redis. Its editor text is a subset of etcdctl's command line, so it
+  // declares `queryLanguage: "json"` with a `queryDialect` of its own, as Redis does for its commands.
+  // The connection is one endpoint plus TLS and an optional password; a client certificate names the
+  // user where etcd's RBAC is on, and `readOnly` below is a mode its provider enforces.
+  | "etcd";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -136,7 +142,9 @@ export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
  * `verify-ca` checks the chain and `verify-full` also the server name. That split is honoured
  * only where the driver exposes the name check on its own - Oracle's `sslServerDNMatch` is
  * the one that does; the Node TLS drivers cannot separate the two, so both land on
- * `rejectUnauthorized: true` there and each provider doc says so.
+ * `rejectUnauthorized: true` there and each provider doc says so. etcd's gRPC adapter could
+ * separate them and checks the name in both all the same, by decision, so that one mode means
+ * one thing across engines (#1089 E5).
  *
  * Adding a member here widens a published type (src/exports/types.ts), so every switch and
  * lookup table over SSLMode has to answer for it: the providers listed above, the seed schema

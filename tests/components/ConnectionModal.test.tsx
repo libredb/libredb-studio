@@ -265,6 +265,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   opensearch: ["host", "port", "user", "password"],
   prometheus: ["host", "port", "user", "password"],
   kafka: ["host", "port", "saslMechanism", "user", "password"],
+  etcd: ["host", "port", "user", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -302,6 +303,15 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       ],
     },
     showSshTunnel: false,
+  },
+  // Mirrored from the real entry (#1089 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  etcd: {
+    fieldHints: {
+      host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
+      user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
+      password:
+        "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
+    },
   },
 };
 
@@ -1440,6 +1450,7 @@ describe("ConnectionModal", () => {
         { ...CREDENTIALS_ONLY, saslMechanism: "SASL mechanism" },
         { saslMechanism: "PLAIN and SCRAM require TLS" },
       ],
+      ["etcd", "etcd", {}, CREDENTIALS_ONLY, MOCK_FIELD_COPY.etcd.fieldHints ?? {}],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],
@@ -1523,6 +1534,7 @@ describe("ConnectionModal", () => {
         labelsFor("host", "user", "password", "saslMechanism"),
         ["host", "port", "user", "password", "saslMechanism"],
       ],
+      ["etcd", "etcd", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
     ];
 

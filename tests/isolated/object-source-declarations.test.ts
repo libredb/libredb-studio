@@ -134,6 +134,9 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   // Every kind has a source, JSON the provider serialises from the broker's own answers, under the
   // `rendered` origin (#1088 4.4).
   kafka: ["topic/json", "consumer_group/json", "broker/json"],
+  // Every kind but the key-prefix group has a source, JSON under the declared language (#1089 4.4): a key's
+  // value and metadata, and a member's, a lease's, a user's and a role's answer, serialised by the provider.
+  etcd: ["key/json", "member/json", "lease/json", "user/json", "role/json"],
   libredb: [],
 });
 
@@ -217,7 +220,7 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(19);
+    expect(CENSUS_TYPES).toHaveLength(20);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -235,10 +238,10 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(67);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(67);
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(22);
-    expect(rows).toHaveLength(89);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(72);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(72);
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(23);
+    expect(rows).toHaveLength(95);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -264,10 +267,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 69 on a MariaDB connection against 67 unconnected: the design states both numbers because
+    // 74 on a MariaDB connection against 72 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(69);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(74);
   });
 
   /*
@@ -353,7 +356,7 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    expect(rows).toHaveLength(97);
+    expect(rows).toHaveLength(103);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)
@@ -386,10 +389,10 @@ describe("the fleet census of object source declarations", () => {
  * - such a kind on capabilities with no `keyScan`, because then no Keys panel exists to enumerate it.
  *
  * `KEY_BROWSER_KINDS` is the committed expectation, one `<type-id>/<kind id>` per such kind, and the
- * registration of an engine that declares one moves it. Before etcd it is empty, so the fleet row
- * certifies an absence, and the planted declarations are what show each rule refuses what it names.
+ * registration of an engine that declares one moves it. etcd's `key` is the one such kind (#1089 4.1), and
+ * the planted declarations are what show each rule refuses what it names.
  */
-const KEY_BROWSER_KINDS: readonly string[] = Object.freeze([]);
+const KEY_BROWSER_KINDS: readonly string[] = Object.freeze(["etcd/key"]);
 
 /** The breaches of the three conditions above in one declaration, one sentence each. */
 function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {
@@ -432,8 +435,8 @@ describe("the key-browser declaration", () => {
     expect(breaches).toEqual([]);
   });
 
-  // PLANTED declarations, because the fleet declares none of this shape before etcd lands, so without
-  // them each rule would be certified by nothing but the absence above.
+  // PLANTED declarations, because the fleet's one declaration of this shape keeps all three rules, so without
+  // them each rule would be certified by nothing but a declaration that keeps it.
   const PREFIX: ObjectKindSpec = { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" };
   const KEY: ObjectKindSpec = {
     id: "key",

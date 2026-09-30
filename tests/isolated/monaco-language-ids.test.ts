@@ -295,7 +295,8 @@ describe("the installed editor's language ids", () => {
     // first.
     expect(declared.map((entry) => entry.where)).toContain("mysql/package");
     expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
-    expect(declared).toHaveLength(69);
+    // 69 before etcd (#1089), whose five kinds with a source each declare `json` (object-source-declarations).
+    expect(declared).toHaveLength(74);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

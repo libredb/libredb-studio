@@ -155,6 +155,14 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "Apache Kafka",
     reason: "A topic holds messages, not rows with declared columns, so there is no column definition to change.",
   },
+  // Not a table store either (#1089): a key's value is bytes, and a key-prefix group is derived from the
+  // key space's shape rather than declared; the columns the object browser shows are the fixed shape of a
+  // `get` row. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  etcd: {
+    label: "etcd",
+    reason:
+      "A key-prefix group holds keys whose values are bytes, not rows with declared columns, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -199,7 +207,7 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * text is PromQL, not SQL (`NON_SQL_DIALECTS`). `NO_TABLE_DDL` declines its whole diff before
  * any wrapper is written, so this entry keeps the two sets agreeing rather than changing output.
  * `kafka` (#1088) joined on the same fact and for the same reason: its text is a JSON read
- * request, not SQL.
+ * request, not SQL. `etcd` (#1089) joined the same way: its text is an etcdctl command line.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -217,6 +225,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "trino",
   "prometheus",
   "kafka",
+  "etcd",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -232,6 +241,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "opensearch",
   "prometheus",
   "kafka",
+  "etcd",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

@@ -12,8 +12,8 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  *
  * The expectation is transcribed from the issue's table and never derived from the build.
  * The fifteen providers that call `assertContainerPathShape` declare a value explicitly; the
- * four that call no kernel check and declare no container level (elasticsearch, opensearch,
- * prometheus, kafka) leave it absent, which the kernel reads as `exact`: the same `[]`-only set
+ * five that call no kernel check and declare no container level (elasticsearch, opensearch,
+ * prometheus, kafka, etcd) leave it absent, which the kernel reads as `exact`: the same `[]`-only set
  * their own `container.length !== 0` checks accept.
  *
  * It reads the field DIRECTLY on purpose. A census of the declaration must tell absent from
@@ -47,6 +47,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   opensearch: "absent",
   prometheus: "absent",
   kafka: "absent",
+  etcd: "absent",
 });
 
 const TYPES = Object.keys(EXPECTED_CONTAINER_PATH_SHAPES) as DatabaseType[];

@@ -14,13 +14,15 @@ import type { DatabaseType } from "@/lib/types";
  * to the DECLARATION or to the design, never to this file.
  *
  * The engine and version each pair was measured on: PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1),
- * Trino 476, Redis 8.10.0.
+ * Trino 476, Redis 8.10.0, etcd 3.7.2.
  */
 export const EXPECTED_EDITABLE_KINDS: readonly (readonly [DatabaseType, string])[] = Object.freeze([
   ["postgres", "function"],
   ["postgres", "procedure"],
   ["redis", "function"],
   ["trino", "function"],
+  // A key's value, edited through one guarded Txn (#1089 4.5), measured on etcd v3.7.2.
+  ["etcd", "key"],
 ] as const);
 
 /**

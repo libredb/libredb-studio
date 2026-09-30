@@ -39,6 +39,7 @@ const ALL_TYPES: DatabaseType[] = [
   "duckdb",
   "prometheus",
   "kafka",
+  "etcd",
 ];
 
 describe("db-ui-config", () => {
@@ -454,6 +455,24 @@ describe("db-ui-config", () => {
       expect(getDBConfig("redis").connectionFields).toContain("user");
     });
   });
+
+  test("etcd declares the field hints of #1089 6.1, one connection per cluster and no connection string", () => {
+    const etcd = getDBConfig("etcd");
+    expect(etcd).toMatchObject({
+      label: "etcd",
+      defaultPort: "2379",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "user", "password"],
+    });
+    expect(etcd.showSshTunnel).toBeUndefined();
+    expect(etcd.fieldHints).toEqual({
+      host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
+      user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
+      password:
+        "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
+    });
+    expect(etcd.fieldLabels).toBeUndefined();
+  });
 });
 
 // ============================================================================
@@ -513,11 +532,11 @@ describe("declared connection-field copy (#1085)", () => {
     expect(connectionFieldHint(empty, "password")).toBeUndefined();
   });
 
-  test("only prometheus and kafka declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only prometheus, kafka and etcd declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["prometheus", "kafka"]);
+    expect(declared).toEqual(["prometheus", "kafka", "etcd"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -603,6 +622,9 @@ describe("db-showcase", () => {
         // Behind Prometheus and ahead of libSQL (#1088), for the same reason: the message log
         // those teams run beside their databases, met beside them rather than as one of them.
         "kafka",
+        // Behind Kafka and ahead of libSQL (#1089), for the reason the two before it sit where they do: the store
+        // a Kubernetes control plane keeps its state in, met beside the databases rather than as one of them.
+        "etcd",
         "libsql",
         "libredb",
       ]);

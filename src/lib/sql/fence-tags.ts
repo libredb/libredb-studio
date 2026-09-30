@@ -80,6 +80,11 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // because a MongoDB document is JSON too, and `fenceTagEngine` is what decides whether a plan's
   // deliverable was written for THIS connection.
   kafka: true,
+  // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). No alias is
+  // registered below: `sh`, `bash` and `shell` name no engine, which is the reason `sql` maps to
+  // no engine in `ALIAS_ENGINES`, and `etcdctl`, which names etcd alone, is left out until plan
+  // runs show a model writing it.
+  etcd: true,
 });
 
 /**

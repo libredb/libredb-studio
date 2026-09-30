@@ -1,5 +1,10 @@
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
+import {
+  ETCD_DESTRUCTIVE_OPERATIONS,
+  etcdTypedConfirmation,
+  readEtcdOperations,
+} from "@/lib/db/providers/keyvalue/etcd/guard";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
@@ -242,7 +247,9 @@ interface DestructiveVocabulary {
    * expression can start with a metric name the server's data chooses, `update`,
    * `delete` and `drop` are legal names, and read as SQL the tree's own selector for
    * such a metric is a write. A Kafka read request names its topic, which can carry
-   * any of those names too, in text that can only ever read that topic.
+   * any of those names too, in text that can only ever read that topic. An etcd command
+   * names its keys, which can be spelled like any SQL keyword, and `guard.ts` reads it with
+   * the parser the provider runs, so what asks and what runs are one parse (#1089).
    */
   readonly decidesAlone: boolean;
   /**
@@ -412,6 +419,18 @@ const readKafkaOperations: OperationReader = () => [];
  * gate reads; a row would be a second, weaker opinion about the same text.
  */
 export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseType, DestructiveVocabulary>>> = {
+  etcd: {
+    operations: ETCD_DESTRUCTIVE_OPERATIONS,
+    // The provider's own parser, read by guard.ts, so what asks and what runs are one parse (#1089 5.5). Text
+    // it refuses names nothing, where every other reader answers "could not tell": the provider refuses that
+    // text before any request, so a prompt would ask about a command that cannot run.
+    read: readEtcdOperations,
+    decidesAlone: true,
+    // A range delete and a lease revoke are typed; everything else that asks takes one click (#1089 5.5).
+    typedConfirmation: etcdTypedConfirmation,
+    // A put's value is part of the statement, so no etcd statement is posted for an AI analysis (#1089 E10).
+    safetyAnalysis: false,
+  },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   mongodb: { operations: MONGODB_DESTRUCTIVE_OPERATIONS, read: readMongodbOperations, decidesAlone: false },
   prometheus: { operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS, read: readPrometheusOperations, decidesAlone: true },

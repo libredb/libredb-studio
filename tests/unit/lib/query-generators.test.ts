@@ -14,6 +14,11 @@ import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql"
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import { KAFKA_TOPIC_COLUMNS } from "@/lib/db/providers/stream/kafka/objects";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { type EtcdCommand, type EtcdParseLimits, parseEtcdCommand } from "@/lib/db/providers/keyvalue/etcd/commands";
+import { ETCD_READ_BOUNDS } from "@/lib/db/providers/keyvalue/etcd/execute";
+import { assessCommand } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 // ============================================================================
 // Helpers
@@ -1465,6 +1470,89 @@ describe("quoteIdentifier and quoteObjectPath on a Kafka path (#1088)", () => {
     // The control: the same names on the SQL helper are quoted, so the answers above are the JSON arm's.
     expect(quoteIdentifier("Orders.v2-eu", makeCaps())).toBe('"Orders.v2-eu"');
     expect(quoteObjectPath(["Orders.v2-eu"], makeCaps())).toBe('"Orders.v2-eu"');
+  });
+});
+
+// ============================================================================
+// etcd (#1089): the tree click reads the group
+// ============================================================================
+
+/** The real provider's declaration: its constructor validates and opens nothing (#1089 3.1). */
+const etcdCaps = new EtcdProvider(CENSUS_CONNECTION.etcd).getCapabilities();
+
+/** The bounds the provider parses a command under (keyvalue/etcd/index.ts `parseLimits`), at a 30 s query timeout. */
+const ETCD_PARSE_LIMITS: EtcdParseLimits = {
+  maxLimit: DEFAULT_QUERY_LIMIT,
+  txnRangeLimit: ETCD_READ_BOUNDS.firstPageSize,
+  maxCommandTimeoutMs: 30_000,
+  maxWatchWindowMs: 30_000 - ETCD_READ_BOUNDS.watchMarginMs,
+};
+
+/** The command the provider's own parser reads from `text`, which is what the provider runs (#1089 5.1). */
+function etcdCommand(text: string): EtcdCommand {
+  const parsed = parseEtcdCommand(text, ETCD_PARSE_LIMITS);
+  if (!parsed.ok) throw new Error(`the provider refuses ${JSON.stringify(text)}: ${parsed.refusal.message}`);
+  return parsed.parsed.command;
+}
+
+const etcdBytes = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+describe("etcd tree click (#1089)", () => {
+  test("a click on a group reads 50 keys of its prefix, as one get the provider's parser reads as is", () => {
+    const text = generateTableQuery(["/app/config/*"], etcdCaps);
+    expect(text).toBe("get /app/config/ --prefix --limit=50");
+    const command = etcdCommand(text);
+    expect(command).toMatchObject({ kind: "get", key: etcdBytes("/app/config/"), prefix: true, limit: 50 });
+    expect(assessCommand(command).class).toBe("read");
+    // The control: the same path on a JSON engine with no dialect is the MongoDB `find` an etcd connection
+    // would have been sent without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateTableQuery(["/app/config/*"], mongodb))).toMatchObject({ operation: "find" });
+  });
+
+  test("only a name that ends in /* loses its star; any other segment is the prefix as it stands", () => {
+    expect(generateTableQuery(["orders"], etcdCaps)).toBe("get orders --prefix --limit=50");
+    expect(generateTableQuery(["/app/*x"], etcdCaps)).toBe("get '/app/*x' --prefix --limit=50");
+    // A star that does not follow a "/" is part of the prefix, quoted, and never read as a glob.
+    expect(generateTableQuery(["orders*"], etcdCaps)).toBe("get 'orders*' --prefix --limit=50");
+    expect(generateTableQuery(["/app/"], etcdCaps)).toBe("get /app/ --prefix --limit=50");
+    // The object's own segment, whatever path it is handed, as the other key-value arms read it.
+    expect(generateTableQuery(["app", "/orders/*"], etcdCaps)).toBe("get /orders/ --prefix --limit=50");
+  });
+
+  test.each([
+    ["a space", "/my app/", "get '/my app/' --prefix --limit=50"],
+    ["a single quote", "/it's/", "get '/it'\\''s/' --prefix --limit=50"],
+    ["a double quote", '/say "hi"/', `get '/say "hi"/' --prefix --limit=50`],
+    ["a line feed", "/a\nb/", "get '/a\nb/' --prefix --limit=50"],
+    ["a #", "/a#b/", "get '/a#b/' --prefix --limit=50"],
+    ["a $", "/$HOME/", "get '/$HOME/' --prefix --limit=50"],
+  ])(
+    "a prefix holding %s is quoted by the command line's rule and reads back as the same bytes",
+    (_label, prefix, expected) => {
+      const text = generateTableQuery([`${prefix}*`], etcdCaps);
+      expect(text).toBe(expected);
+      expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes(prefix), prefix: true, limit: 50 });
+    },
+  );
+
+  test("a prefix that begins with - is written after --, with the flags before it", () => {
+    const text = generateTableQuery(["-app/*"], etcdCaps);
+    expect(text).toBe("get --prefix --limit=50 -- -app/");
+    expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("-app/"), prefix: true, limit: 50 });
+  });
+
+  test("a prefix holding a carriage return is read through a txn, whose Go quoting spells it, with no --limit", () => {
+    const text = generateTableQuery(["/a\rb/*"], etcdCaps);
+    // The command line has no spelling for a carriage return: the editor ends a line at it (lexer.ts quoteWord).
+    expect(text).toBe('txn\n\nget "/a\\rb/" --prefix\n\n');
+    const command = etcdCommand(text);
+    expect(command).toMatchObject({ kind: "txn", compares: [], failure: [] });
+    const success = command.kind === "txn" ? command.success : [];
+    expect(success).toHaveLength(1);
+    expect(success[0]).toMatchObject({ kind: "get", key: etcdBytes("/a\rb/"), prefix: true, fromKey: false });
+    expect(success[0]?.kind === "get" ? success[0].limit : "not a get").toBeUndefined();
+    expect(assessCommand(command).class).toBe("read");
   });
 });
 
