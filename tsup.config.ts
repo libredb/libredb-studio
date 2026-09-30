@@ -45,6 +45,9 @@ export default defineConfig({
     "mongodb",
     "ioredis",
     "@platformatic/kafka",
+    // The etcd provider's gRPC client and the loader that reads its generated descriptor.
+    "@grpc/grpc-js",
+    "@grpc/proto-loader",
     "@libredb/libredb",
     // SSH and crypto
     "ssh2",
