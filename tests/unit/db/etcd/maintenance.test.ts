@@ -380,6 +380,27 @@ describe("runEtcdMaintenance: alarm disarm (spec 7.2)", () => {
   });
 });
 
+describe("runEtcdMaintenance: every call carries the surface's own AbortSignal, so a cancel reaches it", () => {
+  for (const type of ETCD_MAINTENANCE_OPERATIONS) {
+    test(`${type}: each call's options carry context.signal itself`, async () => {
+      const controller = new AbortController();
+      const client = createFakeEtcdClient({
+        status: async () => status(ETCD_1, "1"),
+        memberList: members,
+        compact: async () => undefined,
+        defragment: async () => undefined,
+        alarmList: async () => [{ memberId: ETCD_1, alarm: "nospace" }],
+        alarmDisarm: async (alarm) => [alarm],
+      });
+      await runEtcdMaintenance(client, surface({ signal: controller.signal }), type);
+      expect(client.calls.length).toBeGreaterThan(1);
+      for (const call of client.calls) {
+        expect((call.args.at(-1) as { signal: AbortSignal }).signal).toBe(controller.signal);
+      }
+    });
+  }
+});
+
 describe("runEtcdMaintenance: a PermissionDenied from any of the three reads 7.2's one sentence (R13 D3)", () => {
   const ROOT_ONLY = "Compaction, defragmentation and alarm disarm need the etcd root role";
   const denying = () =>

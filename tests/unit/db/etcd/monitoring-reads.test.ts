@@ -315,6 +315,28 @@ describe("readEtcdTableStats (spec 7.1, 4.7)", () => {
     ).rejects.toThrow(`etcd user reader may read: ${describeScope(READABLE)}.`);
   });
 
+  test("counts that settle out of order still land on their own group's row (spec KE2)", async () => {
+    let releaseFirst: () => void = () => undefined;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const client = createFakeEtcdClient({
+      range: async (request) => {
+        if (text(request.key) === "/a/") {
+          await firstHeld;
+          return counted("100");
+        }
+        releaseFirst();
+        return counted("1");
+      },
+    });
+    const rows = await readEtcdTableStats(client, surface(), ["/a/", "/b/"]);
+    expect(rows.map((row) => [row.tableName, row.rowCount])).toEqual([
+      ["/a/*", 100],
+      ["/b/*", 1],
+    ]);
+  });
+
   test("a prefix that does not end in / names no group the walk listed: raised before any read", async () => {
     const client = createFakeEtcdClient();
     await expect(readEtcdTableStats(client, surface(), ["/apisix/routes/", "/apisix/routes"])).rejects.toThrow(
@@ -337,6 +359,35 @@ describe("readEtcdTableStats (spec 7.1, 4.7)", () => {
     );
     expect(client.calls).toHaveLength(ETCD_TABLE_STATS_CONCURRENCY);
   });
+});
+
+describe("every read carries the surface's own AbortSignal, so a cancel reaches it", () => {
+  const client = () =>
+    createFakeEtcdClient({
+      status: async () => status(),
+      alarmList: async () => [],
+      memberList: async () => ({ header: status().header, members: MEMBERS }),
+      range: async () => counted("1"),
+    });
+  const reads = {
+    readEtcdHealth: (fake: ReturnType<typeof client>, context: EtcdSurfaceContext) => readEtcdHealth(fake, context),
+    readEtcdOverview: (fake: ReturnType<typeof client>, context: EtcdSurfaceContext) => readEtcdOverview(fake, context),
+    readEtcdStorageStats: (fake: ReturnType<typeof client>, context: EtcdSurfaceContext) =>
+      readEtcdStorageStats(fake, context),
+    readEtcdTableStats: (fake: ReturnType<typeof client>, context: EtcdSurfaceContext) =>
+      readEtcdTableStats(fake, context, ["/a/", "/b/"]),
+  };
+  for (const [name, run] of Object.entries(reads)) {
+    test(`${name}: each call's options carry context.signal itself`, async () => {
+      const controller = new AbortController();
+      const fake = client();
+      await run(fake, surface({ signal: controller.signal }));
+      expect(fake.calls.length).toBeGreaterThan(0);
+      for (const call of fake.calls) {
+        expect((call.args.at(-1) as { signal: AbortSignal }).signal).toBe(controller.signal);
+      }
+    });
+  }
 });
 
 describe("a very flat or very large key space (plan Review Focus 4)", () => {
