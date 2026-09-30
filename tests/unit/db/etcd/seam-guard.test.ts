@@ -17,7 +17,8 @@
  *   send only those;
  * - that every write the adapter can send is one E6 knows and one surface gates: an editor command classified by
  *   guard.ts with its Gate of spec 5.1.3, or a maintenance operation whose words the editor's table and its parser
- *   refuse by name, pointing at the card of spec 7.2 by that card's label (E7), and which E6 refuses when read-only.
+ *   refuse by name, pointing at the card of spec 7.2 by that card's label (E7), whose card maintenance.ts declares
+ *   under that label, global, never per entity and typed-confirmed, and which E6 refuses when read-only.
  *
  * It reads the repository's files through git's own lists (tracked, and untracked but not ignored), so a new
  * directory is read too, and resolves module names as TypeScript does, with the repository's tsconfig, so a path or
@@ -48,6 +49,7 @@ import ts from "typescript";
 import { ETCD_CLIENT_METHODS } from "@/lib/db/providers/keyvalue/etcd/client";
 import { ETCD_REFUSED_COMMANDS, parseEtcdCommand } from "@/lib/db/providers/keyvalue/etcd/commands";
 import { assessCommand, type CommandAssessment } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { ETCD_MAINTENANCE_SPECS } from "@/lib/db/providers/keyvalue/etcd/maintenance";
 import { refuseBeforeSend, refuseReadOnly } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
@@ -817,18 +819,26 @@ function editorWriteFindings(
   return findings;
 }
 
-/** Each maintenance RPC, the label spec 7.2 gives its card, and the words the editor refuses for it (spec E7). */
+/**
+ * Each maintenance RPC, the card maintenance.ts declares for it, the label spec 7.2 gives that card, and the words
+ * the editor refuses for it (spec E7).
+ */
 interface MaintenanceCard {
   readonly rpc: string;
-  /** The card's label in spec 7.2's table, which the editor's refusal of the words points at by name. */
+  /** The operation whose card maintenance.ts declares in ETCD_MAINTENANCE_SPECS. */
+  readonly operation: keyof typeof ETCD_MAINTENANCE_SPECS;
+  /**
+   * The card's label in spec 7.2's table: the label maintenance.ts declares the card under, and the one the editor's
+   * refusal of the words points at by name.
+   */
   readonly card: string;
   readonly words: readonly string[];
 }
 
 const MAINTENANCE_CARDS: readonly MaintenanceCard[] = [
-  { rpc: "KV/Compact", card: "Compact history", words: ["compaction"] },
-  { rpc: "Maintenance/Defragment", card: "Defragment", words: ["defrag"] },
-  { rpc: "Maintenance/Alarm", card: "Disarm alarms", words: ["alarm", "disarm"] },
+  { rpc: "KV/Compact", operation: "compact", card: "Compact history", words: ["compaction"] },
+  { rpc: "Maintenance/Defragment", operation: "defragment", card: "Defragment", words: ["defrag"] },
+  { rpc: "Maintenance/Alarm", operation: "disarm", card: "Disarm alarms", words: ["alarm", "disarm"] },
 ];
 
 function maintenanceFindings(
@@ -836,9 +846,10 @@ function maintenanceFindings(
   refused: typeof ETCD_REFUSED_COMMANDS,
   refuse: typeof refuseReadOnly,
   parse: typeof parseEtcdCommand,
+  specs: typeof ETCD_MAINTENANCE_SPECS,
 ): string[] {
   const findings: string[] = [];
-  for (const { rpc, card, words } of cards) {
+  for (const { rpc, operation, card, words } of cards) {
     const named = `maintenance cards: ${words.join(" ")} (${rpc})`;
     const entry = refused.find((candidate) => candidate.words.join(" ") === words.join(" "));
     if (entry === undefined) {
@@ -849,6 +860,23 @@ function maintenanceFindings(
     const parsed = parse(words.join(" "), NO_CAPS);
     if (parsed.ok || parsed.refusal.code !== "maintenance-command") {
       findings.push(`${named} is not refused as a maintenance command by the parser`);
+    }
+    const spec = specs[operation];
+    if (spec === undefined) {
+      findings.push(`${named} has no declared card in maintenance.ts (spec 7.2)`);
+    } else {
+      const found = {
+        label: spec.label,
+        global: spec.global,
+        perEntity: spec.perEntity,
+        confirmation: spec.confirmation,
+      };
+      const expected = { label: card, global: true, perEntity: false, confirmation: "typed" };
+      if (JSON.stringify(found) !== JSON.stringify(expected)) {
+        findings.push(
+          `${named} is declared as ${JSON.stringify(found)} in maintenance.ts, and spec 7.2 says ${JSON.stringify(expected)}`,
+        );
+      }
     }
   }
   if (refuse({ readOnly: "connection" })?.reason !== "read-only") {
@@ -983,7 +1011,15 @@ describe("spec E11: every write the adapter can send is one E6 knows and one sur
   });
 
   test("each maintenance RPC is tied to its card of 7.2: refused by name in the editor and its parser, and by E6 when read-only", () => {
-    expect(maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parseEtcdCommand)).toEqual([]);
+    expect(
+      maintenanceFindings(
+        MAINTENANCE_CARDS,
+        ETCD_REFUSED_COMMANDS,
+        refuseReadOnly,
+        parseEtcdCommand,
+        ETCD_MAINTENANCE_SPECS,
+      ),
+    ).toEqual([]);
   });
 
   test("every write RPC is gated by an editor command or a maintenance card, and nothing else is", () => {
@@ -1356,31 +1392,83 @@ describe("planted violations: the text rules fail by name", () => {
         ? { ...entry, message: entry.message.replace("the Compact history card", "the Defragment card") }
         : entry,
     );
-    const findings = maintenanceFindings(MAINTENANCE_CARDS, moved, refuseReadOnly, parseEtcdCommand);
+    const findings = maintenanceFindings(
+      MAINTENANCE_CARDS,
+      moved,
+      refuseReadOnly,
+      parseEtcdCommand,
+      ETCD_MAINTENANCE_SPECS,
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]).toStartWith(
       "maintenance cards: compaction (KV/Compact) is refused without pointing at the Compact history card of spec 7.2: ",
     );
-    expect(maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, () => undefined, parseEtcdCommand)).toEqual([
-      "maintenance cards: a maintenance operation is not refused by E6 on a read-only connection",
-    ]);
+    expect(
+      maintenanceFindings(
+        MAINTENANCE_CARDS,
+        ETCD_REFUSED_COMMANDS,
+        () => undefined,
+        parseEtcdCommand,
+        ETCD_MAINTENANCE_SPECS,
+      ),
+    ).toEqual(["maintenance cards: a maintenance operation is not refused by E6 on a read-only connection"]);
     const unrefused = ETCD_REFUSED_COMMANDS.filter((entry) => entry.words.join(" ") !== "compaction");
-    expect(maintenanceFindings(MAINTENANCE_CARDS, unrefused, refuseReadOnly, parseEtcdCommand)).toEqual([
-      "maintenance cards: compaction (KV/Compact) is not refused by name in the editor (spec E7)",
-    ]);
+    expect(
+      maintenanceFindings(MAINTENANCE_CARDS, unrefused, refuseReadOnly, parseEtcdCommand, ETCD_MAINTENANCE_SPECS),
+    ).toEqual(["maintenance cards: compaction (KV/Compact) is not refused by name in the editor (spec E7)"]);
     // A parser that reads the words as another command: one it accepts, and one it refuses as not offered.
     const parsedAs =
       (words: string, instead: string): typeof parseEtcdCommand =>
       (text, limits) =>
         parseEtcdCommand(text === words ? instead : text, limits);
     expect(
-      maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parsedAs("compaction", "get /a")),
+      maintenanceFindings(
+        MAINTENANCE_CARDS,
+        ETCD_REFUSED_COMMANDS,
+        refuseReadOnly,
+        parsedAs("compaction", "get /a"),
+        ETCD_MAINTENANCE_SPECS,
+      ),
     ).toEqual(["maintenance cards: compaction (KV/Compact) is not refused as a maintenance command by the parser"]);
     expect(
-      maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parsedAs("defrag", "move-leader")),
+      maintenanceFindings(
+        MAINTENANCE_CARDS,
+        ETCD_REFUSED_COMMANDS,
+        refuseReadOnly,
+        parsedAs("defrag", "move-leader"),
+        ETCD_MAINTENANCE_SPECS,
+      ),
     ).toEqual([
       "maintenance cards: defrag (Maintenance/Defragment) is not refused as a maintenance command by the parser",
     ]);
+    // A card maintenance.ts does not declare, and one it declares under another label.
+    const uncompacted = { ...ETCD_MAINTENANCE_SPECS, compact: undefined };
+    expect(
+      maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parseEtcdCommand, uncompacted),
+    ).toEqual(["maintenance cards: compaction (KV/Compact) has no declared card in maintenance.ts (spec 7.2)"]);
+    const relabelled = {
+      ...ETCD_MAINTENANCE_SPECS,
+      defragment: { ...ETCD_MAINTENANCE_SPECS.defragment!, label: "Defrag" },
+    };
+    expect(
+      maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parseEtcdCommand, relabelled),
+    ).toEqual([
+      'maintenance cards: defrag (Maintenance/Defragment) is declared as {"label":"Defrag","global":true,"perEntity":false,"confirmation":"typed"} in maintenance.ts, and spec 7.2 says {"label":"Defragment","global":true,"perEntity":false,"confirmation":"typed"}',
+    ]);
+    // A card that is not global, one declared per entity, and one with a plain confirmation each fail on their own.
+    for (const disarm of [
+      { ...ETCD_MAINTENANCE_SPECS.disarm!, global: false },
+      { ...ETCD_MAINTENANCE_SPECS.disarm!, perEntity: true },
+      { ...ETCD_MAINTENANCE_SPECS.disarm!, confirmation: undefined },
+    ]) {
+      const findings = maintenanceFindings(MAINTENANCE_CARDS, ETCD_REFUSED_COMMANDS, refuseReadOnly, parseEtcdCommand, {
+        ...ETCD_MAINTENANCE_SPECS,
+        disarm,
+      });
+      expect(findings).toEqual([
+        `maintenance cards: alarm disarm (Maintenance/Alarm) is declared as ${JSON.stringify({ label: disarm.label, global: disarm.global, perEntity: disarm.perEntity, confirmation: disarm.confirmation })} in maintenance.ts, and spec 7.2 says {"label":"Disarm alarms","global":true,"perEntity":false,"confirmation":"typed"}`,
+      ]);
+    }
   });
 
   test("write coverage: a write no surface gates, and a gated RPC that is not a write, each fail", () => {
