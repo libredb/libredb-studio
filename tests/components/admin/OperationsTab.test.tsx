@@ -2496,4 +2496,32 @@ describe("OperationsTab", () => {
     expect(view.getByRole("alertdialog", { name: "Analyze the database" })).toBeTruthy();
     expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
   });
+
+  test("a read-only connection draws the one line in place of the declared cards, and no card of theirs", async () => {
+    // Declared cards are the section's only global operations here, as they are on etcd (Task 6 beside Task 7).
+    mockMetadata = declaredCardsMetadata;
+    mockConnectionsList = [
+      {
+        id: "c1",
+        name: "Guarded",
+        type: "postgres",
+        host: "localhost",
+        port: 5432,
+        database: "dev",
+        readOnly: true,
+        createdAt: new Date(),
+      },
+    ];
+    const view = await render_();
+
+    const section = view.getByTestId("operations-read-only");
+    expect(section.textContent).toContain("Global Operations");
+    expect(section.textContent).toContain("This connection is read-only: use a read-write connection for maintenance");
+    for (const label of ["Compact history", "Defragment", "Disarm alarms"]) {
+      expect({ label, drawn: view.queryByRole("button", { name: label }) !== null }).toEqual({ label, drawn: false });
+    }
+    for (const description of [COMPACT_DESCRIPTION, DEFRAGMENT_DESCRIPTION, DISARM_DESCRIPTION]) {
+      expect(view.queryByText(description)).toBeNull();
+    }
+  });
 });
