@@ -40,6 +40,14 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import {
+  countEtcdObjects,
+  describeEtcdObjects,
+  ETCD_GROUP_CAP,
+  ETCD_OBJECT_KINDS,
+  type EtcdSurfaceContext,
+  listEtcdObjects,
+} from "@/lib/db/providers/keyvalue/etcd/objects";
+import {
   countObjects as countKafkaObjects,
   describeObjects as describeKafkaObjects,
   KAFKA_CONTAINER_LEVELS,
@@ -51,6 +59,8 @@ import {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
+import { etcdWalkSpace } from "../../../helpers/etcd-walk-space";
 import type {
   ColumnSchema,
   DatabaseConnection,
@@ -2062,6 +2072,121 @@ describe("captureContextSnapshot — the object surface that says what each entr
       "value_encoding",
       "headers",
     ]);
+  });
+
+  /**
+   * etcd's key-prefix walk (#1089 spec 4.3, KE1, E13). Past its group cap the prefix listing holds the
+   * first G groups and says it is a floor through the kind's `sampledFrom`, while its bulk read marks
+   * no batch truncated, so this walk goes on to the members, leases, users and roles (R12 CIC-3). Both
+   * arms run through the real walk over the etcd module's own declaration, counts, listings and bulk
+   * reads, over the shared fake client and an in-memory key space, since no live fixture reaches G.
+   */
+  function etcdSurface(over: Partial<EtcdSurfaceContext> = {}): EtcdSurfaceContext {
+    return {
+      readable: { kind: "all" },
+      writable: { kind: "all" },
+      signal: new AbortController().signal,
+      now: () => 0,
+      errors: {
+        host: "etcd.test",
+        port: 2379,
+        runtimeReportsTlsCause: true,
+        receiveCapBytes: 8 * 1024 * 1024,
+        timeoutMs: 60_000,
+      },
+      ...over,
+    };
+  }
+
+  async function etcdHarness(keys: readonly string[], context: EtcdSurfaceContext): Promise<ObjectHarness> {
+    const header = { clusterId: "1", memberId: "10276657743932975437", revision: "100", raftTerm: "3" };
+    const client = createFakeEtcdClient({
+      range: etcdWalkSpace(keys).range,
+      memberList: async () => ({
+        header,
+        members: [
+          {
+            id: "10276657743932975437",
+            name: "etcd-1",
+            peerUrls: ["https://10.0.0.1:2380"],
+            clientUrls: ["https://10.0.0.1:2379"],
+            isLearner: false,
+          },
+        ],
+      }),
+      alarmList: async () => [],
+      leaseLeases: async () => ({ header, ids: ["7587863092875085000"] }),
+      userList: async () => ["root"],
+      roleList: async () => ["root"],
+    });
+    const counts = await countEtcdObjects(client, context);
+    const listed = new Map(
+      await Promise.all(
+        ["prefix", "member", "lease", "user", "role"].map(
+          async (kind) => [kind, await listEtcdObjects(client, context, kind)] as const,
+        ),
+      ),
+    );
+    return objectHarness({
+      kinds: ETCD_OBJECT_KINDS,
+      containerLevels: [],
+      derivedGroupings: true,
+      counts: () => counts,
+      objects: (_container, kind) => listed.get(kind) ?? [],
+      describeObjects: async (_container, kind, limit) => describeEtcdObjects(kind, listed.get(kind) ?? [], limit),
+    });
+  }
+
+  test("etcd past its group cap: the walk grounds the groups read with the floor note, and the members, leases, users and roles", async () => {
+    const keys = Array.from(
+      { length: ETCD_GROUP_CAP + 1 },
+      (_unused, index) => `/g/${String(index).padStart(5, "0")}/k`,
+    );
+    const harness = await etcdHarness(keys, etcdSurface());
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.truncated).toBeUndefined();
+    const byKind = Object.groupBy(snapshot.objects, (object) => object.kind ?? "");
+    expect(byKind.prefix).toHaveLength(ETCD_GROUP_CAP);
+    expect(byKind.member?.map((object) => object.name)).toEqual(["8e9e05c52164694d"]);
+    expect(byKind.lease?.map((object) => object.name)).toEqual(["694d8147df1dc4c8"]);
+    expect(byKind.user?.map((object) => object.name)).toEqual(["root"]);
+    expect(byKind.role?.map((object) => object.name)).toEqual(["root"]);
+    const floor = `one key-prefix walk capped at ${ETCD_GROUP_CAP.toLocaleString("en-US")} groups`;
+    expect(snapshot.kinds?.find((kind) => kind.id === "prefix")?.sampledFrom).toBe(floor);
+    // Plan mode carries the floor note (plan Review Focus 4).
+    expect(packContextForTask(snapshot, "Which routes does the gateway serve?")).toContain(
+      `they were counted from ${floor}.`,
+    );
+    // E13: the capture names groups, never a key.
+    expect(JSON.stringify(snapshot)).not.toContain("/g/00000/k");
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual([
+      "prefix",
+      "member",
+      "lease",
+      "user",
+      "role",
+    ]);
+  });
+
+  test("etcd as a reader granted one key: the capture names the key's group and the scope, and never the key (spec E13)", async () => {
+    const context = etcdSurface({
+      readable: { kind: "ranges", ranges: [{ key: new TextEncoder().encode("/config/a") }] },
+      writable: { kind: "ranges", ranges: [] },
+      principal: { name: "reader", via: "password" },
+    });
+    const harness = await etcdHarness(["/config/a", "/config/b", "/app/x/y"], context);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects.filter((object) => object.kind === "prefix").map((object) => object.name)).toEqual([
+      "/config/*",
+    ]);
+    expect(snapshot.kinds?.find((kind) => kind.id === "prefix")?.sampledFrom).toBe(
+      "the 1 range etcd user reader may read",
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("/config/a");
   });
 
   test("more container and kind pairs than the read may issue is reported as truncated too", async () => {
