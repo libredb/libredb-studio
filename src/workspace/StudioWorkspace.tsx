@@ -1126,6 +1126,7 @@ export function StudioWorkspace({
         query={queryExec.safetyCheckQuery || ""}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
+        connectionName={conn.activeConnection?.name}
         onClose={() => queryExec.setSafetyCheckQuery(null)}
         onProceed={() => {
           if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
@@ -1230,11 +1231,13 @@ export function StudioWorkspace({
         exist when the dialog opens and installs no observer (`node_modules/aria-hidden` carries no
         `MutationObserver`), so a body child created afterwards - which is exactly when this renders
         - is not marked: portaled, the same measurement answers `[]` and the region IS returned by
-        `byRole("status")`. A portal is NOT this shell's house style for a float: `QuerySafetyDialog`
-        and `DataProfiler`, both mounted below, are in-place `fixed inset-0 z-50` divs
-        (`src/components/QuerySafetyDialog.tsx:216`, `src/components/DataProfiler.tsx:217`), and
-        `DataProfiler.tsx:186-196` records staying inside the subtree as a deliberate choice. This
-        one leaves the box because the live region needs it to, and for nothing else.
+        `byRole("status")`. A portal is NOT this shell's house style for a float of its own:
+        `DataProfiler`, mounted above, is an in-place `fixed inset-0 z-50` div, and its Escape
+        docblock in `src/components/DataProfiler.tsx` records staying inside the subtree as a
+        deliberate choice, while `QuerySafetyDialog`, mounted above too, portals only because it has
+        been the Radix alert dialog since #1191, whose `AlertDialogContent` renders through
+        `AlertDialogPortal` (`src/components/ui/alert-dialog.tsx`). This one leaves the box because
+        the live region needs it to, and for nothing else.
 
         FIXED, and that is a cost paid on purpose in an embeddable surface. This is the only
         viewport-fixed element the shell renders itself, so it paints in the HOST's chrome rather

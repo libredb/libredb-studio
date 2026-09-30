@@ -1540,6 +1540,7 @@ export default function Studio() {
         query={queryExec.safetyCheckQuery || ""}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
+        connectionName={conn.activeConnection?.name}
         onClose={() => queryExec.setSafetyCheckQuery(null)}
         onProceed={() => {
           if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);

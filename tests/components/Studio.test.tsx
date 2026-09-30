@@ -2121,6 +2121,17 @@ describe("Studio", () => {
     expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users");
   });
 
+  test("QuerySafetyDialog is handed the active connection's name, which a typed confirmation of it asks for (#1089)", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    expect(capturedSafetyDialogProps.connectionName).toBe("TestPG");
+  });
+
+  test("QuerySafetyDialog is handed no connection name while no connection is active", () => {
+    render(<Studio />);
+    expect(capturedSafetyDialogProps.connectionName).toBeUndefined();
+  });
+
   // --- Connection-change effect ---
   test("connection-change effect resets state and fetches schema", () => {
     connMgrOverride = { activeConnection: pgConn };

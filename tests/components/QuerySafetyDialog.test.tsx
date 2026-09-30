@@ -9,6 +9,8 @@ import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDia
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
+import type { TypedConfirmationAsk } from "@/lib/db/types";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 
 function createStreamResponse({
   chunks,
@@ -949,6 +951,315 @@ describe("QuerySafetyDialog", () => {
       />,
     );
     expect(balanced.queryByText("Part of this statement could not be read")).toBeNull();
+  });
+
+  // A vocabulary that asks for a typed value, or keeps its statements from the analysis (#1089, section 5.5 and
+  // E10). No shipped engine's row declares either field before etcd's lands with its registration, so these tests
+  // install a row of their own under a key no DatabaseType spells (tests/helpers/stand-in-vocabulary.ts).
+  describe("a vocabulary's typed confirmation and its safety-analysis switch", () => {
+    const MISSING_NAME =
+      "This statement is confirmed by typing the connection's name, which this editor did not provide, so it cannot run from here.";
+    const LOCAL_ONLY =
+      "This editor checked the statement itself: statements for this engine are not sent to an AI provider for a risk analysis.";
+    const asks = (text: string): TypedConfirmationAsk | undefined => {
+      if (text === "wipe-prefix /App/") return { type: "text", text: "/App/" };
+      if (text === "wipe-prefix  a") return { type: "text", text: " a" };
+      if (text === "wipe-both /app/ /cfg/") {
+        return { type: "connection-name", targets: ["/app/ (prefix)", "/cfg/ (prefix)"] };
+      }
+      return undefined;
+    };
+    const proceed = () => screen.getByRole("button", { name: "Execute Query" }) as HTMLButtonElement;
+    let remove: () => void = () => {};
+
+    afterEach(() => {
+      remove();
+      remove = () => {};
+    });
+
+    test("a text ask holds Proceed disabled until the text is typed exactly", () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="wipe-prefix /App/"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      const field = screen.getByLabelText("Type /App/ to confirm") as HTMLInputElement;
+      expect(field.value).toBe("");
+      expect(proceed().disabled).toBe(true);
+      expect(proceed().className).toContain("opacity-50");
+      for (const wrong of ["/app/", " /App/", "/App/ ", "/APP/"]) {
+        fireEvent.change(field, { target: { value: wrong } });
+        expect({ wrong, disabled: proceed().disabled }).toEqual({ wrong, disabled: true });
+      }
+      fireEvent.click(proceed());
+      expect(onProceed).not.toHaveBeenCalled();
+
+      fireEvent.change(field, { target: { value: "/App/" } });
+      expect(proceed().disabled).toBe(false);
+      expect(proceed().className).not.toContain("opacity-50");
+      fireEvent.click(proceed());
+      expect(onProceed).toHaveBeenCalledTimes(1);
+    });
+
+    test("draws the text to type with its whitespace kept", () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="wipe-prefix  a"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      const shown = screen.getByRole("alertdialog").querySelector("label span") as HTMLElement;
+      expect(shown.textContent).toBe(" a");
+      expect(shown.className).toContain("whitespace-pre-wrap");
+      const field = screen.getByRole("textbox") as HTMLInputElement;
+      fireEvent.change(field, { target: { value: "a" } });
+      expect(proceed().disabled).toBe(true);
+      fireEvent.change(field, { target: { value: " a" } });
+      expect(proceed().disabled).toBe(false);
+    });
+
+    test("a reopened dialog starts empty, with Proceed disabled again", async () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      function Editor() {
+        const [open, setOpen] = React.useState(false);
+        return (
+          <>
+            <button onClick={() => setOpen(true)}>RUN</button>
+            <QuerySafetyDialog
+              isOpen={open}
+              query="wipe-prefix /App/"
+              schemaContext=""
+              databaseType={STAND_IN_TYPE}
+              onClose={() => setOpen(false)}
+              onProceed={onProceed}
+            />
+          </>
+        );
+      }
+      render(<Editor />);
+
+      fireEvent.click(screen.getByRole("button", { name: "RUN" }));
+      fireEvent.change(screen.getByLabelText("Type /App/ to confirm"), { target: { value: "/App/" } });
+      expect(proceed().disabled).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+      fireEvent.click(screen.getByRole("button", { name: "RUN" }));
+      expect((screen.getByLabelText("Type /App/ to confirm") as HTMLInputElement).value).toBe("");
+      expect(proceed().disabled).toBe(true);
+      expect(onProceed).not.toHaveBeenCalled();
+    });
+
+    test("a different ask while the dialog is open starts its field empty", () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      const gate = (query: string) => (
+        <QuerySafetyDialog
+          isOpen
+          query={query}
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          onClose={onClose}
+          onProceed={onProceed}
+        />
+      );
+      const view = render(gate("wipe-prefix /App/"));
+      fireEvent.change(screen.getByLabelText("Type /App/ to confirm"), { target: { value: "/App/" } });
+      expect(proceed().disabled).toBe(false);
+
+      // What was typed for one ask is never carried to another.
+      view.rerender(gate("wipe-prefix  a"));
+      expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
+      expect(proceed().disabled).toBe(true);
+    });
+
+    test("a connection-name ask lists every target and asks for the connection's name", () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="wipe-both /app/ /cfg/"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          connectionName="prod-etcd"
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog.textContent).toContain("Targets");
+      expect(Array.from(dialog.querySelectorAll("li")).map((item) => item.textContent)).toEqual([
+        "/app/ (prefix)",
+        "/cfg/ (prefix)",
+      ]);
+      const field = screen.getByLabelText("Type prod-etcd to confirm");
+      expect(proceed().disabled).toBe(true);
+      fireEvent.change(field, { target: { value: "Prod-etcd" } });
+      expect(proceed().disabled).toBe(true);
+      fireEvent.change(field, { target: { value: "prod-etcd" } });
+      expect(proceed().disabled).toBe(false);
+    });
+
+    test.each<[string, string | undefined]>([
+      ["no connectionName", undefined],
+      ["an empty connectionName", ""],
+    ])(
+      "with %s, a connection-name ask shows the refusal in place of the field, and Proceed stays disabled",
+      (_label, connectionName) => {
+        remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+        render(
+          <QuerySafetyDialog
+            isOpen
+            query="wipe-both /app/ /cfg/"
+            schemaContext=""
+            databaseType={STAND_IN_TYPE}
+            connectionName={connectionName}
+            onClose={onClose}
+            onProceed={onProceed}
+          />,
+        );
+
+        const dialog = screen.getByRole("alertdialog");
+        expect(dialog.textContent).toContain(MISSING_NAME);
+        expect(within(dialog).queryByRole("textbox")).toBeNull();
+        // The targets are still named: they are what the refusal is about.
+        expect(dialog.textContent).toContain("/cfg/ (prefix)");
+        expect(proceed().disabled).toBe(true);
+        fireEvent.click(proceed());
+        expect(onProceed).not.toHaveBeenCalled();
+      },
+    );
+
+    test("a name that disappears while the dialog is open takes Proceed back", () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      const gate = (connectionName: string) => (
+        <QuerySafetyDialog
+          isOpen
+          query="wipe-both /app/ /cfg/"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          connectionName={connectionName}
+          onClose={onClose}
+          onProceed={onProceed}
+        />
+      );
+      const view = render(gate("prod-etcd"));
+      fireEvent.change(screen.getByLabelText("Type prod-etcd to confirm"), { target: { value: "prod-etcd" } });
+      expect(proceed().disabled).toBe(false);
+
+      view.rerender(gate(""));
+      expect(screen.getByRole("alertdialog").textContent).toContain(MISSING_NAME);
+      expect(proceed().disabled).toBe(true);
+    });
+
+    test("a text ask needs no connection name", () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks, safetyAnalysis: false });
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="wipe-prefix /App/"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      expect(screen.getByLabelText("Type /App/ to confirm")).toBeTruthy();
+      expect(screen.getByRole("alertdialog").textContent).not.toContain(MISSING_NAME);
+    });
+
+    test("a row that keeps its statements from the analysis posts nothing, calls no adapter, and says so", () => {
+      remove = installStandInVocabulary({ safetyAnalysis: false });
+      const fetchMock = mock(async () => createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const onAnalyzeSafety = mock(async () => ({ ...SAFE_PAYLOAD, riskLevel: "safe" as const }));
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="wipe everything"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          onClose={onClose}
+          onProceed={onProceed}
+          onAnalyzeSafety={onAnalyzeSafety}
+        />,
+      );
+
+      // The analysis would have been asked for while the dialog rendered: both calls start before its first await.
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(onAnalyzeSafety).not.toHaveBeenCalled();
+      expect(screen.queryByText("Analyzing query safety...")).toBeNull();
+      expect(screen.getByText(LOCAL_ONLY)).toBeTruthy();
+      expect(
+        screen.getByText(
+          "This statement may change data, database objects, or permissions. Review the query before proceeding.",
+        ),
+      ).toBeTruthy();
+      // The statement preview stays.
+      expect(screen.getByRole("alertdialog").textContent).toContain("wipe everything");
+      expect(proceed().disabled).toBe(false);
+      fireEvent.click(proceed());
+      expect(onProceed).toHaveBeenCalledTimes(1);
+    });
+
+    test("a row that asks for a typed value and allows the analysis gets both, and the field still holds Proceed", async () => {
+      remove = installStandInVocabulary({ typedConfirmation: asks });
+      const fetchMock = mock(async () => createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="wipe-prefix /App/"
+          schemaContext=""
+          databaseType={STAND_IN_TYPE}
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      await waitFor(() => expect(screen.queryByText("Safe")).not.toBeNull());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(LOCAL_ONLY)).toBeNull();
+      expect(proceed().disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText("Type /App/ to confirm"), { target: { value: "/App/" } });
+      expect(proceed().disabled).toBe(false);
+    });
+
+    test("an engine whose row declares neither field keeps today's dialog", async () => {
+      const fetchMock = mock(async () => createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="FLUSHALL"
+          schemaContext=""
+          databaseType="redis"
+          connectionName="cache"
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      await waitFor(() => expect(screen.queryByText("Safe")).not.toBeNull());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(screen.queryByText(LOCAL_ONLY)).toBeNull();
+      expect(proceed().disabled).toBe(false);
+    });
   });
 });
 
