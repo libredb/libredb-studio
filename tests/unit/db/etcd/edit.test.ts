@@ -1277,6 +1277,9 @@ describe("plan Review Focus 1: keys and values that strain the path model, both 
       if (!answer.built) throw new Error(answer.refusal.sentence);
       expect(builder.calls[0].args[0]).toEqual({ key: b(key), limit: 1 });
       const unit = commandUnit(answer.plan);
+      // The one user segment spans the text in UTF-16 units, the wire's rule, so a value outside ASCII still delivers.
+      expect(isObjectEditBuildResponseShape(answer)).toBe(true);
+      expect(unit.payload.segments).toEqual([{ from: "user", start: 0, end: value.length }]);
       const dash = key.startsWith("-") ? ["--"] : [];
       expect(unit.arguments).toEqual([
         `mod(${quoteGoString(b(key))}) = "7"`,
