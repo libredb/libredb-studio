@@ -86,6 +86,21 @@ export function descriptorOutputFile(args) {
 }
 
 /**
+ * The line the command prints once it has written `outputFile`: the file relative to `cwd`, with `/` between its
+ * segments on every platform, so a run reads the same on Windows as anywhere else. `path.relative` answers with the
+ * platform's own separator, a backslash on Windows, and only that separator is rewritten: a backslash inside a POSIX
+ * file name is part of the name.
+ * @param {string} outputFile an absolute path
+ * @param {string} cwd the working directory the command runs in
+ * @param {import("node:path").PlatformPath} [paths] the path functions to use, the running platform's unless given;
+ * the test passes `path.win32` and `path.posix`
+ * @returns {string}
+ */
+export function wroteLine(outputFile, cwd, paths = path) {
+  return `Wrote ${paths.relative(cwd, outputFile).split(paths.sep).join("/")}`;
+}
+
+/**
  * Whether node runs this file as its program, rather than a module that imports it (the unit test does).
  *
  * Both sides are made real. Node keeps the path it was given in process.argv[1], which through a symlinked checkout
@@ -111,7 +126,7 @@ function main(args) {
     process.exit(2);
   }
   writeFileSync(outputFile, renderEtcdDescriptor(loadEtcdDescriptor()));
-  console.log(`Wrote ${path.relative(process.cwd(), outputFile)}`);
+  console.log(wroteLine(outputFile, process.cwd()));
 }
 
 if (isDirectExecution(process.argv[1])) main(process.argv.slice(2));

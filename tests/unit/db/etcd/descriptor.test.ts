@@ -25,6 +25,7 @@ import {
   ETCD_PROTO_DIR,
   loadEtcdDescriptor,
   renderEtcdDescriptor,
+  wroteLine,
 } from "../../../../scripts/generate-etcd-descriptor.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -260,6 +261,21 @@ describe("the generator's command, run by node in child processes that write onl
       ["--check"],
     ];
     for (const args of refused) expect({ args, file: descriptorOutputFile(args) }).toEqual({ args, file: undefined });
+  });
+
+  test("the line it prints names the file relative to cwd with forward slashes, the same on every platform", () => {
+    // path.relative answers with the platform's separator, a backslash on Windows, where the Cross-platform Tests
+    // job runs this file too; the runs below pin the line on the platform at hand, and this pins it on both.
+    const platforms = [
+      { platform: "win32", paths: path.win32, cwd: "C:\\work" },
+      { platform: "posix", paths: path.posix, cwd: "/work" },
+    ];
+    for (const { platform, paths, cwd } of platforms) {
+      const line = wroteLine(paths.join(cwd, "out", "descriptor.ts"), cwd, paths);
+      expect({ platform, line }).toEqual({ platform, line: "Wrote out/descriptor.ts" });
+    }
+    // Only the platform's separator is rewritten: on POSIX a backslash is part of the file's name.
+    expect(wroteLine("/work/out\\descriptor.ts", "/work", path.posix)).toBe("Wrote out\\descriptor.ts");
   });
 
   test("--out writes the committed bytes to that file, resolved against the working directory, and names it", () => {
