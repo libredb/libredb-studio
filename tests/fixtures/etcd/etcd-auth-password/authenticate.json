@@ -1,0 +1,41 @@
+{
+  "$captured": {
+    "service": "etcd-auth-password",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "9341064349964996272",
+    "memberId": "11100594549813706834",
+    "date": "2026-09-30T16:30:12.784Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Auth/Authenticate",
+    "surface": "authenticate as root with its password",
+    "request": {
+      "name": "root",
+      "password": "<password>"
+    },
+    "match": {
+      "name": "root"
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "header": {
+      "cluster_id": {
+        "$int64": "9341064349964996272"
+      },
+      "member_id": {
+        "$int64": "11100594549813706834"
+      },
+      "revision": {
+        "$int64": "37"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "token": "<token>"
+  }
+}

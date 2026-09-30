@@ -1,0 +1,50 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "4743283766027114114",
+    "memberId": "14609290428206289688",
+    "date": "2026-09-30T16:29:59.142Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "KV/Txn",
+    "surface": "txn: a put while the NOSPACE alarm is raised",
+    "request": {
+      "compare": [],
+      "success": [
+        {
+          "request_put": {
+            "key": {
+              "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvbm9zcGFjZQ=="
+            },
+            "value": {
+              "$bytes": "eA=="
+            }
+          }
+        }
+      ],
+      "failure": []
+    },
+    "match": {
+      "success": [
+        {
+          "request_put": {
+            "key": {
+              "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvbm9zcGFjZQ=="
+            }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "8 RESOURCE_EXHAUSTED: etcdserver: mvcc: database space exceeded",
+    "code": 8,
+    "details": "etcdserver: mvcc: database space exceeded"
+  }
+}

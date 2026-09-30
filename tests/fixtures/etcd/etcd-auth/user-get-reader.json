@@ -1,0 +1,42 @@
+{
+  "$captured": {
+    "service": "etcd-auth",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "18242060571022570213",
+    "memberId": "1380394221505655472",
+    "date": "2026-09-30T16:30:12.409Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Auth/UserGet",
+    "surface": "userGet reader as reader (certificate reader.crt): a user reads itself",
+    "request": {
+      "name": "reader"
+    },
+    "match": {
+      "name": "reader"
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "roles": [
+      "reader"
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "18242060571022570213"
+      },
+      "member_id": {
+        "$int64": "1380394221505655472"
+      },
+      "revision": {
+        "$int64": "37"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    }
+  }
+}

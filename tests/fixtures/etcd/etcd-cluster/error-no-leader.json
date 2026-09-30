@@ -1,0 +1,36 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "4743283766027114114",
+    "memberId": "14609290428206289688",
+    "date": "2026-09-30T16:30:11.001Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "KV/Range",
+    "surface": "range: /app/cfg with hasleader, no leader",
+    "request": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      },
+      "limit": {
+        "$int64": "1"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "14 UNAVAILABLE: etcdserver: no leader",
+    "code": 14,
+    "details": "etcdserver: no leader"
+  }
+}

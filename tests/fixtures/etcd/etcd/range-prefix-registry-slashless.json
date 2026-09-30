@@ -1,0 +1,78 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T21:29:29.912Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: the prefix registry/: the slash-less secrets root",
+    "request": {
+      "key": {
+        "$bytes": "cmVnaXN0cnkv"
+      },
+      "range_end": {
+        "$bytes": "cmVnaXN0cnkw"
+      },
+      "limit": {
+        "$int64": "500"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "cmVnaXN0cnkv"
+      },
+      "range_end": {
+        "$bytes": "cmVnaXN0cnkw"
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "cmVnaXN0cnkvc2VjcmV0cy9kZWZhdWx0L2xlZ2FjeQ=="
+        },
+        "create_revision": {
+          "$int64": "82"
+        },
+        "mod_revision": {
+          "$int64": "82"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "eyJhcGlWZXJzaW9uIjoidjEiLCJraW5kIjoiU2VjcmV0IiwibWV0YWRhdGEiOnsibmFtZSI6ImxlZ2FjeSJ9LCJkYXRhIjp7Im1hcmtlciI6ImJHbGljbVZrWWkxbWFYaDBkWEpsTFhObFkzSmxkQT09In19"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "82"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "1"
+    }
+  }
+}

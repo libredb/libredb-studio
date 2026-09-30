@@ -1,0 +1,78 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "4743283766027114114",
+    "memberId": "14609290428206289688",
+    "date": "2026-09-30T16:30:11.000Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Cluster/MemberList",
+    "surface": "memberList: serializable, without hasleader, no leader",
+    "request": {
+      "linearizable": false
+    },
+    "match": {
+      "linearizable": false
+    },
+    "metadata": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "members": [
+      {
+        "peerURLs": [
+          "http://etcd-cluster-2:2380"
+        ],
+        "clientURLs": [
+          "http://127.0.0.3:2379"
+        ],
+        "ID": {
+          "$int64": "8857620542826090066"
+        },
+        "name": "libredb-etcd-cluster-2",
+        "isLearner": false
+      },
+      {
+        "peerURLs": [
+          "http://etcd-cluster-3:2380"
+        ],
+        "clientURLs": [
+          "http://127.0.0.4:2379"
+        ],
+        "ID": {
+          "$int64": "11734059914781576738"
+        },
+        "name": "libredb-etcd-cluster-3",
+        "isLearner": false
+      },
+      {
+        "peerURLs": [
+          "http://etcd-cluster-1:2380"
+        ],
+        "clientURLs": [
+          "http://127.0.0.2:2379"
+        ],
+        "ID": {
+          "$int64": "14609290428206289688"
+        },
+        "name": "libredb-etcd-cluster-1",
+        "isLearner": false
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "4743283766027114114"
+      },
+      "member_id": {
+        "$int64": "14609290428206289688"
+      },
+      "revision": {
+        "$int64": "0"
+      },
+      "raft_term": {
+        "$int64": "5"
+      }
+    }
+  }
+}

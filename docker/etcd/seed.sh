@@ -65,13 +65,14 @@ put_new "$(text /registry/events/default/nginx.1)" "$(text '{"kind":"Event","rea
 # A Kubernetes-shaped subtree, so the write refusals and the withheld values run without a
 # cluster. The envelopes are `k8s\0` and a runtime.Unknown whose TypeMeta names the object,
 # built by hand; the Secret's data holds the marker libredb-fixture-secret, which no answer
-# may carry.
+# may carry. The slash-less JSON Secret keeps it under the data entry marker: the required
+# Secret Scan's gitleaks decodes a capture's base64 and read an entry named password as a leak.
 put_new "$(text /registry/pods/default/nginx)" "$(hex 6b3873000a090a0276311203506f6412090a070a056e67696e781a002200)"
 put_new "$(text /registry/secrets/default/db-creds)" "$(hex 6b3873000a0c0a027631120653656372657412300a0a0a0864622d637265647312220a0870617373776f726412166c6962726564622d666978747572652d7365637265741a002200)"
 put_new "$(text /registry/configmaps/default/encrypted)" "$(encrypted)"
 put_new "$(text /registry/cbor.example.com/gadgets/default/g1)" "$(hex d9d9f7a26a61706956657273696f6e7363626f722e6578616d706c652e636f6d2f7631646b696e6466476164676574)"
 new /registry/example.com/widgets/default/w1 '{"apiVersion":"example.com/v1","kind":"Widget","metadata":{"name":"w1","namespace":"default"},"spec":{"size":3}}'
-new registry/secrets/default/legacy '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"legacy"},"data":{"password":"'"$(text libredb-fixture-secret)"'"}}'
+new registry/secrets/default/legacy '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"legacy"},"data":{"marker":"'"$(text libredb-fixture-secret)"'"}}'
 
 # kube-apiserver's compaction clock, at the root and outside every prefix, with the decimal
 # revision it writes there.

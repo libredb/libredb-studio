@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "service": "transport",
+    "image": "none",
+    "digest": "none",
+    "clusterId": "none",
+    "memberId": "none",
+    "date": "2026-09-30T16:31:03.606Z",
+    "runtime": "node 24.14.0",
+    "rpc": "Maintenance/Status",
+    "surface": "status to a closed local port",
+    "request": {},
+    "match": {},
+    "metadata": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "14 UNAVAILABLE: No connection established. Last error: Error: connect ECONNREFUSED 127.0.0.1:39011. Resolution note: ",
+    "code": 14,
+    "details": "No connection established. Last error: Error: connect ECONNREFUSED 127.0.0.1:39011. Resolution note: "
+  }
+}

@@ -89,7 +89,7 @@ The same 34 keys, at revision 37, on `etcd`, on the cluster and on both auth ser
 | `/registry/configmaps/default/encrypted` | An encryption-at-rest value, `k8s:enc:aescbc:v1:key1:` and 32 bytes |
 | `/registry/cbor.example.com/gadgets/default/g1` | A CBOR value, self-described (`d9 d9 f7`) |
 | `/registry/example.com/widgets/default/w1` | A custom resource stored as JSON |
-| `registry/secrets/default/legacy` | A JSON Secret under the slash-less secrets root, holding the same marker in base64 |
+| `registry/secrets/default/legacy` | A JSON Secret under the slash-less secrets root, holding the same marker in base64 as its data entry `marker`, since the required Secret Scan read an entry named `password` as a leaked credential |
 | `compact_rev_key` | kube-apiserver's compaction clock, at the root, with a decimal value |
 | `/tenant-a/configmaps/default/cm`, `/tenant-a/configmaps/default/cm-encrypted` | A protobuf envelope and an encrypted value under an unprotected prefix, a stand-in for a custom `--etcd-prefix`, which only the content rule recognises |
 

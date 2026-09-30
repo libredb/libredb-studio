@@ -1,0 +1,211 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.414Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Txn",
+    "surface": "txn: E8's read of three single-key targets, read-only, the last one absent",
+    "request": {
+      "compare": [],
+      "success": [
+        {
+          "request_range": {
+            "key": {
+              "$bytes": "L2FwcC9jZmc="
+            },
+            "limit": {
+              "$int64": "1"
+            }
+          }
+        },
+        {
+          "request_range": {
+            "key": {
+              "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbQ=="
+            },
+            "limit": {
+              "$int64": "1"
+            }
+          }
+        },
+        {
+          "request_range": {
+            "key": {
+              "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvYWJzZW50"
+            },
+            "limit": {
+              "$int64": "1"
+            }
+          }
+        }
+      ],
+      "failure": []
+    },
+    "match": {
+      "success": [
+        {
+          "request_range": {
+            "key": {
+              "$bytes": "L2FwcC9jZmc="
+            }
+          }
+        },
+        {
+          "request_range": {
+            "key": {
+              "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbQ=="
+            }
+          }
+        },
+        {
+          "request_range": {
+            "key": {
+              "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvYWJzZW50"
+            }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "responses": [
+      {
+        "response_range": {
+          "kvs": [
+            {
+              "key": {
+                "$bytes": "L2FwcC9jZmc="
+              },
+              "create_revision": {
+                "$int64": "12"
+              },
+              "mod_revision": {
+                "$int64": "12"
+              },
+              "version": {
+                "$int64": "1"
+              },
+              "value": {
+                "$bytes": "eyJtb2RlIjoiYmx1ZSJ9"
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            }
+          ],
+          "header": {
+            "cluster_id": {
+              "$int64": "0"
+            },
+            "member_id": {
+              "$int64": "0"
+            },
+            "revision": {
+              "$int64": "70"
+            },
+            "raft_term": {
+              "$int64": "0"
+            }
+          },
+          "more": false,
+          "count": {
+            "$int64": "1"
+          }
+        },
+        "response": "response_range"
+      },
+      {
+        "response_range": {
+          "kvs": [
+            {
+              "key": {
+                "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbQ=="
+              },
+              "create_revision": {
+                "$int64": "33"
+              },
+              "mod_revision": {
+                "$int64": "33"
+              },
+              "version": {
+                "$int64": "1"
+              },
+              "value": {
+                "$bytes": "azhzAAoPCgJ2MRIJQ29uZmlnTWFwEhQKBAoCY20SDAoEbW9kZRIEYmx1ZRoAIgA="
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            }
+          ],
+          "header": {
+            "cluster_id": {
+              "$int64": "0"
+            },
+            "member_id": {
+              "$int64": "0"
+            },
+            "revision": {
+              "$int64": "70"
+            },
+            "raft_term": {
+              "$int64": "0"
+            }
+          },
+          "more": false,
+          "count": {
+            "$int64": "1"
+          }
+        },
+        "response": "response_range"
+      },
+      {
+        "response_range": {
+          "kvs": [],
+          "header": {
+            "cluster_id": {
+              "$int64": "0"
+            },
+            "member_id": {
+              "$int64": "0"
+            },
+            "revision": {
+              "$int64": "70"
+            },
+            "raft_term": {
+              "$int64": "0"
+            }
+          },
+          "more": false,
+          "count": {
+            "$int64": "0"
+          }
+        },
+        "response": "response_range"
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "70"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "succeeded": true
+  }
+}

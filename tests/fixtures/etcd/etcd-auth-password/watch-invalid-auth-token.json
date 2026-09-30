@@ -1,0 +1,71 @@
+{
+  "$captured": {
+    "service": "etcd-auth-password",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "9341064349964996272",
+    "memberId": "11100594549813706834",
+    "date": "2026-09-30T16:30:36.936Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Watch/Watch",
+    "surface": "watch: /app/ with reader's token 12 s after it was issued, cancelled in-band",
+    "request": {
+      "create_request": {
+        "key": {
+          "$bytes": "L2FwcC8="
+        },
+        "range_end": {
+          "$bytes": "L2FwcDA="
+        },
+        "fragment": true
+      }
+    },
+    "match": {
+      "create_request": {
+        "key": {
+          "$bytes": "L2FwcC8="
+        },
+        "range_end": {
+          "$bytes": "L2FwcDA="
+        }
+      }
+    },
+    "metadata": {
+      "hasleader": "true",
+      "token": "<token>"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "messages": [
+      {
+        "events": [],
+        "header": {
+          "cluster_id": {
+            "$int64": "9341064349964996272"
+          },
+          "member_id": {
+            "$int64": "11100594549813706834"
+          },
+          "revision": {
+            "$int64": "37"
+          },
+          "raft_term": {
+            "$int64": "2"
+          }
+        },
+        "watch_id": {
+          "$int64": "-1"
+        },
+        "created": true,
+        "canceled": true,
+        "compact_revision": {
+          "$int64": "0"
+        },
+        "cancel_reason": "rpc error: code = Unauthenticated desc = etcdserver: invalid auth token",
+        "fragment": false
+      }
+    ],
+    "end": "open"
+  }
+}

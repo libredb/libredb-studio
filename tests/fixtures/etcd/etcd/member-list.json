@@ -1,0 +1,54 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.391Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Cluster/MemberList",
+    "surface": "memberList: linearizable",
+    "request": {
+      "linearizable": true
+    },
+    "match": {
+      "linearizable": true
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "members": [
+      {
+        "peerURLs": [
+          "http://etcd:2380"
+        ],
+        "clientURLs": [
+          "http://127.0.0.1:2379"
+        ],
+        "ID": {
+          "$int64": "13653403111078390177"
+        },
+        "name": "libredb-etcd",
+        "isLearner": false
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "0"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    }
+  }
+}
