@@ -11,6 +11,8 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   HealthInfo,
+  DatabaseProvider,
+  MaintenanceOperation,
   MaintenanceType,
   MaintenanceResult,
   ProviderOptions,
@@ -1048,6 +1050,69 @@ describe("maintenanceControl", () => {
     });
 
     expect(maintenanceControl(drifted, "vacuum", "perEntity").offered).toBe(false);
+  });
+
+  test("a spec that declares no card field answers exactly what it answered before (#1089)", () => {
+    // `toStrictEqual` and the key list, because an answer carrying `title: undefined` would be a different object
+    // to a caller that lists its keys, and no provider but etcd declares any of the three fields.
+    const sqliteShaped = caps({
+      maintenanceOperationSpecs: { vacuum: { label: "Vacuum Database", perEntity: false, global: true } },
+    });
+
+    expect(maintenanceControl(sqliteShaped, "vacuum", "global")).toStrictEqual({
+      offered: true,
+      label: "Vacuum Database",
+    });
+    expect(Object.keys(maintenanceControl(sqliteShaped, "vacuum", "perEntity"))).toEqual(["offered", "label"]);
+  });
+
+  test("a declared card's title, description and typed confirmation travel with the answer, each on its own (#1089)", () => {
+    const etcdShaped = caps({
+      maintenanceOperations: ["compact", "defragment", "disarm"],
+      maintenanceOperationSpecs: {
+        compact: {
+          label: "Compact history",
+          title: "Compact history",
+          description: "Removes every revision before the current one.",
+          perEntity: false,
+          global: true,
+          confirmation: "typed",
+        },
+        defragment: { label: "Defragment", title: "Defragment the member", perEntity: false, global: true },
+      },
+    });
+    const compactCard = {
+      label: "Compact history",
+      title: "Compact history",
+      description: "Removes every revision before the current one.",
+      confirmation: "typed" as const,
+    };
+
+    expect(maintenanceControl(etcdShaped, "compact", "global")).toStrictEqual({ offered: true, ...compactCard });
+    // The fields describe the operation's card, not a placement: the per-row answer carries them and stays refused.
+    expect(maintenanceControl(etcdShaped, "compact", "perEntity")).toStrictEqual({ offered: false, ...compactCard });
+    expect(maintenanceControl(etcdShaped, "defragment", "global")).toStrictEqual({
+      offered: true,
+      label: "Defragment",
+      title: "Defragment the member",
+    });
+    // An operation with no spec is offered under the caller's own card, as before.
+    expect(maintenanceControl(etcdShaped, "disarm", "global")).toStrictEqual({ offered: true });
+  });
+});
+
+describe("MaintenanceOperation", () => {
+  test("every operation a provider may declare can be handed to runMaintenance, etcd's three included (#1089)", () => {
+    // `POST /api/db/maintenance` hands a provider exactly what its `maintenanceOperations` declared, so the
+    // interface and the base class both take `MaintenanceOperation`. The two assignments below are the
+    // compile-time half of that, checked by `bun run typecheck`: a parameter narrowed back to `MaintenanceType`
+    // fails there. `MaintenanceType` keeps its six because `MongoDBProvider.runMaintenance` switches over
+    // exactly those, and this stub's own `runMaintenance` above takes the six as every such provider does.
+    const etcdOperations: readonly MaintenanceOperation[] = ["compact", "defragment", "disarm"];
+    const toTheInterface: readonly Parameters<DatabaseProvider["runMaintenance"]>[0][] = etcdOperations;
+    const toTheBaseClass: readonly Parameters<BaseDatabaseProvider["runMaintenance"]>[0][] = etcdOperations;
+    expect(toTheInterface).toBe(etcdOperations);
+    expect(toTheBaseClass).toBe(etcdOperations);
   });
 });
 

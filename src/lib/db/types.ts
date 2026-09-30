@@ -95,7 +95,27 @@ export interface HealthInfo {
 // Maintenance Operations
 // ============================================================================
 
+/**
+ * The six maintenance operations of the engines that shipped before etcd, the type each of their providers'
+ * own `runMaintenance` dispatches on.
+ *
+ * Kept to these six (#1089, section 7.2): `MongoDBProvider.runMaintenance` ends its work in a `switch` over
+ * exactly these members with no `default`, so a seventh member here makes that method's result possibly
+ * undefined to the compiler, and the etcd work edits no other provider's file. Every operation a provider may
+ * declare and be asked to run is `MaintenanceOperation`.
+ */
 export type MaintenanceType = "vacuum" | "analyze" | "reindex" | "kill" | "optimize" | "check";
+
+/**
+ * Every maintenance operation a provider may declare in `maintenanceOperations` and be asked to run through
+ * `runMaintenance`: the six of `MaintenanceType`, and etcd's three.
+ *
+ * `compact`, `defragment` and `disarm` are etcd's history compaction, member defragmentation and alarm disarm
+ * (#1089, section 7.2), operations of their own rather than `vacuum` and `optimize` under other words: a reused
+ * `vacuum` is audited as VACUUM and read by the monitoring Tables tab's vacuum column, and `optimize` has no global
+ * card, so a defragmentation declared as it would have had no control at all.
+ */
+export type MaintenanceOperation = MaintenanceType | "compact" | "defragment" | "disarm";
 
 export interface MaintenanceResult {
   success: boolean;
@@ -131,6 +151,24 @@ export interface MaintenanceOperationSpec {
   perEntity: boolean;
   /** Runs with no target at all, over the whole database. */
   global: boolean;
+  /**
+   * The heading of this operation's own card in the Operations tab's Global Operations section (#1089, section 7.2).
+   *
+   * Declaring it IS the request for that card: the tab draws one card, with `label` on its button, this heading and
+   * `description` as its body, for every operation `maintenanceControl` offers globally with a title, and withholds
+   * the card it would otherwise draw for the operation from `ProviderLabels`. Absent keeps the operation on the
+   * tab's own cards, which is every provider that shipped before the field existed.
+   */
+  title?: string;
+  /** The body of this operation's card, and of its typed dialog when it asks for one (#1089, section 7.2). */
+  description?: string;
+  /**
+   * `"typed"`: the operation's card asks for the connection's name, typed exactly, before it sends anything
+   * (#1089, section 7.2). Honoured on a declared card only, so a spec that asks declares `title`, `description`
+   * and `perEntity: false`: no per-row control asks, and the typed dialog takes its title and body from those two
+   * fields. `tests/unit/db/maintenance-confirmation-capability.test.ts` holds every shipped provider to that.
+   */
+  confirmation?: "typed";
 }
 
 /** Where a surface wants to put a control: on one row, or on a whole-database card. */
@@ -147,12 +185,17 @@ export type MaintenancePlacement = "perEntity" | "global";
  * `maintenanceOperationSpecs` - a provider that declares no spec is offered in both
  * placements under the caller's own wording, which is what both surfaces did before
  * #U9.
+ *
+ * A spec's card fields, `title`, `description` and `confirmation`, travel with the answer
+ * only where the spec declares them, for the Operations tab's declared cards (#1089,
+ * section 7.2): a spec that declares none answers exactly what it answered before they
+ * existed.
  */
 export function maintenanceControl(
   capabilities: ProviderCapabilities | undefined,
-  type: MaintenanceType,
+  type: MaintenanceOperation,
   placement: MaintenancePlacement,
-): { offered: boolean; label?: string } {
+): { offered: boolean; label?: string; title?: string; description?: string; confirmation?: "typed" } {
   // Unknown capabilities are not a permission: `/api/db/provider-meta` answers with
   // nothing both while it is in flight and when it failed, and failing open there
   // puts the dead buttons back on exactly the connections the #272/#282 gates exist
@@ -166,7 +209,13 @@ export function maintenanceControl(
     return { offered: true };
   }
 
-  return { offered: spec[placement], label: spec.label };
+  return {
+    offered: spec[placement],
+    label: spec.label,
+    ...(spec.title === undefined ? {} : { title: spec.title }),
+    ...(spec.description === undefined ? {} : { description: spec.description }),
+    ...(spec.confirmation === undefined ? {} : { confirmation: spec.confirmation }),
+  };
 }
 
 /**
@@ -669,9 +718,9 @@ export interface ProviderCapabilities {
    */
   readonly enforcesReadOnly?: true;
   supportsMaintenance: boolean;
-  maintenanceOperations: MaintenanceType[];
+  maintenanceOperations: MaintenanceOperation[];
   /**
-   * Per-operation targeting for the operations above, keyed by `MaintenanceType`.
+   * Per-operation targeting for the operations above, keyed by `MaintenanceOperation`.
    *
    * Optional for the published-interface reason `supportsInlineRowEdit` records
    * (`src/exports/types.ts`): a required field added after the fact stops every
@@ -679,7 +728,7 @@ export interface ProviderCapabilities {
    * alone", which is what both maintenance surfaces did before #U9 - so an
    * implementation that declares nothing here behaves exactly as it did.
    */
-  maintenanceOperationSpecs?: Partial<Record<MaintenanceType, MaintenanceOperationSpec>>;
+  maintenanceOperationSpecs?: Partial<Record<MaintenanceOperation, MaintenanceOperationSpec>>;
   supportsConnectionString: boolean;
   defaultPort: number | null;
   /**
@@ -1381,7 +1430,9 @@ export interface DatabaseProvider {
 
   /**
    * Run maintenance operations
-   * @param type - Type of maintenance operation
+   * @param type - Type of maintenance operation. A provider's own implementation may take the narrower
+   * `MaintenanceType` when it runs none of etcd's three: `POST /api/db/maintenance` hands a provider only an
+   * operation its `maintenanceOperations` declares.
    * @param target - Optional target (table name or process ID)
    * @param container - Optional namespace the target lives in. What a container means is
    * per-engine and the provider decides: a schema for PostgreSQL, DuckDB and SQL Server, a
@@ -1389,7 +1440,7 @@ export interface DatabaseProvider {
    * the attached database for SQLite and libSQL. Providers that cannot act on one ignore it
    * rather than guessing a dialect from the target string.
    */
-  runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceOperation, target?: string, container?: string): Promise<MaintenanceResult>;
 
   /**
    * Validate provider configuration

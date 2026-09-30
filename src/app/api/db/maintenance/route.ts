@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrCreateProvider, type MaintenanceType } from "@/lib/db";
+import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Maintenance operations not supported for this database` }, { status: 400 });
     }
 
-    if (!capabilities.maintenanceOperations.includes(type as MaintenanceType)) {
+    if (!capabilities.maintenanceOperations.includes(type as MaintenanceOperation)) {
       return NextResponse.json(
         {
           error: `Operation '${type}' not supported for this database. Supported: ${capabilities.maintenanceOperations.join(", ")}`,
@@ -96,8 +96,8 @@ export async function POST(request: Request) {
     // the existing "operation not supported" 400 unreachable for exactly the four providers
     // whose vacuum wording names something else.
     const placement: MaintenancePlacement = target ? "perEntity" : "global";
-    const perEntityControl = maintenanceControl(capabilities, type as MaintenanceType, "perEntity");
-    const globalControl = maintenanceControl(capabilities, type as MaintenanceType, "global");
+    const perEntityControl = maintenanceControl(capabilities, type as MaintenanceOperation, "perEntity");
+    const globalControl = maintenanceControl(capabilities, type as MaintenanceOperation, "global");
     const requestedControl = placement === "perEntity" ? perEntityControl : globalControl;
 
     if (!requestedControl.offered && (perEntityControl.offered || globalControl.offered)) {
