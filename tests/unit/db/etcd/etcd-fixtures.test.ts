@@ -159,6 +159,15 @@ describe("the etcd fixture directory", () => {
     expect(secret?.value.includes("libredb-fixture-secret")).toBe(true);
   });
 
+  test("the slash-less Secret holds the marker in base64 under the data entry marker, as seed.sh writes it", () => {
+    // Named password, the entry failed the required Secret Scan: its gitleaks decodes a capture's base64.
+    const answer = etcdFixture<{ kvs: Array<{ key: Buffer; value: Buffer }> }>("etcd/range-prefix-registry-slashless");
+    const legacy = answer.kvs.find((kv) => kv.key.toString() === "registry/secrets/default/legacy");
+    expect(JSON.parse(legacy?.value.toString() ?? "null")?.data).toEqual({
+      marker: Buffer.from("libredb-fixture-secret").toString("base64"),
+    });
+  });
+
   test("the evidence harness exists and bun run test never runs it", () => {
     expect(existsSync(path.join(ROOT, "tests/live/etcd-evidence.ts"))).toBe(true);
     expect(discoverTestFiles(ROOT).filter((file) => file.startsWith("tests/live/"))).toEqual([]);

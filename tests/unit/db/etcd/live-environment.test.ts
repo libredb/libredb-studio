@@ -395,7 +395,11 @@ describe("the scripts of docker/etcd", () => {
       expect(seedLine(key)).toEndWith(' "$(encrypted)"');
     expect(script("seed.sh")).toContain("encrypted() { { printf 'k8s:enc:aescbc:v1:key1:';");
     expect(seedLine("/registry/cbor.example.com/gadgets/default/g1")).toContain('"$(hex d9d9f7');
-    expect(seedLine("registry/secrets/default/legacy")).toContain("$(text libredb-fixture-secret)");
+    // The slash-less Secret keeps the marker under the data entry marker: the required Secret Scan's gitleaks
+    // decodes a capture's base64, and it read the same entry named password as a leaked credential.
+    expect(seedLine("registry/secrets/default/legacy")).toContain(
+      `"data":{"marker":"'"$(text libredb-fixture-secret)"'"}`,
+    );
     expect(seedLine("compact_rev_key")).toMatch(/^new compact_rev_key '\d+'$/);
   });
 
