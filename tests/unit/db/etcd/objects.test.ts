@@ -1292,6 +1292,17 @@ describe("the member, lease, user and role sources (spec 4.4)", () => {
     );
   });
 
+  test("a negative lease id, as lease list prints one, is refused before any request in the grammar's words", async () => {
+    const fake = client();
+    // etcd grants an id a client chooses, a negative one included; lease list prints -5 as -000000000000005.
+    const error = await readEtcdObjectSource(fake, surface(), ["-000000000000005"], "lease").catch((caught) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      '"-000000000000005" is a negative lease id, as lease list prints one: Studio does not address a negative id, which etcd holds only when a client chose it.',
+    );
+    expect(fake.calls).toEqual([]);
+  });
+
   test("a user: its name and roles; one etcd does not hold is refused naming it", async () => {
     const fake = client({
       userGet: async (name) =>

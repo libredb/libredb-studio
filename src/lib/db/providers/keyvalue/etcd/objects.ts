@@ -876,6 +876,13 @@ function keyEntry(key: EtcdBytes): { readonly key: string; readonly key_encoding
   return view.encoding === "text" ? { key: view.text } : { key: view.text, key_encoding: "base64" };
 }
 
+/**
+ * A negative lease id as lease list prints it (keys.ts `leaseHexId`), a sign and then hex digits: the
+ * listing leaves it out, and the Source tab refuses it in the command grammar's words (commands.ts
+ * `NEGATIVE_LEASE`).
+ */
+const NEGATIVE_LEASE_ID = /^-[0-9a-fA-F]+$/;
+
 async function leaseSource(
   client: EtcdObjectClient,
   context: EtcdSurfaceContext,
@@ -883,6 +890,12 @@ async function leaseSource(
   limit: number | undefined,
 ): Promise<ObjectSourceDocument> {
   const text = path[0];
+  if (NEGATIVE_LEASE_ID.test(text)) {
+    throw new QueryError(
+      `${JSON.stringify(text)} is a negative lease id, as lease list prints one: Studio does not address a negative id, which etcd holds only when a client chose it.`,
+      PROVIDER,
+    );
+  }
   const id = fromHexId(text);
   if (id === undefined) {
     throw new QueryError(
