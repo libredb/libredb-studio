@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
+import { MCP_EXPOSABLE, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { refuseMcpWhereNotOffered, SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
 describe("SeedConnectionSchema", () => {
   const validConn = {
@@ -353,6 +353,50 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
 
   it("accepts defaults without it", () => {
     expect(SeedDefaultsSchema.safeParse({ managed: true }).success).toBe(true);
+  });
+});
+
+/**
+ * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
+ * `MCP_EXPOSABLE` and never from a type-id. Every shipped engine answers true for now, so the refusal
+ * itself is pinned through `refuseMcpWhereNotOffered` handed a copy of the record that answers false
+ * for a shipped type, the way `offersReadOnlyToggle` is handed its engine's answer; the case of a
+ * shipped engine that answers false lands with that engine's registration.
+ */
+describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {
+  const connection = { id: "cluster", name: "Cluster", host: "cluster.internal", roles: ["*"] };
+  const notOffered = (type: string) =>
+    `mcp is not offered for ${type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`;
+  const refusingOnly = (type: "kafka" | "redis") =>
+    SeedConnectionSchema.superRefine(refuseMcpWhereNotOffered({ ...MCP_EXPOSABLE, [type]: false }));
+
+  it("accepts mcp: true on every shipped engine the record offers MCP for", () => {
+    const offered = SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type]);
+    // Vacuity, by name: an empty population would refuse nothing and pass.
+    expect(offered).toContain("postgres");
+    const refused = offered.filter(
+      (type) => SeedConnectionSchema.safeParse({ ...connection, type, mcp: true }).data?.mcp !== true,
+    );
+    expect(refused).toEqual([]);
+  });
+
+  it.each(["kafka", "redis"] as const)(
+    "refuses mcp: true on %s where the record answers false, naming the type and the field",
+    (type) => {
+      const result = refusingOnly(type).safeParse({ ...connection, type, mcp: true });
+      expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+        ["mcp", notOffered(type)],
+      ]);
+    },
+  );
+
+  it("accepts mcp: false, and no mcp at all, on an engine the record answers false for", () => {
+    expect(refusingOnly("kafka").safeParse({ ...connection, type: "kafka", mcp: false }).success).toBe(true);
+    expect(refusingOnly("kafka").safeParse({ ...connection, type: "kafka" }).success).toBe(true);
+  });
+
+  it("refuses only the engine the record answers false for", () => {
+    expect(refusingOnly("kafka").safeParse({ ...connection, type: "postgres", mcp: true }).success).toBe(true);
   });
 });
 

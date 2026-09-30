@@ -182,6 +182,39 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
 });
 
 /**
+ * Which shipped engines a seed connection may expose to MCP clients (#246): the seed schema refuses
+ * `mcp: true` at load on an engine where this answers false, naming the engine, so an opt-in the
+ * product does not honour fails the file instead of listing a connection. Static for the reason
+ * `READ_ONLY_ENFORCED` is: the seed file is validated before any provider exists.
+ *
+ * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
+ * its entry answers false, and that entry lands with the provider's registration, which the compiler
+ * forces. Every other engine answers true. An exhaustive Record for the reason `EXTERNAL` gives, so a
+ * new type-id cannot join without someone answering, and frozen like the records above it.
+ */
+export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  libsql: true,
+  duckdb: true,
+  oracle: true,
+  mssql: true,
+  clickhouse: true,
+  druid: true,
+  trino: true,
+  cassandra: true,
+  elasticsearch: true,
+  opensearch: true,
+  mongodb: true,
+  couchbase: true,
+  redis: true,
+  prometheus: true,
+  kafka: true,
+  libredb: true,
+});
+
+/**
  * How much of the product works against a wire-compatible engine.
  *
  * - `full` - every introspection surface answered. Caveats may still record data

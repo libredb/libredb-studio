@@ -14,6 +14,7 @@ import {
   compatibleEnginesFor,
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
+  MCP_EXPOSABLE,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
@@ -490,5 +491,26 @@ describe("wire-compatibility registry", () => {
         expect(caveat.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+/**
+ * `MCP_EXPOSABLE` (#1089): which engines a seed connection may expose to MCP clients. The seed schema
+ * reads it before it accepts `mcp: true`, so it answers for every shipped type-id and nothing else,
+ * and no reader can change an answer at run time. The refusal it drives is pinned in
+ * `tests/unit/seed/types.test.ts`.
+ */
+describe("MCP_EXPOSABLE (#1089)", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(MCP_EXPOSABLE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can offer or withdraw MCP for an engine at run time", () => {
+    expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
+  });
+
+  test("offers MCP for every shipped engine", () => {
+    // An engine MCP is not offered for answers false with its registration, and is named here then.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([]);
   });
 });

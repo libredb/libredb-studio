@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
-import type { DatabaseConnection } from "@/lib/types";
+import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 // SSLMode matches the union in src/lib/types.ts — NO 'prefer'. Kept in step BY HAND: a zod
 // enum is a value, so a mode missing here is not a compile error, it is a seed file the
@@ -21,6 +21,25 @@ const ConnectionEnvironmentSchema = z.enum(["production", "staging", "developmen
 
 // Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
 const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
+
+/**
+ * The load's refusal of an MCP opt-in on an engine MCP is not offered for (#1089). Read from the record
+ * it is handed, `MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
+ * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
+ * that asks for something the product will not do. A factory over the record, the way
+ * `offersReadOnlyToggle` takes its engine's answer, so the refusal is tested before any shipped engine
+ * answers false.
+ */
+export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType, boolean>>) {
+  return (conn: { type: DatabaseType; mcp?: boolean }, ctx: z.RefinementCtx): void => {
+    if (conn.mcp !== true || exposable[conn.type]) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `mcp is not offered for ${conn.type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
+      path: ["mcp"],
+    });
+  };
+}
 
 // Kept in step with DatabaseType in src/lib/types.ts BY HAND: a zod enum is a value,
 // so a type-id missing here is not a compile error - it is a seed file the server
@@ -151,6 +170,8 @@ export const SeedConnectionSchema = z
       path: conn.apiKeyId !== undefined ? ["apiKeyId"] : ["apiKeySecret"],
     });
   })
+  // An MCP opt-in on an engine MCP is not offered for (#1089), read from MCP_EXPOSABLE.
+  .superRefine(refuseMcpWhereNotOffered(MCP_EXPOSABLE))
   // A read-only mode the engine's provider ignores would be a promise nobody keeps: the seed would be
   // listed as read-only and still write (#1089). Read from READ_ONLY_ENFORCED, never a type-id branch,
   // so an engine is admitted by its own declaration.
