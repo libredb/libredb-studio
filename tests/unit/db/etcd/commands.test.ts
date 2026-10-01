@@ -1353,16 +1353,21 @@ describe("the txn body (spec 5.1.4)", () => {
    *   20,000 runs    1346ms
    *   40,000 runs    5053ms (120 KB)
    *
-   * The bound is loose on purpose, so it cannot flake on a slow runner, while the quadratic form is
-   * over ten times past it at 30,000 runs. Each answer is asserted with its time: a fast wrong answer
-   * is not a pass, and the second text is refused only for a line some 60,000 lines below the first.
+   * The bound leaves measured room on both sides at the 50,000 runs below, with bun 1.4.2 on an
+   * i7-13650HX. That check, restored as a mutant, took 8.5 to 9.7s on the first text, run alone and
+   * without coverage: at least 5.7 times the bound, and past bun's default 5s test timeout as well.
+   * The parse as it is took at most 40ms alone. Under coverage, with copies of this file running at
+   * once on four of the host's efficiency cores, it took at most 106ms with four copies, as the
+   * required job runs one file per CPU, 242ms with eight, 6.2 times below the bound, and 485ms with
+   * sixteen, 3.1 times below. Each answer is asserted with its time: a fast wrong answer is not a
+   * pass, and the second text is refused only for a line some 100,000 lines below the first.
    */
   test("a body of many # runs, each above an empty line, answers in bounded time", () => {
-    const BOUND_MS = 200;
-    const runs = "#\n\n".repeat(30_000);
+    const BOUND_MS = 1_500;
+    const runs = "#\n\n".repeat(50_000);
     const adversarial: [label: string, text: string, expected: ParseResult][] = [
       [
-        "30,000 # runs past the failure list",
+        "50,000 # runs past the failure list",
         `txn\n\n\n\n${runs}`,
         { ok: true, parsed: { command: { kind: "txn", compares: [], success: [], failure: [] }, line: 1 } },
       ],
