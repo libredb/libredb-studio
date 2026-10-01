@@ -73,11 +73,12 @@ The highlighter and the parser read one quoting module, so what the editor draws
 ### 3.2 Kubernetes writes are refused (E8)
 
 The protected prefixes are `/registry/`, `registry/`, `/kubernetes.io/`, `kubernetes.io/`, `/openshift.io/`, `openshift.io/`, `/bootstrap/`, `bootstrap/`, `/k3s/`, `k3s/`, `/rke2/` and `rke2/`, and the protected key is `compact_rev_key`, kube-apiserver's compaction clock at the root of the key space.
-A write whose key, range or prefix meets the protected set is refused before any request: `put`, `del` in every spelling, a write in either branch of a `txn`, a `put --lease`, and a `lease revoke` whose lease holds a protected key.
+A write whose key, range or prefix meets the protected set is refused before any request: `put`, `del` in every spelling, a write in either branch of a `txn`, and a `put --lease`.
+A `lease revoke` deletes every key its lease holds, so it first reads those keys with one `LeaseTimeToLive` that asks for them, and is refused with nothing revoked when one of them is protected, or when etcd will not show them, because Kubernetes attaches its keys to leases.
 The refusal names the prefix and says that Kubernetes objects are written through the Kubernetes API, or names `compact_rev_key` and says that kube-apiserver owns it.
 Under a prefix this list does not name, such as a custom `--etcd-prefix`, a single-key write is read first and refused when the stored value is a Kubernetes protobuf envelope or an encrypted value, naming the key and its label and never the value.
 A top-level single-key `put` or `del` that passes is sent as one transaction guarded by the `mod_revision` its read returned, and it is refused, with nothing written, when the key changed or vanished in between.
-A WRITE-only grant cannot put or del a single key through Studio, because the read that guards the write needs READ.
+A WRITE-only grant cannot put or del a single key through Studio, because the read that guards the write needs READ, and for the same reason a user who may not read every key of a lease cannot revoke that lease through Studio.
 
 ### 3.3 Values that are never shown (E9)
 
