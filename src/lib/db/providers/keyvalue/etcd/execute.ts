@@ -15,8 +15,11 @@
  * A get reads in pages pinned to its first page's revision (spec 5.4, E14): the first page asks
  * for P keys, and a later page for twice as many, up to the ceiling, while two of the page just
  * read still fit in the byte budget left. A watch is watch.ts's bounded loop, and every other
- * command is its one call, or etcdctl's two for endpoint health. A --command-timeout is the
- * deadline of the whole command, its calls together, and a watch's window instead (spec 5.1.2).
+ * command is its one call, or etcdctl's two for endpoint health. A list etcd answers whole (the
+ * leases, a lease's keys, the users, the roles, and a user's or a role's permissions) holds its first
+ * rowLimit entries and says how many etcd answered, since only the receive cap bounds it on the wire
+ * (spec 5.4). A --command-timeout is the deadline of the whole command, its calls together, and a
+ * watch's window instead (spec 5.1.2).
  *
  * Every failure passes through errors.ts with `write` from guard.ts's class (spec 5.6), and a
  * request read before a write is mapped as a read, since no write left the client. The sentences
@@ -255,10 +258,13 @@ async function dispatch(
       const response = await send(run, () => client.leaseTimeToLive(id, command.keys, call));
       // A TTL of -1 is etcd's answer for a lease it does not hold: data, not an error (spec 5.6).
       if (response.ttl === "-1") throw leaseNotFoundError(command.leaseHex, run.failure.command);
-      return { kind: "lease-timetolive", response, keys: command.keys };
+      const [keys, held] = rowsHeld(run, response.keys);
+      return { kind: "lease-timetolive", response: { ...response, keys }, keys: command.keys, ...held };
     }
-    case "lease-list":
-      return { kind: "lease-list", ids: (await send(run, () => client.leaseLeases(call))).ids };
+    case "lease-list": {
+      const [ids, held] = rowsHeld(run, (await send(run, () => client.leaseLeases(call))).ids);
+      return { kind: "lease-list", ids, ...held };
+    }
     case "lease-keep-alive-once": {
       const id = leaseDecimal(command.leaseHex);
       const response = await sendWrite(run, () => client.leaseKeepAliveOnce(id, call));
@@ -286,19 +292,30 @@ async function dispatch(
       return { kind: "alarm-list", alarms: await send(run, () => client.alarmList(call)) };
     case "auth-status":
       return { kind: "auth-status", status: await send(run, () => client.authStatus(call)) };
-    case "user-list":
-      return { kind: "user-list", names: await send(run, () => client.userList(call)) };
+    case "user-list": {
+      const [names, held] = rowsHeld(run, await send(run, () => client.userList(call)));
+      return { kind: "user-list", names, ...held };
+    }
     case "user-get":
       return userGet(run, command.name, command.detail);
-    case "role-list":
-      return { kind: "role-list", names: await send(run, () => client.roleList(call)) };
-    case "role-get":
-      return {
-        kind: "role-get",
-        name: command.name,
-        permissions: await send(run, () => client.roleGet(command.name, call)),
-      };
+    case "role-list": {
+      const [names, held] = rowsHeld(run, await send(run, () => client.roleList(call)));
+      return { kind: "role-list", names, ...held };
+    }
+    case "role-get": {
+      const [permissions, held] = rowsHeld(run, await send(run, () => client.roleGet(command.name, call)));
+      return { kind: "role-get", name: command.name, permissions, ...held };
+    }
   }
+}
+
+/**
+ * A list etcd answers whole, held to the rows a result holds (spec 5.4): its first `rowLimit` entries,
+ * and, when etcd answered more, how many it answered, which results.ts names in its warning.
+ */
+function rowsHeld<T>(run: Run, entries: readonly T[]): readonly [readonly T[], { readonly answered?: number }] {
+  const { rowLimit } = run.context.bounds;
+  return entries.length > rowLimit ? [entries.slice(0, rowLimit), { answered: entries.length }] : [entries, {}];
 }
 
 /** A decision of write-policy.ts, raised before the request it refuses; its sentence quotes no value (spec E6, E8). */
@@ -767,8 +784,11 @@ async function userGet(run: Run, name: string, detail: boolean): Promise<Command
   const roles = await send(run, () => client.userGet(name, call));
   if (!detail) return { kind: "user-get", name, roles };
   const granted = await send(run, () => Promise.all(roles.map((role) => client.roleGet(role, call))));
-  const permissions = roles.flatMap((role, index) => granted[index].map((permission) => ({ role, permission })));
-  return { kind: "user-get", name, roles, permissions };
+  const [permissions, held] = rowsHeld(
+    run,
+    roles.flatMap((role, index) => granted[index].map((permission) => ({ role, permission }))),
+  );
+  return { kind: "user-get", name, roles, permissions, ...held };
 }
 
 function formatMs(ms: number): string {

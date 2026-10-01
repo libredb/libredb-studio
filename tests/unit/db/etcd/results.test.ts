@@ -980,6 +980,73 @@ describe("the root role (etcdctl printer_simple.go RoleGet)", () => {
   });
 });
 
+describe("a list etcd answered whole, held to the rows a result holds (spec 5.4)", () => {
+  const grant: EtcdPermission = { type: "read", key: utf8("/app/"), rangeEnd: utf8("/app0") };
+
+  test("lease list held at 500 of the 1,200 leases etcd answered says so, names the bound, and sets wasLimited", () => {
+    const ids = Array.from({ length: 500 }, (_unused, index) => String(index + 1));
+    const answer = result({ kind: "lease-list", ids, answered: 1_200 });
+    expect(answer.rowCount).toBe(500);
+    expect(answer.warnings).toEqual([
+      { message: "etcd answered 1,200 leases; the result shows the first 500, the most a result holds." },
+    ]);
+    expect(answer.pagination).toEqual({ limit: 500, offset: 0, hasMore: false, totalReturned: 500, wasLimited: true });
+  });
+
+  test("each list names what etcd answered in its own words", () => {
+    const lease = {
+      header: header(),
+      id: LEASE,
+      ttl: "3599",
+      grantedTtl: "3600",
+      keys: [utf8("/leases/a"), utf8("/leases/b")],
+    };
+    const held = (noun: string, answered: string) =>
+      `etcd answered ${answered} ${noun}; the result shows the first 2, the most a result holds.`;
+    const cases: ReadonlyArray<readonly [CommandOutcome, string]> = [
+      [
+        { kind: "lease-timetolive", response: lease, keys: true, answered: 1_000 },
+        held("keys attached to the lease", "1,000"),
+      ],
+      [{ kind: "user-list", names: ["a", "b"], answered: 700 }, held("users", "700")],
+      [{ kind: "role-list", names: ["a", "b"], answered: 700 }, held("roles", "700")],
+      [
+        {
+          kind: "user-get",
+          name: "alice",
+          roles: ["app"],
+          permissions: [
+            { role: "app", permission: grant },
+            { role: "app", permission: grant },
+          ],
+          answered: 600,
+        },
+        held("permissions", "600"),
+      ],
+      [{ kind: "role-get", name: "app", permissions: [grant, grant], answered: 600 }, held("permissions", "600")],
+    ];
+    for (const [outcome, message] of cases) {
+      const answer = result(outcome);
+      expect(answer.rowCount).toBe(2);
+      expect(answer.warnings).toEqual([{ message }]);
+      expect(answer.pagination?.wasLimited).toBe(true);
+    }
+  });
+
+  test("the root role's warning stays beside the bound's", () => {
+    expect(result({ kind: "role-get", name: "root", permissions: [grant, grant], answered: 501 }).warnings).toEqual([
+      { message: "The root role may read and write every key, whatever permissions etcd lists for it." },
+      { message: "etcd answered 501 permissions; the result shows the first 2, the most a result holds." },
+    ]);
+  });
+
+  test("a list answered whole carries neither the warning nor pagination", () => {
+    const answer = result({ kind: "lease-list", ids: [LEASE, "1"] });
+    expect(answer.warnings).toBeUndefined();
+    expect(answer).not.toHaveProperty("pagination");
+  });
+});
+
 describe("the rules every result keeps (spec 5.2)", () => {
   test("every write answers at least one row", () => {
     const writes: CommandOutcome[] = [

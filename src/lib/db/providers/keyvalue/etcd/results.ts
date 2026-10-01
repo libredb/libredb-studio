@@ -48,6 +48,14 @@ export interface WatchOutcome {
   readonly capped?: { readonly queryTimeoutMs: number };
 }
 
+/**
+ * A list etcd answers whole, which execute.ts holds to the rows a result holds (spec 5.4): `answered`
+ * is set only when etcd answered more, and counts what it answered, while the outcome holds the first.
+ */
+export interface HeldList {
+  readonly answered?: number;
+}
+
 export type CommandOutcome =
   | {
       readonly kind: "get";
@@ -65,8 +73,12 @@ export type CommandOutcome =
   | { readonly kind: "watch"; readonly outcome: WatchOutcome }
   | { readonly kind: "lease-grant"; readonly response: EtcdLeaseGrantResponse }
   | { readonly kind: "lease-revoke"; readonly id: EtcdInt64 }
-  | { readonly kind: "lease-timetolive"; readonly response: EtcdLeaseTimeToLiveResponse; readonly keys: boolean }
-  | { readonly kind: "lease-list"; readonly ids: readonly EtcdInt64[] }
+  | ({
+      readonly kind: "lease-timetolive";
+      readonly response: EtcdLeaseTimeToLiveResponse;
+      readonly keys: boolean;
+    } & HeldList)
+  | ({ readonly kind: "lease-list"; readonly ids: readonly EtcdInt64[] } & HeldList)
   | { readonly kind: "lease-keep-alive-once"; readonly response: EtcdLeaseKeepAliveResponse }
   | { readonly kind: "member-list"; readonly members: readonly EtcdMember[] }
   | { readonly kind: "endpoint-status"; readonly endpoint: string; readonly status: EtcdStatus }
@@ -79,15 +91,15 @@ export type CommandOutcome =
     }
   | { readonly kind: "alarm-list"; readonly alarms: readonly EtcdAlarm[] }
   | { readonly kind: "auth-status"; readonly status: EtcdAuthStatus }
-  | { readonly kind: "user-list"; readonly names: readonly string[] }
-  | {
+  | ({ readonly kind: "user-list"; readonly names: readonly string[] } & HeldList)
+  | ({
       readonly kind: "user-get";
       readonly name: string;
       readonly roles: readonly string[];
       readonly permissions?: ReadonlyArray<{ readonly role: string; readonly permission: EtcdPermission }>;
-    }
-  | { readonly kind: "role-list"; readonly names: readonly string[] }
-  | { readonly kind: "role-get"; readonly name: string; readonly permissions: readonly EtcdPermission[] };
+    } & HeldList)
+  | ({ readonly kind: "role-list"; readonly names: readonly string[] } & HeldList)
+  | ({ readonly kind: "role-get"; readonly name: string; readonly permissions: readonly EtcdPermission[] } & HeldList);
 
 type Row = Record<string, unknown>;
 
@@ -155,6 +167,25 @@ function stopWarning(stop: ReadStop, rows: number): string {
   return stop.by === "rows"
     ? `The read stopped at ${plural(rows, "row")}, the most a result holds, ${before}: narrow the range, or read on from that key.`
     : `The read stopped at its byte budget after ${plural(rows, "row")}, ${before}: narrow the range, read it with --keys-only, or read on from that key.`;
+}
+
+/**
+ * A list execute.ts held to the rows a result holds (spec 5.4): the rows it holds, `wasLimited`, and a
+ * warning naming how many `nouns` etcd answered and the bound; a list answered whole is left as it is.
+ */
+function heldShape(shape: Shape, list: HeldList, nouns: string): Shape {
+  if (list.answered === undefined) return shape;
+  const shown = grouped(String(shape.rows.length));
+  return {
+    ...shape,
+    warnings: [
+      ...(shape.warnings ?? []),
+      {
+        message: `etcd answered ${grouped(String(list.answered))} ${nouns}; the result shows the first ${shown}, the most a result holds.`,
+      },
+    ],
+    wasLimited: true,
+  };
 }
 
 function getShape(outcome: Extract<CommandOutcome, { readonly kind: "get" }>, shaping: Shaping): Shape {
@@ -392,10 +423,18 @@ function shapeOf(outcome: CommandOutcome, shaping: Shaping): Shape {
         keys.length === 0
           ? [{ lease, ttl, granted_ttl: grantedTtl }]
           : keys.map((key) => joined({ lease, ttl, granted_ttl: grantedTtl }, keyCells(key)));
-      return { fields: ["lease", "ttl", "granted_ttl", "key", "key_encoding"], rows };
+      return heldShape(
+        { fields: ["lease", "ttl", "granted_ttl", "key", "key_encoding"], rows },
+        outcome,
+        "keys attached to the lease",
+      );
     }
     case "lease-list":
-      return { fields: ["lease"], rows: outcome.ids.map((id) => ({ lease: leaseHexId(id) })) };
+      return heldShape(
+        { fields: ["lease"], rows: outcome.ids.map((id) => ({ lease: leaseHexId(id) })) },
+        outcome,
+        "leases",
+      );
     case "lease-keep-alive-once":
       return {
         fields: ["lease", "ttl"],
@@ -452,7 +491,11 @@ function shapeOf(outcome: CommandOutcome, shaping: Shaping): Shape {
       };
     case "user-list":
     case "role-list":
-      return { fields: ["name"], rows: outcome.names.map((name) => ({ name })) };
+      return heldShape(
+        { fields: ["name"], rows: outcome.names.map((name) => ({ name })) },
+        outcome,
+        outcome.kind === "user-list" ? "users" : "roles",
+      );
     case "user-get": {
       const user = { name: outcome.name, roles: outcome.roles.join(", ") };
       if (outcome.permissions === undefined) return { fields: ["name", "roles"], rows: [user] };
@@ -460,22 +503,30 @@ function shapeOf(outcome: CommandOutcome, shaping: Shaping): Shape {
         outcome.permissions.length === 0
           ? [user]
           : outcome.permissions.map(({ role, permission }) => joined({ ...user, role }, permissionCells(permission)));
-      return {
-        fields: ["name", "roles", "role", ...PERMISSION_FIELDS],
-        rows,
-        ...(outcome.roles.includes(ROOT_ROLE) ? { warnings: ROOT_ROLE_WARNINGS } : {}),
-      };
+      return heldShape(
+        {
+          fields: ["name", "roles", "role", ...PERMISSION_FIELDS],
+          rows,
+          ...(outcome.roles.includes(ROOT_ROLE) ? { warnings: ROOT_ROLE_WARNINGS } : {}),
+        },
+        outcome,
+        "permissions",
+      );
     }
     case "role-get": {
       const rows =
         outcome.permissions.length === 0
           ? [{ role: outcome.name }]
           : outcome.permissions.map((permission) => joined({ role: outcome.name }, permissionCells(permission)));
-      return {
-        fields: ["role", ...PERMISSION_FIELDS],
-        rows,
-        ...(outcome.name === ROOT_ROLE ? { warnings: ROOT_ROLE_WARNINGS } : {}),
-      };
+      return heldShape(
+        {
+          fields: ["role", ...PERMISSION_FIELDS],
+          rows,
+          ...(outcome.name === ROOT_ROLE ? { warnings: ROOT_ROLE_WARNINGS } : {}),
+        },
+        outcome,
+        "permissions",
+      );
     }
   }
 }

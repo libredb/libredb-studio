@@ -1607,6 +1607,77 @@ describe("the cluster and auth reads (spec 5.1.3)", () => {
   });
 });
 
+describe("a list etcd answers whole holds at most the row limit (spec 5.4, E14)", () => {
+  // SMALL holds 5 rows, and each list below answers one entry more. Only the receive cap held these
+  // answers before: on etcd v3.7.2, lease timetolive --keys of a lease holding 600 keys answered 600 rows.
+  const OVER = SMALL.rowLimit + 1;
+  const names = Array.from({ length: OVER }, (_unused, index) => `name-${index}`);
+  const ids = Array.from({ length: OVER }, (_unused, index) => String(index + 1));
+  const leaseKeys = Array.from({ length: OVER }, (_unused, index) => enc(`/leases/session-${index}`));
+  const permissions = Array.from({ length: OVER }, (_unused, index) => ({
+    type: "read" as const,
+    key: enc(`/app/${index}`),
+  }));
+
+  test("lease timetolive --keys and lease list hold the first rows, and say how many etcd answered", async () => {
+    const h = harness({ bounds: SMALL });
+    const lease = { header: header("57"), id: LEASE_ID, ttl: "600", grantedTtl: "3600", keys: leaseKeys };
+    const fake = createFakeEtcdClient({
+      leaseTimeToLive: async () => lease,
+      leaseLeases: async () => ({ header: header("57"), ids }),
+    });
+    expect(await run(fake, `lease timetolive ${LEASE_HEX} --keys`, h)).toEqual({
+      kind: "lease-timetolive",
+      response: { ...lease, keys: leaseKeys.slice(0, 5) },
+      keys: true,
+      answered: OVER,
+    });
+    expect(await run(fake, "lease list", h)).toEqual({ kind: "lease-list", ids: ids.slice(0, 5), answered: OVER });
+  });
+
+  test("user list, role list, user get --detail and role get hold the same bound", async () => {
+    const h = harness({ bounds: SMALL });
+    const fake = createFakeEtcdClient({
+      userList: async () => names,
+      roleList: async () => names,
+      userGet: async () => ["reader", "writer"],
+      roleGet: async (name: string) =>
+        name === "reader" ? permissions.slice(0, 4) : name === "writer" ? permissions.slice(4) : permissions,
+    });
+    expect(await run(fake, "user list", h)).toEqual({ kind: "user-list", names: names.slice(0, 5), answered: OVER });
+    expect(await run(fake, "role list", h)).toEqual({ kind: "role-list", names: names.slice(0, 5), answered: OVER });
+    // The permissions of every role count together, in the user's order of roles.
+    expect(await run(fake, "user get alice --detail", h)).toEqual({
+      kind: "user-get",
+      name: "alice",
+      roles: ["reader", "writer"],
+      permissions: [
+        ...permissions.slice(0, 4).map((permission) => ({ role: "reader", permission })),
+        { role: "writer", permission: permissions[4] },
+      ],
+      answered: OVER,
+    });
+    expect(await run(fake, "role get admin", h)).toEqual({
+      kind: "role-get",
+      name: "admin",
+      permissions: permissions.slice(0, 5),
+      answered: OVER,
+    });
+  });
+
+  test("a list that ends at the row limit exactly is answered whole, and says nothing was cut", async () => {
+    const h = harness({ bounds: SMALL });
+    const fake = createFakeEtcdClient({
+      leaseLeases: async () => ({ header: header("57"), ids: ids.slice(0, 5) }),
+      userList: async () => names.slice(0, 5),
+    });
+    const leases = await run(fake, "lease list", h);
+    expect(leases).toEqual({ kind: "lease-list", ids: ids.slice(0, 5) });
+    expect(leases).not.toHaveProperty("answered");
+    expect(await run(fake, "user list", h)).not.toHaveProperty("answered");
+  });
+});
+
 describe("endpoint health, etcdctl's probe (spec 5.1.3)", () => {
   const probe = { key: enc("health"), limit: 1, keysOnly: true };
 
