@@ -3758,6 +3758,33 @@ describe("over grpc-js: nothing of a channel outlives close() (spec E16)", () =>
     expect(asked).toBe(1);
   });
 
+  test("a connector made after the adapter's close, for an address grpc-js hands on late, refuses readiness and ends a socket handed to it", async () => {
+    const silent = await silentListener();
+    const inner = credentials.createInsecure();
+    let asked = 0;
+    spyOn(inner, "_createSecureConnector").mockReturnValue({
+      connect: (socket) => Promise.resolve({ socket, secure: false }),
+      waitForReady: () => {
+        asked++;
+        return Promise.resolve();
+      },
+      getCallCredentials: () => credentials.createEmpty(),
+      destroy: () => undefined,
+    });
+    const closing = new ClosingCredentials(inner);
+    // The control: a connector made before the close is ready as grpc-js's own is.
+    await closing._createSecureConnector(TARGET, {}).waitForReady();
+    closing.endEverySocket();
+    const late = closing._createSecureConnector(TARGET, {});
+    expect(await failure(late.waitForReady())).toMatchObject({ message: CHANNEL_CLOSED });
+    const socket = await dialled(silent.port);
+    expect(await failure(late.connect(socket))).toMatchObject({ message: CHANNEL_CLOSED });
+    expect({ destroyed: socket.destroyed, asked }).toEqual({ destroyed: true, asked: 1 });
+    await eventually(() => silent.held.size === 0);
+    silent.listener.close();
+    expect(silent.held.size).toBe(0);
+  });
+
   test("a connector's destroy() alone leaves an established socket open, as a load balancer's release needs; the adapter's close ends it", async () => {
     const silent = await silentListener();
     const closing = new ClosingCredentials(establishing());

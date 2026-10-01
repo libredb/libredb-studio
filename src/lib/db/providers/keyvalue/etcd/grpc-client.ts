@@ -591,7 +591,7 @@ const CHANNEL_CLOSED = "The channel closed before this connection was establishe
 /**
  * Spec E16: grpc-js's own credentials, plaintext or TLS, wrapped so that nothing of a channel outlives the adapter's
  * close(). In grpc-js 1.14.5, `client.close()` reaches the credentials' connector only through its `destroy()`
- * (`Subchannel.unref`, subchannel.ts), which grpc-js's own connectors leave empty, and three things outlived it
+ * (`Subchannel.unref`, subchannel.ts), which grpc-js's own connectors leave empty, and four things outlived it
  * (measured under Node 24.14.0 and Bun 1.4.2). A TLS handshake the peer never answers:
  * `Http2SubchannelConnector.connect` (transport.ts) hands the TCP socket it connected to the connector, whose
  * `connect` (`SecureConnectorImpl`, channel-credentials.ts) waits for the handshake with no bound, so the socket, and
@@ -599,21 +599,29 @@ const CHANNEL_CLOSED = "The channel closed before this connection was establishe
  * IDLE, and one in TRANSIENT_FAILURE dials the endpoint again when its backoff timer ends (`handleBackoffTimer`),
  * whatever its refcount, about a second after the attempt that failed. And an HTTP/2 session still waiting for the
  * peer's SETTINGS, plaintext or TLS: `createSession` (transport.ts) opens it over the connector's socket and unrefs it,
- * and only `Http2SubchannelConnector.shutdown()`, which nothing calls, would close it.
+ * and only `Http2SubchannelConnector.shutdown()`, which nothing calls, would close it. And a subchannel built after
+ * the close: the DNS resolver hands an IP target's address on in a setImmediate that its `destroy()` does not cancel
+ * (`startResolution`, resolver-dns.ts), so a close in the event-loop iteration of the channel's first call, or of its
+ * first after grpc-js's idle timeout, met a subchannel made after it, which dialled the endpoint and held the
+ * connection; every connection through an SSH tunnel dials such a target, 127.0.0.1.
  * The connector below, the hook `experimental.SecureConnector` describes, ends on `destroy()` every socket still in
  * its handshake, and at once a socket handed over after it, whose TCP connect outlived the close, and fails that
  * connect itself, since Node never settles a handshake whose socket was destroyed (Bun reports ECONNRESET); and from
  * `destroy()` on it refuses `waitForReady()`, which grpc-js awaits before every TCP connect, so nothing is dialled.
  * It keeps every socket it was handed until that socket closes, and `endEverySocket()`, which the adapter's close()
- * calls, ends them all. A `destroy()` alone ends no socket past its handshake: grpc-js also destroys a connector when
- * the load balancer releases a subchannel whose address left a re-resolution, and then shuts its transport down
- * gracefully, so that a call in flight, a write among them, finishes with an answer.
+ * calls, ends them all and destroys every connector made after it as it is made, so a subchannel built after the close
+ * only retries at grpc-js's backoff, each attempt refused before it dials. A `destroy()` alone ends no socket past its
+ * handshake: grpc-js also destroys a connector when the load balancer releases a subchannel whose address left a
+ * re-resolution, and then shuts its transport down gracefully, so that a call in flight, a write among them, finishes
+ * with an answer.
  * The credentials equal only themselves, so no two clients share a subchannel: grpc-js's insecure credentials equal
  * any other, which would let two plaintext clients of one endpoint share one, and one client's close reach the other.
  */
 export class ClosingCredentials extends ChannelCredentials {
   /** Every socket a connector of these credentials was handed, until it closes. */
   private readonly sockets = new Set<Socket>();
+  /** Set by the adapter's close(): a connector made after it is destroyed as it is made, so it dials nothing. */
+  private closed = false;
 
   constructor(private readonly inner: ChannelCredentials) {
     super();
@@ -633,11 +641,20 @@ export class ClosingCredentials extends ChannelCredentials {
     options: ChannelOptions,
     callCredentials?: CallCredentials,
   ): experimental.SecureConnector {
-    return closingConnector(this.inner._createSecureConnector(channelTarget, options, callCredentials), this.sockets);
+    const connector = closingConnector(
+      this.inner._createSecureConnector(channelTarget, options, callCredentials),
+      this.sockets,
+    );
+    if (this.closed) connector.destroy();
+    return connector;
   }
 
-  /** The adapter's close(): ends every socket its connectors still hold, in a handshake, a session or a call. */
+  /**
+   * The adapter's close(): ends every socket its connectors still hold, in a handshake, a session or a call, and from
+   * then on destroys every connector made, one for an address grpc-js hands on after the close among them.
+   */
   endEverySocket(): void {
+    this.closed = true;
     for (const socket of this.sockets) socket.destroy();
   }
 }

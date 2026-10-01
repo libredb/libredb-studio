@@ -26,9 +26,10 @@
  * holds a connection open, since its client closed it: not the TLS handshake, and not the HTTP/2 session waiting for
  * SETTINGS, plaintext or TLS, which grpc-js unrefs, so that `process.getActiveResourcesInfo` does not list it, and
  * which Bun lists nothing of anyway. Nor does a closed client dial again: the reset case's listener accepts nothing in
- * twice grpc-js's initial backoff after the case's close(), under either runtime. The Node child reports on one line
- * and lives until the parent has read the listeners, so what its close() left open is still open then, and a dial its
- * closed channel makes still reaches them.
+ * twice grpc-js's initial backoff after the case's close(), under either runtime, and a client closed in the turn of
+ * its first call, before grpc-js's resolver has handed the IP address on, leaves the silent listener no connection.
+ * The Node child reports on one line and lives until the parent has read the listeners, so what its close() left open
+ * is still open then, and a dial its closed channel makes still reaches them.
  *
  * The same child is KE16's fallback for a real-transport test, should Bun's HTTP/2 stall (spec section 11).
  */
@@ -65,6 +66,8 @@ type HandshakeCase =
       /** The tunnel's far end, set on the connection under TUNNEL_FAR_END: a symbol key does not survive JSON. */
       readonly farEnd?: { readonly host: string; readonly port: number };
       readonly timeoutMs: number;
+      /** The client closes in the turn of its call, before grpc-js has handed the endpoint's address on (spec E16). */
+      readonly closeInTurn?: boolean;
     }
   | {
       readonly name: string;
@@ -182,8 +185,11 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
     try {
       // oxlint-disable-next-line no-await-in-loop -- one connection at a time, so each listener's count is its case's alone.
       client = await deps.createGrpcEtcdClient(options, {}, recording);
+      const call = { signal: new AbortController().signal };
+      // A close in the turn of the call comes before grpc-js's resolver hands an IP address on, which it does in a
+      // setImmediate, so the call ends as closed and the closed channel must dial nothing for it (spec E16).
       // oxlint-disable-next-line no-await-in-loop -- the case's one call, on the channel it just opened.
-      await client.status({ signal: new AbortController().signal });
+      await (item.closeInTurn === true ? Promise.all([client.status(call), client.close()]) : client.status(call));
       outcome = { name: item.name, outcome: "connected", target: options.target };
     } catch (error) {
       const failure = error as { readonly category?: string; readonly tlsFailure?: string; readonly grpcCode?: number };
@@ -606,7 +612,11 @@ function adapterCase(
   name: string,
   connection: (ports: Listeners) => Record<string, unknown>,
   expected: (ports: Listeners) => Expectation,
-  extra: { readonly farEnd?: { readonly host: string; readonly port: number }; readonly timeoutMs?: number } = {},
+  extra: {
+    readonly farEnd?: { readonly host: string; readonly port: number };
+    readonly timeoutMs?: number;
+    readonly closeInTurn?: boolean;
+  } = {},
 ): CaseDefinition {
   return {
     name,
@@ -617,6 +627,7 @@ function adapterCase(
       connection: connection(ports),
       ...(extra.farEnd === undefined ? {} : { farEnd: extra.farEnd }),
       timeoutMs: extra.timeoutMs ?? TIMEOUT_MS,
+      ...(extra.closeInTurn === undefined ? {} : { closeInTurn: extra.closeInTurn }),
     }),
     expected,
   };
@@ -649,6 +660,8 @@ const SILENT_TLS = "a TLS listener that never answers the handshake is a connect
 const SETTINGSLESS_TLS =
   "a TLS listener that completes the handshake and never sends SETTINGS is a connect timeout: the request never left";
 const RESET_ON_ACCEPT = "a socket reset on accept is a failure to connect";
+const CLOSED_IN_TURN =
+  "a client closed in the turn of its first call, before grpc-js hands the IP address on, ends the call as closed";
 
 const CASES: readonly CaseDefinition[] = [
   // -- spec E1: nothing is dialled for an endpoint that is refused, or for a host that names a grpc-js resolver
@@ -995,6 +1008,19 @@ const CASES: readonly CaseDefinition[] = [
       text: /ECONNREFUSED/,
       sentence: noPlaintextAnswer(`127.0.0.1:${ports.closed}`),
     }),
+  ),
+  // -- spec E16: a close before grpc-js has handed the address on, which the silent listener's held connections check
+  adapterCase(
+    CLOSED_IN_TURN,
+    (ports) => direct("127.0.0.1", ports.silent),
+    () => () => ({
+      outcome: "failed",
+      category: "closed",
+      grpcCode: 14,
+      text: /^Channel closed before call started$/,
+      sentence: "This connection to etcd is closed: connect again.",
+    }),
+    { closeInTurn: true },
   ),
   // -- spec E5: the control, which takes the branch its runtime's version takes
   {
