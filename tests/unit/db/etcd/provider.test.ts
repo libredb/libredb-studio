@@ -39,7 +39,7 @@ import {
   etcdErrorConnection,
 } from "@/lib/db/providers/keyvalue/etcd/connection-options";
 import { applyEtcdValueEdit, buildEtcdValueEdit, type EtcdEditPlanStamp } from "@/lib/db/providers/keyvalue/etcd/edit";
-import { toEtcdError } from "@/lib/db/providers/keyvalue/etcd/errors";
+import { toEtcdError, toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { ETCD_READ_BOUNDS, executeCommand } from "@/lib/db/providers/keyvalue/etcd/execute";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { ETCD_KEY_SCAN, scanEtcdKeysPage } from "@/lib/db/providers/keyvalue/etcd/key-scan";
@@ -1190,8 +1190,10 @@ describe("who a surface names (spec 4.7)", () => {
 });
 
 /**
- * Every call's deadline is the connection's query timeout (spec 5.3): the connect sequence's, each surface's,
- * each command's, and the read of the grants after an auth-store change, each a call etcd never answers here.
+ * Every call's deadline is the connection's query timeout (spec 5.3): the connect sequence's, which the adapter's
+ * gRPC deadline sets alone, so it tells a call that never left the client (spec 5.6); and each surface's, each
+ * command's and the read of the grants after an auth-store change, which the provider's signal bounds too; each
+ * a call etcd never answers here.
  */
 describe("each call's deadline, the connection's query timeout (spec 5.3)", () => {
   const TIMEOUT = 40;
@@ -1204,9 +1206,40 @@ describe("each call's deadline, the connection's query timeout (spec 5.3)", () =
     });
   }
 
+  /** The deadline the factory's options set on every call (grpc-client.ts `wireCall`), read as the factory is called. */
+  let callTimeoutMs = 0;
+
+  /**
+   * A call etcd never answers, ended as the adapter ends one: by its gRPC deadline, `callTimeoutMs` after the
+   * call starts, with grpc-js's DEADLINE_EXCEEDED `details`, or, when its signal aborts first, by that abort,
+   * which grpc-js answers CANCELLED "Cancelled on client"; the adapter's toEtcdError reads either.
+   */
+  function endedAtTheDeadline(details: string) {
+    return (...args: unknown[]): Promise<never> => {
+      const { signal } = args[args.length - 1] as { readonly signal: AbortSignal };
+      return new Promise((_resolve, reject) => {
+        const cancelled = () => reject(toEtcdError({ code: 1, details: "Cancelled on client" }, signal));
+        if (signal.aborted) {
+          cancelled();
+          return;
+        }
+        const deadline = setTimeout(() => {
+          signal.removeEventListener("abort", cancel);
+          reject(toEtcdError({ code: 4, details }, signal));
+        }, callTimeoutMs);
+        const cancel = () => {
+          clearTimeout(deadline);
+          cancelled();
+        };
+        signal.addEventListener("abort", cancel, { once: true });
+      });
+    };
+  }
+
   function timed(connection: DatabaseConnection, client: FakeEtcdClient) {
     const hooks: EtcdClientHooks[] = [];
-    const provider = new EtcdProvider(connection, { queryTimeout: TIMEOUT }, {}, async (_options, hook) => {
+    const provider = new EtcdProvider(connection, { queryTimeout: TIMEOUT }, {}, async (options, hook) => {
+      callTimeoutMs = options.callTimeoutMs;
       if (hook !== undefined) hooks.push(hook);
       return client;
     });
@@ -1234,10 +1267,49 @@ describe("each call's deadline, the connection's query timeout (spec 5.3)", () =
     }
   }
 
-  test("a step of the connect sequence", async () => {
-    const { provider } = timed(CONNECTION, etcdClient({ authStatus: unanswered }));
-    await reached(() => provider.connect(), "auth status");
+  /** The connect sequence's refusal, or a mistake in the test where it connected. */
+  async function connectFailure(provider: EtcdProvider): Promise<Error> {
+    const failure = await provider.connect().then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    if (failure === undefined) throw new Error("the provider connected to an etcd that never answers");
+    return failure;
+  }
+
+  test("a step of the connect sequence etcd never answers: the adapter's deadline, the query timeout, ends it", async () => {
+    const { provider } = timed(
+      CONNECTION,
+      etcdClient({ authStatus: endedAtTheDeadline("Deadline exceeded after 0.040s,remote_addr=127.0.0.1:2379") }),
+    );
+    const failure = await connectFailure(provider);
+    expect(callTimeoutMs).toBe(TIMEOUT);
+    expect(failure).toBeInstanceOf(TimeoutError);
+    expect(failure.message).toBe(
+      `The auth status reached its deadline of ${TIMEOUT} ms. (Deadline exceeded after 0.040s)`,
+    );
   });
+
+  test.each([
+    ["with no credential, at the auth status", CONNECTION, "authStatus"],
+    ["with a password, at the sign-in", PASSWORD_CONNECTION, "authenticate"],
+  ] as const)(
+    "a step of the connect sequence that never left the client is a connection error, %s, which only the adapter's deadline tells (spec 5.6)",
+    async (_label, connection, step) => {
+      const details = "Deadline exceeded after 0.040s,name resolution: 0.001s,Waiting for LB pick";
+      const { provider } = timed(connection, readerClient({ [step]: endedAtTheDeadline(details) }));
+      const failure = await connectFailure(provider);
+      const options = buildEtcdConnectionOptions(connection, { executionReadOnly: false, queryTimeout: TIMEOUT });
+      const neverSent = toProviderError(new EtcdError("not-connected", details, 4), {
+        command: "connection",
+        write: false,
+        connection: etcdErrorConnection(options),
+      });
+      expect(failure).toBeInstanceOf(ConnectionError);
+      expect(failure.message).toBe(neverSent.message);
+      expect(failure.message).toEndWith(` (${details})`);
+    },
+  );
 
   test("a surface's read", async () => {
     const { provider } = timed(CONNECTION, etcdClient({ memberList: unanswered }));

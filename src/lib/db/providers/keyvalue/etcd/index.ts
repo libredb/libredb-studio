@@ -380,7 +380,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
     await session?.client.close();
   }
 
-  /** Each call's own deadline, the connection's query timeout (spec 5.3). */
+  /** The deadline of a surface's or a command's calls, the connection's query timeout (spec 5.3). */
   private callSignal(): AbortSignal {
     return AbortSignal.timeout(this.queryTimeout);
   }
@@ -391,6 +391,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
    * a token (2); authentication on with no credential is refused before any other call (3); in certificate
    * mode the Common Name's user is read (4); then Status, and the grants (5), reusing step 2's AuthStatus and
    * step 4's roles. A member whose Status names no leader refuses the connection at once (4.7).
+   *
+   * Each step is one call, and its deadline is the gRPC deadline the adapter sets on every call, the same query
+   * timeout (spec 5.3), with no timer of the provider's own: only that deadline says whether the call was still
+   * waiting for its connection, a connection error (spec 5.6), and a timer of the same length, started first,
+   * would cancel the call before it, which grpc-js reports as "Cancelled on client" either way.
    */
   private async openSession(
     client: EtcdClient,
@@ -398,7 +403,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
     errors: EtcdErrorConnection,
   ): Promise<EtcdSession> {
     const step = (command: string): EtcdErrorContext => ({ command, write: false, connection: errors });
-    const signal = () => this.callSignal();
+    const steps = new AbortController();
+    const signal = () => steps.signal;
     const { auth, principal } = options;
 
     if (auth.kind === "password") {
