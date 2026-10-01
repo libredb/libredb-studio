@@ -218,7 +218,7 @@ A grant an admin changes is seen from the first call that meets etcd's "revision
 #### Words
 
 The command line is split into words by the POSIX shell's quoting rules: single quotes keep everything literally, double quotes escape only `"`, `\`, `$`, a backquote and a newline, a backslash outside quotes escapes the next character, and a `#` that begins a word starts a comment.
-Studio runs no shell, so text a shell would expand is refused rather than taken literally: an unquoted or double-quoted `$` before a name, a digit, `{`, `(` or one of `@`, `*`, `#`, `?`, `-`, `$` and `!`, an unquoted `$'...'` or `$"..."`, a leading `~`, a backquote, and an unquoted `;`, `&`, `|`, `<` or `>`.
+Studio runs no shell, so text a shell would expand or reject is refused rather than taken literally: an unquoted or double-quoted `$` before anything but a blank, the end of the word or a closing double quote; an unquoted or double-quoted backquote; a `~` that begins a word, or follows the `=` or a `:` of an unquoted `NAME=` word; unquoted braces holding an unquoted comma, or a `..` whether its dots are quoted or not, which a shell expands into several words, so unquoted JSON such as `{"a":1,"b":2}` is refused; a backslash that ends the text; and an unquoted `;`, `&`, `|`, `<`, `>`, `(` or `)`.
 Glob characters are data, as a shell passes them when nothing matches.
 
 #### One command per run
@@ -252,7 +252,7 @@ Every other global flag is refused by name: `--endpoints`, `--user`, `--password
 | `role list` | none | none | read | none |
 | `role get` | `<name>` | none | read | none |
 
-Refused, each with its reason: `--sort-by`, `--order` and the four revision filters, because the server then loads the whole range; `--print-value-only` and `--stream`; a `del --prev-kv` with a range, because etcd builds that answer whole with no limit; `watch` with `-i`, `--progress-notify` or a command after `--`; `lease keep-alive` without `--once`; and `--cluster` on `endpoint`.
+Refused, each with its reason: `--sort-by`, `--order` and the four revision filters, because the server then loads the whole range; `--print-value-only` and `--stream`; a `put` value beside `--ignore-value`, and a `--lease` other than 0 beside `--ignore-lease`; a `del --prev-kv` with a range, because etcd builds that answer whole with no limit; `txn` with `-i` or `--interactive`, because Studio has no terminal to prompt in and reads the body from the lines below `txn`; `watch` with `-i`, `--progress-notify` or a command after `--`; `lease keep-alive` without `--once`; and `--cluster` on `endpoint`.
 Refused by name: `compaction`, `defrag` and `alarm disarm`, which are the admin cards of section 8; `member add`, `member remove`, `member update`, `member promote`, `move-leader`, `snapshot save`, `downgrade validate`, `downgrade enable`, `downgrade cancel`, `auth enable`, `auth disable`, `user add`, `user delete`, `user passwd`, `user grant-role`, `user revoke-role`, `role add`, `role delete`, `role grant-permission` and `role revoke-permission`, which this version does not offer; `lock` and `elect`, which block until another client acts; and `make-mirror`, `check perf`, `check datascale`, `endpoint hashkv`, `version`, `completion`, `options` and `help`.
 `--` ends flag parsing on every command but `watch`, so a key or value beginning with `-` is written `put -- -key value` or `put key -- -value`.
 An empty key with `--prefix` or `--from-key` is the whole key space, and an empty key without either is refused.
