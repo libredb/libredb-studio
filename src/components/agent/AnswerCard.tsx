@@ -63,8 +63,10 @@ export interface AnswerCardProps {
   readonly timeline: AgentRunTimeline;
   /**
    * The engine's capabilities, for the statement block's language. `null` or absent is
-   * the honest state while nothing has answered for the connection — and it is read as
-   * "unknown", never as SQL.
+   * the honest state while nothing has answered for the connection, and the card then
+   * reads the language the LEDGER recorded with the draft (#1089). In a ledger written
+   * before that, it reads the guard's reach: "sql" where the SQL guard could read the
+   * draft and "unknown" where it could not. It never defaults to SQL.
    */
   readonly capabilities?: ProviderCapabilities | null;
   /** Puts a statement into the host's editor. Absent hosts are offered no control. */
