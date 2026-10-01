@@ -453,6 +453,23 @@ describe("QueryToolbar", () => {
     expect(sql.queryByText("BEGIN")).not.toBeNull();
   });
 
+  test("No transaction, sandbox, edit or import controls for an etcd connection (#1089)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and an etcd txn is one atomic
+    // request the provider sends whole, not a session transaction a BEGIN could open.
+    const etcdMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "json", queryDialect: "etcd" },
+      labels: { ...sqlLabels, entityName: "Key Prefix", entityNamePlural: "Key Prefixes" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: etcdMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    // The control: the toolbar still rendered its run control, so the absent group is the gate.
+    expect(queryByText("RUN")).not.toBeNull();
+  });
+
   test("Query label always shown", () => {
     // With connection
     const props1 = createDefaultProps();

@@ -2350,6 +2350,19 @@ describe("Studio", () => {
     expect(result[0].type).toBe("redis");
   });
 
+  test("connection-change effect retypes tabs to etcd when the provider declares that dialect (#1089)", () => {
+    // etcd declares queryLanguage "json" too, with a dialect of its own, so the ladder's etcd rung sits
+    // above the json rung and the tab is not retyped to mongodb.
+    connMgrOverride = { activeConnection: pgConn };
+    capabilitiesOverride = { queryLanguage: "json", queryDialect: "etcd" };
+    render(<Studio />);
+    const updater = (mockSetTabs.mock.calls[0] as unknown[])[0] as (prev: unknown[]) => Array<{ type: string }>;
+    const result = updater([
+      { id: "tab-1", name: "Query 1", query: "get /app/ --prefix", result: null, isExecuting: false, type: "sql" },
+    ]);
+    expect(result[0].type).toBe("etcd");
+  });
+
   // --- exportResults sql-ddl type mapping ---
   test("exportResults sql-ddl maps boolean and date sample values", async () => {
     tabMgrOverride = {

@@ -1143,6 +1143,12 @@ describe("StudioWorkspace", () => {
     expect(capturedQueryEditorProps.language).toBe("redis");
   });
 
+  test("editor language is etcd for etcd tabs (#1089)", () => {
+    tabMgrOverride = { currentTab: { ...baseTab, type: "etcd" } };
+    renderWorkspace();
+    expect(capturedQueryEditorProps.language).toBe("etcd");
+  });
+
   // =========================================================================
   // Provider metadata wiring (#427)
   // =========================================================================

@@ -103,6 +103,8 @@ mock.module("@monaco-editor/react", () => ({
             capturedLanguageRegistrations.push(language.id);
           }),
           setMonarchTokensProvider: mock(() => {}),
+          // The etcd language's tokens provider is the provider's own lexer, not a Monarch grammar (#1089).
+          setTokensProvider: mock(() => {}),
           setLanguageConfiguration: mock(() => {}),
         },
       };
@@ -1591,6 +1593,18 @@ describe("QueryEditor", () => {
       expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
     });
 
+    test("a json editor on an etcd connection registers none, by the same rule (#1089)", () => {
+      // Reachable for a render while a tab is retyped after a connection switch: an etcdctl command is
+      // no MongoDB document, and the gate refuses it because a dialect is declared, with no etcd branch.
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "json", capabilities: { ...jsonCapabilities, queryDialect: "etcd" } }),
+        ),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
     test("a sql editor registers none, whatever its capabilities", () => {
       render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", capabilities: jsonCapabilities })));
       expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
@@ -1914,6 +1928,54 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("promql");
   });
 
+  test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
+
+    // The three languages registered before #1089 are the control: they reach the same capture, so a
+    // missing "etcd" is the component and not the mock.
+    expect(capturedLanguageRegistrations).toContain("libredb");
+    expect(capturedLanguageRegistrations).toContain("redis");
+    expect(capturedLanguageRegistrations).toContain("promql");
+    expect(capturedLanguageRegistrations).toContain("etcd");
+  });
+
+  test("an etcd buffer runs whole, and draws no Format control and no SQL completions (#1089)", () => {
+    // The provider reads the whole buffer as one command (#1089 5.1.2): a `;` inside a quoted value is
+    // data, and a leading comment line is skipped, where the SQL splitter would cut the text at the `;`.
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockRegisterSQLCompletionProvider.mockClear();
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+    const buffer = "# set the flag; then read it back\nput /cfg/flag 'on; for now'";
+
+    const { queryByText } = render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ value: buffer, language: "etcd", databaseType: "postgres" }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
+    window.removeEventListener("execute-query", handler);
+
+    expect(eventDetail!.query).toBe(buffer);
+    expect(queryByText("Format")).toBeNull();
+    expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+  });
+
   test("a PromQL buffer runs whole, and draws no Format control and no SQL completions (#1085)", () => {
     // A PromQL text is one expression and `#` starts a comment in it. Under a SQL grammar the `;`
     // inside the comment below is a statement separator, which is what the control next door shows.
@@ -2076,6 +2138,7 @@ describe("QueryEditor", () => {
       ["json", false],
       ["redis", false],
       ["libredb", false],
+      ["etcd", false],
       ["sql", true],
     ] as const;
     for (const [language, offered] of steps) {

@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 /**
@@ -714,6 +715,35 @@ describe("the actions whose destination speaks only some query languages", () =>
       "profile",
       "generate-code",
       "view-source",
+    ]);
+  });
+
+  test("an etcd key-prefix group is offered Generate Command and Browse Keys, and nothing that profiles, models, counts or writes its rows (#1089)", () => {
+    // The provider's own declaration (#1089, section 6.2): its text is an etcdctl command, which the profile
+    // route builds no statement in; a group's columns are a get row's fixed shape, which no model is written
+    // over; a declared dialect and a derived grouping each withhold the count; no etcd kind takes row writes,
+    // so Generate Test Data, the one caller of TestDataGenerator, is never offered; and its three maintenance
+    // operations are global, never per group.
+    const etcd = new EtcdProvider({
+      id: "etcd-row-actions",
+      name: "etcd",
+      type: "etcd",
+      host: "127.0.0.1",
+      port: 2379,
+      createdAt: new Date(0),
+    }).getCapabilities();
+    const group: DatabaseObject = { path: ["/app/config/*"], name: "/app/config/*", kind: "prefix" };
+    const groupRow: TreeRowModel = { ...objectRow("prefix"), path: ["/app/config/*"] };
+    const handlers: TreeRowActionHandlers = { ...allHandlers(), onGenerateCount: () => {} };
+
+    expect(idsFor(groupRow, etcd, handlers, group)).toEqual(["generate-select", "browse-keys"]);
+    // The control, in the one field under test: with the dialect removed, the declaration is MongoDB's JSON,
+    // which generates code, so that refusal is the dialect's. Profile and the count stay withheld there, by
+    // the derived grouping alone.
+    expect(idsFor(groupRow, { ...etcd, queryDialect: undefined }, handlers, group)).toEqual([
+      "generate-select",
+      "generate-code",
+      "browse-keys",
     ]);
   });
 });

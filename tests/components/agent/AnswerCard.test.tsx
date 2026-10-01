@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis" | "kafka",
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -285,6 +285,32 @@ describe("AnswerCard — a plan run's statement", () => {
     const redisBlock = redis.getByTestId("agent-answer-statement");
     expect(redisBlock.getAttribute("data-language")).toBe("redis");
     expect(redisBlock.className).not.toContain("border-hue-cyan/40");
+  });
+
+  test("tints an etcd command in the etcd language its tab renders in, in an accent of its own (#1089)", () => {
+    // No guard here reads an etcdctl command either (`validatePlanStatement` declines it), so the draft
+    // is shown beside the "not checked" chip, as a PromQL one is.
+    const etcdDraft = planTimeline({
+      sql: "get /app/config/ --prefix --limit=50",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const etcd = render(<AnswerCard timeline={etcdDraft} capabilities={capabilitiesFor("json", "etcd")} />);
+    const block = etcd.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("etcd");
+    expect(block.className).toContain("border-hue-sky/40");
+    cleanup();
+
+    // The controls: SQL's blue and JSON's cyan are not it, so the class above is etcd's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+    ] as const) {
+      const other = render(<AnswerCard timeline={etcdDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-sky/40");
+      cleanup();
+    }
   });
 
   test("with no capabilities to hand, the guard's reach decides the language rather than a default of SQL", () => {

@@ -954,8 +954,9 @@ describe("QuerySafetyDialog", () => {
   });
 
   // A vocabulary that asks for a typed value, or keeps its statements from the analysis (#1089, section 5.5 and
-  // E10). No shipped engine's row declares either field before etcd's lands with its registration, so these tests
-  // install a row of their own under a key no DatabaseType spells (tests/helpers/stand-in-vocabulary.ts).
+  // E10). These tests install a row of their own under a key no DatabaseType spells
+  // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any engine's grammar; etcd's row,
+  // the one shipped row that declares both fields, is pinned with its own commands in the describe after this one.
   describe("a vocabulary's typed confirmation and its safety-analysis switch", () => {
     const MISSING_NAME =
       "This statement is confirmed by typing the connection's name, which this editor did not provide, so it cannot run from here.";
@@ -1258,6 +1259,123 @@ describe("QuerySafetyDialog", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(screen.queryByRole("textbox")).toBeNull();
       expect(screen.queryByText(LOCAL_ONLY)).toBeNull();
+      expect(proceed().disabled).toBe(false);
+    });
+  });
+
+  // etcd's own row (#1089, section 5.5 and E10), as the editor's gate meets it: guard.ts reads the text with the
+  // provider's parser, so the dialog asks what the command really is.
+  describe("etcd's row", () => {
+    const MISSING_NAME =
+      "This statement is confirmed by typing the connection's name, which this editor did not provide, so it cannot run from here.";
+    const LOCAL_ONLY =
+      "This editor checked the statement itself: statements for this engine are not sent to an AI provider for a risk analysis.";
+    const proceed = () => screen.getByRole("button", { name: "Execute Query" }) as HTMLButtonElement;
+
+    test("a prefix delete holds Proceed disabled on /app/ and enables it on /App/, the prefix as typed", () => {
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="del /App/ --prefix"
+          schemaContext=""
+          databaseType="etcd"
+          connectionName="prod-etcd"
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+
+      const field = screen.getByLabelText("Type /App/ to confirm") as HTMLInputElement;
+      fireEvent.change(field, { target: { value: "/app/" } });
+      expect(proceed().disabled).toBe(true);
+      fireEvent.change(field, { target: { value: "/App/" } });
+      expect(proceed().disabled).toBe(false);
+    });
+
+    test("a reopened dialog starts empty, with Proceed disabled again", async () => {
+      function Editor() {
+        const [open, setOpen] = React.useState(false);
+        return (
+          <>
+            <button onClick={() => setOpen(true)}>RUN</button>
+            <QuerySafetyDialog
+              isOpen={open}
+              query="del /App/ --prefix"
+              schemaContext=""
+              databaseType="etcd"
+              connectionName="prod-etcd"
+              onClose={() => setOpen(false)}
+              onProceed={onProceed}
+            />
+          </>
+        );
+      }
+      render(<Editor />);
+
+      fireEvent.click(screen.getByRole("button", { name: "RUN" }));
+      fireEvent.change(screen.getByLabelText("Type /App/ to confirm"), { target: { value: "/App/" } });
+      expect(proceed().disabled).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+      fireEvent.click(screen.getByRole("button", { name: "RUN" }));
+      expect((screen.getByLabelText("Type /App/ to confirm") as HTMLInputElement).value).toBe("");
+      expect(proceed().disabled).toBe(true);
+    });
+
+    test.each<[string, string | undefined]>([
+      ["no connectionName", undefined],
+      ["an empty connectionName", ""],
+    ])(
+      "a txn with two destructive targets and %s shows the refusal, with Proceed disabled",
+      (_label, connectionName) => {
+        expect(() =>
+          render(
+            <QuerySafetyDialog
+              isOpen
+              query={"txn\n\ndel /app/ --prefix\ndel /cfg/ --prefix\n\n"}
+              schemaContext=""
+              databaseType="etcd"
+              connectionName={connectionName}
+              onClose={onClose}
+              onProceed={onProceed}
+            />,
+          ),
+        ).not.toThrow();
+
+        const dialog = screen.getByRole("alertdialog");
+        expect(dialog.textContent).toContain(MISSING_NAME);
+        expect(within(dialog).queryByRole("textbox")).toBeNull();
+        expect(Array.from(dialog.querySelectorAll("li")).map((item) => item.textContent)).toEqual([
+          "/app/ (prefix)",
+          "/cfg/ (prefix)",
+        ]);
+        expect(proceed().disabled).toBe(true);
+      },
+    );
+
+    test("no etcd statement is posted for an AI analysis, a put's value included (E10)", () => {
+      const fetchMock = mock(async () => createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const onAnalyzeSafety = mock(async () => ({ ...SAFE_PAYLOAD, riskLevel: "safe" as const }));
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query="put /app/token s3cr3t-value"
+          schemaContext=""
+          databaseType="etcd"
+          connectionName="prod-etcd"
+          onClose={onClose}
+          onProceed={onProceed}
+          onAnalyzeSafety={onAnalyzeSafety}
+        />,
+      );
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(onAnalyzeSafety).not.toHaveBeenCalled();
+      expect(screen.getByText(LOCAL_ONLY)).toBeTruthy();
+      // A single-key write asks one click and no typed text (#1089 5.1.3).
+      expect(screen.queryByRole("textbox")).toBeNull();
       expect(proceed().disabled).toBe(false);
     });
   });

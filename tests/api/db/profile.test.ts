@@ -57,6 +57,7 @@ mock.module("@/lib/db/factory", () => ({
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/profile/route");
 const { KafkaProvider } = await import("@/lib/db/providers/stream/kafka/index");
+const { EtcdProvider } = await import("@/lib/db/providers/keyvalue/etcd/index");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -81,6 +82,14 @@ const kafkaConnection = {
   type: "kafka" as const,
   host: "localhost",
   port: 9092,
+};
+
+const etcdConnection = {
+  id: "test-etcd",
+  name: "Test etcd",
+  type: "etcd" as const,
+  host: "localhost",
+  port: 2379,
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -583,5 +592,22 @@ describe("POST /api/db/profile", () => {
     const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
     expect(profiled.status).toBe(200);
     expect(mongoProvider.query).toHaveBeenCalledTimes(2);
+  });
+
+  test("refuses an etcd connection, whose text is a line of etcdctl's, and sends nothing (#1089)", async () => {
+    // The provider's own declaration, so the refusal is the one a key-prefix group's profile request meets.
+    const etcd = new EtcdProvider({ ...etcdConnection, createdAt: new Date(0) }).getCapabilities();
+    const etcdProvider = createMockProvider({ capabilities: etcd });
+    mockGetOrCreateProvider.mockResolvedValueOnce(etcdProvider);
+    const body = { connection: etcdConnection, tablePath: ["/refusal_probe/*"], columns: ["refusal_probe_column"] };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"json" in the etcd dialect');
+    expect(data.error).not.toContain("refusal_probe");
+    expect(etcdProvider.query).not.toHaveBeenCalled();
   });
 });

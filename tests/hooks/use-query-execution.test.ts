@@ -1319,6 +1319,47 @@ describe("useQueryExecution", () => {
     expect(JSON.parse(singleCall![1]!.body as string).sql).toBe(buffer);
   });
 
+  test("executeQuery keeps an etcd buffer on /api/db/query whole, semicolons and all (#1089)", async () => {
+    // An etcd tab's whole buffer is ONE command, which the provider's own parser reads (#1089 5.1.2): a
+    // leading comment line is skipped and a `;` inside it is text. Under the connection's SQL grammar
+    // the `;` below separates two statements. `dialectIsSql` keeps the splitter off.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const buffer = "# write it; one command per run\nput /cfg/a b";
+    // The premise: the splitter the hook asks does read this buffer as two statements.
+    expect(isMultiStatement(buffer, resolveSqlGrammar(mockConnection.type))).toBe(true);
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: {
+          ...mockMetadata.capabilities,
+          queryLanguage: "json",
+          queryDialect: "etcd",
+          supportsExplain: false,
+          explainFormat: undefined,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(singleCall).toBeDefined();
+    expect(JSON.parse(singleCall![1]!.body as string).sql).toBe(buffer);
+  });
+
   test("the control: the same buffer on a SQL declaration IS split, so the language decides", async () => {
     // The multi-statement answer shape the test `executeQuery uses /api/db/multi-query for
     // multi-statement queries` above uses, since this buffer does take that route.

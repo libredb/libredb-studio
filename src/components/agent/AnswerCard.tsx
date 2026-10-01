@@ -109,7 +109,7 @@ const STATUS_TONES: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
  * `"unknown"` is this surface having nothing to go on, which is a different state from
  * every engine in the ladder and must not collapse into the first of them.
  */
-type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "unknown";
+type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "unknown";
 
 /**
  * Identity, never status. The rail spends amber on "nobody established this", rose on a
@@ -121,6 +121,9 @@ type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "unkn
  * amber, and a PromQL draft is always shown beside the amber "not checked" chip, because no
  * guard here reads PromQL (`validatePlanStatement` declines it, so `guardReading` answers
  * `unexamined`).
+ *
+ * etcd takes sky (#1089), the light blue of its own mark, between SQL's blue and JSON's cyan and
+ * neither of them: its command line is no SQL and no JSON, and no guard here reads it either.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -128,6 +131,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   redis: "border-hue-fuchsia/40",
   libredb: "border-hue-violet/40",
   promql: "border-hue-indigo/40",
+  etcd: "border-hue-sky/40",
   unknown: "border-hairline-strong",
 });
 

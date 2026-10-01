@@ -16,13 +16,13 @@ import { FileBraces, FileCode, Hash, Plus, X } from "lucide-react";
  *
  * The SOURCE arm is first and it wins over the dialect. A Source tab holds no query, so its
  * `type` is the neutral `"sql"` on a SQL connection and whatever `resolveTabType` answered on
- * a document connection; without this arm a Source tab on MongoDB, Redis, Prometheus or Kafka
+ * a document connection; without this arm a Source tab on MongoDB, Redis, Prometheus, Kafka or etcd
  * would take the document icon and be indistinguishable from a query tab in the one place a reader
  * picks a tab from. Nothing errors if the arm is missing, which is exactly why it is tested.
  *
  * The last arm means "a query language that is not SQL", not "JSON": Redis and LibreDB commands
- * take it, and so do PromQL (#1085) and Kafka's read request (#1088), decided rather than
- * defaulted and pinned in `tests/components/studio/StudioTabBar.test.tsx`.
+ * take it, and so do PromQL (#1085), Kafka's read request (#1088) and an etcdctl command (#1089),
+ * decided rather than defaulted and pinned in `tests/components/studio/StudioTabBar.test.tsx`.
  */
 function tabIcon(tab: StudioTabSummary): React.JSX.Element {
   // The ELEMENT rather than the component, so nothing here assigns a component to a local

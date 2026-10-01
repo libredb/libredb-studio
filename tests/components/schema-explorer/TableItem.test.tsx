@@ -64,6 +64,7 @@ mock.module("@/components/schema-explorer/ColumnList", () => ({
 import { TableItem } from "@/components/schema-explorer/TableItem";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
 // Capability fixtures are partial on purpose: TableItem reads a handful of fields, and
@@ -129,6 +130,18 @@ const kafkaCaps: Caps = new KafkaProvider({
   type: "kafka",
   host: "localhost",
   port: 9092,
+  createdAt: new Date(0),
+}).getCapabilities();
+/**
+ * etcd's own declaration (#1089), read from the provider: a command line in a dialect of its own, a
+ * key-prefix group that is a derived grouping, no kind that takes row writes and no grid row edit.
+ */
+const etcdCaps: Caps = new EtcdProvider({
+  id: "etcd-table-item",
+  name: "etcd",
+  type: "etcd",
+  host: "127.0.0.1",
+  port: 2379,
   createdAt: new Date(0),
 }).getCapabilities();
 /**
@@ -1110,6 +1123,25 @@ describe("TableItem", () => {
       const jsonMenu = menuOf(topic, { ...kafkaCaps, queryDialect: undefined });
       expect(offered(jsonMenu)).toEqual(["Profile Table", "Generate Code"]);
       expect(jsonMenu.querySelectorAll("hr")).toHaveLength(1);
+    });
+
+    test("an etcd key-prefix group is offered none of the three, and no rule is drawn for them (#1089)", () => {
+      const group: DetailedObject = {
+        name: "/app/config/*",
+        kind: "prefix",
+        path: ["/app/config/*"],
+        columns: [],
+        indexes: [],
+      };
+      const menu = menuOf(group, etcdCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control, in the one field under test: with the dialect removed the declaration is MongoDB's JSON,
+      // which generates code, so that refusal is the dialect's. Profile stays withheld by the derived grouping,
+      // and Generate Test Data because no etcd kind takes row writes.
+      const jsonMenu = menuOf(group, { ...etcdCaps, queryDialect: undefined });
+      expect(offered(jsonMenu)).toEqual(["Generate Code"]);
     });
 
     test("unknown capabilities offer none of the three", () => {

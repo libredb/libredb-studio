@@ -47,6 +47,13 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
   });
 
+  test("etcd gets an etcd tab, not the MongoDB one its queryLanguage json would give (#1089)", () => {
+    // An etcdctl command line is no MongoDB document either, so the dialect rung sits above the json rung.
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "etcd" }))).toBe("etcd");
+    // The control: the same declaration with the dialect removed is MongoDB's.
+    expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
+  });
+
   test("missing capabilities fall back to sql", () => {
     expect(resolveTabType(undefined)).toBe("sql");
     expect(resolveTabType(null)).toBe("sql");
@@ -61,6 +68,7 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType("redis")).toBe("redis");
     expect(editorLanguageForTabType("promql")).toBe("promql");
     expect(editorLanguageForTabType("kafka")).toBe("json");
+    expect(editorLanguageForTabType("etcd")).toBe("etcd");
   });
 
   test("a Kafka tab renders in Monaco's built-in json mode, and no language of its own (#1088)", () => {
@@ -68,6 +76,12 @@ describe("editorLanguageForTabType", () => {
     // fallback, and no Monaco language is registered for it (#1088, section 3.3).
     expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "kafka" })))).toBe(
       "json",
+    );
+  });
+
+  test("an etcd tab renders in the etcd language this repository registers over the provider's lexer (#1089)", () => {
+    expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "etcd" })))).toBe(
+      "etcd",
     );
   });
 });
