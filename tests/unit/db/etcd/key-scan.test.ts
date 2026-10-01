@@ -18,6 +18,7 @@ import {
   encodeScanCursor,
   ETCD_KEY_SCAN,
   scanEtcdKeysPage,
+  walkDigest,
 } from "@/lib/db/providers/keyvalue/etcd/key-scan";
 import type { EtcdSurfaceContext } from "@/lib/db/providers/keyvalue/etcd/objects";
 import { describeScope, readableScope, writableScope } from "@/lib/db/providers/keyvalue/etcd/permissions";
@@ -35,6 +36,9 @@ const COMPACTED = () => new EtcdError("compacted", "etcdserver: mvcc: required r
 const pad = (n: number, width = 5) => String(n).padStart(width, "0");
 /** The character a lossy decode puts where bytes are not UTF-8, which no name may hold (plan Review Focus 1). */
 const REPLACEMENT = String.fromCharCode(0xfffd);
+/** The digests of a walk of `/app/` and of the whole key space, by a connection that reads every key. */
+const APP_WALK = walkDigest("/app/", { kind: "all" });
+const EVERY_KEY_WALK = walkDigest(undefined, { kind: "all" });
 
 function surface(over: Partial<EtcdSurfaceContext> = {}): EtcdSurfaceContext {
   return {
@@ -85,23 +89,45 @@ describe("the declaration (spec 4.6, KE3b)", () => {
 });
 
 describe("the cursor (spec 4.6)", () => {
-  test("k:, the next key in base64url, the pinned revision and the total, read back as they were written", () => {
-    const cursor = encodeScanCursor(enc("/app/x"), "105", "42");
-    expect(cursor).toBe("k:L2FwcC94:105:42");
-    expect(decodeScanCursor(cursor)).toEqual({ nextKey: enc("/app/x"), revision: "105", total: "42" });
+  test("k:, the next key in base64url, the pinned revision, the total and the walk's digest, read back as they were written", () => {
+    const cursor = encodeScanCursor(enc("/app/x"), "105", "42", APP_WALK);
+    expect(cursor).toBe(`k:L2FwcC94:105:42:${APP_WALK}`);
+    expect(decodeScanCursor(cursor)).toEqual({
+      nextKey: enc("/app/x"),
+      revision: "105",
+      total: "42",
+      digest: APP_WALK,
+    });
     const binary = new Uint8Array([0x2f, 0xff, 0x00]);
-    expect(decodeScanCursor(encodeScanCursor(binary, "7", "0"))).toEqual({
+    expect(decodeScanCursor(encodeScanCursor(binary, "7", "0", APP_WALK))).toEqual({
       nextKey: binary,
       revision: "7",
       total: "0",
+      digest: APP_WALK,
     });
     expect(decodeScanCursor("0")).toBe("start");
     // The largest revision and count etcd holds are read; one more is not a cursor this provider wrote.
-    expect(decodeScanCursor("k:AA:9223372036854775807:9223372036854775807")).toEqual({
+    expect(decodeScanCursor(`k:AA:9223372036854775807:9223372036854775807:${APP_WALK}`)).toEqual({
       nextKey: new Uint8Array([0]),
       revision: "9223372036854775807",
       total: "9223372036854775807",
+      digest: APP_WALK,
     });
+  });
+
+  test("the digest is of the readable pieces of the walked range: equal pieces give one digest, and other pieces another", () => {
+    expect(APP_WALK).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // A user whose grants hold all of /app/ walks root's pieces there, so a cursor of either goes on in the other.
+    expect(walkDigest("/app/", readableScope([grantPrefix("/")]))).toBe(APP_WALK);
+    expect(walkDigest("/app/x/", { kind: "all" })).not.toBe(APP_WALK);
+    expect(walkDigest(undefined, { kind: "all" })).toBe(EVERY_KEY_WALK);
+    expect(walkDigest("", { kind: "all" })).toBe(EVERY_KEY_WALK);
+    const widened = walkDigest(undefined, readableScope([grantPrefix("/")]));
+    expect(walkDigest(undefined, readableScope([grantPrefix("/a/")]))).not.toBe(widened);
+    // A single key and the prefix of the same bytes are different pieces.
+    expect(walkDigest(undefined, readableScope([grantKey("/a/")]))).not.toBe(
+      walkDigest(undefined, readableScope([grantPrefix("/a/")])),
+    );
   });
 
   test("a revision or a total longer than the largest int64 is refused before any number is built from it", () => {
@@ -114,8 +140,8 @@ describe("the cursor (spec 4.6)", () => {
       return original(value);
     }) as typeof BigInt;
     try {
-      expect(decodeScanCursor(`k:AA:${"9".repeat(1_000_000)}:1`)).toBeUndefined();
-      expect(decodeScanCursor(`k:AA:1:${"9".repeat(1_000_000)}`)).toBeUndefined();
+      expect(decodeScanCursor(`k:AA:${"9".repeat(1_000_000)}:1:${APP_WALK}`)).toBeUndefined();
+      expect(decodeScanCursor(`k:AA:1:${"9".repeat(1_000_000)}:${APP_WALK}`)).toBeUndefined();
     } finally {
       globalThis.BigInt = original;
     }
@@ -123,21 +149,28 @@ describe("the cursor (spec 4.6)", () => {
   });
 
   test("a cursor this provider did not write reads as none", () => {
+    // Each carries one fault beside fields this provider writes, so each is refused for that fault.
+    const digest = APP_WALK;
     for (const cursor of [
       "",
       "1",
-      "k::1:1",
-      "k:AA:0:1",
-      "k:AA:01:1",
-      "k:AA:1:01",
+      `k::1:1:${digest}`,
+      `k:AA:0:1:${digest}`,
+      `k:AA:01:1:${digest}`,
+      `k:AA:1:01:${digest}`,
       "k:AA:1",
-      "k:AA:1:1:1",
-      "x:AA:1:1",
-      "k:A=:1:1",
-      "k:AB:1:1",
-      "k:AA:12345678901234567890:1",
-      "k:AA:9223372036854775808:1",
-      "k:AA:1:9223372036854775808",
+      // A cursor without the walk's digest, as one written before the digest was.
+      "k:AA:1:1",
+      `k:AA:1:1:${digest}:1`,
+      `k:AA:1:1:${digest.slice(1)}`,
+      `k:AA:1:1:${digest}A`,
+      `k:AA:1:1:${"=".repeat(43)}`,
+      `x:AA:1:1:${digest}`,
+      `k:A=:1:1:${digest}`,
+      `k:AB:1:1:${digest}`,
+      `k:AA:12345678901234567890:1:${digest}`,
+      `k:AA:9223372036854775808:1:${digest}`,
+      `k:AA:1:9223372036854775808:${digest}`,
     ]) {
       expect(decodeScanCursor(cursor)).toBeUndefined();
     }
@@ -152,7 +185,7 @@ describe("a page (spec 4.6)", () => {
     const page = await scanEtcdKeysPage(client, surface(), start(2, "/app/"));
     expect(page).toEqual({
       keys: ["/app/0", "/app/1"],
-      cursor: encodeScanCursor(new Uint8Array([...enc("/app/1"), 0]), "100", "5"),
+      cursor: encodeScanCursor(new Uint8Array([...enc("/app/1"), 0]), "100", "5", APP_WALK),
       total: 5,
       types: {},
     });
@@ -163,7 +196,7 @@ describe("a page (spec 4.6)", () => {
 
   test("a later page reads from the cursor's key at its revision, and answers the total the first page counted", async () => {
     const { client } = spaceClient([...KEYS, "/apple/x"], { revision: "130" });
-    const cursor = encodeScanCursor(new Uint8Array([...enc("/app/1"), 0]), "100", "5");
+    const cursor = encodeScanCursor(new Uint8Array([...enc("/app/1"), 0]), "100", "5", APP_WALK);
     const page = await scanEtcdKeysPage(client, surface(), { cursor, count: 2, pattern: "/app/" });
     expect(page).toMatchObject({ keys: ["/app/2", "/app/3"], total: 5 });
     expect(decodeScanCursor(page.cursor)).toMatchObject({ revision: "100", total: "5" });
@@ -271,7 +304,7 @@ describe("refusals, each before any request (spec 4.6, E14, R11 CF-18)", () => {
 describe("failures between pages (plan Review Focus 2 and 3)", () => {
   test("a compaction since the walk began tells the reader to start the walk again, never etcd's typed-revision sentence", async () => {
     const client = createFakeEtcdClient({ range: async () => Promise.reject(COMPACTED()) });
-    const cursor = encodeScanCursor(enc("/app/1"), "100", "5");
+    const cursor = encodeScanCursor(enc("/app/1"), "100", "5", APP_WALK);
     const error = await scanEtcdKeysPage(client, surface(), { cursor, count: 2, pattern: "/app/" }).catch(
       (caught) => caught,
     );
@@ -297,7 +330,7 @@ describe("failures between pages (plan Review Focus 2 and 3)", () => {
     const client = createFakeEtcdClient({
       range: async () => Promise.reject(new EtcdError("unavailable", "etcdserver: server stopped", 14)),
     });
-    const cursor = encodeScanCursor(enc("/app/1"), "100", "5");
+    const cursor = encodeScanCursor(enc("/app/1"), "100", "5", APP_WALK);
     const error = await scanEtcdKeysPage(client, surface(), { cursor, count: 2, pattern: "/app/" }).catch(
       (caught) => caught,
     );
@@ -310,7 +343,7 @@ describe("failures between pages (plan Review Focus 2 and 3)", () => {
       [new EtcdError("unauthenticated", "etcdserver: invalid auth token", 16), AuthenticationError, "sign-in"],
       [new EtcdError("no-leader", "etcdserver: no leader", 14), ConnectionError, "lost quorum"],
     ];
-    const cursor = encodeScanCursor(enc("/app/1"), "100", "5");
+    const cursor = encodeScanCursor(enc("/app/1"), "100", "5", EVERY_KEY_WALK);
     const errors = await Promise.all(
       cases.map(([failure]) =>
         scanEtcdKeysPage(createFakeEtcdClient({ range: async () => Promise.reject(failure) }), surface(), {
@@ -434,14 +467,85 @@ describe("a user who is not root (spec 4.7)", () => {
     expect(client.calls).toEqual([]);
   });
 
+  const NOT_THIS_WALK =
+    "This cursor does not continue a walk of the keys this connection may read under this prefix: start the walk again.";
+
   test("a cursor whose key lies outside every readable piece is refused: the grants changed, so the walk starts again", async () => {
     const grants = [grantPrefix("/app/a/")];
     const { client } = spaceClient(KEYS, { readable: grants });
-    const cursor = encodeScanCursor(enc("/config/a"), "100", "2");
-    await expect(scanEtcdKeysPage(client, reader(grants), { cursor, count: 10 })).rejects.toThrow(
-      "This cursor does not continue a walk of the keys this connection may read under this prefix: start the walk again.",
+    // Written by a walk under grants that also read /config/a.
+    const earlier = walkDigest(undefined, readableScope([...grants, grantKey("/config/a")]));
+    const cursor = encodeScanCursor(enc("/config/a"), "100", "2", earlier);
+    await expect(scanEtcdKeysPage(client, reader(grants), { cursor, count: 10 })).rejects.toThrow(NOT_THIS_WALK);
+    expect(client.calls).toEqual([]);
+  });
+
+  test("a cursor that carries this walk's digest and a key outside every one of its pieces is refused, never read", async () => {
+    const grants = [grantPrefix("/app/a/")];
+    const { client } = spaceClient(KEYS, { readable: grants });
+    const cursor = encodeScanCursor(enc("/config/a"), "100", "2", walkDigest(undefined, readableScope(grants)));
+    await expect(scanEtcdKeysPage(client, reader(grants), { cursor, count: 10 })).rejects.toThrow(NOT_THIS_WALK);
+    expect(client.calls).toEqual([]);
+  });
+
+  test("a cursor written before the grants widened is refused, so the walk starts again under the new ones (spec 4.6, 4.7)", async () => {
+    // The provider reads the grants again after etcd's "revision of auth store is old" (R13 D10), so the
+    // next page is clipped by the new grants, while the cursor's total counted the old ones.
+    const keys = ["/0/x", "/a/1", "/a/2", "/b/1"];
+    const before = [grantPrefix("/a/")];
+    const after = [grantPrefix("/")];
+    const first = await scanEtcdKeysPage(spaceClient(keys, { readable: before }).client, reader(before), start(1));
+    expect(first).toMatchObject({ keys: ["/a/1"], total: 2 });
+    const { client } = spaceClient(keys, { readable: after });
+    await expect(scanEtcdKeysPage(client, reader(after), { cursor: first.cursor, count: 1 })).rejects.toThrow(
+      NOT_THIS_WALK,
     );
     expect(client.calls).toEqual([]);
+    // Started again, the walk lists every key the new grants read, and counts them all.
+    expect(await scanEtcdKeysPage(client, reader(after), start(10))).toMatchObject({
+      keys: ["/0/x", "/a/1", "/a/2", "/b/1"],
+      cursor: "0",
+      total: 4,
+    });
+  });
+
+  test("a cursor written before the grants narrowed is refused as well, because its total counts keys the walk no longer visits", async () => {
+    const keys = ["/a/1", "/a/2", "/b/1"];
+    const before = [grantPrefix("/a/"), grantPrefix("/b/")];
+    const after = [grantPrefix("/a/")];
+    const first = await scanEtcdKeysPage(spaceClient(keys, { readable: before }).client, reader(before), start(1));
+    expect(first).toMatchObject({ keys: ["/a/1"], total: 3 });
+    const { client } = spaceClient(keys, { readable: after });
+    await expect(scanEtcdKeysPage(client, reader(after), { cursor: first.cursor, count: 1 })).rejects.toThrow(
+      NOT_THIS_WALK,
+    );
+    expect(client.calls).toEqual([]);
+  });
+
+  test("a cursor goes on when the readable pieces of its walk are unchanged, a grant outside its prefix included", async () => {
+    const keys = ["/a/1", "/a/2", "/b/1"];
+    const before = [grantPrefix("/a/")];
+    const after = [grantPrefix("/a/"), grantPrefix("/b/")];
+    const first = await scanEtcdKeysPage(
+      spaceClient(keys, { readable: before }).client,
+      reader(before),
+      start(1, "/a/"),
+    );
+    const { client } = spaceClient(keys, { readable: after });
+    expect(
+      await scanEtcdKeysPage(client, reader(after), { cursor: first.cursor, count: 1, pattern: "/a/" }),
+    ).toMatchObject({ keys: ["/a/2"], cursor: "0", total: 2 });
+  });
+
+  test("a cursor resumed under another prefix is refused: its total counts the walk it came from", async () => {
+    const { client } = spaceClient(KEYS);
+    const first = await scanEtcdKeysPage(client, surface(), start(4, "/app/"));
+    expect(first).toMatchObject({ keys: ["/app/a/1", "/app/a/2", "/app/b", "/app/x/a"], total: 6 });
+    const sent = client.calls.length;
+    await expect(
+      scanEtcdKeysPage(client, surface(), { cursor: first.cursor, count: 4, pattern: "/app/x/" }),
+    ).rejects.toThrow(NOT_THIS_WALK);
+    expect(client.calls).toHaveLength(sent);
   });
 
   test("a page etcd refuses names what the user may read", async () => {
