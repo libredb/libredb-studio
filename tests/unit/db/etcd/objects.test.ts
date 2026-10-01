@@ -1292,6 +1292,19 @@ describe("the member, lease, user and role sources (spec 4.4)", () => {
     });
   });
 
+  test.each([
+    ["another member, as a follower's does", "14609290428206289688"],
+    ["no leader, as during a quorum loss", "0"],
+  ])("the member reached is not the leader when its Status names %s", async (_label, leader) => {
+    const document = await readEtcdObjectSource(
+      client({ status: async () => ({ ...STATUS, leader }) }),
+      surface(),
+      ["8e9e05c52164694d"],
+      "member",
+    );
+    expect(JSON.parse(textOf(document, 1)).leader).toBe(false);
+  });
+
   test("any other member: its fields and a status part naming the member reached, with no Status read (E3)", async () => {
     const fake = client();
     const document = await readEtcdObjectSource(fake, surface(), ["91bc3c398fb3c146"], "member");
