@@ -430,10 +430,13 @@ export class EtcdProvider extends BaseDatabaseProvider {
     return this.session!;
   }
 
-  /** The grants as they stand, read again first after an auth-store change the adapter reported (R13 D10). */
+  /**
+   * The grants as they stand, read again first after an auth-store change the adapter reported (R13 D10). Only
+   * then does a command join a read already under way, so it never waits for a walk's AuthStatus.
+   */
   private async currentGrants(session: EtcdSession): Promise<EtcdGrants> {
-    if (this.pendingGrants !== undefined) return this.pendingGrants;
     if (!this.grantsStale || session.user === undefined) return session.grants;
+    if (this.pendingGrants !== undefined) return this.pendingGrants;
     return this.readGrantsAgain(session, session.user);
   }
 

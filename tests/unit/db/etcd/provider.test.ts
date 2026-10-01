@@ -999,6 +999,26 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(methods(client).filter((method) => method === "userGet")).toHaveLength(4);
   });
 
+  test("a typed command started while a walk reads the auth store's revision waits for nothing it does not need", async () => {
+    let release: () => void = () => undefined;
+    let held = false;
+    const client = readerClient({
+      authStatus: () => {
+        if (!held) return Promise.resolve({ enabled: true, authRevision: "5" });
+        return new Promise((resolve) => {
+          release = () => resolve({ enabled: true, authRevision: "5" });
+        });
+      },
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    held = true;
+    const walk = provider.listObjects([], "prefix");
+    const command = provider.query("get /app/cfg").then((result) => result.rowCount);
+    expect(await Promise.race([command, Bun.sleep(200).then(() => "waited for the walk's read")])).toBe(1);
+    release();
+    expect((await walk).length).toBeGreaterThan(0);
+  });
+
   test("a defect met reading the grants is raised by the count, never kept as the prefix folder's sentence", async () => {
     let defect = false;
     const client = readerClient({
