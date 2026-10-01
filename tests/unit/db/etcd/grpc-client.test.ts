@@ -831,7 +831,14 @@ describe("capture: each seam method against what etcd v3.7.2 answered (gate 4)",
     expect(wire.cancels).toEqual(["Watch/Watch"]);
   });
 
-  test("capture: a watch whose token expired in-band is renewed once and created once more", async () => {
+  test("capture: a watch whose token expired in-band is renewed once and created once more, after the revision etcd refused it at", async () => {
+    // etcd v3.7.2 refuses the create in one answer, created and canceled together, at the store's revision then.
+    const [refusal] = (
+      etcdCapture("etcd-auth-password/watch-invalid-auth-token").payload as {
+        messages: Array<{ created: boolean; canceled: boolean; header: { revision: string } }>;
+      }
+    ).messages;
+    expect(refusal).toMatchObject({ created: true, canceled: true });
     const { wire, client } = await recorded(
       {
         service: "etcd-auth-password",
@@ -859,6 +866,11 @@ describe("capture: each seam method against what etcd v3.7.2 answered (gate 4)",
       ["Auth/Authenticate", null],
       ["Watch/Watch", "token-2"],
     ]);
+    // The watch created again starts after the refusal's revision, so a write committed during the renewal reaches it.
+    const starts = wire.calls
+      .filter((call) => call.rpc === "Watch/Watch")
+      .map((call) => (call.request as { create_request: { start_revision?: string } }).create_request.start_revision);
+    expect(starts).toEqual([undefined, String(Number(refusal.header.revision) + 1)]);
     expect(wire.cancels).toEqual(["Watch/Watch", "Watch/Watch"]);
   });
 
@@ -1721,6 +1733,9 @@ describe("spec E4: the token and its bounded renewal", () => {
 
   test("a watch refused in-band before any event starts again after the created revision, or from its own", async () => {
     const reason = "rpc error: code = Unauthenticated desc = etcdserver: invalid auth token";
+    // etcd v3.7.2 refuses a create in its created answer itself, created and canceled together, at the store's
+    // revision then (SRC `etcd__server_etcdserver_api_v3rpc_watch.go` near 287-317).
+    const refused = { ...cancelledWatch(reason), header: { ...HEADER, revision: "40" } };
     const starts: Array<string | undefined> = [];
     for (const startRevision of [undefined, "7"]) {
       // oxlint-disable-next-line no-await-in-loop -- each start gets a recorded channel of its own, one after another.
@@ -1729,7 +1744,7 @@ describe("spec E4: the token and its bounded renewal", () => {
           answers: {
             "Auth/Authenticate": [signedIn("token-1"), signedIn("token-2")],
             "Watch/Watch": [
-              () => ({ messages: [created("40"), { ...cancelledWatch(reason), created: false }], end: "open" }),
+              () => ({ messages: [refused], end: "open" }),
               () => ({
                 messages: [cancelledWatch("rpc error: code = PermissionDenied desc = etcdserver: permission denied")],
                 end: "open",

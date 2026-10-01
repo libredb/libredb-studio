@@ -939,6 +939,13 @@ export async function createGrpcEtcdClient(
         // oxlint-disable-next-line no-await-in-loop -- a watch answers one response after another, in order.
         const response = await readWatch(stream, signal);
         if (response === "aborted") return { end: { reason: "aborted" } };
+        // A watch created again starts after the revision this one was created at, or after the last revision it
+        // delivered, so no event is missed or arrives twice. etcd refuses a create in-band in its created answer,
+        // created and canceled together, so that revision is read before the refusal is (SRC
+        // `etcd__server_etcdserver_api_v3rpc_watch.go` near 287-317).
+        if (response.created && cursor.startRevision === undefined) {
+          cursor.startRevision = following(header(response.header, "Watch/Watch").revision);
+        }
         if (response.canceled) {
           if (response.compact_revision !== "0") {
             return { end: { reason: "compacted", compactRevision: response.compact_revision } };
@@ -948,8 +955,6 @@ export async function createGrpcEtcdClient(
           return { end: { reason: "canceled", cancelReason: response.cancel_reason } };
         }
         const answered = header(response.header, "Watch/Watch");
-        // A watch created again starts after the last revision this one delivered, so no event arrives twice.
-        if (response.created && cursor.startRevision === undefined) cursor.startRevision = following(answered.revision);
         // Each fragment is handed on as it arrives, so the row limit and the byte budget stop a watch inside one large
         // answer, and the fragments that arrived before an abort, the window's included, are not lost (spec 5.3, E14).
         if (response.events.length === 0) continue;
