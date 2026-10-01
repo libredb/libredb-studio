@@ -11,7 +11,8 @@
  * send, the call's own abort, the receive cap, etcd's answers in its own words (KE6), a refused and a reset socket,
  * a name that does not resolve, a TXT service config that would resend a write, failover inside the one channel,
  * the TLS rules of spec E5 the transport applies, over the committed test certificates of tests/fixtures/tls/, and
- * the TLS handshake a peer never answers, which close() ends (E16).
+ * what a closed channel still did (E16): a TLS handshake a peer never answers, which close() ends, and a dial after
+ * the close, which refused readiness stops.
  * Real handshakes against certificates made at test time, under both runtimes, are tls-handshake.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
@@ -44,12 +45,12 @@ import {
 import type { EtcdConnectionOptions, EtcdTlsOptions } from "@/lib/db/providers/keyvalue/etcd/connection-options";
 import { type EtcdErrorContext, toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import {
+  ClosingCredentials,
   createGrpcEtcdClient,
   ETCD_ALLOWLISTED_RPCS,
   ETCD_LOADER_OPTIONS,
   type EtcdUnaryRpc,
   type EtcdWireRpc,
-  endingHandshakesOnClose,
   grpcWireTransport,
   HASLEADER_RULES,
 } from "@/lib/db/providers/keyvalue/etcd/grpc-client";
@@ -3293,10 +3294,10 @@ describe("over grpc-js: the TLS rules the transport applies (spec E5)", () => {
   }, 20_000);
 });
 
-describe("over grpc-js: close() ends a TLS handshake the peer never answers (spec E16)", () => {
+describe("over grpc-js: nothing of a channel outlives close() (spec E16)", () => {
   /** What grpc-js hands a connector for the adapter's target; the handshake's name is the host, never an IP. */
   const TARGET: experimental.GrpcUri = { scheme: "dns", path: "etcd.test:2379" };
-  const CLOSED_IN_HANDSHAKE = "The channel closed before the TLS handshake completed";
+  const CHANNEL_CLOSED = "The channel closed before this connection was established";
 
   /** TCP that reads what arrives and writes nothing, so a handshake never ends: what it holds, and who sent bytes. */
   async function silentListener() {
@@ -3344,17 +3345,14 @@ describe("over grpc-js: close() ends a TLS handshake the peer never answers (spe
 
   test("destroy() ends every socket still in its handshake and fails its connect, which Node never settles", async () => {
     const silent = await silentListener();
-    const connector = endingHandshakesOnClose(tlsCredentials())._createSecureConnector(TARGET, {});
+    const connector = new ClosingCredentials(tlsCredentials())._createSecureConnector(TARGET, {});
     const sockets = await Promise.all([dialled(silent.port), dialled(silent.port)]);
     const connecting = sockets.map((socket) => failure(connector.connect(socket)));
     // Both hellos have arrived, so both handshakes are under way.
     await eventually(() => silent.spoke.size === 2);
     expect(silent.spoke.size).toBe(2);
     connector.destroy();
-    expect(await Promise.all(connecting)).toMatchObject([
-      { message: CLOSED_IN_HANDSHAKE },
-      { message: CLOSED_IN_HANDSHAKE },
-    ]);
+    expect(await Promise.all(connecting)).toMatchObject([{ message: CHANNEL_CLOSED }, { message: CHANNEL_CLOSED }]);
     expect(sockets.map((socket) => socket.destroyed)).toEqual([true, true]);
     await eventually(() => silent.held.size === 0);
     silent.listener.close();
@@ -3363,10 +3361,10 @@ describe("over grpc-js: close() ends a TLS handshake the peer never answers (spe
 
   test("a socket handed over after destroy(), whose TCP connect outlived the close, is ended before any handshake", async () => {
     const silent = await silentListener();
-    const connector = endingHandshakesOnClose(tlsCredentials())._createSecureConnector(TARGET, {});
+    const connector = new ClosingCredentials(tlsCredentials())._createSecureConnector(TARGET, {});
     connector.destroy();
     const socket = await dialled(silent.port);
-    expect(await failure(connector.connect(socket))).toMatchObject({ message: CLOSED_IN_HANDSHAKE });
+    expect(await failure(connector.connect(socket))).toMatchObject({ message: CHANNEL_CLOSED });
     expect(socket.destroyed).toBe(true);
     await eventually(() => silent.held.size === 0);
     silent.listener.close();
@@ -3391,7 +3389,7 @@ describe("over grpc-js: close() ends a TLS handshake the peer never answers (spe
       },
     };
     const created = spyOn(inner, "_createSecureConnector").mockReturnValue(recording);
-    const connector = endingHandshakesOnClose(inner)._createSecureConnector(
+    const connector = new ClosingCredentials(inner)._createSecureConnector(
       TARGET,
       { "grpc.enable_retries": 0 },
       callCredentials,
@@ -3410,16 +3408,42 @@ describe("over grpc-js: close() ends a TLS handshake the peer never answers (spe
     });
   });
 
-  test("the credentials keep grpc-js's security flag, and equal only themselves, as two clients' own TLS credentials do", () => {
-    const tls = endingHandshakesOnClose(tlsCredentials());
+  test("the credentials keep grpc-js's security flag, and equal only themselves, plaintext or TLS, so no two clients share a subchannel", () => {
+    const tls = new ClosingCredentials(tlsCredentials());
+    const plaintext = new ClosingCredentials(credentials.createInsecure());
+    expect({ tls: tls._isSecure(), plaintext: plaintext._isSecure() }).toEqual({ tls: true, plaintext: false });
+    expect({ tls: tls._equals(tls), plaintext: plaintext._equals(plaintext) }).toEqual({ tls: true, plaintext: true });
     expect({
-      tls: tls._isSecure(),
-      plaintext: endingHandshakesOnClose(credentials.createInsecure())._isSecure(),
-    }).toEqual({ tls: true, plaintext: false });
-    expect(tls._equals(tls)).toBe(true);
-    expect(tls._equals(endingHandshakesOnClose(tlsCredentials()))).toBe(false);
-    // The control: grpc-js's own TLS credentials, built twice as two clients build them, are not equal either, so
-    // no client shares another's connection.
-    expect(tlsCredentials()._equals(tlsCredentials())).toBe(false);
+      tls: tls._equals(new ClosingCredentials(tlsCredentials())),
+      plaintext: plaintext._equals(new ClosingCredentials(credentials.createInsecure())),
+    }).toEqual({ tls: false, plaintext: false });
+    // The controls: grpc-js's own TLS credentials, built twice as two clients build them, are not equal, while its
+    // insecure credentials equal any other, which would let two plaintext clients of one endpoint share a subchannel,
+    // and one client's close() reach the other's connection.
+    expect({
+      tls: tlsCredentials()._equals(tlsCredentials()),
+      plaintext: credentials.createInsecure()._equals(credentials.createInsecure()),
+    }).toEqual({ tls: false, plaintext: true });
+  });
+
+  test("from destroy() on, readiness is refused, naming the closed channel, so grpc-js dials nothing more and its own connector is not asked", async () => {
+    const inner = credentials.createInsecure();
+    const ready = Promise.resolve();
+    let asked = 0;
+    spyOn(inner, "_createSecureConnector").mockReturnValue({
+      connect: (socket) => Promise.resolve({ socket, secure: false }),
+      waitForReady: () => {
+        asked++;
+        return ready;
+      },
+      getCallCredentials: () => credentials.createEmpty(),
+      destroy: () => undefined,
+    });
+    const connector = new ClosingCredentials(inner)._createSecureConnector(TARGET, {});
+    // The control: before destroy(), readiness is grpc-js's own.
+    expect(connector.waitForReady()).toBe(ready);
+    connector.destroy();
+    expect(await failure(connector.waitForReady())).toMatchObject({ message: CHANNEL_CLOSED });
+    expect(asked).toBe(1);
   });
 });

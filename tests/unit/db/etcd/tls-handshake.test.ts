@@ -23,7 +23,10 @@
  *
  * Spec E16: once the cases are done, no socket keeps the Node child running, and under Bun, whose
  * `process.getActiveResourcesInfo` lists nothing, the TLS listener that never answers the handshake holds no
- * connection open, since its client closed it.
+ * connection open, since its client closed it. Nor does a closed client dial again: the reset case's listener
+ * accepts nothing in twice grpc-js's initial backoff after the case's close(), under either runtime. The Node child
+ * reports on one line and lives until the parent has read the listeners, so a dial its closed channel makes still
+ * reaches them.
  *
  * The same child is KE16's fallback for a real-transport test, should Bun's HTTP/2 stall (spec section 11).
  */
@@ -75,9 +78,9 @@ interface RawFailure {
   readonly details: string;
 }
 
-/** What one attempt came to. */
+/** What one attempt came to; `closedAt` is when the adapter's close() returned, where spec E16's checks start. */
 type HandshakeOutcome =
-  | { readonly name: string; readonly outcome: "connected"; readonly target: string }
+  | { readonly name: string; readonly outcome: "connected"; readonly target: string; readonly closedAt?: number }
   | { readonly name: string; readonly outcome: "refused"; readonly errorClass: string; readonly message: string }
   | {
       readonly name: string;
@@ -91,6 +94,7 @@ type HandshakeOutcome =
       readonly grpcCode?: number;
       readonly errorClass?: string;
       readonly message?: string;
+      readonly closedAt?: number;
     };
 
 /** What `runCases` needs from the modules around it; the Node child's bundle passes its own copies. */
@@ -171,12 +175,13 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
       };
     };
     let client: Awaited<ReturnType<RunnerDeps["createGrpcEtcdClient"]>> | undefined;
+    let outcome: HandshakeOutcome;
     try {
       // oxlint-disable-next-line no-await-in-loop -- one connection at a time, so each listener's count is its case's alone.
       client = await deps.createGrpcEtcdClient(options, {}, recording);
       // oxlint-disable-next-line no-await-in-loop -- the case's one call, on the channel it just opened.
       await client.status({ signal: new AbortController().signal });
-      outcomes.push({ name: item.name, outcome: "connected", target: options.target });
+      outcome = { name: item.name, outcome: "connected", target: options.target };
     } catch (error) {
       const failure = error as { readonly category?: string; readonly tlsFailure?: string; readonly grpcCode?: number };
       const mapped = deps.toProviderError(error, {
@@ -184,7 +189,7 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
         write: false,
         connection: deps.etcdErrorConnection(options),
       });
-      outcomes.push({
+      outcome = {
         name: item.name,
         outcome: "failed",
         target: options.target,
@@ -194,11 +199,12 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
         grpcCode: failure.grpcCode,
         errorClass: mapped.name,
         message: mapped.message,
-      });
+      };
     } finally {
       // oxlint-disable-next-line no-await-in-loop -- the channel closes before the next case dials.
       await client?.close();
     }
+    outcomes.push({ ...outcome, closedAt: Date.now() });
   }
   return outcomes;
 }
@@ -264,6 +270,8 @@ const sockets: net.Server[] = [];
 const processes: ReturnType<typeof Bun.spawn>[] = [];
 /** How many Status calls each gRPC server answered, and how many connections each socket listener accepted. */
 const counts: Record<string, number> = {};
+/** When each socket listener accepted each connection, by `Date.now()`, which the Node child's clock shares. */
+const acceptedAt: Record<string, number[]> = {};
 /** The connections the TLS listener that never answers still holds, each until its client closes it (spec E16). */
 const heldBySilentTls = new Set<net.Socket>();
 
@@ -358,8 +366,10 @@ function socketListener(
   onAccept: (socket: net.Socket) => void,
 ): Promise<number> {
   counts[name] = 0;
+  acceptedAt[name] = [];
   const listener = net.createServer((socket) => {
     counts[name]++;
+    acceptedAt[name].push(Date.now());
     socket.on("error", () => undefined);
     onAccept(socket);
   });
@@ -600,6 +610,7 @@ const VERIFY_FULL_SELF_SIGNED = "verify-full with no CA rejects a self-signed se
 const VERIFY_SYSTEM_SELF_SIGNED = "verify-system rejects a self-signed server";
 const TLS_TO_PLAINTEXT = "TLS to a plaintext port fails as not TLS, and nothing is sent in plaintext";
 const SILENT_TLS = "a TLS listener that never answers the handshake is a connect timeout: the request never left";
+const RESET_ON_ACCEPT = "a socket reset on accept is a failure to connect";
 
 const CASES: readonly CaseDefinition[] = [
   // -- spec E1: nothing is dialled for an endpoint that is refused, or for a host that names a grpc-js resolver
@@ -907,7 +918,7 @@ const CASES: readonly CaseDefinition[] = [
     { timeoutMs: 500 },
   ),
   adapterCase(
-    "a socket reset on accept is a failure to connect",
+    RESET_ON_ACCEPT,
     (ports) => direct("127.0.0.1", ports.resetting),
     (ports) => (runtime) => ({
       outcome: "failed",
@@ -1062,6 +1073,44 @@ function expectListeners(run: Run | undefined): void {
   expect(run.seenWhileDialled.localForward).toBe(0);
 }
 
+/** grpc-js 1.14.5's first reconnect backoff (`INITIAL_BACKOFF_MS`, backoff-timeout.ts), which it jitters by a fifth. */
+const GRPC_INITIAL_BACKOFF_MS = 1000;
+
+/**
+ * Spec E16: what the reset case's listener accepted after the case's close() returned, read once twice grpc-js's
+ * initial backoff has passed, longer than a subchannel left in TRANSIENT_FAILURE waits before it dials again. Each
+ * accept is given as its delay after the close.
+ */
+async function acceptsAfterClose(outcome: HandshakeOutcome | undefined): Promise<number[]> {
+  const closedAt = outcome !== undefined && "closedAt" in outcome ? outcome.closedAt : undefined;
+  if (closedAt === undefined) throw new Error(`The case "${RESET_ON_ACCEPT}" did not report when its client closed`);
+  const until = closedAt + 2 * GRPC_INITIAL_BACKOFF_MS;
+  await Bun.sleep(Math.max(0, until - Date.now()));
+  return acceptedAt.resetting.filter((time) => time > closedAt && time <= until).map((time) => time - closedAt);
+}
+
+/** What the Node child reports, on one line of its stdout. */
+interface ChildReport {
+  readonly version: string;
+  readonly outcomes: HandshakeOutcome[];
+  readonly openSockets: string[];
+}
+
+/** The first line a child writes, or undefined when its output ends before one. */
+async function firstLine(output: ReadableStream<Uint8Array>): Promise<string | undefined> {
+  const reader = output.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- the child's output arrives one chunk after another.
+    const { done, value } = await reader.read();
+    if (value !== undefined) text += decoder.decode(value, { stream: true });
+    const end = text.indexOf("\n");
+    if (end !== -1) return text.slice(0, end);
+    if (done) return undefined;
+  }
+}
+
 describe("the certificates (spec E5)", () => {
   test("no certificate a tunnel-shaped connection verifies or passes carries 127.0.0.1 or localhost", () => {
     for (const name of ["far-dns", "far-ip"]) {
@@ -1074,6 +1123,7 @@ describe("the certificates (spec E5)", () => {
 describe("under Bun (spec E1, E5, 5.6, E16)", () => {
   let run: Run | undefined;
   let stillHeld: number | undefined;
+  let dialledAfterClose: number[] | undefined;
   beforeAll(async () => {
     const workingDirectory = process.cwd();
     // The Unix socket is named after a port in the working directory, which is where grpc-js looks for `unix:<port>`.
@@ -1089,10 +1139,14 @@ describe("under Bun (spec E1, E5, 5.6, E16)", () => {
       await Bun.sleep(50);
     }
     stillHeld = heldBySilentTls.size;
+    dialledAfterClose = await acceptsAfterClose(run.outcomes.get(RESET_ON_ACCEPT));
   }, 90_000);
 
   test.each(CASE_NAMES)("%s", (name) => expectCase(run, "bun", name));
   test("the listeners saw only what spec E1 and E5 allow", () => expectListeners(run));
+  test("after close(), the reset case's client dials nothing within twice grpc-js's initial backoff (spec E16)", () => {
+    expect(dialledAfterClose).toEqual([]);
+  });
   test("once its cases are done, the TLS listener that never answers holds no connection open (spec E16)", () => {
     expect(stillHeld).toBe(0);
   });
@@ -1100,6 +1154,7 @@ describe("under Bun (spec E1, E5, 5.6, E16)", () => {
 
 describe("in a Node child, the production runtime (spec E5)", () => {
   let run: Run | undefined;
+  let dialledAfterClose: number[] | undefined;
   beforeAll(async () => {
     const node = Bun.which("node");
     if (node === null) {
@@ -1128,7 +1183,11 @@ describe("in a Node child, the production runtime (spec E5)", () => {
         // runner's budget ends the file.
         'const openSockets = () => process.getActiveResourcesInfo().filter((name) => name === "TCPSocketWrap" || name === "TLSWrap");',
         "for (const until = Date.now() + 2000; openSockets().length > 0 && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 50));",
-        "process.stdout.write(JSON.stringify({ version: process.version, outcomes, openSockets: openSockets() }), () => process.exit(0));",
+        // It reports on one line, then lives until the parent ends its stdin, so a dial its closed channel makes still
+        // reaches the parent's listeners while the parent reads them.
+        'process.stdin.on("end", () => process.exit(0));',
+        "process.stdin.resume();",
+        'process.stdout.write(JSON.stringify({ version: process.version, outcomes, openSockets: openSockets() }) + "\\n");',
         "",
       ].join("\n"),
     );
@@ -1138,18 +1197,27 @@ describe("in a Node child, the production runtime (spec E5)", () => {
     const openSockets: string[] = [];
     const phases = await runPhases(async (cases) => {
       writeFileSync(at("cases.json"), JSON.stringify(cases));
-      const child = Bun.spawn([node, at("child.js"), at("cases.json")], { cwd: dir, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
-      if (exitCode !== 0) throw new Error(`The Node child exited ${exitCode}: ${stderr}`);
-      const answer = JSON.parse(stdout) as {
-        readonly version: string;
-        readonly outcomes: HandshakeOutcome[];
-        readonly openSockets: string[];
-      };
+      const child = Bun.spawn([node, at("child.js"), at("cases.json")], {
+        cwd: dir,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = new Response(child.stderr).text();
+      let answer: ChildReport | undefined;
+      try {
+        const line = await firstLine(child.stdout);
+        if (line !== undefined) {
+          answer = JSON.parse(line) as ChildReport;
+          const reset = answer.outcomes.find((outcome) => outcome.name === RESET_ON_ACCEPT);
+          // Read while the child lives, so a dial its closed channel makes is seen (spec E16).
+          if (reset !== undefined) dialledAfterClose = await acceptsAfterClose(reset);
+        }
+      } finally {
+        child.stdin.end();
+      }
+      const exitCode = await child.exited;
+      if (exitCode !== 0 || answer === undefined) throw new Error(`The Node child exited ${exitCode}: ${await stderr}`);
       version = answer.version;
       openSockets.push(...answer.openSockets);
       return answer.outcomes;
@@ -1163,6 +1231,9 @@ describe("in a Node child, the production runtime (spec E5)", () => {
   });
   test.each(CASE_NAMES)("%s", (name) => expectCase(run, "node", name));
   test("the listeners saw only what spec E1 and E5 allow", () => expectListeners(run));
+  test("after close(), the reset case's client dials nothing within twice grpc-js's initial backoff (spec E16)", () => {
+    expect(dialledAfterClose).toEqual([]);
+  });
   test("once its cases are done, no socket keeps the child running (spec E16)", () => {
     expect(run?.openSockets).toEqual([]);
   });
