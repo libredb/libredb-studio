@@ -41,6 +41,7 @@ import {
 import { applyEtcdValueEdit, buildEtcdValueEdit, type EtcdEditPlanStamp } from "@/lib/db/providers/keyvalue/etcd/edit";
 import { toEtcdError, toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { ETCD_READ_BOUNDS, executeCommand } from "@/lib/db/providers/keyvalue/etcd/execute";
+import { assessCommand } from "@/lib/db/providers/keyvalue/etcd/guard";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { ETCD_KEY_SCAN, scanEtcdKeysPage } from "@/lib/db/providers/keyvalue/etcd/key-scan";
 import { groupLabel, memberHexId, prefixGroups } from "@/lib/db/providers/keyvalue/etcd/keys";
@@ -67,7 +68,7 @@ import {
 } from "@/lib/db/providers/keyvalue/etcd/objects";
 import { describeScope, readableScope, writableScope } from "@/lib/db/providers/keyvalue/etcd/permissions";
 import { commandResult } from "@/lib/db/providers/keyvalue/etcd/results";
-import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import { readOnlySentence, refuseBeforeSend } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import type {
   DatabaseConnection,
   DatabaseProvider,
@@ -1166,6 +1167,65 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     hooks[0].onAuthStoreChanged?.();
     await provider.countObjects([]);
     expect(methods(client)).not.toContain("userGet");
+  });
+
+  /** The reader's client, whose read of the grants etcd stops answering once `answers` says so. */
+  function failingGrants(answers: { now: boolean }, overrides: Partial<EtcdClient> = {}): FakeEtcdClient {
+    return readerClient({
+      ...overrides,
+      userGet: async () => {
+        if (answers.now) return ["reader"];
+        throw unavailable();
+      },
+    });
+  }
+
+  test("after an auth-store change, a refusal that needs no request is given before the grants are read again (spec E6, E8)", async () => {
+    const answers = { now: true };
+    const readOnlyClient = failingGrants(answers, MAINTENANCE);
+    const readOnly = await connected({ ...PASSWORD_CONNECTION, readOnly: true }, readOnlyClient);
+    const writerClient = failingGrants(answers);
+    const writer = await connected(PASSWORD_CONNECTION, writerClient);
+    readOnly.hooks[0].onAuthStoreChanged?.();
+    writer.hooks[0].onAuthStoreChanged?.();
+    answers.now = false;
+    const marks = [readOnlyClient.calls.length, writerClient.calls.length];
+    const readOnlyRefusal = new QueryError(readOnlySentence("connection"), "etcd");
+    await expect(readOnly.provider.query("put /app/x 1")).rejects.toThrow(readOnlyRefusal);
+    await expect(readOnly.provider.runMaintenance("compact")).rejects.toThrow(readOnlyRefusal);
+    const protectedWrite = "del /registry/ --prefix";
+    const parsed = parseEtcdCommand(protectedWrite, LIMITS);
+    if (!parsed.ok) throw new Error(parsed.refusal.message);
+    const protectedRefusal = refuseBeforeSend(assessCommand(parsed.parsed.command), {});
+    expect(protectedRefusal?.reason).toBe("protected-prefix");
+    await expect(writer.provider.query(protectedWrite)).rejects.toThrow(
+      new QueryError(protectedRefusal?.message as string, "etcd"),
+    );
+    expect([readOnlyClient.calls.length, writerClient.calls.length]).toEqual(marks);
+  });
+
+  test("after an auth-store change, a surface that walks no key answers over the grants as they stand: the members, the health and the storage (spec 4.7, 7.1)", async () => {
+    const answers = { now: true };
+    const client = failingGrants(answers);
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    hooks[0].onAuthStoreChanged?.();
+    answers.now = false;
+    const member = memberHexId(MEMBER.id);
+    const twin = readerClient();
+    const context = contextFor(PASSWORD_CONNECTION, READER_PERMISSIONS);
+    const mark = client.calls.length;
+    expect(await provider.listObjects([], "member")).toEqual(await listEtcdObjects(twin, context, "member"));
+    expect(await provider.readObjectSource([member], "member")).toEqual(
+      await readEtcdObjectSource(twin, context, [member], "member"),
+    );
+    expect(await provider.getHealth()).toEqual(await readEtcdHealth(twin, context));
+    expect(await provider.getStorageStats()).toEqual(await readEtcdStorageStats(twin, context));
+    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+    // The change is still read before the next walk.
+    answers.now = true;
+    const walked = client.calls.length;
+    await provider.listObjects([], "prefix");
+    expect(methods(client, walked).slice(0, 3)).toEqual(["authStatus", "userGet", "roleGet"]);
   });
 });
 

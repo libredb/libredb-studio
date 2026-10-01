@@ -72,6 +72,7 @@ import {
 } from "./errors";
 import { ETCD_READ_BOUNDS, executeCommand } from "./execute";
 import { createGrpcEtcdClient } from "./grpc-client";
+import { assessCommand } from "./guard";
 import { ETCD_KEY_SCAN, scanEtcdKeysPage } from "./key-scan";
 import { ETCD_LABELS } from "./labels";
 import { ETCD_MAINTENANCE_OPERATIONS, ETCD_MAINTENANCE_SPECS, runEtcdMaintenance } from "./maintenance";
@@ -87,6 +88,7 @@ import {
 } from "./objects";
 import { type AccessScope, describeScope, ROOT_ROLE, readableScope, writableScope } from "./permissions";
 import { commandResult } from "./results";
+import { refuseBeforeSend } from "./write-policy";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
 
@@ -306,7 +308,10 @@ function unreadGrants(error: unknown): EtcdGrants {
 
 export class EtcdProvider extends BaseDatabaseProvider {
   private session: EtcdSession | null = null;
-  /** Set by the adapter's `onAuthStoreChanged` (R13 D10): the grants are read again before the next surface. */
+  /**
+   * Set by the adapter's `onAuthStoreChanged` (R13 D10): the grants are read again before the next walk that
+   * reads keys, and before the next command no local refusal stops.
+   */
   private grantsStale = false;
   /** One read of the grants that surfaces starting together share. */
   private pendingGrants: Promise<EtcdGrants> | undefined;
@@ -555,10 +560,13 @@ export class EtcdProvider extends BaseDatabaseProvider {
     return reading;
   }
 
-  /** One surface call over the grants as they stand, read again first after an auth-store change (R13 D10). */
-  private async surface(): Promise<SurfaceCall> {
+  /**
+   * One call of a surface that walks no key, over the grants as they stand: they only name the user in a
+   * refusal, so nothing is read before the surface's own requests, and a change waits for the next walk (spec 4.7).
+   */
+  private standingSurface(): SurfaceCall {
     const session = this.requireSession();
-    return this.surfaceOver(session, await this.currentGrants(session));
+    return this.surfaceOver(session, session.grants);
   }
 
   /** One walk that reads keys, over the grants read again first where they changed (spec 4.7). */
@@ -613,6 +621,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
     const session = this.requireSession();
     const parsed = parseEtcdCommand(text, this.parseLimits());
     if (!parsed.ok) throw new QueryError(parsed.refusal.message, this.type);
+    // E6 and E8 refuse a write before any request, the read of the grants after an auth-store change among them:
+    // the grants only name what the user may read in a refusal etcd gives (spec 5.6). executeCommand checks again.
+    const local = refuseBeforeSend(assessCommand(parsed.parsed.command), session.options);
+    if (local !== undefined) throw new QueryError(local.message, this.type);
 
     const run: RunningQuery = { controller: new AbortController(), writeSent: false };
     if (queryId !== undefined) this.running.set(queryId, run);
@@ -681,7 +693,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     requireRoot(container);
     const walks = KEY_READING_KINDS.has(kind);
-    const { client, grants, context } = await (walks ? this.walkSurface() : this.surface());
+    const { client, grants, context } = walks ? await this.walkSurface() : this.standingSurface();
     if (walks) requireKeysReadable(grants);
     return listEtcdObjects(client, context, kind);
   }
@@ -704,7 +716,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     const walks = KEY_READING_KINDS.has(kind);
-    const { client, grants, context } = await (walks ? this.walkSurface() : this.surface());
+    const { client, grants, context } = walks ? await this.walkSurface() : this.standingSurface();
     if (walks) requireKeysReadable(grants);
     return readEtcdObjectSource(client, context, path, kind, limit);
   }
@@ -751,7 +763,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async getHealth(): Promise<HealthInfo> {
-    const { client, context } = await this.surface();
+    const { client, context } = this.standingSurface();
     return readEtcdHealth(client, context);
   }
 
@@ -762,7 +774,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
-    const { client, context } = await this.surface();
+    const { client, context } = this.standingSurface();
     return readEtcdStorageStats(client, context);
   }
 
@@ -803,7 +815,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
    * the maintenance route refuses a target for them before this is reached (`maintenanceControl`).
    */
   public async runMaintenance(type: MaintenanceOperation): Promise<MaintenanceResult> {
-    const { client, context } = await this.surface();
+    const { client, context } = this.standingSurface();
     return runEtcdMaintenance(client, context, type);
   }
 }
