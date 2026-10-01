@@ -4,7 +4,8 @@
  * Over the recorded transport of tests/helpers/etcd-fixtures.ts (plan C11), the real adapter meets what etcd v3.7.2
  * answered the evidence harness (Task 2b): the request each seam method builds, every captured answer decoded,
  * every captured failure classified by the error table, the `hasleader` table, the token and spec E4's bounded
- * renewal, the watch and the keep-alive, and close(). Only the server is fake.
+ * renewal, with what the error table and the value edit's apply make of a write it raises, the watch and the
+ * keep-alive, and close(). Only the server is fake.
  *
  * Over local gRPC servers this file starts from the descriptor, through `grpcWireTransport` and the installed
  * @grpc/grpc-js: the wire encoding both ways, the decoded AlarmRequest of spec 7.2, deadlines before and after the
@@ -46,6 +47,7 @@ import {
   type EtcdWatchBatch,
 } from "@/lib/db/providers/keyvalue/etcd/client";
 import type { EtcdConnectionOptions, EtcdTlsOptions } from "@/lib/db/providers/keyvalue/etcd/connection-options";
+import { applyEtcdValueEdit, buildEtcdValueEdit } from "@/lib/db/providers/keyvalue/etcd/edit";
 import { type EtcdErrorContext, toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import {
   ClosingCredentials,
@@ -58,6 +60,7 @@ import {
   grpcWireTransport,
   HASLEADER_RULES,
 } from "@/lib/db/providers/keyvalue/etcd/grpc-client";
+import type { EtcdSurfaceContext } from "@/lib/db/providers/keyvalue/etcd/objects";
 import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";
 import {
   ETCD_FIXTURE_NAMES,
@@ -1393,7 +1396,7 @@ describe("spec E4: the token and its bounded renewal", () => {
   );
 
   test.each(NOT_APPLIED_ANSWERS)(
-    "a write meeting %s whose renewal fails raises the renewal's failure, as a read does, since nothing was written",
+    "a write meeting %s whose renewal is refused raises its own answer, which says nothing was written, never the sign-in's, and the next call signs in again",
     async (_label, code, details) => {
       const { wire, client } = await recorded(
         {
@@ -1411,7 +1414,9 @@ describe("spec E4: the token and its bounded renewal", () => {
       );
       await client.authenticate(options);
       const error = await failure(client.txn({ compare: [], success: [put], failure: [] }, options));
-      expect(error).toMatchObject({ category: "auth-failed" });
+      // E4 and 5.6: a write raises its own answer after its one renewal, here one KE12 measured as not applied.
+      expect(error).toMatchObject({ category: "unauthenticated", detail: details, grpcCode: code });
+      expect(toProviderError(error, context("put", true)).message).not.toContain("The write may have been applied");
       // The failed renewal left the token it would have replaced, so the next call meets the answer and renews.
       await INVOKE["KV/Range"](client);
       expect(tokensOf(wire.calls)).toEqual([
@@ -1421,6 +1426,56 @@ describe("spec E4: the token and its bounded renewal", () => {
         ["KV/Range", "token-1"],
         ["Auth/Authenticate", null],
         ["KV/Range", "token-2"],
+      ]);
+    },
+  );
+
+  test.each(NOT_APPLIED_ANSWERS)(
+    "a value edit whose Txn meets %s and whose renewal is refused is refused, its one Txn never sent again (spec 4.5)",
+    async (_label, code, details) => {
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            "Auth/Authenticate": [
+              signedIn("token-1"),
+              refuse(3, "etcdserver: authentication failed, invalid user ID or password"),
+            ],
+            "KV/Range": [() => rangeAnswer(kv("/app/cfg", "old"))],
+            "KV/Txn": [refuse(code, details)],
+          },
+        },
+        PASSWORD,
+      );
+      await client.authenticate(options);
+      const surface: EtcdSurfaceContext = {
+        readable: { kind: "all" },
+        writable: { kind: "all" },
+        signal: options.signal,
+        now: () => 1_000,
+        errors: context("value edit", true).connection,
+      };
+      const build = await buildEtcdValueEdit(
+        client,
+        surface,
+        { path: ["/app/cfg"], kind: "key", partId: "value", text: "new" },
+        { type: "etcd", connectionFingerprint: "etcd.test", planId: "plan-1", issuedAt: "2026-10-01T12:00:00.000Z" },
+      );
+      if (!build.built) throw new Error(`expected a plan, got: ${build.refusal.sentence}`);
+      // The value edit reads only 4.5's closed list, which holds the Txn's answer and never a refused sign-in.
+      expect(await applyEtcdValueEdit(client, surface, build.plan)).toEqual({
+        outcome: "refused",
+        refusal: {
+          refusal: "unsupported",
+          sentence: `etcd did not accept this connection's sign-in for the value edit: connect again. (etcd: ${details.slice("etcdserver: ".length)})`,
+          at: { within: "none" },
+        },
+        duration: 0,
+      });
+      expect(tokensOf(wire.calls)).toEqual([
+        ["Auth/Authenticate", null],
+        ["KV/Range", "token-1"],
+        ["KV/Txn", "token-1"],
+        ["Auth/Authenticate", null],
       ]);
     },
   );
