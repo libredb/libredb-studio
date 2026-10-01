@@ -254,11 +254,14 @@ const ETCD_SAMPLE_NAME = "example";
 const ETCD_SAMPLE_VALUE = "value";
 
 /**
- * Whether a word holds a carriage return, which has no spelling on the etcd command line: the editor ends
- * a line at it, and the lexer's `quoteWord` throws for one. A read that names one is written as a txn
- * request instead, whose Go quoting escapes it (#1089 6.4).
+ * Whether a word holds a character Studio's editor does not keep as the etcd command line spells it: a
+ * carriage return, which has no spelling there, since the editor ends a line at it and the lexer's
+ * `quoteWord` throws for one, or a line or paragraph separator, U+2028 or U+2029, which Monaco offers to
+ * remove from the text the moment it lands, as an unusual line terminator, so a form that kept it raw
+ * between single quotes would name other bytes once the offer is taken. A form that names one is written
+ * as a txn request instead, whose Go quoting escapes each of them (#1089 6.4).
  */
-const holdsCarriageReturn = (word: string): boolean => word.includes("\r");
+const holdsUnkeptCharacter = (word: string): boolean => /[\r\u2028\u2029]/.test(word);
 
 /**
  * One etcd request: the command, then its arguments through `quote`, the word rule of the place the
@@ -288,13 +291,14 @@ function etcdPieceGet(piece: ObjectReadRange): { readonly keys: readonly string[
 
 /**
  * The read of one piece (#1089 6.4): a get on the command line with the preview's `--limit`, or, where a
- * key holds a carriage return, a txn whose success list holds the Go-quoted get with no `--limit`, since
- * the provider sends a txn's ranged get with its own page size (#1089 5.1.4). The txn closes its success
- * and failure lists with a blank line each, so no line below it is read as one of its requests.
+ * key holds a character the editor does not keep as the command line spells it (`holdsUnkeptCharacter`),
+ * a txn whose success list holds the Go-quoted get with no `--limit`, since the provider sends a txn's
+ * ranged get with its own page size (#1089 5.1.4). The txn closes its success and failure lists with a
+ * blank line each, so no line below it is read as one of its requests.
  */
 function etcdRead(piece: ObjectReadRange): string {
   const { keys, flags } = etcdPieceGet(piece);
-  if (keys.some(holdsCarriageReturn)) {
+  if (keys.some(holdsUnkeptCharacter)) {
     return ["txn", "", etcdRequest("get", keys, flags, etcdTxnWord), "", ""].join("\n");
   }
   return etcdRequest("get", keys, [...flags, ETCD_READ_LIMIT_FLAG], quoteWord);
@@ -351,15 +355,15 @@ function etcdTxnTemplate(key: string): string {
 
 /**
  * Generate Command's other forms (#1089 6.4), each on a sample key under the group's prefix: a put, a
- * del, a watch of the prefix and the txn template. A prefix holding a carriage return has no command-line
- * spelling, so the txn template, which spells it, is its one form. A prefix that begins with `-` gets no
- * watch: on `watch`, a `--` introduces the command etcdctl runs for each event, so no watch of such a
- * prefix parses.
+ * del, a watch of the prefix and the txn template. A prefix holding a character the editor does not keep
+ * as the command line spells it has no command-line form, so the txn template, which spells it, is its
+ * one form. A prefix that begins with `-` gets no watch: on `watch`, a `--` introduces the command etcdctl
+ * runs for each event, so no watch of such a prefix parses.
  */
 function etcdOtherForms(prefix: string): readonly string[] {
   const key = `${prefix}${ETCD_SAMPLE_NAME}`;
   const template = etcdTxnTemplate(key);
-  if (holdsCarriageReturn(prefix)) return [template];
+  if (holdsUnkeptCharacter(prefix)) return [template];
   return [
     etcdRequest("put", [key, ETCD_SAMPLE_VALUE], [], quoteWord),
     etcdRequest("del", [key], [], quoteWord),

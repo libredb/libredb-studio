@@ -70,7 +70,16 @@ const PREFIXES: readonly (readonly [label: string, prefix: string])[] = [
   ["a #", "/a#b/"],
   ["a $", "/$HOME/"],
   ["a carriage return", "/cr\rhere/"],
+  ["a line separator", "/ls\u2028here/"],
+  ["a paragraph separator", "/ps\u2029here/"],
 ];
+
+/**
+ * What Studio's editor does not keep as the command line spells it: a carriage return, at which it ends a line,
+ * and a line or paragraph separator, which Monaco offers to remove the moment the text lands, as an unusual line
+ * terminator; accepting leaves a form that names other bytes. A generated text holds none of them as itself.
+ */
+const UNKEPT = /[\r\u2028\u2029]/;
 
 const sampleKey = (prefix: string): string => `${prefix}example`;
 
@@ -78,13 +87,15 @@ describe("Generate Command runs its read as is, and each commented form parses o
   test.each(PREFIXES)("a prefix holding %s", (_label, prefix) => {
     const text = generateSelectQuery([`${prefix}*`], [], CAPABILITIES);
     const { read, forms } = partsOf(text);
+    expect(text).not.toMatch(UNKEPT);
 
     // The whole buffer runs the read, so a write needs an edit first.
     const whole = commandOf(text);
     expect(whole).toEqual(commandOf(read));
     expect(assessCommand(whole).class).toBe("read");
-    if (prefix.includes("\r")) {
-      // No command-line spelling reads a carriage return back, so the read is a txn's get (lexer.ts quoteWord).
+    if (UNKEPT.test(prefix)) {
+      // No command-line spelling the editor keeps reads the character back, so the read is a txn's get, whose Go
+      // quoting escapes it (lexer.ts quoteWord, quoteGoString).
       expect(whole).toMatchObject({ kind: "txn", compares: [], failure: [] });
       expect(whole.kind === "txn" ? whole.success : []).toEqual([
         expect.objectContaining({ kind: "get", key: bytes(prefix), prefix: true }),
@@ -105,7 +116,7 @@ describe("Generate Command runs its read as is, and each commented form parses o
     });
     const del = expect.objectContaining({ kind: "del", key, prefix: false, fromKey: false });
     const watch = expect.objectContaining({ kind: "watch", key: bytes(prefix), prefix: true });
-    if (prefix.includes("\r")) expect(commands).toEqual([txn]);
+    if (UNKEPT.test(prefix)) expect(commands).toEqual([txn]);
     // The one form 6.4 does not write, left out: see the test below for why no spelling of it parses.
     else if (prefix.startsWith("-")) expect(commands).toEqual([put, del, txn]);
     else expect(commands).toEqual([put, del, watch, txn]);
@@ -139,6 +150,8 @@ const PIECES: readonly (readonly [label: string, piece: ObjectReadRange])[] = [
   ["a range whose end alone begins with -", { start: "+config", end: "-config" }],
   ["a prefix holding a newline", { prefix: "/config/new\nline/" }],
   ["a key holding a carriage return", { key: "/config/cr\rkey" }],
+  ["a key holding a line separator", { key: "/config/ls\u2028key" }],
+  ["a prefix holding a paragraph separator", { prefix: "/config/ps\u2029/" }],
 ];
 
 /** What a piece's read reads: a get of its keys, as etcdctl reads the three shapes. */
@@ -149,10 +162,10 @@ function readOf(piece: ObjectReadRange) {
   return expect.objectContaining({ kind: "get", key: bytes(piece.start), rangeEnd: bytes(piece.end) });
 }
 
-/** A piece's read runs as a get, or as a txn holding one where a key holds a carriage return. */
+/** A piece's read runs as a get, or as a txn holding one where a key holds a character the editor does not keep. */
 function expectReads(command: EtcdCommand, piece: ObjectReadRange): void {
   const keys = "key" in piece ? [piece.key] : "prefix" in piece ? [piece.prefix] : [piece.start, piece.end];
-  if (keys.some((key) => key.includes("\r"))) {
+  if (keys.some((key) => UNKEPT.test(key))) {
     expect(command).toMatchObject({ kind: "txn", compares: [], failure: [] });
     expect(command.kind === "txn" ? command.success : []).toEqual([readOf(piece)]);
   } else {
@@ -167,6 +180,7 @@ describe("the click reads each piece a user who is not root may read, as is or o
     const others = PIECES.map(([, piece]) => piece).filter((piece) => piece !== first);
     const text = generateTableQuery(["/config/*"], CAPABILITIES, [], { readRanges: [first, ...others] });
     const { read, forms } = partsOf(text);
+    expect(text).not.toMatch(UNKEPT);
     expectReads(commandOf(text), first);
     expect(commandOf(text)).toEqual(commandOf(read));
     expect(forms).toHaveLength(others.length);
