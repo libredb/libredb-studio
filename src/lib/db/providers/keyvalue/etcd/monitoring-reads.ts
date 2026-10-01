@@ -12,8 +12,8 @@ import { type EtcdByteRange, type EtcdClient, EtcdError, type EtcdInt64 } from "
 import { type EtcdErrorContext, toProviderError } from "./errors";
 import { ALL_KEYS, encodeKey, groupLabel, type PrefixGroup, prefixRangeEnd } from "./keys";
 import { describeAlarm, toHealthInfo, toOverview, toStorageStats, toTableStats } from "./monitoring";
-import type { EtcdSurfaceContext } from "./objects";
-import { clipToScope, describeRange, describeScope } from "./permissions";
+import { type EtcdSurfaceContext, surfaceErrorContext } from "./objects";
+import { clipToScope, describeRange } from "./permissions";
 
 const PROVIDER: DatabaseType = "etcd";
 
@@ -31,22 +31,12 @@ interface CountPiece {
   readonly label: string;
 }
 
-/** The user whose grants scope the context (spec 4.7); a scoped context without one is a composition defect. */
-function scopedUser(context: EtcdSurfaceContext): string {
-  if (context.principal === undefined) {
-    throw new Error(
-      "An etcd surface context scoped to a user's grants carries no principal: the provider builds both from one connect (spec 4.7)",
-    );
-  }
-  return context.principal.name;
-}
-
-/** errors.ts's facts for one read of this module, naming what the user may read where 4.7 read the grants. */
+/**
+ * errors.ts's facts for one read of this module, as objects.ts states them for every surface: a context
+ * that carries a principal names what the user may read, whatever its grants read (spec 4.7, 5.6).
+ */
 function readContext(context: EtcdSurfaceContext, command: string, range?: string): EtcdErrorContext {
-  const base = { command, write: false, connection: context.errors, ...(range === undefined ? {} : { range }) };
-  return context.readable.kind === "all"
-    ? base
-    : { ...base, readable: { user: scopedUser(context), ranges: describeScope(context.readable) } };
+  return surfaceErrorContext(context, command, range === undefined ? {} : { range });
 }
 
 /** One read, its failure raised through errors.ts's table (spec 5.6). */
@@ -151,9 +141,9 @@ export async function readEtcdHealth(client: EtcdMonitoringClient, context: Etcd
 /**
  * The overview (spec 7.1): `Status` for the version and the size, a serializable `MemberList` to name
  * the answering member, and the exact key count, one `count_only` over the key space, or one per
- * readable range for a user who is not root, whose count is then a floor that names its scope (spec
- * 4.7). The count is linearizable, so during a quorum loss it fails at once and the monitoring route
- * keeps the other panels.
+ * readable range for a user who is not root, whose count is then a floor that names its scope, whatever
+ * its grants read (spec 4.7). The count is linearizable, so during a quorum loss it fails at once and
+ * the monitoring route keeps the other panels.
  */
 export async function readEtcdOverview(
   client: EtcdMonitoringClient,
@@ -164,14 +154,15 @@ export async function readEtcdOverview(
     () => client.memberList({ linearizable: false }, { signal: context.signal }),
     readContext(context, "member list"),
   );
-  const scope = context.readable;
-  if (scope.kind === "all") {
+  // Scoped where a refusal names what the user may read, so grants that read every key are one range.
+  const scope = readContext(context, "key count").readable;
+  if (scope === undefined) {
     const keyCount = await countKeys(client, context, [{ range: ALL_KEYS, label: "every key" }]);
     return toOverview({ status, members, keyCount });
   }
-  const pieces = scope.ranges.map((range) => ({ range, label: describeRange(range) }));
+  const pieces = clipToScope(ALL_KEYS, context.readable).map((range) => ({ range, label: describeRange(range) }));
   const keyCount = await countKeys(client, context, pieces);
-  const countScope = `the ranges etcd user ${scopedUser(context)} may read: ${describeScope(scope)}`;
+  const countScope = `the ranges etcd user ${scope.user} may read: ${scope.ranges}`;
   return toOverview({ status, members, keyCount, countScope });
 }
 

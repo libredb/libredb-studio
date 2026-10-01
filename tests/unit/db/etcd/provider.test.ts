@@ -1014,6 +1014,20 @@ describe("who a surface names (spec 4.7)", () => {
     });
   });
 
+  test("a user who is not root whose grants read every key is scoped on the overview, and a refused command names what it may read (spec 4.7, 5.6)", async () => {
+    const everyKey: readonly EtcdPermission[] = [{ type: "read", key: Uint8Array.of(0), rangeEnd: Uint8Array.of(0) }];
+    const client = readerClient({ roleGet: async () => everyKey, range: keySpaceRange(KEYS) });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect(await provider.getOverview()).toMatchObject({
+      tableCount: KEYS.length,
+      tableCountSampledFrom: "the ranges etcd user reader may read: every key",
+    });
+    // etcd refuses `user list` to a user who is not root, whatever its grants read.
+    expect(await provider.query("user list").catch((error: Error) => error.message)).toBe(
+      "etcd refused the user list: this connection's etcd user is not granted all of it. (etcd: permission denied) etcd user reader may read: every key.",
+    );
+  });
+
   test("a user whose grants etcd refused to read is still named where a refusal names it", async () => {
     const client = readerClient({
       roleGet: async () => {

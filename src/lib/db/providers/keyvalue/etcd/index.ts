@@ -450,8 +450,9 @@ export class EtcdProvider extends BaseDatabaseProvider {
     if (queryId !== undefined) this.running.set(queryId, run);
     try {
       const grants = await this.currentGrants(session);
+      // Read grants of a user who is not root, whatever they read; EVERY_KEY is root's and auth off's (spec 4.7, 5.6).
       const readable =
-        session.user !== undefined && grants.state === "read" && grants.readable.kind === "ranges"
+        session.user !== undefined && grants.state === "read" && grants !== EVERY_KEY
           ? { user: session.user, ranges: describeScope(grants.readable) }
           : undefined;
       const started = Date.now();

@@ -214,6 +214,23 @@ describe("readEtcdOverview (spec 7.1)", () => {
     ]);
   });
 
+  test("a user who is not root whose grants read every key is scoped all the same: one count_only over the key space, and the count names its scope (spec 4.7)", async () => {
+    const client = createFakeEtcdClient({
+      status: async () => status(),
+      memberList: async () => ({ header: status().header, members: MEMBERS }),
+      range: async () => counted("48213"),
+    });
+    // The context the provider builds for such a user: the readable union is the `all` of root, and the principal scopes it.
+    const overview = await readEtcdOverview(client, surface({ principal: READER }));
+    expect(overview).toMatchObject({
+      tableCount: 48213,
+      tableCountSampledFrom: "the ranges etcd user reader may read: every key",
+    });
+    expect(client.calls.filter((call) => call.method === "range").map((call) => call.args[0])).toEqual([
+      { key: new Uint8Array([0]), rangeEnd: new Uint8Array([0]), limit: 1, countOnly: true },
+    ]);
+  });
+
   test("the count is linearizable, so during a quorum loss it fails at once as the lost quorum", async () => {
     const client = createFakeEtcdClient({
       status: async () => status(),
@@ -313,6 +330,24 @@ describe("readEtcdTableStats (spec 7.1, 4.7)", () => {
     await expect(
       readEtcdTableStats(client, surface({ principal: READER, readable: READABLE, writable: READABLE }), ["/app/"]),
     ).rejects.toThrow(`etcd user reader may read: ${describeScope(READABLE)}.`);
+  });
+
+  test("a user who is not root whose grants read every key: a refused count names what it may read, every key (spec 4.7, 5.6)", async () => {
+    const refusing = () =>
+      createFakeEtcdClient({
+        status: async () => status(),
+        memberList: async () => ({ header: status().header, members: MEMBERS }),
+        range: async () => {
+          throw toEtcdError(grpc(7, "etcdserver: permission denied"));
+        },
+      });
+    const everyKey = surface({ principal: READER });
+    await expect(readEtcdTableStats(refusing(), everyKey, ["/app/"])).rejects.toThrow(
+      "etcd refused the key count on /app/*: this connection's etcd user is not granted all of it. (etcd: permission denied) etcd user reader may read: every key.",
+    );
+    await expect(readEtcdOverview(refusing(), everyKey)).rejects.toThrow(
+      "etcd refused the key count on every key: this connection's etcd user is not granted all of it. (etcd: permission denied) etcd user reader may read: every key.",
+    );
   });
 
   test("counts that settle out of order still land on their own group's row (spec KE2)", async () => {
