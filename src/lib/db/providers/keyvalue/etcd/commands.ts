@@ -1389,17 +1389,20 @@ function readRequestLine(line: SplitLine, limits: EtcdParseLimits): TxnRequestSp
 
 /**
  * Whether the run of `#` lines starting at `index` is one spec 5.1.4 removes: a run directly above a
- * compare or a request, or one followed only by `#` and empty lines.
+ * compare or a request, or one followed only by `#` and empty lines, which is a run below `lastOther`,
+ * the index of the body's last line that is neither a `#` line nor empty (-1 when there is none). The
+ * caller finds that index once, so no run rescans the lines below it.
  */
-function commentRunRemovable(body: readonly SplitLine[], index: number): boolean {
+function commentRunRemovable(body: readonly SplitLine[], index: number, lastOther: number): boolean {
   let next = index;
   while (next < body.length && body[next].role === "comment") next += 1;
   if (next >= body.length || body[next].role !== "blank") return true;
-  return body.slice(next).every((line) => line.role === "blank" || line.role === "comment");
+  return lastOther < next;
 }
 
 function readTxnBody(lines: readonly SplitLine[], limits: EtcdParseLimits): EtcdCommand | CommandRefusal {
   const body = lines.filter((line) => line.section !== "command");
+  const lastOther = body.findLastIndex((line) => line.role !== "blank" && line.role !== "comment");
   const compares: TxnCompareSpec[] = [];
   const branches = {
     success: { requests: [] as TxnRequestSpec[], first: undefined as SplitLine | undefined },
@@ -1425,7 +1428,11 @@ function readTxnBody(lines: readonly SplitLine[], limits: EtcdParseLimits): Etcd
         `Line ${line.line} comes after the txn's failure list, which the third empty line ended, and etcdctl never reads it: remove the line, or an empty line above it.`,
         place,
       );
-    } else if (line.role === "comment" && body[index - 1]?.role !== "comment" && !commentRunRemovable(body, index)) {
+    } else if (
+      line.role === "comment" &&
+      body[index - 1]?.role !== "comment" &&
+      !commentRunRemovable(body, index, lastOther)
+    ) {
       return refusal(
         "txn-syntax",
         `Line ${line.line} of the txn is a # line that is neither directly above a compare or a request nor followed only by # and empty lines, and a # line above an empty line could read as a list of its own: move it directly above a compare or a request, or remove it.`,

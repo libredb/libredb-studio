@@ -18,6 +18,7 @@ import {
   type EtcdCommand,
   type EtcdParseLimits,
   type ParsedCommand,
+  type ParseResult,
   parseEtcdCommand,
 } from "@/lib/db/providers/keyvalue/etcd/commands";
 import { GRAMMAR_CORPUS } from "../../../fixtures/etcd/grammar-corpus";
@@ -1314,6 +1315,55 @@ describe("the txn body (spec 5.1.4)", () => {
     // A # line that ends a list, and one past the failure list: the rule, not a change of list, refuses them.
     expect(txnRefusal('mod("k") > "0"\n\nput k a\n# trailing\n\nput k b').message).toBe(misplaced(5));
     expect(txnRefusal("\n\n\n# c\n\nput x y").message).toBe(misplaced(5));
+  });
+
+  /**
+   * A timing guard, because the # rule was once checked by rescanning the rest of the body at the
+   * first line of every # run, which made a body of alternating # and empty lines quadratic, in the
+   * provider's query() and first in the browser's confirmation gate, before any request is sent.
+   * Measured with that check:
+   *
+   *   10,000 runs     313ms
+   *   20,000 runs    1346ms
+   *   40,000 runs    5053ms (120 KB)
+   *
+   * The bound is loose on purpose, so it cannot flake on a slow runner, while the quadratic form is
+   * over ten times past it at 30,000 runs. Each answer is asserted with its time: a fast wrong answer
+   * is not a pass, and the second text is refused only for a line some 60,000 lines below the first.
+   */
+  test("a body of many # runs, each above an empty line, answers in bounded time", () => {
+    const BOUND_MS = 200;
+    const runs = "#\n\n".repeat(30_000);
+    const adversarial: [label: string, text: string, expected: ParseResult][] = [
+      [
+        "30,000 # runs past the failure list",
+        `txn\n\n\n\n${runs}`,
+        { ok: true, parsed: { command: { kind: "txn", compares: [], success: [], failure: [] }, line: 1 } },
+      ],
+      [
+        "the same runs above a line past the failure list",
+        `txn\n\n\n\n${runs}put k v`,
+        {
+          ok: false,
+          refusal: {
+            code: "txn-syntax",
+            line: 5,
+            column: 0,
+            message:
+              "Line 5 of the txn is a # line that is neither directly above a compare or a request nor followed only by # and empty lines, and a # line above an empty line could read as a list of its own: move it directly above a compare or a request, or remove it.",
+          },
+        },
+      ],
+    ];
+
+    for (const [label, text, expected] of adversarial) {
+      const started = performance.now();
+      const result = parseEtcdCommand(text, LIMITS);
+      const elapsed = performance.now() - started;
+
+      expect(result, label).toEqual(expected);
+      expect(elapsed, `${label} took ${elapsed.toFixed(1)}ms`).toBeLessThan(BOUND_MS);
+    }
   });
 
   test("a line past the failure list is refused, naming it", () => {
