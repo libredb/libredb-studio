@@ -539,6 +539,15 @@ export interface AgentInventoryObject {
    * the bare name - so the label is carried beside the address rather than instead of it.
    */
   readonly label?: string;
+  /**
+   * Present where this connection may read only part of the object, so a read of the whole object
+   * is refused: a listed object that carried `DatabaseObject.readRanges` (#1089 4.7), which is an
+   * etcd group the user's grants do not cover. Absent means the whole object may be read.
+   *
+   * A mark and never the ranges: they are the connection's grants and a piece may name a key, so
+   * the walk derives this from them and copies none of them (E13).
+   */
+  readonly partlyReadable?: true;
 }
 
 /**

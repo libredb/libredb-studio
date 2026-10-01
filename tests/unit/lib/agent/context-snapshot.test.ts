@@ -47,6 +47,7 @@ import {
   type EtcdSurfaceContext,
   listEtcdObjects,
 } from "@/lib/db/providers/keyvalue/etcd/objects";
+import { prefixRangeEnd } from "@/lib/db/providers/keyvalue/etcd/keys";
 import {
   countObjects as countKafkaObjects,
   describeObjects as describeKafkaObjects,
@@ -2189,6 +2190,51 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(JSON.stringify(snapshot)).not.toContain("/config/a");
   });
 
+  /**
+   * The etcd-auth reader of Task 27 (#1089 spec 4.7, E13): granted the prefix /app/ and the one key
+   * /config/a, it reads /app/a/* and /app/x/* whole and /config/* only in part, and etcd refuses a read
+   * of the whole of /config/*. Plan mode drafted `get /config/ --prefix` in 2 of 2 runs, because the
+   * inventory listed /config/* exactly as it listed the groups read whole. The group read in part is
+   * marked by its name, which E13 allows, and never by the ranges, which name the key.
+   */
+  test("etcd as a reader granted a prefix and one key of another group: the group read in part is marked, by name only", async () => {
+    const utf8 = (text: string) => new TextEncoder().encode(text);
+    const context = etcdSurface({
+      readable: {
+        kind: "ranges",
+        ranges: [{ key: utf8("/app/"), rangeEnd: prefixRangeEnd(utf8("/app/")) }, { key: utf8("/config/a") }],
+      },
+      writable: { kind: "ranges", ranges: [] },
+      principal: { name: "reader", via: "password" },
+    });
+    const harness = await etcdHarness(["/app/a/1", "/app/x/1", "/config/a", "/config/b"], context);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(
+      snapshot.objects
+        .filter((object) => object.kind === "prefix")
+        .map((object) => [object.name, Object.hasOwn(object, "partlyReadable")]),
+    ).toEqual([
+      ["/app/a/*", false],
+      ["/app/x/*", false],
+      ["/config/*", true],
+    ]);
+    const note =
+      "Each object marked partly readable below may be read by this connection only in part: a read of the whole object is refused, so do not draft or run one, and say that the object is only partly readable for this connection.";
+    const packed = packContextForTask(snapshot, "What keys and values are in the configuration group?");
+    expect(packed).toContain(note);
+    expect(packed).toContain("\n/config/* (Key Prefix) (partly readable): ");
+    expect(packed).toContain("\n/app/a/* (Key Prefix): ");
+    expect(packed).toContain("\n/app/x/* (Key Prefix): ");
+    const operations = packOperationsInventory(snapshot);
+    expect(operations).toContain(note);
+    expect(operations).toContain('\n"/config/*" (Key Prefix) (partly readable): ');
+    expect(operations).toContain('\n"/app/a/*" (Key Prefix): ');
+    // E13: the mark names the group and never the key the grant reads.
+    for (const text of [JSON.stringify(snapshot), packed, operations]) expect(text).not.toContain("/config/a");
+  });
+
   test("more container and kind pairs than the read may issue is reported as truncated too", async () => {
     const snapshot = await inventoryOf(
       objectHarness({
@@ -2928,6 +2974,41 @@ describe("an inventory that knows what its objects ARE", () => {
     expect(bounded).toContain("app.orders");
     expect(bounded).not.toContain("0.user:*");
     expect(bounded).not.toContain("the first 1,000 keys of one SCAN walk");
+  });
+
+  /**
+   * An object this connection may read only in part carries a mark (#1089 4.7), and the note that says
+   * what the mark means is about the marked lines below it, so it is gated on what was rendered, as the
+   * kind notes are.
+   */
+  test("the partial-read note is emitted only where a marked object is rendered", () => {
+    const marked = kinded({
+      objects: [
+        { path: ["app", "orders"], name: "app.orders", kind: "table", columns: [], indexes: [], foreignKeys: [] },
+        {
+          path: ["app", "order_summary"],
+          name: "app.order_summary",
+          kind: "view",
+          columns: [],
+          indexes: [],
+          foreignKeys: [],
+          partlyReadable: true,
+        },
+      ],
+    });
+
+    const whole = packContextForTask(marked, "orders");
+    expect(whole).toContain("\napp.order_summary (View) (partly readable): ");
+    expect(whole).toContain("Each object marked partly readable below");
+
+    // Bounded so that only the objective's own row fits: the marked view is omitted, and the note goes with it.
+    const bounded = packContextForTask(marked, "orders", { maxChars: whole.length - 40 });
+    expect(bounded).toContain("\napp.orders (Table): ");
+    expect(bounded).not.toContain("app.order_summary");
+    expect(bounded).not.toContain("partly readable");
+
+    // The control: an inventory with nothing marked says nothing about it.
+    expect(packContextForTask(kinded(), "orders")).not.toContain("partly readable");
   });
 
   /**

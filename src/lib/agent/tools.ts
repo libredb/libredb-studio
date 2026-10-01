@@ -3014,6 +3014,9 @@ async function walkObjectInventory(
           // would change identity every time somebody inserted a row, and a resumed run
           // could no longer tell whether it was looking at the schema its earlier claims
           // were made about. Each engine means something different by the number anyway.
+          // The ranges a grant reads are NOT carried either, since a piece may name a key (E13): only
+          // the mark that they do not cover the object, so plan mode does not draft a read of all of it.
+          ...(object.readRanges === undefined ? {} : { partlyReadable: true }),
         });
       }
       if (truncated !== undefined) break;
