@@ -18,6 +18,8 @@
  *   bun tests/live/etcd-evidence.ts --certs <dir> --report <file>     capture every service
  *   bun tests/live/etcd-evidence.ts --only <name,...> --certs <dir> --report <file> --out <dir>
  *                                                                        capture named stand-alone rows only
+ *   bun tests/live/etcd-evidence.ts --phase <phase> [--only <name,...>] --certs <dir> --report <file> --out <dir>
+ *                                                                        capture one phase alone, with its setup
  *   bun tests/live/etcd-evidence.ts --readme --report <file>           render tests/fixtures/etcd/README.md
  *   node tests/live/etcd-evidence.ts --child <name,...> --context <file>  spawned by the capture run
  * <dir> is a copy of the auth fixtures' certificate volume, `docker cp libredb-etcd-auth:/certs <dir>`, outside
@@ -1627,6 +1629,74 @@ function clusterPhases(): Phase[] {
               },
             ),
         ),
+        // KE14's other half: each call spec 6.1 exempts from hasleader, sent with it to the same member, fails with
+        // "etcdserver: no leader", which is why the adapter sends them without it (R11 ETCD-3).
+        errorRow(
+          "etcd-cluster/status-no-leader-hasleader",
+          "status of member 1 with members 2 and 3 stopped, with hasleader",
+          "etcdserver: no leader",
+          () => unary(first, "Maintenance/Status", {}, { hasleader: true, match: {} }),
+        ),
+        errorRow(
+          "etcd-cluster/defragment-no-leader-hasleader",
+          "defragment member 1 with members 2 and 3 stopped, with hasleader",
+          "etcdserver: no leader",
+          () => unary(first, "Maintenance/Defragment", {}, { hasleader: true, match: {} }),
+        ),
+        errorRow(
+          "etcd-cluster/lease-leases-no-leader-hasleader",
+          "leaseLeases with hasleader, no leader",
+          "etcdserver: no leader",
+          () => unary(first, "Lease/LeaseLeases", {}, { hasleader: true, match: {} }),
+        ),
+        errorRow(
+          "etcd-cluster/member-list-serializable-no-leader-hasleader",
+          "memberList: serializable, with hasleader, no leader",
+          "etcdserver: no leader",
+          () =>
+            unary(
+              first,
+              "Cluster/MemberList",
+              { linearizable: false },
+              { hasleader: true, match: { linearizable: false } },
+            ),
+        ),
+        errorRow(
+          "etcd-cluster/range-serializable-no-leader-hasleader",
+          "range: /app/cfg, serializable, with hasleader, no leader",
+          "etcdserver: no leader",
+          () =>
+            unary(
+              first,
+              "KV/Range",
+              { key: text("/app/cfg"), limit: "1", serializable: true },
+              {
+                hasleader: true,
+                match: { key: text("/app/cfg"), serializable: true },
+              },
+            ),
+        ),
+        errorRow(
+          "etcd-cluster/txn-serializable-gets-no-leader-hasleader",
+          "txn: read-only, its one request a serializable get of /app/cfg, with hasleader, no leader",
+          "etcdserver: no leader",
+          () =>
+            unary(
+              first,
+              "KV/Txn",
+              {
+                compare: [],
+                success: [{ request_range: { key: text("/app/cfg"), limit: "1", serializable: true } }],
+                failure: [],
+              },
+              {
+                hasleader: true,
+                match: {
+                  success: [{ request_range: { key: text("/app/cfg"), serializable: true } }],
+                },
+              },
+            ),
+        ),
       ],
       teardown: async () => {
         docker("start", "libredb-etcd-cluster-2", "libredb-etcd-cluster-3");
@@ -2378,12 +2448,66 @@ function fixtureNames(directory: string): string[] {
   }).sort();
 }
 
+/**
+ * One phase alone, as the whole run takes it: its setup, its rows (or the --only ones among them) under their own
+ * runtimes, and its teardown, between two E15 snapshots of its server. It takes rows after the whole run, which
+ * compacts etcd and etcd-auth, without running it again.
+ */
+async function phaseRun(
+  name: string,
+  only: readonly string[] | undefined,
+  directory: string,
+  contextFile: string,
+  log: RunLog,
+): Promise<number> {
+  const found = SERVICES.flatMap((service) => PHASES[service]().map((phase) => ({ service, phase }))).find(
+    ({ phase }) => phase.name === name,
+  );
+  if (found === undefined) throw new Error(`No phase is named ${name}`);
+  const { service, phase } = found;
+  const captures =
+    only === undefined
+      ? phase.captures
+      : only.map((row) => {
+          const capture = phase.captures.find((candidate) => candidate.name === row);
+          if (capture === undefined) throw new Error(`The phase ${name} has no capture named ${row}`);
+          return capture;
+        });
+  const server = service === "transport" ? undefined : service;
+  // The transport rows reach no server, so they have no key space to snapshot.
+  const keySpace = async (): Promise<readonly string[]> => {
+    if (server === undefined) return [];
+    await clean(server);
+    return (await snapshot(SNAPSHOT_CONNS[server], await rootToken(server))).lines;
+  };
+  const before = await keySpace();
+  try {
+    await runPhase({ ...phase, captures }, directory, contextFile, log);
+  } finally {
+    // oxlint-disable-next-line no-await-in-loop -- each restore finishes before the next one starts.
+    for (const restore of restores) await restore();
+  }
+  const after = await keySpace();
+  closeClients();
+  const changed = [
+    ...before.filter((line) => !after.includes(line)).map((line) => `- ${line}`),
+    ...after.filter((line) => !before.includes(line)).map((line) => `+ ${line}`),
+  ];
+  console.error(
+    `E15: ${server ?? "no server"} ${changed.length === 0 ? "identical" : `CHANGED\n${changed.join("\n")}`}`,
+  );
+  console.error(`wrote ${log.written.join(", ")}`);
+  console.error(log.mismatches.join("\n") || "no mismatches");
+  return log.mismatches.length === 0 && changed.length === 0 ? 0 : 1;
+}
+
 async function captureRun(): Promise<number> {
   if (!IS_BUN)
     throw new Error("Run the capture under Bun: bun tests/live/etcd-evidence.ts --certs <dir> --report <file>");
   const reportFile = path.resolve(required("--report"));
   const only = argument("--only")?.split(",");
-  const directory = only === undefined ? FIXTURES : path.resolve(required("--out"));
+  const phaseName = argument("--phase");
+  const directory = only === undefined && phaseName === undefined ? FIXTURES : path.resolve(required("--out"));
   context = {
     certsDir: path.resolve(required("--certs")),
     closedPort: await closedPort(),
@@ -2395,6 +2519,7 @@ async function captureRun(): Promise<number> {
   writeFileSync(contextFile, `${JSON.stringify(context, null, 2)}\n`);
   const log: RunLog = { written: [], split: [], mismatches: [] };
 
+  if (phaseName !== undefined) return phaseRun(phaseName, only, directory, contextFile, log);
   if (only !== undefined) {
     const byName = new Map(allCaptures().map((capture) => [capture.name, capture]));
     await runPhase(

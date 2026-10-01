@@ -258,6 +258,50 @@ describe("what the captures show, as the README says", () => {
       "etcdserver: user name is empty",
     );
   });
+
+  test("KE14: on the member that lost its leader, each call spec 6.1 exempts from hasleader is refused when it carries it", () => {
+    // Member 1 of etcd-cluster with members 2 and 3 stopped, as its own Status found it: leader 0.
+    const leaderless = etcdCapture("etcd-cluster/status-no-leader");
+    expect((leaderless.payload as { leader: string }).leader).toBe("0");
+    const exempt = {
+      "etcd-cluster/defragment-no-leader-hasleader": "Maintenance/Defragment",
+      "etcd-cluster/lease-leases-no-leader-hasleader": "Lease/LeaseLeases",
+      "etcd-cluster/member-list-serializable-no-leader-hasleader": "Cluster/MemberList",
+      "etcd-cluster/range-serializable-no-leader-hasleader": "KV/Range",
+      "etcd-cluster/status-no-leader-hasleader": "Maintenance/Status",
+      "etcd-cluster/txn-serializable-gets-no-leader-hasleader": "KV/Txn",
+    };
+    for (const [name, rpc] of Object.entries(exempt)) {
+      const { $captured: captured, outcome, payload } = etcdCapture(name);
+      const { code, details } = payload as Failure;
+      expect({
+        name,
+        rpc: captured.rpc,
+        memberId: captured.memberId,
+        metadata: captured.metadata,
+        outcome,
+        code,
+        details,
+      }).toEqual({
+        name,
+        rpc,
+        memberId: leaderless.$captured.memberId,
+        metadata: { hasleader: "true" },
+        outcome: "fail",
+        code: 14,
+        details: "etcdserver: no leader",
+      });
+    }
+    // Each request is the form the adapter sends without the metadata (HASLEADER_RULES).
+    type Op = { request_range?: { serializable?: boolean } };
+    const request = (name: string) => etcdCapture(name).$captured.request as Record<string, unknown>;
+    expect(request("etcd-cluster/range-serializable-no-leader-hasleader").serializable).toBe(true);
+    expect(request("etcd-cluster/member-list-serializable-no-leader-hasleader").linearizable).toBe(false);
+    const txn = request("etcd-cluster/txn-serializable-gets-no-leader-hasleader");
+    const ops = [...(txn.success as Op[]), ...(txn.failure as Op[])];
+    expect(ops.length).toBeGreaterThan(0);
+    expect(ops.every((op) => op.request_range?.serializable === true)).toBe(true);
+  });
 });
 
 describe("reviveEtcdFixture", () => {
@@ -541,7 +585,7 @@ describe("recordedEtcdWire", () => {
     });
     expect(await channel.unary("Maintenance/Status", { a: 1 }, liveCall())).toEqual({ echoed: { a: 1 } });
     await expect(channel.unary("Maintenance/Status", {}, liveCall())).rejects.toThrow("refused by the test");
-    // Five etcd-cluster captures answer Status {} alike; with no field to prefer one, the first by name answers.
+    // Six etcd-cluster captures answer Status {} alike; with no field to prefer one, the first by name answers.
     expect(await channel.unary("Maintenance/Status", {}, liveCall())).toEqual(
       etcdFixture("etcd-cluster/status-after-defragment"),
     );

@@ -1,6 +1,6 @@
 # etcd fixtures
 
-Verbatim answers of etcd v3.7.2 to `@grpc/grpc-js` 1.14.5, captured from the services of `database-compose.yml` before any provider code was written (spec 10, gate 4).
+Verbatim answers of etcd v3.7.2 to `@grpc/grpc-js` 1.14.5, captured from the services of `database-compose.yml` before any provider code was written (spec 10, gate 4), but for the six KE14 rows the next section names, which were added after it.
 A test that needs a real etcd answer loads one of these files through `tests/helpers/etcd-fixtures.ts` instead of writing its own, and the provider's integration test runs the real adapter over the recorded transport that helper builds.
 The capture harness is `tests/live/etcd-evidence.ts`, run by hand and never by `bun run test`.
 It calls every surface separately, records a pass or the verbatim error, and renders the three generated blocks below from the files and its run report, so no value in them was typed by hand.
@@ -16,7 +16,7 @@ A capture that no member answered names `none`: a refused socket, a TLS failure,
 | Service | Image | Digest | Cluster id | Members that answered | Captured | Runtimes |
 |---|---|---|---|---|---|---|
 | `etcd` | `gcr.io/etcd-development/etcd:v3.7.2` | `sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3` | 15812935348987335903 | 13653403111078390177 | 2026-09-30T16:29:55.373Z to 2026-09-30T21:29:29.912Z | bun 1.4.2, bun 1.4.2 and node 24.14.0, node 24.14.0 |
-| `etcd-cluster` | `gcr.io/etcd-development/etcd:v3.7.2` | `sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3` | 4743283766027114114 | 14609290428206289688, 8857620542826090066 | 2026-09-30T16:29:59.127Z to 2026-09-30T16:30:11.001Z | bun 1.4.2, bun 1.4.2 and node 24.14.0, node 24.14.0 |
+| `etcd-cluster` | `gcr.io/etcd-development/etcd:v3.7.2` | `sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3` | 4743283766027114114 | 14609290428206289688, 8857620542826090066 | 2026-09-30T16:29:59.127Z to 2026-10-01T10:54:00.632Z | bun 1.4.2, bun 1.4.2 and node 24.14.0, node 24.14.0 |
 | `etcd-auth` | `gcr.io/etcd-development/etcd:v3.7.2` | `sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3` | 18242060571022570213 | 1380394221505655472 | 2026-09-30T16:30:12.393Z to 2026-09-30T16:30:12.689Z | bun 1.4.2, bun 1.4.2 and node 24.14.0, node 24.14.0 |
 | `etcd-auth-password` | `gcr.io/etcd-development/etcd:v3.7.2` | `sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3` | 9341064349964996272 | 11100594549813706834 | 2026-09-30T16:30:12.737Z to 2026-09-30T16:31:01.747Z | bun 1.4.2, bun 1.4.2 and node 24.14.0 |
 | `transport` | `none` | `none` | none | none | 2026-09-30T16:31:03.464Z to 2026-09-30T16:31:03.607Z | bun 1.4.2, node 24.14.0 |
@@ -38,6 +38,7 @@ The rows that change a server for the rows after them run last on their server: 
 The quorum-loss rows stop members 2 and 3 of `etcd-cluster` and start them again, and two deadline rows pause one container for about a second.
 A run compacts `etcd` and `etcd-auth` to their current revision, so `/history/counter` no longer answers at its first two revisions there: remove those two containers and seed them again, as `docker/etcd/README.md` says, before anything reads that history.
 `etcd/range-prefix-registry-slashless` was taken again after that run, alone, with `--only etcd/range-prefix-registry-slashless --out tests/fixtures/etcd`, once the seed had renamed the slash-less Secret's data entry and that one key had been deleted and seeded again on every server, so its revisions are past the run's.
+The six `etcd-cluster/*-no-leader-hasleader` rows, KE14's half that each call spec 6.1 exempts from `hasleader` fails with it, were taken on 2026-10-01, after the provider was written, with `--phase "cluster without a quorum" --only <their names> --out tests/fixtures/etcd`, which runs that phase's setup and teardown, so members 2 and 3 were stopped and started again, and holds E15 over `etcd-cluster` (identical).
 
 ## Encoding
 
@@ -81,6 +82,7 @@ A server's revision before the run is past the seed's 37 where an earlier run of
 - With `--auth-token=simple`, which both auth servers run, a token carries no auth revision: a token issued before an auth change still reads (`etcd-auth-password/range-token-before-auth-change`), and "etcdserver: revision of auth store is old" answers only a request that was in flight while the auth revision moved, so `etcd-auth-password/error-auth-revision-old` sends reads beside a grant until one meets it.
 - Granting a user a role it already holds moves no auth revision; granting a role a permission it already holds moves it by one and leaves the role's grants as they were.
 - Over a new channel to a paused member, whose kernel still completes the TCP handshake, Node never gets a ready channel and the deadline reads "Waiting for LB pick", while Bun 1.4.2 takes the channel as ready, sends the call, and the deadline carries `remote_addr=` (`etcd-cluster/error-deadline-before-pick.node` and `.bun`).
+- On member 1 of `etcd-cluster` with members 2 and 3 stopped, each call spec 6.1 exempts from `hasleader` fails with "etcdserver: no leader" when it carries the metadata (the six `etcd-cluster/*-no-leader-hasleader` rows, KE14), while `Status`, a serializable `Range` and a serializable `MemberList` answer without it (`etcd-cluster/status-no-leader`, `range-serializable-no-leader` and `member-list-serializable-no-leader`).
 - A deadline of 1 ms against a name that does not resolve can lose to the resolver, and the call then fails as UNAVAILABLE "Name resolution failed for target ..."; `transport/error-deadline-name-resolution` sets a deadline that has already passed, which always reads "waiting for name resolution".
 
 ## Texts pinned from error.go, not provoked
@@ -102,10 +104,11 @@ Their texts are pinned from etcd v3.7.2's `api/v3rpc/rpctypes/error.go`, each wi
 
 The recorded transport answers a call from the capture whose `match` the request carries, the one naming the most fields first, and then the first by name.
 It never answers from a capture split per runtime, or from one that no member answered, because no request means one of those by its fields alone.
-Some rows answer the same request differently because the server's state differed, so a test that means the second reads it by name through the transport's `answers`:
+Some rows answer the same request differently because the server's state, or the call's metadata, differed, so a test that means the second reads it by name through the transport's `answers`:
 
 - `etcd/lease-keep-alive` and `etcd/lease-keep-alive-expired`: before and after the revoke.
-- The five `Status` rows of `etcd-cluster`: the leader, a follower, member 2 around its defragmentation, and member 1 without a quorum.
+- The six `Status` rows of `etcd-cluster`: the leader, a follower, member 2 around its defragmentation, and member 1 without a quorum, without `hasleader` and with it.
+- `etcd-cluster/defragment`, `range-serializable-no-leader` and `member-list-serializable-no-leader`, and the `-no-leader-hasleader` row of each: the same request without `hasleader` and with it, which the transport does not read, so it answers the first by name.
 - `etcd-auth-password/error-range-no-token`, `etcd-auth-password/error-invalid-auth-token`, `etcd-auth-password/error-auth-revision-old` and `etcd-auth-password/range-token-before-auth-change`: the same `Range` with no token, with an expired token, during an auth change, and after one.
 - `etcd-auth-password/authenticate` and `etcd-auth-password/error-authenticate-wrong-password`: the same user, with its password and with another.
 
@@ -162,20 +165,26 @@ Some rows answer the same request differently because the server's state differe
 | `etcd-cluster/alarm-disarm-member-zero.json` | pass | `Maintenance/Alarm` | bun 1.4.2 | alarmDisarm: DEACTIVATE NOSPACE with member id 0, which clears nothing |
 | `etcd-cluster/alarm-list-nospace.json` | pass | `Maintenance/Alarm` | bun 1.4.2 | alarmList: Alarm GET with a NOSPACE alarm raised |
 | `etcd-cluster/defragment.json` | pass | `Maintenance/Defragment` | bun 1.4.2 | defragment member 2, through its own connection |
+| `etcd-cluster/defragment-no-leader-hasleader.json` | fail | `Maintenance/Defragment` | bun 1.4.2 and node 24.14.0 | defragment member 1 with members 2 and 3 stopped, with hasleader |
 | `etcd-cluster/error-connection-dropped.json` | fail | `KV/Txn` | bun 1.4.2 and node 24.14.0 | txn: a put through a forwarder that passes the request to member 1 and drops the connection before the answer |
 | `etcd-cluster/error-deadline-before-pick.bun.json` | fail | `KV/Range` | bun 1.4.2 | range: /app/cfg with a 1.5 s deadline over a new channel to member 3, paused: Node never gets a ready channel, Bun sends the call |
 | `etcd-cluster/error-deadline-before-pick.node.json` | fail | `KV/Range` | node 24.14.0 | range: /app/cfg with a 1.5 s deadline over a new channel to member 3, paused: Node never gets a ready channel, Bun sends the call |
 | `etcd-cluster/error-no-leader.json` | fail | `KV/Range` | bun 1.4.2 and node 24.14.0 | range: /app/cfg with hasleader, no leader |
 | `etcd-cluster/error-no-leader-txn-put.json` | fail | `KV/Txn` | bun 1.4.2 and node 24.14.0 | txn: E8's guarded put with hasleader, no leader |
 | `etcd-cluster/error-no-space.json` | fail | `KV/Txn` | bun 1.4.2 and node 24.14.0 | txn: a put while the NOSPACE alarm is raised |
+| `etcd-cluster/lease-leases-no-leader-hasleader.json` | fail | `Lease/LeaseLeases` | bun 1.4.2 and node 24.14.0 | leaseLeases with hasleader, no leader |
 | `etcd-cluster/member-list.json` | pass | `Cluster/MemberList` | bun 1.4.2 | memberList: linearizable, three members |
 | `etcd-cluster/member-list-serializable-no-leader.json` | pass | `Cluster/MemberList` | bun 1.4.2 | memberList: serializable, without hasleader, no leader |
+| `etcd-cluster/member-list-serializable-no-leader-hasleader.json` | fail | `Cluster/MemberList` | bun 1.4.2 and node 24.14.0 | memberList: serializable, with hasleader, no leader |
 | `etcd-cluster/range-serializable-no-leader.json` | pass | `KV/Range` | bun 1.4.2 | range: /app/cfg, serializable, without hasleader, no leader |
+| `etcd-cluster/range-serializable-no-leader-hasleader.json` | fail | `KV/Range` | bun 1.4.2 and node 24.14.0 | range: /app/cfg, serializable, with hasleader, no leader |
 | `etcd-cluster/status-after-defragment.json` | pass | `Maintenance/Status` | bun 1.4.2 | status of member 2 after its defragmentation |
 | `etcd-cluster/status-before-defragment.json` | pass | `Maintenance/Status` | bun 1.4.2 | status of member 2 before its defragmentation |
 | `etcd-cluster/status-follower.json` | pass | `Maintenance/Status` | bun 1.4.2 | status of a follower |
 | `etcd-cluster/status-leader.json` | pass | `Maintenance/Status` | bun 1.4.2 | status of the leader |
 | `etcd-cluster/status-no-leader.json` | pass | `Maintenance/Status` | bun 1.4.2 | status of member 1 with members 2 and 3 stopped, without hasleader |
+| `etcd-cluster/status-no-leader-hasleader.json` | fail | `Maintenance/Status` | bun 1.4.2 and node 24.14.0 | status of member 1 with members 2 and 3 stopped, with hasleader |
+| `etcd-cluster/txn-serializable-gets-no-leader-hasleader.json` | fail | `KV/Txn` | bun 1.4.2 and node 24.14.0 | txn: read-only, its one request a serializable get of /app/cfg, with hasleader, no leader |
 | `etcd/alarm-list-none.json` | pass | `Maintenance/Alarm` | bun 1.4.2 | alarmList: Alarm GET, no alarm raised |
 | `etcd/auth-status-off.json` | pass | `Auth/AuthStatus` | bun 1.4.2 | authStatus: RBAC off |
 | `etcd/compact.json` | pass | `KV/Compact` | bun 1.4.2 | compact to the current revision, physical |
