@@ -446,7 +446,8 @@ On an etcd that authenticates nobody, and on a connection of the user's own, it 
 `readOnly` is checked by one function, `assertReadOnlyHonoured`, before any provider is built and before any SSH tunnel is dialled, so on an engine whose provider does not keep the mode `readOnly: true` is refused rather than ignored, and the seed loader refuses it there too, and on a seed that is not managed.
 etcd's provider is the one that keeps the mode today (`READ_ONLY_ENFORCED` in `src/lib/db/compatibility.ts`), and it names where the mode was set in every refusal ([`docs/providers/etcd.md`](./providers/etcd.md) section 3.4).
 
-**3.9.** The protected set is the storage roots of the Kubernetes distributions measured for #1089, each with and without its leading `/`: `/registry/`, `registry/`, `/kubernetes.io/`, `kubernetes.io/`, `/openshift.io/`, `openshift.io/`, `/bootstrap/`, `bootstrap/`, `/k3s/`, `k3s/`, `/rke2/` and `rke2/`, and the one exact key `compact_rev_key`, which sits outside every prefix and whose deletion makes each running kube-apiserver panic on its next compaction.
+**3.9.** The protected set is the storage roots of the Kubernetes distributions measured for #1089, each with and without its leading `/`: `/registry/`, `registry/`, `/kubernetes.io/`, `kubernetes.io/`, `/openshift.io/`, `openshift.io/`, `/bootstrap/`, `bootstrap/`, `/k3s/` and `k3s/`; RKE2's root, `/rke2/` and `rke2/`, inferred and not measured; and the one exact key `compact_rev_key`, which sits outside every prefix and whose deletion makes each running kube-apiserver panic on its next compaction.
+RKE2's root comes from its source rather than from a store: RKE2 builds the k3s code with the program name `rke2`, and k3s names its own root after that program name.
 Under a prefix this set does not name, only a single-key write over a stored protobuf envelope or encrypted value is recognised, and `docs/providers/etcd.md` lists what is not.
 
 ## Known limits
