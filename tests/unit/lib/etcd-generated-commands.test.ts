@@ -197,7 +197,13 @@ const REFRESH_PATTERN = CAPABILITIES.schemaRefreshPattern;
 /** The command kinds whose run reloads the tree: a new or removed key can add or remove a prefix group or a lease. */
 const REFRESHING: ReadonlySet<EtcdCommand["kind"]> = new Set(["put", "del", "txn", "lease-grant", "lease-revoke"]);
 
-/** Section 10's hand-written corpus: every place the command word can stand, and keys named like a verb. */
+/**
+ * Section 10's hand-written corpus, each text written plainly: the lines and leading tokens the command word may
+ * follow (comment and blank lines, CRLF endings, a prompt, env, ETCDCTL_API=3, a path to etcdctl and
+ * --command-timeout), commands that reload the tree and commands that do not, and keys named like a verb. A word
+ * spelled in quotes, with an escape or across a line join is held to the parser by the refresh pattern's own
+ * agreement corpus, in tests/unit/db/etcd/lexer.test.ts.
+ */
 const WRITTEN: readonly (readonly [label: string, text: string])[] = [
   ["a leading comment line", "# write it\nput /a b"],
   ["a comment line with leading whitespace", "   # write it\nput /a b"],
