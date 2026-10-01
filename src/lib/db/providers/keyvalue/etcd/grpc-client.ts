@@ -544,11 +544,14 @@ export const grpcWireTransport: EtcdWireTransport = (options) => {
  * `grpc_config=` TXT record on the host cannot install a retry or hedging policy that resends a write etcd
  * applied, or a load-balancing config the bundled client cannot load (KE7, measured in Task 1). E14: no answer
  * past the receive cap is read. E5: the TLS identity is the override in every TLS mode, never the dialled address.
+ * E1: the channel dials the endpoint itself, never a proxy that `grpc_proxy`, `https_proxy` or `http_proxy` names,
+ * which grpc-js otherwise asks to CONNECT to the endpoint (`mapProxyName`, http_proxy.ts).
  */
-function channelOptions(options: EtcdConnectionOptions): ChannelOptions {
+export function channelOptions(options: EtcdConnectionOptions): ChannelOptions {
   return {
     "grpc.service_config_disable_resolution": 1,
     "grpc.max_receive_message_length": options.receiveCapBytes,
+    "grpc.enable_http_proxy": 0,
     ...(options.tls === undefined ? {} : { "grpc.ssl_target_name_override": options.tls.serverNameOverride }),
   };
 }

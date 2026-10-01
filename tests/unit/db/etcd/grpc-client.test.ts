@@ -9,11 +9,11 @@
  * Over local gRPC servers this file starts from the descriptor, through `grpcWireTransport` and the installed
  * @grpc/grpc-js: the wire encoding both ways, the decoded AlarmRequest of spec 7.2, deadlines before and after the
  * send, the call's own abort, the receive cap, etcd's answers in its own words (KE6), a refused and a reset socket,
- * a name that does not resolve, a TXT service config that would resend a write, failover inside the one channel,
- * the TLS rules of spec E5 the transport applies, over the committed test certificates of tests/fixtures/tls/, and
- * what a closed channel still did (E16): a TLS handshake, or an HTTP/2 session waiting for SETTINGS, that a peer
- * never answers, and a stream still open, which close() ends, and a dial after the close, which refused readiness
- * stops.
+ * a name that does not resolve, a TXT service config that would resend a write, a proxy the environment names,
+ * which the channel never dials (E1), failover inside the one channel, the TLS rules of spec E5 the transport
+ * applies, over the committed test certificates of tests/fixtures/tls/, and what a closed channel still did (E16): a
+ * TLS handshake, or an HTTP/2 session waiting for SETTINGS, that a peer never answers, and a stream still open, which
+ * close() ends, and a dial after the close, which refused readiness stops.
  * Real handshakes against certificates made at test time, under both runtimes, are tls-handshake.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
@@ -49,6 +49,7 @@ import type { EtcdConnectionOptions, EtcdTlsOptions } from "@/lib/db/providers/k
 import { type EtcdErrorContext, toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import {
   ClosingCredentials,
+  channelOptions,
   createGrpcEtcdClient,
   ETCD_ALLOWLISTED_RPCS,
   ETCD_LOADER_OPTIONS,
@@ -3044,7 +3045,7 @@ describe("over grpc-js: sockets and names that answer nothing (spec 5.6)", () =>
   }, 10_000);
 });
 
-describe("over grpc-js: the channel's own rules (spec E4, E16, 6.1)", () => {
+describe("over grpc-js: the channel's own rules (spec E1, E4, E16, 6.1)", () => {
   test("opening the channel dials nothing: only a call does (spec E16)", async () => {
     let accepted = 0;
     const listener = net.createServer((socket) => {
@@ -3211,6 +3212,54 @@ describe("over grpc-js: the channel's own rules (spec E4, E16, 6.1)", () => {
       second.server.forceShutdown();
     }
   }, 30_000);
+
+  test("the channel's options: no service config from DNS, the receive cap, no environment proxy, and the TLS name (spec E1, E4, E5, E14)", () => {
+    const base = {
+      "grpc.service_config_disable_resolution": 1,
+      "grpc.max_receive_message_length": PLAINTEXT.receiveCapBytes,
+      "grpc.enable_http_proxy": 0,
+    };
+    expect(channelOptions(PLAINTEXT)).toEqual(base);
+    expect(channelOptions(PASSWORD)).toEqual({ ...base, "grpc.ssl_target_name_override": "etcd.test" });
+  });
+
+  test("a proxy the environment names is never used: the endpoint is dialled itself, and the proxy accepts nothing (spec E1)", async () => {
+    let proxied = 0;
+    const proxy = net.createServer((socket) => {
+      proxied++;
+      socket.on("error", () => undefined);
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const { server, port } = await serve({ Maintenance: { Status: answering(MINIMAL["Maintenance/Status"]) } });
+    // The variables grpc-js reads (http_proxy.ts): a proxy, by preference, and the hosts it skips, which are cleared
+    // so that 127.0.0.1 cannot pass by the proxy for that reason alone.
+    const read = ["grpc_proxy", "https_proxy", "http_proxy", "no_grpc_proxy", "no_proxy"] as const;
+    const saved = new Map(read.map((name) => [name, process.env[name]]));
+    try {
+      for (const name of ["grpc_proxy", "https_proxy", "http_proxy"] as const) {
+        for (const other of read) delete process.env[other];
+        process.env[name] = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+        // oxlint-disable-next-line no-await-in-loop -- one variable after another, each with its own client.
+        const client = await createGrpcEtcdClient(at(port, { callTimeoutMs: 3000 }));
+        // oxlint-disable-next-line no-await-in-loop -- the one call on that client.
+        const answered = await client.status(options).then(
+          (status) => status.version,
+          (error: unknown) => (error as EtcdError).category,
+        );
+        // oxlint-disable-next-line no-await-in-loop -- the client closes before the next variable is set.
+        await client.close();
+        expect({ name, answered, proxied }).toEqual({ name, answered: "3.7.2", proxied: 0 });
+      }
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      proxy.close();
+      server.forceShutdown();
+    }
+  }, 20_000);
 });
 
 describe("over grpc-js: the TLS rules the transport applies (spec E5)", () => {
