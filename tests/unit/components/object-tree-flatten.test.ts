@@ -1002,6 +1002,21 @@ describe("TreeRow trailing slot", () => {
     expect(tokens(failure)).toEqual(expect.arrayContaining(sentenceShare));
     expect(tokens(failure)).not.toContain("max-w-[40%]");
 
+    // A failure alone splits the row too, and it is the common case: a describe that failed, or a 429,
+    // on an object row that carries no refusal, so the failure is the row's only sentence.
+    const failedAlone = drawRow({
+      row: openOrdersRow({}),
+      object: ordersObject,
+      failure: { message: "Too many requests. Try again in 41 seconds." },
+    });
+    expect(failedAlone.querySelector('[data-testid="tree-row-unavailable"]')).toBeNull();
+    expect(tokens(failedAlone.querySelector('[data-testid="tree-row-label"]'))).toEqual(
+      expect.arrayContaining(nameShare),
+    );
+    expect(tokens(failedAlone.querySelector('[data-testid="tree-row-failure"]'))).toEqual(
+      expect.arrayContaining(sentenceShare),
+    );
+
     // The control: a row with no sentence draws its name exactly as before, so an object's count and
     // a column's type share the row with it as they always have.
     const counted = drawRow({ row: openOrdersRow({}), object: ordersObject });
