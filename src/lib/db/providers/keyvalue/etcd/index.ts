@@ -72,7 +72,6 @@ import {
 } from "./errors";
 import { ETCD_READ_BOUNDS, executeCommand } from "./execute";
 import { createGrpcEtcdClient } from "./grpc-client";
-import { assessCommand } from "./guard";
 import { ETCD_KEY_SCAN, scanEtcdKeysPage } from "./key-scan";
 import { ETCD_LABELS } from "./labels";
 import { ETCD_SCHEMA_REFRESH_PATTERN } from "./lexer";
@@ -89,7 +88,6 @@ import {
 } from "./objects";
 import { type AccessScope, describeScope, ROOT_ROLE, readableScope, writableScope } from "./permissions";
 import { commandResult } from "./results";
-import { refuseBeforeSend } from "./write-policy";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
 
@@ -229,10 +227,7 @@ function unreadGrants(error: unknown): EtcdGrants {
 
 export class EtcdProvider extends BaseDatabaseProvider {
   private session: EtcdSession | null = null;
-  /**
-   * Set by the adapter's `onAuthStoreChanged` (R13 D10): the grants are read again before the next walk that
-   * reads keys, and before the next command no local refusal stops.
-   */
+  /** Set by the adapter's `onAuthStoreChanged` (R13 D10): the next walk that reads keys reads the grants again. */
   private grantsStale = false;
   /** One read of the grants that surfaces starting together share. */
   private pendingGrants: Promise<EtcdGrants> | undefined;
@@ -431,16 +426,6 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The grants as they stand, read again first after an auth-store change the adapter reported (R13 D10). Only
-   * then does a command join a read already under way, so it never waits for a walk's AuthStatus.
-   */
-  private async currentGrants(session: EtcdSession): Promise<EtcdGrants> {
-    if (!this.grantsStale || session.user === undefined) return session.grants;
-    if (this.pendingGrants !== undefined) return this.pendingGrants;
-    return this.readGrantsAgain(session, session.user);
-  }
-
-  /**
    * The grants a walk that reads keys runs under (spec 4.7): AuthStatus first, and the grants read again when
    * the auth store's revision is not the one they were read under. etcd checks its default simple token at the
    * auth store's revision as it stands, so no call made after an auth change meets "revision of auth store is
@@ -540,6 +525,13 @@ export class EtcdProvider extends BaseDatabaseProvider {
     };
   }
 
+  /**
+   * One typed command, sent as written over the grants as they stand (spec 4.7): nothing is read before its own
+   * requests, so a command that needs no leader, a serializable get among them, still answers during a lost quorum
+   * after an auth-store change, and E6's and E8's refusals, which executeCommand gives first, send nothing. The
+   * grants only word a refusal etcd gives, which names what the user may read as they were last read, as a surface
+   * that walks no key does (`standingSurface`), until the next walk reads them again.
+   */
   public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     // An etcdctl command has no binding, and dropping the values would run another command than the one
     // the caller built. An empty list binds nothing and is not a refusal (spec 5.4).
@@ -547,15 +539,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
     const session = this.requireSession();
     const parsed = parseEtcdCommand(text, this.parseLimits());
     if (!parsed.ok) throw new QueryError(parsed.refusal.message, this.type);
-    // E6 and E8 refuse a write before any request, the read of the grants after an auth-store change among them:
-    // the grants only name what the user may read in a refusal etcd gives (spec 5.6). executeCommand checks again.
-    const local = refuseBeforeSend(assessCommand(parsed.parsed.command), session.options);
-    if (local !== undefined) throw new QueryError(local.message, this.type);
 
     const run: RunningQuery = { controller: new AbortController(), writeSent: false };
     if (queryId !== undefined) this.running.set(queryId, run);
     try {
-      const grants = await this.currentGrants(session);
+      const { grants } = session;
       // Read grants of a user who is not root, whatever they read; EVERY_KEY is root's and auth off's (spec 4.7, 5.6).
       const readable =
         session.user !== undefined && grants.state === "read" && grants !== EVERY_KEY

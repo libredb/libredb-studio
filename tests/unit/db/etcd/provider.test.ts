@@ -1027,6 +1027,61 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect((await walk).length).toBeGreaterThan(0);
   });
 
+  test("after an auth-store change, a typed command is sent before any read of the grants, so a serializable get still answers during a lost quorum (spec 4.7, 6.1)", async () => {
+    let quorum = true;
+    const noLeader = () => new EtcdError("no-leader", "etcdserver: no leader", 14);
+    const whileQuorum = <T>(answer: T) => (quorum ? Promise.resolve(answer) : Promise.reject(noLeader()));
+    const client = readerClient({
+      authStatus: () => whileQuorum({ enabled: true, authRevision: "5" }),
+      userGet: () => whileQuorum(["reader"]),
+      roleGet: () => whileQuorum(READER_PERMISSIONS),
+      // A serializable Range carries no hasleader, so a member without a leader still answers it (spec 6.1).
+      range: (request, options) =>
+        quorum || request.serializable === true
+          ? keySpaceRange(KEYS, READER_PERMISSIONS)(request, options)
+          : Promise.reject(noLeader()),
+    });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    hooks[0].onAuthStoreChanged?.();
+    quorum = false;
+    const mark = client.calls.length;
+    expect((await provider.query("get /app/cfg --consistency=s")).rowCount).toBe(1);
+    expect((await provider.query("get /app/cfg --consistency=s")).rowCount).toBe(1);
+    expect(methods(client, mark)).toEqual(["range", "range"]);
+  });
+
+  test("after an auth-store change, a refusal etcd gives a typed command or a surface that walks no key names what the user may read as the grants were last read, until the next walk reads them again (spec 4.7, 5.6)", async () => {
+    let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
+    const client = readerClient({
+      roleGet: async () => permissions,
+      alarmList: async () => {
+        throw denied();
+      },
+    });
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    const narrowed: readonly EtcdPermission[] = [{ type: "read", key: encode("/config/a") }];
+    permissions = narrowed;
+    hooks[0].onAuthStoreChanged?.();
+    const refusals = async () => {
+      const command = await provider.query("get /secret/x").then(
+        () => "answered",
+        (error: unknown) => (error instanceof QueryError ? error.message : String(error)),
+      );
+      const health = await provider.getHealth().then(
+        () => "answered",
+        (error: unknown) => (error instanceof QueryError ? error.message : String(error)),
+      );
+      return [command, health];
+    };
+    const mayRead = (granted: readonly EtcdPermission[]) =>
+      expect.stringContaining(`etcd user reader may read: ${describeScope(readableScope(granted))}.`);
+    const mark = client.calls.length;
+    expect(await refusals()).toEqual([mayRead(READER_PERMISSIONS), mayRead(READER_PERMISSIONS)]);
+    expect(methods(client, mark)).not.toContain("userGet");
+    await provider.listObjects([], "prefix");
+    expect(await refusals()).toEqual([mayRead(narrowed), mayRead(narrowed)]);
+  });
+
   test("a defect met reading the grants is raised by the count, never kept as the prefix folder's sentence", async () => {
     let defect = false;
     const client = readerClient({
@@ -1821,23 +1876,6 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
     expect(failure?.message).toContain(
       `etcd user reader may read: ${describeScope(readableScope(READER_PERMISSIONS))}.`,
     );
-  });
-
-  test("after an auth-store change, a read etcd refuses names the grants read again (R13 D10)", async () => {
-    let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
-    const client = readerClient({ roleGet: async () => permissions });
-    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
-    const narrowed: readonly EtcdPermission[] = [{ type: "read", key: encode("/config/a") }];
-    permissions = narrowed;
-    hooks[0].onAuthStoreChanged?.();
-    const mark = client.calls.length;
-    const failure = await provider.query("get /secret/x").then(
-      () => undefined,
-      (error: unknown) => error as Error,
-    );
-    expect(failure).toBeInstanceOf(QueryError);
-    expect(failure?.message).toContain(`etcd user reader may read: ${describeScope(readableScope(narrowed))}.`);
-    expect(methods(client, mark)).toEqual(["authStatus", "userGet", "roleGet", "range"]);
   });
 
   test("with authentication off, or as root, a refusal carries no list of what may be read", async () => {
