@@ -651,6 +651,14 @@ describe("the connect sequence (spec 6.1)", () => {
     ]);
   });
 
+  test("step 2's auth revision is the one the grants are read under, so a certificate user's first walk reads AuthStatus and no grant (spec 4.7)", async () => {
+    const client = readerClient();
+    const { provider } = await connected(CERTIFICATE_CONNECTION, client);
+    const mark = client.calls.length;
+    expect((await provider.listObjects([], "prefix")).length).toBeGreaterThan(0);
+    expect(methods(client, mark).filter((method) => method !== "range")).toEqual(["authStatus"]);
+  });
+
   test("step 4 below 3.7: 'user name is empty' at step 2 is authentication on, so the Common Name is read", async () => {
     const client = readerClient({
       authStatus: async () => {
