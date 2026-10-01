@@ -393,8 +393,10 @@ export function TreeRow({
         THE NAME AND THE SENTENCE SPLIT THE ROOM 60/40, and each takes what the other leaves.
         Each starts from its share (`basis-[60%]` on the name, `basis-[40%]` here), grows into
         room the other does not use, and stops at its own text (`grow max-w-max`). So the two
-        are cut only where they do not fit, and then each keeps its share of the room left to
-        them, or all of itself where that is less. Two layouts stood here before. Both
+        are cut only where they do not fit, and then each keeps about its share of the room
+        left to them, or all of itself where that is less. About, because flex weighs each one's
+        shrinking by its basis less its padding, and the sentence's `pl-2` comes off its weight,
+        so where both are cut the name keeps less than 60%. Two layouts stood here before. Both
         truncating from their own widths shared the shrinking in proportion to those widths, so
         a refusal many times a folder's name cut it to two letters: etcd's reader saw `Le...`,
         `U...` and `R...` for Leases, Users and Roles (#1089). A 40% cap on the sentence then
@@ -403,9 +405,9 @@ export function TreeRow({
         past its width: a folder's badge and an object's status take their room first, and the
         two split what is left. Computed with the Flexbox algorithm over Geist's advance widths
         rather than measured in a browser: at the 15% minimum sidebar of a 1366-wide screen, a
-        top-level folder leaves the two 105px, so a name of up to 63px stays whole beside any
-        sentence, and on a depth-2 object a 238px name beside a 168px sentence keeps 49px to the
-        sentence's 33px. The whole sentence stays in the title and in the row's name.
+        top-level folder leaves the two 105px, so a name of up to 61px stays whole beside any
+        sentence, and on a depth-2 object a 238px name beside a 168px sentence keeps 47px to the
+        sentence's 34px. The whole sentence stays in the title and in the row's name.
       */}
       {row.unavailable !== undefined && failure === undefined && (
         <span
