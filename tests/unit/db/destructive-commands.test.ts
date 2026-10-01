@@ -345,8 +345,10 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
 });
 
 // The two fields a row declares for the dialog rather than for the gate's yes or no (#1089, section 5.5 and E10).
-// No shipped engine's row declares either before etcd's lands with its registration, so these tests install a row
-// of their own under a key no DatabaseType spells, and remove it after each test.
+// These tests install a row of their own under a key no DatabaseType spells, and remove it after each test, so each
+// rule is pinned apart from any engine's grammar. etcd's row, the one shipped row that declares both fields, is
+// pinned as well: its typed confirmation with its own commands in describe("the etcd row") below, and its
+// safetyAnalysis: false by the etcd test of describe("vocabularySendsToModel").
 
 describe("vocabularyTypedConfirmation", () => {
   let remove: () => void = () => {};

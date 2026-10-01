@@ -5,10 +5,12 @@ import type { DatabaseType } from "@/lib/types";
 /**
  * A confirmation-gate vocabulary row of a test's own, under a key no `DatabaseType` spells.
  *
- * The gate's `typedConfirmation` and `safetyAnalysis` fields have no engine that declares them until etcd's row
- * lands with its registration (#1089), and a row of `NON_SQL_DESTRUCTIVE_VOCABULARY` is the only input their readers
- * and `QuerySafetyDialog` take. So a test installs one here and removes it when it ends; every test file runs in a
- * bun process of its own, so no other file ever reads the table while the row is in it.
+ * A row of `NON_SQL_DESTRUCTIVE_VOCABULARY` is the only input the readers of the gate's `typedConfirmation` and
+ * `safetyAnalysis` fields and `QuerySafetyDialog` take (#1089). So a test installs one here, which pins each rule
+ * apart from any engine's grammar, and removes it when it ends; every test file runs in a bun process of its own,
+ * so no other file ever reads the table while the row is in it. etcd's row, the one shipped row that declares both
+ * fields, is pinned with its own commands in describe("the etcd row") of `tests/unit/db/destructive-commands.test.ts`
+ * and describe("etcd's row") of `tests/components/QuerySafetyDialog.test.tsx`.
  */
 export const STAND_IN_TYPE = "stand-in-typed-engine" as string as DatabaseType;
 

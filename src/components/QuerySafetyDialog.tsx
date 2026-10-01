@@ -562,19 +562,21 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   //
   // Only where the text IS SQL, though. Both execution paths ask about whatever is
   // in the editor, so this predicate is handed MongoDB documents, Redis commands, PromQL
-  // expressions and Kafka read requests as well, and an escaped quote that a SQL span reader cannot
-  // resolve closes perfectly in the grammar those are written in. For MongoDB and
+  // expressions, Kafka read requests and etcdctl commands as well, and an escaped quote that a SQL
+  // span reader cannot resolve closes perfectly in the grammar those are written in. For MongoDB and
   // Redis the keyword tests below still run: narrowing this rule is not switching the
   // gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
 
   // A type whose own vocabulary is the whole answer is not read as SQL at all, and
-  // PromQL and Kafka are those types. A PromQL expression can start with a metric name the
+  // PromQL, Kafka and etcd are those types. A PromQL expression can start with a metric name the
   // server's data chooses, `update`, `delete` and `drop` are legal names, and the keyword
   // test below read the tree's own selector for such a metric as a write, about text that
   // only ever reaches a query endpoint that cannot write (#1085, section 2); a Kafka read
   // request names a topic, which can carry those names too, and can only read it (#1088,
-  // section 2). Which types decide alone is a fact of the same table, not a type test here.
+  // section 2); an etcd command names keys, which can be spelled like any SQL keyword, and the
+  // etcd provider's guard.ts reads it with the parser the provider runs (#1089, section 5.5).
+  // Which types decide alone is a fact of the same table, not a type test here.
   if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;

@@ -538,9 +538,10 @@ describe("SeedConfigSchema: a read-only seed must be managed (#1089)", () => {
     "an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.";
   const onConnection = `readOnly: true needs a managed connection, and this one has managed: false: ${why}`;
   const fromDefaults = `readOnly: true needs a managed connection, and this one has managed: false from defaults.managed: ${why}`;
-  // No shipped engine enforces the mode yet, so each read-only case also carries the engine's own
-  // refusal first; the managed rule is the second issue, and its absence is the assertion where the
-  // seed is managed. The same cases over an engine that enforces the mode land with its registration.
+  // This describe's engine, postgres, does not enforce the mode, so each read-only case also carries the
+  // engine's own refusal first; the managed rule is the second issue, and its absence is the assertion where
+  // the seed is managed. The same cases over etcd, which enforces it, are in the describe
+  // "SeedConfigSchema: a read-only etcd seed (#1089 E6)" below.
   const enginePostgres =
     "readOnly is not offered for postgres: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.";
 
