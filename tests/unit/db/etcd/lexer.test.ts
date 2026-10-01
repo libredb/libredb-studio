@@ -6,11 +6,15 @@
  * v3.7.2's own `txn` (the bytes pinned in tests/fixtures/etcd/grammar-corpus.ts). A refusal is
  * pinned with its whole sentence, because the sentence is what the user reads in the editor.
  *
- * The corpus at the end is the one the tokens provider's test reads too, so the editor and the
- * parser are held to the same word boundaries, sections and bytes (R11 ARCH-9).
+ * The corpus near the end is the one the tokens provider's test reads too, so the editor and the
+ * parser are held to the same word boundaries, sections and bytes (R11 ARCH-9). The last section
+ * holds the refresh pattern the lexer builds from these rules to the parser (spec 6.2).
  */
 import { describe, expect, test } from "bun:test";
+import { type EtcdParseLimits, parseEtcdCommand } from "@/lib/db/providers/keyvalue/etcd/commands";
+import { ETCD_READ_BOUNDS } from "@/lib/db/providers/keyvalue/etcd/execute";
 import {
+  ETCD_SCHEMA_REFRESH_PATTERN,
   holdsUnprintedRune,
   INITIAL_LEX_STATE,
   isFlagText,
@@ -29,6 +33,8 @@ import {
   tokenizeLine,
   type Word,
 } from "@/lib/db/providers/keyvalue/etcd/lexer";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { shouldRefreshSchema } from "@/lib/query-generators";
 import { type CorpusWord, GRAMMAR_CORPUS } from "../../../fixtures/etcd/grammar-corpus";
 
 const encoder = new TextEncoder();
@@ -1485,5 +1491,124 @@ describe("quoteTxnWord and quoteGoString, the txn body's quoting (spec 4.5, 6.4)
     const [, , value] = bodyLine('txn\n\nput k "\\ufeffa"', 3).words ?? [];
     expect(value.text).toBe("\ufeffa");
     expect(hex(value.bytes)).toBe("efbbbf61");
+  });
+});
+
+// ============================================================================
+// 6.2: the refresh pattern
+// ============================================================================
+
+/**
+ * The pattern the provider declares as `schemaRefreshPattern`, built in the lexer from the word rules it restates,
+ * held to the parser: a text reloads the tree exactly when it parses to a put, del, txn, lease grant or lease
+ * revoke, but for the limits its docblock states (spec 5.1.1, 5.1.2, 6.2).
+ */
+describe("the refresh pattern, held to the parser (spec 5.1.1, 5.1.2, 6.2)", () => {
+  /** The bounds the provider parses a command under (keyvalue/etcd/index.ts `parseLimits`), at a 5 s query timeout. */
+  const LIMITS: EtcdParseLimits = {
+    maxLimit: DEFAULT_QUERY_LIMIT,
+    txnRangeLimit: ETCD_READ_BOUNDS.firstPageSize,
+    maxCommandTimeoutMs: 5_000,
+    maxWatchWindowMs: 5_000 - ETCD_READ_BOUNDS.watchMarginMs,
+  };
+
+  test("the refresh pattern agrees with the parser on writes and reads whose words are quoted, escaped or joined across lines, or whose path to etcdctl holds blanks (spec 5.1.1, 5.1.2, 6.2)", () => {
+    const pattern = ETCD_SCHEMA_REFRESH_PATTERN;
+    const refreshing: ReadonlySet<string> = new Set(["put", "del", "txn", "lease-grant", "lease-revoke"]);
+    const texts = [
+      // A line join among the blanks between two words, the documented multi-line forms among them.
+      "ETCDCTL_API=3 etcdctl \\\n  del /app/x",
+      "etcdctl \\\nput /newgroup/a v",
+      "etcdctl \\\r\nput /newgroup/a v",
+      "etcdctl\\\n  put /app/x v",
+      "etcdctl --command-timeout=5s \\\n  del /app/x",
+      "etcdctl \\\n  --command-timeout=5s \\\n  put /app/x v",
+      "--command-timeout \\\n5s put /a b",
+      "$ \\\nput /a b",
+      "  \\\n  put /a b",
+      "lease \\\ngrant 60",
+      "lease\\\n revoke 694d77aa9e38260f",
+      "lease --command-timeout 5s \\\ngrant 60",
+      // A line join before the blanks between two words and another after them.
+      "etcdctl\\\n \\\nput /a b",
+      "lease\\\r\n\t\\\r grant 60",
+      // A path to etcdctl that holds blanks, quoted or escaped, a quoted line break or a no-break space, its last
+      // slash bare, escaped or in quotes.
+      '"/opt/my tools/etcdctl" put /a b',
+      "/opt/my\\ tools/etcdctl del /a",
+      "'/Applications/etcd tools/etcdctl' lease revoke 694d77aa9e38260f",
+      "'/opt/my tools/'etcdctl put /a b",
+      "/usr/local/bin\\/etcdctl put /a b",
+      '"/usr/bin\\/etcdctl" put /a b',
+      '"/opt/my\ttools/etc"dctl lease grant 60',
+      "/opt/'my tools'/etcdctl \\\n  del /a",
+      "'/opt/my\ntools/etcdctl' put /a b",
+      "/opt/my\u00a0tools/etcdctl put /a b",
+      '$ env ETCDCTL_API=3 "/opt/my tools/etcdctl" --command-timeout=5s txn\nmod("/a") > "0"\n\nput /a b\n\n',
+      // Quote marks and escapes inside a word, which the lexer removes.
+      "'put' /app/x v",
+      '"del" /a',
+      "p'ut' /a b",
+      "pu\\t /a b",
+      "'lease' 'grant' 60",
+      '\'txn\'\nmod("/a") > "0"\n\nput /a b\n\n',
+      "ETCDCTL_API='3' etcdctl put /a b",
+      'ETCDCTL_API="3" put /a b',
+      "'env' ETCDCTL_API=3 put /a b",
+      '"./etcdctl" put /a b',
+      "/usr/local/bin/'etcdctl' del /a",
+      "'--command-timeout'=5s put /a b",
+      // The same spellings around a command that writes nothing, and a key named like a verb.
+      "etcdctl \\\nget /app/del",
+      "'get' /app/put",
+      "ETCDCTL_API='3' etcdctl get /put",
+      "get \\\n  put",
+      "lease \\\nkeep-alive --once 694d8147df1dc4c8",
+      "lease 'timetolive' 694d8147df1dc4c8",
+      "etcdctl \\\n  member list",
+      "etcdctl\\\n \\\nget /app/del",
+      '"/opt/my tools/etcdctl" get /put',
+      "/opt/my\\ tools/etcdctl member list",
+      "'/opt/my tools/'etcdctl lease list",
+    ];
+    const parsed = texts.map((text) => {
+      const result = parseEtcdCommand(text, LIMITS);
+      if (!result.ok) throw new Error(`${JSON.stringify(text)} is refused: ${result.refusal.message}`);
+      return { text, refreshes: refreshing.has(result.parsed.command.kind) };
+    });
+    expect(texts.map((text) => ({ text, refreshes: shouldRefreshSchema(text, pattern) }))).toEqual(parsed);
+    // The corpus holds texts on both sides of the pattern.
+    expect(parsed.filter((entry) => entry.refreshes).length).toBeGreaterThan(0);
+    expect(parsed.filter((entry) => !entry.refreshes).length).toBeGreaterThan(0);
+  });
+
+  test("the refresh pattern's stated limits: a line join inside a word, two side by side or after a second run of blanks, and a quoted path that holds a write command (spec 6.2)", () => {
+    const pattern = ETCD_SCHEMA_REFRESH_PATTERN;
+    const reading = (text: string) => {
+      const parsed = parseEtcdCommand(text, LIMITS);
+      const kind = parsed.ok ? parsed.parsed.command.kind : parsed.refusal.message;
+      return { text, kind, refreshes: shouldRefreshSchema(text, pattern) };
+    };
+    // Writes the parser runs after which the tree is not reloaded.
+    const unread = [
+      "pu\\\nt /a b",
+      "/opt/my\\\ntools/etcdctl put /a b",
+      '"/opt/my\\\ntools/etcdctl" put /a b',
+      "etcdctl \\\n\\\nput /a b",
+      "etcdctl\\\n\\\n put /a b",
+      "etcdctl \\\n \\\nput /a b",
+      "etcdctl\\\n \\\n \\\nput /a b",
+    ];
+    expect(unread.map(reading)).toEqual(unread.map((text) => ({ text, kind: "put", refreshes: false })));
+    // A read the parser runs after which the tree is reloaded.
+    const read = "'/etcdctl put /x/etcdctl' get /a";
+    expect(reading(read)).toEqual({ text: read, kind: "get", refreshes: true });
+  });
+
+  test("the refresh pattern reads a path of 300,000 characters, which a pattern of one unit at a time stops matching in JavaScriptCore, the engine of Bun (spec 6.2)", () => {
+    const pattern = ETCD_SCHEMA_REFRESH_PATTERN;
+    const text = `/opt/${"x".repeat(300_000)}/etcdctl put /a b`;
+    expect(parseEtcdCommand(text, LIMITS)).toMatchObject({ ok: true, parsed: { command: { kind: "put" } } });
+    expect(shouldRefreshSchema(text, pattern)).toBe(true);
   });
 });
