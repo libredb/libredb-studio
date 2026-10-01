@@ -3408,7 +3408,7 @@ enumeration still fails loudly rather than passing vacuously.
 ### REL5. Fourteen scripts do nothing and exit 0 when run through a symlinked checkout
 
 Each of `scripts/*.mjs` that runs as a command compares `path.resolve(process.argv[1])` with `fileURLToPath(import.meta.url)`; through a symlinked checkout Node keeps the link in `argv[1]` and resolves `import.meta.url` to the real file, so the comparison fails and the script exits 0 without running.
-`readme-check.mjs`, `security-check.mjs`, `sync-chart-version.mjs` and `distribution-check.mjs` are drift guards of the required check, so a guard run that way passes silently.
+`sync-chart-version.mjs`, `generate-channel-showcase.mjs`, `readme-check.mjs` and `security-check.mjs` are the drift guards of the required check (`chart:check`, `channels:showcase:check`, `readme:check` and `security:check` in `.github/workflows/ci.yml`), and `distribution-check.mjs` is the guard of the separate Distribution Check workflow, so a guard run that way passes silently.
 Measured 2026-09-30 by the etcd PR's descriptor generator, which compares real paths on both sides instead (`scripts/generate-etcd-descriptor.mjs`); `grep -rl 'path.resolve(process.argv' scripts` returns exactly 14 hits.
 
 Not fixed there: the etcd PR touches no other script.
