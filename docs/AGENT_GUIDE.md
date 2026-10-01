@@ -45,7 +45,7 @@ Three controls elsewhere in the shell open it **carrying the statement in your e
 | Control | Where | What it does |
 | --- | --- | --- |
 | "Ask the agent about this query" | Command palette (`src/components/CommandPalette.tsx:134-137`) | Fills the objective with the editor's statement, and names the *Investigate* workflow for it |
-| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:235-245`) | The same, and opens the sheet |
+| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:272-282`) | The same, and opens the sheet |
 | "Agent" | Mobile nav (`src/components/Studio.tsx:857-863`) | Opens the rail and asks nothing |
 
 **The two that name a workflow name it under Advanced, and open that panel to show you.** The

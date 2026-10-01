@@ -322,7 +322,7 @@ that was hard-coded before.
 So on an Operate run this section is narrower than what follows and section 4 does not happen. On
 every other workflow, the inventory is captured once per run by whichever of the two readings that
 dialect gets, then packed for the task
-(`packContextForTask`, `src/lib/agent/context-snapshot.ts:1392`). Per table it renders
+(`packContextForTask`, `src/lib/agent/context-snapshot.ts:1405`). Per table it renders
 (`renderTable`, `context-snapshot.ts:428-441`):
 
 - the table name;
@@ -635,7 +635,7 @@ fences what it sends:
 | Feature | Route | What the browser sends | Call site |
 | --- | --- | --- | --- |
 | Visual EXPLAIN's AI explanation | `POST /api/ai/explain` | `query`, `explainPlan`, `schemaContext`, `databaseType` | `src/components/VisualExplain.tsx:486-497` |
-| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType` | `src/components/QuerySafetyDialog.tsx:167-171` |
+| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType` | `src/components/QuerySafetyDialog.tsx:221-231` |
 | Database documentation | `POST /api/ai/describe-schema` | A schema string built from table names, row counts and column definitions | `src/components/DatabaseDocs.tsx:61-68` |
 | Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`** | `src/components/DataProfiler.tsx:84-107` |
 

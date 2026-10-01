@@ -515,7 +515,7 @@ paste tab. Two independent reasons, the same pair Druid records:
 `connection-string-parser.ts` is therefore **not touched** by this provider, and the consequence is
 recorded rather than hidden: pasting `http://localhost:9200` selects ClickHouse. The connection-form
 hook says so too — its unparseable-string message lists the schemes that do exist and deliberately
-omits these two ([`use-connection-form.ts:376`](../../src/hooks/use-connection-form.ts)).
+omits these two (`handlePasteConnectionString` in [`use-connection-form.ts`](../../src/hooks/use-connection-form.ts)).
 
 ### 4.3 TLS
 

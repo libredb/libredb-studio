@@ -1425,12 +1425,12 @@ the provider as a non-owner role rather than asserting the statement text.
 ### D103. `noAbstainingKinds` is enforced over the expectation's kinds, not the provider's declarations
 
 `assertColumnDeclarations` builds `abstained` by walking `listings`
-(`tests/helpers/object-surface-conformance.ts:595-603`), and `listings` holds only the kinds the
-expectation gave a non-zero `want` (`:307-335`). The field's own docblock (`:195-200`) defines it
+(`tests/helpers/object-surface-conformance.ts:618-626`), and `listings` holds only the kinds the
+expectation gave a non-zero `want` (`:330-358`). The field's own docblock (`:201-208`) defines it
 over something else: "This provider declares `hasColumns` on EVERY kind it has". A provider that
 declares one kind without `hasColumns` and whose fixture happens to hold none of that kind is
 therefore indistinguishable, to the guard, from a provider that has no abstaining kind at all, and
-the refusal at `:643` tells the author to set a flag whose stated meaning that provider's own
+the refusal at `:666` tells the author to set a flag whose stated meaning that provider's own
 declarations contradict.
 
 It is worse than one wrong direction, and the control that shows it is the one worth keeping.
@@ -1856,7 +1856,7 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 ### D126. Concurrent first acquisitions of one connection and profile each open a provider
 
-`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:715-812`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:809`).
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:773-873`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:869`).
 Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
 The editor and agent paths reach this function the same way.
 `/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
@@ -1865,7 +1865,7 @@ The editor and agent paths reach this function the same way.
 
 ### D127. Two seed-loading paths drop a connection without telling the caller
 
-`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:89-99`).
+`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:133-143`).
 The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:57-59`, `:68-70`).
 Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
 
@@ -2535,8 +2535,8 @@ constant, and a bounded batch and a single read land in one cache shape rather t
 ### U32. A catalog change that lands during an in-flight read is dropped, and the pre-DDL answer stays
 
 `run` refuses a read whose key is already in flight
-(`src/components/object-tree/use-tree-nodes.ts:517`) and `refresh` issues its reads without waiting
-for anything (`:696`), so a `refreshToken` bump that arrives while a read is still open issues
+(`src/components/object-tree/use-tree-nodes.ts:519`) and `refresh` issues its reads without waiting
+for anything (`:698`), so a `refreshToken` bump that arrives while a read is still open issues
 nothing for that slot.
 The answer that lands is the one asked for before the DDL statement ran, `store` writes it as the
 row's current state, and nothing re-issues until the next bump.
